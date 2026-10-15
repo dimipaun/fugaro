@@ -38,8 +38,10 @@ import (
 //     say it is this repository's and this variant's, and only after its
 //     delete's long-running operation reached a terminal state.
 
-// retireWait bounds the wait for a job delete's operation. Both are
-// variables so a test can shorten the wait rather than sleep through it.
+// retireDeletePolls and retireDeletePoll bound the wait for a job delete's
+// operation: how many times its state is polled, and how long between two
+// polls. Both are variables so a test can shorten the wait rather than sleep
+// through it.
 var (
 	retireDeletePolls = 30
 	retireDeletePoll  = 2 * time.Second
@@ -87,6 +89,13 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 	infra.FillFromState(st, rets)
 	r.retireSet = rets
 	if len(rets) == 0 {
+		// --retire with nothing to retire used to be silent, and a flag that
+		// does nothing without saying so reads as a flag that was ignored
+		// (review round 2, nit). The ordinary path below is what runs; this
+		// line is the whole of what the flag had to say.
+		if r.o.retire {
+			fmt.Fprintf(r.w, "Nothing to retire: every address in %s's Terraform state is one the configuration still produces, and the labels found no orphan of this repository, so --retire has nothing to remove from the state, nothing to delete through the Cloud Run API and nothing to confirm.\n", spec.Name)
+		}
 		return nil, nil
 	}
 	r.res.Retire = rets

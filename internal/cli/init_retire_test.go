@@ -39,6 +39,20 @@ const (
 	retireRegistryAddr = `module.repo.google_artifact_registry_repository.images`
 )
 
+// retireKeptSecretID is the container's Secret Manager ID as a real state's
+// own values carry it: the derived name (gcp.SecretID), not the logical name
+// repeated. With the two equal the confirmation's "logical (id)" line and the
+// golden's KEPT row read "claude-oauth-token-bmb (claude-oauth-token-bmb)",
+// which no real repository's state holds (review round 2, nit).
+func retireKeptSecretID(t *testing.T) string {
+	t.Helper()
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gcp.SecretID(slug, retireKeptName)
+}
+
 // retireOpts are the rig's knobs.
 type retireOpts struct {
 	// protection is what the state says the orphaned job's
@@ -143,7 +157,7 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	if o.keptAsNote {
 		// The container an earlier run released: out of the state, still in
 		// Secret Manager with its labels, which is the only record left.
-		r.sm.Seed(retireKeptName, map[string]string{
+		r.sm.Seed(retireKeptSecretID(t), map[string]string{
 			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: retireKeptName,
 		}, []byte("v"))
 	}
@@ -192,7 +206,7 @@ func retireStateDoc(t *testing.T, o retireOpts) string {
 	root := []any{}
 	if !o.keptAsNote {
 		root = append(root, map[string]any{"address": retireKeptAddr, "mode": "managed", "type": "google_secret_manager_secret", "name": "this",
-			"values": map[string]any{"secret_id": retireKeptName}})
+			"values": map[string]any{"secret_id": retireKeptSecretID(t)}})
 	}
 	doc := map[string]any{
 		"format_version": "1.0",
@@ -413,7 +427,7 @@ func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
 	}
 	text := out + errOut
 	for _, want := range []string{
-		retireKeptName + " (" + retireKeptName + ")",
+		retireKeptName + " (" + retireKeptSecretID(t) + ")",
 		"Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there",
 		"unmanaged",
 	} {
@@ -1386,7 +1400,7 @@ func TestInitRepoJSONCarriesRetirements(t *testing.T) {
 	if !ok {
 		t.Fatalf("the JSON has no retirement for the kept container: %+v", res.Retire)
 	}
-	if kept.Logical != retireKeptName || kept.SecretID != retireKeptName || kept.Kept == "" {
+	if kept.Logical != retireKeptName || kept.SecretID != retireKeptSecretID(t) || kept.Kept == "" {
 		t.Errorf("the container's row = %+v, want its logical name, Secret Manager ID and Kept text", kept)
 	}
 	if n := len(r.ran(t, "state rm")); n != 0 {
@@ -1403,7 +1417,7 @@ func TestInitRepoRetireNeverTouchesSecretManager(t *testing.T) {
 	// The container the state holds is live in Secret Manager with a value:
 	// the retirement takes its address out of the state, and that value has
 	// to survive.
-	r.sm.Seed(retireKeptName, nil, []byte("v"))
+	r.sm.Seed(retireKeptSecretID(t), nil, []byte("v"))
 	if _, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build"); err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut)
 	}
@@ -1420,7 +1434,7 @@ func TestInitRepoRetireNeverTouchesSecretManager(t *testing.T) {
 			}
 		}
 	}
-	if got := r.sm.Latest(retireKeptName); len(got) == 0 {
+	if got := r.sm.Latest(retireKeptSecretID(t)); len(got) == 0 {
 		t.Errorf("the retired container's value is gone from Secret Manager")
 	}
 }
@@ -1540,6 +1554,37 @@ func TestInitRepoRetireConvergesOnAnAdoptedContainer(t *testing.T) {
 	}
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Errorf("a secret was deleted: %v", got)
+	}
+}
+
+// An ordinary --retire run with nothing to retire says so (review round 2,
+// nit): the flag was typed, and one that quietly does nothing reads as one
+// that was ignored. The line is the whole of what it had to say -- no
+// summary, no next command, no state removal -- and the ordinary plan below
+// it is what runs.
+func TestInitRepoRetireSaysWhenThereIsNothingToRetire(t *testing.T) {
+	// The converge fixture: an empty state, no orphan job, and the container
+	// live and labelled in Secret Manager, so Readiness adopts it back into
+	// the spec and nothing at all is left to retire.
+	r := newRetireRig(t, retireOpts{protection: false, stateEmpty: true, noOrphanJob: true, keptAsNote: true})
+	out, errOut, err := executeStdin(t, "", "init", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	if !strings.Contains(text, "Nothing to retire:") {
+		t.Errorf("--retire with nothing to retire said nothing:\n%s", text)
+	}
+	for _, bad := range []string{"⚠ This change retires", retireNextCommand} {
+		if strings.Contains(text, bad) {
+			t.Errorf("the empty run printed %q:\n%s", bad, text)
+		}
+	}
+	if calls := r.ran(t, "state rm"); len(calls) != 0 {
+		t.Errorf("state rm ran: %v", calls)
+	}
+	if got := r.applies(t); len(got) != 1 {
+		t.Errorf("applies = %v, want the ordinary apply", got)
 	}
 }
 
