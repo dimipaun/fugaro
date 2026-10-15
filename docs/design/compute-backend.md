@@ -168,11 +168,17 @@ What the numbers are:
      download, which can significantly reduce startup time for large
      container images" (cloud.google.com/batch/docs/use-image-streaming,
      checked 2026-10-15). It requires the image in **Artifact Registry** in the
-     job's own location — which the registry work provides, since `fugaro-base`
-     is served from an in-region Artifact Registry remote repository
-     ([registry-remote-repository.md](registry-remote-repository.md)) — and it
-     requires the `containerfilesystem.googleapis.com` API enabled (same page;
-     §1.9, the Batch provisioning task, 6). **The catch is twofold.** It switches the container runtime
+     job's own location — and that prerequisite is already met, by the
+     installation's own base repository: `fugaro-base` is an Artifact Registry
+     repository in the installation's region (the one `infra.BaseRegistry`
+     names, §7.2's `IMG`), which is where every release image is pushed today.
+     The **remote** repository of
+     [registry-remote-repository.md](registry-remote-repository.md) is a
+     different thing — a proxy that removes the ghcr.io copy step — and it is
+     **PR #362, not merged**: streaming does not depend on it, and §7.2 points
+     its probe at the direct repository for that reason. The second prerequisite
+     is the `containerfilesystem.googleapis.com` API (`same page`; §1.9, the
+     Batch provisioning task, 6). **The catch is twofold.** It switches the container runtime
      to **containerd, not Docker**, and with streaming "container runnables
      only support the following fields: `imageUri`, `commands`, `entrypoint`,
      `volumes`, `enableImageStreaming`" — every other option is disregarded
@@ -584,12 +590,19 @@ unchanged.
   (`runner/lockcache.go`) and `finalize` (`runner/runner.go`) touch only the
   process, the RTDB and the runs bucket — all of which behave identically on
   a VM. **Nothing in those four paths changes.**
-- The job env is the same set `platformEnv`/`budgetEnv` already write
-  (`internal/infra/spec.go`): `FUGARO_GCP_PROJECT`, `FUGARO_REGION`,
-  `FUGARO_PROJECT`, `FUGARO_BACKEND`, `FUGARO_BUCKET`, `FUGARO_RUN`, the
-  state/checkout/remote variables, the budget variables and the model-provider
-  variable. On Batch they are written into the job's `environmentVariables`
-  instead of Cloud Run's `env`; the names and values are unchanged.
+- The job env is nearly the same set the launch path already writes, and it
+  comes from three places, not one. `platformEnv` (`internal/infra/spec.go`
+  :522-529) writes exactly five: `FUGARO_BUCKET`, `FUGARO_BACKEND`,
+  `FUGARO_GCP_PROJECT`, `FUGARO_PROJECT` and `FUGARO_REGION`. `budgetEnv`
+  (`spec.go`:732) writes the budget variables, the workflow spec writes the
+  state/checkout/remote ones and the model-provider variable (`spec.go`:691),
+  and **`FUGARO_RUN` is written by none of them**: the launch path sets it per
+  execution, as a Cloud Run container override
+  (`internal/backend/gcp/run.go`:110) — which is the same per-run name the
+  Batch launcher has to write for itself (§2.3). On Batch the job env goes in
+  **`taskSpec.environment.variables`** (Batch REST reference, `TaskSpec` and
+  `Environment`, checked 2026-10-15) instead of Cloud Run's per-execution
+  `env` override; the names and values are unchanged.
 
 What is genuinely new, and is the bulk of the work: the **Docker socket**
 (§2.2), the **name/parse and cloud-detection seam** (§2.5), the
@@ -679,7 +692,7 @@ Every method of `internal/backend.Backend` maps onto Batch:
 | Seam method | Batch | Notes |
 |---|---|---|
 | `Launch(LaunchSpec)` | `projects.locations.jobs.create` | One Batch job, one task group, one task. Name derived per run (§2.4). The `FUGARO_RUN` env and the timeout are set in the job definition, not in an override — Batch has no execution-override concept like Cloud Run's `Overrides`. Returns `ExecutionRef{Name, Job, LogURL}`. |
-| `Execution(name)` | `jobs.get` | Maps Batch's state enum to `backend.State`, for **every** value the API documents: `STATE_UNSPECIFIED`/`QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, and `CANCELLATION_IN_PROGRESS`/`CANCELLED` → `StateCancelled`. That list is the complete `JobStatus.State` enum — `STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`, `CANCELLED`, in that order and **no others**: Batch v1 has no `SUCCEEDING` and no `FAILING` (checked 2026-10-15 against the REST reference, the discovery document and `google/cloud/batch/v1/job.proto`'s `JobStatus.State`, which carry the same eight plus `STATE_UNSPECIFIED`). So no documented value falls through untyped. `DELETION_IN_PROGRESS` → `StateCancelled` too, but it should only ever be seen for a job the **reaper** is deleting (§3.4) — a user cancel is `jobs.cancel`, which ends `CANCELLED` (§1.4). An unrecognised value is treated as **not terminal** and logged — the same defensive shape as `stateOf` in `internal/backend/gcp/run.go`, which reads Cloud Run's counts rather than trusting one field. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
+| `Execution(name)` | `jobs.get` | Maps Batch's state enum to `backend.State`, for **every** value the API documents: `STATE_UNSPECIFIED`/`QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, and `CANCELLATION_IN_PROGRESS`/`CANCELLED` → `StateCancelled`. That list is the complete `JobStatus.State` enum — `STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`, `CANCELLED`, in that order and **no others**: Batch v1 has no `SUCCEEDING` and no `FAILING` (checked 2026-10-15 against the REST reference, the discovery document and `google/cloud/batch/v1/job.proto`'s `JobStatus.State`, which carry the same eight plus `STATE_UNSPECIFIED`). So no documented value falls through untyped. `DELETION_IN_PROGRESS` → `StateCancelled` too, but it should only ever be seen for a job the **reaper** is deleting (§3.4) — a user cancel is `jobs.cancel`, which ends `CANCELLED` (§1.4). An unrecognised value is treated as **not terminal** and logged — the same defensive shape as `stateOf` in `internal/backend/gcp/run.go`, which reads Cloud Run's counts rather than trusting one field. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the task's `environment.variables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
 | `List(filter)` | `jobs.list` | Filter by the Fugaro labels and `CreateTime`; the `fugaro-` name prefix is replaced by the label predicate. |
 | `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `labels.job_uid="<uid>" AND logName="projects/<p>/logs/batch_task_logs"`, the form Google documents for one job's task logs (cloud.google.com/batch/docs/analyze-job-using-logs, checked 2026-10-15; §1.5). It needs the job's **UID**, so `Logs` does a `jobs.get` first — one extra read per call, cached for the follow loop. The alternative `resource.labels.job_id` is **UNVERIFIED** (the resource list says only "The identifier of the Job", which may be the name or the UID), which is why it is not the shipped filter; Check 57a step 10 settles it and may allow the cheaper form later. The `fugaro=managed` marker does reach the entry (`Job.labels` applies to the job "and any Cloud Logging LogEntry that it generates") and pins the installation's arm of the sink (§1.5). |
 | `Cancel(name)` | `jobs.cancel` | The job passes through `CANCELLATION_IN_PROGRESS` to `CANCELLED`; `Execution` keeps working afterwards, which is what `backendtest`'s cancel case requires. Tolerate a job already terminal (the same race live check 5 already documents for Cloud Run). `jobs.delete` is **not** `Cancel` — it is the reaper's and the restore's (§3.4). |
@@ -798,11 +811,39 @@ metadata-server probe (`http://metadata.google.internal/…` answering with
 `Metadata-Flavor: Google`) as the fallback for a VM whose vars were stripped;
 `OnCloudRun` keeps its Cloud Run meaning for
 the Cloud Run backend; the Batch backend answers "am I on you?" from its own
-marker; and the **default when neither matches is "in the cloud"**
+marker; and the answer for a process **no backend claims** is "in the cloud"
 (`true`), so the four security checks above fail *closed* on an unrecognised
 platform instead of open. That last part is the point: today the function's
 name invites "am I on Cloud Run?" while every caller reads it as "am I
 somewhere a launcher controls?", and the two are not the same question.
+
+**Local mode is an explicit invocation, never "no cloud marker", and that is
+what keeps the local path working.** A true-by-default answer has one dangerous
+reading — a local `fugaro exec` classified as in-cloud, which would make
+`RequireProject` true (`internal/runner/project.go`:22 then fails a run whose
+environment has no `FUGARO_PROJECT`) and pass `loopbackOK = false` to
+`runner.BackendFromEnv` (`internal/cli/exec.go`:102), breaking the local
+`--task-file` path, the local Docker checks (20, 21) and the e2e suite
+(`internal/e2e/e2e_test.go`:97 launches a local `fugaro exec --task-file` with
+no `FUGARO_PROJECT`). So the design names the local case rather than inferring
+it. There is exactly one local invocation, and the CLI already recognises it:
+`fugaro exec` with `--task-file` ("`--task-file` is for local runs; on Cloud
+Run the run comes from `FUGARO_RUN`", `cli/exec.go`:139-142). `exec` therefore
+resolves the platform **first** — **local** when `--task-file` was given (or a
+hidden test hook put it there), else whichever backend claims the process,
+else "in the cloud" — and every check reads that one resolved value:
+
+- **Local**: `RequireProject` is false, `loopbackOK` is true, `refuseOldJobEnv`
+  and `execPrices` keep their local behaviour. This is today's behaviour for
+  every local run, which is why Task 1 must leave the e2e suite and checks 20
+  and 21 green (it is a requirement of that task, not a nicety).
+- **In the cloud**: the platform's marker names the backend, and an
+  unrecognised or stripped marker is **in the cloud**, so the checks fail
+  closed.
+- The flag is a CLI argument, so **nothing in a job's environment can ask for
+  local mode**, and a `--task-file` on a process that is a Cloud Run execution
+  stays refused (`cli/exec.go`:139-142 already reports that contradiction): the
+  two rules cannot both apply to one run.
 
 **`FUGARO_BACKEND` is not that signal, and must not become it.** Three things
 break if it is used as one. It is a Fugaro variable: `internal/infra/spec.go`:88 defines it and
@@ -1891,7 +1932,10 @@ sweep misses one, that name is what finds it.
    **platform-injected** marker (no `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`, and a
    metadata server that does not answer) must make the binary refuse rather than
    fall open — a `FUGARO_*` variable must **not** be able to stand in for it
-   (§2.5, and 57a-12 for whether the injected pair can be overwritten): the design's §2.5 fix exists because four call sites today read
+   (§2.5, and 57a-12 for whether the injected pair can be overwritten). A VM's
+   process is never in **local mode** — that is the CLI's `--task-file`
+   invocation, which no job uses — so the markerless case here is always the
+   cloud one: the design's §2.5 fix exists because four call sites today read
    `OnCloudRun` and treat "not Cloud Run" as "not in the cloud". **FACT:**
    whether the run without the marker refused.
 
@@ -2057,7 +2101,10 @@ senior reviewer before merge, not just the normal one.
    `ParseExecution`, `SameExecution`, `ExecutionFromEnv`, `OnCloudRun` and the
    job-binding check behind a per-backend codec, add the fail-closed "in the
    cloud" answer keyed on the **platform's** signal (never a `FUGARO_*`
-   variable, §2.5), and keep Cloud Run's behaviour byte-for-byte unchanged
+   variable, §2.5) **with local mode resolved from the invocation rather than
+   from a missing marker**, and keep Cloud Run's and the local path's
+   behaviour byte-for-byte unchanged — the e2e suite's local
+   `exec --task-file` run and checks 20 and 21 are part of that requirement
    (§2.5). Fixing `execPrices`' `cloud-run`-only gate (§5.2's site 3) belongs
    here too, since it is the same question asked by a different caller. Merges alone; no new backend; every existing test green. Value: the
    seam is honest about names before a second name shape exists, and the four
