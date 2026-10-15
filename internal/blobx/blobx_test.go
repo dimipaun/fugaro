@@ -431,7 +431,7 @@ func TestTouchForbiddenIsClassified(t *testing.T) {
 //	TestPutFileStreamsAndHashes                  the returned sha256 is of nothing
 //	TestPutFileSetsContentType                   the writer records no content type
 //	TestPutFileWithIfNotExistRefusesAnExistingObject  the create-only condition is dropped
-//	TestPutFileWithoutIfNotExistOverwrites       the second write does not replace the first (same mutation as above)
+//	TestPutFileWithoutIfNotExistOverwrites       the condition is forced create-only, so the second write is refused
 //	TestPutFileAbortsTheWriteBeforeClosingOnAFailedRead  the cancel before Close is removed
 //	TestPutFileAbortsOnAShortRead                the size-changed check is removed
 //	TestGetFileRefusesOverTheLimitAndLeavesNothing  the download caps are removed
