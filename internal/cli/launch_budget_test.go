@@ -254,6 +254,15 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 // to this operator — the rules were changed out from under it. Reading that as
 // an absent node would launch the run with no budget identity at all, and the
 // run would then go on with the project's policy unread and unenforced.
+//
+// A second mutation lives here, and this test carries the observable that
+// catches it: swallowing the error in the launch gate (launchPolicyGates) so
+// the launch goes on. Nothing else tells the two apart — the mint's own read
+// then fails with the same message and the same exit code, no token is
+// written and no execution is created either way. What differs is where the
+// launch stopped: with the gate swallowing, createTask has already run, so the
+// run's task.json is in the bucket. No stored task is this gate's promise
+// ("a refused launch leaves nothing behind at all"), and it is asserted below.
 func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
@@ -272,6 +281,9 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	}
 	if launchedAny(f) || readToken(t, f.cloudFixture, budgetRun) != "" {
 		t.Fatal("a denied read of a published policy minted a token or launched the run")
+	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("the refused launch stored a task: the gate read the policy after createTask had run")
 	}
 }
 

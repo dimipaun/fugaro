@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -10,8 +11,11 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // publishPolicy puts a policy node and the rules marker on the fixture's
@@ -44,6 +48,63 @@ func storedTask(t *testing.T, f *cloudFixture) bool {
 		return false
 	}
 	return true
+}
+
+// The gate's own binding refusal (the third of its refusals, beside the skew
+// and the allow-list). It is unreachable through `fugaro run` — the slug a
+// launch stores its run under is task.Slug of the provider the local config or
+// the checkout's fugaro.yaml names, both validated against config.Providers,
+// which is the run's own list (TestProviderKindsAgreeWithTheConfigsList) — so
+// it is called here directly, with the pair a launcher's own jobs.run call
+// would have to build by hand. What it is worth is the operator hearing about
+// a repository the run would refuse while he is still there, before an
+// execution exists; what it guards is the day the two lists stop agreeing.
+//
+// Mutation (run, restored): delete the `if !ok` refusal. Nothing else in the
+// package fails — no other test reaches the branch — which is what this test
+// is for.
+func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
+	f := newLaunchBudget(t, "off")
+	// The allow-list admits every repository, so what refuses below is the
+	// binding and not the policy.
+	publishPolicy(t, f, `{"version":1,"allow_repos":["*"]}`)
+	env := memEnv(t, f.cloudFixture)
+	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+
+	// The pair that agrees is admitted: the refusal below is about the slug.
+	if err := launchPolicyGates(context.Background(), env, appSlug, spec); err != nil {
+		t.Fatalf("the repository's own slug was refused: %v", err)
+	}
+
+	other, err := task.Slug("github", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = launchPolicyGates(context.Background(), env, other, spec)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want the binding's own refusal", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		other, "acme/app", "provider kind", "github", "bitbucket", "before any execution exists",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
+// Why the binding refusal above cannot fire on a launch this CLI builds, and
+// why the test calls the gate by hand: repoSlug computes the slug with
+// task.Slug of the provider the config or the checkout names, and
+// config.Validate allows exactly the kinds the run derives its own from. The
+// two lists are the same list — the run's jobProviderKinds, which
+// runner.ProviderKinds exports for this message — and a kind added to one of
+// them alone would make this gate, and only this gate, the thing that refuses
+// a launch the run itself would refuse a moment later.
+func TestProviderKindsAgreeWithTheConfigsList(t *testing.T) {
+	if got, want := runner.ProviderKinds(), config.Providers; !slices.Equal(got, want) {
+		t.Fatalf("the run's provider kinds are %v, the config's are %v: a repository whose provider one side knows and the other does not is a slug the two disagree about", got, want)
+	}
 }
 
 // A published policy that does not admit the repository stops the launch, with
