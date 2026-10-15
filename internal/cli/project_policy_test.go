@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1289,6 +1290,13 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
+		// The broader pattern really does keep every repository the removed one
+		// admitted, so the runs are not refused (the review of PR #390).
+		"pattern, a broader pattern": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
+		// The other direction, and the reason this is not just MatchRepo: it
+		// says github/acme/* matches the string "github/*/app", while
+		// github/acme/* does not admit github/other/app, which github/*/app does.
+		"pattern, one that only overlaps it": {[]string{"github/acme/*", "github/*/app"}, "github/*/app", false, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, by := admittedBy(tc.allow, tc.arg)
@@ -1549,5 +1557,127 @@ func TestProjectPolicyDeleteRemovesOrphanChildrenWithoutASharedNode(t *testing.T
 	}
 	if !strings.Contains(out, "nothing to delete") {
 		t.Errorf("a second --delete does not say there is nothing to delete:\n%s", out)
+	}
+}
+
+// TestProjectReposRmOfAPatternWithABroaderPatternLeftSaysSo: removing a
+// pattern while a broader one remains refuses nothing — github/*/* admits
+// every repository github/acme/* admitted — so the confirmation must not
+// claim a stop it does not make (the review of PR #390). MatchRepo answers a
+// different question ("does this entry admit that string"), and the narrower
+// case below is why it is not the whole answer.
+//
+// Mutation (verified, run and restored): restore admittedBy's old
+// `for _, p := range rest { if p == "*" }` branch for patterns: this test
+// fails, reading "its runs are refused from now on" while github/*/* still
+// admits every one of them.
+func TestProjectReposRmOfAPatternWithABroaderPatternLeftSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/*/*", "github/acme/*"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/*/* still admits it") {
+		t.Errorf("the confirmation does not name the broader pattern that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/*/* is on the list:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "github/acme/*") {
+		t.Errorf("allow_repos = %v, want the pattern removed", allow)
+	}
+	// The point of the sentence: every repository the removed pattern admitted
+	// is still admitted, by the entry the confirmation named.
+	for _, r := range []string{"github/acme/app", "github/acme/anything", "github/other/thing"} {
+		if !projectpolicy.AdmitRepo(allow, r) {
+			t.Errorf("allow_repos = %v no longer admits %s, which the confirmation said it keeps", allow, r)
+		}
+	}
+}
+
+// TestProjectReposRmOfANameOnlyAPatternAdmitsSaysThePatternKeepsIt: the name
+// is not an entry, so nothing is removed — but a pattern on the list admits
+// it, so its runs keep running, and "nothing to remove" alone reads as if
+// they had stopped (the review of PR #390).
+//
+// Mutation (verified, run and restored): put back the plain
+// `userErr("%s is not on the allow-list ...: nothing to remove")` return in
+// runProjectReposEdit: this test fails, finding no mention of the pattern.
+func TestProjectReposRmOfANameOnlyAPatternAdmitsSaysThePatternKeepsIt(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+		t.Fatal(err)
+	}
+	before := publishedPolicy(t, f).AllowRepos
+	_, _, err := execute(t, "project", "repos", "rm", "github/acme/extra")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	if !strings.Contains(err.Error(), "github/acme/* admits it") || !strings.Contains(err.Error(), "keep running") {
+		t.Errorf("the refusal does not say the pattern keeps admitting it: %v", err)
+	}
+	if strings.Contains(err.Error(), "nothing to remove") {
+		t.Errorf("the refusal says only that there is nothing to remove: %v", err)
+	}
+	if got := publishedPolicy(t, f).AllowRepos; !slices.Equal(got, before) {
+		t.Errorf("allow_repos = %v, want the list unchanged (%v)", got, before)
+	}
+}
+
+// TestProjectReposEditRefusesTheSharedConfig: repos add and rm write the
+// published policy, so they are writers like `policy publish` and take its
+// two refusals — the shared config is not an operator's own installation, and
+// the database must be this project's (the review of PR #390).
+//
+// Mutation (verified, run and restored): call openBudget instead of
+// openProjectBudget in runProjectReposEdit: this test fails, the command
+// reaching the network instead of refusing.
+func TestProjectReposEditRefusesTheSharedConfig(t *testing.T) {
+	f := sharedEnd2End(t)
+	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+	for _, args := range [][]string{
+		{"project", "repos", "add", "github/acme/app"},
+		{"project", "repos", "rm", "github/acme/app"},
+	} {
+		_, _, err := execute(t, args...)
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), errSharedWrite) {
+			t.Errorf("%v: err = %v, want the shared-config refusal", args, err)
+		}
+	}
+}
+
+// TestProjectPolicyPublishDiffDoesNotPrintAModelPricesCount: the diff names
+// every price override by model (priceLines), so a summary line reading
+// "model_prices: 1" says nothing an operator can use and reads like a rate
+// (the review of PR #390: the line the block-level comment beside it already
+// called out as useless).
+//
+// Mutation (verified, run and restored): put back
+// `"model_prices": fmt.Sprintf("%d", len(p.Prices))` in policyLines: this
+// test fails, finding "model_prices: 1" in the diff.
+func TestProjectPolicyPublishDiffDoesNotPrintAModelPricesCount(t *testing.T) {
+	newProjectFixture(t, "model_prices:\n  deepseek/deepseek-v4-flash: { input_per_m: 1, output_per_m: 2 }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "model_prices: ") {
+		t.Errorf("the diff prints a model_prices count line:\n%s", out)
+	}
+	if !strings.Contains(out, "+ model_prices deepseek/deepseek-v4-flash: input_per_m 1") {
+		t.Errorf("the diff no longer names the override it has:\n%s", out)
 	}
 }

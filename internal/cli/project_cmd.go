@@ -223,7 +223,17 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	case gen >= projectpolicy.RulesVersion:
 		return nil
 	}
-	return userErr("the deployed rules are older than the marker %s: re-run 'fugaro init --firebase' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
+	return userErr("%s", rulesSkewText())
+}
+
+// rulesSkewText is the one sentence for "the deployed rules are older than
+// the marker": `policy publish` refuses with it and doctor's
+// policy-rules-skew check prints it (plan task 1.6 step 4's fifth check),
+// so the state reads the same whether the operator met it as a refusal or
+// as a report. It is a plain sentence and not an error, because doctor has
+// no error to wrap it in.
+func rulesSkewText() string {
+	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro init --firebase' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
 		projectpolicy.PathRulesMarker(), policySince)
 }
 
@@ -711,7 +721,6 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"budget.max_run_tokens": fmt.Sprintf("%d", p.Budget.MaxRunTokens),
 		"allow_repos":           fmt.Sprintf("%v", nonNil(p.AllowRepos)),
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
-		"model_prices":          fmt.Sprintf("%d", len(p.Prices)),
 	}
 }
 
@@ -1373,7 +1382,12 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 // concurrent publisher is refused rather than overwritten.
 func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string, remove bool) error {
 	ctx := cmd.Context()
-	lc, db, err := openBudget(ctx, o.cloud)
+	// openProjectBudget, not openBudget: this writes the published policy node,
+	// so it is a writer like `policy publish` and takes the same two refusals —
+	// the shared config is not an operator's own installation (and its repos:
+	// map is not the one a bare owner/name resolves against), and the database
+	// must be this project's.
+	lc, db, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
@@ -1406,6 +1420,16 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	allow := nonNil(p.AllowRepos)
 	have := slices.Contains(p.AllowRepos, canonical)
 	if remove && !have {
+		// A name that is not an entry can still be admitted by a pattern on the
+		// list, and then the removal removes nothing and refuses nothing: saying
+		// only "nothing to remove" would read as if the repository had stopped
+		// running.
+		for _, p := range p.AllowRepos {
+			if projectpolicy.MatchRepo(p, canonical) {
+				return userErr("%s is not an entry of the allow-list of %s; the pattern %s admits it, so its runs keep running — remove that pattern to refuse them",
+					canonical, projectpolicy.PathShared(), p)
+			}
+		}
 		return userErr("%s is not on the allow-list of %s: nothing to remove", canonical, projectpolicy.PathShared())
 	}
 	if !remove && have {
@@ -1483,8 +1507,13 @@ func removalWarning(allow []string, canonical string) string {
 // A concrete repository is admitted by any remaining entry that matches it: the
 // wildcard, or a pattern such as github/acme/*. A *pattern* being removed is a
 // different question — removing it is moot only if some remaining entry admits
-// everything it admitted — and the only entry that does is the bare wildcard
-// (two identical entries cannot both be on the list).
+// every repository it admitted — and MatchRepo alone does not answer it:
+// MatchRepo("github/acme/*", "github/*/app") is true while the first does not
+// admit github/other/app, so a pattern is covered by the wildcard alone, or by
+// a pattern whose every segment is either "*" or exactly arg's. That covers the
+// case this exists for — github/acme/* removed while github/*/* is on the list
+// refuses nothing — and it never says "not refused" about a repository the
+// removal does refuse.
 //
 // An entry is a pattern when it carries a wildcard, not when ValidPattern
 // accepts it: ValidPattern accepts a concrete name too (a pattern with no "*"
@@ -1499,20 +1528,41 @@ func admittedBy(allow []string, arg string) (bool, string) {
 			rest = append(rest, p)
 		}
 	}
-	if strings.Contains(arg, "*") {
-		for _, p := range rest {
-			if p == "*" {
+	for _, p := range rest {
+		if strings.Contains(arg, "*") {
+			if coversRepo(p, arg) {
 				return true, p
 			}
+			continue
 		}
-		return false, ""
-	}
-	for _, p := range rest {
 		if projectpolicy.MatchRepo(p, arg) {
 			return true, p
 		}
 	}
 	return false, ""
+}
+
+// coversRepo reports whether every repository pattern admits is admitted by
+// other too, when both are patterns: "*" admits everything, and otherwise the
+// two are compared segment against segment, where a "*" admits whatever the
+// other segment admits and any other segment must be equal to it. A segment
+// with a partial wildcard ("ac*") is only covered by itself or by "*", which is
+// conservative in the safe direction: it can miss a covering entry, and never
+// claims a repository keeps running when it does not.
+func coversRepo(pattern, other string) bool {
+	if pattern == "*" {
+		return true
+	}
+	ps, os := strings.Split(pattern, "/"), strings.Split(other, "/")
+	if len(ps) != len(os) {
+		return false
+	}
+	for i := range ps {
+		if ps[i] != "*" && ps[i] != os[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // canonicalRepoArg is the operator's argument as a canonical allow-list

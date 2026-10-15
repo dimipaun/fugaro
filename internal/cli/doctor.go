@@ -23,6 +23,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/basepin"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -30,6 +31,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
@@ -334,6 +337,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
 	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
+	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
@@ -1306,4 +1310,170 @@ func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcf
 	return []doctorCheck{{ID: "shared-config-differs", Severity: "info",
 		Problem: "the shared config published to the runs bucket differs from your local config on " + strings.Join(diff, ", ") + "; yours is used",
 		Fix:     "fugaro init publishes your local config's installation-wide fields"}}
+}
+
+// doctorPolicyChecks reports the published project policy and the state
+// around it (plan task 1.6 step 4): whether one exists and which version,
+// whether this binary understands it (P8), whether the installation's jobs
+// still run a runner image that predates the policy model, whether the
+// allow-list it carries admits anything, and whether the deployed rules are
+// the generation that can read it.
+//
+// It reads, and only reads: the policy node and the rules marker with the
+// operator's own credentials, plus the local config. Nothing here writes,
+// and every outcome is a check — a database that cannot be reached is a
+// note, never a failure, which is the shape the rest of doctor has.
+func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+	shared := projectpolicy.PathShared()
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		// The state of every installation that has not run init --firebase:
+		// there is no node to read, and the runs take their ceiling from the
+		// job environment, exactly as they did before this model (P3).
+		return []doctorCheck{{ID: "policy-published", Severity: "info",
+			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
+			Fix:     "fugaro init --firebase <firebase-project-id> --name " + lc.Name + " adds the backend the policy is published to"}}
+	}
+	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		return []doctorCheck{{ID: "policy-published", Severity: "info",
+			Problem: fmt.Sprintf("whether project %s publishes a policy could not be checked: %v", lc.Name, err),
+			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}}
+	}
+	checks := doctorRulesSkew(ctx, db)
+	var raw json.RawMessage
+	found, err := db.Get(ctx, shared, &raw)
+	if err != nil {
+		// A read that failed is not "no policy": doctor says which it is.
+		return append(checks, doctorCheck{ID: "policy-published", Severity: "info",
+			Problem: fmt.Sprintf("the project policy at %s could not be read (%v), so whether one is published is unknown", shared, err),
+			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"})
+	}
+	if !found {
+		return append(checks, doctorCheck{ID: "policy-published", Severity: "info",
+			Problem: fmt.Sprintf("no policy is published at %s: runs take their ceiling from the job environment", shared),
+			Fix:     "fugaro project policy publish publishes the project's policy"})
+	}
+	p, _, err := projectpolicy.Decode(raw)
+	if err != nil {
+		var ve *projectpolicy.VersionError
+		if errors.As(err, &ve) {
+			// P8's release skew: the node was written by a newer Fugaro. It is
+			// not a refusal here (doctor changes nothing) but it does mean this
+			// binary cannot read what governs the project's runs.
+			return append(checks, doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
+				Problem: fmt.Sprintf("%s: %s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood), shared),
+				Fix:     fmt.Sprintf("upgrade Fugaro to a release that understands version %d", ve.Found)})
+		}
+		return append(checks, doctorCheck{ID: "policy-published", Severity: "warning",
+			Problem: fmt.Sprintf("%s holds a node this Fugaro cannot read: %v", shared, err),
+			Fix:     "read it yourself (fugaro project policy show prints what this binary can decode) and republish with 'fugaro project policy publish' if it is not the policy you meant"})
+	}
+	checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
+		Problem: fmt.Sprintf("a policy is published at %s (version %d, %d allow-list entries)", shared, p.Version, len(p.AllowRepos)),
+		Fix:     "fugaro project policy show prints it"})
+	if len(p.AllowRepos) == 0 {
+		// Empty inside a *published* policy is deny-all (design §5), which is a
+		// different state from an installation that published nothing: every
+		// run of every repository stops at admission.
+		checks = append(checks, doctorCheck{ID: "allow-list-empty", Severity: "warning",
+			Problem: fmt.Sprintf("the policy published at %s admits no repository: every run's repository is refused before it mints a git token", shared),
+			Fix:     "fugaro project repos add owner/name enrolls one ('fugaro project repos add github/acme/app')"})
+	}
+	if c := doctorPolicyVsJobs(lc); c != nil {
+		checks = append(checks, *c)
+	}
+	return checks
+}
+
+// doctorPolicyVsJobs is 12a item 6's trap: a policy is published, and the
+// installation's jobs were deployed from a runner image that predates the
+// model, so the runs they launch never read the node that governs them —
+// they keep taking the ceiling from their own environment, which is looser
+// than what the owner published.
+//
+// The comparison is the one `fugaro image refresh` already makes
+// (refreshBase/baseIsCurrent): the recorded base image against this
+// release's pin, offline, with no job enumeration and no registry call.
+// It is deliberately not a claim about the digests a live job is running —
+// doctor reads what the local config records, as it does for every base
+// image it reports.
+func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
+	cur := lc.BaseImage(config.BaseKind)
+	if cur == "" {
+		// Nothing recorded: doctor's own base-image check already names that.
+		return nil
+	}
+	host, err := infra.RegistryHost(lc)
+	if err != nil {
+		return nil
+	}
+	owner := baseOwner(lc)
+	if !isManaged(cur, host, config.BaseKind, owner) || baseIsCurrent(cur, host, config.BaseKind, owner, Version) {
+		return nil
+	}
+	return &doctorCheck{ID: "policy-vs-jobs", Severity: "warning",
+		Problem: fmt.Sprintf("the jobs are deployed from the runner image %s, which predates this Fugaro: a policy published at %s is one those runs do not read, so they keep the ceiling from their own environment", pluginwire.Printable(cur), projectpolicy.PathShared()),
+		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro init --repo . in your own terminal, which is the only path that writes a job's environment)"}
+}
+
+// doctorRulesSkew is the fifth check: the deployed rules are older than the
+// marker config/limits/policyRules. It is the state an older CLI's
+// `fugaro init --firebase` leaves behind by redeploying the pre-policy
+// template while the marker stays, and its consequence is that a published
+// policy becomes unreadable — a run's token is refused for a node that
+// exists, so every budget-on run halts (Task 1.3 step 1's third outcome).
+//
+// The marker alone cannot tell this state apart from a healthy one: it is
+// the marker *and* the deployed document. The document is compared against
+// what this generation generates, which is exactly what the rules deploy
+// itself compares before it decides to write (internal/infra's DB.Plan,
+// sameJSON), so an installation whose rules were deployed by a CLI of this
+// generation never reports a skew.
+//
+// A warning, not an error: the fix is the owner's `fugaro init --firebase`
+// and doctor cannot perform it.
+func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
+	marker := projectpolicy.PathRulesMarker()
+	var raw json.RawMessage
+	found, err := db.Get(ctx, marker, &raw)
+	if err != nil || !found {
+		// Unreadable, or absent: absent is generation 0, the pre-policy rules,
+		// under which no policy can have been published (publishing refuses
+		// without the marker) — there is nothing for the rules to be older
+		// than, and nothing to warn about.
+		return nil
+	}
+	var gen int
+	if err := json.Unmarshal(raw, &gen); err != nil {
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
+			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
+	}
+	if gen < projectpolicy.RulesVersion {
+		return nil
+	}
+	live, err := db.Rules(ctx)
+	if err != nil {
+		return nil
+	}
+	want, err := rules.Generate()
+	if err != nil || policyDocEqual(live, want) {
+		return nil
+	}
+	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+		Problem: rulesSkewText(),
+		Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal: it redeploys the rules the policy is read under"}}
+}
+
+// policyDocEqual reports whether a and b are the same JSON document,
+// ignoring formatting: the deployed rules come back as the database holds
+// them, and a document that differs only in whitespace is not a skew.
+func policyDocEqual(a, b []byte) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return string(a) == string(b)
+	}
+	xb, _ := json.Marshal(x)
+	yb, _ := json.Marshal(y)
+	return string(xb) == string(yb)
 }
