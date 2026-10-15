@@ -74,6 +74,11 @@ type GCS struct {
 	// a content GET) answer 503, as a flaky network or an overloaded
 	// backend would.
 	failGets int
+	// failObject maps an object ("<bucket>/<name>") to the first read of it
+	// that answers 403 (FailObjectGetsAfter); reads is how many reads of
+	// each object the fake has served, successful or failed.
+	failObject map[string]int
+	reads      map[string]int
 	// listCalls counts object listing requests (one per page).
 	listCalls int
 	// denied maps a bucket to the prefixes DenyWrites has closed.
@@ -125,7 +130,8 @@ func NewGCS(t *testing.T) *GCS {
 	t.Helper()
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
 		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{},
-		refusedPolicy: map[string]bool{}, failedPolicy: map[string]bool{}, held: map[string][]string{}}
+		refusedPolicy: map[string]bool{}, failedPolicy: map[string]bool{}, held: map[string][]string{},
+		failObject: map[string]int{}, reads: map[string]int{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -166,6 +172,18 @@ func (g *GCS) FailObjectGets(n int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failGets = n
+}
+
+// FailObjectGetsAfter makes reads of one object answer 403 PERMISSION_DENIED
+// from the (skip+1)th on, so a test can fail the read a late step makes while
+// the earlier steps that read the same object (a record read during the plan,
+// say) answer normally. 403 and not 5xx: the storage client retries a 5xx on
+// its own (idempotent GETs), so the caller would never see it. The object
+// must exist for this to fire: an absent object still answers 404.
+func (g *GCS) FailObjectGetsAfter(bucket, name string, skip int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failObject[bucket+"/"+name] = skip + 1
 }
 
 // AddProject lets bucket inserts name project id, whose number new buckets
@@ -698,6 +716,14 @@ func (g *GCS) get(w http.ResponseWriter, bucket, name string, media bool) {
 	o := g.buckets[bucket][name]
 	if o == nil {
 		g.notFound(w, bucket, name)
+		return
+	}
+	key := bucket + "/" + name
+	g.reads[key]++
+	if from := g.failObject[key]; from != 0 && g.reads[key] >= from {
+		// Not 404: the caller must see a failure, not an absent object,
+		// since this is the read no other knob can name.
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "injected failure")
 		return
 	}
 	if !media {
