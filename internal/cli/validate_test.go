@@ -1100,6 +1100,61 @@ func TestValidateSeesTheCheckoutLayer(t *testing.T) {
 	}
 }
 
+// A layer-claimed pin is judged by the credential and mode rules exactly as
+// any other provider model is (P10): the claim decides who may route the ID,
+// and nothing else. validate judges the pins against the merged map the run
+// will use, so a claimed pin under oauth is refused here with the auth rule's
+// own wording, and one under observe with the mode rule's.
+// Mutations that make this fail, one at a time: validate.go passing
+// lc.Providers to config.CheckProviderAuth (or CheckProviderGateway, or
+// CheckProviderPolicy) instead of the merged map.
+func TestValidateRefusesAClaimedPinTheAuthAndModeRulesRefuse(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	// claimedCheckout is the fixture of TestValidateSeesTheCheckoutLayer with
+	// the credential and the budget mode a case chooses.
+	claimedCheckout := func(t *testing.T, auth, budget string) {
+		t.Helper()
+		f := newCloudFixture(t)
+		isolateCache(t)
+		f.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n"+
+			"model_prices:\n  \""+id+"\": { input_per_m: 3, output_per_m: 15 }\n")
+		repo := "version: 1\nproject: aurora\ngcp_project: proj-1234\n" + budget +
+			"agent:\n  auth: " + auth + "\n  model: claude-sonnet-5-5\n  models: { reviewer: " + id + ", background: claude-haiku-4-5 }\n" +
+			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+		layerCheckout(t, f, repo)
+		publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+	}
+	t.Run("api-key and enforce: the claim is the pin's passage", func(t *testing.T) {
+		claimedCheckout(t, "api-key", "budget: { mode: enforce, per_run_usd: 2 }\n")
+		if out, errOut, err := execute(t, "validate"); err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("a claimed pin under api-key and enforce was refused: %v\n%s%s", err, out, errOut)
+		}
+	})
+	t.Run("oauth", func(t *testing.T) {
+		claimedCheckout(t, "oauth", "budget: { mode: enforce, per_run_usd: 2 }\n")
+		out, errOut, err := execute(t, "validate")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("a claimed pin under oauth: exit %d\n%s%s", ExitCode(err), out, errOut)
+		}
+		if !strings.Contains(out, "an oauth token is a Claude subscription credential") {
+			t.Errorf("the refusal is not config.CheckProviderAuth's:\n%s", out)
+		}
+		if !strings.Contains(out, "agent.models.reviewer") || !strings.Contains(out, "served by provider openrouter") {
+			t.Errorf("the refusal does not name the pin and the route:\n%s", out)
+		}
+	})
+	t.Run("observe", func(t *testing.T) {
+		claimedCheckout(t, "api-key", "budget: { mode: observe }\n")
+		out, errOut, err := execute(t, "validate")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("a claimed pin under observe: exit %d\n%s%s", ExitCode(err), out, errOut)
+		}
+		if !strings.Contains(out, "is served by a provider, which needs budget.mode enforce") {
+			t.Errorf("the refusal is not config.CheckProviderGateway's:\n%s", out)
+		}
+	})
+}
+
 // A layer is judged against its own project's config, never against whichever
 // project config happens to be selected: with another project's config
 // selected, its routes are that installation's, and a claim naming a route of
