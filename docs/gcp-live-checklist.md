@@ -243,11 +243,16 @@ and **Check 45 is the next free number** — this design claims nothing
 past 43. **Check 57 is reserved by the compute-backend design**
 (`docs/design/compute-backend.md` §7, PR for the restored generic-tool
 Task 28): the Docker-capable Compute Engine VM backend, the successor of the
-dropped Check 31. It takes 57 rather than 45 because numbers 42–47 and 48–56
-were claimed by other plans in flight when it was written; a number, once
-reserved, is never reused or renumbered, so the gap below 57 is intentional
-and is not a missing check. Its full text lives in that design's §7.2 and its
-row is in the table below.
+dropped gen-2 Docker probe — generic-tool Task 26, which the plan numbered
+Check 31, a number this checklist had already given to `fugaro upgrade`
+(row 31 below); the probe is referred to by its task from here on. It takes 57
+rather than 45 because, after the paragraph above was written, the numbers
+45–47 and 48–56 were claimed by other plans in flight — their rows appear in
+the table below when those plans land, which is why nothing sits between 44
+and 57 yet; a number reserved in a plan is reserved whether or not its row is
+written, and a number, once reserved, is never reused or renumbered, so the
+gap is intentional and is not a missing check. Its full text lives in that
+design's §7.2 and its row is in the table below.
 
 | # | Check | Command | Expected |
 |---|---|---|---|
@@ -293,7 +298,7 @@ row is in the table below.
 | 42 | The config-transitions design's checks (reserved; `docs/design/config-transitions.md` §6 and `docs/plans/2026-10-14-config-transitions.md` Task 8, merged to `main` as PR #344) | Not written yet | Reserved number. |
 | 43 | The base image through an Artifact Registry **remote** repository over ghcr.io, with no copy (design `registry-remote-repository.md` §2, §8; plan `2026-10-14-registry-remote-repository.md` Task 8): the create and its `fugaro=managed` label (43a), a cold **digest** fetch and the digest surviving the hop (43b), the path a **custom** upstream takes (43c), the CLI pinning it and the check job running from the pin (43d), the consumers (docker, Cloud Build, Cloud Run Jobs) accepting `<tag>@<digest>` (43e), and the sandbox round trip with its restore (43f) | See "Check 43" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — and every step re-runs the one guarded setup block, which hard-stops unless the project is `fugaro-dev` and the checkout is the sandbox. **43a to 43c need no Fugaro change** and are the go/no-go for the whole design; **43d to 43f also need a tagged release that ran #318's Task 1** (no signed `-pinned` image exists before one). | A few cents of registry storage for the cached base image, and one sandbox-sized image build (about $0.21) in 43e. **USER-RUN, NOT RUN.** |
 | 44 | The provider price catalog (design `provider-price-catalog.md`): what a routed model is charged in the sandbox under each `price_policy` and `require_zdr`, whether the account's data policy can be read from an inference key, whether the charged price is the published one, and that a stale catalog charges the tier maximum | See "Check 44" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only. | A handful of small sandbox runs. **USER-RUN, NOT RUN.** |
-| 57 | The compute-instance Docker backend (design `compute-backend.md` §7): a Docker-capable run on Compute Engine VMs, cold start with and without a preloaded image, `docker run` and a small Postgres container inside a run, the cost of one run, and the VM gone on success, failure, cancel and a crashed runner | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a hard-coded project guard. It is the successor of the dropped Check 31 (gen-2 cannot run Docker). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **USER-RUN, NOT RUN.** |
+| 57 | The compute-instance Docker backend (design `compute-backend.md` §7): a Docker-capable run on Compute Engine VMs, cold start with and without a preloaded image, `docker run` and a small Postgres container inside a run, the cost of one run, and the VM gone on success, failure, cancel and a crashed runner | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a hard-coded project guard. It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 

@@ -6,9 +6,11 @@ execution backend, generic-tool section 1, was "gen-2 first, a VM backend as
 the fallback" ([generic-tool.md](generic-tool.md) §1,
 [plans/2026-10-08-generic-tool.md](../plans/2026-10-08-generic-tool.md)
 Task 28). Cloud Run gen-2 cannot run Docker — the owner measured it — so
-gen-2 failed its own first tier and **the VM backend is the route**. Check 31
-(the gen-2 Docker probe, Task 26) and Task 27 (Docker on gen-2) are dropped;
-Task 28 is restored and is no longer conditional on Check 31. Nothing here is
+gen-2 failed its own first tier and **the VM backend is the route**. The gen-2
+Docker probe (Task 26 — the plan numbered it Check 31, a number
+`docs/gcp-live-checklist.md` had already given to `fugaro upgrade`) and Task 27
+(Docker on gen-2) are dropped; Task 28 is restored and is no longer conditional
+on the probe. Nothing here is
 built: this document decides the substrate, the execution model and the
 security envelope, and leaves the implementation plan to be written after it
 is approved.
@@ -58,8 +60,8 @@ Batch stage) and nothing per repository — so it composes with the
 project-centric goal of "no heavy per-repository setup" rather than fighting
 it.
 
-The decisions are C1 to C11 in §1.10 and C12 to C20 inline in §2 to §5; §8.2
-collects every one the owner should weigh, each with its recommendation and
+The decisions are C1 to C11 in §1.10, C12 to C17 inline in §2 to §5, and C18 to
+C20 in §8.2; §8.2's table collects all twenty, each with its recommendation and
 the trade-off of the alternative.
 
 ## 1. Choice of substrate
@@ -403,7 +405,7 @@ the cold-start mitigation.
 not require Fugaro to implement VM lifecycle, timeouts, logging and teardown
 itself.
 
-### 1.10 Decision C1: the substrate
+### 1.10 Decisions C1 to C11
 
 | # | Decision | Recommendation | Veto alternative / trade-off |
 |---|---|---|---|
@@ -489,9 +491,9 @@ Every method of `internal/backend.Backend` maps onto Batch:
 | Seam method | Batch | Notes |
 |---|---|---|
 | `Launch(LaunchSpec)` | `projects.locations.jobs.create` | One Batch job, one task group, one task. Name derived per run (§2.4). The `FUGARO_RUN` env and the timeout are set in the job definition, not in an override — Batch has no execution-override concept like Cloud Run's `Overrides`. Returns `ExecutionRef{Name, Job, LogURL}`. |
-| `Execution(name)` | `jobs.get` | Maps Batch's state enum to `backend.State`: `QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, `DELETION_IN_PROGRESS` → `StateCancelled`. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
+| `Execution(name)` | `jobs.get` | Maps Batch's nine-value state enum to `backend.State`: `STATE_UNSPECIFIED`/`QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, `CANCELLATION_IN_PROGRESS`/`CANCELLED` → `StateCancelled`, and `DELETION_IN_PROGRESS` → `StateCancelled` too (a job Fugaro cancelled is deleted, so its last observable state is the deletion, §1.4). An unrecognised value is treated as **not terminal** and logged — the same defensive shape as `stateOf` in `internal/backend/gcp/run.go`, which reads Cloud Run's counts rather than trusting one field. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
 | `List(filter)` | `jobs.list` | Filter by the Fugaro labels and `CreateTime`; the `fugaro-` name prefix is replaced by the label predicate. |
-| `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `resource.type="batch.googleapis.com/Job" AND labels."batch.googleapis.com/job_id"="<job id>"` (label names from cloud.google.com/logging/docs/api/v2/resource-list, checked 2026-10-15), pinned to the region like the Cloud Run filter is. |
+| `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `resource.type="batch.googleapis.com/Job" AND resource.labels.location="<region>" AND resource.labels.job_id="<job id>"`, pinning the region and the job the way the Cloud Run filter pins `resource.labels.location` and `resource.labels.job_name` (`internal/backend/gcp/logs.go`). `job_id` is a **monitored-resource** label of `batch.googleapis.com/Job` — with `resource_container` and `location` — not an entry label, so it is `resource.labels.job_id` and not `labels."batch.googleapis.com/job_id"` (cloud.google.com/logging/docs/api/v2/resource-list, checked 2026-10-15; §1.5). The `fugaro=managed` marker is the other kind — a **user label on the entry**, which Batch copies from the job (§2.4) — so a second term may pin it as `labels."fugaro"`; the entry is found by resource label either way. |
 | `Cancel(name)` | `jobs.delete` | Tolerate `NOT_FOUND` and a job already terminal (the same race live check 5 already documents for Cloud Run). |
 | `LongestTaskTimeout()` | The longest configured workflow timeout | See §2.5: on Batch there is no deployed job to read it from. |
 | `TaskTimeout(slug, workflow)` | The workflow's configured timeout | Same: a config/policy read, `ErrNotFound` for an unknown workflow. |
@@ -880,17 +882,24 @@ backend creates a fresh job per run, so it never needs to share, and it
 One user-run live check settles the substrate's two risky claims — that a
 Fugaro run gets a working Docker daemon, and that the cold start is bearable —
 before any production code depends on them. It is the successor of the dropped
-Check 31, in the format of Checks 30 and 32.
+gen-2 Docker probe (generic-tool Task 26; the plan numbered it Check 31, but
+that number belongs to `fugaro upgrade` in the live checklist), in the format
+of Checks 30 and 32.
 
 ### 7.1 The number
 
 `docs/gcp-live-checklist.md` reserves a number once and never reuses it. On
-`main`, checks 1–44 are claimed and the checklist names 45 as "the next free
-number". This design is told that the numbers **42–47 and 48–56 are claimed by
-other plans in flight**, so it claims **Check 57** and its row in the table is
-additive. If, when this lands, those reservations turn out not to exist, the
-number is still valid — the ruling is "never reuse or renumber", not "always
-use the lowest".
+`main`, checks 1–44 have rows and the provider-price-catalog design's paragraph
+names 45 as "the next free number" — true when that paragraph was written.
+Since then, this design is told, the numbers **45–47 and 48–56 were claimed by
+other plans in flight**; their rows appear in the table when those plans land,
+which is why nothing sits between 44 and 57 today. So this design claims
+**Check 57**, and its row and its reservation paragraph are additive. If those
+reservations turn out not to exist, the number is still valid — the ruling is
+"never reuse or renumber", not "always use the lowest". The narrow escape is
+not repeated either: the plan this check comes from numbered the dropped probe
+Check 31, which the registry had already given to `fugaro upgrade`, so this one
+reads the registry first (§9).
 
 ### 7.2 The check
 
@@ -920,18 +929,20 @@ accident, not to be clever.)
    time launch-to-first-log-line (`fugaro logs RUN`, the first `started`
    line), five times. This is Check 41's measurement, reused. **FACT:** the
    five times and their median.
-2. **Cold start without a preloaded image.** Create one Batch job in the
+2. **Cold start without a preloaded image.** Define one Batch job in the
    sandbox: a container runnable from the sandbox's `fugaro-base`, a
    Container-Optimized OS boot disk, `logsPolicy.destination=CLOUD_LOGGING`,
    the socket bind mount, a dedicated service account, the same env the Cloud
-   Run job sets, and `maxRetryCount: 0`. Run it five times and record
-   submission-to-first-line. **FACT:** the five times, the median, and the
-   delta over step 1.
+   Run job sets, and `maxRetryCount: 0`. Then **submit five of them** — a Batch
+   job is single-use once it reaches `SUCCEEDED` or `FAILED` (§2.3), so five
+   samples are five jobs, each getting its own run id in its name and its
+   per-run label (§2.4) — and record submission-to-first-line for each.
+   **FACT:** the five times, the median, and the delta over step 1.
 3. **Cold start with a preloaded image.** Rebuild the boot disk with
    `fugaro-base` already in the Docker data root (or point the runnable at the
    base served by image streaming from the in-region Artifact Registry), and
-   repeat step 2. **FACT:** the five times, the median, and the delta over
-   steps 1 and 2.
+   repeat step 2 — five more fresh jobs, not five more submissions of one.
+   **FACT:** the five times, the median, and the delta over steps 1 and 2.
 4. **Docker inside a run.** In a run on the Batch job, `docker run --rm
    docker.io/library/postgres:17 postgres --version`, then start a small
    Postgres container and wait for `pg_isready`. **FACT:** whether the socket
@@ -952,8 +963,9 @@ accident, not to be clever.)
    notice to the VM's death.
 8. **Teardown on every exit path.** For each of: success; failure (a runnable
    that exits non-zero); cancel (`fugaro cancel`, which deletes the job); and
-   a crashed runner (kill `fugaro exec`'s process), list the surviving
-   resources (`gcloud compute instances list --filter='labels.fugaro=managed'`
+   a crashed runner (kill `fugaro exec`'s process) — **a fresh job each, since
+   one job runs once** — list the surviving resources
+   (`gcloud compute instances list --filter='labels.fugaro=managed'`
    and `gcloud batch jobs list`). **FACT** per path: the job's final state,
    whether any VM survived, and (if a reaper is built) what it deleted and
    when. This is the answer to "does the reaper delete the instance" for every
@@ -980,11 +992,13 @@ the check's go/no-go: **build the VM backend only if step 2 or 3's median is at
 most 120 s above step 1's** (generic-tool §1, G2). If both are worse, the
 documented answer stays `fugaro-services` plus `image.apt`.
 
-**Restore.** Delete the check's Batch jobs, the preloaded boot image, the
-NAT/router/subnet, the service account and any VM the check left; if the log
-sink arm was applied, revert it (`fugaro init` from the sandbox's config, or
-the Terraform apply that reverses it). Nothing in `belong` is touched at any
-step.
+**Restore.** Delete the check's Batch jobs — the five of step 2, the five of
+step 3, the four of step 8, and step 7's if it ran (about fifteen, one per
+sample and per exit path, because a job runs once) — plus the preloaded boot
+image, the NAT/router/subnet, the service account and any VM the check left;
+if the log sink arm was applied, revert it (`fugaro init` from the sandbox's
+config, or the Terraform apply that reverses it). Nothing in `belong` is
+touched at any step.
 
 ## 8. Task outline
 
@@ -1025,6 +1039,11 @@ delivers value**.
 
 ### 8.2 Open decisions for the owner
 
+Every decision in this document, C1 to C20, in one place: the ones taken above
+and the ones that were only ever recommendations (§2, §3, §4.3, §5.2), each
+with the alternative and what it costs. The sections above are where the
+reasoning lives; this table is the checklist.
+
 | # | Decision | Recommendation | The alternative, and its cost |
 |---|---|---|---|
 | C1 | Substrate | Cloud Batch, one job with one task per run | Plain Compute Engine instances (full control, but Fugaro owns lifecycle/timeouts/logs/reaper); MIG rejected |
@@ -1034,7 +1053,12 @@ delivers value**.
 | C5 | Spot | Off by default, opt-in per profile | Spot by default (up to 91% cheaper, kills a stage mid-flight) |
 | C6 | Service account | One per run class, never the default Compute Engine SA | The default SA (project-wide blast radius) |
 | C7 | Egress | No external IP; Cloud NAT | An ephemeral IP + deny-all ingress (simpler, cheaper per run, "no inbound" rests on a firewall list) |
+| C8 | Timeouts and cancel | Batch `maxRunDuration` + `jobs.delete`, tolerating a cancel that races a finished job | Fugaro's own watchdog (needed only on plain instances) |
+| C9 | Logs | `logsPolicy.destination=CLOUD_LOGGING`, and extend the installation's sink/exclusion to `batch.googleapis.com/Job` | Leave logs in `_Default` (`fugaro logs` finds nothing, every viewer reads them) |
+| C10 | Secrets | The runner resolves named secrets from Secret Manager as the VM's service account | Bake values into the job definition (anyone with `batch.jobs.get` reads them) |
+| C11 | `fugaro init` weight | One installation-level Batch stage, no per-repository resource | Per-repository VM setup (reintroduces the weight project-centric removes) |
 | C12 | The name seam | Generalise `Backend` (§2.5) | Encode a Batch job as a synthetic Cloud Run execution (lies in stored data) |
+| C13 | Naming | Reuse the Fugaro label set verbatim, plus a per-run label (§2.4) | Mark only the job and rely on the job-id prefix (fragile for a VM outliving its job) |
 | C14 | The reaper | Keep it even though Batch self-cleans | Rely on Batch teardown alone (an occasional orphan VM bills) |
 | C15 | Where the backend is chosen | Per project (`backend:`), not per workflow | Per workflow (two platforms in one project); or per profile inside the policy (correct after phase 3) |
 | C16 | The Docker key | `docker: true` (generic-tool §1's name) | `runtime: docker` (a second name for the same thing); or no key (every workflow gets a socket) |
@@ -1055,10 +1079,13 @@ above where used):
   switching the runtime to containerd with only four subfields honoured
   (Batch REST reference; `cloud.google.com/batch/docs/use-image-streaming`).
 - Batch job fields used here: `logsPolicy.destination`, `allocationPolicy.
-  serviceAccount`, `maxRetryCount` (default 0), the State enum (`QUEUED`,
-  `SCHEDULED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `DELETION_IN_PROGRESS`), and
-  that labels apply to the job, its VMs and the log entries it generates
-  (Batch REST reference).
+  serviceAccount`, `maxRetryCount` (default 0), the nine-value State enum
+  (`STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`, `SUCCEEDED`,
+  `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`, `CANCELLED`),
+  and that labels apply to the job, its VMs and the log entries it generates
+  (Batch REST reference). Which of those states a cancelled or a preempted job
+  actually passes through, and how long it sits in each, is **UNVERIFIED** —
+  Check 57 steps 7 and 8.
 - Batch logs reach Cloud Logging only when the destination is set, and the
   monitored resource is `batch.googleapis.com/Job` with labels
   `resource_container`/`location`/`job_id`
@@ -1081,12 +1108,20 @@ above where used):
 
 **Verified by reading the code (this repository):** the `Backend` interface
 and its Cloud-Run-shaped names (`internal/backend/backend.go`); the
-conformance suite (`internal/backend/backendtest`); the log sink filter
+conformance suite (`internal/backend/backendtest`); the Cloud Run log filter's
+use of `resource.labels.location`/`resource.labels.job_name` and the entry
+label `labels."run.googleapis.com/execution_name"`
+(`internal/backend/gcp/logs.go`), which §2.3's Batch filter mirrors in the
+monitored-resource label kind; the log sink filter
 (`deploy/terraform/gcp/modules/installation/logging.tf`); the runner's
 backend-agnosticism (`internal/runner`); the launch path
 (`internal/cli/run.go`, `launch_budget.go`); the naming/labels
 (`internal/backend/gcp/names.go`); the base image's CLI-only Docker and its
-3812 MB size (`images/base/Dockerfile`, base-image.md §9, §13).
+3812 MB size (`images/base/Dockerfile`, base-image.md §9, §13). The live
+checklist's own numbering is verified the same way: check 31 there is
+`fugaro upgrade` with the real `claude` CLI (`docs/gcp-live-checklist.md`), not
+the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
+§7.1 reads the registry before claiming a number.
 
 **Unverified, each with what settles it:**
 
