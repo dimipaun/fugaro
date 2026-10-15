@@ -560,11 +560,15 @@ const minSecretLen = 4
 // before this process has a redactor at all, internal/cli's runExec), so the
 // runner is the earliest holder that can.
 //
-// The value registered is the *encoded* key, because that is the form it
-// travels in and therefore the form a print of the environment would show.
+// The value registered is both spellings the key can be printed in: the
+// encoded one, because that is the form it travels in and therefore the form a
+// print of the environment value would show, and the raw key bytes, because
+// the redactor derives a secret's base64 spellings from the secret itself —
+// so the raw form also covers an encoding this code did not think of.
 func (r *run) addSealKey() {
 	if len(r.d.Backend.TokenKey) > 0 {
 		r.addSecret(token.EncodeKey(r.d.Backend.TokenKey))
+		r.addSecret(string(r.d.Backend.TokenKey))
 	}
 }
 

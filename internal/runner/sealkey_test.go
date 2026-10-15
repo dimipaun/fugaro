@@ -113,10 +113,11 @@ func TestASealedTokenBootstrapsAndTheKeyIsNeverPublished(t *testing.T) {
 	// registration must happen before bootstrap rather than where the key is
 	// used (takeBudgetToken).
 	var atStart []string
-	var redacted string
+	var redacted, hidden string
 	runner.OnRun(t, func(h *runner.RunHandle) {
 		atStart = h.Secrets()
 		redacted = h.Redact("the job's marker is " + enc)
+		hidden = h.Redact("the key itself is " + string(key))
 	})
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
@@ -128,8 +129,8 @@ func TestASealedTokenBootstrapsAndTheKeyIsNeverPublished(t *testing.T) {
 	if !slices.Contains(atStart, enc) {
 		t.Errorf("the seal key is not among the values registered at the start of the run: %v", atStart)
 	}
-	if strings.Contains(redacted, enc) {
-		t.Errorf("the redactor leaves the key readable: %q", redacted)
+	if strings.Contains(redacted, enc) || strings.Contains(hidden, string(key)) {
+		t.Errorf("the redactor leaves the key readable: %q, %q", redacted, hidden)
 	}
 	if strings.Contains(b.logs.String(), enc) {
 		t.Error("the key reaches the run's log")
@@ -158,7 +159,7 @@ func TestAPlaintextTokenIsRefusedWhenTheMarkerCarriesAKey(t *testing.T) {
 		t.Errorf("the refusal does not name the seal: %q", rec.Reason)
 	}
 	for _, text := range []string{rec.Reason, b.logs.String()} {
-		if strings.Contains(text, enc) {
+		if strings.Contains(text, enc) || strings.Contains(text, string(key)) {
 			t.Fatal("the key reaches what the run publishes")
 		}
 	}
