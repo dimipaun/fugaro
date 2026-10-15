@@ -395,7 +395,7 @@ the job's service account needs `secretAccessor` on **exactly** those secrets
 fetch from Secret Manager survives only as a fallback, for the cases the
 declarative path cannot express — a secret whose name is only known at
 run time, or a second secret materialised after `jobs.create` — and if a plan
-task finds no such case, that task is dropped rather than built (Task 4).
+task finds no such case, that task is dropped rather than built (Task 11).
 
 - The VM (Batch-created) runs as a service account; omit the field and it is
   the default Compute Engine service account, set it and it is the one named
@@ -484,7 +484,7 @@ Verified from Google's public documentation (checked 2026-10-15):
   such as load balancers' (same page). Disks are regional. The *default
   numeric values* per project are not on that page and depend on the project's
   history — **UNVERIFIED here**; the owner reads the project's own quota page
-  (Check 57a step 9 records the FACT).
+  (Check 57a step 11 records the FACT).
 
 What one run consumes: one VM, its vCPUs against the regional (and global)
 CPU quota and one instance against the instances quota, one boot disk, and —
@@ -893,8 +893,8 @@ SECURITY.md says which granularity an installation has:
   API-only and the VMs have no external IP (§1.7) — so the project's SSH keys
   are blocked from the fleet rather than left as a back door that bypasses
   everything above. UNVERIFIED: whether Batch also leaves its own OS Login or
-  serial-console path open (Check 57a step 8 records what a VPC-SC-free
-  sandbox project shows).
+  serial-console path open (Check 57a step 9 records the fleet's bindings, and a
+  VPC-SC-free sandbox project shows what else reaches them).
 
 ### 3.3 The metadata server
 
@@ -1813,8 +1813,9 @@ above where used):
   serviceAccount`, `maxRetryCount` (default 0), the nine-value State enum
   (`STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`, `SUCCEEDED`,
   `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`, `CANCELLED`),
-  and that labels apply to the job, its VMs and the log entries it generates
-  (Batch REST reference). Which of those states a cancelled or a preempted job
+  and that `Job.labels` apply to the job "and any Cloud Logging LogEntry that
+  it generates" while only `AllocationPolicy.labels` reach the Compute Engine
+  resources (Batch REST reference, checked 2026-10-15). Which of those states a cancelled or a preempted job
   actually passes through, and how long it sits in each, is **UNVERIFIED** —
   Check 57a steps 7 and 8.
 - Batch logs reach Cloud Logging only when the destination is set, and the
@@ -1827,15 +1828,45 @@ above where used):
   (`cloud.google.com/container-optimized-os/docs/concepts/features-and-benefits`).
 - Compute Engine billing: a one-minute minimum, then per-second
   (`cloud.google.com/compute/pricing`); Spot is up to 91% off, may be
-  preempted at any time, stops or deletes the VM, with a 30 s default
-  preemption notice (extendable to 120 s)
-  (`cloud.google.com/compute/docs/instances/spot`).
+  preempted at any time, stops or deletes the VM, with a preemption notice of
+  **0 seconds by default** (a workload may ask for 120 seconds instead), after
+  which the shutdown is best effort and can take up to 30 seconds
+  (`cloud.google.com/compute/docs/instances/spot`,
+  `cloud.google.com/compute/docs/instances/create-start-preemptible-instance`,
+  checked 2026-10-15).
 - Compute Engine quota model: VM quotas are regional, the VM-instances quota
   is auto-set to 10× the CPU quota, CPU quota is regional with a global
-  CPUs (All Regions) quota, and IP quotas are global
-  (`cloud.google.com/compute/docs/resource-quotas`).
+  CPUs (All Regions) quota, and the **"In-use IP addresses" quota is regional**
+  (the global IP quota is for load-balancer addresses, not VM external IPs)
+  (`cloud.google.com/compute/docs/resource-quotas`, checked 2026-10-15).
+- Batch's job methods: `jobs.create/get/list/delete` and
+  **`jobs.cancel`** (`POST /v1/{name=projects/*/locations/*/jobs/*}:cancel`),
+  with `jobs.delete` erasing the job's details and history
+  (Batch REST reference and `cloud.google.com/batch/docs/cancel-job`, checked
+  2026-10-15).
+- Batch secrets: `Environment.secretVariables` is "a map of environment
+  variable names to Secret Manager secret names", so the **values** never
+  enter the job definition (Batch REST reference).
+- Batch finishes a job's life 60 days after it completes by deleting the job
+  and its metadata, and `InstancePolicyOrTemplate`'s `blockProjectSshKeys`
+  blocks project-wide SSH keys on the VMs (Batch REST reference and
+  `cloud.google.com/batch/docs/create-run-job`, checked 2026-10-15).
+- **"There is no additional cost for using Batch."**
+  (`cloud.google.com/batch/docs/get-started`, checked 2026-10-15; §1.3), while
+  an **in-use external IPv4 address is charged** at $0.005/h standard /
+  $0.0025/h spot (`cloud.google.com/vpc/pricing`, checked 2026-10-15).
+- Batch IAM: a job's creator needs `roles/batch.jobsEditor` plus
+  `roles/iam.serviceAccountUser` on the job's service account, the job's
+  account needs `roles/batch.agentReporter` and (for logs)
+  `roles/logging.logWriter`, and the default Compute Engine service account is
+  Editor and "not recommended for production"
+  (`cloud.google.com/batch/docs/create-run-job`;
+  `cloud.google.com/batch/docs/reference/rest/v1/projects.locations.jobs`,
+  checked 2026-10-15).
 - Cloud NAT is the no-external-IP egress path
-  (`cloud.google.com/nat/docs/overview`).
+  (`cloud.google.com/nat/docs/overview`), and Private Google Access reaches
+  **only Google APIs**, not arbitrary endpoints
+  (`cloud.google.com/vpc/docs/private-google-access`, checked 2026-10-15).
 
 **Verified by reading the code (this repository):** the `Backend` interface
 and its Cloud-Run-shaped names (`internal/backend/backend.go`); the
@@ -1867,7 +1898,19 @@ the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
   crashed runnable — Check 57a step 8.
 - Whether image streaming works for a base image served through an Artifact
   Registry **remote** repository — Check 57a step 3 (pairs with Check 43).
-- The project's own default quota numbers — Check 57a step 9.
+- Whether Batch accepts a **custom boot image** at all ("might not be
+  supported" is Google's own hedge) — Check 57a step 3b.
+- Whether a Batch job's queue deadline can be expressed as a Google-side field
+  — it cannot, as far as the pages read show, so the design's queue deadline
+  is a Fugaro-side reaper action; and how long a job really sits in `QUEUED` —
+  Check 57a step 11.
+- Whether an IAM Condition narrowing `batch.jobsEditor` to Fugaro-shaped job
+  names is accepted — Check 57a step 9.
+- Whether `resource.labels.job_id` on a `batch.googleapis.com/Job` entry is the
+  job's **name** or its **UID** (the resource list says only "The identifier of
+  the Job"), which is why the shipped filter uses the documented
+  `labels.job_uid` — Check 57a step 10.
+- The project's own default quota numbers — Check 57a step 11.
 - Whether a workflow's Cloud Run `resources` values map cleanly onto a
   Compute Engine machine type — a plan task (§4.4 item 3).
 - Cloud Run gen-2's inability to run Docker is the **owner's measurement**
