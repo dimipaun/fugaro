@@ -1847,8 +1847,13 @@ leaked VM of *this check* is told from a real run's.
 
    `roles/logging.logWriter` is what lets the job write its own lines (step 10
    reads them back); `roles/batch.agentReporter` is §3.2's C21 grant, the one
-   Batch needs to report task state to the agent. **FACT:** the bindings, read
-   back with `gcloud projects get-iam-policy`, and that the *job* — not the
+   Batch needs to report task state to the agent; and the repository reader
+   binding is what lets the agent pull the private base image at all — a grant
+   the probe cannot run without and the first thing to check when a job fails
+   before its first line. **FACT:** the bindings, read
+   back with `gcloud projects get-iam-policy` and
+   `gcloud artifacts repositories get-iam-policy "${BASE_REPO:?}"
+   --location="${L:?}"`, and that the *job* — not the
    owner's account — is what `allocationPolicy.serviceAccount` names (step 1
    checks the same thing from the job's side: the run's `id` must not be the
    default account). Step 9 adds the design's other grants under a Condition and
