@@ -20,6 +20,20 @@ sent it to SECURITY.md's own words beside D4; phase 3b designs the channel that 
 half of D13 stands whatever this document decides, and the recommendation below does not touch it:
 inside a shared job the profile is the isolation boundary.
 
+**Slice A is built (2026-10-15).** The owner's "build the seal" (D14) is the approval the paragraph
+above was waiting for, and Slice A is the seal's **runner side**, in the order D19 fixes — runner
+and image first: the versioned envelope in `internal/budget/token` (the new `seal.go`:
+`Seal`/`Unseal`, the version byte, the object's name as additional authenticated data,
+`ParseKey`/`EncodeKey`), `PutObject`/`TakeObject` understanding it, every refusal §7.4 lists, the
+runner's strict parse of the marker's value with `"1"` still accepted as the one-bit marker, the key
+registered with the runner's redactor before anything can print it, and the `%q` leak gone — no code
+path prints the marker's value. **Slice B follows, and is not in this change:** the launcher seals
+and hands its key to the execution it starts, a `--retry` re-mints and re-seals under a new key
+(D17), the object moves to `tokens/` with the grant that reads it (D16, Task 3.2), and SECURITY.md's
+two sentences are rewritten with the launcher's seal (D15). Until Slice B the launcher still writes
+the token plaintext, which is why SECURITY.md's wording is unchanged here: the marker's nature
+change arrives with the launcher, not with the runner that is ready for it.
+
 Every symbol below was read on `next` on 2026-10-15 and is cited by name rather than by line
 number, because the lines move.
 
