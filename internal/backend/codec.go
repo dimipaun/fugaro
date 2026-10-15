@@ -60,10 +60,12 @@ type Codec interface {
 const Local = "local"
 
 // codecs are the name codecs this build knows, in the order their platform
-// signals are tried. Task 2 adds internal/backend/batch's here: a Batch
-// codec answers On from BATCH_TASK_INDEX and BATCH_TASK_COUNT, which Batch
-// injects into every task, and parses the six-field job name (design §2.5).
-func codecs() []Codec { return []Codec{CloudRunCodec()} }
+// signals are tried. A Batch codec answers On from BATCH_TASK_INDEX and
+// BATCH_TASK_COUNT, which Batch injects into every task, and parses the
+// six-field job name (design §2.5). Their name shapes cannot overlap -- six
+// fields against eight, with "executions" in the Cloud Run one -- so the
+// order only decides which signal is asked first, not which name wins.
+func codecs() []Codec { return []Codec{CloudRunCodec(), BatchCodec()} }
 
 // CloudRunCodec is Cloud Run's name codec: the shape this package has
 // always spoken, now named, so that the seam can carry a second one.
