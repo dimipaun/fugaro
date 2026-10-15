@@ -422,6 +422,24 @@ func TestTouchForbiddenIsClassified(t *testing.T) {
 }
 
 // --- the streaming pair: PutFile and GetFile (design artifact-runs.md §3) ---
+//
+// The methods were written before these tests, so every one of them passed on
+// its first run. Each was then checked against a hand-applied mutation of
+// blobx.go — the mutation named below is the one that makes it fail, so a
+// later edit that removes the property takes the test with it:
+//
+//	TestPutFileStreamsAndHashes                  the returned sha256 is of nothing
+//	TestPutFileSetsContentType                   the writer records no content type
+//	TestPutFileWithIfNotExistRefusesAnExistingObject  the create-only condition is dropped
+//	TestPutFileWithoutIfNotExistOverwrites       the second write does not replace the first (same mutation as above)
+//	TestPutFileAbortsTheWriteBeforeClosingOnAFailedRead  the cancel before Close is removed
+//	TestPutFileAbortsOnAShortRead                the size-changed check is removed
+//	TestGetFileRefusesOverTheLimitAndLeavesNothing  the download caps are removed
+//	TestGetFileRefusesAMismatchAndLeavesNothing  the hash check is removed (and, separately, the temp file is left behind on failure)
+//	TestGetFileWithoutAnExpectedHashStillReturnsOne  the returned hash is of nothing
+//	TestGetFileClassifiesForbidden               strict mode folds a 403 into not-found
+//	TestGetFileNonStrictFoldsForbiddenIntoNotExist  non-strict stops folding a 403 into not-found
+//	TestGetFileClassifiesMissingAsNotExist       a 404 is reported as an access problem
 
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
