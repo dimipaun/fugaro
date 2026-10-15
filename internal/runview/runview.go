@@ -371,11 +371,14 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 	}
 	var c runstore.Cost
 	switch {
-	case e != nil && (e.CPU > 0 || e.MemoryGiB > 0):
+	case e != nil && (e.CPU > 0 || e.MemoryGiB > 0 || e.MachineType != ""):
 		// The window is the execution's own: a VM is billed from its boot
 		// window with a one-minute minimum, Cloud Run from its start
 		// (backend.Execution.BilledWindow). A window or a price table the
-		// backend has not reported leaves compute unestimated, never 0.
+		// backend has not reported leaves compute unestimated, never 0. A
+		// VM-backed execution qualifies on its machine type alone: Batch
+		// reports no CPU/MemoryGiB limits, so requiring them would leave
+		// every VM run on the model-only fallback (design §5.2).
 		d, known := e.BilledWindow(now)
 		p := prices(e)
 		switch {
@@ -390,9 +393,19 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 			c = runstore.NewCost(model, p.ComputeUSD(cpu, mem, d), basis)
 			// Only an estimate priced from a table that names itself
 			// records a source line; Cloud Run's list price is what it
-			// always was, and its rows are unchanged.
+			// always was, and its rows are unchanged. A VM run also records
+			// which time its window started from, so a reader can tell a
+			// window that includes Batch's queue time from one that does
+			// not (§5.2).
 			if e.MachineType != "" {
 				c.ComputeSource = p.Source
+				if n := e.WindowNote(); n != "" {
+					if c.ComputeSource == "" {
+						c.ComputeSource = n
+					} else {
+						c.ComputeSource += "; " + n
+					}
+				}
 			}
 		}
 	case stored != nil && stored.ComputeEstimated:

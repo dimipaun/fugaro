@@ -290,6 +290,49 @@ func TestCloudPricesUseTheVMsTableForAVMRun(t *testing.T) {
 	}
 }
 
+// A local compute_prices override wins on a VM run too, but it does not turn
+// the run into a Cloud Run job: the machine type's quantities still decide
+// the figure and the line still names the disk and NAT the figure leaves out
+// (design §5.2, C17). Without this, an overridden price on a VM run would
+// bill the workflow's resources -- which Batch reports as nothing at all --
+// and its source line would stop naming what the figure excludes.
+func TestCloudPricesOverrideOnAVMRunKeepsTheMachineTypesQuantities(t *testing.T) {
+	newCloudFixture(t)
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Close()
+	env.lc.ComputePrices = map[string]localcfg.Price{"us-central1": {VCPUSecondUSD: 1e-5, GiBSecondUSD: 2e-6}}
+	vm := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/fugaro-j-1", Region: "us-central1", MachineType: "e2-standard-4"}
+	got := env.prices(nil)(vm)
+	// The operator's rates win over the VM table's.
+	if got.VCPUSecondUSD != 1e-5 || got.GiBSecondUSD != 2e-6 {
+		t.Errorf("an overridden VM run prices = %+v, want the local override's rates", got)
+	}
+	// The machine type's quantities do not, and the note survives.
+	if got.VCPU != 4 || got.MemoryGiB != 16 {
+		t.Errorf("an overridden VM run carries %v vCPU / %v GiB, want the e2-standard-4's 4/16", got.VCPU, got.MemoryGiB)
+	}
+	for _, want := range []string{localcfg.PriceSource, "boot disk", "Cloud NAT"} {
+		if !strings.Contains(got.Source, want) {
+			t.Errorf("an overridden VM run's source %q does not name %q", got.Source, want)
+		}
+	}
+	// A VM of a machine type the table does not carry is refused, override or
+	// not: the quantities are unknown, so there is nothing to bill.
+	unknown := &backend.Execution{Name: vm.Name, Region: "us-central1", MachineType: "n2-standard-4"}
+	if got := env.prices(nil)(unknown); got != (backend.Prices{}) {
+		t.Errorf("an overridden VM of an unknown machine type = %+v, want no prices", got)
+	}
+	// Cloud Run's override is the local override, unchanged: no machine
+	// type's quantities, its own source line.
+	cloud := &backend.Execution{Name: "exec-1", Region: "us-central1", CPU: 2, MemoryGiB: 4}
+	if got := env.prices(nil)(cloud); got.VCPU != 0 || got.MemoryGiB != 0 || got.Source != localcfg.PriceSource {
+		t.Errorf("Cloud Run's overridden prices = %+v, want the override as it was", got)
+	}
+}
+
 // TestJobWorkflowRefusesInsteadOfPanicking is review finding #1's "confirm
 // it cannot panic" follow-up: unlike OAuthToken (config.ClaudeAccountNameRE,
 // enforced by task.Spec.Validate on every task.Parse), task.Spec's Workflow

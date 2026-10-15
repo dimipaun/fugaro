@@ -231,8 +231,29 @@ func TestJoinPricesAVMRunFromItsBootWindow(t *testing.T) {
 	if !row.Cost.ComputeEstimated {
 		t.Error("compute is not estimated")
 	}
-	if row.Cost.ComputeSource != vm.Source {
-		t.Errorf("compute source = %q, want the VM table's line %q", row.Cost.ComputeSource, vm.Source)
+	// The line carries the table's own words and, because this execution
+	// reported no scheduled time, says which window it priced.
+	if want := vm.Source + "; " + e.WindowNote(); row.Cost.ComputeSource != want {
+		t.Errorf("compute source = %q, want %q", row.Cost.ComputeSource, want)
+	}
+	if !strings.Contains(row.Cost.ComputeSource, "window starts at job creation") {
+		t.Errorf("compute source = %q, want it to say the window started at creation", row.Cost.ComputeSource)
+	}
+
+	// A backend that reports the scheduled time gets the window from there:
+	// 295 s from scheduling to completion, not creation's 35 s floored to 60,
+	// and the line says so instead of naming queue time.
+	scheduled := *e
+	scheduled.Scheduled = now.Add(-5 * time.Minute)
+	row = Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: &scheduled}, book, now)
+	if want := 295 * (4*1e-5 + 16*2e-6); math.Abs(row.Cost.ComputeUSD-want) > 1e-12 {
+		t.Errorf("compute = %v, want %v (the scheduled window, not creation's 40 s)", row.Cost.ComputeUSD, want)
+	}
+	if !strings.Contains(row.Cost.ComputeSource, "window starts at the job's scheduled time") {
+		t.Errorf("compute source = %q, want it to name the scheduled window", row.Cost.ComputeSource)
+	}
+	if strings.Contains(row.Cost.ComputeSource, "queue time") {
+		t.Errorf("compute source = %q names queue time although the window is the scheduled one", row.Cost.ComputeSource)
 	}
 	// Cloud Run's window and its record stay what they were: no source line,
 	// and the window from Started.
@@ -260,6 +281,36 @@ func TestJoinLeavesWhatItCannotPriceUnestimated(t *testing.T) {
 	known := func(*backend.Execution) backend.Prices { return backend.Prices{} }
 	if row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: e}, known, now); row.Cost.ComputeEstimated {
 		t.Error("an execution no price table carries is priced as estimated")
+	}
+}
+
+// A VM run whose execution reports no CPU/memory limits at all is priced
+// from its machine type: the type's quantities are what Compute Engine bills,
+// and the Batch backend sets no limits on the execution (#381). Requiring
+// e.CPU or e.MemoryGiB would leave every VM run on the model-only fallback,
+// reading "compute not estimated" for a run whose compute is known (§5.2).
+func TestJoinPricesAVMRunWithNoResourceLimits(t *testing.T) {
+	vm := backend.Prices{VCPUSecondUSD: 1e-5, GiBSecondUSD: 2e-6, VCPU: 4, MemoryGiB: 16,
+		Source: "Compute Engine VM list price, e2-standard family, us-east5 (2026-10-15, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"}
+	book := func(*backend.Execution) backend.Prices { return vm }
+	e := &backend.Execution{Name: "projects/p/locations/us-east5/jobs/fugaro-j-1", State: backend.StateSucceeded,
+		Region: "us-east5", MachineType: "e2-standard-4",
+		Created: now.Add(-40 * time.Second), Completed: now.Add(-5 * time.Second)}
+	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: e}, book, now)
+	if want := 60 * (4*1e-5 + 16*2e-6); row.Cost.ComputeUSD != want {
+		t.Errorf("compute = %v, want %v (the machine type's quantities over the floored window)", row.Cost.ComputeUSD, want)
+	}
+	if !row.Cost.ComputeEstimated || row.Cost.ComputeSource == "" {
+		t.Errorf("compute estimated=%v source=%q, want an estimate with its source line", row.Cost.ComputeEstimated, row.Cost.ComputeSource)
+	}
+	// An execution with neither a machine type nor limits is still not
+	// priced: Cloud Run's quantities are the workflow's, and nothing
+	// reported them.
+	cloud := &backend.Execution{Name: "exec-1", State: backend.StateSucceeded, Region: "us-east5",
+		Started: now.Add(-10 * time.Second), Completed: now.Add(-5 * time.Second)}
+	row = Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: cloud}, book, now)
+	if row.Cost.ComputeEstimated {
+		t.Errorf("an execution with no quantities and no machine type is priced as estimated: %v", row.Cost.ComputeUSD)
 	}
 }
 

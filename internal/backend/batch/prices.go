@@ -279,6 +279,33 @@ func PricesFor(region, machineType string) (backend.Prices, error) {
 	}, nil
 }
 
+// ForMachineType is the installation's own price override as a VM run needs
+// it: the operator's rates stay (they win over the table, localcfg), but the
+// machine type's quantities decide the figure (design §5.2) and the line
+// keeps the disk/NAT note the table's own lines carry (C17). Without this,
+// an overridden price on a VM run would bill the workflow's resources -- on
+// Batch, nothing at all -- and its source line would stop naming the two
+// costs the figure leaves out.
+//
+// An unknown machine type is the same refusal as PricesFor's: the caller
+// records no compute cost rather than a wrong one.
+func ForMachineType(p backend.Prices, machineType string) (backend.Prices, error) {
+	mt, err := MachineTypeOf(machineType)
+	if err != nil {
+		return backend.Prices{}, err
+	}
+	if p.VCPU <= 0 || p.MemoryGiB <= 0 {
+		p.VCPU, p.MemoryGiB = mt.VCPU, mt.MemoryGiB
+	}
+	if p.Source == "" {
+		p.Source = "compute price override"
+	}
+	if !strings.Contains(p.Source, excludedNote) {
+		p.Source += "; " + excludedNote
+	}
+	return p, nil
+}
+
 // secondsPerHour converts the pricing page's per-hour figures, the units the
 // table is written in, into the per-second prices the seam estimates with.
 const secondsPerHour = 3600

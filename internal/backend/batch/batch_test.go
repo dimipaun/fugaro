@@ -954,6 +954,17 @@ func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 	if x.Name != want || x.Job != ref.Job || x.State.Terminal() {
 		t.Fatalf("Execution = %+v, want %s", x, want)
 	}
+	// The region is the backend's own, so a caller never parses a Batch
+	// name's six fields to find it (backend.Execution.Region, §5.2).
+	if x.Region != testRegion {
+		t.Errorf("Execution region = %q, want the backend's own %q", x.Region, testRegion)
+	}
+	// And the machine type is left unset: the job definition's machine type
+	// is Task 7's, so a Batch execution prices at no machine type --
+	// "compute not estimated" -- rather than at a guessed one.
+	if x.MachineType != "" {
+		t.Errorf("Execution machine type = %q, want none (the type is Task 7's)", x.MachineType)
+	}
 	// The number form is the same run, not a second one.
 	if x2, err := b.Execution(ctx, strings.Replace(want, "/projects/"+testProject+"/", "/projects/999/", 1)); err != nil || x2.Name != want {
 		t.Fatalf("Execution(by number) = %+v, %v", x2, err)

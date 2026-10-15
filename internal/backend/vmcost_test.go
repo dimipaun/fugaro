@@ -43,6 +43,16 @@ func TestBilledWindowOnAVM(t *testing.T) {
 			wantKnown: true,
 		},
 		{
+			// The scheduled time is where Compute Engine starts
+			// provisioning, so it and not creation starts the window
+			// (design §5.2): 6 minutes from scheduling against creation's
+			// 8, which would count Batch's queue time as VM time.
+			name:      "the scheduled time, not creation",
+			exec:      Execution{MachineType: "e2-standard-4", Scheduled: vmNow.Add(-6 * time.Minute), Created: vmNow.Add(-8 * time.Minute), Started: vmNow.Add(-4 * time.Minute), Completed: vmNow.Add(-time.Minute)},
+			want:      5 * time.Minute,
+			wantKnown: true,
+		},
+		{
 			name:      "no boot window reported",
 			exec:      Execution{MachineType: "e2-standard-4", Started: vmNow.Add(-time.Minute)},
 			wantKnown: false,
@@ -52,6 +62,26 @@ func TestBilledWindowOnAVM(t *testing.T) {
 		if ok != tc.wantKnown || got != tc.want {
 			t.Errorf("%s: BilledWindow = %v, %v; want %v, %v", tc.name, got, ok, tc.want, tc.wantKnown)
 		}
+	}
+}
+
+// WindowNote is what tells a reader which time the window started from, and
+// it must say the fallback is the queue-time one: a window from creation
+// includes the stretch before any VM exists and errs high (design §5.2).
+func TestWindowNoteNamesWhichTimeTheWindowStartedFrom(t *testing.T) {
+	vm := Execution{MachineType: "e2-standard-4", Created: vmNow.Add(-time.Minute)}
+	if got, want := vm.WindowNote(), "window starts at job creation: includes queue time, errs high"; got != want {
+		t.Errorf("a VM with no scheduled time: WindowNote = %q, want %q", got, want)
+	}
+	vm.Scheduled = vmNow.Add(-40 * time.Second)
+	if got, want := vm.WindowNote(), "window starts at the job's scheduled time"; got != want {
+		t.Errorf("a VM with a scheduled time: WindowNote = %q, want %q", got, want)
+	}
+	// Cloud Run's rows carry no window line at all: their estimate is what
+	// it always was.
+	cloud := Execution{Created: vmNow.Add(-time.Minute), Started: vmNow.Add(-40 * time.Second)}
+	if got := cloud.WindowNote(); got != "" {
+		t.Errorf("Cloud Run's WindowNote = %q, want none", got)
 	}
 }
 

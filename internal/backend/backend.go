@@ -101,7 +101,22 @@ type Execution struct {
 	// its machine type from its boot window, with a one-minute minimum
 	// (BilledWindow, design compute-backend.md §5.2).
 	MachineType string
-	LogURL      string
+	// Scheduled is when the platform scheduled this execution for: the point
+	// at which Compute Engine starts provisioning the VM. On Batch that is
+	// the job's SCHEDULED transition, and it is what a VM is billed from --
+	// earlier than Started, because the VM boots, Batch sets the task up and
+	// the image may be streamed or pulled all before the runner's first line
+	// (design compute-backend.md §5.2). Zero when the backend does not report
+	// one; BilledWindow then falls back to Created and says so, because that
+	// window includes Batch's queue time -- the stretch before any VM exists
+	// -- and so errs high.
+	//
+	// The Batch backend leaves it zero today: the job's status events are
+	// where it would come from, and their shape is UNVERIFIED (Check 57a
+	// steps 7 and 8, design §9). Reading a guess into it would be a wrong
+	// cost, so nothing is inferred.
+	Scheduled time.Time
+	LogURL    string
 	// Run is "<slug>/<run id>", the FUGARO_RUN the execution was launched
 	// with, when the platform reports the execution's environment; empty
 	// when it does not (the sweeper then treats the execution as possibly
@@ -135,13 +150,18 @@ const VMMinimumBilled = time.Minute
 // is known at all (design compute-backend.md §5.2).
 //
 // For a VM-backed execution -- one whose MachineType is set -- it is the
-// boot window: from the job's creation, when the platform starts
-// provisioning the VM, to its completion or to now while it runs, floored at
+// boot window: from Scheduled, the time the platform began provisioning the
+// VM (design §5.2), to its completion or to now while it runs, floored at
 // VMMinimumBilled. The VM boots, Batch sets the task up and the image may be
 // streamed or pulled all before the runner's first line, and Compute Engine
 // bills every second of it, so a window that started at Started would
-// under-report exactly the runs whose cold start is most of their cost. The
-// caller says so in the estimate's source line.
+// under-report exactly the runs whose cold start is most of their cost.
+//
+// When the backend reports no Scheduled time, the window starts at Created
+// and WindowNote says so: that window includes Batch's queue time, the
+// stretch before any VM exists, so it errs high -- which is the direction an
+// estimate should err, but a reader has to be able to tell the two apart.
+// The note travels to the estimate's source line with the figure.
 //
 // For every other execution it is Billed, unchanged: Cloud Run's own
 // billing has no floor and starts when the container does, and a caller
@@ -149,20 +169,39 @@ const VMMinimumBilled = time.Minute
 // recorded.
 //
 // ok is false only for a VM-backed execution whose boot window the backend
-// has not reported (Created is zero, so nothing can be priced). The estimate
-// must then say "unknown", never "free".
+// has not reported (neither Scheduled nor Created is set, so nothing can be
+// priced). The estimate must then say "unknown", never "free".
 func (e Execution) BilledWindow(now time.Time) (time.Duration, bool) {
 	if e.MachineType == "" {
 		return e.Billed(now), true
 	}
-	if e.Created.IsZero() {
+	start := e.Scheduled
+	if start.IsZero() {
+		start = e.Created
+	}
+	if start.IsZero() {
 		return 0, false
 	}
 	end := e.Completed
 	if end.IsZero() {
 		end = now
 	}
-	return max(VMMinimumBilled, end.Sub(e.Created)), true
+	return max(VMMinimumBilled, end.Sub(start)), true
+}
+
+// WindowNote names the time a VM-backed execution's billed window started
+// from, for the estimate's source line (design §5.2): the scheduled time, or
+// the job's creation when the backend reported none, which includes Batch's
+// queue time and errs high. "" for an execution that is not VM-backed, whose
+// window is Cloud Run's own and whose rows carry no such line.
+func (e Execution) WindowNote() string {
+	if e.MachineType == "" {
+		return ""
+	}
+	if e.Scheduled.IsZero() {
+		return "window starts at job creation: includes queue time, errs high"
+	}
+	return "window starts at the job's scheduled time"
 }
 
 // ListFilter narrows List.

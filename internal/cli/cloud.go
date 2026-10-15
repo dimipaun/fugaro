@@ -149,10 +149,22 @@ func (e *cloudEnv) prices(warn func(string)) runview.PriceBook {
 		if x != nil && x.Region != "" {
 			region = x.Region
 		}
+		vm := x != nil && x.MachineType != ""
 		if p, ok := e.lc.PriceOverride(region); ok {
+			if !vm {
+				return p
+			}
+			// The override's rates win, but a VM run is billed for its
+			// machine type's quantities and its line keeps the disk/NAT note
+			// (batch.ForMachineType, design §5.2, C17).
+			p, err := batch.ForMachineType(p, x.MachineType)
+			if err != nil {
+				refused(err)
+				return backend.Prices{}
+			}
 			return p
 		}
-		if x != nil && x.MachineType != "" {
+		if vm {
 			p, err := batch.PricesFor(region, x.MachineType)
 			if err != nil {
 				refused(err)
