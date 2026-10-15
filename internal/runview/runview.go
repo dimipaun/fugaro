@@ -166,8 +166,20 @@ func Pushed(t *task.Spec, r *runstore.Record) (head string, ok bool) {
 //
 // The zero Prices means "no table prices this execution": Join then records
 // compute as not estimated, never as $0.00, so a machine type or region the
-// table does not carry reads as unknown rather than free.
+// table does not carry reads as unknown rather than free. A book that carries
+// a source line but bills nothing at all is the same thing (priced), because
+// a "$0.00" estimate cannot be told from free either.
 type PriceBook func(e *backend.Execution) backend.Prices
+
+// priced reports whether p prices anything: a book whose two rates are both
+// zero bills every execution at nothing, and "compute $0.00, estimate" is
+// indistinguishable from free, which §5.2 refuses. A table that carries
+// genuine prices always has a positive CPU rate -- neither platform sells
+// vCPU-seconds for nothing -- so this never refuses a real table; it only
+// catches a caller that handed over a partly-filled one.
+func priced(p backend.Prices) bool {
+	return p.VCPUSecondUSD > 0 || p.GiBSecondUSD > 0
+}
 
 // Join builds the row for in, pricing compute with prices.
 func Join(in Input, prices PriceBook, now time.Time) Row {
@@ -382,7 +394,7 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 		d, known := e.BilledWindow(now)
 		p := prices(e)
 		switch {
-		case !known || p == (backend.Prices{}):
+		case !known || !priced(p):
 			c = runstore.ModelOnlyCost(model, basis)
 		default:
 			// A price table that bills a machine type carries that type's

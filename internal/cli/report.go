@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -167,6 +168,13 @@ func runReport(cmd *cobra.Command, o *reportOptions) error {
 	}
 	if why != "" {
 		return reportDegraded(ctx, cmd, o, lc, dim, m, why, from, to)
+	}
+	// The history path knows a day's compute is an estimate (the records
+	// count the runs it was estimated for) but not the price table each came
+	// from: the daily rollup stores the figure, not its source (design C17),
+	// so the source is named no further than that here.
+	if daysWithCompute(recs) {
+		m.Warnings = append(m.Warnings, reportComputeEstimateNote)
 	}
 	return reportEmit(cmd, o, report.Build(recs, dim), m)
 }
@@ -422,6 +430,39 @@ func computeSources(rows []runview.Row) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// reportComputeEstimateNote is the one line the history-backed report says
+// about its COMPUTE column. The history keeps the figure, not the table it
+// came from, so a reader of an installation that ran on a VM would otherwise
+// never learn that the column leaves the VM's boot disk and Cloud NAT out
+// (design compute-backend.md §5.2, C17) -- the run-record path below says the
+// same thing with the table it can name.
+const reportComputeEstimateNote = "COMPUTE $ is an estimate, priced from each run's own price table: a VM run's figure leaves the VM's boot disk and Cloud NAT out"
+
+// daysWithCompute reports whether any record in the report priced compute for
+// a run. An installation that never estimated compute gets no note, so its
+// report reads exactly as it did before this existed.
+func daysWithCompute(recs []report.Rec) bool {
+	for _, r := range recs {
+		if r.ComputeEstimatedRuns > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// costLines is the cost block diagnose prints: the cost line, and under it
+// the compute estimate's own source line when it has one (a VM run's price
+// table, design compute-backend.md §5.2). One line per line, since oneLine
+// would turn the break between them into a "?" and the two lines are not one
+// sentence.
+func costLines(c runstore.Cost) []string {
+	var out []string
+	for _, ln := range strings.Split(strings.ReplaceAll(runner.CostLine(c), "**", ""), "\n") {
+		out = append(out, oneLine(ln))
+	}
 	return out
 }
 

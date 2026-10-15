@@ -497,3 +497,25 @@ func TestDegradedReportComputeSourceFollowsTheRange(t *testing.T) {
 		t.Errorf("warnings = %q, want the VM table's source line", o.Warnings)
 	}
 }
+
+// The history-backed report says what its COMPUTE column is, too. The
+// history keeps the figure and not the price table behind it (design C17),
+// so the note names the estimate and what a VM run's figure leaves out; a
+// report whose days estimated no compute says nothing, exactly as before
+// compute existed.
+func TestReportHistoryNamesComputeAsAnEstimate(t *testing.T) {
+	f := newReportFixture(t)
+	f.doc("2026-10-18", repOpts{spent: 2_000_000, compute: 250_000, estimated: 1, final: true})
+	f.doc("2026-10-19", repOpts{spent: 1_000_000, final: true})
+
+	o := f.json(t, "--since", "2026-10-18", "--until", "2026-10-18")
+	if !strings.Contains(strings.Join(o.Warnings, "\n"), reportComputeEstimateNote) {
+		t.Errorf("a day with an estimated compute figure warned %q, want %q", o.Warnings, reportComputeEstimateNote)
+	}
+	o = f.json(t, "--since", "2026-10-19", "--until", "2026-10-19")
+	for _, w := range o.Warnings {
+		if strings.Contains(w, "COMPUTE $ is an estimate") {
+			t.Errorf("a report with no estimated compute warned about one: %q", w)
+		}
+	}
+}

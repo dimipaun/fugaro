@@ -278,9 +278,21 @@ func TestJoinLeavesWhatItCannotPriceUnestimated(t *testing.T) {
 	if row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: e}, prices, now); row.Cost.ComputeEstimated || row.Cost.ComputeUSD != 0 {
 		t.Errorf("a VM with no boot window: compute = %v estimated=%v, want not estimated", row.Cost.ComputeUSD, row.Cost.ComputeEstimated)
 	}
-	known := func(*backend.Execution) backend.Prices { return backend.Prices{} }
-	if row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: e}, known, now); row.Cost.ComputeEstimated {
-		t.Error("an execution no price table carries is priced as estimated")
+	books := map[string]backend.Prices{
+		"no table": {},
+		// A book that names itself but bills nothing: "compute $0.00,
+		// estimate" is as unreadable as a free run, and only a test that
+		// hands one over reaches the check (the config refuses a zero
+		// override, localcfg.ValidPrice).
+		"a table whose rates are zero": {Source: "a table that prices nothing"},
+	}
+	for name, p := range books {
+		known := func(*backend.Execution) backend.Prices { return p }
+		row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: e}, known, now)
+		if row.Cost.ComputeEstimated || row.Cost.ComputeSource != "" {
+			t.Errorf("%s: compute = %v estimated=%v source=%q, want not estimated and no source line",
+				name, row.Cost.ComputeUSD, row.Cost.ComputeEstimated, row.Cost.ComputeSource)
+		}
 	}
 }
 

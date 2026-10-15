@@ -483,12 +483,8 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		}
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
-	// The cost line, and under it the compute estimate's own source line
-	// when it has one (a VM run's price table, design compute-backend.md
-	// §5.2): one line per line, since oneLine would turn the break between
-	// them into a "?" and the two lines are not one sentence.
-	for _, ln := range strings.Split(strings.ReplaceAll(runner.CostLine(r.Cost), "**", ""), "\n") {
-		fmt.Fprintf(&b, "%s\n", oneLine(ln))
+	for _, ln := range costLines(r.Cost) {
+		fmt.Fprintf(&b, "%s\n", ln)
 	}
 	if r.Cost.CatalogStale {
 		// The run charged, and over-counted on purpose: the catalog it
