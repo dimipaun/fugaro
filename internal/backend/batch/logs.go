@@ -22,13 +22,6 @@ const (
 	createdMargin = time.Minute
 	// logMaxSpan is how long after its start a log URL's time range runs.
 	logMaxSpan = 24 * time.Hour
-	// defaultLogPoll is follow's poll interval when the query sets none.
-	defaultLogPoll = 3 * time.Second
-	// followLookback is how far before the newest entry already seen each
-	// follow poll reads again. Cloud Logging can ingest an entry after a
-	// newer one; the lookback catches it, and insert IDs keep it from being
-	// emitted twice. gcp's follow uses the same window.
-	followLookback = 10 * time.Second
 )
 
 // jobUIDRE is the charset a job's UID may have before it goes into a log
@@ -105,80 +98,28 @@ func (b *Backend) Logs(ctx context.Context, q backend.LogQuery, fn func(backend.
 	if !q.Follow {
 		return b.readLogs(ctx, id, uid, since, fn)
 	}
-	poll := q.Poll
-	if poll <= 0 {
-		poll = defaultLogPoll
-	}
-	seen := map[string]time.Time{} // insertId|timestamp → timestamp, within the lookback
-	var newest, settleFrom time.Time
-	for {
-		// Read from the lookback before the newest entry seen, but never
-		// from the future: one future-dated entry must not hide the rest.
-		from := since
-		if !newest.IsZero() {
-			if f := minTime(newest, time.Now()).Add(-followLookback); f.After(from) {
-				from = f
+	// The follow loop is backend.Follow, which gcp's Logs follows through
+	// too: the lookback, the dedup and the settle are one implementation, not
+	// two that must agree. Only the read (by UID) and the state call differ.
+	return backend.Follow(ctx, backend.FollowOptions{
+		Since:  since,
+		Poll:   q.Poll,
+		Settle: b.o.LogSettle,
+		Read: func(ctx context.Context, from time.Time, fn func(backend.LogEntry) error) error {
+			return b.readLogs(ctx, id, uid, from, fn)
+		},
+		State: func(ctx context.Context) (terminal, gone bool, err error) {
+			ex, err := b.Execution(ctx, full)
+			// A job the backend has forgotten has finished.
+			if errors.Is(err, backend.ErrNotFound) {
+				return false, true, nil
 			}
-		}
-		fresh := 0
-		err := b.readLogs(ctx, id, uid, from, func(e backend.LogEntry) error {
-			k := e.InsertID + "|" + e.Time.Format(time.RFC3339Nano)
-			if _, dup := seen[k]; dup {
-				return nil
+			if err != nil {
+				return false, false, err
 			}
-			seen[k] = e.Time
-			if e.Time.After(newest) {
-				newest = e.Time
-			}
-			fresh++
-			return fn(e)
-		})
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err != nil {
-			return err
-		}
-		// The next read starts no earlier than this one: older keys can't recur.
-		for k, t := range seen {
-			if t.Before(from) {
-				delete(seen, k)
-			}
-		}
-
-		ex, err := b.Execution(ctx, full)
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		// A job the backend has forgotten has finished: settle on its logs
-		// like any ended one.
-		ended := errors.Is(err, backend.ErrNotFound)
-		if err != nil && !ended {
-			return err
-		}
-		now := time.Now()
-		switch {
-		case !ended && !ex.State.Terminal():
-			settleFrom = time.Time{}
-		case settleFrom.IsZero() || fresh > 0:
-			settleFrom = now // wait out Cloud Logging's ingestion lag
-		case now.Sub(settleFrom) >= b.o.LogSettle:
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(poll):
-		}
-	}
-}
-
-// minTime is the earlier of a and b. gcp's follow has the same one.
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
+			return ex.State.Terminal(), false, nil
+		},
+	}, fn)
 }
 
 // readLogs reads every entry of the job's task logs at or after from (all of
