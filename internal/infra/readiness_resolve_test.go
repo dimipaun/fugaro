@@ -139,7 +139,7 @@ func TestReadinessProjectSecretGateNeedsDiscoveryConfirmation(t *testing.T) {
 	// discovery *would* have confirmed it.
 	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
 	want := f.seedProjectSecret(spec, "bitbucket-token")
-	got, missing, err := Readiness(t.Context(), f.c, spec, Existing{})
+	got, missing, err := Readiness(t.Context(), f.c, spec, Existing{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
