@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -482,8 +484,81 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 			puts = append(puts, strings.TrimSuffix(q.Path, ".json"))
 		}
 	}
-	if len(puts) == 0 || puts[len(puts)-1] != "/.settings/rules" || puts[0] != "/fugaro/mark" {
+	// The rules go in last of the database's own writes, over a database that
+	// is already marked and configured: the mark is written before them. The
+	// one write after them is the rules-generation marker, which exists to say
+	// the deploy above succeeded and must not be there otherwise
+	// (TestRulesMarkerOnlyAfterTheRulesDeploy).
+	if len(puts) < 2 || puts[0] != "/fugaro/mark" || puts[len(puts)-2] != "/.settings/rules" ||
+		puts[len(puts)-1] != "/"+projectpolicy.PathRulesMarker() {
 		t.Errorf("PUT order = %v", puts)
+	}
+}
+
+// TestRulesMarkerOnlyAfterTheRulesDeploy: config/limits/policyRules records
+// which generation of the rules is deployed, and the runner (phase 1 task 1.3)
+// reads it so it never decodes a policy the deployed rules do not protect. A
+// marker written without a successful deploy — or before one — would halt
+// every budget-on run of a database whose rules were never deployed, so the
+// marker is written only after the deploy, and a deploy that fails leaves no
+// marker at all.
+func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
+	marker := func(r *fbRig) any { return r.db.Value(projectpolicy.PathRulesMarker()) }
+
+	// A refused rules deploy: init fails and leaves no marker.
+	refused := newFBRig(t)
+	refused.historyImage()
+	refused.db.DenyRules(1)
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err == nil {
+		t.Fatal("init reported success although the rules deploy was refused")
+	}
+	if got := marker(refused); got != nil {
+		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the runner would read a policy these rules do not protect", projectpolicy.PathRulesMarker(), got)
+	}
+	if n := refused.db.RulePuts(); n != 0 {
+		t.Errorf("rules deployed %d times, want 0", n)
+	}
+
+	// A deploy that succeeds records this generation.
+	r := newFBRig(t)
+	r.historyImage()
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if r.db.RulePuts() != 1 {
+		t.Errorf("rules deployed %d times, want 1", r.db.RulePuts())
+	}
+	num, ok := marker(r).(json.Number)
+	if !ok || num.String() != strconv.Itoa(projectpolicy.RulesVersion) {
+		t.Errorf("%s = %#v, want %d (RulesVersion): the runner compares them", projectpolicy.PathRulesMarker(), marker(r), projectpolicy.RulesVersion)
+	}
+	// It sits beside the largest lease, not on top of it.
+	lim, _ := r.db.Value("config/limits").(map[string]any)
+	if len(lim) != 2 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the marker beside maxReserveMicros", lim)
+	}
+}
+
+// TestInitLeavesAnUpToDateMarkerAlone: a database whose rules are already the
+// generated ones is not re-deployed, and a marker that already records this
+// generation is not rewritten: init writes nothing at all.
+func TestInitLeavesAnUpToDateMarkerAlone(t *testing.T) {
+	r := newFBRig(t)
+	r.historyImage()
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	puts := len(r.db.Requests())
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.db.RulePuts(); n != 1 {
+		t.Errorf("the rules were deployed %d times, want 1: they are already the generated ones", n)
+	}
+	for _, q := range r.db.Requests()[puts:] {
+		if q.Method == "PUT" || q.Method == "PATCH" {
+			t.Errorf("the second init wrote %s /%s", q.Method, q.Path)
+		}
 	}
 }
 
