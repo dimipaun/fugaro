@@ -1,0 +1,359 @@
+package gcpfake
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+)
+
+// batchCall sends one request to a Batch fake and returns the status and the
+// decoded body. The fake's own tests speak HTTP rather than the generated
+// client: what they check is the fake's answer, not a client's reading of it.
+func batchCall(t *testing.T, method, url, body string) (int, map[string]any) {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]any{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("%s %s: body %s: %v", method, url, raw, err)
+		}
+	}
+	return resp.StatusCode, out
+}
+
+// batchJob is the smallest job body the fake accepts: the fields it reads are
+// the labels (for the list filter) and nothing else.
+const batchJobBody = `{"labels":{"fugaro":"managed"},"taskGroups":[{"taskSpec":{"environment":{"variables":{"FUGARO_RUN":"acme-app/run"}}}}]}`
+
+func TestBatchFakeLifecycle(t *testing.T) {
+	f := NewBatch(t)
+	base := f.URL + "/v1/projects/p/locations/r1"
+	code, created := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", batchJobBody)
+	if code != http.StatusOK {
+		t.Fatalf("create: status %d: %v", code, created)
+	}
+	if created["name"] != "projects/p/locations/r1/jobs/fugaro-x-web-1" || created["uid"] == nil {
+		t.Fatalf("create answered %v", created)
+	}
+	if st, _ := created["status"].(map[string]any); st["state"] != "QUEUED" {
+		t.Fatalf("a new job is not QUEUED: %v", created["status"])
+	}
+	if got := f.IDs(); len(got) != 1 || got[0] != "fugaro-x-web-1" {
+		t.Fatalf("IDs = %v", got)
+	}
+	if got := f.Creates(); len(got) != 1 || got[0].JobID != "fugaro-x-web-1" || got[0].Job["labels"] == nil {
+		t.Fatalf("Creates = %+v", got)
+	}
+
+	// get
+	if code, got := batchCall(t, "GET", base+"/jobs/fugaro-x-web-1", ""); code != http.StatusOK || got["name"] != created["name"] {
+		t.Fatalf("get: status %d: %v", code, got)
+	}
+	// a job that does not exist
+	if code, got := batchCall(t, "GET", base+"/jobs/nope", ""); code != http.StatusNotFound || got["error"] == nil {
+		t.Fatalf("get of an unknown job: status %d: %v", code, got)
+	}
+
+	// cancel, then delete
+	if code, got := batchCall(t, "POST", base+"/jobs/fugaro-x-web-1:cancel", "{}"); code != http.StatusOK || got["done"] != true {
+		t.Fatalf("cancel: status %d: %v", code, got)
+	}
+	if got := f.State("fugaro-x-web-1"); got != "CANCELLED" {
+		t.Fatalf("state after cancel = %q", got)
+	}
+	if got := f.Cancels(); len(got) != 1 || got[0] != "fugaro-x-web-1" {
+		t.Fatalf("Cancels = %v", got)
+	}
+	if code, _ := batchCall(t, "DELETE", base+"/jobs/fugaro-x-web-1", ""); code != http.StatusOK {
+		t.Fatalf("delete: status %d", code)
+	}
+	if got := f.Deletes(); len(got) != 1 || got[0] != "fugaro-x-web-1" {
+		t.Fatalf("Deletes = %v", got)
+	}
+	if code, _ := batchCall(t, "GET", base+"/jobs/fugaro-x-web-1", ""); code != http.StatusNotFound {
+		t.Fatalf("a deleted job is still readable: status %d", code)
+	}
+}
+
+// TestBatchFakeRefusesWhatItDoesNotImplement is the fake's fail-closed half:
+// Batch has no jobs.patch, so a client that sends one is noticed here rather
+// than in production.
+func TestBatchFakeRefusesWhatItDoesNotImplement(t *testing.T) {
+	f := NewBatch(t)
+	var failed []string
+	f.failf = func(format string, args ...any) { failed = append(failed, format) }
+	base := f.URL + "/v1/projects/p/locations/r1"
+	for _, c := range []struct{ method, url string }{
+		{"PATCH", base + "/jobs/fugaro-x-web-1"},
+		{"PUT", base + "/jobs/fugaro-x-web-1"},
+		{"POST", f.URL + "/v1/projects/p/locations/r1/jobs/fugaro-x-web-1:run"},
+		{"GET", f.URL + "/v2/something-else"},
+		{"DELETE", f.URL + "/v1/projects/p/locations/r1/jobs"}, // no job id
+		{"POST", f.URL + "/v1/locations/r1/jobs?jobId=x"},      // no project
+	} {
+		if code, _ := batchCall(t, c.method, c.url, "{}"); code != http.StatusBadRequest {
+			t.Errorf("%s %s: status %d, want 400", c.method, c.url, code)
+		}
+	}
+	if len(failed) != 6 {
+		t.Fatalf("the fake failed the test %d times, want 6: %v", len(failed), failed)
+	}
+}
+
+// TestBatchFakeRefusesABadCreate: a job id is what the caller chooses and the
+// API validates, so the fake validates it too -- a fake that accepted one the
+// real API refuses would let a naming bug through.
+func TestBatchFakeRefusesABadCreate(t *testing.T) {
+	f := NewBatch(t)
+	// A malformed body is the client's fault, and the fake reports it as a
+	// test failure; this test sends one on purpose.
+	f.failf = func(string, ...any) {}
+	base := f.URL + "/v1/projects/p/locations/r1"
+	for _, id := range []string{"", "-leading", "trailing-", "Upper", "under_score", strings.Repeat("a", 64)} {
+		code, body := batchCall(t, "POST", base+"/jobs?jobId="+id, batchJobBody)
+		if code != http.StatusBadRequest {
+			t.Errorf("create with jobId %q: status %d, want 400: %v", id, code, body)
+		}
+	}
+	if got := f.IDs(); len(got) != 0 {
+		t.Fatalf("a refused create created something: %v", got)
+	}
+	// The body's own name must be the job in the URL, as the API requires.
+	code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", `{"name":"projects/p/locations/r1/jobs/other"}`)
+	if code != http.StatusBadRequest {
+		t.Errorf("a body naming another job: status %d, want 400", code)
+	}
+	// The body is not valid JSON.
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", `{`); code != http.StatusBadRequest {
+		t.Errorf("an unparseable body: status %d, want 400", code)
+	}
+}
+
+// TestBatchFakeRefusesADuplicate: a Batch job is single-use and its id is the
+// run's, so a second create of one is a run launched twice.
+func TestBatchFakeRefusesADuplicate(t *testing.T) {
+	f := NewBatch(t)
+	url := f.URL + "/v1/projects/p/locations/r1/jobs?jobId=fugaro-x-web-1"
+	if code, _ := batchCall(t, "POST", url, batchJobBody); code != http.StatusOK {
+		t.Fatalf("first create: status %d", code)
+	}
+	code, body := batchCall(t, "POST", url, batchJobBody)
+	if code != http.StatusConflict {
+		t.Fatalf("second create: status %d, want 409: %v", code, body)
+	}
+	if got := f.IDs(); len(got) != 1 {
+		t.Fatalf("a duplicate create created a second job: %v", got)
+	}
+}
+
+// TestBatchFakeCancelOfATerminalJob: the real API's answer is UNVERIFIED
+// (design §9, Check 57a step 7), so the fake refuses by default -- which is
+// what makes a backend's tolerance of the race a tested requirement -- and
+// answers OK when AllowCancelOfTerminal says the API is the other way.
+func TestBatchFakeCancelOfATerminalJob(t *testing.T) {
+	f := NewBatch(t)
+	base := f.URL + "/v1/projects/p/locations/r1"
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	f.SetState("fugaro-x-web-1", "SUCCEEDED")
+	code, body := batchCall(t, "POST", base+"/jobs/fugaro-x-web-1:cancel", "{}")
+	if code != http.StatusBadRequest || body["error"] == nil {
+		t.Fatalf("cancel of a finished job: status %d: %v", code, body)
+	}
+	if got := f.Cancels(); len(got) != 0 {
+		t.Fatalf("a refused cancel was recorded: %v", got)
+	}
+	if got := f.State("fugaro-x-web-1"); got != "SUCCEEDED" {
+		t.Fatalf("a refused cancel changed the state to %q", got)
+	}
+	f.AllowCancelOfTerminal = true
+	if code, _ := batchCall(t, "POST", base+"/jobs/fugaro-x-web-1:cancel", "{}"); code != http.StatusOK {
+		t.Fatalf("cancel with AllowCancelOfTerminal: status %d", code)
+	}
+	if got := f.State("fugaro-x-web-1"); got != "SUCCEEDED" {
+		t.Fatalf("cancelling a finished job changed its state to %q", got)
+	}
+}
+
+// TestBatchFakeListFiltersAndPages: the listing is what a sweeper reads, so
+// its filter and its paging are the fake's, not the client's, business.
+func TestBatchFakeListFiltersAndPages(t *testing.T) {
+	f := NewBatch(t)
+	base := f.URL + "/v1/projects/p/locations/r1"
+	for _, id := range []string{"fugaro-x-web-1", "fugaro-x-web-2", "other-web-3"} {
+		body := batchJobBody
+		if id == "other-web-3" {
+			body = `{"labels":{"someone":"else"}}`
+		}
+		if code, _ := batchCall(t, "POST", base+"/jobs?jobId="+id, body); code != http.StatusOK {
+			t.Fatalf("create %s failed", id)
+		}
+	}
+	// The filter is the marker, so someone else's job is not in the answer.
+	code, body := batchCall(t, "GET", base+"/jobs?filter="+`labels.fugaro%20%3D%20%22managed%22`, "")
+	if code != http.StatusOK {
+		t.Fatalf("list: status %d: %v", code, body)
+	}
+	if got := batchNames(body); len(got) != 2 {
+		t.Fatalf("list answered %v, want the two marked jobs", got)
+	}
+	// A filter the fake cannot answer fails the test rather than being
+	// silently ignored: a wrong server-side filter must not read as "no
+	// runs".
+	var failed string
+	f.failf = func(format string, args ...any) { failed = format }
+	if code, _ := batchCall(t, "GET", base+"/jobs?filter=labels.fugaro%3D%22managed%22%20AND%20x%3D1", ""); code != http.StatusBadRequest {
+		t.Fatalf("an unsupported filter: status %d, want 400", code)
+	}
+	if failed == "" {
+		t.Fatal("an unsupported filter did not fail the test")
+	}
+
+	// Paging: newest first, one per page.
+	code, page := batchCall(t, "GET", base+"/jobs?filter="+`labels.fugaro%20%3D%20%22managed%22`+"&pageSize=1", "")
+	if code != http.StatusOK || len(batchNames(page)) != 1 {
+		t.Fatalf("page 1: status %d: %v", code, page)
+	}
+	token, _ := page["nextPageToken"].(string)
+	if token == "" {
+		t.Fatalf("page 1 carried no next page: %v", page)
+	}
+	code, page2 := batchCall(t, "GET", base+"/jobs?filter="+`labels.fugaro%20%3D%20%22managed%22`+"&pageSize=1&pageToken="+token, "")
+	if code != http.StatusOK || len(batchNames(page2)) != 1 {
+		t.Fatalf("page 2: status %d: %v", code, page2)
+	}
+	if batchNames(page)[0] == batchNames(page2)[0] {
+		t.Fatal("the second page repeated the first")
+	}
+	if page2["nextPageToken"] != nil {
+		t.Fatalf("the last page carried a next page: %v", page2)
+	}
+}
+
+func batchNames(body map[string]any) []string {
+	jobs, _ := body["jobs"].([]any)
+	var out []string
+	for _, j := range jobs {
+		m, _ := j.(map[string]any)
+		if n, ok := m["name"].(string); ok {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// TestBatchFakeAnswersWithTheProjectNumber: the API may write a project
+// number where the caller wrote a project ID, and callers that compare names
+// must not be broken by it.
+func TestBatchFakeAnswersWithTheProjectNumber(t *testing.T) {
+	f := NewBatch(t)
+	f.ProjectNumber = "999"
+	base := f.URL + "/v1/projects/p/locations/r1"
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	if got := f.JobJSON("p", "r1", "fugaro-x-web-1")["name"]; got != "projects/999/locations/r1/jobs/fugaro-x-web-1" {
+		t.Fatalf("JobJSON name = %v", got)
+	}
+	if got := f.Creates()[0].Name; got != "projects/999/locations/r1/jobs/fugaro-x-web-1" {
+		t.Fatalf("Creates[0].Name = %v", got)
+	}
+}
+
+// TestBatchFakeFailCreateWith: an injected failure creates nothing, which is
+// how the backend's classification of a create's errors is exercised.
+func TestBatchFakeFailCreateWith(t *testing.T) {
+	f := NewBatch(t)
+	f.FailCreateWith = http.StatusConflict
+	code, _ := batchCall(t, "POST", f.URL+"/v1/projects/p/locations/r1/jobs?jobId=fugaro-x-web-1", batchJobBody)
+	if code != http.StatusConflict {
+		t.Fatalf("status %d, want 409", code)
+	}
+	if got := f.IDs(); len(got) != 0 {
+		t.Fatalf("an injected failure created a job: %v", got)
+	}
+	if got := f.Creates(); len(got) != 1 {
+		t.Fatalf("a refused create was not recorded: %v", got)
+	}
+}
+
+// TestBatchFakeSetCreatedAndUID are the two knobs a test needs to reach a
+// state the fake's own create never produces.
+func TestBatchFakeSetCreatedAndUID(t *testing.T) {
+	f := NewBatch(t)
+	if code, _ := batchCall(t, "POST", f.URL+"/v1/projects/p/locations/r1/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	when := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
+	f.SetCreated("fugaro-x-web-1", when)
+	if got, _ := f.JobJSON("p", "r1", "fugaro-x-web-1")["createTime"].(string); !strings.HasPrefix(got, when.Format(time.RFC3339)) {
+		t.Fatalf("createTime = %q, want %s", got, when.Format(time.RFC3339))
+	}
+	f.SetUID("fugaro-x-web-1", "")
+	if got := f.JobJSON("p", "r1", "fugaro-x-web-1")["uid"]; got != "" {
+		t.Fatalf("uid = %v, want empty", got)
+	}
+}
+
+// TestLoggingFakeReadsBatchTaskLogsByUID is the Logging fake's Batch half:
+// entries stored by UID come back for the filter design §2.3 ships, and only
+// that job's.
+func TestLoggingFakeReadsBatchTaskLogsByUID(t *testing.T) {
+	l := NewLogging(t)
+	l.AddUID("uid-1", LogEntry{Time: time.Now(), Text: "mine"})
+	l.AddUID("uid-2", LogEntry{Time: time.Now(), Text: "someone else's"})
+	filter := `labels.job_uid="uid-1" AND logName="projects/p/logs/batch_task_logs"`
+	body, err := json.Marshal(map[string]any{"resourceNames": []string{"projects/p"}, "filter": filter, "orderBy": "timestamp asc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, got := batchCall(t, "POST", l.URL+"/v2/entries:list", string(body))
+	if code != http.StatusOK {
+		t.Fatalf("entries.list: status %d: %v", code, got)
+	}
+	entries, _ := got["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %v, want one", entries)
+	}
+	e, _ := entries[0].(map[string]any)
+	if e["textPayload"] != "mine" || e["logName"] != "projects/p/logs/batch_task_logs" {
+		t.Fatalf("entry = %v", e)
+	}
+	if res, _ := e["resource"].(map[string]any); res["type"] != "batch.googleapis.com/Job" {
+		t.Fatalf("resource = %v", e["resource"])
+	}
+	// A timestamp filter the fake cannot parse, and a log whose project is
+	// not one the request may read, both fail the test rather than answering
+	// something.
+	var failed []string
+	l.failf = func(format string, args ...any) { failed = append(failed, format) }
+	for _, f := range []string{
+		filter + ` AND timestamp>="not a time"`,
+		`labels.job_uid="uid-1" AND logName="projects/other/logs/batch_task_logs"`,
+	} {
+		body, _ := json.Marshal(map[string]any{"resourceNames": []string{"projects/p"}, "filter": f})
+		if code, _ := batchCall(t, "POST", l.URL+"/v2/entries:list", string(body)); code != http.StatusBadRequest {
+			t.Errorf("filter %q: status %d, want 400", f, code)
+		}
+	}
+	if len(failed) != 2 {
+		t.Fatalf("the fake failed the test %d times, want 2: %v", len(failed), failed)
+	}
+}
