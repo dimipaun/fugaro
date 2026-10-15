@@ -280,7 +280,10 @@ func (r *run) closeGateway() {
 
 // routingKnob reports whether the live test's knob skips the
 // routing refusal. In the cloud, or against a test upstream, it never
-// does.
+// does: InCloud is the CLI's fail-closed answer (design
+// compute-backend.md §2.5), so a platform no backend claims refuses the
+// knob too. The warning still says Cloud Run, the only cloud platform that
+// can reach it today.
 func (r *run) routingKnob() bool {
 	if envLookup(r.d.Env, allowRoutingSettingsEnv) != "1" {
 		return false
