@@ -367,6 +367,29 @@ func fileWithBudget(t *testing.T, projectBudget, fileBlock, agent string) string
 
 const pinnedAgent = "  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
 
+// TestValidatePerRunWarningNamesTheDatabaseCaps: with enforce and no
+// budget.per_run_usd the warning says what actually halts a run (D6): the
+// database's effective per-run cap bounds it when one is set anywhere, and
+// only a database with no per-run cap on any of the three sides refuses the
+// lease.
+func TestValidatePerRunWarningNamesTheDatabaseCaps(t *testing.T) {
+	// The project config can't hold enforce with no cap (localcfg refuses
+	// it), so the reachable shape is a project that observes and a file that
+	// tightens the mode to enforce without adding a cap.
+	path := fileWithBudget(t, "budget: { mode: observe }\n", "budget: { mode: enforce }\n", pinnedAgent)
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a missing per-run cap is a warning: %v %q", err, out)
+	}
+	want := "warning: budget.per_run_usd: the mode is enforce but no per-run cap is set in the project config or here; the database's effective per-run cap still bounds the run when one is set anywhere (the repository's own, the default for repositories without one, or the project's global one), and the run halts (no_cap) only when all three are unset"
+	if !strings.Contains(errOut, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	}
+	if strings.Contains(errOut, "the run would halt (no_cap)\n") {
+		t.Errorf("the warning still claims the run halts:\n%s", errOut)
+	}
+}
+
 func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	path := fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\n",
 		"budget: { mode: off, per_run_usd: 20 }\n", pinnedAgent+"\n  max_run_tokens: 9000")
