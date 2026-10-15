@@ -954,6 +954,17 @@ func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 	if x.Name != want || x.Job != ref.Job || x.State.Terminal() {
 		t.Fatalf("Execution = %+v, want %s", x, want)
 	}
+	// The region is the backend's own, so a caller never parses a Batch
+	// name's six fields to find it (backend.Execution.Region, §5.2).
+	if x.Region != testRegion {
+		t.Errorf("Execution region = %q, want the backend's own %q", x.Region, testRegion)
+	}
+	// And the machine type is left unset: the job definition's machine type
+	// is Task 7's, so a Batch execution prices at no machine type --
+	// "compute not estimated" -- rather than at a guessed one.
+	if x.MachineType != "" {
+		t.Errorf("Execution machine type = %q, want none (the type is Task 7's)", x.MachineType)
+	}
 	// The number form is the same run, not a second one.
 	if x2, err := b.Execution(ctx, strings.Replace(want, "/projects/"+testProject+"/", "/projects/999/", 1)); err != nil || x2.Name != want {
 		t.Fatalf("Execution(by number) = %+v, %v", x2, err)
@@ -963,6 +974,16 @@ func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 // TestLogsReadsOneJobsTaskLogsByUID pins the filter design §2.3 ships, and
 // why it costs one jobs.get: labels.job_uid needs the job's UID, which only
 // the job itself reports.
+//
+// UNVERIFIED, and it is the whole log surface of this backend: the filter's
+// two clauses are the form Google documents for one job's task logs, and the
+// fake answers that shape because it was written to (internal/gcpfake), not
+// because a real entry was read. Nothing here proves that a real
+// batch.googleapis.com/Job entry carries labels.job_uid, that the log's name
+// is batch_task_logs, or that the sink's resource.type arm matches what the
+// platform really writes. Check 57a step 10 reads a raw entry and settles
+// all three (design §9); until then these tests hold the code to the
+// documented shape, and that is all they claim.
 func TestLogsReadsOneJobsTaskLogsByUID(t *testing.T) {
 	ctx := context.Background()
 	b, bf, lf, _ := newTestBackend(t, nil)
@@ -1123,19 +1144,101 @@ func TestLogsOfAJobWithoutAUIDIsAnError(t *testing.T) {
 	}
 }
 
-// TestLogsFollowIsNotSilentlyIgnored: a follow that quietly read once would
-// look exactly like a run that had gone silent. Task 4 owns it, with the
-// installation's sink arm.
-func TestLogsFollowIsNotSilentlyIgnored(t *testing.T) {
+// TestLogsRefusesAUIDTheFilterMustNotBeBuiltFrom: the filter is built by
+// concatenation (design §2.3) and the UID is a value the API reports, so one
+// carrying a quote, a space or a backslash could add clauses of its own --
+// selecting another job's lines, or another resource type. Every such UID is
+// refused before any request goes out, and the refusal does not echo the
+// value back.
+func TestLogsRefusesAUIDTheFilterMustNotBeBuiltFrom(t *testing.T) {
+	ctx := context.Background()
+	b, bf, lf, _ := newTestBackend(t, nil)
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	for _, uid := range []string{
+		`1" OR resource.type="cloud_run_job`,
+		`1" AND labels.job_uid="2`,
+		"1 2",
+		`1\2`,
+		"1\n2",
+		strings.Repeat("9", 129),
+	} {
+		bf.SetUID(ref.Job, uid)
+		err := b.Logs(ctx, backend.LogQuery{Execution: ref.Name}, func(backend.LogEntry) error { return nil })
+		if err == nil {
+			t.Errorf("Logs read the task logs of a job whose UID is %q", uid)
+			continue
+		}
+		if strings.Contains(err.Error(), uid) {
+			t.Errorf("the refusal echoed a UID it refused: %v", err)
+		}
+	}
+	if got := len(lf.Requests()); got != 0 {
+		t.Fatalf("%d entries.list requests were sent for a UID that must be refused", got)
+	}
+	// The real shape -- what the API reports -- is read: the refusal is a
+	// charset check, not a filter that finds nothing.
+	bf.SetUID(ref.Job, "7123456789012345678")
+	lf.AddUID("7123456789012345678", gcpfake.LogEntry{Time: time.Now(), Text: "hello"})
+	var got []string
+	if err := b.Logs(ctx, backend.LogQuery{Execution: ref.Name}, func(e backend.LogEntry) error {
+		got = append(got, e.Message)
+		return nil
+	}); err != nil || len(got) != 1 {
+		t.Fatalf("Logs = %q, %v", got, err)
+	}
+}
+
+// TestLogsFollow: follow keeps reading a job's task logs by the UID it read
+// once, emits an entry that arrives while it waits, never repeats one it has
+// already emitted, and returns once the job has ended and its logs have
+// settled. Poll and LogSettle are shrunk so the test does not wait them out.
+func TestLogsFollow(t *testing.T) {
+	ctx := context.Background()
+	b, bf, lf, _ := newTestBackend(t, func(o *Options) { o.LogSettle = 50 * time.Millisecond })
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	uid, _ := bf.JobJSON(testProject, testRegion, ref.Job)["uid"].(string)
+	lf.AddUID(uid, gcpfake.LogEntry{Time: time.Now(), Text: "first"})
+	var got []string
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		lf.AddUID(uid, gcpfake.LogEntry{Time: time.Now().Add(time.Second), Text: "second"})
+		bf.SetState(ref.Job, "SUCCEEDED")
+	}()
+	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	collect := func(e backend.LogEntry) error { got = append(got, e.Message); return nil }
+	if err := b.Logs(fctx, backend.LogQuery{Execution: ref.Name, Follow: true, Poll: 10 * time.Millisecond}, collect); err != nil {
+		t.Fatalf("Logs(Follow): %v", err)
+	}
+	// "first" is re-read by the lookback window and must not be emitted
+	// twice: an entry the operator has already seen, printed again on every
+	// poll, is the bug the insert IDs exist for.
+	if len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("followed = %q", got)
+	}
+}
+
+// TestLogsFollowStopsOnContext: a job that never ends must not make follow
+// hang. Ctrl-C and a closed pipe reach it through the context.
+func TestLogsFollowStopsOnContext(t *testing.T) {
 	ctx := context.Background()
 	b, _, _, _ := newTestBackend(t, nil)
 	ref, err := b.Launch(ctx, spec())
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
-	err = b.Logs(ctx, backend.LogQuery{Execution: ref.Name, Follow: true}, func(backend.LogEntry) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "Task 4") {
-		t.Fatalf("Logs(Follow) = %v, want a refusal naming Task 4", err)
+	// A launched job is QUEUED and stays there: nothing else moves it.
+	fctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	err = b.Logs(fctx, backend.LogQuery{Execution: ref.Name, Follow: true, Poll: 10 * time.Millisecond}, func(backend.LogEntry) error { return nil })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Logs(Follow) = %v, want the context's own error", err)
 	}
 }
 

@@ -299,15 +299,19 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		}
 	}
 
-	prices := env.prices()
-	rows := make([]runview.Row, len(runs))
-	errs = make([]error, len(runs))
 	var mu sync.Mutex // guards warn
 	warnf := func(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
 		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
 	}
+	// The price book warns through warnf too: a VM run whose region or
+	// machine type the price table does not carry is listed with compute not
+	// estimated, and this is where the operator reads why (design
+	// compute-backend.md §5.2).
+	prices := env.prices(func(s string) { warnf("%s", s) })
+	rows := make([]runview.Row, len(runs))
+	errs = make([]error, len(runs))
 	parallel(len(runs), func(i int) {
 		if errs[i] = followExecution(ctx, env, &runs[i], execs, warnf); errs[i] == nil {
 			rows[i] = runview.Join(runs[i].in, prices, now)

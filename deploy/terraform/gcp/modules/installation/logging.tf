@@ -4,12 +4,49 @@
 # can't take roles/logging.viewer away from anyone, so the same lines are
 # also kept out of _Default. Owners and editors still read everything.
 #
+# A job's platform decides its resource.type -- cloud_run_job on Cloud Run,
+# batch.googleapis.com/Job on Cloud Batch (the VM backend) -- so the filter
+# below has one arm per platform, and both are pinned by the same label.
+#
 # Cloud Build logs stay in _Default: they hold the repository's build
 # output, never a secret value.
 
 locals {
   log_bucket_path = "projects/${var.project}/locations/global/buckets/${var.names.log.bucket}"
-  fugaro_logs     = "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\""
+
+  # The Cloud Run arm: every Fugaro-managed Cloud Run job's lines (the
+  # workflow jobs and the check jobs). It is byte-for-byte what it was before
+  # the Batch arm below existed -- an installation's sink and exclusion
+  # already filter on it, and an arm that drifted would move lines this
+  # installation never meant to route. A test pins it.
+  fugaro_cloud_run_logs = "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\""
+
+  # The Batch arm (design docs/design/compute-backend.md §1.5, §8.1 task 4):
+  # a Batch job's lines carry resource.type="batch.googleapis.com/Job", and
+  # its Job.labels reach the entry it generates, so the installation's
+  # fugaro=managed marker selects them the same way. ADDITIVE and inert for a
+  # project with no Batch jobs: no Batch job means no entry with that
+  # resource type, so this arm matches nothing and moves nothing. Without it,
+  # a Batch run's lines would sit in _Default, where every project viewer
+  # reads them, while `fugaro logs` (which reads the view below) found
+  # nothing.
+  fugaro_batch_logs = "resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\""
+
+  # Both arms, as one group, with each arm's own AND clauses parenthesized
+  # inside it. Every parenthesis here is load-bearing, because Cloud
+  # Logging's query language is NOT the usual one: NOT has the highest
+  # precedence, "followed by OR and AND in that order" -- AND binds
+  # *loosest*, where most languages bind it tightest (Logging query
+  # language, "Boolean operators", checked 2026-10-15; the doc's own example
+  # makes `"a" OR NOT "b" AND NOT "c" OR "d"` mean
+  # `("a" OR (NOT "b")) AND ((NOT "c") OR "d")`). So an unparenthesized
+  # `A1 AND A2 OR B1 AND B2` would be read as `A1 AND (A2 OR B1) AND B2`,
+  # which matches only the Cloud Run arm -- the Batch arm would route and
+  # exclude nothing, leaving a Batch run's task lines in _Default where every
+  # project viewer reads them, which is the outcome this whole file exists to
+  # prevent. Written out, the filter means what it says whichever order the
+  # reader assumes. A test pins it.
+  fugaro_logs = "((${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs}))"
 }
 
 resource "google_logging_project_bucket_config" "fugaro" {
