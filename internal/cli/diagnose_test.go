@@ -470,6 +470,10 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	const key = "sk-or-v1-testkeyshouldneverprint"
 	t.Setenv("OPENROUTER_API_KEY", key)
 	f := newCloudFixture(t)
+	// The owner's route, so the run's model is the one the built-in catalog
+	// prices: the pin warning is the catalog's note (the embedded placeholder
+	// row is gone, P6).
+	f.appendConfig(t, validateProviderBlock)
 	const id = "20260927-130000-dddd"
 	exec := seedRun(t, f, id, "", "someone@example.com", true)
 	ctx := context.Background()
@@ -489,7 +493,7 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "unverified placeholder", "more than 10% above", "may be too low"} {
+	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "built-in provider price catalog", "zdr", "more than 10% above", "may be too low"} {
 		if !strings.Contains(human, want) {
 			t.Fatalf("diagnose lacks %q:\n%s", want, human)
 		}

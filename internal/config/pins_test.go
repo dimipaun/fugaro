@@ -20,6 +20,36 @@ func paths(ps []Problem) string {
 	return strings.Join(s, ",")
 }
 
+// placeholderPrices is Embedded() with the placeholder row a provider model
+// used to get from it, built by hand: the built-in catalog prices provider
+// models now, so no embedded row carries Unverified, but the flag, its source
+// and its date are still what a pin warning reads.
+func placeholderPrices() *pricing.Table {
+	tbl := pricing.Embedded()
+	tbl.Models["deepseek/deepseek-v4-flash"] = pricing.Model{
+		ID: "deepseek/deepseek-v4-flash", Unverified: true,
+		PriceSource: "placeholder, not verified: no provider price was read", PriceCheckedAt: "2026-10-03",
+		Rates: pricing.Rates{InputPerM: 1, OutputPerM: 4, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1},
+	}
+	return tbl
+}
+
+// TestCatalogPriceWarns: a pin the built-in catalog priced says so — which
+// tier, how many endpoints, which end of its range is charged — and names the
+// two switches that move it, so an owner who wants the other end (or the
+// other tier) is told how.
+func TestCatalogPriceWarns(t *testing.T) {
+	ws := PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), providerPrices(t))
+	if len(ws) != 2 || ws[0].Code != CodeCatalogPrice {
+		t.Fatalf("warnings: %v", ws)
+	}
+	for _, want := range []string{"built-in provider price catalog", "zdr", "min", "require_zdr", "price_policy: highest", "model_prices"} {
+		if !strings.Contains(ws[0].Message, want) {
+			t.Errorf("the catalog note does not name %q: %s", want, ws[0].Message)
+		}
+	}
+}
+
 func TestCheckPinsPasses(t *testing.T) {
 	if ps := CheckPins(pinnedAgent(), pricing.Embedded()); len(ps) != 0 {
 		t.Fatalf("problems: %v", ps)
@@ -133,9 +163,9 @@ func TestUnpricedModelRefused(t *testing.T) {
 	if paths(ps) != "agent.models.coder,agent.models.background" || !strings.Contains(ps[0].Message, "no price") {
 		t.Fatalf("problems: %v", ps)
 	}
-	// The embedded starter row for the first model is a price, so it passes.
-	if ps := CheckPins(providerAgent("deepseek/deepseek-v4-flash"), pricing.Embedded()); len(ps) != 0 {
-		t.Fatalf("starter row refused: %v", ps)
+	// The catalog's row for the route's model is a price, so it passes.
+	if ps := CheckPins(providerAgent("deepseek/deepseek-v4-flash"), providerPrices(t)); len(ps) != 0 {
+		t.Fatalf("catalog row refused: %v", ps)
 	}
 	// A variant suffix is a different model: no price.
 	if ps := CheckPins(providerAgent("deepseek/deepseek-v4-flash:free"), pricing.Embedded()); len(ps) == 0 {
@@ -144,7 +174,10 @@ func TestUnpricedModelRefused(t *testing.T) {
 }
 
 func TestUnverifiedPriceWarns(t *testing.T) {
-	ws := PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), pricing.Embedded())
+	// The placeholder row a provider model used to get from the embedded
+	// table (the built-in catalog prices provider models now): built here so
+	// the flag, its source and its date stay covered.
+	ws := PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), placeholderPrices())
 	if paths(ws) != "agent.models.coder,agent.models.background" || ws[0].Code != CodeUnverifiedPrice ||
 		!strings.Contains(ws[0].Message, "unverified") || !strings.Contains(ws[0].Message, "model_prices") {
 		t.Fatalf("warnings: %v", ws)

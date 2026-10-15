@@ -19,7 +19,7 @@ func feeRouted(t *testing.T, fee float64, prices func(*pricing.Table), stage Sta
 	prov, psrv := anthropicfake.New(t, script...)
 	h := newHarnessWith(t, func(o *Options) {
 		if prices != nil {
-			tbl := pricing.Embedded()
+			tbl := dsPrices()
 			prices(tbl)
 			o.Prices = tbl
 		}
@@ -162,7 +162,7 @@ func TestServingModelNeverLowersTheCharge(t *testing.T) {
 			if resp, b := r.post(msg(dsModel, 4000)); resp.StatusCode != 200 {
 				t.Fatalf("%d %s", resp.StatusCode, b)
 			}
-			tbl := pricing.Embedded()
+			tbl := dsPrices()
 			prices(tbl)
 			a, _ := tbl.Lookup(dsModel)
 			b, _ := tbl.Lookup(c.served)

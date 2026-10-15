@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -26,10 +27,26 @@ func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.
 	g := newGW(t, cfg, mode, capUSD)
 	compat, up := anthropicfake.New(t, script...)
 	g.compat = compat
-	g.deps.Providers = map[string]config.ModelProvider{"openrouter": {
+	providers := map[string]config.ModelProvider{"openrouter": {
 		Kind: config.ModelProviderKind, BaseURL: up.URL, Auth: "bearer",
 		Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: allow,
 	}}
+	g.deps.Providers = providers
+	// The job's environment carries the same routes (init --repo writes
+	// FUGARO_MODEL_PROVIDERS from the owner's local config) and the run's
+	// price table is built from them (P5): without a route no model is
+	// claimed, so the built-in catalog has no row for it. newGW built the
+	// spend before the routes existed, so rebuild it with them.
+	raw, err := json.Marshal(providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{runner.BudgetModeEnv: mode, runner.MaxRunUSDEnv: capUSD, runner.ModelProvidersEnv: string(raw)}
+	spend, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.deps.Spend = spend
 	withProviderKey(g.harness)
 	return g
 }

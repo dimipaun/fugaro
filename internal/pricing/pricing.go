@@ -60,7 +60,11 @@ type Model struct {
 	// warn until the owner sets the real price under model_prices (which
 	// replaces the row and clears this). PriceSource and PriceCheckedAt say
 	// where the row came from and when; empty on a row the table's own
-	// Source and CheckedAt cover.
+	// Source and CheckedAt cover. No row of Embedded() sets it any more —
+	// the built-in provider price catalog prices a provider model, and a
+	// model with no price is refused rather than guessed at (P6) — but the
+	// flag, its warning and the fields beside it are what a future
+	// placeholder would use, and what an owner's override still clears.
 	Unverified     bool
 	PriceSource    string
 	PriceCheckedAt string

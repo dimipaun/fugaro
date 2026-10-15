@@ -3,8 +3,10 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
 func okProvider() ModelProvider {
@@ -172,9 +174,23 @@ func TestAllowsDataIgnoresCase(t *testing.T) {
 	}
 }
 
+// providerPrices is the table the program builds for okProvider's route: the
+// embedded rows, the built-in catalog's rows for the models the route claims,
+// then the owner's overrides last — PriceTable, the one builder every surface
+// prices from. A bare pricing.Embedded() prices no provider model any more:
+// the placeholder row is gone (P6), so a test that pins one needs the
+// catalog's row, exactly as a run would.
 func providerPrices(t *testing.T) *pricing.Table {
 	t.Helper()
-	return pricing.Embedded()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl, err := PriceTable(map[string]ModelProvider{"openrouter": okProvider()}, nil, cat, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tbl
 }
 
 // A repository's fugaro.yaml cannot carry a provider, a base URL, a key or a

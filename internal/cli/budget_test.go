@@ -682,7 +682,12 @@ func TestTUIAndCLIShareSetKill(t *testing.T) {
 	}
 }
 
-func TestPricesMarksPlaceholderRowsUnverified(t *testing.T) {
+// The embedded table carries no placeholder row for a provider model any
+// more: the built-in provider price catalog prices those (P6), and with no
+// project config no route claims one, so the printed table holds no provider
+// model at all — and no row is marked unverified. The catalog's own
+// provenance in this table is the CATALOG column's job.
+func TestPricesHasNoPlaceholderRow(t *testing.T) {
 	const key = "sk-or-v1-testkeyshouldneverprint"
 	t.Setenv("OPENROUTER_API_KEY", key)
 	isolateProjects(t, t.TempDir())
@@ -690,17 +695,14 @@ func TestPricesMarksPlaceholderRowsUnverified(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ds, sonnet string
+	if strings.Contains(out, "UNVERIFIED") || strings.Contains(out, "deepseek/") {
+		t.Fatalf("a placeholder row is still printed:\n%s", out)
+	}
+	var sonnet string
 	for _, l := range strings.Split(out, "\n") {
-		switch {
-		case strings.HasPrefix(l, "deepseek/deepseek-v4-flash"):
-			ds = l
-		case strings.HasPrefix(l, "claude-sonnet-5-5"):
+		if strings.HasPrefix(l, "claude-sonnet-5-5") {
 			sonnet = l
 		}
-	}
-	if !strings.Contains(ds, "NO") || !strings.Contains(ds, "UNVERIFIED") || !strings.Contains(ds, "placeholder") {
-		t.Fatalf("the placeholder row is not marked:\n%s", out)
 	}
 	if !strings.Contains(sonnet, "yes") || strings.Contains(sonnet, "UNVERIFIED") {
 		t.Fatalf("a checked row is marked unverified:\n%s", out)
@@ -715,16 +717,13 @@ func TestPricesMarksPlaceholderRowsUnverified(t *testing.T) {
 	if err := json.Unmarshal([]byte(js), &doc); err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	if len(doc.Models) == 0 {
+		t.Fatalf("no rows: %s", js)
+	}
 	for _, m := range doc.Models {
-		if m.ID == "deepseek/deepseek-v4-flash" {
-			found = m.Unverified && m.Source != "" && m.CheckedAt != ""
-		} else if m.Unverified {
+		if m.Unverified {
 			t.Errorf("%s is marked unverified", m.ID)
 		}
-	}
-	if !found {
-		t.Fatalf("json lacks the unverified flag and source: %s", js)
 	}
 	if strings.Contains(out+js, key) {
 		t.Fatal("the provider key is in the output")
