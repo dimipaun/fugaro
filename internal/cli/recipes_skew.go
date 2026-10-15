@@ -31,18 +31,22 @@ const recipesSince = "0.5.0"
 const layeredSince = "0.6.0"
 
 // cloneSince names the release whose runner reads FUGARO_CHECKOUT and makes
-// a blobless clone at start (plan Task 17). Today it names a release that
-// does not exist yet, on purpose (see cloneShipped): until that release is
-// tagged, this constant is a placeholder for "the release that will ship
-// it", not
+// a blobless clone at start (plan Task 17). It names the release this branch's
+// release notes ship, which is not tagged yet while they are a draft (see
+// cloneShipped): it is a placeholder for "the release that will ship it", not
 // a verified fact the way recipesSince/layeredSince/namedTokensSince above
 // are. checkCloneImageSince below gates it unconditionally, whether or not
 // the workflow also uses a recipe or a project layer: nothing else here
 // checks that base_images.base is actually this recent (fugaro-base could
 // first be published from an older release, or --image-source could mirror
-// one). Once Task 17 ships, this constant's job becomes the same as the
-// others': docs/release.md's ("Before you tag") checklist verifies it
-// equals the release that ships it.
+// one). Note what the gate can and cannot do while cloneShipped is false: it
+// refuses an image with no release tag and one older than cloneSince, but an
+// image whose own release *is* cloneSince or later satisfies
+// imagePredates(rel, cloneSince) == false and passes — which is exactly why
+// the flip-or-bump decision below is a precondition of that tag, not
+// something the gate can be relied on to catch. Once Task 17 ships, this
+// constant's job becomes the same as the others': docs/release.md's ("Before
+// you tag") checklist verifies it equals the release that ships it.
 const cloneSince = "0.7.5"
 
 // cloneShipped is false until the release named by cloneSince is actually
@@ -50,11 +54,16 @@ const cloneSince = "0.7.5"
 // and the refusal of any deployed checkout: clone job before it) is in the
 // tree, but no tagged fugaro release carries it yet, so no released binary
 // can run one. While it is false:
-//   - checkCloneImageSince's cloneSince-specific branches refuse every
-//     checkout: clone launch on any job image, known release or not,
-//     including the current one, with guidance that the runner side is
-//     not released yet (not the ordinary "upgrade your base image" line,
-//     which would not fix anything here);
+//   - checkCloneImageSince's cloneSince-specific branches refuse a
+//     checkout: clone launch on a job image with no release tag (a dev
+//     build, a hand-pushed image) and on one older than cloneSince, with
+//     guidance that the runner side is not released yet (not the ordinary
+//     "upgrade your base image" line, which would not fix anything here).
+//     An image whose own release is cloneSince or later passes this gate:
+//     while cloneSince names a release that is not tagged, no such image
+//     exists, and once one does either the flip below has happened or the
+//     constant has been bumped past it — that ordering is the precondition
+//     docs/release.md's "Before you tag" checklist verifies;
 //   - refuseClonesNotShipped refuses fugaro init --repo and fugaro image
 //     refresh before either deploys or moves a checkout: clone workflow's
 //     job, so a clone job can never come to exist in the first place —
@@ -271,10 +280,11 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 	// predates cloneSince (a known, too-old release) or its release is not
 	// known at all (a dev build, a hand-pushed image, or an --image-source
 	// mirror without a release tag): cloneShipped being false means no
-	// image, of any release or none, can run checkout: clone, so
+	// runner a release can build today reads FUGARO_CHECKOUT, so
 	// "fugaro init --base base" (refuse's own fix line) would not help
 	// either way. Say so plainly, and name checkout: baked, the only
-	// checkout that actually runs today.
+	// checkout that actually runs today. (Images at cloneSince or later do
+	// not reach this closure at all — see the constant's comment.)
 	notShipped := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later); checkout: clone's own runner side is not released yet "+
 			"(generic-tool plan Task 17 has not shipped), so the checkout: clone job image of %s workflow %s (%s) is refused "+

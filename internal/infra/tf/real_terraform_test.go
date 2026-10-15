@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -227,14 +229,59 @@ func mapsEqual(a, b map[string][]string) bool {
 	return true
 }
 
+// abortAddress, abortOnLine and abortSource are the three parts of the abort
+// that name *the configuration* rather than the wording: the resource
+// instance Terraform refused, the file and line it points at, and the line
+// of source it quotes. Everything between and around them is Terraform's own
+// text, and that is what this generator reproduces.
+var (
+	abortAddress = regexp.MustCompile(`(?m)^Resource (\S+) has$`)
+	abortOnLine  = regexp.MustCompile(`(?m)^  on (\S+) line (\d+):$`)
+	abortSource  = regexp.MustCompile(`(?m)^   (\d+): (.*)$`)
+)
+
+// retarget rewrites the real abort so it names what the committed fixture
+// names: each of the three spans above is replaced, verbatim, by the span the
+// fixture carries. Nothing else is touched, so the two texts agree on the
+// wording, the wrap points and the punctuation by construction -- which is
+// the property the fixture exists for.
+func retarget(fixture, real string) (string, error) {
+	out := real
+	for _, re := range []*regexp.Regexp{abortAddress, abortOnLine, abortSource} {
+		want := re.FindString(fixture)
+		if want == "" {
+			return "", fmt.Errorf("the committed fixture carries no %s", re)
+		}
+		if !re.MatchString(out) {
+			return "", fmt.Errorf("Terraform no longer prints %s:\n%s", re, real)
+		}
+		out = re.ReplaceAllLiteralString(out, want)
+	}
+	return out, nil
+}
+
 // The real prevent_destroy abort, as Terraform prints it, is the fixture the
 // CLI's matcher is pinned against (internal/cli/testdata's copy): the design's
 // §1 quote also comes from a real run, and a fixture written by hand could
-// pin text Terraform never produces. It really runs Terraform -- against the
-// built-in terraform_data resource, so nothing is downloaded, no credentials
-// are read and nothing is applied beyond the local backend -- and rewrites
-// the fixture only under -update, so a CI run with -tags terraform compiles
-// and vets it without writing anything.
+// pin text Terraform never produces.
+//
+// It really runs Terraform -- a module named repo whose resource stays in the
+// configuration while one for_each key leaves, which is the shape a
+// retirement really has -- so it needs nothing downloaded and no credential.
+// The resource is the built-in terraform_data and not the real
+// google_secret_manager_secret for exactly that reason: naming the google
+// provider would put a registry download and a provider configuration in
+// front of a test whose subject is a sentence.
+//
+// So three spans are the fixture's own, and retarget is what welds them to
+// the real text: the address instance
+// (module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]),
+// the file Terraform points at (secrets.tf) and the source line it quotes.
+// Those are what a real run of fugaro's repo root would print; the wording
+// around them is Terraform's, byte for byte. Run without -update the test
+// asserts that this still holds, so the committed fixture cannot drift from
+// Terraform's text or be edited by hand unnoticed; -update rewrites it from
+// the run, keeping the three spans it already carries.
 //
 // The message must still be *wrapped*: Terraform breaks the sentence at the
 // terminal width, and a fixture whose line happens to fit would make both the
@@ -243,9 +290,6 @@ func TestRealPreventDestroyText(t *testing.T) {
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
-	}
-	if !*update {
-		t.Skip("it rewrites internal/cli/testdata/prevent_destroy_wrapped.txt: pass -update")
 	}
 	root := t.TempDir()
 	dir := filepath.Join(root, "work")
@@ -265,6 +309,10 @@ func TestRealPreventDestroyText(t *testing.T) {
 	// from the configuration, so nothing would protect the instance and the
 	// plan would succeed, which is what the first version of this generator
 	// found.
+	//
+	// The module is named repo with its own directory, so the address
+	// Terraform prints is module-qualified and the "on <file> line <n>"
+	// chunk points into a module -- the two shapes the committed fixture has.
 	keep := `
 resource "terraform_data" "this" {
   for_each = toset(["claude-oauth-token"])
@@ -279,11 +327,20 @@ resource "terraform_data" "this" {
   lifecycle { prevent_destroy = true }
 }
 `
+	if err := os.MkdirAll(filepath.Join(dir, "modules", "repo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	write := func(content string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "modules", "repo", "main.tf"), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`module "repo" {
+  source = "./modules/repo"
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "terraform.tfvars.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -321,7 +378,21 @@ resource "terraform_data" "this" {
 		t.Fatalf("the whitespace-normalized signature is not in the real text:\n%s", xe.Stderr)
 	}
 	path := filepath.Join("..", "..", "cli", "testdata", "prevent_destroy_wrapped.txt")
-	if err := os.WriteFile(path, []byte(xe.Stderr), 0o644); err != nil {
+	committed, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the committed fixture: %v", err)
+	}
+	regenerated, err := retarget(string(committed), xe.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !*update {
+		if regenerated != string(committed) {
+			t.Errorf("the committed fixture is not what this run produces: its wording has drifted from Terraform's, or it was edited by hand. Rerun with -update.\n--- committed ---\n%s\n--- produced ---\n%s", committed, regenerated)
+		}
+		return
+	}
+	if err := os.WriteFile(path, []byte(regenerated), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

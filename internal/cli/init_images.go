@@ -132,16 +132,25 @@ func basepinSource(source string) (owner, repo string, err error) {
 // newARClient is the client the read-back through the remote repository
 // uses: the person's Application Default Credentials, which carry their
 // reader grant on that repository (Task 1, design §5.3). It refuses a
-// redirect off the registry's own host, so the credential cannot be
-// carried somewhere else. Tests replace it.
+// redirect off the registry's own host — so the credential cannot be
+// carried somewhere else — and it refuses any redirect that is not https,
+// because a same-host redirect from https to http would carry the Bearer
+// token in cleartext over a connection anyone on the path can read.
+// Tests replace it.
 var newARClient = func(ctx context.Context, m *mirror.Mirror) (*http.Client, error) {
 	if m == nil || m.Token == nil {
 		return nil, userErr("no Google credentials to read the base image back through the registry")
 	}
 	c := oauth2.NewClient(ctx, m.Token)
 	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+		if len(via) == 0 {
+			return nil
+		}
+		if req.URL.Host != via[0].URL.Host {
 			return fmt.Errorf("refusing a redirect to %s: the registry credential stays on the registry's own host", req.URL.Host)
+		}
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("refusing a redirect to %s: the registry credential is sent over https only, and following this one would put it on the wire in cleartext", req.URL)
 		}
 		return nil
 	}

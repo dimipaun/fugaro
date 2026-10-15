@@ -325,6 +325,14 @@ func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
 	if !ok {
 		return fmt.Errorf("its task.json names workflow %q, which is not a workflow name, so execution %s can't be tied to the run's job", oneLineCLI(spec.Workflow), name)
 	}
+	// TODO(compute-backend Task 8): this is Cloud Run's own codec, reached
+	// through the concrete gcp package rather than the backend seam, so a
+	// project whose backend is not Cloud Run would be checked with the wrong
+	// codec. It is correct today only because localcfg refuses every other
+	// backend name (internal/localcfg/localcfg.go). Task 8 -- not the enable
+	// task, which is Task 9 and only lifts that refusal -- replaces it with
+	// the selected backend's Codec.ValidateRun (design
+	// compute-backend.md §8.1 Task 8, C12).
 	err := gcp.CheckRunExecution(name, e.lc.Region, slug, variant)
 	var wr *backend.WrongRegionError
 	if errors.As(err, &wr) {

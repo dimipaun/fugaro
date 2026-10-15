@@ -220,7 +220,7 @@ The `routing` skill gains a section "Choosing a recipe" (G16). It does not get a
 **Recommendation (G17):**
 - **Plural nouns, as today.** `fugaro recipes ls` exists, and so do `secrets`, `budget` and `image`. Cobra aliases make `fugaro recipe ls` work too, at one line each (`Aliases: []string{"recipe"}`), so the spec's spelling works without a second command.
 - **`fugaro runs ls` replaces `fugaro ls`.** The noun is "run", not "job": in Fugaro a *job* is a workflow's Cloud Run job, and a *run* is one execution of a task (`fugaro run`, `RUN` arguments, `runs/` in the bucket). `fugaro job ls` would list the wrong thing. The alias `jobs` is not added, for the same reason.
-- **`fugaro ls` is removed, with a hidden tombstone in 0.7.0.** `fugaro ls` exits 2 with `fugaro ls was renamed in 0.7.0: use fugaro runs ls (same flags)`. The tombstone is deleted in 0.8.0. No working alias (the memory rule; the tombstone costs one function). Veto alternative: keep `ls` as a hidden working alias.
+- **`fugaro ls` is removed, with a hidden tombstone in 0.7.0.** `fugaro ls` exits 1 (a user error, not the remote failure exit 2 of v1.md §9.1) with `fugaro ls was renamed in 0.7.0: use fugaro runs ls (same flags)`. The tombstone is deleted in the next release, not 0.8.0: the owner's 2026-10-14 ruling moved the deletion there (plan Task 29, "it may ship in 0.7.1"; that release was later renamed 0.7.5, #370), and it shipped — #350 removed it, so `ls` is an ordinary unknown command in 0.7.5. No working alias (the memory rule; the tombstone costs one function). Veto alternative: keep `ls` as a hidden working alias.
 - **The verbs on one run stay top-level:** `run`, `logs`, `diagnose`, `cancel` and `watch`. They are the hot path, like `git log` and `docker logs`. Moving them under `runs` gains consistency and costs every skill, doc and muscle memory. Veto alternative: `fugaro runs logs|diagnose|cancel`, each with a tombstone.
 - `fugaro recipes ls --verbose` (§3.2).
 - Future nouns slot in the same way: `fugaro backends ls` when a second backend exists.
@@ -309,7 +309,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 
 ## 12. Release, order and coordination
 
-**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) is **release 0.8.0** (R4), alongside section 1: it is not a 0.7.0 group.
+**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) was placed in **release 0.8.0** by R4, alongside section 1: it is not a 0.7.0 group. The owner's 2026-10-14 ruling later moved §1.1 forward — Tasks 24 and 25 shipped in 0.7.5 — and dropped the two gen-2 Docker tasks, leaving section 1 (Task 28, the compute-instance backend) as the 0.8.0 work.
 
 **Order against the other 0.7.0 work** (G27):
 - **Layered config Phase 1 (0.6.0) merges first.** Its scope table (`internal/config/scope.go`) and project layer (`layer.go`) must list the new keys `workflows.<n>.checkout`, `commands.lint`, `commands.fix` and `review.allow_forks`. Its Task 17 edits `ls.go`, so it must land before the rename.
@@ -327,7 +327,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 - Group D, provisioning: 4.
 - Group E, docs and skills: 2.
 
-Plus six tasks for 0.8.0 (plan Tasks 24 to 29): the cost preview (Group F, moved from 0.7.0 by R4), the measurement, two blocked phases and the tombstone's removal. Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
+Plus six tasks the plan wrote after 0.7.0 (plan Tasks 24 to 29), of which one is still open. The owner's 2026-10-14 ruling moved them: Tasks 24 and 25 (the per-stage cost in `result.json` and `fugaro budget preview`) shipped in 0.7.5 as §1.1; Task 29 (the tombstone's removal) shipped there too (#350); Tasks 26 and 27 (the Check 31 gen-2 Docker measurement and Docker on gen-2) are **dropped**, because Cloud Run gen-2 cannot run Docker; Task 28 (a Docker-capable backend on Compute Engine VMs) was **restored** in their place and is the only one left for 0.8.0 — its design shipped (#375, `compute-backend.md`) and its implementation plan is written after that design is approved. Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
 
 ## 13. Verified and unverified
 

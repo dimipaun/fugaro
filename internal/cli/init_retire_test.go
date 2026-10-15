@@ -586,6 +586,15 @@ func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.
 
 // A retirement is not a way to apply an unread plan: the plan's own counts
 // and its full delete list are printed before the second confirmation.
+//
+// M-5 pins the list itself: it is the plan's deletes, not the summary's
+// prediction, and the fixture tells the two apart. The retirement set holds
+// three addresses -- the variant's service account the plan really deletes,
+// the orphaned job the removal takes out of the state before the plan, and
+// the container the plan still produces (adopted, kept) -- so a list built
+// from the prediction would name the job and the container, and no apply may
+// destroy either. Only `delete <the service account>` belongs in the block,
+// and it has to sit between the header and the prompt.
 func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 	newRetireRig(t, retireOpts{protection: true})
 	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
@@ -595,12 +604,43 @@ func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 	text := out + errOut
 	second := strings.LastIndex(text, "⚠ CONFIRM")
 	counts := strings.Index(text, "0 imports, 1 creates, 1 updates, 1 deletes")
-	list := strings.Index(text, "delete "+retireSvcAddr)
-	if counts == -1 || list == -1 || second == -1 {
-		t.Fatalf("counts at %d, the delete list at %d, the second prompt at %d:\n%s", counts, list, second, text)
+	header := strings.Index(text, "the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:")
+	list := strings.Index(text, "\n  delete "+retireSvcAddr)
+	if counts == -1 || header == -1 || list == -1 || second == -1 {
+		t.Fatalf("counts at %d, the header at %d, the delete list at %d, the second prompt at %d:\n%s",
+			counts, header, list, second, text)
 	}
-	if counts > second || list > second {
-		t.Errorf("the plan is shown after the second confirmation (counts %d, list %d, prompt %d)", counts, list, second)
+	// Fatal, not Error: the block below is the slice between two of these
+	// offsets, so an ordering that puts the prompt first must fail here
+	// rather than panic in the slice.
+	if counts > second || header > second || list > second {
+		t.Fatalf("the plan is shown after the second confirmation (counts %d, header %d, list %d, prompt %d)",
+			counts, header, list, second)
+	}
+	if list < header {
+		t.Errorf("the delete list is printed before the line that introduces it (header %d, list %d)", header, list)
+	}
+	// The block is the plan's own list: exactly the deletes of this plan, one
+	// address a line, and nothing the prediction holds.
+	block := text[header:second]
+	var deletes []string
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(line, "  delete ") {
+			deletes = append(deletes, strings.TrimPrefix(line, "  delete "))
+		}
+	}
+	if len(deletes) != 1 || deletes[0] != retireSvcAddr {
+		t.Errorf("the printed delete list is %q, want only the plan's own delete of %s:\n%s", deletes, retireSvcAddr, block)
+	}
+	for _, predicted := range []string{retireJobAddr, retireKeptAddr} {
+		if strings.Contains(block, predicted) {
+			t.Errorf("the printed list names %s, which is a retirement no plan of this run deletes:\n%s", predicted, block)
+		}
+	}
+	// And both of them are in the retirement set this run printed: the block
+	// above is what differs, not the summary.
+	if !strings.Contains(text, retireJobAddr) {
+		t.Errorf("fixture bug: the retirement set does not hold the job:\n%s", text)
 	}
 }
 
@@ -1148,16 +1188,37 @@ func TestPreventDestroyAbortMatchesWrappedTerraformText(t *testing.T) {
 			t.Errorf("the abort for a resource fugaro never destroys does not say %q: %v", want, notRead)
 		}
 	}
-	// An ordinary address keeps the module advice: a service account, an IAM
-	// member, a bucket grant are all things an apply may destroy once the
-	// configuration stops producing them.
+	// An ordinary address is not given the module advice, and is given the
+	// state removal instead (M-1): the repo root's only two
+	// lifecycle.prevent_destroy declarations are the container and the
+	// registry, and the embedded workdir is rewritten every run, so "take the
+	// block out of the module" could not be followed even if it were safe.
+	// A service account, an IAM member and a bucket grant are all things an
+	// apply may destroy once the configuration stops producing them.
 	const plain = `module.repo.module.workflow["app"].google_service_account.job`
 	ordinary := retireAborted(nil, plain, "/wd")
-	if !strings.Contains(ordinary.Error(), "take the lifecycle.prevent_destroy block out of the module") {
-		t.Errorf("an ordinary address lost the module advice: %v", ordinary)
+	if strings.Contains(ordinary.Error(), "take the lifecycle.prevent_destroy block out of the module") {
+		t.Errorf("an ordinary address is still told to edit the module: %v", ordinary)
 	}
-	if strings.Contains(ordinary.Error(), "terraform state rm") {
-		t.Errorf("an ordinary address is given the never-destroyed advice: %v", ordinary)
+	for _, want := range []string{"terraform state rm '" + plain + "'", "/wd", "revert the configuration change"} {
+		if !strings.Contains(ordinary.Error(), want) {
+			t.Errorf("the abort for an ordinary address does not say %q: %v", want, ordinary)
+		}
+	}
+	// And when Terraform's text does not yield the address, the removal is
+	// asked for by the address Terraform named, not by an empty pair of
+	// quotes -- which is the same wording the reader needs either way.
+	unreadable := retireAborted(nil, "", "/wd")
+	for _, want := range []string{"the address named in Terraform's error", "/wd", "revert the configuration change"} {
+		if !strings.Contains(unreadable.Error(), want) {
+			t.Errorf("the abort with no address does not say %q: %v", want, unreadable)
+		}
+	}
+	if strings.Contains(unreadable.Error(), "state rm ''") {
+		t.Errorf("the abort with no address asks to remove the empty address: %v", unreadable)
+	}
+	if !strings.Contains(unreadable.Error(), "a resource carries") {
+		t.Errorf("the abort with no address does not read as a sentence: %v", unreadable)
 	}
 	read := retireAborted([]infra.Retirement{{Address: retireKeptAddr, Kept: infra.KeptSecret}}, retireKeptAddr, "/wd")
 	if !strings.Contains(read.Error(), retireNextCommand) {
@@ -2079,40 +2140,63 @@ func TestInitRepoRetireSaysWhenThereIsNothingToRetire(t *testing.T) {
 	}
 }
 
-// "Nothing to retire" and "could not look" are different sentences (design
-// §3.1a, review round 3): with the job list refused, the labels never
-// answered, and the run may not claim they found nothing. What it says is
-// that it cannot say -- and it still removes nothing, deletes nothing and
-// confirms nothing.
-func TestInitRepoRetireSaysTheCheckCouldNotBeMade(t *testing.T) {
-	r := newRetireRig(t, retireOpts{protection: false, stateEmpty: true, noOrphanJob: true, keptAsNote: true})
-	r.run.FailListWith = 403
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
-	if err != nil {
-		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
-	}
-	text := out + errOut
-	if !strings.Contains(text, "could not list the repository's Cloud Run jobs (run.jobs.list)") {
-		t.Errorf("the refused label call is not named:\n%s", text)
-	}
-	if strings.Contains(text, "Nothing to retire:") {
-		t.Errorf("the run claims there is nothing to retire after a look it could not make:\n%s", text)
-	}
-	if !strings.Contains(text, "Cannot say whether there is anything to retire:") {
-		t.Errorf("the run does not say the check could not be made:\n%s", text)
-	}
-	if calls := r.ran(t, "state rm"); len(calls) != 0 {
-		t.Errorf("state rm ran: %v", calls)
+// M-4: a label call that did not answer stops --retire, and the refusal names
+// the call. §3.1a's degradation is for the ordinary run; here the set drives
+// state removals, and without the labels a live container of the repository
+// that no job mounts is called KEPT -- and Kept is what Removals takes out of
+// the state, so the container would silently lose Terraform's management while
+// keeping its value and its labels. That is the false positive §3.1a forbids,
+// so the run refuses before it computes anything, removes nothing, deletes
+// nothing and confirms nothing -- and does not reach a prompt.
+func TestInitRepoRetireRefusesAFailedLabelCall(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		fail       func(r *retireRig)
+	}{
+		{"the job list", "could not list the repository's Cloud Run jobs (run.jobs.list)", func(r *retireRig) { r.run.FailListWith = 403 }},
+		{"the secrets list", "could not list the repository's secrets (secretmanager.secrets.list)", func(r *retireRig) { r.sm.FailListWith = 403 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRetireRig(t, retireOpts{protection: false, keptAsNote: true})
+			tc.fail(r)
+			// No typed confirmation is fed in: a refusal that reached the
+			// first prompt would fail on EOF instead of on the message.
+			out, errOut, err := executeStdin(t, "", "init", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+			if ExitCode(err) != ExitRemoteError {
+				t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+			}
+			msg := err.Error()
+			for _, want := range []string{
+				tc.want,
+				"it will not run on a retirement set read without the labels",
+				"the removal would release the live one from Terraform's management",
+				"Nothing was removed from the state, nothing was deleted and nothing was confirmed.",
+				"rerun without --retire",
+			} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("the refusal does not say %q:\n%v", want, err)
+				}
+			}
+			if calls := r.ran(t, "state rm"); len(calls) != 0 {
+				t.Errorf("state rm ran: %v", calls)
+			}
+			if got := r.ran(t, "plan"); len(got) != 0 {
+				t.Errorf("the run planned anyway: %v", got)
+			}
+			if got := r.applies(t); len(got) != 0 {
+				t.Errorf("the run applied anyway: %v", got)
+			}
+		})
 	}
 }
 
-// A refused secrets list does not end the run (design §3.1a, review round
-// 3): discovery cannot union a container the configuration no longer
-// computes back into the plan, and it says so rather than aborting the
-// ordinary `fugaro init --repo` -- the same permission answers the
-// retirement's own label call, which the run reports the same way. What is
-// lost is the union, and the plan's own prevent_destroy refusal is what
-// catches the consequence.
+// The same two calls degrade loudly on the ordinary run, and the run goes on
+// (design §3.1a, review round 3): discovery cannot union a container the
+// configuration no longer computes back into the plan, and it says so rather
+// than aborting the ordinary `fugaro init --repo` -- the same permission
+// answers the retirement's own label call, which the run reports the same
+// way. What is lost is the union, and the plan's own prevent_destroy refusal
+// is what catches the consequence.
 func TestInitRepoRefusedSecretsListDegradesInsteadOfAborting(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false})
 	r.sm.FailListWith = 403
