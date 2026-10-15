@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 )
@@ -30,7 +32,6 @@ func computeSpec() ComputeSpec {
 		ManageAPIs:         true,
 		Launchers:          []string{"user:owner@example.com"},
 		Operators:          []string{},
-		LauncherRunGrants:  []LauncherRunGrant{{Member: "user:owner@example.com", Account: "fugaro-acme-web@proj-1234.iam.gserviceaccount.com"}},
 		RunAccounts:        []string{"serviceAccount:fugaro-acme-web@proj-1234.iam.gserviceaccount.com"},
 		RegistryRepository: GhcrRegistry,
 		BaseImage:          "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3",
@@ -103,6 +104,7 @@ func TestComputeVarsRefuseWhatTheModuleRefuses(t *testing.T) {
 		{"no subnetwork", func(s *ComputeSpec) { s.Subnetwork = "" }, "subnetwork"},
 		{"no run accounts", func(s *ComputeSpec) { s.RunAccounts = nil }, "run account"},
 		{"no repository", func(s *ComputeSpec) { s.RegistryRepository = "" }, "repository"},
+		{"no base image", func(s *ComputeSpec) { s.BaseImage = "" }, "base image"},
 		{"no build-submitter role", func(s *ComputeSpec) { s.BuildSubmitterRole = "" }, "build-submitter"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -208,5 +210,71 @@ func TestJobPrefixIsTheModulesInput(t *testing.T) {
 	}
 	if JobPrefix != "fugaro-" {
 		t.Errorf("JobPrefix = %q: the job names are fugaro-<slug>-<workflow>-<hash> (internal/backend/batch/names.go)", JobPrefix)
+	}
+}
+
+// The preload rebuild's start is retried while the scheduler agent's binding
+// on the preload account propagates (57a's measurement: a binding created
+// moments before is not readable everywhere at once), and a refusal that
+// outlasts the retries is returned as it is, so the caller can name the one
+// command that starts the job by hand. A job that is not there is NOT
+// retried: it is a 404, not a propagated 403.
+func TestRunSchedulerJobRetriesPropagation(t *testing.T) {
+	restore := runJobRetries
+	runJobRetries = []time.Duration{0, 0}
+	t.Cleanup(func() { runJobRetries = restore })
+	ctx := context.Background()
+	f := newCloud(t)
+	f.sched.SetJob("proj-1234", "us-east5", PreloadSchedulerJob, "https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
+
+	f.sched.RefuseRuns = 2
+	if err := RunSchedulerJob(ctx, f.c, "proj-1234", "us-east5", PreloadSchedulerJob); err != nil {
+		t.Fatalf("two refusals then a run: %v", err)
+	}
+	if runs := f.sched.Runs(); len(runs) != 1 {
+		t.Errorf("the job ran %d times, want once: %v", len(runs), runs)
+	}
+
+	f.sched.RefuseRuns = len(runJobRetries) + 1
+	err := RunSchedulerJob(ctx, f.c, "proj-1234", "us-east5", PreloadSchedulerJob)
+	if err == nil || !strings.Contains(err.Error(), "PERMISSION_DENIED") {
+		t.Fatalf("a run that stays refused: %v", err)
+	}
+
+	// A job that does not exist fails at once: retrying a 404 would only
+	// delay the real answer.
+	if err := RunSchedulerJob(ctx, f.c, "proj-1234", "us-east5", "no-such-job"); err == nil {
+		t.Error("a run of a job that is not there succeeded")
+	}
+}
+
+// JobRunAccounts finds the installation's run-class accounts by their
+// display-name mark and nothing else: they are what a job's VM runs as, and
+// an account left out is a run that can never report its state. Another
+// account in the project, however it is named, is never one.
+func TestJobRunAccountsReadsTheJobMark(t *testing.T) {
+	f := newCloud(t)
+	f.crm.AddProject("proj-1234", testProjectNumber)
+	f.iam.AddServiceAccount("proj-1234", "fugaro-acme-web@proj-1234.iam.gserviceaccount.com", "Fugaro job acme/sandbox web")
+	f.iam.AddServiceAccount("proj-1234", "fugaro-acme-web-m4@proj-1234.iam.gserviceaccount.com", "Fugaro M4 job acme/sandbox web")
+	f.iam.AddServiceAccount("proj-1234", "fugaro-reaper@proj-1234.iam.gserviceaccount.com", "Fugaro reaper")
+	f.iam.AddServiceAccount("proj-1234", "123456789012-compute@developer.gserviceaccount.com", "Compute Engine default service account")
+
+	got, err := JobRunAccounts(context.Background(), f.c, "proj-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"serviceAccount:fugaro-acme-web-m4@proj-1234.iam.gserviceaccount.com",
+		"serviceAccount:fugaro-acme-web@proj-1234.iam.gserviceaccount.com",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("JobRunAccounts = %q, want %q", got, want)
+	}
+	// The reaper is not a run account: the design's §3.7 gives it exactly six
+	// permissions over jobs and instances, and a VM running as it could do
+	// neither of the things a run must.
+	if slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, ReaperAccountID) }) {
+		t.Errorf("the reaper's own account was returned as a run account: %q", got)
 	}
 }

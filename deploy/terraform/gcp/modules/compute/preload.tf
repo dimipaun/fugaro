@@ -37,7 +37,10 @@ locals {
         "BASE_PROJECT=${var.base_project}",
         "BASE_FAMILY=${var.base_family}",
         "REGISTRY_HOST=${var.region}-docker.pkg.dev",
-        "RUN_ACCOUNT=${sort(tolist(var.run_accounts))[0]}",
+        # The builder VM's own identity: a run-class account, whose reader
+        # grant lets the pull happen. It is passed as the EMAIL a VM's
+        # --service-account takes; run_accounts holds IAM members.
+        "RUN_ACCOUNT=${trimprefix(sort(tolist(var.run_accounts))[0], "serviceAccount:")}",
         "MACHINE_TYPE=${var.builder_machine_type}",
       ]
     }]

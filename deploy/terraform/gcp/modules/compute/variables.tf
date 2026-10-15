@@ -110,21 +110,18 @@ variable "operators" {
   type        = set(string)
 }
 
-variable "launcher_run_grants" {
-  description = "The (launcher, run account) pairs that get actAs, one row per pair: a launcher never holds actAs on an account this installation did not name."
-  type = list(object({
-    member  = string
-    account = string
-  }))
-}
-
 variable "run_accounts" {
-  description = "The run-class service accounts' emails: the accounts a job's VMs run as (§3.2). They get the run-class project roles and the base registry reader grant, and the launchers get actAs on them."
+  description = "The run-class service accounts, as IAM members (serviceAccount:<email>): the accounts a job's VMs run as (§3.2). They get the run-class project roles and the base registry reader grant, and the launchers get actAs on them -- on these accounts and no others, since the grant is the cross product of this set with the launchers."
   type        = set(string)
 
   validation {
     condition     = length(var.run_accounts) > 0
     error_message = "run_accounts must name at least one run-class account: the design forbids the default Compute Engine service account, and with no account here nothing a job runs as could report its state."
+  }
+
+  validation {
+    condition     = alltrue([for a in var.run_accounts : can(regex("^serviceAccount:[^@[:space:]]+@[^@[:space:]]+$", a))])
+    error_message = "run_accounts must be IAM members: serviceAccount:<email> (the email is what a VM's --service-account takes, and the member is what a project role takes)."
   }
 }
 

@@ -92,13 +92,20 @@ resource "google_project_iam_member" "launcher_jobs_editor" {
   }
 }
 
-# actAs on the run-class accounts only, and a "grant" here is one pair of
-# (launcher, account), so a launcher never holds actAs on an account this
-# installation did not name.
+# actAs, as the cross product of the launchers and the run-class accounts:
+# a launcher holds Service Account User on the accounts this installation
+# named and on no others. It is what creating a job that runs as one of them
+# needs (cloud.google.com/batch/docs/create-run-job-custom-service-account,
+# checked 2026-10-15), and it is deliberately not actAs on the project.
 resource "google_service_account_iam_member" "launcher_user" {
-  for_each = { for g in var.launcher_run_grants : "${g.member}|${g.account}" => g }
+  # The pair is an object rather than a tuple: the member expression then
+  # reads each.value.member, the reviewed shape every other grant here uses.
+  for_each = {
+    for p in setproduct(var.launchers, var.run_accounts) :
+    "${p[0]}|${p[1]}" => { member = p[0], run_account = p[1] }
+  }
 
-  service_account_id = "projects/${var.project}/serviceAccounts/${each.value.account}"
+  service_account_id = "projects/${var.project}/serviceAccounts/${trimprefix(each.value.run_account, "serviceAccount:")}"
   role               = "roles/iam.serviceAccountUser"
   member             = each.value.member
 }
@@ -230,7 +237,7 @@ resource "google_service_account_iam_member" "preload_cloud_build_agent" {
 resource "google_service_account_iam_member" "cloud_build_agent_user" {
   for_each = var.run_accounts
 
-  service_account_id = "projects/${var.project}/serviceAccounts/${each.value}"
+  service_account_id = "projects/${var.project}/serviceAccounts/${trimprefix(each.value, "serviceAccount:")}"
   role               = "roles/iam.serviceAccountUser"
   member             = local.cloud_build_agent
 }

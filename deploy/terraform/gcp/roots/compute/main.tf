@@ -41,7 +41,6 @@ module "compute" {
   manage_apis         = var.manage_apis
   launchers           = var.launchers
   operators           = var.operators
-  launcher_run_grants = var.launcher_run_grants
   run_accounts        = var.run_accounts
   registry_repository = var.registry_repository
   base_image          = var.base_image

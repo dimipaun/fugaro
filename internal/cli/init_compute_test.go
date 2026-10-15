@@ -1,0 +1,326 @@
+package cli
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+)
+
+// The compute stage (design compute-backend §8.1 task 6). It is the owner's
+// step, and the only step --yes may not reach that is neither a project, a
+// secret nor a checkout's own file: what it provisions is money (a NAT's
+// hours, a billable image build) and permanent, so its confirmation is the
+// project's name typed at a real terminal.
+//
+// The rig is the whole converge with --provision-batch: the run accounts come
+// from the project (a service account carrying a Fugaro job display name), the
+// installation's outputs come from the fake terraform, and the Scheduler fake
+// records the preload rebuild.
+
+// computePin is the base image the installation pins: through the remote
+// repository, the shape 57a measured on 2026-10-15 (§7.2). It is the image
+// the preload pulls onto the boot image, so the pin must be there for the
+// root to have anything to build from.
+const computePin = "us-east5-docker.pkg.dev/proj-1234/" + infra.GhcrRegistry + "/acme/fugaro-base:1.2.3"
+
+// computeRig is the ordinary init rig with a state bucket, a base pin, a run
+// account and the preload rebuild's job, ready for --provision-batch.
+func computeRig(t *testing.T) *initRig {
+	t.Helper()
+	r := newInitRig(t)
+	r.stateBucket()
+	// The installation's pin, recorded by the run that pinned it.
+	r.appendConfig(t, "base_images:\n  "+config.BaseKind+": "+computePin+"\n")
+	// The run-class account a repository root would have created: the only
+	// kind of account the compute root accepts as a run account.
+	r.iam.AddServiceAccount(initProject, "fugaro-acme-web@proj-1234.iam.gserviceaccount.com", "Fugaro job acme/sandbox web")
+	// The rebuild job the compute root creates; the stage starts it once the
+	// apply is done.
+	r.sched.SetJob(initProject, "us-east5", infra.PreloadSchedulerJob,
+		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
+	// The compute root's own outputs. They are scripted for this root alone:
+	// the installation's answer is a different one (a root's name is the
+	// script key's suffix).
+	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSON(t)}
+	r.save(t)
+	return r
+}
+
+// computeOutputsJSON is what the compute root's `terraform output -json`
+// answers: the image the preload built, and the names the stage reports.
+func computeOutputsJSON(t *testing.T) string {
+	t.Helper()
+	vals := map[string]string{
+		"preload_image":         infra.PreloadedImage(computePin),
+		"reaper_account":        infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com",
+		"reaper_role":           "projects/" + initProject + "/roles/" + infra.ReaperRoleID,
+		"preload_account":       infra.PreloadAccountID + "@" + initProject + ".iam.gserviceaccount.com",
+		"preload_scheduler_job": infra.PreloadSchedulerJob,
+		"network":               infra.DefaultNetwork(initProject),
+		"subnetwork":            infra.DefaultSubnetwork(initProject, "us-east5"),
+	}
+	out := map[string]any{}
+	for k, v := range vals {
+		out[k] = map[string]any{"value": v, "type": "string", "sensitive": false}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// computeCalls are the terraform subcommands run in the compute root's own
+// workdir, in order. The rig's calls() reads the args alone, and the workdir
+// is what tells this root's calls from the installation's.
+func computeCalls(t *testing.T, r *initRig) [][]string {
+	t.Helper()
+	dir, err := infra.ComputeWorkdir(os.Getenv, initProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(r.log)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out [][]string
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if line == "" {
+			continue
+		}
+		var c struct {
+			Args []string `json:"args"`
+			Dir  string   `json:"dir"`
+		}
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			t.Fatal(err)
+		}
+		if c.Dir == dir || strings.HasPrefix(c.Dir, dir+string(filepath.Separator)) {
+			out = append(out, c.Args)
+		}
+	}
+	return out
+}
+
+// subcommands are the subcommands of calls, in order.
+func subcommands(calls [][]string) []string {
+	var out []string
+	for _, c := range calls {
+		out = append(out, c[0])
+	}
+	return out
+}
+
+// The whole stage: a run that asks for the provisioning and types the
+// project's name plans the root, shows the summary, applies it in the root's
+// own workdir and state prefix, and starts the preload rebuild at once.
+func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
+	typedThroughYes(t) // about the provisioning, not about who may confirm it
+	r := computeRig(t)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	calls := computeCalls(t, r)
+	if got := subcommands(calls); !slices.Equal(got, []string{"version", "init", "plan", "show", "apply", "output"}) {
+		t.Fatalf("terraform calls in the compute workdir = %q\n%s", got, out)
+	}
+	init := calls[1]
+	if !slices.Contains(init, "-backend-config=prefix="+infra.StatePrefixCompute) {
+		t.Errorf("the compute root does not have a state of its own: %q", init)
+	}
+	if runs := r.sched.Runs(); len(runs) != 1 || !strings.Contains(runs[0], infra.PreloadSchedulerJob) {
+		t.Errorf("the preload rebuild was started %v, want once", runs)
+	}
+	if !strings.Contains(out, "provisions the Batch compute backend") {
+		t.Errorf("the confirmation did not say what it provisions:\n%s", out)
+	}
+	if !strings.Contains(out, infra.PreloadedImage(computePin)) {
+		t.Errorf("the preloaded image's name was not reported:\n%s", out)
+	}
+	// The tfvars are the installation's own readings, not the defaults: the
+	// run accounts come from the project, the repository and the roles from
+	// the installation's outputs, and the COS family from Google's project.
+	vars := computeTfvars(t, r)
+	for k, want := range map[string]any{
+		"project":              initProject,
+		"region":               "us-east5",
+		"run_accounts":         []any{"serviceAccount:fugaro-acme-web@proj-1234.iam.gserviceaccount.com"},
+		"registry_repository":  infra.GhcrRegistry,
+		"base_image":           computePin,
+		"base_project":         "batch-custom-image",
+		"base_family":          "batch-cos-stable-official",
+		"build_submitter_role": "projects/" + initProject + "/roles/fugaroBuildSubmitter",
+		"network":              "projects/" + initProject + "/global/networks/default",
+		"subnetwork":           "projects/" + initProject + "/regions/us-east5/subnetworks/default",
+	} {
+		if got := vars[k]; !equalJSON(got, want) {
+			t.Errorf("tfvars[%q] = %v, want %v", k, got, want)
+		}
+	}
+}
+
+// computeTfvars is the compute root's terraform.tfvars.json.
+func computeTfvars(t *testing.T, r *initRig) map[string]any {
+	t.Helper()
+	dir, err := infra.ComputeWorkdir(os.Getenv, initProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "gcp", "roots", "compute", "terraform.tfvars.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func equalJSON(a, b any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+// --yes never covers it: it is not a stage --yes is allowed to reach, so a
+// run that passes --yes and types nothing leaves it for the owner instead of
+// applying.
+func TestComputeStageNeverTakesYes(t *testing.T) {
+	r := computeRig(t)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "init", "--yes", "--provision-batch")
+	if err == nil || !strings.Contains(err.Error(), "left for you") {
+		t.Fatalf("err = %v, want the step left for the owner\n%s", err, out)
+	}
+	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
+		t.Fatalf("the compute root was applied without the typed name: %q", calls)
+	}
+	if len(r.sched.Runs()) != 0 {
+		t.Error("the preload rebuild was started by a run that applied nothing")
+	}
+	if !strings.Contains(out, "left for you (compute, prompt)") {
+		t.Errorf("the step was not reported as left for the owner:\n%s", out)
+	}
+	if !strings.Contains(out, "provisions the Batch compute backend") {
+		t.Errorf("what the step provisions was not shown before it was left:\n%s", out)
+	}
+}
+
+// A plan that would delete something is refused unless --allow-delete names
+// it: the stage never deletes what it did not create.
+func TestComputeStageGuardsDeletes(t *testing.T) {
+	r := computeRig(t)
+	r.setPlan(t, change("module.compute.google_compute_router_nat.this", "delete", "create"))
+	fakeTerminal(t)
+	_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	if err == nil || !strings.Contains(err.Error(), "--allow-delete") {
+		t.Fatalf("err = %v, want the guard's refusal", err)
+	}
+	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
+		t.Fatal("a plan that deletes was applied")
+	}
+}
+
+// Nothing to do is "No changes", not an apply: a second run of the stage is a
+// no-op, which is what makes it safe to rerun after a partial failure.
+func TestComputeStageNoChanges(t *testing.T) {
+	r := computeRig(t)
+	r.script["plan"] = map[string]any{"exit": 0} // an empty plan, everywhere
+	r.save(t)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
+		t.Fatalf("an empty plan was applied: %q", calls)
+	}
+	if !strings.Contains(out, "No changes: the compute backend's provisioning matches the plan.") {
+		t.Errorf("the empty plan was not reported:\n%s", out)
+	}
+}
+
+// --plan-only applies nothing, --provision-batch or not.
+func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
+	r := computeRig(t)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
+		t.Fatalf("--plan-only applied: %q", calls)
+	}
+}
+
+// The stage is not registered unless the flag is given: an ordinary run never
+// plans or touches the compute root, whatever the installation is. This is
+// the INERT guarantee the design's rollout rests on.
+func TestComputeStageIsBehindItsFlag(t *testing.T) {
+	r := computeRig(t)
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if calls := computeCalls(t, r); len(calls) != 0 {
+		t.Fatalf("an ordinary run reached the compute root: %q", calls)
+	}
+}
+
+// The flag is refused where it could only mislead: with --repo (another
+// root's run) and with --forget (which applies nothing). The check is asked
+// directly: a --repo run resolves the checkout before it validates anything,
+// and what is under test is the refusal, not the order of the checks.
+func TestProvisionBatchFlagIsRefusedWhereItCannotApply(t *testing.T) {
+	for _, o := range []*initOptions{{provisionBatch: true, repo: true}, {provisionBatch: true, forget: true}} {
+		err := o.check()
+		if err == nil || !strings.Contains(err.Error(), "--provision-batch") {
+			t.Errorf("%+v: err = %v, want it refused", o, err)
+		}
+	}
+}
+
+// The registry repository the root is given is the one the installation's pin
+// names, never the fugaro-base constant (§7.2): a grant aimed at the wrong
+// repository leaves every agent unable to pull.
+func TestRegistryRepositoryFollowsThePin(t *testing.T) {
+	host := "us-east5-docker.pkg.dev/" + initProject
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: host}
+	outs := infra.InstallationOutputs{BaseRegistry: infra.BaseRegistry, RegistryHost: host}
+	if got := registryRepository(lc, outs); got != infra.BaseRegistry {
+		t.Errorf("no pin: %q, want %q", got, infra.BaseRegistry)
+	}
+	lc.BaseImages = map[string]string{"base": host + "/" + infra.GhcrRegistry + "/acme/fugaro-base:1.2.3"}
+	lc.ImageSource = "ghcr.io/acme"
+	if got := registryRepository(lc, outs); got != infra.GhcrRegistry {
+		t.Errorf("a pin through the remote: %q, want %q", got, infra.GhcrRegistry)
+	}
+	// A pin that does not go through the remote repository (an installation
+	// that mirrors its base elsewhere) reads the installation's own answer.
+	lc.BaseImages = map[string]string{"base": "eu.gcr.io/other/fugaro-base:1.2.3"}
+	if got := registryRepository(lc, outs); got != infra.BaseRegistry {
+		t.Errorf("a foreign pin: %q, want %q", got, infra.BaseRegistry)
+	}
+	// The host the pin is read against comes from the installation's outputs
+	// when the local config does not carry it yet (a first run that also
+	// provisions): reading it against an empty host would aim the grant at
+	// the shared repository the pin does not go through (§7.2).
+	lc.RegistryHost = ""
+	lc.BaseImages = map[string]string{"base": host + "/" + infra.GhcrRegistry + "/acme/fugaro-base:1.2.3"}
+	if got := registryRepository(lc, outs); got != infra.GhcrRegistry {
+		t.Errorf("a first run's pin: %q, want %q", got, infra.GhcrRegistry)
+	}
+}

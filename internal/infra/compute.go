@@ -1,10 +1,23 @@
 package infra
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"time"
+
+	scheduler "google.golang.org/api/cloudscheduler/v1"
+	"google.golang.org/api/googleapi"
+	iam "google.golang.org/api/iam/v1"
 )
 
 // The Batch backend's installation-level provisioning (design
@@ -88,15 +101,6 @@ func ComputeNamesFor() ComputeNames {
 	}
 }
 
-// LauncherRunGrant is one (launcher, run account) pair: the launcher holds
-// Service Account User on that one account and on no other. The module is
-// given the pairs, never the cross product, so a launcher cannot act as an
-// account this installation did not name.
-type LauncherRunGrant struct {
-	Member  string `json:"member"`
-	Account string `json:"account"`
-}
-
 // ComputeSpec is the compute root's terraform.tfvars.json (§8.1 task 6).
 // Every field is an input of the root's own variables.tf and its key is that
 // file's variable name; TestComputeVarsMatchRootVariables holds the two
@@ -119,13 +123,12 @@ type ComputeSpec struct {
 
 	Launchers []string `json:"launchers"`
 	Operators []string `json:"operators"`
-	// LauncherRunGrants are the (launcher, run account) actAs pairs.
-	LauncherRunGrants []LauncherRunGrant `json:"launcher_run_grants"`
-	// RunAccounts are the accounts a run's VM runs as (§3.2). They hold
-	// Batch Agent Reporter, Logs Writer and a reader grant on the registry
-	// repository below, and nothing else. Never the default Compute Engine
-	// service account: the design forbids it and the module refuses an
-	// empty set.
+	// RunAccounts are the accounts a run's VM runs as (§3.2), as IAM
+	// members (serviceAccount:<email>): the module grants them Batch Agent
+	// Reporter, Logs Writer and a reader grant on the registry repository
+	// below, and gives the launchers actAs on them. Nothing else, and never
+	// the default Compute Engine service account: the design forbids it and
+	// the module refuses an empty set.
 	RunAccounts []string `json:"run_accounts"`
 
 	// RegistryRepository is the Artifact Registry repository the
@@ -171,6 +174,8 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 		return nil, fmt.Errorf("the compute root needs at least one run account: the design forbids the default Compute Engine service account, and no job could report its state")
 	case spec.RegistryRepository == "":
 		return nil, fmt.Errorf("the compute root needs the registry repository the installation's pin names (design compute-backend §7.2)")
+	case spec.BaseImage == "":
+		return nil, fmt.Errorf("the compute root needs the installation's pinned base image: the preloaded boot image is that image pulled onto a COS boot disk, so an empty one would build an image with nothing in it")
 	case spec.BuildSubmitterRole == "":
 		return nil, fmt.Errorf("the compute root needs the installation's build-submitter role: the preload build is started with it")
 	}
@@ -200,6 +205,127 @@ func ComputeWorkdir(getenv func(string) string, project string) (string, error) 
 		return "", err
 	}
 	return filepath.Join(filepath.Dir(dir), "compute"), nil
+}
+
+// ComputeOutputs are what the compute root reads back: the names the stage
+// reports and a later `doctor` check reads (§8.1 tasks 6 and 8). Nothing here
+// is a secret, and nothing here is a permission.
+type ComputeOutputs struct {
+	PreloadImage     string `json:"preload_image"`
+	ReaperAccount    string `json:"reaper_account"`
+	ReaperRole       string `json:"reaper_role"`
+	PreloadAccount   string `json:"preload_account"`
+	PreloadScheduler string `json:"preload_scheduler_job"`
+	Network          string `json:"network"`
+	Subnetwork       string `json:"subnetwork"`
+}
+
+// DecodeComputeOutputs reads the compute root's outputs.
+func DecodeComputeOutputs(raw map[string]json.RawMessage) (ComputeOutputs, error) {
+	var o ComputeOutputs
+	if len(raw) == 0 {
+		return o, ErrNoOutputs
+	}
+	typ := reflect.TypeFor[ComputeOutputs]()
+	v := reflect.ValueOf(&o).Elem()
+	for i := range typ.NumField() {
+		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+		val, ok := raw[name]
+		if !ok || bytes.Equal(bytes.TrimSpace(val), []byte("null")) {
+			continue
+		}
+		if err := json.Unmarshal(val, v.Field(i).Addr().Interface()); err != nil {
+			return ComputeOutputs{}, fmt.Errorf("the compute root's output %s: %w", name, err)
+		}
+	}
+	return o, nil
+}
+
+// jobMarkers are the display names a Fugaro job account carries: the current
+// one and the M4 bootstrap's. A display name is a service account's ownership
+// mark (gcp.JobSADisplayName; discovery compares it exactly and reports any
+// other value as foreign), so a listing can tell the installation's run-class
+// accounts from every other account in the project without reading a state.
+var jobMarkers = []string{"Fugaro job ", "Fugaro M4 job "}
+
+// JobRunAccounts lists the project's Fugaro job accounts, as IAM members
+// (serviceAccount:<email>): the run-class identities a Batch job's VM runs as
+// (§3.2). They are the accounts the repository roots created for the
+// installation's workflows, which is why they are listed rather than derived:
+// the local config records workflow names, not the token variants' accounts,
+// and an account left out here is a run whose VM cannot report its state.
+//
+// An empty answer is not an error here but is refused by ComputeVars: with no
+// run account the provisioning could only produce jobs that never report.
+func JobRunAccounts(ctx context.Context, c *Clients, project string) ([]string, error) {
+	if c.IAM == nil {
+		return nil, errors.New("no IAM client")
+	}
+	var out []string
+	err := c.IAM.Projects.ServiceAccounts.List("projects/"+project).PageSize(100).Pages(ctx, func(r *iam.ListServiceAccountsResponse) error {
+		for _, sa := range r.Accounts {
+			if sa.Email == "" || !slices.ContainsFunc(jobMarkers, func(m string) bool { return strings.HasPrefix(sa.DisplayName, m) }) {
+				continue
+			}
+			out = append(out, "serviceAccount:"+sa.Email)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing the project's job accounts: %w", err)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}
+
+// SchedulerJobName is the full name of one of an installation's Cloud
+// Scheduler jobs, as the API takes it.
+func SchedulerJobName(project, region, job string) string {
+	return "projects/" + project + "/locations/" + region + "/jobs/" + job
+}
+
+// RunSchedulerJob starts job now, as its own schedule would. The compute
+// stage uses it for the preload rebuild: the module creates the job, and a
+// fresh installation must not wait a week for its first preloaded image.
+//
+// The call is retried while it comes back "forbidden": a binding created
+// moments before — the scheduler's own agent's actAs on the account the job's
+// OAuth token is minted from — is not readable everywhere at once, which is
+// the propagation wait 57a measured (§7.2, §8.1 task 6). A refusal that
+// outlasts runJobRetries is returned as it is: the caller reports the one
+// command that starts the job by hand.
+func RunSchedulerJob(ctx context.Context, c *Clients, project, region, job string) error {
+	if c.Scheduler == nil {
+		return errors.New("no Cloud Scheduler client")
+	}
+	name := SchedulerJobName(project, region, job)
+	var err error
+	for attempt := 0; ; attempt++ {
+		if _, err = c.Scheduler.Projects.Locations.Jobs.Run(name, &scheduler.RunJobRequest{}).Context(ctx).Do(); err == nil {
+			return nil
+		}
+		if !propagating(err) || attempt >= len(runJobRetries) {
+			return fmt.Errorf("starting the scheduled job %s: %w", name, err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("starting the scheduled job %s: %w", name, err)
+		case <-time.After(runJobRetries[attempt]):
+		}
+	}
+}
+
+// runJobRetries are the waits between attempts at starting a scheduled job
+// whose identity's bindings may not have propagated yet. Tests replace them.
+var runJobRetries = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second}
+
+// propagating reports whether err is the refusal a just-created binding
+// gets: a 403 whose detail is a PERMISSION_DENIED about the caller or the
+// identity it acts as. Only a 403 counts — a 404 (the job is not there) and
+// an unreadable answer must fail at once, not be retried into a delay.
+func propagating(err error) bool {
+	var ae *googleapi.Error
+	return errors.As(err, &ae) && ae.Code == http.StatusForbidden
 }
 
 // PreloadedImage is the preloaded boot image's name for one pinned base

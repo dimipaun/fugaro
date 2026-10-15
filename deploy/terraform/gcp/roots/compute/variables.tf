@@ -46,13 +46,6 @@ variable "operators" {
   type = set(string)
 }
 
-variable "launcher_run_grants" {
-  type = list(object({
-    member  = string
-    account = string
-  }))
-}
-
 variable "run_accounts" {
   type = set(string)
 }
