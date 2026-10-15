@@ -115,23 +115,23 @@ Pin every download by version and checksum. Don't pipe a download into a shell, 
 
 ## 8. Secrets
 
-Run `fugaro secrets ls --json` (or read the `secrets` field of `fugaro doctor --json`).
+Run `fugaro secrets ls --repo --json` (this repository's view), or read the `secrets` field of `fugaro doctor --json`.
 Compare it with what the config needs: the git credential for the provider (`github-app-key` for GitHub, `bitbucket-token` for Bitbucket), the model credential the chosen auth names (`claude-oauth-token` for `oauth`; `anthropic-api-key` for `api-key` **whenever a call actually goes direct to Anthropic**: with the budget enforcing, that is a pin no provider the repository may use serves (a run whose models all route through providers needs none), and with the budget off or observing nothing routes a call to a provider (observing only accounts for the spend), so every call goes to Anthropic and the key is always needed whatever the pins are; `vertex` needs none), and each name under `workflows.<w>.secrets`. For every one that is missing, give the user a one-line command with the reason (the block below is the shape). Never ask for a value, never put one on a command line, and tell the user not to paste one into this conversation. A one-line value is typed at a hidden prompt; a multi-line one, such as the GitHub App's PEM key, must be redirected from a file with `<`. The user can also leave all of these to init's own hidden prompts in step 9. Where a credential is created, its name is shown as the author of every pull request and comment and can't be changed later. A Bitbucket repository access token: a name such as `Fugaro <org>`. A GitHub App: a name is unique across all of GitHub and the bare `Fugaro` is taken, so `<yourname>-fugaro` (for example `acme-fugaro`). The App's four repository permissions are Contents Read & write, Pull requests Read & write, Issues Read and Metadata Read, and never Workflows. Install it on this repository, and when its permissions change later, accept the change on the installation (GitHub requires it, or the old permissions stay). Details: [docs/git-providers.md](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md).
 
-The user runs these in their own terminal window, not through the agent, never you. One line per missing secret:
+The user runs these in their own terminal window, not through the agent. One line per missing secret; no `--repo`, so each goes to the scope it has by default:
 
 ```bash user-runs
 # the GitHub App private key (a PEM file: redirected, not typed)
-fugaro secrets set github-app-key --repo <owner/name> < <path-to-pem-file>
+fugaro secrets set github-app-key < <path-to-pem-file>
 # a one-line token, typed at a hidden prompt
-fugaro secrets set claude-oauth-token --repo <owner/name>
+fugaro secrets set claude-oauth-token
 ```
 
-**Named Claude accounts (optional).** The operator may have configured more than one Claude account in their own local config (`claude_accounts`; never in `fugaro.yaml`, and not something you can set up here) — `fugaro doctor --json`'s `secrets` field, or `fugaro secrets ls --json`, then lists more than one name starting `claude-oauth-token-`. If so, ask the user which account this repository's `agent.auth: oauth` workflow should use by default (or confirm its existing default is fine), and write `agent.oauth_token: <name>` under `agent` in `fugaro.yaml`, using the part of the secret name after `claude-oauth-token-`. Leave the key out to keep the repository on its default account, and never guess a name: `fugaro run` refuses one the operator's local config does not list this repository under, and `fugaro validate --json` only checks its shape, not whether it is allowed. The user runs this in their own terminal window, not through the agent, the same as every secret above, to store a chosen account's token with its full secret name:
+**Named Claude accounts (optional).** The operator may have configured more than one Claude account in their own local config (`claude_accounts`; never in `fugaro.yaml`, and not something you can set up here) — `fugaro doctor --json`'s `secrets` field, or `fugaro secrets ls --repo --json`, then lists more than one name starting `claude-oauth-token-`. If so, ask the user which account this repository's `agent.auth: oauth` workflow should use by default (or confirm its existing default is fine), and write `agent.oauth_token: <name>` under `agent` in `fugaro.yaml`, using the part of the secret name after `claude-oauth-token-`. Leave the key out to keep the repository on its default account, and never guess a name: `fugaro run` refuses one the operator's local config does not list this repository under, and `fugaro validate --json` only checks its shape, not whether it is allowed. The user runs this in their own terminal window, not through the agent, to store a chosen account's token with its full secret name:
 
 ```bash user-runs
 # a one-line token, typed at a hidden prompt (<name> is the account the user chose)
-fugaro secrets set claude-oauth-token-<name> --repo <owner/name>
+fugaro secrets set claude-oauth-token-<name>
 ```
 
 Minting a *second* Claude account's token, when this terminal already holds one from `claude setup-token` for another account, is not yet verified by Fugaro: tell the user to run `claude setup-token` again and follow whatever it prompts for switching accounts, rather than assuming a flag or a log-out step.

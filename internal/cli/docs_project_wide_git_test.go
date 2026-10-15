@@ -32,7 +32,7 @@ func TestDocsWarnAboutAProjectWideGitCredential(t *testing.T) {
 		{"../../docs/gcp-setup.md", []string{
 			"A project-wide git credential reaches other repositories:",
 			"the App key mints tokens for every repository the App is installed on",
-			"Store the git credential per repository unless that is the reach you mean",
+			"Store the git credential with `--repo acme/webapp` unless that is the reach you mean",
 			"give each repository its own App if it matters",
 			"installations of one App share its key",
 		}},
@@ -52,6 +52,34 @@ func TestDocsWarnAboutAProjectWideGitCredential(t *testing.T) {
 		// same App helps; it does not (one key, every installation).
 		if strings.Contains(doc, "its own App installation") {
 			t.Errorf("%s still says \"its own App installation\": installations of one App share its key", tc.path)
+		}
+	}
+}
+
+// TestSetupSkillStoresTheGitCredentialWithoutRepo: the setup skill's
+// user-runs block is the command a user copies, and since D2 the git
+// credential's default store is the project's own container (plan Task 2.1
+// step 1). A --repo there would store a repository copy instead, which wins
+// over the project copy for that repository from then on (design
+// project-secrets.md §5) — the very state the default exists to make
+// unnecessary, and the one both existing installations are already in for
+// the names that matter (§6 step 4a). The CLI's own note at store time says
+// which scope each name took, so the skill does not restate it.
+func TestSetupSkillStoresTheGitCredentialWithoutRepo(t *testing.T) {
+	skill, err := os.ReadFile("../../plugin/skills/setup/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(skill)
+	if !strings.Contains(text, "fugaro secrets set github-app-key < <path-to-pem-file>") {
+		t.Error("the setup skill no longer gives the App key as the project-wide default (`fugaro secrets set github-app-key < <path-to-pem-file>`)")
+	}
+	for _, bad := range []string{
+		"fugaro secrets set github-app-key --repo",
+		"fugaro secrets set bitbucket-token --repo",
+	} {
+		if strings.Contains(text, bad) {
+			t.Errorf("the setup skill passes --repo to %q: a repository copy wins over the project copy from then on, and the git credential is stored project-wide by default", bad)
 		}
 	}
 }

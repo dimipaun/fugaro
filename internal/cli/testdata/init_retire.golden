@@ -14,7 +14,7 @@ Removed from Terraform's state, and never deleted (1):
 
 KEPT — Fugaro never deletes a secret or a secret version:
   claude-oauth-token-bmb           leaves Terraform's state, unmanaged; Secret Manager is untouched
-  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.
+  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls --repo`.
 
 Order of operations:
   1. remove 2 addresses from Terraform's state without destroying them: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
