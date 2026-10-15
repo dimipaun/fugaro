@@ -210,7 +210,20 @@ What the numbers are:
      2026-10-15). So a per-base-version image built on `batch-cos` goes stale
      on Google's schedule as well as Fugaro's, and the fleet's oldest VM is a
      base image that may be past its supported lifetime — so the preload is a
-     thing to **rebuild on a schedule** (Task 6), not build once. How a Docker
+     thing to **rebuild on a schedule** (Task 6), not build once.
+     **Built** (Task 6, `deploy/terraform/gcp/modules/compute/preload.tf` and
+     `preload.sh`): the module owns the pipeline and the account, and the
+     build itself is a committed script — boot a COS VM from Google's family,
+     pull into its Docker store, wait for the pull's marker on the serial
+     port, image its disk, delete the VM — run by Cloud Build as a narrow
+     account and started by a Cloud Scheduler job
+     (`fugaro-preload-rebuild`, weekly). The image's name carries
+     `sha256(base_image)[:8]`, so one pinned base is one image and a new pin
+     is a new name; the stage starts the first build itself, so a fresh
+     installation does not wait for the schedule. Terraform owns none of the
+     build, deliberately: no resource expresses the wait in the middle of the
+     procedure, and an image taken from a disk whose pull has not finished is
+     an image with nothing in it. How a Docker
      data root is baked into a COS-derived image is **no longer open**: 57a-3b
      did it by pulling into the VM's Docker store and imaging its disk, with no
      package manager involved, and the resulting image booted and ran the
@@ -1574,7 +1587,14 @@ What follows, plainly:
   The reaper reads no secret and needs no Secret Manager, storage or logging
   grant. Task 6 creates the role and grants it; nothing selects the backend
   before the enable task (9), so none of this is reachable in an installation
-  today.
+  today. **Built** (Task 6,
+  `deploy/terraform/gcp/modules/compute/iam.tf`): the custom role is exactly
+  the six permissions above, in a `google_project_iam_custom_role` the reaper
+  account and nobody else holds — never `roles/batch.jobsEditor`, never
+  `roles/compute.instanceAdmin.v1`. `TestComputeReaperRoleIsExactlySix`
+  (`deploy/terraform/terraform_test.go`) holds the list to those six and
+  refuses both built-ins, so widening it is a test failure rather than a
+  silent grant.
 
 **Recommendation (C22): give the launcher `batch.jobsEditor`,
 `serviceAccountUser` scoped to the run-class accounts, and nothing else; if
@@ -1586,7 +1606,17 @@ recommendation takes it (2026-10-15, Check 57a step 9):** a
 `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")`
 was **accepted and read back as written** — so Task 6 should narrow the
 launcher's job-editing grant to Fugaro-shaped job names rather than leave it
-project-wide. **What was measured is the binding's acceptance, not its reach**:
+project-wide. **Built that way** (Task 6,
+`deploy/terraform/gcp/modules/compute/iam.tf`): one
+`roles/batch.jobsEditor` binding per launcher, each with the
+`resource.name.startsWith(...)` condition built from the job prefix the
+module is given (`local.job_name_prefix`), and `serviceAccountUser` granted
+as the cross product of the launchers and the run accounts — actAs on the
+accounts this installation named and on no others, never on the project.
+`TestComputeLauncherJobsEditorIsConditioned` refuses a second
+`batch.jobsEditor` binding, a binding without the condition, and any
+`compute.instanceAdmin.v1`, `compute.admin`, `editor` or `owner` grant
+anywhere under the module. **What was measured is the binding's acceptance, not its reach**:
 57a-9's purpose was to read *what the sandbox's IAM actually allows*, and **no
 request was ever made under the binding**, so no allow and no deny was ever
 observed — the enforcement below is **inferred from `resource.name`'s
@@ -3086,10 +3116,22 @@ recipe — the one route it leaves, the gid baked into the image, is untested
 - **A newly created service account is not visible to IAM binding calls for a
   while.** Poll the account, then retry the bindings on "does not exist" —
   provisioning that binds once and gives up is a provisioning that fails on a
-  fresh project (§1.9, Task 6).
+  fresh project (§1.9, Task 6). **Built** (Task 6): the IAM bindings are
+  Terraform's own `google_project_iam_member` resources, so their retry is
+  Terraform's; what Task 6 retries itself is the call that follows the apply —
+  starting the preload rebuild, whose scheduler agent's binding on the preload
+  account is seconds old (`infra.RunSchedulerJob`: a 403 is retried for about
+  a minute, a 404 is not retried at all, and a refusal that outlasts the
+  retries is reported with the one `gcloud scheduler jobs run` line that
+  starts the job by hand).
 - **Disabling Compute and re-enabling it fails with "currently being
   deactivated"** until the deactivation completes. Retry for minutes; it is not
-  an error to work around (§1.9, Task 6).
+  an error to work around (§1.9, Task 6). **Built** (Task 6,
+  `internal/infra/apis.go`): `EnableService` retries the enable call itself on
+  that answer — the 400 whose message is "is currently being deactivated" —
+  for about two minutes before it reports the failure, and
+  `internal/gcpfake/serviceusage.go` answers it so the retry is tested
+  (`TestEnableServiceWaitsOutADeactivation`) rather than merely written.
 - **The preload base image family lives in project `batch-custom-image`**
   (family `batch-cos-stable-official`), **not** in the installation's project —
   the check read the family from that project, and a Task 6 implementation that
@@ -3638,6 +3680,31 @@ senior reviewer before merge, not just the normal one.
    `fugaro-ghcr`, not the `fugaro-base` constant); the NAT/router; and the
    sink arm of Task 4. (§7.2's setup findings are this task's input list.)
    **[review]**
+   **Built** (Task 6, this branch): the root is
+   `deploy/terraform/gcp/roots/compute` over
+   `deploy/terraform/gcp/modules/compute` (the APIs, the three accounts and
+   their roles, the NAT and router on the network and subnetwork named
+   explicitly, the preload pipeline and its schedule), the Go-side contract is
+   `internal/infra/compute.go` (the spec, the tfvars, the outputs, the run
+   accounts read out of the project by their display-name mark, the image
+   name's derivation, the two retries), and the stage is
+   `internal/cli/init_compute.go`, registered by
+   `internal/cli/init_stages.go` only when `--provision-batch` is given and
+   registered `noYes` in `internal/initflow/stage.go`, so `--yes` never
+   covers it: it is confirmed by the project's name typed at a real terminal,
+   like the project's creation and the secrets. It is a root, a workdir and a
+   state prefix of its own (`fugaro/compute`), so the installation's tfvars,
+   imports and saved plan are never rewritten by it, every apply passes
+   `tf.Guard` with `--allow-delete`, and an empty plan is "No changes" rather
+   than an apply — the stage is idempotent to rerun. Image streaming is **not**
+   enabled (C4: the preloaded boot image is the fast-start path, and a Docker
+   run's `options` needs streaming off), so `containerfilesystem` is not
+   among the APIs it enables. What it does not do, by design: no secret is
+   handled, the installation's own root and the belong installation are never
+   touched, and nothing selects the backend — `backend: cloud-batch` stays
+   refused until the enable task (9). **The live step is the owner's**: the
+   code is built and tested against the fakes only, the `[review]` above
+   stands, and Check 57b (task 10) is what runs it against a real project.
 7. **The job definition, `Launch` and the socket.** **[review]** The job JSON
    (labels in both fields, `secretVariables`, `maxRetryCount: 0`,
    `maxRunDuration`, `logsPolicy`, `blockProjectSshKeys`, **`network` AND
