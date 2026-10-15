@@ -47,16 +47,33 @@ type TagResolver interface {
 }
 
 // CertIdentity is what a signing certificate must name: the workflow ref
-// GitHub's OIDC issues for a TAG PUSH specifically (images.yml's own
-// event guard is exactly why this identity is the one to expect).
+// GitHub's OIDC issues for a TAG PUSH specifically, the issuer that issued
+// it, and the two Fulcio extensions that say the run really was a push of
+// this repository.
+//
+// The ref alone is not enough. A certificate subject of
+// ".../images.yml@refs/tags/vX.Y.Z" says which workflow ran and which ref it
+// ran against — and a workflow_dispatch run started against that same tag
+// ref gets the very same subject. Trigger and Repository are the extensions
+// (1.3.6.1.4.1.57264.1.2 "event_name" and .1.5 "repository") that separate
+// the two, and cosign's --certificate-github-workflow-trigger/-repository
+// check them (flag names and semantics confirmed against cosign v2 and v3).
 type CertIdentity struct {
 	WorkflowRef string // "https://github.com/<owner>/<repo>/.github/workflows/images.yml@refs/tags/vX.Y.Z"
 	Issuer      string // "https://token.actions.githubusercontent.com"
+	Trigger     string // the GitHub event that started the run: "push"
+	Repository  string // the repository the run was in: "<owner>/<repo>"
 }
 
 // Issuer is GitHub's OIDC issuer: the only one images.yml's keyless
 // signing can have come from.
 const Issuer = "https://token.actions.githubusercontent.com"
+
+// TriggerPush is the GitHub event a release's certificate must name: the
+// tag push. The nightly and a workflow_dispatch are the events that must
+// not pass, and a dispatch against the tag ref is the one the workflow ref
+// above cannot tell apart from the push.
+const TriggerPush = "push"
 
 // Identity is the certificate identity a release's tag push signs with.
 // owner and repoOnGitHub name the GitHub repository whose images.yml is
@@ -65,6 +82,8 @@ func Identity(owner, repoOnGitHub, version string) CertIdentity {
 	return CertIdentity{
 		WorkflowRef: "https://github.com/" + owner + "/" + repoOnGitHub + "/.github/workflows/images.yml@refs/tags/v" + version,
 		Issuer:      Issuer,
+		Trigger:     TriggerPush,
+		Repository:  owner + "/" + repoOnGitHub,
 	}
 }
 

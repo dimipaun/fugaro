@@ -1079,18 +1079,18 @@ func TestNoMessageOffersARemovedBaseCommand(t *testing.T) {
 // first assertion.
 func TestNewARClientRefusesARedirectOffTheRegistryHost(t *testing.T) {
 	var elsewhere []string
-	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		elsewhere = append(elsewhere, r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer other.Close()
 	var atRegistry []string
-	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	reg := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atRegistry = append(atRegistry, r.Header.Get("Authorization"))
 		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
 	}))
 	defer reg.Close()
-	c, err := newARClient(context.Background(), &mirror.Mirror{Token: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "user-token"})})
+	c, err := newARClient(context.WithValue(context.Background(), oauth2.HTTPClient, reg.Client()), &mirror.Mirror{Token: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "user-token"})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1103,13 +1103,93 @@ func TestNewARClientRefusesARedirectOffTheRegistryHost(t *testing.T) {
 		resp.Body.Close()
 		t.Fatalf("the redirect to another host was followed: %d", resp.StatusCode)
 	}
-	if !strings.Contains(err.Error(), other.URL) {
-		t.Errorf("err = %v, want it to name the host it refused", err)
+	// Both servers are https, so the scheme check cannot be what refuses
+	// this: the HOST check is, and its own sentence is the proof (a test that
+	// only looked for the other host's URL passed with the host check gone,
+	// because the scheme check names it too).
+	if !strings.Contains(err.Error(), "registry's own host") {
+		t.Errorf("err = %v, want the host check's refusal (the credential stays on the registry's own host)", err)
 	}
 	if len(atRegistry) != 1 || atRegistry[0] != "Bearer user-token" {
 		t.Fatalf("the registry saw %v, want the credential (the test is vacuous otherwise)", atRegistry)
 	}
 	if len(elsewhere) != 0 {
 		t.Errorf("the other host received %d request(s), the first with %q", len(elsewhere), elsewhere[0])
+	}
+}
+
+// sentRequest is one request a client would actually put on the wire.
+type sentRequest struct{ url, auth string }
+
+// recordingTransport records what the client under test sends before
+// handing the request to the transport that really dials. It is how the
+// test below sees a hop that never happens: the http target of the
+// redirect has no server to answer it, so only what the client tried to
+// send can say whether the credential would have left.
+type recordingTransport struct {
+	base http.RoundTripper
+	sent []sentRequest
+}
+
+func (t *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.sent = append(t.sent, sentRequest{url: req.URL.String(), auth: req.Header.Get("Authorization")})
+	return t.base.RoundTrip(req)
+}
+
+// TestNewARClientRefusesAnHTTPSDowngradeOnTheSameHost: the host check alone
+// is not enough. Artifact Registry answers a request with a redirect, and a
+// redirect that stays on the registry's host but drops https would send the
+// Bearer token in cleartext — the same credential, over a connection anyone
+// on the path can read (and rewrite the answer of). So every redirect
+// target must be https, and the client must not even dial the http hop.
+//
+// The test server is TLS, and the redirect points back at its own
+// host:port with scheme http, so only the scheme separates the two: the
+// host check cannot be what refuses this. The recording transport is what
+// makes "nothing reached the http hop" observable, and the first hop's own
+// recorded Authorization header keeps the test from being vacuous.
+//
+// Mutation (run, restore): drop the scheme check from CheckRedirect — the
+// client sends the plain-http request (the recorded list grows) and the
+// refusal this test wants is gone.
+func TestNewARClientRefusesAnHTTPSDowngradeOnTheSameHost(t *testing.T) {
+	var atRegistry []string
+	reg := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atRegistry = append(atRegistry, r.Header.Get("Authorization"))
+		http.Redirect(w, r, "http://"+r.Host+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer reg.Close()
+
+	c, err := newARClient(context.Background(), &mirror.Mirror{Token: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "user-token"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the two things the test environment forces are replaced: the
+	// transport trusts the test server's certificate, and the recording
+	// wrapper sits under the token source so it sees the header. The client
+	// and its CheckRedirect are newARClient's own.
+	rec := &recordingTransport{base: reg.Client().Transport}
+	c.Transport = &oauth2.Transport{Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "user-token"}), Base: rec}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, reg.URL+"/v2/proj/fugaro-ghcr/manifests/1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatalf("the https-to-http redirect was followed: %d", resp.StatusCode)
+	}
+	if !strings.Contains(err.Error(), "http://"+req.URL.Host+req.URL.Path) || !strings.Contains(err.Error(), "cleartext") {
+		t.Errorf("err = %v, want a refusal naming the http target it would not follow", err)
+	}
+	if len(atRegistry) != 1 || atRegistry[0] != "Bearer user-token" {
+		t.Fatalf("the registry saw %v, want the credential (the test is vacuous otherwise)", atRegistry)
+	}
+	if len(rec.sent) != 1 {
+		t.Fatalf("the client sent %d request(s) %v, want only the https one: the http hop must never be dialed", len(rec.sent), rec.sent)
+	}
+	if rec.sent[0].auth != "Bearer user-token" {
+		t.Fatalf("the https hop carried %q, want the credential (the test is vacuous otherwise)", rec.sent[0].auth)
 	}
 }

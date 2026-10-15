@@ -231,7 +231,7 @@ func TestGatewayManagedDirNotWritableFailsBootstrap(t *testing.T) {
 		!strings.Contains(rec.Reason, "M9a base image") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Fatal("the lock was taken before the settings directory was checked")
 	}
 	if len(h.agent.calls) != 0 {
@@ -262,7 +262,7 @@ func TestRepoSettingsRerouteRefused(t *testing.T) {
 			// Someone else holds the branch: a refusal that came after the
 			// lock would say "branch busy" instead.
 			b := withBucket(h)
-			if _, err := lock.Acquire(context.Background(), b, lock.Key("acme-app", "fugaro/"+runID),
+			if _, err := lock.Acquire(context.Background(), b, lock.Key(repoSlug, "fugaro/"+runID),
 				lock.Holder{RunID: "20260101-000000-ffff", ExpiresAt: time.Now().Add(time.Hour)}, time.Now()); err != nil {
 				t.Fatal(err)
 			}

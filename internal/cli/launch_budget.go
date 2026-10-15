@@ -71,27 +71,37 @@ func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
 	if e.lc.Budget == nil || e.lc.Budget.RTDBURL == "" {
 		return false, nil // no database: no policy this CLI could see either
 	}
-	p, found, err := projectPolicyOf(ctx, e.lc)
-	if err != nil || !found || p == nil {
-		return false, err
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil {
+		return false, policyReadErr(err)
+	}
+	if !found || p == nil {
+		return false, nil
 	}
 	// A policy exists: this run must be able to read it. That needs a signer,
 	// whatever the mode is.
 	return true, budgetSignerOn(e.lc)
 }
 
-// projectPolicyOf reads the project's policy with the operator's own
-// credentials: the one read the CLI itself makes of the node (Readiness's D11
-// gate, and in mintBudgetToken the decision whether a run needs a budget
-// identity at all). A project whose config carries no database URL has no
-// policy this CLI can see, and says so without a call.
+// projectPolicyRead is the CLI's read of the project's policy with the
+// operator's own credentials: the one read the CLI itself makes of the node
+// (Readiness's D11 gate, the launch gate, and in mintBudgetToken the decision
+// whether a run needs a budget identity at all). A project whose config
+// carries no database URL has no policy this CLI can see, and says so without
+// a call. policyReadOnce is what callers use, so one launch reads it once.
 //
-// The keys this Fugaro does not know are refused, not ignored. The runner
-// tolerates them (P8: a policy a newer Fugaro wrote must not brick an older
-// image, which cannot be upgraded mid-run), but the CLI is the operator's own
-// tool and can be upgraded, and a misspelt key that is silently dropped is a
-// policy the owner believes he set. Refusing names the keys and the way out.
-func projectPolicyOf(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
+// It is the read with projectpolicy's typed errors intact, not the wording
+// (policyReadErr), for the one caller that words the version skew itself —
+// the launch gate (internal/cli/run_allowlist.go, plan
+// task 1.5 step 4), which names the release the policy model ships in beside
+// the policy's own version, because what it refuses is a *launch* and the fix
+// is on the operator's side. Every other caller wants policyReadErr.
+//
+// The keys this Fugaro does not know are refused here rather than in
+// policyReadErr, because that refusal reads the policy the read returned
+// rather than the error: a key nobody reads is a policy that never takes
+// effect, and the launch gate must not pass over one either.
+func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, false, nil
 	}
@@ -100,29 +110,8 @@ func projectPolicyOf(ctx context.Context, lc *localcfg.Config) (*projectpolicy.P
 		return nil, false, err
 	}
 	p, found, err := projectpolicy.Read(ctx, db)
-	var ve *projectpolicy.VersionError
-	var me *projectpolicy.MarkerError
-	switch {
-	case err == nil:
-	case errors.As(err, &ve):
-		return nil, false, userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
-	case errors.As(err, &me):
-		return nil, false, userErr("%v", err)
-	case errors.Is(err, rtdb.ErrPermission):
-		return nil, false, userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro init --firebase again with this Fugaro", err, projectpolicy.PathRulesMarker())
-	case errors.Is(err, rtdb.ErrUnavailable):
-		return nil, false, remote(err)
-	default:
-		// What is left is a node the database handed over and this Fugaro
-		// could not read: not JSON, over MaxPolicyBytes, a version that is
-		// not an integer, a budget block the decoder refuses. That is the
-		// project's own published data, and the same class is the user's own
-		// error (exit 1) everywhere else in the CLI — dbErr and
-		// checkDBProject both call a bad node a user error. Only an outage is
-		// remote, and a run cannot fix either one. The node is named: a
-		// decoder message says what is wrong with the document, not which
-		// document it is.
-		return nil, false, userErr("%s: %w", projectpolicy.PathShared(), err)
+	if err != nil {
+		return nil, false, err
 	}
 	if found && len(p.UnknownKeys) > 0 {
 		return nil, false, userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
@@ -131,21 +120,77 @@ func projectPolicyOf(ctx context.Context, lc *localcfg.Config) (*projectpolicy.P
 	return p, found, nil
 }
 
+// policyReadErr words the errors projectpolicy.Read returns. What is left to
+// the default case is a node the database handed over and this Fugaro could
+// not read: not JSON, over MaxPolicyBytes, a version that is not an integer, a
+// budget block the decoder refuses. That is the project's own published data,
+// and the same class is the user's own error (exit 1) everywhere else in the
+// CLI — dbErr and checkDBProject both call a bad node a user error. Only an
+// outage is remote, and a run cannot fix either one. The node is named: a
+// decoder message says what is wrong with the document, not which document it
+// is.
+func policyReadErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ve *projectpolicy.VersionError
+	var me *projectpolicy.MarkerError
+	switch {
+	case errors.As(err, &ve):
+		return userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
+	case errors.As(err, &me):
+		return userErr("%v", err)
+	case errors.Is(err, rtdb.ErrPermission):
+		return userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro init --firebase again with this Fugaro", err, projectpolicy.PathRulesMarker())
+	case errors.Is(err, rtdb.ErrUnavailable):
+		return remote(err)
+	default:
+		// An error that already carries an exit code is one of this file's own
+		// refusals (projectPolicyRead's unknown keys, the only one that can
+		// reach here), and it already names the node: prefixing it again would
+		// print the same path twice.
+		var ee *ExitError
+		if errors.As(err, &ee) {
+			return err
+		}
+		return userErr("%s: %w", projectpolicy.PathShared(), err)
+	}
+}
+
 // policyReadOnce memoizes one CLI run's read of the policy: init --repo asks
 // twice (once before the first plan, once after the builds) and must not pay
-// for it twice, and the answer cannot change under it.
+// for it twice, and a launch asks twice on one path too — the gate before
+// anything of it exists, and the mint decision — where two reads could
+// disagree about the policy a single launch is admitted against. The answer
+// cannot change under either of them (and where it could, the run reads the
+// node itself and is the one that counts).
+//
+// What is memoized is the raw read, projectPolicyRead's result with
+// projectpolicy's typed errors intact, because two callers word the same error
+// differently: the launch gate names the release a policy's version is from
+// (policySkewRefusal), and every other caller wants policyReadErr.
 type policyReadOnce struct {
 	done  bool
+	p     *projectpolicy.Policy
 	found bool
 	err   error
 }
 
-func (p *policyReadOnce) exists(ctx context.Context, lc *localcfg.Config) (bool, error) {
+// read is the memoized projectPolicyRead: the policy, whether one was
+// published, and the read's own error.
+func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	if !p.done {
 		p.done = true
-		_, p.found, p.err = projectPolicyOf(ctx, lc)
+		p.p, p.found, p.err = projectPolicyRead(ctx, lc)
 	}
-	return p.found, p.err
+	return p.p, p.found, p.err
+}
+
+// exists is read in the CLI's wording, for the callers that only ask whether
+// the project has published a policy (Readiness's D11 gate).
+func (p *policyReadOnce) exists(ctx context.Context, lc *localcfg.Config) (bool, error) {
+	_, found, err := p.read(ctx, lc)
+	return found, policyReadErr(err)
 }
 
 // budgetPrecheck refuses a launch the budget would refuse anyway (see

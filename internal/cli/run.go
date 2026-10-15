@@ -436,6 +436,19 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				return launchResult{}, err
 			}
 		}
+		// The project's policy, read with the operator's own credentials
+		// before anything of this launch is written (plan task 1.5 step 4):
+		// the repository must be admitted, and the policy must not be newer
+		// than this binary. Before createTask and before the launch claim, so
+		// a refused launch leaves no task, no token and no execution behind.
+		// Outside the --no-budget-check branch, which is deliberate: neither
+		// check is a budget check, so neither is an operator's to skip. After
+		// the budget pre-check, so an unreachable database is refused by the
+		// pre-check's own fail-closed message when that check runs; the gate
+		// refuses it itself, with the node named, when it does not.
+		if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
+			return launchResult{}, err
+		}
 	}
 	if o.retry == "" {
 		if err := createTask(ctx, s, spec); err != nil {
@@ -1249,6 +1262,12 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	if err := check(rec.Execution); err != nil {
 		return nil, err
 	}
+	// TODO(compute-backend Task 8): the backend is written as Cloud Run's
+	// because it is the only one this build runs (localcfg refuses every
+	// other name), not because the record says so. A backfilled launch of a
+	// run that ran on another backend would be recorded as Cloud Run's. Task
+	// 8 takes the name from the config, so the enable task (Task 9) does not
+	// inherit it (design compute-backend.md §8.1 Task 8).
 	l := &runstore.Launch{Version: 1, RunID: runID, Backend: backend.CloudRun, Execution: rec.Execution, LaunchedAt: rec.StartedAt}
 	if id, ok := backend.ParseExecution(rec.Execution); ok {
 		l.Job = id.Job
@@ -1417,6 +1436,10 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s then reports the execution if it started, or launches it",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
+	// TODO(compute-backend Task 8): as above, the backend is Cloud Run's
+	// because it is the only one this build runs; Task 8 records the one the
+	// launch actually used, before the enable task (Task 9) can select
+	// another.
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: backend.CloudRun, Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
 	if err := s.WriteLaunch(hctx, l); errors.Is(err, runstore.ErrExists) {
 		theirs, rerr := s.ReadLaunch(hctx)

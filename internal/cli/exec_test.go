@@ -171,7 +171,11 @@ func TestExecPlatformResolution(t *testing.T) {
 		"a local task file": {execOptions{taskFile: "/tmp/task.json"}, nil, true, backend.Local},
 		"a local run is not a cloud run whatever the shell holds": {execOptions{taskFile: "/tmp/task.json"}, map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_RUN": "acme-app/20260926-221530-abcd"}, true, backend.Local},
 		"a task file on a Cloud Run execution stays a cloud run":  {execOptions{taskFile: "/tmp/task.json"}, run, false, backend.CloudRun},
-		"a Cloud Run execution":                                   {execOptions{run: "acme-app/20260926-221530-abcd"}, run, false, backend.CloudRun},
+		// The local case is a platform that claims nothing, not the flag
+		// alone: a Batch task's own markers are a platform, so the same
+		// --task-file is a cloud run here (design §2.5, C12).
+		"a task file on a Batch task stays a Batch task": {execOptions{taskFile: "/tmp/task.json"}, map[string]string{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1"}, false, backend.CloudBatch},
+		"a Cloud Run execution":                          {execOptions{run: "acme-app/20260926-221530-abcd"}, run, false, backend.CloudRun},
 		// No marker at all, or only Fugaro's own variables: in the cloud,
 		// and no backend claims it -- the fail-closed default.
 		"no marker": {execOptions{run: "acme-app/20260926-221530-abcd"}, nil, false, ""},
@@ -494,11 +498,11 @@ func TestExecPassesProject(t *testing.T) {
 	}
 	defer b.Close()
 	ctx := context.Background()
-	store := runstore.Open(b, "acme-app", runID)
+	store := runstore.Open(b, appSlug, runID)
 	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/"+runID, "--remote", remote,
+	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", appSlug+"/"+runID, "--remote", remote,
 		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state"))
 	if ExitCode(err) != ExitRemoteError || err == nil ||
 		!strings.Contains(err.Error(), "project mismatch: fugaro.yaml on main names project borealis; this job belongs to project aurora") {

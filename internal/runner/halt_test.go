@@ -402,7 +402,7 @@ func TestBootstrapHaltIsHaltedExitZero(t *testing.T) {
 	if refs := testutil.Git(t, h.remote, "for-each-ref", "refs/heads/fugaro/"); refs != "" {
 		t.Fatalf("a branch was pushed: %s", refs)
 	}
-	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Fatal("the branch lock was taken")
 	}
 }

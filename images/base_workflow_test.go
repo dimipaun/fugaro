@@ -308,6 +308,41 @@ const (
 // mistake, so the check catches the class, not one spelling.
 var swallowedFailure = regexp.MustCompile(`\|\|\s*(true|:|/bin/true|exit 0)(\s|$)`)
 
+// cosignFallback finds a `||` in a script that runs cosign. The list above
+// is one spelling of the class, not the class: `|| echo skipped`, or any
+// other fallback, makes a rejected signature a green step just as `|| true`
+// does, so in a script that runs cosign ANY `||` is refused — whatever it
+// falls back to, and wherever in the script it is written (a check that
+// only looked for a `||` on the same text line as the word "cosign" would
+// pass an edit that moved the fallback onto its own line, or that appended
+// one to a multi-line cosign invocation). Comments are stripped before this
+// runs (see script), so a `||` that survives only in a comment is not seen.
+func cosignFallback(s string) (string, bool) {
+	if !strings.Contains(s, "cosign") {
+		return "", false
+	}
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "||") {
+			return strings.TrimSpace(line), true
+		}
+	}
+	return "", false
+}
+
+// setPlusE reports a line turning the shell's own fail-fast off: `set +e`,
+// `set +ex`. It needs no `||` at all — with it every later command's
+// failure, cosign's included, stops failing the step — so a signing step
+// carrying one is refused for the same reason a fallback is.
+func setPlusE(s string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[0] == "set" && strings.HasPrefix(f[1], "+") && strings.Contains(f[1], "e") {
+			return true
+		}
+	}
+	return false
+}
+
 func stepName(s workflowStep) string {
 	if s.Name != "" {
 		return s.Name
@@ -366,10 +401,17 @@ func signingProblems(wf imagesWorkflow) []string {
 			bad("cosign-installer is pinned as %q, want the full commit SHA %q", s.Uses, cosignPin)
 		}
 		// A failure anywhere in the chain must fail the job: a shell `|| true`
-		// (or `|| :`, `|| /bin/true`, `|| exit 0`) and continue-on-error both
-		// turn a failed signature into a green run.
+		// (or `|| :`, `|| /bin/true`, `|| exit 0`), any other fallback on a
+		// line that runs cosign, `set +e`, and continue-on-error all turn a
+		// failed signature into a green run.
 		if swallowedFailure.MatchString(script(s.Run)) {
 			bad("step %q swallows a failure with `|| true` (or the same thing spelled `|| :`, `|| /bin/true`, `|| exit 0`)", stepName(s))
+		}
+		if line, ok := cosignFallback(script(s.Run)); ok {
+			bad("step %q runs cosign and carries a `||` (%q): a cosign failure must fail the step, whatever the fallback says", stepName(s), line)
+		}
+		if setPlusE(script(s.Run)) {
+			bad("step %q turns the shell's fail-fast off with `set +e`, so a failed cosign would no longer fail the step", stepName(s))
 		}
 		if s.ContinueOnError != nil && s.ContinueOnError != false {
 			bad("step %q sets continue-on-error: %v, so its failure would not fail the job", stepName(s), s.ContinueOnError)
@@ -580,6 +622,28 @@ func TestSigningProblemsFindEveryMutation(t *testing.T) {
 		{"the verification step swallows a failure with `|| exit 0`", func(wf imagesWorkflow) imagesWorkflow {
 			return wf.withStep("verify", func(s *workflowStep) { s.Run += " || exit 0" })
 		}, "swallows a failure"},
+		// The list above is one spelling of the class, not the class: a
+		// fallback nobody wrote down (`|| echo skipped`) turns a rejected
+		// signature into a green step exactly as `|| true` does. Any `||` on
+		// a line that runs cosign is refused, whatever it falls back to.
+		{"the sign step falls back with `|| echo skipped`", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("sign", func(s *workflowStep) { s.Run += " || echo skipped" })
+		}, "runs cosign and carries a `||`"},
+		{"the verify step falls back with `|| echo skipped`", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("verify", func(s *workflowStep) { s.Run += " || echo skipped" })
+		}, "runs cosign and carries a `||`"},
+		// `set +e` needs no `||` at all: it turns the shell's fail-fast off,
+		// and every later command's failure — cosign's included — stops
+		// failing the step.
+		{"the sign step turns fail-fast off with `set +e`", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("sign", func(s *workflowStep) { s.Run = "set +e\n" + s.Run })
+		}, "fail-fast"},
+		{"the verify step turns fail-fast off with `set +e`", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("verify", func(s *workflowStep) { s.Run = "set +e\n" + s.Run })
+		}, "fail-fast"},
+		{"the -pinned step turns fail-fast off with `set +ex`", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("pinned", func(s *workflowStep) { s.Run = "set +ex\n" + s.Run })
+		}, "fail-fast"},
 		{"publish-base is marked continue-on-error at job level", func(wf imagesWorkflow) imagesWorkflow {
 			job := wf.Jobs["publish-base"]
 			job.ContinueOnError = true

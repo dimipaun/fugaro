@@ -60,8 +60,9 @@ var (
 // §3.1a gives the label calls: a false negative, never a false positive, and
 // never silent. The summary above all may not claim "nothing retired" when
 // the run could not look. --retire is the difference that matters: it removes
-// addresses from the state, so it must not guess at the set, and a state it
-// cannot read stops it. An abandoned run is not a degradation either.
+// addresses from the state, so it must not guess at the set -- a state it
+// cannot read stops it, and so does a label call that did not answer (M-4,
+// below). An abandoned run is not a degradation either.
 func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.TF, spec infra.RepoSpec) ([]infra.Retirement, error) {
 	st, err := t.ShowState(ctx)
 	if err != nil {
@@ -75,6 +76,20 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 	orphans, notes, warnings, err := infra.Orphans(ctx, c, spec, r.retireState)
 	if err != nil {
 		return nil, initErr(err)
+	}
+	// M-4: --retire acts on the set -- it removes protected addresses from
+	// Terraform's state -- so it may not run on a set read without the labels.
+	// §3.1a's degradation is for the ordinary run and does not extend here:
+	// without the answer, Retirements cannot tell a live container of this
+	// repository that no job mounts any more from one that is retired, so it
+	// calls it KEPT, and Kept is exactly what Removals takes out of the state
+	// (design §4.2a). The container would keep its value and its labels and
+	// lose Terraform's management, silently -- a false positive, the one
+	// outcome §3.1a forbids. So the run refuses and names the call it could
+	// not make, and the reader decides: fix the permission, or rerun without
+	// the flag and read the plan as it is.
+	if len(warnings) > 0 && r.o.retire {
+		return nil, remote(fmt.Errorf("--retire removes protected addresses from Terraform's state, so it will not run on a retirement set read without the labels:\n  %s\nWithout the answer the run cannot tell a live container of this repository from a retired one, and the removal would release the live one from Terraform's management without deleting or saying anything else. Nothing was removed from the state, nothing was deleted and nothing was confirmed. Rerun when the call named above answers, or rerun without --retire to read the plan and the summary as they are", strings.Join(warnings, "\n  ")))
 	}
 	for _, w := range warnings {
 		r.warn(w)
@@ -94,18 +109,11 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 		// (review round 2, nit). The ordinary path below is what runs; this
 		// line is the whole of what the flag had to say.
 		//
-		// "Nothing to retire" and "could not look" are different sentences
-		// (design §3.1a, review round 3): a label call the run could not
-		// make narrows what it can see, so the line above all may not claim
-		// the labels found nothing when one of them never answered. The
-		// empty set is the same either way -- nothing is removed, deleted or
-		// confirmed -- and what changes is what the run says it knows.
+		// The set is the state's here, and the labels were answered: a label
+		// call that did not answer stopped the run above (M-4), which is why
+		// this line may say "the labels found no orphan" as a fact.
 		if r.o.retire {
-			if len(warnings) > 0 {
-				fmt.Fprintf(r.w, "Cannot say whether there is anything to retire: the label calls named above did not answer, so an orphan they would have found was not looked for. Every address in %s's Terraform state is one the configuration still produces as far as this run can see, and --retire has nothing to remove from the state, nothing to delete through the Cloud Run API and nothing to confirm.\n", spec.Name)
-			} else {
-				fmt.Fprintf(r.w, "Nothing to retire: every address in %s's Terraform state is one the configuration still produces, and the labels found no orphan of this repository, so --retire has nothing to remove from the state, nothing to delete through the Cloud Run API and nothing to confirm.\n", spec.Name)
-			}
+			fmt.Fprintf(r.w, "Nothing to retire: every address in %s's Terraform state is one the configuration still produces, and the labels found no orphan of this repository, so --retire has nothing to remove from the state, nothing to delete through the Cloud Run API and nothing to confirm.\n", spec.Name)
 		}
 		return nil, nil
 	}
@@ -748,20 +756,26 @@ func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " "
 // --retire is named only when the aborting address is one of the retirements
 // this run read: for any other address the state removal would not touch it,
 // the same plan would abort in the same place, and pointing at --retire would
-// be advice that cannot work. The configuration is what holds that
-// prevent_destroy, so for most addresses the two ways out are named instead:
-// take the block out of the module, or put back the configuration change that
-// made Terraform want to destroy the resource (M5).
+// be advice that cannot work. For any other address the two ways out are
+// named instead (M-1): revert the configuration change that asked for the
+// destruction, or take the address out of Terraform's state.
 //
-// Two addresses are not given the first of those (review round 2, I-B): the
-// secret container and the registry are the resources whose module
-// declaration carries prevent_destroy (modules/repo/secrets.tf:22,
-// registry.tf:59), the block IS fugaro's promise that it never deletes a
-// secret or a secret version, and the advice could not be followed anyway --
-// the modules are embedded in the binary, and PrepareWorkdir rewrites the
-// workdir on the next run. Their safe route is the state removal the docs
-// give for an older binary instead: the resource leaves Terraform's state,
-// which destroys nothing, and stays in GCP with its value.
+// The state removal is the only way fugaro offers for anything it does not
+// retire, and it is the same route the two protected addresses get (review
+// round 2, I-B; below). "Take the lifecycle.prevent_destroy block out of the
+// module" used to be named here and is not advice a reader can follow: the
+// repo root's only two declarations of the block are the secret container and
+// the registry (modules/repo/secrets.tf:22, registry.tf:59) -- the block IS
+// fugaro's promise that it never deletes a secret or a secret version -- and
+// the modules are embedded in the binary, so PrepareWorkdir rewrites the
+// workdir on the next run and an edit to it would be gone before the rerun.
+// Where the address cannot be read out of Terraform's text at all, the
+// removal is asked for by the address Terraform itself named.
+//
+// The secret container and the registry are told which of the two sides they
+// are on: their state removal destroys nothing and leaves the value or the
+// images in GCP, and fugaro never destroys them, so they are never told to
+// revert a configuration change that asked for their destruction.
 func retireAborted(rets []infra.Retirement, addr, workdir string) error {
 	where := ""
 	if addr != "" {
@@ -773,7 +787,11 @@ func retireAborted(rets []infra.Retirement, addr, workdir string) error {
 	if keeps, never := neverDestroyed(addr); never {
 		return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Fugaro never destroys this resource -- the block is that promise, not a line to delete -- so only you can say which side is wrong:\n  - Terraform is holding a resource that should go: leave it in GCP and take it out of Terraform's state: `terraform state rm '%s'` in %s destroys nothing and keeps %s; then rerun `fugaro init --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, addr, workdir, keeps)
 	}
-	return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. The block is in the configuration, and only you can say which side is wrong:\n  - Terraform is holding a resource that should go: take the lifecycle.prevent_destroy block out of the module for that address (or restore the configuration that used to produce it), then rerun.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where)
+	rm := "the address named in Terraform's error"
+	if addr != "" {
+		rm = "'" + addr + "'"
+	}
+	return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Only you can say which side is wrong:\n  - Terraform is holding a resource that should go: take it out of Terraform's state with `terraform state rm %s` in %s -- that destroys nothing; then rerun `fugaro init --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, rm, workdir)
 }
 
 // neverDestroyedTypes are the resource types fugaro never destroys, each

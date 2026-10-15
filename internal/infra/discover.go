@@ -644,7 +644,7 @@ type Existing struct {
 	// (projectpolicy.PathShared, under rules new enough for it to be
 	// readable). Discovery cannot see it: the database is read through the
 	// *operator's* credentials, which only the CLI holds, so the caller that
-	// has them fills this in (internal/cli's projectPolicyOf). It is the
+	// has them fills this in (internal/cli's policyReadOnce). It is the
 	// fact that turns the Firebase requirement into a gate (D11, plan task
 	// 1.4 step 2).
 	PolicyExists bool

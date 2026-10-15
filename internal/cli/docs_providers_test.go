@@ -3,8 +3,12 @@ package cli
 import (
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
 // docSection returns the text of doc from heading (inclusive) up to, but not
@@ -63,6 +67,143 @@ func TestMultiModelNamesDirectProviders(t *testing.T) {
 	}
 	if !strings.Contains(section, "Check 33") {
 		t.Error("the Direct to the vendor section does not name Check 33")
+	}
+}
+
+// TestReadmeOpenRouterSetup: README.md must carry a short, self-contained
+// "how to set up OpenRouter" section (the owner asked for exactly this), and
+// the claims in it that a reader acts on -- the account-side setup it links
+// instead of duplicating, which repositories a provider may see, what a pin
+// is refused with, and until which release the two catalog switches are
+// refused -- must be the code's and the linked docs', not prose that drifted.
+// Every assertion is anchored to that section alone (docSection), so a claim
+// that only appears elsewhere in the README does not make this pass.
+func TestReadmeOpenRouterSetup(t *testing.T) {
+	const path = "../../README.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := docSection(t, path, string(data), "## Other models through OpenRouter")
+
+	// The steps a new user needs, each spelled the way the CLI spells it.
+	for _, want := range []string{
+		"~/.config/fugaro/projects/<project>.yaml", // where the provider is declared
+		"fugaro secrets set openrouter-api-key",    // how the key is stored
+		"--project-wide",                           // project-wide vs per-repository
+		"--repo <owner>/<repo>",                    // the other way to scope the key
+		"coder: deepseek/deepseek-v4.1-flash",      // the pin in fugaro.yaml
+		"fugaro validate",
+		"fugaro init --repo",
+		"fugaro doctor",
+		"fugaro budget preview",
+		"budget.per_day_usd", // the repository's own day cap
+		"allow_data_to",
+		"model_prices",
+		"docs/multi-model.md",
+		"docs/dogfooding.md", // the all-cheap-model setup the example is
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the README OpenRouter section never mentions %q", want)
+		}
+	}
+	// The account-side setup comes first and is not duplicated here: the
+	// section must link docs/multi-model.md's own section 1, and the four
+	// things that section says a person must do on OpenRouter.
+	if !strings.Contains(section, "docs/multi-model.md#1-on-the-openrouter-account-before-anything-in-fugaro") {
+		t.Error("the README OpenRouter section does not link docs/multi-model.md's OpenRouter-account setup")
+	}
+	for _, want := range []string{"credit limit", "fallbacks", "data-collection", "route fee"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the README OpenRouter section's account step never mentions %q", want)
+		}
+	}
+	// A setup guide must not carry a value: the placeholders are the point.
+	for _, key := range []string{"sk-or-", "sk-ant-", "sk-"} {
+		if strings.Contains(section, key) {
+			t.Errorf("the README OpenRouter section looks like it carries a real key (%q)", key)
+		}
+	}
+
+	// The gate the section describes is the code's: an absent allow_data_to
+	// (or the explicit ["*"]) lets every repository send code to a provider,
+	// a real list lets only the repositories it names, and a repository the
+	// list leaves out is refused with the message the README quotes. Prices
+	// are nil, which skips CheckProviderPolicy's own price rule.
+	const model = "deepseek/deepseek-v4.1-flash"
+	agent := config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: model, Reviewer: model}}
+	for _, tc := range []struct {
+		name      string
+		allow     []string
+		repo      string
+		refused   bool
+		openToAll bool
+	}{
+		{"absent means every repository", nil, "acme/app", false, true},
+		{"the wildcard means every repository", []string{"*"}, "acme/app", false, true},
+		{"a list names only its repositories", []string{"acme/other"}, "acme/app", true, false},
+		{"a listed repository is allowed", []string{"acme/app"}, "acme/app", false, false},
+	} {
+		p := config.ModelProvider{Kind: config.ModelProviderKind, Models: []string{"deepseek/*"}, AllowDataTo: tc.allow}
+		if got := p.OpenToEveryRepo(); got != tc.openToAll {
+			t.Errorf("%s: OpenToEveryRepo() = %v, want %v", tc.name, got, tc.openToAll)
+		}
+		ps := config.CheckProviderPolicy(agent, nil, tc.repo, map[string]config.ModelProvider{"openrouter": p}, nil)
+		if got := len(ps) > 0; got != tc.refused {
+			t.Fatalf("%s: refused = %v (%v), want %v", tc.name, got, ps, tc.refused)
+		}
+		if tc.refused {
+			text := layerProblemsText(ps)
+			want := "whose allow_data_to does not name `" + tc.repo + "`"
+			if !strings.Contains(text, want) {
+				t.Errorf("%s: the refusal does not say %q: %s", tc.name, want, text)
+			}
+			// The README quotes this refusal, so the two cannot drift apart.
+			if !strings.Contains(section, "does not name") {
+				t.Error("the README OpenRouter section does not state the allow_data_to refusal")
+			}
+		}
+	}
+
+	// Claude goes direct, never through a provider: the section must say so,
+	// and the rule must still be the code's.
+	if !strings.Contains(section, "Claude models never go through a provider") {
+		t.Error("the README OpenRouter section does not say Claude models never go through a provider")
+	}
+	if why := config.CheckModelPattern("anthropic/claude-sonnet-5-5"); why == "" {
+		t.Error("a provider may claim an anthropic/ model, so the README section is wrong")
+	}
+
+	// The section's "ship at <release>" sentence is catalogSince, and the
+	// "leave both out" instruction lasts exactly as long as catalogShipped is
+	// false (catalogSwitchSkew, internal/cli/recipes_skew.go). Tying both to
+	// the constants means the one-line PR that ships the two switches -- or
+	// that bumps the release they ship in -- cannot leave the README telling
+	// users to leave the keys out, or the release number wrong.
+	if !strings.Contains(section, "ship at "+catalogSince) {
+		t.Errorf("the README OpenRouter section does not say require_zdr/price_policy ship at %s (catalogSince)", catalogSince)
+	}
+	if leftOut := strings.Contains(section, "leave both out"); leftOut == catalogShipped {
+		t.Errorf("the README OpenRouter section's \"leave both out\" instruction disagrees with catalogShipped = %v", catalogShipped)
+	}
+
+	// The section states how narrow the catalog is, so a reader knows a model
+	// it does not cover is refused rather than guessed. The count is the
+	// embedded file's, and the model the section pins by example is one of
+	// its rows: a regenerated catalog that changes either fails here.
+	f, err := catalog.Load()
+	if err != nil {
+		t.Fatalf("the built-in price catalog does not load: %v", err)
+	}
+	count := map[int]string{1: "one model", 2: "two models", 3: "three models", 4: "four models", 5: "five models"}[len(f.Models)]
+	if count == "" {
+		count = strconv.Itoa(len(f.Models)) + " models"
+	}
+	if !strings.Contains(section, "only "+count) {
+		t.Errorf("the README OpenRouter section does not say the catalog covers only %s (it holds %d)", count, len(f.Models))
+	}
+	if _, ok := f.Models[model]; !ok {
+		t.Errorf("the README OpenRouter section pins %s by example, which the built-in catalog does not price", model)
 	}
 }
 
