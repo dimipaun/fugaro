@@ -86,13 +86,17 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		return p.policy, p.found, p.err
 	}
 	p.done = true
-	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv {
+	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.TokenMarked {
 		// No database in the job's environment: no client, no marker, no node.
 		// This is the absence the readiness gate refuses (init --repo) once
 		// the project has published a policy; a run cannot invent the
-		// credential it would need to notice one. An environment that named a
-		// backend it could not parse is not that absence (L-b): it goes
-		// through budgetClient, which refuses it whatever the run's mode.
+		// credential it would need to notice one. The other two are not that
+		// absence and go through budgetClient, which refuses them whatever the
+		// run's mode: an environment that named a backend it could not parse
+		// (L-b), and a job whose launcher minted a budget token (M2 — the
+		// marker is only ever written when the project has something
+		// published, so read as "no policy here" it would skip the allow-list
+		// and the run would open the provider and clone before the refusal).
 		return nil, false, nil
 	}
 	db, err := r.budgetClient(ctx)
@@ -263,6 +267,19 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		return nil, c.err
 	}
 	if !r.d.Backend.On() {
+		// No database in the job's environment. For a job whose launcher
+		// minted a token that absence is not the mode-off path: the marker is
+		// proof that there is a policy to read (the launcher mints only when
+		// there is one), so this is the refusal and never "this project has
+		// published nothing" (M2). It is returned here rather than only from
+		// startBudgetBackend, which is where it used to be, because this read
+		// is what admission runs on: the run ends before the provider is
+		// opened and before the clone, with no git credential handed out, and
+		// it ends in the same sentence either way (errTokenWithoutBackend).
+		if r.d.Backend.TokenMarked {
+			c.err = errTokenWithoutBackend()
+			return nil, c.err
+		}
 		return nil, nil
 	}
 	if r.d.Backend.APIKey == "" && !r.d.Spend.On() && !r.d.Backend.TokenMarked {

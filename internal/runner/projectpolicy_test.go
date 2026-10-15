@@ -287,6 +287,21 @@ func TestRunnerWithTheMarkerAndNoBackendRefuses(t *testing.T) {
 	}
 }
 
+// The same refusal, held to *where* it lands: the run above stops somewhere in
+// bootstrap and the assertion cannot say where. A marked job with no backend
+// is a job whose policy cannot be read (the marker is proof there is one), so
+// the read that ends it is the policy read — during admission, before the
+// provider is opened and before the clone. The credential counter is the only
+// thing that tells the two placements apart: both end in the same error, and
+// only the later one handed a git credential out first. Bootstrap writes
+// nothing else either way (refusedAdmission).
+func TestRunnerWithTheMarkerAndNoBackendIsRefusedBeforeTheClone(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", "")
+	b.deps.Backend = runner.Backend{TokenMarked: true}
+	rec, err := b.run(t, implement("feature"))
+	refusedAdmission(t, b, rec, err, runner.RTDBURLEnv, "fugaro init --repo")
+}
+
 // B1's regression test: the job's environment says the budget is on but carries
 // no FUGARO_FIREBASE_API_KEY. That is the shipped refusal — never the mode-off
 // path, and never "no policy here": the run must not proceed on the environment
