@@ -43,6 +43,22 @@ func wantIdentity(owner, repoOnGitHub, version string) CertIdentity {
 	return Identity(owner, repoOnGitHub, version)
 }
 
+// TestIdentityIsTheLiteralTagPushIdentity pins the exact strings a release's
+// certificate must carry, written out rather than built by calling Identity
+// again. Every other test here (and the fakeVerifier's own expectation)
+// builds its want by calling Identity, so a change to the format — say
+// "@refs/heads/main", or another repository — would move both sides of those
+// comparisons together and pass; this test is the one that would not.
+func TestIdentityIsTheLiteralTagPushIdentity(t *testing.T) {
+	id := Identity("dimipaun", "fugaro", "0.7.5")
+	if got, want := id.WorkflowRef, "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v0.7.5"; got != want {
+		t.Errorf("WorkflowRef = %q, want %q (the tag push of this repository's images.yml)", got, want)
+	}
+	if got, want := id.Issuer, "https://token.actions.githubusercontent.com"; got != want {
+		t.Errorf("Issuer = %q, want %q", got, want)
+	}
+}
+
 func TestResolve(t *testing.T) {
 	tr := fakeResolver{digest: testDigest}
 	ref := "ghcr.io/dimipaun/fugaro-base@" + testDigest
