@@ -78,13 +78,33 @@ import (
 //     how a Fugaro-labelled VM in any of the region's zones is found.
 //   - compute.instances.delete -- the other destructive one.
 //
-// roles/batch.jobsEditor on the project carries the four Batch permissions
-// (design §3.7 names it for create, cancel and delete alike) and
-// roles/compute.instanceAdmin.v1 the two Compute ones; whether the owner
-// narrows them with an IAM Condition is Check 57a step 9's question
-// (UNVERIFIED, design §9), and it does not change this list. Nothing here
-// reads a secret, and nothing here needs Secret Manager, storage or logging:
-// the reaper's whole surface is the six permissions above.
+// Six permissions, and the grant must be a custom role that carries exactly
+// these: roles/batch.jobsEditor and roles/compute.instanceAdmin.v1 -- the
+// roles Google's own pages name for creating, cancelling and deleting a job
+// and for deleting an instance -- are both far wider. jobsEditor also carries
+// batch.jobs.create, i.e. the power to run any container in the project, which
+// is the launcher-shaped power §3.7 spends its length distinguishing; and
+// instanceAdmin.v1 carries compute.instances.create and the rest of the
+// instance lifecycle, including compute.instances.setMetadata, which is how
+// SSH keys reach a VM (the full permission list of each built-in role is
+// Google's and was NOT re-read for this task: UNVERIFIED). A reaper account
+// that could create jobs and VMs would be a second launcher, not a janitor.
+// Design §3.7 and docs/backends.md state the same six for the same reason:
+// this header is where a reviewer checks the role against the code.
+//
+// IAM cannot scope a delete by label. Nothing in the grant says "only
+// fugaro=managed": the six permissions are project-wide, `jobs.delete` erases
+// any job in the project and `instances.delete` any VM in it, and no Condition
+// can express "the resource carries this label" (Conditions match resource
+// names and types -- design §3.7's Check 57a step 9 question -- not labels).
+// What confines the reaper to this installation's resources is therefore this
+// file and only this file: listJobs filters on the marker and re-checks it
+// client-side, reapJob refuses what it cannot attribute, and reapInstances
+// re-checks both labels before any delete. A reviewer who trusts the reaper's
+// narrowness is trusting reapJob's and reapInstances' refusals, not the IAM.
+//
+// Nothing here reads a secret, and nothing here needs Secret Manager, storage
+// or logging: the reaper's whole surface is the six permissions above.
 
 // ReapMargin is the margin the reaper's age filter adds on top of the
 // longest task timeout, its slack and the queue deadline: the VM boot and
@@ -94,6 +114,17 @@ import (
 // whatever else is true about it, because "young" is the one explanation the
 // reaper cannot tell apart from "Batch is still doing its job".
 const ReapMargin = 15 * time.Minute
+
+// MaxDeadline is the longest deadline a caller may configure, for either of
+// the reaper's own. A VM or a job cannot leak for longer than Batch keeps the
+// record that would have owned it -- Batch deletes a job and its history 60
+// days after it finishes (design §9) -- so a deadline past a month protects
+// nothing a shorter one does not, and is the shape a unit error takes (a
+// seconds value where minutes were meant). The reaper refuses such a
+// configuration rather than obey it: an absurd deadline is a caller's bug, and
+// a reaper that deletes things must not paper over one by substituting its own
+// idea of "reasonable".
+const MaxDeadline = 30 * 24 * time.Hour
 
 // ActionKind is what the reaper did, or in a dry run would do.
 type ActionKind string
@@ -179,13 +210,19 @@ type ReaperOptions struct {
 	// configured task timeout plus backend.TaskTimeoutSlack -- "the
 	// launcher's own task timeout", the design's natural default.
 	QueueDeadline time.Duration
-	// MaxAge is how old a job or an instance must be before the reaper will
-	// delete it. Zero means the queue deadline, plus the longest task timeout
-	// and its slack, plus ReapMargin: nothing a Fugaro run can legitimately
-	// be doing takes longer than queueing, running and tearing down. The age
-	// filter exists because Batch's own teardown takes seconds, so a resource
-	// that is still there moments after its job ended is not yet evidence of
-	// a leak (§3.4).
+	// MaxAge is how old an instance must be before the reaper will delete it,
+	// and how long a job may be QUEUED before the deadline cancels it. Zero
+	// means the queue deadline, plus the longest task timeout and its slack,
+	// plus ReapMargin: nothing a Fugaro run can legitimately be doing takes
+	// longer than queueing, running and tearing down. The age filter exists
+	// because Batch's own teardown takes seconds, so a resource that is still
+	// there moments after its job ended is not yet evidence of a leak (§3.4).
+	//
+	// It is NOT what a job's stuckness is judged on: a job is deleted for being
+	// stuck only by the time it has spent in the state it reports (stateSince),
+	// and never by its age since creation (see Reaper.RunBudget). A value that
+	// is negative, longer than MaxDeadline, or shorter than the queue wait plus
+	// a run it must contain is refused by NewReaper rather than obeyed.
 	MaxAge time.Duration
 	// DryRun makes Reap list what it would delete and touch nothing: no
 	// instance is deleted and no job is cancelled either.
@@ -211,6 +248,12 @@ type Reaper struct {
 	now           func() time.Time
 	queueDeadline time.Duration
 	maxAge        time.Duration
+	// runBudget is how long a job may spend in one state (RUNNING,
+	// SCHEDULED, DELETION_IN_PROGRESS) before the reaper reads it as stuck:
+	// the longest task timeout, its slack and ReapMargin, i.e. everything in
+	// MaxAge except the queue wait. Time in a state is measured from the job's
+	// own status events, never from its creation time.
+	runBudget time.Duration
 	// listPageSize is the job listing's page size; tests shrink it to
 	// exercise paging.
 	listPageSize int64
@@ -244,13 +287,36 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	if base <= 0 {
 		base = backend.DefaultTaskTimeout
 	}
+	switch {
+	case o.QueueDeadline < 0:
+		return nil, fmt.Errorf("a negative queue deadline (%v): a caller meaning \"no deadline\" leaves it zero", o.QueueDeadline)
+	case o.MaxAge < 0:
+		return nil, fmt.Errorf("a negative maximum age (%v): a caller meaning \"use the default\" leaves it zero", o.MaxAge)
+	}
 	queueDeadline := o.QueueDeadline
-	if queueDeadline <= 0 {
+	if queueDeadline == 0 {
 		queueDeadline = base + backend.TaskTimeoutSlack
 	}
+	// Everything in MaxAge except the queue wait: how long a job may
+	// legitimately be RUNNING (or in any other single state) before it is
+	// stuck. Derived before MaxAge, because MaxAge's floor is built from it.
+	runBudget := base + backend.TaskTimeoutSlack + ReapMargin
 	maxAge := o.MaxAge
-	if maxAge <= 0 {
-		maxAge = queueDeadline + base + backend.TaskTimeoutSlack + ReapMargin
+	if maxAge == 0 {
+		maxAge = queueDeadline + runBudget
+	}
+	// A caller's deadlines are validated rather than clamped. MaxAge shorter
+	// than the queue wait it must contain would delete a job that had just
+	// started (or a VM behind it) the moment its queue wait alone reached it;
+	// one past MaxDeadline is a unit error. Both are the caller's bug, and a
+	// reaper that deletes things must say so rather than invent a deadline.
+	switch floor := queueDeadline + base + backend.TaskTimeoutSlack; {
+	case queueDeadline > MaxDeadline:
+		return nil, fmt.Errorf("a queue deadline of %v is longer than any deadline the reaper will act on (%v)", queueDeadline, MaxDeadline)
+	case maxAge > MaxDeadline:
+		return nil, fmt.Errorf("a maximum age of %v is longer than any deadline the reaper will act on (%v)", maxAge, MaxDeadline)
+	case maxAge < floor:
+		return nil, fmt.Errorf("a maximum age of %v is too short to contain the queue deadline of %v plus a run: it must be at least %v", maxAge, queueDeadline, floor)
 	}
 	bs, err := batch.NewService(ctx, clientOptions(o.Endpoints.Batch, o.Endpoints, o.HTTPClient, o.GCPProject)...)
 	if err != nil {
@@ -262,15 +328,21 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	}
 	return &Reaper{
 		o: o, batch: bs, compute: cs, now: o.Now,
-		queueDeadline: queueDeadline, maxAge: maxAge, listPageSize: 100,
+		queueDeadline: queueDeadline, maxAge: maxAge, runBudget: runBudget,
+		listPageSize: 100,
 	}, nil
 }
 
-// QueueDeadline and MaxAge are the deadlines this Reaper decides by, after
-// the defaults above are applied. Exported for the caller that logs the plan
-// before a pass (and for tests that pin the defaults).
+// QueueDeadline, MaxAge and RunBudget are the deadlines this Reaper decides
+// by, after the defaults above are applied. Exported for the caller that logs
+// the plan before a pass (and for tests that pin them).
+//
+// QueueDeadline bounds a QUEUED job's wait, MaxAge bounds an instance's age and
+// a job's time in the QUEUED state, and RunBudget bounds how long a job may be
+// in any one other state before the reaper calls it stuck.
 func (r *Reaper) QueueDeadline() time.Duration { return r.queueDeadline }
 func (r *Reaper) MaxAge() time.Duration        { return r.maxAge }
+func (r *Reaper) RunBudget() time.Duration     { return r.runBudget }
 
 // location is projects/<p>/locations/<r>, the parent of the jobs.
 func (r *Reaper) location() string {
@@ -372,6 +444,12 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 	}
 	switch state {
 	case "QUEUED":
+		// The queue wait is the one deadline judged from the creation time,
+		// and the one job state where that is sound: a job that has not
+		// started has been waiting since it was created, and the wait between
+		// creation and the API reporting QUEUED is a few milliseconds the
+		// reaper reads as waiting -- the conservative side of a deadline that
+		// cancels rather than deletes.
 		if age <= r.queueDeadline {
 			// Still waiting for capacity, within the deadline the design
 			// gives a queue wait. It owns its VM if it has somehow been given
@@ -388,19 +466,36 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		owned.own(run, "its job was QUEUED past the queue deadline and was cancelled, not deleted: Batch tears its VMs down from CANCELLATION_IN_PROGRESS")
 		return r.cancelQueued(ctx, j, run, age, rep)
 	case "SCHEDULED", "RUNNING":
-		if age <= r.maxAge {
+		// Judged on the time spent IN THIS STATE, not on the job's age: a run
+		// may wait in the queue far longer than the queue deadline (the
+		// deadline is the previous pass's, or a reaper that was not running),
+		// and then start, and its age since creation would call that run stuck
+		// seconds after it began.
+		spent, ok := stateSince(j, r.now())
+		if !ok {
+			return r.refuseUnknownStateTime(j, state, run, owned, rep)
+		}
+		if spent <= r.runBudget {
 			// A live run: Batch owns its VM, and the instance pass must leave
 			// it alone.
-			owned.own(run, "its job is "+state+": Batch owns its teardown")
+			owned.own(run, fmt.Sprintf("its job is %s, %.0f minutes into the state: Batch owns its teardown", state, spent.Minutes()))
 			return nil
 		}
-		// Past every deadline a Fugaro run could legitimately have: Batch's
-		// own maxRunDuration should have failed it long ago, so this is the
-		// hung job §3.4 keeps the reaper for. Deleting the job IS the VM's
-		// teardown, which is why it happens here, before the instance pass.
-		return r.deleteJob(ctx, j, fmt.Sprintf("still %s %.0f minutes past every deadline this installation configures", state, age.Minutes()), rep)
+		// Longer than any Fugaro run can legitimately be in this state:
+		// Batch's own maxRunDuration should have failed it long ago, so this
+		// is the hung job §3.4 keeps the reaper for. Deleting the job IS the
+		// VM's teardown, which is why it happens here, before the instance
+		// pass.
+		return r.deleteJob(ctx, j, run, fmt.Sprintf("still %s %.0f minutes into the state, past every run deadline this installation configures", state, spent.Minutes()), owned, rep)
 	case "DELETION_IN_PROGRESS":
-		if age <= r.maxAge {
+		// Likewise judged on the time in this state. A deletion STARTED
+		// moments ago on an old job -- Batch's own 60-day auto-delete, §9 --
+		// must not read as stuck just because the job is old.
+		spent, ok := stateSince(j, r.now())
+		if !ok {
+			return r.refuseUnknownStateTime(j, state, run, owned, rep)
+		}
+		if spent <= r.runBudget {
 			// Someone is already deleting this job, and Batch is deleting its
 			// VMs with it: the instance pass must not race that.
 			owned.own(run, "its job is DELETION_IN_PROGRESS: its deletion is already under way")
@@ -409,7 +504,7 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		// A stuck deletion: the residual §3.4 names. Deleting it again is
 		// how the deletion finishes (and is what makes this idempotent for a
 		// job the real API has already removed -- a 404 below is success).
-		return r.deleteJob(ctx, j, "a deletion that has not finished within every deadline", rep)
+		return r.deleteJob(ctx, j, run, fmt.Sprintf("a deletion that has not finished in %.0f minutes", spent.Minutes()), owned, rep)
 	case "SUCCEEDED", "FAILED", "CANCELLED", "CANCELLATION_IN_PROGRESS":
 		// A finished job: its record is history -- fugaro ls, diagnose and
 		// watch read it -- and Batch's own teardown owns its VMs. The one
@@ -425,6 +520,18 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		rep.refuse(j.Name, fmt.Sprintf("its Batch state %q is not one this build knows", state))
 		return nil
 	}
+}
+
+// refuseUnknownStateTime is what a job whose time in the current state cannot
+// be read gets: nothing is done to it (no delete, no cancel -- a job whose
+// stuckness is unknown is not stuck), it is owned so the instance pass leaves
+// its VMs alone, and the refusal says why. It is the same posture as an
+// unreadable createTime: fail closed, and name it in the report.
+func (r *Reaper) refuseUnknownStateTime(j *batch.Job, state, run string, owned owners, rep *Report) error {
+	r.o.Warn(fmt.Sprintf("reaper: job %s: no readable time for the %s state: refusing to act on it", j.Name, state))
+	owned.own(run, "its job reports no readable time for the state it is in, so the reaper refused to act on it")
+	rep.refuse(j.Name, fmt.Sprintf("it reports no readable time for the %s state it is in, so how long it has been there is unknown and no deadline can clear it", state))
+	return nil
 }
 
 // cancelQueued is the queue deadline: a job that has not reached SCHEDULED or
@@ -453,8 +560,21 @@ func (r *Reaper) cancelQueued(ctx context.Context, j *batch.Job, run string, age
 
 // deleteJob is jobs.delete: the job and, with it, its VMs. Only jobs the
 // reaper has decided must go reach it (a stuck job, and a stuck deletion).
-func (r *Reaper) deleteJob(ctx context.Context, j *batch.Job, why string, rep *Report) error {
+//
+// It also OWNS the run, in a dry run as much as in a live pass: Batch tears a
+// deleted job's VMs down itself, and deleting one in the same pass races that
+// teardown -- the very race §3.4 keeps the age floor for, at the other end of a
+// job's life. So a VM behind a job this pass deletes is left for the pass after
+// it, which reaps it if it really outlived its job. The cost of the grace is
+// one reaper interval on a leak; the cost of racing is an API error (or a
+// half-torn-down job) on a path that runs whenever the reaper does its job.
+func (r *Reaper) deleteJob(ctx context.Context, j *batch.Job, run, why string, owned owners, rep *Report) error {
 	reason := "stuck: " + why
+	deleting := "is being deleted by this pass"
+	if r.o.DryRun {
+		deleting = "would be deleted by this pass"
+	}
+	owned.own(run, "its job "+deleting+", and Batch tears a deleted job's VMs down itself: leaving the VM to the pass after this one")
 	if r.o.DryRun {
 		rep.Actions = append(rep.Actions, Action{Kind: ActionDeleteJob, Target: j.Name, Reason: reason})
 		return nil
@@ -501,6 +621,17 @@ func (r *Reaper) reapInstances(ctx context.Context, owned owners, rep *Report) e
 		// the filter should not have returned is refused, not deleted.
 		if in.labels[labelManaged] != managedValue {
 			rep.refuse(target, fmt.Sprintf("its %s label is %q, not this installation's %q", labelManaged, in.labels[labelManaged], managedValue))
+			continue
+		}
+		if !zoneInRegion(in.zone, r.o.Region) {
+			// The jobs this pass decided from are the reaper's REGION's
+			// (jobs.list is regional); the aggregated listing is not, it is
+			// project-wide. A VM in another region belongs to another region's
+			// jobs, which this pass never read -- so it is a VM listing
+			// deciding, which is what §3.4 forbids -- and it is refused rather
+			// than deleted. Another Fugaro region in the same project is a
+			// second reaper's business, not this one's.
+			rep.refuse(target, fmt.Sprintf("it is in zone %s, not this reaper's region %s, whose jobs are the ones this pass read", in.zone, r.o.Region))
 			continue
 		}
 		run := in.labels[RunLabel]
@@ -611,6 +742,17 @@ func (r *Reaper) listInstances(ctx context.Context) ([]instance, error) {
 	return out, nil
 }
 
+// zoneInRegion reports whether a zone is one of a region's, by the naming
+// Google documents: a zone's name is its region's, a dash and a letter
+// (us-central1-a is in us-central1). It is what confines the instance pass to
+// the region whose jobs the job pass read. A name that does not match is
+// refused, never deleted, so a naming Google changes is a reaper that stops
+// reaping (and says so in the report) rather than one that deletes the wrong
+// region's VMs.
+func zoneInRegion(zone, region string) bool {
+	return region != "" && strings.HasPrefix(zone, region+"-")
+}
+
 // zoneOf is an instance's zone NAME, which is what instances.delete needs and
 // what neither field carries directly: the aggregated listing scopes an
 // instance under "zones/<zone>" and the instance's own Zone field is the
@@ -638,6 +780,15 @@ func (r *Reaper) listJobs(ctx context.Context) ([]*batch.Job, error) {
 			PageSize(r.listPageSize).PageToken(token).Context(ctx).Do()
 		if err != nil {
 			return nil, apiError("listing jobs in "+r.location()+" (the reaper needs batch.jobs.list there)", err)
+		}
+		// A partial listing must never be read as a complete one: the instance
+		// pass deletes a VM whose run no listed job answers for, so a job the
+		// API could not reach would look exactly like a run with no job behind
+		// it -- a live job's VM deleted because a listing was short. There is
+		// no partial answer this pass can act on, so it fails, and the caller
+		// retries.
+		if len(resp.Unreachable) > 0 {
+			return nil, fmt.Errorf("listing jobs in %s: the API could not reach %s, so the listing may be missing jobs: refusing to reap anything from a partial listing", r.location(), strings.Join(resp.Unreachable, ", "))
 		}
 		for _, j := range resp.Jobs {
 			if j == nil || !managedJob(j) {
@@ -695,6 +846,65 @@ func jobRunLabels(j *batch.Job) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// stateSince is how long a job has been in the state it reports now, which is
+// what the run-scoped deadline is measured against: the time of its latest
+// job-level status event, or -- for a RUNNING job, whose RunDuration is exactly
+// that -- the run duration Batch reports. It is deliberately NOT the job's age
+// since creation. A job's age says how long ago it was created, and a run may
+// spend longer in the queue than the queue deadline (the deadline is the
+// previous pass's, and a reaper that was not running enforces nothing), then
+// start and run legitimately: judged by its age, that run is "stuck" the second
+// it starts, and jobs.delete would kill a live run. A deletion is the same
+// story from the other end: Batch's own 60-day job delete (§9) puts a
+// DELETION_IN_PROGRESS on a months-old job, and the state began moments ago.
+//
+// Task-level events (TaskState set) are skipped: those are emitted while the
+// job is in the same state, so they date a task, not the state. Taking the
+// latest job-level event can only make the time in state look SHORTER than it
+// is (an event the API emits mid-state), which errs towards leaving a job
+// alone -- the direction this file errs in everywhere.
+//
+// A job with no readable time in state is not stuck: the caller refuses it and
+// owns its VMs (refuseUnknownStateTime), because an unknown time never clears a
+// job.
+func stateSince(j *batch.Job, now time.Time) (time.Duration, bool) {
+	if j.Status == nil {
+		return 0, false
+	}
+	latest := time.Time{}
+	for _, ev := range j.Status.StatusEvents {
+		if ev == nil || ev.TaskState != "" {
+			continue
+		}
+		t, err := parseTime(ev.EventTime)
+		if err != nil || t.IsZero() {
+			continue
+		}
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	if latest.IsZero() {
+		// RunDuration is Batch's own answer for the one state it defines it
+		// for: "the duration of time that the Job spent in status RUNNING"
+		// (batch/v1.JobStatus). It is the fallback, not the primary, because
+		// no other state has an equivalent field.
+		if j.Status.State == "RUNNING" && j.Status.RunDuration != "" {
+			if d, err := time.ParseDuration(j.Status.RunDuration); err == nil && d >= 0 {
+				return d, true
+			}
+		}
+		return 0, false
+	}
+	spent := now.Sub(latest)
+	if spent < 0 {
+		// A clock that disagrees with the API's: read the state as just
+		// entered rather than as one it has been in for a negative time.
+		spent = 0
+	}
+	return spent, true
 }
 
 // jobIsTerminal reports whether a job has finished, by the same mapping the

@@ -409,6 +409,80 @@ func TestBatchFakeSetCreatedAndUID(t *testing.T) {
 	}
 }
 
+// TestBatchFakeStatusKnobs are the three knobs a caller needs to reach a job
+// whose time in its state is a fact (SetStateAt), one whose events date
+// something else (SetStatusEvents), and one that reports only a runDuration
+// (SetRunDuration) -- the shapes a per-state deadline is read from.
+func TestBatchFakeStatusKnobs(t *testing.T) {
+	f := NewBatch(t)
+	if code, _ := batchCall(t, "POST", f.URL+"/v1/projects/p/locations/r1/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	when := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
+	f.SetStateAt("fugaro-x-web-1", "RUNNING", when)
+	st := batchStatus(f.JobJSON("p", "r1", "fugaro-x-web-1"))
+	if st["state"] != "RUNNING" {
+		t.Fatalf("state = %v, want RUNNING", st["state"])
+	}
+	events, _ := st["statusEvents"].([]any)
+	if len(events) != 1 {
+		t.Fatalf("SetStateAt wrote %d status events, want one: %v", len(events), st)
+	}
+	e, _ := events[0].(map[string]any)
+	if e["type"] != "STATUS_CHANGED" || e["eventTime"] != when.Format(time.RFC3339) {
+		t.Fatalf("status event = %v, want a STATUS_CHANGED at %s", e, when.Format(time.RFC3339))
+	}
+	// SetStatusEvents replaces them, which is how a task-level event (one the
+	// state deadline must not read) is reached.
+	f.SetStatusEvents("fugaro-x-web-1", map[string]any{
+		"type": "TASK_STATE_CHANGED", "taskState": "RUNNING",
+		"eventTime": when.Add(time.Hour).Format(time.RFC3339),
+	})
+	events, _ = batchStatus(f.JobJSON("p", "r1", "fugaro-x-web-1"))["statusEvents"].([]any)
+	if len(events) != 1 {
+		t.Fatalf("SetStatusEvents wrote %d events, want one", len(events))
+	}
+	f.SetRunDuration("fugaro-x-web-1", "600s")
+	if got := batchStatus(f.JobJSON("p", "r1", "fugaro-x-web-1"))["runDuration"]; got != "600s" {
+		t.Fatalf("runDuration = %v, want 600s", got)
+	}
+	// And the state survives a render: it is the job's, not the event's.
+	if got := f.State("fugaro-x-web-1"); got != "RUNNING" {
+		t.Fatalf("State = %q, want RUNNING", got)
+	}
+}
+
+// TestBatchFakeUnreachable: jobs.list reports the locations it could not reach
+// alongside the jobs it did answer, and reports nothing when it reached them
+// all -- a caller reading absence as fact has to be able to tell the two
+// answers apart.
+func TestBatchFakeUnreachable(t *testing.T) {
+	f := NewBatch(t)
+	if code, _ := batchCall(t, "POST", f.URL+"/v1/projects/p/locations/r1/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	list := func() map[string]any {
+		code, body := batchCall(t, "GET", f.URL+"/v1/projects/p/locations/r1/jobs", "")
+		if code != http.StatusOK {
+			t.Fatalf("list: status %d: %v", code, body)
+		}
+		return body
+	}
+	if got := list()["unreachable"]; got != nil {
+		t.Fatalf("unreachable = %v, want the field absent while every location is reachable", got)
+	}
+	f.Unreachable = []string{"r2", "r3"}
+	got, _ := list()["unreachable"].([]any)
+	if len(got) != 2 || got[0] != "r2" || got[1] != "r3" {
+		t.Fatalf("unreachable = %v, want [r2 r3]", got)
+	}
+}
+
+func batchStatus(job map[string]any) map[string]any {
+	st, _ := job["status"].(map[string]any)
+	return st
+}
+
 // TestLoggingFakeReadsBatchTaskLogsByUID is the Logging fake's Batch half:
 // entries stored by UID come back for the filter design §2.3 ships, and only
 // that job's.

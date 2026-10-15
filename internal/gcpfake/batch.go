@@ -63,6 +63,11 @@ type Batch struct {
 	// FAILED_PRECONDITION, so the backend's tolerance of the race between a
 	// read and a cancel is exercised rather than assumed.
 	AllowCancelOfTerminal bool
+	// Unreachable, when non-empty, is the locations jobs.list reports it could
+	// not reach (ListJobsResponse.Unreachable): the shape of a partial listing.
+	// A caller that treats "the job is not in the listing" as "the job is not
+	// there" must notice it.
+	Unreachable []string
 	// CancelRace, keyed by job id, moves the job to that raw state as its
 	// :cancel arrives, before the cancel is answered: a job that started or
 	// finished between the listing that decided to cancel it and the call
@@ -243,6 +248,72 @@ func (f *Batch) SetState(id, s string) {
 	if st, ok := j.body["status"].(map[string]any); ok {
 		st["state"] = s
 	}
+}
+
+// SetStateAt is SetState plus the job's status events: the job reports one
+// job-level STATUS_CHANGED event at at, which is when it entered the state and
+// therefore the only thing a per-state deadline can be measured from (the
+// reaper's stateSince). SetState alone leaves the events as they were, so a
+// test that wants a job whose time in state is unknown -- no event, no
+// runDuration -- writes that too.
+func (f *Batch) SetStateAt(id, s string, at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.find(id)
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetStateAt(%q): no such job", id)
+	}
+	j.state = s
+	st, _ := j.body["status"].(map[string]any)
+	if st == nil {
+		st = map[string]any{}
+		j.body["status"] = st
+	}
+	st["state"] = s
+	st["statusEvents"] = []any{map[string]any{
+		"type":        "STATUS_CHANGED",
+		"description": "Job state is " + s,
+		"eventTime":   stamp(at),
+	}}
+}
+
+// SetStatusEvents replaces a job's status events, as jobs.get would report
+// them: the shape a test needs to reach a job whose events date something other
+// than its current state (a task-level event, or none at all).
+func (f *Batch) SetStatusEvents(id string, events ...map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.find(id)
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetStatusEvents(%q): no such job", id)
+	}
+	st, _ := j.body["status"].(map[string]any)
+	if st == nil {
+		st = map[string]any{}
+		j.body["status"] = st
+	}
+	list := make([]any, 0, len(events))
+	for _, e := range events {
+		list = append(list, e)
+	}
+	st["statusEvents"] = list
+}
+
+// SetRunDuration sets the runDuration a RUNNING job reports, the fallback a
+// client that finds no event time reads (batch/v1.JobStatus).
+func (f *Batch) SetRunDuration(id, d string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.find(id)
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetRunDuration(%q): no such job", id)
+	}
+	st, _ := j.body["status"].(map[string]any)
+	if st == nil {
+		st = map[string]any{}
+		j.body["status"] = st
+	}
+	st["runDuration"] = d
 }
 
 // SetCreated back-dates (or post-dates) a job's create time, which the
@@ -542,6 +613,12 @@ func (f *Batch) list(w http.ResponseWriter, r *http.Request, parent string) {
 	resp := map[string]any{"jobs": out}
 	if end < len(all) {
 		resp["nextPageToken"] = strconv.Itoa(end)
+	}
+	if len(f.Unreachable) > 0 {
+		// jobs.list answers the locations it could not reach alongside the
+		// jobs it did: a caller that reads an unreachable listing as a complete
+		// one is reading absence as fact.
+		resp["unreachable"] = f.Unreachable
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
