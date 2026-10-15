@@ -496,6 +496,26 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 	return ok
 }
 
+// NeedsAnthropicKey reports whether a run on this configuration sends a call
+// to Anthropic, and so needs the Anthropic API key. The model ID alone decides
+// the route, exactly as the gateway decides it (internal/gateway/route.go): a
+// model no allowed provider claims goes direct. So a Claude pin, or a model no
+// route serves, needs the key, and a repository whose pins are all served by
+// providers it may send code to does not (design docs/design/project-centric.md
+// §6.1). repo "" is an unknown repository, which no provider may serve.
+//
+// Callers ask this only where the gateway is on and enforcing: without it a
+// provider model is refused (CheckProviderGateway) and every call would go to
+// Anthropic.
+func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
+	for _, model := range []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)} {
+		if _, p, ok := ProviderFor(providers, model); !ok || !p.AllowsData(repo) {
+			return true
+		}
+	}
+	return false
+}
+
 // EffectiveBackground is the model of Claude Code's background (haiku-role)
 // requests. The file's agent.models.background when set. Otherwise, with a
 // coder a provider serves, the coder's own model: the alternative is Claude

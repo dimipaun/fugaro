@@ -21,6 +21,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
+// anthropicKeyNeeded is the offline note a pin that goes direct to Anthropic
+// gets: the run needs the key, and only the cloud knows whether the secret has
+// a version yet (design docs/design/project-centric.md §6.1).
+const anthropicKeyNeeded = "a pinned model goes direct to Anthropic, so the run needs an Anthropic API key: the job mounts it whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` if none does), or route the model through a provider"
+
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
 // environment init --repo sets from the project config: an "off" mode is no
 // mode at all.
@@ -181,6 +186,7 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	if rerr == nil {
 		problems = append(problems, config.CheckProviderPolicy(cfg.Agent, allowed, repo, lc.Providers, prices)...)
 	} else {
+		repo = "" // an unknown repository: no provider may serve it
 		for _, p := range config.CheckProviderPolicy(cfg.Agent, allowed, "", lc.Providers, prices) {
 			// Without the repository only the rules that don't name it hold.
 			if !strings.Contains(p.Message, "allow_data_to") {
@@ -205,6 +211,14 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	agent.Models.Background = config.EffectiveBackground(agent, lc.Providers)
 	mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
 	problems = append(problems, config.CheckProviderGateway(agent, agent.Models.Background, lc.Providers, mode)...)
+	// A pin no provider serves goes direct to Anthropic, so the run needs the
+	// Anthropic API key. This is the offline half of the rule: whether the
+	// secret has a version is a fact only the cloud knows, so it is a warning
+	// naming the fix, not a refusal (design docs/design/project-centric.md
+	// §6.1; the gateway refuses such a call, by name, when the key is absent).
+	if cfg.Agent.Auth == "api-key" && mode == policy.ModeEnforce && config.NeedsAnthropicKey(cfg.Agent, lc.Providers, repo) {
+		warnings = append(warnings, config.Problem{Path: "agent.auth", Message: anthropicKeyNeeded})
+	}
 	if cfg.Agent.Auth != "oauth" {
 		warnings = append(warnings, config.PinWarnings(agent, prices)...)
 	}

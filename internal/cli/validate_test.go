@@ -398,14 +398,17 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 4 {
 		t.Fatalf("json = %+v", got)
 	}
-	// A tighter file says nothing about the ceilings. The no-language-runtime
-	// warning still fires (cliMinimalYAML's workflow has no mise config
-	// either way): stripped out by its own exact text before asserting no
-	// warning at all remains, so a ceiling-unrelated warning this test does
-	// not expect (a clamp, say) would still be caught.
+	// A tighter file says nothing about the ceilings. Two warnings unrelated
+	// to the ceilings still fire — the pinned Claude model needs the Anthropic
+	// key (the file's enforce is the effective mode), and cliMinimalYAML's
+	// workflow installs no language runtime either way — and both are stripped
+	// out by their own exact text before asserting no warning at all remains,
+	// so a ceiling-unrelated warning this test does not expect (a clamp, say)
+	// would still be caught.
 	path = fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5 }\n", "budget: { mode: enforce, per_run_usd: 2 }\n", pinnedAgent)
 	_, errOut, err = execute(t, "validate", path)
-	stripped := strings.Replace(errOut, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
+	stripped := strings.Replace(errOut, "warning: agent.auth: "+anthropicKeyNeeded+"\n", "", 1)
+	stripped = strings.Replace(stripped, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
 	if err != nil || strings.Contains(stripped, "warning") {
 		t.Fatalf("tightening warned: %v %q", err, stripped)
 	}
@@ -709,5 +712,34 @@ func TestValidateNotesProvidersOpenToEveryRepository(t *testing.T) {
 		if !strings.Contains(errOut, "warning: "+tc.want) {
 			t.Fatalf("%s: no note naming the provider: %s", name, errOut)
 		}
+	}
+}
+
+// TestValidateNotesAnthropicKeyNeededOffline (design
+// docs/design/project-centric.md §6.1): a pin that goes direct to Anthropic
+// needs the Anthropic key, and validate says so offline -- whether the secret
+// has a version is a fact only the cloud knows -- naming the fix. A run whose
+// pins a provider may all serve gets no such note.
+func TestValidateNotesAnthropicKeyNeededOffline(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n"
+	const allProvider = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: deepseek/deepseek-v4-flash, background: deepseek/deepseek-v4-flash }"
+	for _, tc := range []struct {
+		name  string
+		agent string
+		repo  string
+		want  bool
+	}{
+		{"a Claude pin", "  auth: api-key\n  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 }", "acme/sandbox", true},
+		{"every pin served by a provider", allProvider, "acme/sandbox", false},
+		{"a provider pin this repository may not be sent to", allProvider, "acme/other", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inCheckoutOf(t, tc.repo)
+			path := budgetProject(t, budget+validateProviderBlock, tc.agent)
+			_, errOut, _ := execute(t, "validate", path)
+			if got := strings.Contains(errOut, "needs an Anthropic API key"); got != tc.want {
+				t.Fatalf("note = %v, want %v:\n%s", got, tc.want, errOut)
+			}
+		})
 	}
 }
