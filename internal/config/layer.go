@@ -569,12 +569,24 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 			continue
 		}
 		for i, m := range ids {
-			// The same rule a route entry is judged by (CheckClaudeClaim):
-			// a claim is one explicit anthropic/<id>, never a pattern, a
-			// bare claude-* spelling, a ":" or "[1m]" variant, or another
-			// provider's model.
+			// Two rules, because a claim is appended to a route's own models
+			// (ApplyClaudeClaims) and the merged entry is judged by both:
+			// CheckClaudeClaim (a claim is one explicit anthropic/<id>, never
+			// a pattern, a bare claude-* spelling, a ":" or "[1m]" variant,
+			// or another provider's model) and CheckModelPattern, the rule a
+			// route entry is judged by -- which the gateway's routes apply
+			// again (CheckModelPattern's invariant: a config that validates
+			// here always starts there). The claim rule alone holds no
+			// length bound, so without the second check an over-long ID would
+			// be accepted here, merged into the route, and then refuse to
+			// start every run whose job carries that route.
+			at := fmt.Sprintf("%s[%d]", p, i)
 			if msg := CheckClaudeClaim(m); msg != "" {
-				add(fmt.Sprintf("%s[%d]", p, i), "%s", msg)
+				add(at, "%s", msg)
+				continue
+			}
+			if msg := CheckModelPattern(m); msg != "" {
+				add(at, "%s", msg)
 			}
 		}
 	}

@@ -16,9 +16,20 @@ func claimProviders() map[string]ModelProvider {
 	}
 }
 
-// Review Focus 3: the layer key refuses every spelling a claim may not take,
-// with the same rule a route entry is judged by (CheckClaudeClaim).
+// Review Focus 3: the layer key refuses every spelling a claim may not take.
+// Two rules judge it: the is-it-a-claim rule (CheckClaudeClaim: one explicit
+// anthropic/<id>, never a pattern, a bare claude-* spelling, a ":" or "[1m]"
+// variant, or another provider's model) and the route-entry rule
+// (CheckModelPattern) the merged entry must also satisfy -- the 100-character
+// bound above all, since a claim is appended to a real route's models and the
+// gateway's routes apply that same rule (CheckModelPattern's doc: a config
+// that validates here always starts there).
 func TestLayerClaimMustBeExplicit(t *testing.T) {
+	// The ID of the last case is 101 characters: "anthropic/" plus 91.
+	long := "anthropic/" + strings.Repeat("c", 91)
+	if len(long) != 101 {
+		t.Fatalf("the fixture ID is %d characters, want 101", len(long))
+	}
 	for _, tc := range []struct {
 		name string
 		ids  string
@@ -32,6 +43,11 @@ func TestLayerClaimMustBeExplicit(t *testing.T) {
 		{"a 1m spelling", `["anthropic/claude-sonnet-5.5[1m]"]`, false},
 		{"another provider's model", `["deepseek/deepseek-v4-flash"]`, false},
 		{"an empty list", `[]`, false},
+		// Mutation that makes this fail: judge the entry with CheckClaudeClaim
+		// alone in layer.go (the claim rule holds no length bound, so the ID
+		// is accepted, appended to the route's models, and the gateway then
+		// refuses to start every run whose job carries that route).
+		{"an ID over the 100-character bound", `["` + long + `"]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			text := "version: 1\nproject: acme\ngcp_project: acme-fugaro\nclaude_models:\n  openrouter: " + tc.ids + "\n"

@@ -443,14 +443,29 @@ func TestLayerClaimForARouteThisRepositoryDoesNotHave(t *testing.T) {
 // route entry is judged by, so a class of Claude models can never be claimed
 // from the layer either.
 func TestLayerClaimMustBeExplicit(t *testing.T) {
+	// 101 characters: past the bound a route entry is held to
+	// (config.CheckModelPattern). A claim is appended to the named route's own
+	// models, so an over-long one would make the gateway refuse to start every
+	// run whose job carries that route -- the run must be refused at the layer
+	// instead, before any call.
+	long := "anthropic/" + strings.Repeat("c", 91)
+	if len(long) != 101 {
+		t.Fatalf("the fixture ID is %d characters, want 101", len(long))
+	}
 	for _, claims := range []string{
 		"  openrouter: [\"anthropic/*\"]\n",
 		"  openrouter: [\"claude-sonnet-5-5\"]\n",
 		"  openrouter: []\n",
+		"  openrouter: [\"" + long + "\"]\n",
 	} {
 		g := layerClaimGW(t, claimCfg(t, claimedClaude), layerWithClaim(claims), nil)
 		rec, err := g.run(t)
-		if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "claude_models") ||
+		// The reason must be the *layer* being invalid, not the pin the claim
+		// would have served: the unclaimed-model refusal's own sentence names
+		// "the project layer's claude_models" too, so matching on that
+		// substring alone would pass for a run refused for any other reason.
+		if err == nil || rec.Status != runstore.StatusInfraError ||
+			!strings.Contains(rec.Reason, "the task's project layer") || !strings.Contains(rec.Reason, "is invalid") ||
 			len(g.agent.calls) != 0 {
 			t.Fatalf("claims %q: rec = %+v, err = %v", claims, rec, err)
 		}

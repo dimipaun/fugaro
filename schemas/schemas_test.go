@@ -155,6 +155,11 @@ func TestProjectLayerSchemaClaudeModels(t *testing.T) {
 		"claude_models:\n  openrouter:\n    - anthropic/claude-sonnet-5.5\n",
 		"claude_models: []\n",
 		"claude_models: openrouter\n",
+		// 101 characters: the parser's route-entry rule (CheckModelPattern)
+		// bound, which the schema mirrors as the item's maxLength.
+		"claude_models:\n  openrouter: [\"anthropic/" + strings.Repeat("c", 91) + "\"]\n",
+		// 100 exactly: inside the bound in both.
+		"claude_models:\n  openrouter: [\"anthropic/" + strings.Repeat("c", 90) + "\"]\n",
 	} {
 		text := head + entry
 		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
