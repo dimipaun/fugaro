@@ -98,10 +98,11 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"passed: a later publish never re-adds a name an operator removed. It is never\n" +
 			"seeded from the bucket's runs/<slug>/ prefixes, which every run of a profile\n" +
 			"can write.\n\n" +
-			"--delete removes the policy (the children first, then the shared node) and\n" +
-			"puts the project back on the ceiling its jobs' environments carry. It refuses\n" +
-			"without --yes while runs are in flight, and asks you to type the project's\n" +
-			"name otherwise.",
+			"--delete removes the policy (the children first, the shared node last, so a\n" +
+			"launch mid-delete still sees the policy and keeps its tighter ceiling) and\n" +
+			"puts the project back on the ceiling its jobs' environments carry. It goes\n" +
+			"through the same rules-marker gate as a publish, refuses without --yes while\n" +
+			"runs are in flight, and asks you to type the project's name otherwise.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectPolicyPublish(cmd, &o) },
 	}

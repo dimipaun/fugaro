@@ -483,11 +483,66 @@ func TestPolicyCarriesNoSecretValue(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyDeleteRemovesSharedThenChildren: the children go first and
-// the shared node last (B5) — the shared node's existence is project-centric
-// mode, so a deletion that half-succeeds must not leave the mode off with a
-// child behind.
-func TestProjectPolicyDeleteRemovesSharedThenChildren(t *testing.T) {
+// TestProjectPolicyPublishRefusesAPastedKeyWithoutEchoingIt: a provider's
+// .secret is the NAME of the secret that holds the key, and every model
+// provider's key begins with "sk-" — a value pasted there would otherwise be
+// accepted as a name and published as one. The refusal names the field and
+// never the value: the value IS a key, so quoting it would print a key into
+// the terminal, the job log or result.json, which is the leak the check
+// exists for (the same rule internal/config's ValidateModelProviders states
+// for the config file).
+func TestProjectPolicyPublishRefusesAPastedKeyWithoutEchoingIt(t *testing.T) {
+	f := newProjectFixture(t, "")
+	const value = "sk-or-v1-0123456789abcdef0123456789abcdef"
+	setConfig(t, f, func(s string) string {
+		return strings.Replace(s, "secret: openrouter-key", "secret: "+value, 1)
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a pasted API key was accepted as a secret's name:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "providers.openrouter.secret") {
+		t.Errorf("the refusal does not name the field: %v", err)
+	}
+	for _, text := range []string{err.Error(), out} {
+		if strings.Contains(text, value) {
+			t.Errorf("the refusal echoes the value:\n%s", text)
+		}
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a node was written anyway")
+	}
+}
+
+// TestProjectPolicyDeleteRefusesWithoutTheRulesMarker: --delete goes through
+// the same rules-marker gate as a publish (it cannot remove a policy of a
+// shape it does not know, and an absent marker is an installation that never
+// deployed the rules a policy belongs to), which the command's help states.
+func TestProjectPolicyDeleteRefusesWithoutTheRulesMarker(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(projectpolicy.PathRulesMarker(), nil)
+	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	if err == nil {
+		t.Fatal("--delete without the rules marker was allowed")
+	}
+	if !strings.Contains(err.Error(), "init --firebase") {
+		t.Errorf("the refusal does not name the fix: %v", err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Error("the policy was removed anyway")
+	}
+}
+
+// TestProjectPolicyDeleteRemovesChildrenThenTheSharedNode: the children go
+// first and the shared node last (B5) — the shared node's existence is
+// project-centric mode and, mid-delete, a launch that sees it takes the
+// policy's tighter ceiling, so deleting it first would drop every launch in
+// between to the looser ceiling its job's environment carries. A deletion that
+// half-succeeds must not leave the mode off with a child behind either.
+func TestProjectPolicyDeleteRemovesChildrenThenTheSharedNode(t *testing.T) {
 	f := newProjectFixture(t, "")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
