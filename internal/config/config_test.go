@@ -711,3 +711,125 @@ func TestDurationMarshalsAsWritten(t *testing.T) {
 		t.Fatalf("%s %v", out, err)
 	}
 }
+
+// --- mode: artifact's two commands and the input caps (0.8.0) --------------
+
+// TestRenderTimeoutDefaultsUnderTotal: timeouts.render bounds the render step
+// alone and, like stage and verify, is derived from what is left of the run
+// when nothing writes it: min(verify, total - finalize_reserve), which is
+// never above total (docs/design/artifact-runs.md §3).
+func TestRenderTimeoutDefaultsUnderTotal(t *testing.T) {
+	cfg, problems := Parse([]byte(minimalYAML + "      render: sh render.sh\n      probe: sh probe.sh\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	w := cfg.Workflows["server"]
+	if w.Commands.Render != "sh render.sh" || w.Commands.Probe != "sh probe.sh" {
+		t.Fatalf("commands = %+v", w.Commands)
+	}
+	// 90m total: verify is min(30m, 90m) = 30m, the reserve is 5m, so render
+	// is min(30m, 85m) = 30m.
+	if got := w.Timeouts.Render.Duration; got != 30*time.Minute {
+		t.Fatalf("render = %s, want 30m", got)
+	}
+	// A short total scales it down with the others, and never above total:
+	// 10m total, reserve 2m, verify 10m, so render is 8m.
+	cfg, problems = Parse([]byte(minimalYAML + "    timeouts: { total: 10m }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	to := cfg.Workflows["server"].Timeouts
+	if to.Render.Duration != 8*time.Minute || to.Render.Duration > to.Total.Duration {
+		t.Fatalf("render = %s, want 8m under total %s", to.Render.Duration, to.Total.Duration)
+	}
+	// A written render is kept as it is (the run's own deadline caps it
+	// further, so it is not refused for exceeding the computed default).
+	cfg, problems = Parse([]byte(minimalYAML + "    timeouts: { render: 12m }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if got := cfg.Workflows["server"].Timeouts.Render.Duration; got != 12*time.Minute {
+		t.Fatalf("render = %s, want 12m", got)
+	}
+	// A negative one is refused like the other four.
+	if _, problems := Parse([]byte(minimalYAML + "    timeouts: { render: -5m }\n")); !hasProblem(problems, "workflows.server.timeouts.render", "must be positive", 0) {
+		t.Fatalf("negative render: %v", problems)
+	}
+}
+
+// TestInputCapsHaveCeilings: workflows.<name>.inputs' three caps parse, each
+// with a default behind 0 and a ceiling of its own (P6: max_files counts
+// paths, max_bytes bounds ONE file, max_total_bytes bounds the set).
+func TestInputCapsHaveCeilings(t *testing.T) {
+	cfg, problems := Parse([]byte(minimalYAML + "    inputs: { max_files: 4, max_bytes: 1048576, max_total_bytes: 4194304 }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	in := cfg.Workflows["server"].Inputs
+	if in.MaxFiles != 4 || in.MaxBytes != 1048576 || in.MaxTotalBytes != 4194304 {
+		t.Fatalf("inputs = %+v", in)
+	}
+	if in.MaxFileCount() != 4 || in.MaxFileBytes() != 1048576 || in.MaxSetBytes() != 4194304 {
+		t.Fatalf("effective inputs = %d %d %d", in.MaxFileCount(), in.MaxFileBytes(), in.MaxSetBytes())
+	}
+	// Written zeroes mean the default, not the ceiling.
+	cfg, problems = Parse([]byte(minimalYAML + "    inputs: { max_files: 0, max_bytes: 0, max_total_bytes: 0 }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	in = cfg.Workflows["server"].Inputs
+	if in.MaxFileCount() != DefaultInputFiles || in.MaxFileBytes() != DefaultInputBytes || in.MaxSetBytes() != DefaultInputTotalBytes {
+		t.Fatalf("zeroes = %d %d %d", in.MaxFileCount(), in.MaxFileBytes(), in.MaxSetBytes())
+	}
+	if DefaultInputFiles != 16 || DefaultInputBytes != 256<<20 || DefaultInputTotalBytes != 1<<30 {
+		t.Fatalf("defaults changed: %d files, %d and %d bytes", DefaultInputFiles, DefaultInputBytes, DefaultInputTotalBytes)
+	}
+	// A workflow that writes no inputs block gets the same defaults.
+	cfg, problems = Parse([]byte(minimalYAML))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if in := cfg.Workflows["server"].Inputs; in.MaxFileCount() != 16 || in.MaxFileBytes() != 256<<20 || in.MaxSetBytes() != 1<<30 {
+		t.Fatalf("defaults = %+v", in)
+	}
+	for _, tc := range []struct{ name, line, path, want string }{
+		{"files over the ceiling", "inputs: { max_files: 65 }", "max_files", "must be at most 64"},
+		{"negative files", "inputs: { max_files: -1 }", "max_files", "must not be negative"},
+		{"bytes over the ceiling", "inputs: { max_bytes: 1073741825 }", "max_bytes", "must be at most 1073741824 bytes (1 GiB)"},
+		{"negative bytes", "inputs: { max_bytes: -1 }", "max_bytes", "must not be negative"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(minimalYAML + "    " + tc.line + "\n"))
+			if !hasProblem(problems, "workflows.server.inputs."+tc.path, tc.want, 0) {
+				t.Fatalf("%s: problems %v lack %s: %q", tc.line, problems, tc.path, tc.want)
+			}
+		})
+	}
+}
+
+// TestInputTotalCapHasACeiling: the set cap's own pair of rules, the same two
+// outputs.max_total_bytes has: above its ceiling it is refused, and a set cap
+// below the per-file cap with max_files of 1 is refused too (the one file is
+// the whole set, so the smaller cap silently governs).
+func TestInputTotalCapHasACeiling(t *testing.T) {
+	_, problems := Parse([]byte(minimalYAML + "    inputs: { max_total_bytes: 4294967297 }\n"))
+	if !hasProblem(problems, "workflows.server.inputs.max_total_bytes", "must be at most 4294967296 bytes (4 GiB)", 0) {
+		t.Fatalf("over the ceiling: %v", problems)
+	}
+	if _, problems := Parse([]byte(minimalYAML + "    inputs: { max_total_bytes: -1 }\n")); !hasProblem(problems, "workflows.server.inputs.max_total_bytes", "must not be negative", 0) {
+		t.Fatalf("negative total: %v", problems)
+	}
+	one := "    inputs: { max_files: 1, max_bytes: 1048576, max_total_bytes: 262144 }\n"
+	if _, problems := Parse([]byte(minimalYAML + one)); !hasProblem(problems, "workflows.server.inputs.max_total_bytes", "must be at least inputs.max_bytes", 0) {
+		t.Fatalf("one legal input trips the set: %v", problems)
+	}
+	// With room for more than one file the pair is a set cap doing its job: a
+	// set of files each under max_bytes may still be over the total.
+	if _, problems := Parse([]byte(minimalYAML + "    inputs: { max_files: 2, max_bytes: 1048576, max_total_bytes: 262144 }\n")); len(problems) != 0 {
+		t.Fatalf("two files: %v", problems)
+	}
+	// Only the two written caps are compared.
+	if _, problems := Parse([]byte(minimalYAML + "    inputs: { max_files: 1, max_total_bytes: 262144 }\n")); len(problems) != 0 {
+		t.Fatalf("defaulted max_bytes: %v", problems)
+	}
+}
