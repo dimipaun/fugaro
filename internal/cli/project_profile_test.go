@@ -1,0 +1,144 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+)
+
+// projectProfilesYAML is an operator's profiles block: the default profile
+// every workflow that names none runs on, plus one that pins its own admission
+// list. It is appended after the fixture's repos: block, so it is a top-level
+// key.
+const projectProfilesYAML = "profiles:\n" +
+	"  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [deploy-key] }\n" +
+	"  wide: { provider: github, cpu: 4, memory: 8Gi, timeout_class: 12h, allow_repos: [\"github/acme/*\"] }\n"
+
+// TestPublishWritesTheProfilesAndShowPrintsThemWithTheirJobs: step 5. The
+// published node carries what the operator's config declares, `project show`
+// prints each profile with the job it maps to, and the secrets it prints are
+// names, never values (the node is readable by every run token).
+func TestPublishWritesTheProfilesAndShowPrintsThemWithTheirJobs(t *testing.T) {
+	f := newProjectFixture(t, projectProfilesYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if len(p.Profiles) != 2 {
+		t.Fatalf("profiles = %v, want the operator's two", p.ProfileNames())
+	}
+	standard := p.Profiles[projectpolicy.DefaultProfileName]
+	if standard.Provider != "github" || standard.CPU != 2 || standard.Memory != "4Gi" || standard.TimeoutClass != "6h" {
+		t.Errorf("standard = %+v, want the operator's profile whole", standard)
+	}
+	if len(standard.AllowRepos) != 0 {
+		t.Errorf("standard.allow_repos = %v, want none (the project's list applies)", standard.AllowRepos)
+	}
+	// An empty profile list falls back to the project's, never to everything.
+	adm, err := p.Admission("standard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !projectpolicy.AdmitRepo(adm, "github/acme/app") || projectpolicy.AdmitRepo(adm, "github/acme/elsewhere") {
+		t.Errorf("standard's admission is %v, want the project's own list", adm)
+	}
+	// The profile's own list is the one that applies where it has one.
+	adm, err = p.Admission("wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(adm) != 1 || adm[0] != "github/acme/*" {
+		t.Errorf("wide's admission = %v, want its own list", adm)
+	}
+
+	out, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"profile standard: provider github, cpu 2, memory 4Gi, timeout 6h, secrets deploy-key, allow_repos the project's allow_repos",
+		"profile standard jobs: one job per (profile, provider, account): (standard, github, <account>)",
+		"profile wide: provider github, cpu 4, memory 8Gi, timeout 12h, secrets none, allow_repos github/acme/*",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("policy show does not print %q:\n%s", want, out)
+		}
+	}
+	// `project show` prints the same profiles.
+	out, _, err = execute(t, "project", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "profile standard:") || !strings.Contains(out, "(standard, github, <account>)") {
+		t.Errorf("project show does not print the profiles and their jobs:\n%s", out)
+	}
+}
+
+// TestPublishRefusesAnUndefinedProfile: step 1's publish half. A config that
+// publishes profiles must define the one every workflow that names none runs
+// on, because a repository selecting it would have every run refused at run
+// start, one run at a time.
+func TestPublishRefusesAnUndefinedProfile(t *testing.T) {
+	f := newProjectFixture(t, "profiles:\n  big: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("publishing a profiles block without %s succeeded:\n%s", projectpolicy.DefaultProfileName, out)
+	}
+	if !strings.Contains(err.Error(), projectpolicy.DefaultProfileName) {
+		t.Errorf("the refusal does not name %s: %v", projectpolicy.DefaultProfileName, err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a refused publish wrote the node")
+	}
+}
+
+// TestPublishRefusesAProfileWithoutAProvider: finding 4, at the publisher. A
+// profile's provider decides which repositories its job serves and is part of
+// the job's identity (task 3.2), so it is required — and the refusal comes
+// from the policy's own rule, because the node is what the runner reads.
+func TestPublishRefusesAProfileWithoutAProvider(t *testing.T) {
+	f := newProjectFixture(t, "profiles:\n  standard: { cpu: 2, memory: 4Gi, timeout_class: 6h }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("publishing a profile with no provider succeeded:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "provider") {
+		t.Errorf("the refusal does not say a provider is required: %v", err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a refused publish wrote the node")
+	}
+}
+
+// TestPublishRefusesAnAllowRepoPatternOfAnotherProvider: step 3, at the
+// publisher. A profile serves one provider's repositories, so a pattern of
+// another provider could never match one; admitting it silently would leave
+// the owner believing it admits something.
+func TestPublishRefusesAnAllowRepoPatternOfAnotherProvider(t *testing.T) {
+	f := newProjectFixture(t, "profiles:\n  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [\"bitbucket/acme/*\"] }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("publishing a bitbucket pattern on a github profile succeeded:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "bitbucket") {
+		t.Errorf("the refusal does not name the pattern it refused: %v", err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a refused publish wrote the node")
+	}
+}
+
+// TestPublishRefusesAnInvalidResourceForm: step 4, at the publisher. Cloud Run
+// cannot deploy a job the API would refuse, so the profile that names it is
+// refused where the operator reads the line, not at the deploy.
+func TestPublishRefusesAnInvalidResourceForm(t *testing.T) {
+	newProjectFixture(t, "profiles:\n  standard: { provider: github, cpu: 3, memory: 4Gi, timeout_class: 6h }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("publishing a profile with 3 CPUs succeeded:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "cpu") {
+		t.Errorf("the refusal does not name cpu: %v", err)
+	}
+}

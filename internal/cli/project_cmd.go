@@ -387,12 +387,25 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
 	}
+	// A policy that carries profiles must define the one every workflow that
+	// names none runs on (projectpolicy.validProfiles applies the same rule to
+	// the node, and checkPolicyWeWouldWrite would refuse it there). It is
+	// refused here, before the node is built, so that the operator is told
+	// which file to fix: the alternative is a repository selecting a profile
+	// nobody defined, which is refused at run start, one run at a time.
+	if len(lc.Profiles) > 0 {
+		if _, ok := lc.Profiles[projectpolicy.DefaultProfileName]; !ok {
+			return nil, userErr("this project's config sets profiles: and does not define %q, the profile every workflow that names none runs on: a repository selecting it would have every run refused; define it in %s, or remove the profiles: block (a policy with no profiles block sets no profile at all)",
+				projectpolicy.DefaultProfileName, lc.Name)
+		}
+	}
 	pol := &projectpolicy.Policy{
 		Version:    projectpolicy.Version,
 		Budget:     projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
 		AllowRepos: nonNil(allow),
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
+		Profiles:   policyProfiles(lc),
 	}
 	if old != nil {
 		pol.Routing = old.Routing
@@ -423,6 +436,33 @@ func policyProviders(lc *localcfg.Config) map[string]projectpolicy.Provider {
 		// carrier and leave a respelled copy at zero. Neither can happen with
 		// exactly one declaration of each key.
 		out[name] = projectpolicy.Provider{ModelProvider: mp}
+	}
+	return out
+}
+
+// policyProfiles is the policy's profiles block, built from the operator's
+// config.
+//
+// Each entry is the operator's own carrier, copied whole, for the reason
+// policyProviders copies a provider whole: config.JobProfile is the one
+// declaration of the document (projectpolicy.Profile embeds it), so a copy by
+// name could only lose a key a later release adds.
+//
+// The block is published exactly as the file spells it, and the rules that
+// make it usable are the policy's own (projectpolicy.validProfiles, run by
+// checkPolicyWeWouldWrite before anything is written): the default profile
+// defined, every provider named and known, cpu/memory a Cloud Run shape, the
+// timeout within Cloud Run's ceiling, and every allow_repos pattern of the
+// profile's own provider. Refusing them here too would be a second copy of
+// those rules to drift from — and the operator reads the refusal with the
+// profile's name in it either way.
+func policyProfiles(lc *localcfg.Config) map[string]projectpolicy.Profile {
+	if len(lc.Profiles) == 0 {
+		return nil
+	}
+	out := make(map[string]projectpolicy.Profile, len(lc.Profiles))
+	for name, jp := range lc.Profiles {
+		out[name] = projectpolicy.Profile{JobProfile: jp}
 	}
 	return out
 }
@@ -475,7 +515,7 @@ func checkPolicyBytes(raw []byte) error {
 	p, found, err := projectpolicy.Decode(raw)
 	switch {
 	case err != nil:
-		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices and the allow-list — with 'fugaro validate'", err)
+		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices, the profiles and the allow-list — with 'fugaro validate'", err)
 	case !found || p == nil:
 		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written: check the values it is built from with 'fugaro validate'")
 	}
@@ -589,6 +629,13 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// TestPolicyCarriesNoSecretValue is the guard that it never does.
 	diffLines(out, providerLines(old), providerLines(new))
 	diffLines(out, priceLines(old), priceLines(new))
+	// Profiles are the jobs this project deploys and the repositories each is
+	// admitted to, so a publish that changes one must say which: a line that
+	// only said "profiles: standard" would hide a widened allow_repos list or
+	// an upsized job, and one that said nothing at all would hide a profile
+	// that stopped existing — which refuses the runs of every workflow that
+	// selected it.
+	diffLines(out, profileLines(old), profileLines(new))
 	// The routing block is not this binary's to write (phase 1b's): a publish
 	// keeps whatever the node carries, and saying so is the difference between
 	// an operator reading "the route I set is still there" and wondering
@@ -603,6 +650,49 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 			fmt.Fprintf(out, "  allow_repos %s (kept from the published node)\n", r)
 		}
 	}
+}
+
+// profileLines is one line per value of every profile, and one per job it
+// maps to, for the diff and for `policy show`. A nil policy (no node
+// published) has no profiles.
+func profileLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := make(map[string]string, 2*len(p.Profiles))
+	for _, name := range p.ProfileNames() {
+		pr := p.Profiles[name]
+		out["profile "+name] = profileText(pr)
+		out["profile "+name+" jobs"] = profileJobsText(name, pr)
+	}
+	return out
+}
+
+// profileText is a profile as one line: everything the job is deployed as, and
+// the admission list a run of it is held to. The secrets are their NAMES —
+// the node carries no value (TestPolicyCarriesNoSecretValue is the guard) —
+// and an absent list is printed as the fallback it is, never as an empty one.
+func profileText(pr projectpolicy.Profile) string {
+	secrets := "none"
+	if len(pr.Secrets) > 0 {
+		secrets = strings.Join(pr.Secrets, ", ")
+	}
+	allow := "the project's allow_repos"
+	if len(pr.AllowRepos) > 0 {
+		allow = strings.Join(pr.AllowRepos, ", ")
+	}
+	return fmt.Sprintf("provider %s, cpu %d, memory %s, timeout %s, secrets %s, allow_repos %s",
+		pr.Provider, pr.CPU, pr.Memory, pr.TimeoutClass, secrets, allow)
+}
+
+// profileJobsText is the jobs a profile maps to. Design §4.1 deploys one job
+// and one job service account per (profile, provider, account): the provider
+// is the profile's, and the account is the Claude credential the run uses, so
+// a profile is as many jobs as the project has accounts. The Cloud Run job
+// name itself is Task 3.2's (gcp's own naming), and this prints the key it is
+// built from rather than a spelling this command would have to guess.
+func profileJobsText(name string, pr projectpolicy.Profile) string {
+	return fmt.Sprintf("one job per (profile, provider, account): (%s, %s, <account>)", name, pr.Provider)
 }
 
 // diffLines prints what a write changes, one line per key: the keys the write
@@ -712,7 +802,17 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"allow_repos":           fmt.Sprintf("%v", nonNil(p.AllowRepos)),
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
 		"model_prices":          fmt.Sprintf("%d", len(p.Prices)),
+		"profiles":              profilesText(p),
 	}
+}
+
+// profilesText is the policy's profile names as one line, for the diff's
+// summary row (the per-profile lines below it carry the values).
+func profilesText(p *projectpolicy.Policy) string {
+	if len(p.Profiles) == 0 {
+		return "none (a workflow that selects one is refused at run start)"
+	}
+	return strings.Join(p.ProfileNames(), ", ")
 }
 
 // deleteProjectPolicy removes the published policy (B5). The children go
@@ -1137,6 +1237,13 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	fmt.Fprintf(out, "policy %s: version %d\n", projectpolicy.PathShared(), p.Version)
 	for _, line := range slices.Sorted(maps.Keys(policyLines(p))) {
 		fmt.Fprintf(out, "  %s: %s\n", line, policyLines(p)[line])
+	}
+	// One line per profile, then the jobs it maps to: a reader of this command
+	// is reading what the project deploys and who may run on it (§4.1).
+	for _, name := range p.ProfileNames() {
+		pr := p.Profiles[name]
+		fmt.Fprintf(out, "  profile %s: %s\n", name, profileText(pr))
+		fmt.Fprintf(out, "  profile %s jobs: %s\n", name, profileJobsText(name, pr))
 	}
 	for _, name := range slices.Sorted(maps.Keys(p.Providers)) {
 		pv := p.Providers[name]
