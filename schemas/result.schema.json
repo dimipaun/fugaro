@@ -264,6 +264,20 @@
         "duration_s": { "type": "number", "minimum": 0 },
         "started_at": { "type": "string", "format": "date-time" }
       }
+    },
+    "inputs": {
+      "type": "array",
+      "description": "The files the launcher attached to this run (fugaro run --attach, design artifact-runs.md §4 step 6): the task spec's own list, echoed once the runner downloaded and verified every one, so a reader sees exactly what the run was given. Absent for a run launched without an attachment.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bytes", "sha256"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "The name it is stored and written under: runs/<slug>/<run>/inputs/<name> in the bucket, <checkout>/inputs/<name> in the run." },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The sha256 the launcher read while uploading; the runner verified the object it downloaded against it." }
+        }
+      }
     }
   }
 }

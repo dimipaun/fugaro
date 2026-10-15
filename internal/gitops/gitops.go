@@ -98,6 +98,16 @@ func Open(dir string, env []string) (*Repo, error) {
 	return &Repo{Dir: dir, Env: env}, nil
 }
 
+// GitDir returns the checkout's own git directory, absolute: the directory
+// git keeps its refs, objects and per-repository state in. It is not always
+// <Dir>/.git — in a worktree .git is a file naming that directory — which is
+// why a caller that writes inside it (an artifact run excludes inputs/ in
+// <GitDir>/info/exclude, design artifact-runs.md §4 step 5) asks git rather
+// than joining a path.
+func (r *Repo) GitDir(ctx context.Context) (string, error) {
+	return r.git(ctx, "rev-parse", "--absolute-git-dir")
+}
+
 // OpenOrClone returns the checkout at dir, cloning remote into it first if
 // dir has none. In the container image the checkout is baked in.
 func OpenOrClone(ctx context.Context, dir, remote string, env []string, strip ...string) (*Repo, error) {

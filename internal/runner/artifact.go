@@ -1,19 +1,27 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // renderTree is the tree a render runs in: the working checkout, uncommitted
@@ -235,13 +243,17 @@ func (r *run) noteRenderTail(tail *logtail.Writer) {
 // the only place the run describes the deliverable to the agent, so it says
 // plainly that the render is the runner's, not the agent's.
 //
-// It names no FUGARO_INPUTS_DIR and no attachment: that variable arrives
-// with the task that adds attachments, beside FUGARO_STATE_DIR in the env
-// this run builds, and until then a plan stage cannot see an input because
-// nothing can attach one.
+// When the task attached files it names the directory they were downloaded
+// into, absolute and the same value FUGARO_INPUTS_DIR carries in this run's
+// environment; a task that attached nothing gets no such paragraph, so a
+// plan stage is never pointed at a directory that does not exist.
 func (r *run) artifactPlanPrompt() string {
 	var b strings.Builder
 	b.WriteString("This is a Fugaro artifact run: the deliverable is a set of files uploaded to this run's bucket, not a pull request. There is no pull request to open, no branch is pushed, and the plan you write is not the deliverable.\n\n")
+	if len(r.spec.Inputs) > 0 {
+		fmt.Fprintf(&b, "The task attached %d file(s): they are in `%s` (also named by FUGARO_INPUTS_DIR), already verified against the hashes in the task, and read-only input to you — the run was given them, it did not produce them. They are excluded from git, so `git add -A` never commits one.\n\n",
+			len(r.spec.Inputs), filepath.Join(r.d.WorkDir, inputsDir))
+	}
 	name := r.rec.Recipe.Name
 	fmt.Fprintf(&b, "The runner renders the deliverable itself, once, after this stage: it runs the workflow's own render command (commands.render in fugaro.yaml at %s) in this checkout and uploads the files the recipe's outputs.globs name. Do not run that render command, and do not try to produce the artifacts yourself.\n\n", r.spec.Ref)
 	if u := r.useWhen; u != "" {
@@ -351,4 +363,165 @@ func artifactHasPlan(rcp *recipe.Recipe) bool {
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// inputsDir is the checkout directory a mode: artifact run downloads its
+// attached files into, and the name excluded from git so the run can never
+// commit one (design §4 step 5).
+const inputsDir = runstore.InputsDir
+
+// downloadInputs downloads every file the task spec attached into the
+// checkout's inputs/, before the run's first step (design §4 step 4), and
+// records them on the run. It is called only for a mode: artifact run whose
+// spec carries inputs; bootstrap has already refused the other modes.
+//
+// The spec is text a launcher wrote, so nothing here trusts it. The caps are
+// re-applied before the first GetFile — the count against
+// workflows.<wf>.inputs.max_files, EACH entry's own bytes against
+// inputs.max_bytes, and the SUM of the entries' bytes against
+// inputs.max_total_bytes, the set cap and never one entry's size times the
+// count — so an over-cap spec downloads nothing and leaves inputs/ empty.
+// Each name is refused by task.InputNameProblem before it becomes a path, so
+// a spec whose name is ../../.git/hooks/pre-commit fails the run rather than
+// writing outside inputs/, and is never cleaned into something plausible.
+//
+// Each accepted name is then read from runs/<slug>/<run>/inputs/<name> with
+// blobx.GetFile, passing the spec's own sha256 as the expected hash and
+// strict false: the job's account cannot list that prefix, so a 403 is what
+// a MISSING input looks like to it, and the run must say "the task names an
+// input that is not in the bucket" rather than report an IAM problem. A
+// mismatch — or an object bigger than the size the spec claims — leaves
+// nothing at the destination: GetFile writes a temporary beside it and
+// renames only after the hash matched. A file the bucket holds but the spec
+// does not name is not downloaded at all; it cannot be named, which is the
+// whole reason the list lives in the spec.
+// The workflow's caps come in as an argument rather than from r.wf: this runs
+// before bootstrap assigns r.wf (the assignment sits with the record's own
+// fields, after the recipe checks), and reading the field here would silently
+// judge every run by the zero config's defaults instead of by the workflow's
+// own `inputs:` block — the caps would never bite.
+func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
+	if len(r.spec.Inputs) == 0 {
+		return nil
+	}
+	if r.d.Bucket == nil {
+		return errors.New("the task attached files, and this run has no runs bucket to download them from")
+	}
+	if err := checkInputCaps(r.spec.Inputs, caps); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, in := range r.spec.Inputs {
+		if problem := task.InputNameProblem(in.Name); problem != "" {
+			return fmt.Errorf("attached input %q %s", in.Name, problem)
+		}
+		if seen[in.Name] {
+			return fmt.Errorf("attached input %q is named twice; one file cannot be two", in.Name)
+		}
+		seen[in.Name] = true
+	}
+	dir := filepath.Join(r.d.WorkDir, inputsDir)
+	for _, in := range r.spec.Inputs {
+		dest := filepath.Join(dir, filepath.FromSlash(in.Name))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("creating %s: %w", filepath.Dir(dest), err)
+		}
+		key := runstore.InputKey(r.d.Store.Prefix(), in.Name)
+		// The limit is the size the spec claims, not the workflow's
+		// per-file cap: the cap was just checked, so this is the tighter of
+		// the two, and an object bigger than the claim never reaches the
+		// destination.
+		size, _, err := r.d.Bucket.GetFile(ctx, key, dest, in.SHA256, in.Bytes, false)
+		switch {
+		case errors.Is(err, blobx.ErrNotExist):
+			return fmt.Errorf("the task names an attached input %q that is not in this run's bucket (%s)", in.Name, key)
+		case err != nil:
+			return fmt.Errorf("downloading attached input %q: %w", in.Name, err)
+		}
+		if size != in.Bytes {
+			return fmt.Errorf("attached input %q is %d bytes, and the task claims %d", in.Name, size, in.Bytes)
+		}
+	}
+	if err := r.excludeInputsFromGit(ctx); err != nil {
+		return err
+	}
+	// The record's inputs are the spec's list, echoed, and they are stored
+	// once the files they name are actually in the checkout: a reader sees
+	// exactly what the run was given, and never sees a list for a download
+	// that failed.
+	r.rec.Inputs = r.spec.Inputs
+	r.save(ctx)
+	return nil
+}
+
+// checkInputCaps applies the workflow's three inputs caps to the claims a
+// task spec makes, before anything is downloaded. The three are independent
+// and each means one thing (design §4 step 2): max_files counts ENTRIES,
+// max_bytes bounds ONE ENTRY's own size, max_total_bytes bounds THE SET —
+// never one entry's size, and never the count times the per-file cap. An
+// entry's `bytes` is the launcher's own claim about what it uploaded, which
+// is exactly why it is judged here and again against the object that comes
+// down.
+func checkInputCaps(inputs []task.InputFile, caps config.Inputs) error {
+	if n := len(inputs); n > caps.MaxFileCount() {
+		return fmt.Errorf("the task attached %d files, and workflows.inputs.max_files allows %d", n, caps.MaxFileCount())
+	}
+	var total int64
+	for _, in := range inputs {
+		if in.Bytes > caps.MaxFileBytes() {
+			return fmt.Errorf("the task's attached input %q claims %s, and workflows.inputs.max_bytes allows %s per file", in.Name, fmtBytes(in.Bytes), fmtBytes(caps.MaxFileBytes()))
+		}
+		total += in.Bytes
+	}
+	if set := caps.MaxSetBytes(); total > set {
+		return fmt.Errorf("the task's %d attached inputs claim %s in all, and workflows.inputs.max_total_bytes allows %s for the set", len(inputs), fmtBytes(total), fmtBytes(set))
+	}
+	return nil
+}
+
+// excludeInputsFromGit appends inputs/ to the checkout's own exclude file,
+// <git dir>/info/exclude, once and idempotently (design §4 step 5): an
+// artifact run must never commit a screenshot, and the agent's own `git add
+// -A` is the way it otherwise would. It is the git directory's exclude and
+// not .gitignore, because .gitignore is repository text the run would then
+// be proposing as part of its work.
+//
+// It fails the run rather than warning: a run whose inputs/ were not
+// excluded is a run whose plan stage can commit them.
+func (r *run) excludeInputsFromGit(ctx context.Context) error {
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		return fmt.Errorf("excluding %s/ from git: %w", inputsDir, err)
+	}
+	gitDir, err := repo.GitDir(ctx)
+	if err != nil {
+		return fmt.Errorf("finding the git directory: %w", err)
+	}
+	path := filepath.Join(gitDir, "info", "exclude")
+	line := inputsDir + "/"
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	for _, have := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(have) == line {
+			return nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	add := line + "\n"
+	if len(data) > 0 && !bytes.HasSuffix(data, []byte("\n")) {
+		add = "\n" + add
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(add); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
 }

@@ -110,7 +110,14 @@ type runOptions struct {
 	// pr is --pr, repeated: a single entry continues Fugaro's own pull
 	// request N (the only meaning before Task 12 of the generic-tool
 	// plan); 2 to 4 need a mode: review recipe such as pick (G13).
-	pr            []int
+	pr []int
+	// attach is --attach, repeated: files this launch uploads into the
+	// run's own inputs/ for a mode: artifact run to download (design
+	// artifact-runs.md §4, plan Task 6). It is refused outright on a run id
+	// that already holds a task, refused unless the launch resolves to an
+	// artifact recipe, and refused over any of the workflow's three
+	// inputs caps before the first byte is uploaded.
+	attach        []string
 	asJSON        bool
 	noBudgetCheck bool
 	recipe        string
@@ -164,6 +171,7 @@ func newRunCmd() *cobra.Command {
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
+	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
@@ -172,7 +180,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe", "token"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe", "token", "attach"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -347,6 +355,17 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
+	// The run-id freshness check, first of everything an --attach launch
+	// does and before the first byte it could upload (design §4 step 1,
+	// plan Review Focus 11). It is outside the prior == nil block below
+	// because a repeated --run-id that already launched must be refused
+	// here too rather than report the existing launch while holding
+	// attachments that never went anywhere.
+	if len(o.attach) > 0 {
+		if err := attachRefusesStoredRun(ctx, s, spec.RunID); err != nil {
+			return launchResult{}, err
+		}
+	}
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
 		return launchResult{}, err
@@ -372,6 +391,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	if prior == nil {
+		// --attach, before the gates below and with the upload last of its
+		// own steps: its recipe refusal, its caps, D9's line, its image
+		// gate and the upload itself, all before createTask writes the
+		// task that names them (design §4, plan P7/P9). A launch with no
+		// --attach does nothing here at all.
 		agentRecipe, kind, clone := "", "", false
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
@@ -379,6 +403,9 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				kind = w.BaseKind()
 				clone = w.Checkout == config.CheckoutClone
 			}
+		}
+		if err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn); err != nil {
+			return launchResult{}, err
 		}
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
