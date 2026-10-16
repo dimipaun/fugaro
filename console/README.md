@@ -382,8 +382,11 @@ short and dull; a handler that threw with four megabytes in it, or with a
 newline, an escape sequence or `/home/you/.fugaro/secrets.yaml` in it, would put
 all of that in a renderer that is entitled to treat a reply as the console's own
 words. `replyReason` therefore flattens a message to one line, drops control
-characters, replaces absolute paths (POSIX, `~/`, drive-letter and UNC) with
-`<path>`, and cuts at 2 KB with an ellipsis. The test that an ordinary CLI
+characters and invisible format characters (bidi overrides and isolates,
+zero-width characters), replaces absolute paths (POSIX, `~/`, drive-letter and
+UNC, after a space, quote, backtick, bracket, `;` or `:`, and a `file://` URL
+whole) with `<path>` while leaving a web URL whole, and cuts at 2 KB with an
+ellipsis, never inside a surrogate pair. The test that an ordinary CLI
 sentence comes through byte for byte is what keeps those three from eating the
 case the design asks for. The same shape applies to what the console *accepts*:
 after the argument-count bound, a payload's own width (every key plus every
@@ -532,7 +535,7 @@ field this task reads out of a document is `day`, which the rollover needs.
 | 4 — the binary is resolved explicitly | the operator's configured path, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and only then every entry of the app's own `PATH`; the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
 | 5 — the child's environment is built, not inherited | exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*` variables and the chosen installation's `FUGARO_PROJECT`. A hostile `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `SSH_AUTH_SOCK` or ambient `FUGARO_PROJECT` in the app's environment cannot reach the child |
 | 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin` — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
-| 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
+| 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory, checked with `lstat` (not a link, owned by this uid, mode `0700`) rather than trusted to `mkdir`. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
 | 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The add-an-installation check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
 | 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
 | Task 0.2's four settled behaviours | restart with the CLI's own backoff (1 s doubling to 30 s) except after a refusal, a signal read as the ordinary end of a feed, the UTC-midnight rollover marked as a **gap** rather than a zero, and the reader rule that a stdout line which is not a JSON object is **skipped** and surfaced as a notice — the degraded mode writes a plain sentence on the same stream as the documents (`runWatchDegraded`, `internal/cli/watch.go`) |
@@ -573,8 +576,9 @@ reconciled with rule 10 explicitly rather than growing by accident.
 ### The spawn properties are tests, and each one fails under a mutation
 
 The tests spawn **a fake `fugaro` in a temporary directory — never the real CLI
-and never the network** (`test/unit/stub.ts`: a shell shim that `exec`s the Node
-running the suite by absolute path, a generated script, and a `scenario.json`).
+and never the network** (`test/unit/stub.ts`: an executable whose shebang
+names the Node running the suite by absolute path, a generated script, and a
+`scenario.json`).
 The report file the stub appends to is the child's *own* account of its argv,
 `cwd` and environment, which is what makes these tests about what a real machine
 sees rather than about the console's self-consistency. Seventeen mutations were
@@ -607,6 +611,15 @@ run against the committed tree, and each made a named test red:
   screen's task, and doing it here would flip Task 1.1's named "no preload yet"
   assertion (and its mutation row) before there is a surface to attach. The
   pieces are all reachable from a test, which is where they are held.
+- **Cleanup on quit or crash.** Nothing calls `CliSource.close()` on
+  `before-quit`, and nothing stops the live children if the main process
+  crashes. Today no source is ever constructed by the app, so there is nothing
+  to leak; **the task that wires `handlersFor` must, as a precondition, stop
+  every feed on quit** (`close()` from `before-quit`, awaited before exit).
+  What this task does bound: every one-shot read has a deadline
+  (`READ_TIMEOUT_MS`) and a stdout cap, the feed's line buffer is capped, and a
+  source keeps at most `MAX_LIVE_FEEDS` (4) live children, stopping the least
+  recently used.
 - **Persistence.** The installation store is in memory for one run; see the note
   above on rule 10.
 - **The fixtures.** `FugaroSource`'s second implementation is Task 1.4's
