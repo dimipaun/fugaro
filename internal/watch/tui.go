@@ -56,9 +56,12 @@ type TUIOptions struct {
 	// bad or missing file is the empty set (LoadAcks never fails).
 	AckPath string
 	// PRState filters the ready list by what the operator's own gh says about
-	// each pull request (--no-pr-state leaves it nil). It is asked on every
-	// rebuild and answers from its cache, so the screen never waits for it;
-	// a new answer is picked up by the next tick (Version).
+	// each pull request. The command always passes one: --no-pr-state gives a
+	// disabled resolver (NewPRState(PRStateOptions{Disabled: true})), which
+	// lists every ready row and runs nothing. It is asked on every rebuild and
+	// answers from its cache, so the screen never waits for it; a new answer is
+	// picked up by the next tick (Version). Its methods are nil-safe, so a
+	// caller that builds TUIOptions by hand may leave it nil.
 	PRState *PRState
 
 	ASCII, NoColor bool

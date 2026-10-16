@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -248,6 +250,60 @@ func TestEmitLiveFramesApplyPRState(t *testing.T) {
 	section := readySection(second)
 	if strings.Contains(section, "pull/42") || !strings.Contains(section, "pull/43") {
 		t.Fatalf("want only the open PR listed:\n%s", section)
+	}
+}
+
+// The live plain stream redraws when a PR-state answer lands. A plain stream
+// has no other reason to print again — nothing changed in the database — so
+// watchStream's version comparison is the whole mechanism that turns an answer
+// into a frame there; without it the merged PR would sit in the frame for as
+// long as the stream ran. The screen's equivalent is the TUI test above.
+func TestWatchStreamRedrawsWhenAPRStateAnswerLands(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	for _, r := range []struct {
+		run string
+		n   int
+	}{{runID(10*time.Minute, "ab01"), 42}, {runID(9*time.Minute, "ab02"), 43}} {
+		f.writeTask(t, appSlug, r.run, "")
+		f.writeFinishedResult(t, appSlug, r.run, "succeeded", "ready", r.n,
+			"https://github.com/acme/app/pull/"+itoa(r.n), 10*time.Minute)
+	}
+	fakeWatchGH(t, "case \"$3\" in 42) echo MERGED ;; *) echo OPEN ;; esac\n")
+	// The finished-run source polls the bucket on its own clock, and a test
+	// that wants the ready list must not wait a minute for its second scan
+	// (TestWatchStreamShowsQueuedRun does the same).
+	oldPoll := queuedNextPoll
+	queuedNextPoll = func() time.Duration { return 20 * time.Millisecond }
+	t.Cleanup(func() { queuedNextPoll = oldPoll })
+
+	cmd := NewRootCmd()
+	out := &lockedBuf{}
+	cmd.SetOut(out)
+	cmd.SetErr(io.Discard)
+	// A short interval: this is about the trigger, not about the 10s cadence.
+	cmd.SetArgs([]string{"watch", "--plain", "--interval", "200ms"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- cmd.ExecuteContext(ctx) }()
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(out.String(), "Ready for your review (1)") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Ready for your review (2)") {
+		t.Fatalf("the first frame must draw the list as it is:\n%s", got)
+	}
+	// The frame the answer produced — the last one — has the merged PR gone.
+	frames := strings.Split(got, "\n--- ")
+	section := readySection(frames[len(frames)-1])
+	if strings.Contains(section, "pull/42") || !strings.Contains(section, "pull/43") {
+		t.Fatalf("want only the open PR listed in the last frame:\n%s", section)
 	}
 }
 

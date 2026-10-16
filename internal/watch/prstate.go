@@ -233,12 +233,6 @@ func (p *PRState) Filter(rows []ReadyRow) []ReadyRow {
 	var todo []prRef
 	var listed map[string]bool // the URLs this frame holds, when a failure may be stale
 	p.mu.Lock()
-	if p.noGH {
-		// gh will not appear while this process lives: nothing is attempted and
-		// the note stands.
-		p.mu.Unlock()
-		return rows
-	}
 	if len(p.fail) > 0 {
 		listed = make(map[string]bool, len(p.fail))
 	}
@@ -255,7 +249,11 @@ func (p *PRState) Filter(rows []ReadyRow) []ReadyRow {
 		if ok && a.state.gone() {
 			continue // merged or closed: off the list for good
 		}
-		if (!ok || now.Sub(a.at) >= p.ttl(a)) && !p.busy[ref.url] {
+		// noGH means gh will not appear while this process lives, so nothing
+		// more is attempted — but it is no reason to forget what gh already
+		// said (the answers above are still applied) or to stop drawing the
+		// note about the rows on screen (the pruning below still runs).
+		if !p.noGH && (!ok || now.Sub(a.at) >= p.ttl(a)) && !p.busy[ref.url] {
 			p.busy[ref.url] = true
 			todo = append(todo, ref)
 		}

@@ -207,6 +207,46 @@ func TestPRStateMissingGHKeepsRowsAndNotesOnce(t *testing.T) {
 	}
 }
 
+// A gh that goes away between two frames does not resurrect what it already
+// answered, and does not leave a note behind when the rows it describes are
+// gone: "gh is not installed" is a fact about the lookups, and nothing about
+// it undoes an answer or outlives the list.
+func TestPRStateKeepsTheAnswersItHasWhenGHGoesAway(t *testing.T) {
+	fakeGH(t, ghStates)
+	rows := []ReadyRow{
+		readyRow("https://github.com/acme/app/pull/1", 1), // merged
+		readyRow("https://github.com/acme/app/pull/3", 3), // open
+	}
+	p := NewPRState(PRStateOptions{})
+	p.Filter(rows)
+	p.Settle(30 * time.Second)
+	if got := p.Filter(rows); len(got) != 1 || urls(got)[0] != "https://github.com/acme/app/pull/3" {
+		t.Fatalf("kept %v, want the open one only", urls(got))
+	}
+	// gh disappears — a PATH with none on it, the developer's own included —
+	// and a row it has never answered appears with it.
+	t.Setenv("PATH", t.TempDir())
+	rows = append(rows, readyRow("https://github.com/acme/app/pull/5", 5))
+	p.Filter(rows)
+	p.Settle(30 * time.Second)
+	got := p.Filter(rows)
+	if len(got) != 2 {
+		t.Fatalf("kept %v, want the open one and the unanswered one — and never the merged one", urls(got))
+	}
+	if want := "PR state unavailable: gh not found"; p.Note() != want {
+		t.Fatalf("note = %q, want %q", p.Note(), want)
+	}
+	// The last frame holds only the merged row, which its answer takes off the
+	// list: with nothing left that a lookup could be failing for, the note has
+	// nothing left to describe either.
+	if got := p.Filter(rows[:1]); len(got) != 0 {
+		t.Fatalf("kept %v, want the merged one still off the list", urls(got))
+	}
+	if p.Note() != "" {
+		t.Fatalf("the note outlived the rows it describes: %q", p.Note())
+	}
+}
+
 // A URL that is not a GitHub pull request URL is never handed to a subprocess:
 // not a Bitbucket URL, and not a hostile one — an appended shell command, a
 // space, a newline, a command substitution, a traversal.
