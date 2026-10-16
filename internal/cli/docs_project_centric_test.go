@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // TestChecklistHasCheck52: docs/gcp-live-checklist.md must carry the UNVERIFIED
@@ -1554,8 +1556,16 @@ func TestChecklistHasCheck50(t *testing.T) {
 			sawDoctor = true
 			continue
 		}
-		if !strings.Contains(line, "--project fugaro") {
-			t.Errorf("the Check 50 section has a fugaro command that does not name the installation: %q", line)
+		// The installation is named wherever the command can be told which one
+		// to act on. `fugaro validate` is the exception it has to be: it has no
+		// --project flag at all (it resolves the project from the checkout, the
+		// way `fugaro doctor` does without the flag), so a line that carried one
+		// would be a command line nobody can run — which the flag check below
+		// also fails on.
+		if cmd := fugaroCommandFor(line); cmd == nil || cmdHasFlag(cmd, "project") {
+			if !strings.Contains(line, "--project fugaro") {
+				t.Errorf("the Check 50 section has a fugaro command that does not name the installation: %q", line)
+			}
 		}
 		if m := unguarded.FindString(line); m != "" {
 			t.Errorf("the Check 50 section has an unguarded %s in a fugaro command: %q", m, line)
@@ -1563,6 +1573,28 @@ func TestChecklistHasCheck50(t *testing.T) {
 	}
 	if !sawDoctor {
 		t.Error("the Check 50 section's guard block is not read as a command, so nothing checks that it pins the installation")
+	}
+
+	// Every `fugaro` command the check shows is one this binary has: the
+	// subcommands resolve in the cobra tree and each --flag belongs to that
+	// command or one of its ancestors (TestDocsProjectLayerCommandsExist's rule,
+	// over this section). The owner runs these by hand, so a flag that does not
+	// exist is a step that stops at "unknown flag" — the reason this check is
+	// here is the review of this change, which found `fugaro validate --project
+	// fugaro` in the section: validate declares no --project, and the rule above
+	// had required one on every line.
+	flagRE := regexp.MustCompile(`--([a-z][a-z-]*)`)
+	for _, line := range fugaroCommands(section) {
+		cmd := fugaroCommandFor(line)
+		if cmd == nil {
+			t.Errorf("the Check 50 section has a `fugaro` line that is not a command this binary has: %q", line)
+			continue
+		}
+		for _, m := range flagRE.FindAllStringSubmatch(commandPart(line), -1) {
+			if !cmdHasFlag(cmd, m[1]) {
+				t.Errorf("the Check 50 section's %q shows --%s, which that command does not declare: the owner would meet 'unknown flag' at that step", cmd.CommandPath(), m[1])
+			}
+		}
 	}
 
 	// No step handles a secret VALUE: the check reads a version number, a set
@@ -1626,6 +1658,44 @@ func chk50Step(t *testing.T, section, marker string) string {
 		t.Fatalf("the Check 50 section's %q step is empty: %q must come after it", marker, chk50StepMarkers[i+1])
 	}
 	return section[from:to]
+}
+
+// commandPart is the command half of a section line: everything before the
+// first pipe, since what follows it belongs to another program (`grep`, `jq`)
+// whose flags are not the fugaro command's.
+func commandPart(line string) string {
+	before, _, _ := strings.Cut(line, " | ")
+	return before
+}
+
+// fugaroCommandFor resolves a `fugaro …` line to the command the check means
+// the owner to run, or nil when the line names no command of this binary. The
+// words after `fugaro` are walked down the cobra tree until one is not a
+// subcommand — a flag, an argument such as a run name or a checkout path, or
+// one of the `<placeholder>` forms those lines use — and the last command that
+// resolved is the one whose flags the line is held to.
+func fugaroCommandFor(line string) *cobra.Command {
+	rest := strings.TrimPrefix(strings.TrimSpace(stripCommandPrefix(commandPart(line))), "fugaro ")
+	cur := NewRootCmd()
+	for _, f := range strings.Fields(rest) {
+		if strings.HasPrefix(f, "-") {
+			break
+		}
+		next, _, err := cur.Find([]string{f})
+		if err != nil {
+			// Neither a subcommand of cur nor an argument it takes: the line
+			// names something this binary has no command for.
+			return nil
+		}
+		if next == cur {
+			break
+		}
+		cur = next
+	}
+	if cur == nil {
+		return nil
+	}
+	return cur
 }
 
 // chk50MustContain fails the test for each want that is not in got, naming the
