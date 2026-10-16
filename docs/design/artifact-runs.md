@@ -1062,9 +1062,25 @@ produced (out), and files an operator handed to a model-driven job (in).
    upload name is the file's path **relative to the deepest common root of the
    recipe's globs** — the one root `outputs.globs` are matched against, so the
    rule "no name escapes it" is what the name is already measured from — after
-   a refusal list: no absolute path, no `..` element, no NUL or newline, no
-   duplicate after normalisation, no name beginning with a dot (see below), and
-   an explicit length limit. The leaf is always
+   a refusal list, and it is the list the code enforces rather than a summary
+   of it (**`runner.ArtifactName` / `firstControl`,
+   `internal/runner/artifact.go`**, one function with two callers, below):
+   no absolute path; no `..` element; **no control character — every C0 byte,
+   DEL, every C1 byte and the bidi overrides** (`firstControl`'s table: a name
+   is printed in the report and typed at a shell, and a control character is
+   how a name reads as something other than what it is); **no backslash** (a
+   path separator on Windows and an ordinary character elsewhere, so one name
+   is two different paths depending on the machine that reads it — and
+   `path.Clean`, which this rule cleans with, reads `frames\a.png` as one
+   element while `filepath.Join`, which `get` builds its destination with,
+   reads it as two on Windows); **no duplicate — decided by NFC normalisation
+   followed by FULL Unicode case folding** (`ArtifactCollisionKey`, the same
+   key both sides ask for: `ß` folds to `ss`, `ﬁ` to `fi`, `ς` to `σ`, so
+   `straße.png` and `strasse.png` are one name, as `café.png`'s two
+   normalisations already were — a *simple* fold, or `strings.ToLower`, gives
+   those pairs two keys and lets a run stage a set no download of it can hand
+   back, or hand back one file where the record names two); no name beginning
+   with a dot (see below); and an explicit length limit. The leaf is always
    `runs/<slug>/<run>/artifacts/<name>` — a **fixed** leaf under a **fixed**
    run prefix, so no artifact name (however crafted) can be made to write
    outside the run's own prefix. On the way back, `fugaro artifacts get`
@@ -1103,6 +1119,22 @@ produced (out), and files an operator handed to a model-driven job (in).
    bucket under a run that never starts, which is what a whitespace-only name
    was — it is a legal file name and a legal JSON string, so the launcher took
    it and the runner's `ReadTask` refused the task at bootstrap.
+
+   **"No repeated name" is the collision question, and it is asked with the
+   artifact rule's own key** (`ArtifactCollisionKey`: NFC plus full Unicode
+   case folding), in `downloadInputs` and in the launcher's `--attach` check
+   alike — not with `strings.ToLower` and not with the exact spelling. The
+   inputs of one run are downloaded into **one directory**, on the operator's
+   own filesystem when the run is local, and a name that differs only in case
+   or only in a normalization a filesystem applies is one file there: the
+   second download would replace the first while the task still named both,
+   and — the same drift the artifact names are keyed against (§9) — a spec
+   keyed more weakly than the retriever's is a set the run accepts and then
+   writes over itself. `straße.png` and `strasse.png` are two names and one
+   file on APFS, so a task naming both is refused with both quoted. (Two
+   *identical* spellings are a different sentence — "named twice; one file
+   cannot be two" — and are refused at the launcher before anything is
+   uploaded.)
 
    **And the runner does not trust `Spec.Mode` either, because it may be
    empty.** The launcher does not always resolve the recipe: when it leaves the
@@ -1377,10 +1409,14 @@ produced (out), and files an operator handed to a model-driven job (in).
   never opens what it writes. A mismatch is an error with both hashes printed,
   and **nothing is written**. **The destination is a fresh directory it creates
   and defaults to (`./<run>-artifacts/`; `--out` names its parent), never `.`**,
-  and a record name that is absolute, has a `..` element, begins with a dot or
-  escapes that root is refused — a checkout's `.git/hooks/`, `.claude/` or
-  `.envrc` is what an untrusted record would otherwise be able to write (§8.2,
-  §8.3).
+  and a record name that is absolute, holds a control character or a backslash,
+  has a `..` element, begins with a dot or escapes that root is refused — a
+  checkout's `.git/hooks/`, `.claude/` or `.envrc` is what an untrusted record
+  would otherwise be able to write (§8.2, §8.3). **Two record names that fold
+  to one** — the same NFC-plus-full-case-fold key (§8.2), so `straße.png` with
+  `strasse.png` — **are refused as the duplicate they are**, before a byte is
+  read: two downloads into one directory, on a filesystem that folds, would
+  leave one file and print two success lines.
 
   **The two sides are one rule, and the design states it once so the upload
   path cannot produce what the retrieval path refuses.** The upload sanitiser

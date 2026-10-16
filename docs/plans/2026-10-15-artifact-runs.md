@@ -594,7 +594,7 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error)
 func (r *run) uploadArtifacts(ctx context.Context, set artifactSet) ([]runstore.ArtifactFile, error)
 ```
 
-The sanitiser is one function with one refusal list (design §8.2): the name is the match's path **relative to the deepest common root of the recipe's globs**, cleaned with `path.Clean`, and it must be non-empty, must not be absolute, must not contain a `..` element or a NUL/newline, **must not begin with a dot**, must be at most 200 bytes, and must not collide with a name already taken (after cleaning). **The dot rule is a matched pair with `fugaro artifacts get`'s** (design §9): `get` refuses a dot-named entry, and Go's `filepath.Glob`/`Match` — unlike a shell — match a leading dot, so without the rule here `out/*.mp4` would upload and record a `.hidden.mp4` the retriever can never hand back. Nothing else about a dot is affected: `sizzle.v2.mp4` and `clips/a.mp4` are both names this accepts. A symlink in the checkout whose target is outside the outputs root is skipped with a warning rather than followed — a refusal, not a copy, because the bytes would then be a file the run never rendered.
+The sanitiser is one function with one refusal list (design §8.2, and it is the list the code enforces — `runner.ArtifactName` and `firstControl`): the name is the match's path **relative to the deepest common root of the recipe's globs**, cleaned with `path.Clean`, and it must be non-empty, must not be absolute, must not contain a `..` element, **must not hold a control character** (every C0, DEL and C1 byte, and the bidi overrides — not only a NUL or a newline), **must not hold a backslash** (a path separator on Windows and a character elsewhere, so one name would be two paths depending on the machine), **must not begin with a dot**, must be at most 200 bytes, and must not collide with a name already taken — **where "collide" is decided by NFC normalisation followed by FULL Unicode case folding** (`ArtifactCollisionKey`: `ß` folds to `ss`, `ﬁ` to `fi`, so `straße.png` and `strasse.png` are one name on APFS), because a simple fold or `strings.ToLower` gives those pairs two keys and stages a set `fugaro artifacts get` then writes over itself. **The dot rule is a matched pair with `fugaro artifacts get`'s** (design §9): `get` refuses a dot-named entry, and Go's `filepath.Glob`/`Match` — unlike a shell — match a leading dot, so without the rule here `out/*.mp4` would upload and record a `.hidden.mp4` the retriever can never hand back. Nothing else about a dot is affected: `sizzle.v2.mp4` and `clips/a.mp4` are both names this accepts. A symlink in the checkout whose target is outside the outputs root is skipped with a warning rather than followed — a refusal, not a copy, because the bytes would then be a file the run never rendered.
 
 The caps, and the order they are checked in: match count against `max_files`, then each match's size against `max_bytes` (**per artifact**), then the set's total against `max_total_bytes` (**the set cap, its own key and not `max_bytes × max_files`** — a cap derived from two other caps is a cap the owner cannot set). Nothing is staged until every check passes — **so a refused set leaves the staging directory empty and the bucket untouched** (Review Focus 4).
 
@@ -832,25 +832,35 @@ Expected: **FAIL**.
 //
 // get downloads one artifact (or all of them with no NAME), verifying the
 // byte count and the sha256 against the
-// record. blobx.GetFile takes the record's hash as its expected sum and
-// strict: true — a launcher or an operator holds unconditional
-// objectAdmin, which includes storage.objects.list, so a 403 here is an
-// access problem and must not be reported as "no such artifact" (design
-// §3) — and renames into place only once it matches, so a mismatch is an
-// error naming both hashes with nothing ever written at the destination
-// path. An existing file needs --force. Nothing downloaded is ever
+// record. blobx.GetFileExactly takes the record's hash as its expected sum,
+// its byte count as the exact size to check (not a ceiling: the check
+// happens on the temporary file, before the placement, because comparing it
+// afterwards either leaves a file the record does not describe or deletes
+// what was at that path) and strict: true — a launcher or an operator holds
+// unconditional objectAdmin, which includes storage.objects.list, so a 403
+// here is an access problem and must not be reported as "no such artifact"
+// (design §3) — and puts the file in place only once both match, without
+// replacing what is there unless --force asked for it (a file that appears
+// after the check, or one this filesystem folds the name onto, is refused
+// rather than overwritten), so a mismatch is an error naming both hashes
+// with nothing ever written at the destination path. An existing file needs
+// --force. Nothing downloaded is ever
 // opened, executed or unpacked: the command prints the recorded type, the
 // size and the hash and stops there.
 //
 // The destination is a fresh directory this command creates and then
 // defaults to (./<run>-artifacts/, with --out naming its PARENT), never
 // ".": the record was written by an untrusted, model-driven run, so a name
-// that is absolute, has a ".." element, begins with a dot or escapes that
-// root is refused — otherwise `get` run inside a checkout could drop
-// .git/hooks/pre-commit or .claude/settings.json for the user's next
-// command to run (design §8.2, §9). The refusal is a refusal: a record
-// naming .git/hooks/pre-commit is an error, never a flattened
-// "pre-commit".
+// that is absolute, has a ".." element, holds a control character (every
+// C0, DEL and C1 byte, and the bidi overrides) or a backslash, begins with
+// a dot or escapes that root is refused — and two names that fold to one
+// (NFC plus full Unicode case folding, the uploader's own key: straße.png
+// with strasse.png) are refused as the duplicate they are, because the
+// destination is a filesystem that folds — otherwise `get` run inside a
+// checkout could drop .git/hooks/pre-commit or .claude/settings.json for
+// the user's next command to run (design §8.2, §9). The refusal is a
+// refusal: a record naming .git/hooks/pre-commit is an error, never a
+// flattened "pre-commit".
 func newArtifactsCmd() *cobra.Command
 ```
 

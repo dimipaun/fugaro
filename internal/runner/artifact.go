@@ -1503,24 +1503,29 @@ func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
 	if err := checkInputCaps(r.spec.Inputs, caps); err != nil {
 		return err
 	}
-	// Keyed on the FOLDED name, the rule the launcher applies to the same set
-	// and the one Task 4's artifact names are keyed on: the downloads below
-	// all land in one directory, and a name that differs only in case is one
-	// name there — the second file would replace the first while the task
-	// named both. A spec written by hand reaches this with no launcher to
-	// have refused it, which is why the rule is here too and not only there.
+	// Keyed on the FOLDED name — ArtifactCollisionKey, which is the rule the
+	// launcher applies to the same set (internal/cli's --attach check) and the
+	// one Task 4's artifact names are keyed on: the downloads below all land in
+	// one directory, and a name that differs only in case, or in a Unicode
+	// normalization the filesystem applies, is one name there — the second file
+	// would replace the first while the task named both. A case fold weaker
+	// than the key's (strings.ToLower was one) is the drift
+	// ArtifactCollisionKey's own comment warns about: it gives ß/ss and ﬁ/fi
+	// two keys, and the pair then writes over itself on APFS. A spec written by
+	// hand reaches this with no launcher to have refused it, which is why the
+	// rule is here too and not only there.
 	seen := map[string]string{}
 	for _, in := range r.spec.Inputs {
 		if problem := task.InputNameProblem(in.Name); problem != "" {
 			return fmt.Errorf("attached input %q %s", in.Name, problem)
 		}
-		if first, dup := seen[strings.ToLower(in.Name)]; dup {
+		if first, dup := seen[ArtifactCollisionKey(in.Name)]; dup {
 			if first == in.Name {
 				return fmt.Errorf("attached input %q is named twice; one file cannot be two", in.Name)
 			}
-			return fmt.Errorf("attached inputs %q and %q differ only in case, and both are downloaded into the same directory, where that is one name", first, in.Name)
+			return fmt.Errorf("attached inputs %q and %q differ only in case, or in a Unicode normalization, and both are downloaded into the same directory, where that is one name", first, in.Name)
 		}
-		seen[strings.ToLower(in.Name)] = in.Name
+		seen[ArtifactCollisionKey(in.Name)] = in.Name
 	}
 	dir := filepath.Join(r.d.WorkDir, inputsDir)
 	tracked, err := r.trackedInputs(ctx)

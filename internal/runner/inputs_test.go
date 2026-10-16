@@ -666,3 +666,29 @@ func TestInputsDifferingOnlyInCaseAreRefused(t *testing.T) {
 	seedInputs(t, h, runInputKey(h, "a.png"), []byte("lower"))
 	wantBootstrapError(t, h, nil, "differ only in case", "\"A.png\" and \"a.png\"")
 }
+
+// TestInputsOneFullCaseFoldApartAreRefused is the same rule asked with a pair
+// a *simple* case fold keeps apart: ß folds to ss (and ﬁ to fi) under
+// Unicode's full case folding — `runner.ArtifactCollisionKey`, the key the
+// uploader's artifact names already use — which is what a case-insensitive,
+// normalization-insensitive filesystem (APFS, where a mac runs this) applies
+// to the names in the one directory the inputs land in. Keyed on
+// strings.ToLower, or on the simple fold, straße.png and strasse.png are two
+// names, both downloads run, and the second replaces the first while the
+// record names both.
+//
+// Mutation (key the seen map on strings.ToLower, or on the exact name): this
+// pair is accepted and this test fails on the missing refusal.
+//
+// The pair needs no filesystem that holds both: the refusal is made before a
+// byte is read, from the spec's names alone.
+func TestInputsOneFullCaseFoldApartAreRefused(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	sharp, _ := attachedInput("straße.png", "sharp s")
+	two, _ := attachedInput("strasse.png", "two letters")
+	spec.Inputs = []task.InputFile{sharp, two}
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	seedInputs(t, h, runInputKey(h, "straße.png"), []byte("sharp s"))
+	seedInputs(t, h, runInputKey(h, "strasse.png"), []byte("two letters"))
+	wantBootstrapError(t, h, nil, "differ only in case", "\"straße.png\" and \"strasse.png\"")
+}

@@ -1012,7 +1012,8 @@ func TestArtifactsGetNeverRemovesWhatItDidNotWrite(t *testing.T) {
 // TestArtifactsGetRefusesDuplicateNames: a record that names one artifact
 // twice, or that names two artifacts differing only by case, is refused
 // before any download. This is the retriever's half of the uploader's "no
-// duplicate after normalisation" refusal (design §8.2): a second download of
+// duplicate" refusal (design §8.2), asked with the same key (NFC plus full
+// case folding): a second download of
 // the same name writes one path twice, and the case-folded pair does it on a
 // filesystem that ignores case (APFS, NTFS) — where checkArtifactDest has
 // already proved both destinations before the first byte is read, so the
