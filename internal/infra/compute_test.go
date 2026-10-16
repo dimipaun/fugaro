@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,7 @@ func computeSpec() ComputeSpec {
 		BaseFamily:         "batch-cos-stable-official",
 		PreloadZone:        "us-east5-a",
 		PreloadSchedule:    "0 3 * * 1",
+		PreloadRefreshDays: PreloadRefreshDaysDefault,
 		BuilderMachineType: "e2-medium",
 		BuildSubmitterRole: "projects/proj-1234/roles/fugaroBuildSubmitter",
 	}
@@ -108,6 +110,12 @@ func TestComputeVarsRefuseWhatTheModuleRefuses(t *testing.T) {
 		{"no repository", func(s *ComputeSpec) { s.RegistryRepository = "" }, "repository"},
 		{"no base image", func(s *ComputeSpec) { s.BaseImage = "" }, "base image"},
 		{"no build-submitter role", func(s *ComputeSpec) { s.BuildSubmitterRole = "" }, "build-submitter"},
+		{"no refresh window", func(s *ComputeSpec) { s.PreloadRefreshDays = 0 }, "refresh window"},
+		// A window at or past the lifetime is refused: Batch documents a
+		// custom image's support as ending 60 days after its starting date,
+		// so an image replaced only after that has been unsupported first.
+		{"a refresh window at the lifetime", func(s *ComputeSpec) { s.PreloadRefreshDays = 60 }, "refresh window"},
+		{"a refresh window past the lifetime", func(s *ComputeSpec) { s.PreloadRefreshDays = 90 }, "refresh window"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := computeSpec()
@@ -164,9 +172,43 @@ func TestComputeWorkdirIsItsOwn(t *testing.T) {
 	}
 }
 
+// The refresh window is the one thing that keeps the preloaded boot image
+// inside the lifetime Batch documents for a custom image -- 60 days after its
+// starting date, whichever base it was built from (§1.2, C19) -- because the
+// image's name carries only the pin's hash and does not move when Google's
+// family rolls. So the default the stage sends is inside the lifetime, the
+// root and the module default to the same number, and the window reaches the
+// build's own script (the module's env, preload.tf).
+func TestPreloadRefreshWindowIsInsideTheSupportedLifetime(t *testing.T) {
+	if PreloadRefreshDaysDefault <= 0 || PreloadRefreshDaysDefault >= 60 {
+		t.Errorf("PreloadRefreshDaysDefault = %d, want 1-59 days: Batch ends a custom image's support at 60 days", PreloadRefreshDaysDefault)
+	}
+	for _, path := range []string{"gcp/roots/compute/variables.tf", "gcp/modules/compute/variables.tf"} {
+		b, err := fs.ReadFile(terraform.FS, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blk := regexp.MustCompile(`(?s)variable "preload_refresh_days" \{(.*?)\n\}`).FindStringSubmatch(string(b))
+		if blk == nil {
+			t.Errorf("%s does not declare preload_refresh_days: the value the Go side sends would be a variable the root does not take", path)
+			continue
+		}
+		if !regexp.MustCompile(`(?m)^\s*default\s*=\s*` + strconv.Itoa(PreloadRefreshDaysDefault) + `\s*$`).MatchString(blk[1]) {
+			t.Errorf("%s's default is not the %d the stage sends: an apply by hand would build a different schedule of replacements", path, PreloadRefreshDaysDefault)
+		}
+	}
+	b, err := fs.ReadFile(terraform.FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "REFRESH_DAYS=${var.preload_refresh_days}") {
+		t.Error("the build's environment does not carry the refresh window to preload.sh")
+	}
+}
+
 // The preloaded image's name is the module's: one image per pinned base, and
-// the Go side derives the same name the module does, so the stage can name the
-// image it expects without reading the state back. The module's expression is
+// the Go side derives the same name the module does, so a caller can name the
+// image a run boots without reading a state. The module's expression is
 // asserted here too, because the two must stay the same function.
 func TestPreloadedImageMatchesTheModule(t *testing.T) {
 	b, err := fs.ReadFile(terraform.FS, "gcp/modules/compute/preload.tf")

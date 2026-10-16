@@ -1627,8 +1627,8 @@ func TestComputePreloadBuildFollowsTheMeasuredProcedure(t *testing.T) {
 		if !strings.Contains(line, "delete") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "say ") {
 			continue
 		}
-		if !strings.Contains(line, `"$BUILDER"`) && !strings.Contains(line, `"$img"`) {
-			t.Errorf("preload.sh deletes something that is not its builder VM or a fugaro-labelled image: %s", trimmed)
+		if !strings.Contains(line, `"$BUILDER"`) && !strings.Contains(line, `"$img"`) && !strings.Contains(line, `"$IMAGE"`) {
+			t.Errorf("preload.sh deletes something that is not its builder VM, its own stale image or a fugaro-labelled image: %s", trimmed)
 		}
 	}
 	j, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
@@ -1644,6 +1644,99 @@ func TestComputePreloadBuildFollowsTheMeasuredProcedure(t *testing.T) {
 	}
 	if !strings.Contains(tf, "sha256(var.base_image)") {
 		t.Error("the preload image's name must carry the pinned base version: one image per pin")
+	}
+}
+
+// The rebuild replaces what is stale, or the schedule is decoration. The
+// image's name carries the pin's hash and the pin does not move when Google
+// rolls the base family, so the name cannot say which release is inside the
+// image and an image that is already there is not automatically current: what
+// the image was built from is recorded on it (its base-release label) and how
+// old it is is its creation date, both read back from the API, and an image
+// past the family or past the refresh window is deleted and built again. The
+// window is an input with a ceiling below the 60 days Batch documents for a
+// custom image (§1.2, C19), because a window at or past the lifetime would
+// leave the image unsupported before anything replaced it.
+func TestComputePreloadRebuildsAStaleImage(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := string(b)
+	for _, want := range []string{
+		`--format='csv[no-heading](labels.fugaro,labels.base-release,creationTimestamp)'`, // the three answers the decision reads
+		"REFRESH_DAYS:?",                        // the window is an input, not a literal
+		`--labels=fugaro=managed,base-release=`, // what the image is built from is recorded on it
+		`gcloud compute images delete "$IMAGE"`, // and the stale image itself goes
+	} {
+		if !strings.Contains(sh, want) {
+			t.Errorf("preload.sh does not name %q: the scheduled rebuild would leave a stale image in place", want)
+		}
+	}
+	// The decision is made from the API's answer, and the delete is after it:
+	// describe the image, read what it holds and how old it is, then replace.
+	describe := strings.Index(sh, `describe "$IMAGE" `)
+	release := strings.Index(sh, "labels.base-release")
+	del := strings.Index(sh, `gcloud compute images delete "$IMAGE"`)
+	if describe < 0 || release < describe || del < release {
+		t.Errorf("the stale image's delete is not after the describe that decides it (describe %d, release %d, delete %d)", describe, release, del)
+	}
+	// The image is only touched when it is this build's own: the refusal names
+	// the label, and it comes before the delete.
+	refuse := strings.Index(sh, "is not fugaro=managed; refusing to touch it")
+	if refuse < describe || refuse > del {
+		t.Errorf("preload.sh does not refuse an image that is not its own before deleting it (describe %d, refusal %d, delete %d)", describe, refuse, del)
+	}
+	// A name that is its own and fresh is the only thing left alone, and that
+	// is said, not assumed: both outcomes are inside the conditional, so an
+	// unconditional "already there; nothing to build" -- the bug this test
+	// exists for, a scheduled rebuild that never refreshed anything -- fails
+	// here.
+	if !strings.Contains(sh, "nothing to build") {
+		t.Error("preload.sh never reports the one case it leaves an image alone in")
+	}
+	decide := regexp.MustCompile(`(?s)if \[ "\$IMG_RELEASE" = "\$RELEASE_LABEL" \].*?\nfi`).FindString(sh)
+	if decide == "" {
+		t.Fatal("preload.sh does not decide the rebuild from the release the image holds")
+	}
+	for _, want := range []string{`[ "$IMG_AGE_DAYS" -lt "$REFRESH_DAYS" ]`, `BUILD=""`, "REPLACE=yes"} {
+		if !strings.Contains(decide, want) {
+			t.Errorf("the rebuild's decision does not hold %q: an image is only left alone when it is current AND inside the window", want)
+		}
+	}
+
+	// The window arrives from the module, and the module's and the root's
+	// defaults are inside the lifetime Batch documents.
+	tf, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tf), "REFRESH_DAYS=${var.preload_refresh_days}") {
+		t.Error("the build's environment does not pass the refresh window to the script")
+	}
+	if !strings.Contains(string(tf), "retry_config") {
+		t.Error("the scheduled rebuild has no retry: a replacement a run's VM blocked would wait a week")
+	}
+	for _, path := range []string{"gcp/modules/compute/variables.tf", "gcp/roots/compute/variables.tf"} {
+		vars, err := fs.ReadFile(FS, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blk := regexp.MustCompile(`(?s)variable "preload_refresh_days" \{(.*?)\n\}`).FindStringSubmatch(string(vars))
+		if blk == nil {
+			t.Errorf("%s does not declare preload_refresh_days", path)
+			continue
+		}
+		if !regexp.MustCompile(`(?m)^\s*default\s*=\s*30\s*$`).MatchString(blk[1]) {
+			t.Errorf("%s's preload_refresh_days default is not the 30 days the Go side sends", path)
+		}
+	}
+	moduleVars, err := fs.ReadFile(FS, "gcp/modules/compute/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(moduleVars), "var.preload_refresh_days < 60") {
+		t.Error("the module does not refuse a refresh window at or past the 60-day supported lifetime")
 	}
 }
 

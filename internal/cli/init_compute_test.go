@@ -162,6 +162,8 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 		"base_project":         "batch-custom-image",
 		"base_family":          "batch-cos-stable-official",
 		"build_submitter_role": "projects/" + initProject + "/roles/fugaroBuildSubmitter",
+		// The window the scheduled rebuild replaces a stale image inside.
+		"preload_refresh_days": infra.PreloadRefreshDaysDefault,
 		"network":              "projects/" + initProject + "/global/networks/default",
 		"subnetwork":           "projects/" + initProject + "/regions/us-east5/subnetworks/default",
 	} {

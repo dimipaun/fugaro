@@ -48,6 +48,7 @@ module "compute" {
   base_family          = var.base_family
   preload_zone         = var.preload_zone
   preload_schedule     = var.preload_schedule
+  preload_refresh_days = var.preload_refresh_days
   builder_machine_type = var.builder_machine_type
   build_submitter_role = var.build_submitter_role
 }

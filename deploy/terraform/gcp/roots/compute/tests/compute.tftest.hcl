@@ -374,6 +374,19 @@ run "TestThePreloadRebuildIsScheduled" {
     condition     = google_project_iam_member.preload_build_submitter.role == "projects/proj-1234/roles/fugaroBuildSubmitter"
     error_message = "creating a build needs the installation's own build-submitter role, passed by reference"
   }
+  # The rebuild is not a no-op on an image that is already there, so the
+  # window the script replaces a stale image inside has to reach it: the
+  # build's own spec carries it, and the job retries a build that could not
+  # finish (a run's VM still holding the image, a pull that failed) rather
+  # than waiting a week for its next attempt.
+  assert {
+    condition     = strcontains(base64decode(google_cloud_scheduler_job.preload_rebuild.http_target[0].body), "REFRESH_DAYS=30")
+    error_message = "the build's spec does not carry the refresh window to preload.sh: the scheduled rebuild could never replace a stale image"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.preload_rebuild.retry_config[0].retry_count == 3
+    error_message = "the scheduled rebuild has no retry, so a refused replacement would wait for the next week"
+  }
 }
 
 # The shapes the module refuses, refused: Batch refuses noExternalIpAddress

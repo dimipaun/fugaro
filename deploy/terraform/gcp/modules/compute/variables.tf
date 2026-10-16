@@ -179,6 +179,17 @@ variable "preload_schedule" {
   default     = "0 3 * * 1"
 }
 
+variable "preload_refresh_days" {
+  description = "How old the preloaded image may be before a scheduled rebuild replaces it. A Batch custom image's supported lifetime can end 60 days after its starting date, so the window must be inside that (§1.2, C19); the schedule is weekly, so an image is replaced at the first weekly run past the window. The name is the pin's hash and does not move when Google's family rolls, so this window -- not the name -- is what keeps an image from outliving its support."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.preload_refresh_days > 0 && var.preload_refresh_days < 60
+    error_message = "preload_refresh_days must be between 1 and 59: Batch documents a custom image's supported lifetime as ending 60 days after its starting date, so a longer window would let the image go unsupported before anything replaced it."
+  }
+}
+
 variable "build_submitter_role" {
   description = "The installation's build-submitter custom role id, which is what lets an account create a Cloud Build (cloudbuild.builds.create/get). The scheduled rebuild's account holds it and nothing else on Cloud Build."
   type        = string

@@ -220,7 +220,17 @@ What the numbers are:
      (`fugaro-preload-rebuild`, weekly). The image's name carries
      `sha256(base_image)[:8]`, so one pinned base is one image and a new pin
      is a new name; the stage starts the first build itself, so a fresh
-     installation does not wait for the schedule. Terraform owns none of the
+     installation does not wait for the schedule. The name **cannot** carry
+     Google's side of it — the pin does not move when the family rolls — so
+     the release an image was built from is recorded in its `base-release`
+     label and the rebuild decides API answer by API answer: an image that is
+     this build's own, built from the family's current release and younger
+     than `preload_refresh_days` (default 30, inside the 60 days) is the only
+     one it leaves alone, and anything else it rebuilds, deleting the stale
+     image only after a successful pull (a refusal because a run's VM still
+     holds it leaves the old image booting and the job retries, rather than
+     the schedule becoming a no-op for as long as the image is in use).
+     Terraform owns none of the
      build, deliberately: no resource expresses the wait in the middle of the
      procedure, and an image taken from a disk whose pull has not finished is
      an image with nothing in it. How a Docker
@@ -3693,7 +3703,11 @@ senior reviewer before merge, not just the normal one.
    `deploy/terraform/gcp/roots/compute` over
    `deploy/terraform/gcp/modules/compute` (the APIs, the three accounts and
    their roles, the NAT and router on the network and subnetwork named
-   explicitly, the preload pipeline and its schedule), the Go-side contract is
+   explicitly, the preload pipeline and its schedule — whose rebuild decides
+   from the image's own `base-release` label and creation date rather than
+   from the pin-derived name, so a family roll or an image past
+   `preload_refresh_days` is replaced and only a current in-window image is
+   left alone), the Go-side contract is
    `internal/infra/compute.go` (the spec, the tfvars, the outputs, the run
    accounts read out of the project by their display-name mark, the image
    name's derivation, the two retries), and the stage is

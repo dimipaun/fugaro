@@ -77,6 +77,11 @@ variable "preload_schedule" {
   default = "0 3 * * 1"
 }
 
+variable "preload_refresh_days" {
+  type    = number
+  default = 30
+}
+
 variable "builder_machine_type" {
   type    = string
   default = "e2-medium"

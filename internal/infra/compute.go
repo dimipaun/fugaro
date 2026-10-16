@@ -70,14 +70,25 @@ const (
 	PreloadRoleID = "fugaroPreloadBuilder"
 	// PreloadImage is the prefix of the preloaded boot image's name in the
 	// installation's project. The module appends the hash of the pinned
-	// base version (PreloadedImage), so one pin is one image and a rebuild
-	// after the family rolls produces a new name.
+	// base version (PreloadedImage), so one pin is one image; a new pin is a
+	// new name and the old image is swept. Google rolling the base family
+	// does NOT move it — the pin does not move with it — which is why the
+	// release an image was built from is recorded on the image itself
+	// (preload.sh's base-release label) and why the scheduled rebuild
+	// replaces an image that is stale or past its window.
 	PreloadImage = "fugaro-preload"
 	// PreloadSchedulerJob is the Cloud Scheduler job that rebuilds it: a
 	// Batch custom image's supported lifetime can end 60 days after its
 	// start, so the image is rebuilt on a schedule, never built once
 	// (§1.2).
 	PreloadSchedulerJob = "fugaro-preload-rebuild"
+	// PreloadRefreshDaysDefault is how old the preloaded image may be before
+	// the scheduled rebuild replaces it: half the 60 days Batch documents,
+	// so a weekly schedule has a spare attempt inside the lifetime. The
+	// module and the root default to the same number, and the module, this
+	// package and the root all refuse 60 or more
+	// (TestPreloadRefreshWindowIsInsideTheSupportedLifetime).
+	PreloadRefreshDaysDefault = 30
 )
 
 // ComputeNames is the module's `names` object.
@@ -152,8 +163,14 @@ type ComputeSpec struct {
 	BaseProject string `json:"base_project"`
 	BaseFamily  string `json:"base_family"`
 
-	PreloadZone        string `json:"preload_zone"`
-	PreloadSchedule    string `json:"preload_schedule"`
+	PreloadZone     string `json:"preload_zone"`
+	PreloadSchedule string `json:"preload_schedule"`
+	// PreloadRefreshDays is how old the preloaded image may be before the
+	// scheduled rebuild replaces it, in days: the window that keeps the
+	// image inside the 60-day lifetime Batch documents for a custom image,
+	// and the only thing that refreshes an image whose base family has not
+	// rolled (§1.2, C19).
+	PreloadRefreshDays int    `json:"preload_refresh_days"`
 	BuilderMachineType string `json:"builder_machine_type"`
 
 	// BuildSubmitterRole is the installation's fugaroBuildSubmitter role,
@@ -180,6 +197,8 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 		return nil, fmt.Errorf("the compute root needs the registry repository the installation's pin names (design compute-backend §7.2)")
 	case spec.BaseImage == "":
 		return nil, fmt.Errorf("the compute root needs the installation's pinned base image: the preloaded boot image is that image pulled onto a COS boot disk, so an empty one would build an image with nothing in it")
+	case spec.PreloadRefreshDays <= 0 || spec.PreloadRefreshDays >= 60:
+		return nil, fmt.Errorf("the compute root's preload refresh window must be 1-59 days, not %d: a Batch custom image's supported lifetime can end 60 days after its starting date, so a longer window would leave the image unsupported before anything replaced it (design compute-backend §1.2)", spec.PreloadRefreshDays)
 	case spec.BuildSubmitterRole == "":
 		return nil, fmt.Errorf("the compute root needs the installation's build-submitter role: the preload build is started with it")
 	}
@@ -335,10 +354,14 @@ func propagating(err error) bool {
 }
 
 // PreloadedImage is the preloaded boot image's name for one pinned base
-// image: the module's own derivation (preload.tf), restated here so a caller
-// can name the image it expects without reading the state back. The eight hex
+// image: the module's own derivation (preload.tf), restated here so the Go
+// side and the module cannot disagree about what the runs boot and with
+// TestPreloadedImageMatchesTheModule holding the two together. The eight hex
 // digits are the first of sha256(base), which is what the module's
-// substr(sha256(var.base_image), 0, 8) computes.
+// substr(sha256(var.base_image), 0, 8) computes. The name says nothing about
+// Google's side of the image: the family's release is recorded on the image
+// (its base-release label) and how old it is is its creation date, which is
+// what the scheduled rebuild reads (preload.sh).
 func PreloadedImage(base string) string {
 	sum := sha256.Sum256([]byte(base))
 	return PreloadImage + "-" + hex.EncodeToString(sum[:])[:8]
