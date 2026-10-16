@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -585,7 +586,10 @@ func TestProjectPolicyPublishRefusesWithoutTheRulesMarker(t *testing.T) {
 
 // TestProjectPolicyPublishRefusesOlderRules: the marker exists and is behind
 // this Fugaro's, which is the state an older CLI's init --firebase leaves
-// behind. The refusal is the other one, and names the marker it found.
+// behind. The refusal is the other one, names the marker it found — and is the
+// same sentence doctor prints for the state (rulesMarkerBelowText), because a
+// refusal and a report that word one state differently disagree about where
+// the operator is standing.
 func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion-1)
@@ -593,8 +597,16 @@ func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish behind the deployed rules was allowed")
 	}
-	if !strings.Contains(err.Error(), "older than the marker") || !strings.Contains(err.Error(), "init --firebase") {
-		t.Errorf("the refusal does not say the rules are older: %v", err)
+	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.RulesVersion-1)) || !strings.Contains(err.Error(), "init --firebase") {
+		t.Errorf("the refusal does not say the marker is below the generation a policy is read under: %v", err)
+	} // Not the marker-current state's sentence: "the deployed rules are older
+	// than the marker" is a claim about a document, and nothing here compared
+	// one — the marker itself is the wrong value.
+	if strings.Contains(err.Error(), "older than the marker") {
+		t.Errorf("the refusal for a marker below the generation reuses the other state's sentence: %v", err)
+	}
+	if !strings.Contains(err.Error(), rulesMarkerBelowText(projectpolicy.RulesVersion-1)) {
+		t.Errorf("the refusal is not the sentence doctor prints for this state:\n got %v\nwant %q", err, rulesMarkerBelowText(projectpolicy.RulesVersion-1))
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
 		t.Error("a node was written anyway")

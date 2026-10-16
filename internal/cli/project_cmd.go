@@ -236,18 +236,38 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	case gen >= projectpolicy.RulesVersion:
 		return nil
 	}
-	return userErr("%s", rulesSkewText())
+	return userErr("%s", rulesMarkerBelowText(gen))
 }
 
 // rulesSkewText is the one sentence for "the deployed rules are older than
-// the marker": `policy publish` refuses with it and doctor's
-// policy-rules-skew check prints it (plan task 1.6 step 4's fifth check),
-// so the state reads the same whether the operator met it as a refusal or
-// as a report. It is a plain sentence and not an error, because doctor has
-// no error to wrap it in.
+// the marker": the marker records this generation, and the *document* deployed
+// at .settings/rules is not the one this generation generates. `fugaro init
+// --firebase` redeploys over it (infra.DB.Plan compares the same way), and
+// doctor's policy-rules-skew check prints the sentence (plan task 1.6 step 4's
+// fifth check), so the state reads the same whether the operator met it as a
+// report or in the deploy's own words. It is a plain sentence and not an
+// error, because doctor has no error to wrap it in.
 func rulesSkewText() string {
 	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro init --firebase' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
 		projectpolicy.PathRulesMarker(), policySince)
+}
+
+// rulesMarkerBelowText is the one sentence for the marker-below state: the
+// marker is present and records a generation below this Fugaro's
+// RulesVersion. `fugaro project policy publish` refuses with it and doctor's
+// policy-rules-skew check prints it, so the state reads the same whether the
+// operator met it as a refusal or as a report.
+//
+// It cannot be rulesSkewText, which is the *other* state's sentence: that one
+// is about a *document* that disagrees with a marker ("the deployed rules are
+// older than the marker"), while here the marker is itself the value that is
+// wrong — the deployed rules may be anything at all and doctor never reads
+// them for this state, so the refusal told the operator about a comparison
+// nothing made (the review of PR #402 found the two texts disagreeing; this is
+// one text per state, shared by both readers).
+func rulesMarkerBelowText(gen int) string {
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro init --firebase' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
+		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, policySince, projectpolicy.RulesVersion)
 }
 
 // readPolicyNode reads the shared node with its ETag, the precondition the

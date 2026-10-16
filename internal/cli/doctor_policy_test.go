@@ -372,8 +372,20 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
 		}
 		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion+1)) ||
-			!strings.Contains(c.Problem, "newer than this Fugaro") {
-			t.Errorf("the check does not say the deployed rules are newer than this binary: %+v", c)
+			!strings.Contains(c.Problem, "a newer Fugaro deployed them") {
+			t.Errorf("the check does not say the deployed rules are a newer Fugaro's: %+v", c)
+		}
+		// Not the claim this check used to make. "the deployed rules are newer
+		// than this Fugaro, which cannot read a project policy written under
+		// them" is the opposite of projectpolicy.Read, which takes a marker at
+		// or above its own generation as deployed — so a run under these rules
+		// does read the published policy, and the operator told otherwise looks
+		// for a node that is being read.
+		if strings.Contains(c.Problem, "cannot read a project policy") {
+			t.Errorf("the check says the policy under newer rules is unreadable, which is the opposite of what projectpolicy.Read does: %+v", c)
+		}
+		if !strings.Contains(c.Problem, "is read") {
+			t.Errorf("the check does not say the policy under newer rules is read: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "upgrade Fugaro") {
 			t.Errorf("the check does not name the fix that does not downgrade: %+v", c)
@@ -405,6 +417,9 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion-1)) {
 			t.Errorf("the check does not name the generation the marker records: %+v", c)
 		}
+		if !strings.Contains(c.Problem, "below the generation") || !strings.Contains(c.Problem, "publishing one is refused") {
+			t.Errorf("the check does not say the marker is below the generation a policy is read under: %+v", c)
+		}
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
@@ -415,6 +430,13 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// contradiction (the review of PR #402).
 		if strings.Contains(c.Problem, "the deployed rules are older than the marker") {
 			t.Errorf("the marker-below body reuses the marker-current state's sentence: %+v", c)
+		}
+		// And it is the very sentence the publish refuses with, not a second
+		// wording of the same state: doctor reporting one text while the
+		// refusal prints another is how the two drifted apart in the first
+		// place.
+		if c.Problem != rulesMarkerBelowText(projectpolicy.RulesVersion-1) {
+			t.Errorf("the marker-below body is not the text requirePolicyRules refuses with:\n got %q\nwant %q", c.Problem, rulesMarkerBelowText(projectpolicy.RulesVersion-1))
 		}
 	})
 }

@@ -1701,8 +1701,20 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
 	}
 	if gen > projectpolicy.RulesVersion {
+		// A marker above this binary's RulesVersion, and the review of PR
+		// #402's point: a newer Fugaro wrote it, so the deployed rules are a
+		// generation this binary does not know. The sentence this check used
+		// to print — "the deployed rules are newer than this Fugaro, which
+		// cannot read a project policy written under them" — is the opposite
+		// of what Read does with the marker: a generation at or above this
+		// one's reads as deployed (any marker above RulesVersion included), so
+		// a run under these rules *does* read the published policy. What is
+		// true is that the rules document itself is a shape this binary cannot
+		// verify and must not redeploy over, which is why init --firebase
+		// refuses the state — and the operator who was told the policy is
+		// unreadable would look for the wrong thing.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: fmt.Sprintf("%s records generation %d, and this Fugaro's rules are generation %d: the deployed rules are newer than this Fugaro, which cannot read a project policy written under them",
+			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's own rules carry: a newer Fugaro deployed them, so a policy published under them is read (a marker at or above this Fugaro's generation reads as deployed) while the rules themselves are a shape this binary cannot verify, and it cannot deploy its own over them",
 				marker, gen, projectpolicy.RulesVersion),
 			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro init --firebase' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
 				projectpolicy.RulesVersion)}}
@@ -1715,12 +1727,12 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// nothing here printed "a policy is published" as info while every run
 		// took the legacy path.
 		//
-		// The body cannot be rulesSkewText, which is the *other* state's
-		// sentence: it says the deployed rules are older than the marker, and
-		// here it is the marker that is below (the review of PR #402).
+		// The body is rulesMarkerBelowText, which is the very sentence the
+		// publish refuses with: one text per state, or the refusal and the
+		// report contradict each other (the reviews of PR #402 and of this
+		// branch).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: fmt.Sprintf("%s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules are the pre-policy ones, so no run reads a published policy and 'fugaro project policy publish' refuses until the marker is brought up",
-				marker, gen, projectpolicy.RulesVersion),
+			Problem: rulesMarkerBelowText(gen),
 			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				policySince, projectpolicy.RulesVersion)}}
 	}
