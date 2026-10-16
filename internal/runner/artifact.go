@@ -52,6 +52,15 @@ var artifactStagedSeam func()
 // is read from the filesystem again.
 var artifactCheckedSeam func()
 
+// artifactCopiedSeam runs after one match has been copied into the staging
+// directory and before the recorded content type is taken, when a test sets it
+// (export_test.go's SetArtifactCopiedSeam). It is the window between the
+// staged file existing and the record describing it, which is the one a swap
+// at the staged path lands in: the type is sniffed from the bytes the copy
+// read, so nothing there is opened a second time — a FIFO planted in this
+// window must not be able to block the staging step.
+var artifactCopiedSeam func()
+
 // artifactSet is what the runner staged, in the order it will be uploaded:
 // the staging root and one entry per file.
 type artifactSet struct {
@@ -460,6 +469,9 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 		if err != nil {
 			r.clearStaging(set, "after a copy failed")
 			return set, err
+		}
+		if artifactCopiedSeam != nil {
+			artifactCopiedSeam()
 		}
 		ct := artifactContentType(names[i], head)
 		set.files = append(set.files, staged{name: names[i], path: dst, sha256: sum, contentType: ct})

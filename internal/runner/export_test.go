@@ -244,6 +244,16 @@ func SetArtifactCheckedSeam(t *testing.T, f func()) {
 	t.Cleanup(func() { artifactCheckedSeam = prev })
 }
 
+// SetArtifactCopiedSeam runs f in stageArtifacts after one match has been
+// copied into the staging directory and before its recorded content type is
+// taken: the window between the staged file existing and the record describing
+// it, which is where a swap at the staged path lands.
+func SetArtifactCopiedSeam(t *testing.T, f func()) {
+	prev := artifactCopiedSeam
+	artifactCopiedSeam = f
+	t.Cleanup(func() { artifactCopiedSeam = prev })
+}
+
 // SetArtifactStagedSeam runs f in collectArtifacts after the set is staged
 // and hashed and before anything is uploaded, for the rest of t: it is how a
 // test replaces a staged file between the hash and the upload (Review Focus

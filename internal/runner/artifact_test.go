@@ -2094,22 +2094,66 @@ func TestArtifactContentTypeIsTheExtensionThenTheSniff(t *testing.T) {
 	}
 }
 
-// TestTheStagedTypeComesFromTheCopyNotFromTheStagedPath: the recorded type is
-// a function of the bytes the copy read, so the staged path is opened exactly
-// once — to create it — and never read back. That is what the two hazards at
-// the end of this test are about, both of them real at the staged path and
-// neither of them reachable from the render: a link to a GIF makes the record
-// describe a file this run never staged, and a writerless FIFO blocks the open
-// forever, which no context can interrupt, so the run hangs until the container
-// is killed and writes no result.json.
+// TestAFifoAtTheStagedPathAfterTheCopyDoesNotBlockTheRun: the recorded type
+// is taken from the bytes the copy read, so the staged path is opened exactly
+// once — to create it — and never read back. That matters at the one window
+// this test can stand in: between the staged file existing and the record
+// describing it. A FIFO swapped in there and read back would block the open
+// forever (the staging step takes no context, so nothing the caller does can
+// interrupt it), and the run would hang until the container was killed and
+// write no result.json at all — the failure this file's other tests are about.
 //
-// The staged file is replaced by exactly those two things after the copy, and
-// the type still has to come back — from the head — at once. The deadline is
-// what makes the FIFO a failure instead of a hang.
+// The run ends failed instead, in the ordinary way: the upload's own Lstat
+// finds a staged file that is not a regular file and refuses it. It is the
+// deadline that turns the mutation into a failure rather than a hang.
 //
-// Mutation (read the staged file back to sniff it): the type is image/gif, or
-// the FIFO's open blocks and this test fails on its deadline.
-func TestTheStagedTypeComesFromTheCopyNotFromTheStagedPath(t *testing.T) {
+// Mutation (read the staged file back to sniff it): the open of the FIFO
+// blocks — a link to a GIF in its place would answer for a file the run never
+// staged — and this test fails on its deadline instead of on the run's own
+// refusal.
+func TestAFifoAtTheStagedPathAfterTheCopyDoesNotBlockTheRun(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.fugaroart] }")),
+		renderWrites(outFile{name: "sizzle.fugaroart", body: "sizzle"}))
+	runner.SetArtifactCopiedSeam(t, func() {
+		p := filepath.Join(h.deps.StateDir, "artifacts", "sizzle.fugaroart")
+		if err := os.Remove(p); err != nil {
+			t.Error(err)
+			return
+		}
+		if out, err := exec.Command("mkfifo", p).CombinedOutput(); err != nil {
+			t.Errorf("mkfifo %s: %v: %s", p, err, out)
+		}
+	})
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "not a regular file") {
+		t.Fatalf("the run did not refuse the staged file it found: %q", rec.Reason)
+	}
+	// No artifact was uploaded. The FIFO the seam planted stays in the staging
+	// directory — the run failed at the upload, not while staging — so this is
+	// the bucket's own claim rather than assertNothingUploaded's.
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the failed run left %v in the bucket", keys)
+	}
+}
+
+// TestTheStagedTypeIsAFunctionOfTheHead is the other side of that window: the
+// type takes the bytes the copy read and nothing else, so there is no path in
+// its signature for a later change to point at the staged file. Both hazards
+// at the staged path are planted here anyway — a link to a GIF answers
+// image/gif, and a writerless FIFO's open never returns — with an empty head
+// for the FIFO, which is the plausible excuse a fallback would use for
+// reaching for the path.
+//
+// Mutation (read the staged path when the head does not answer): the first
+// case's type is image/gif and the second blocks; this test fails on both.
+func TestTheStagedTypeIsAFunctionOfTheHead(t *testing.T) {
 	dir := t.TempDir()
 	const body = "sizzle"
 	src := filepath.Join(dir, "source")
@@ -2135,16 +2179,23 @@ func TestTheStagedTypeComesFromTheCopyNotFromTheStagedPath(t *testing.T) {
 	if out, err := exec.Command("mkfifo", fifo).CombinedOutput(); err != nil {
 		t.Fatalf("mkfifo %s: %v: %s", fifo, err, out)
 	}
-	for _, p := range []string{staged, fifo} {
+	for i, tc := range []struct {
+		at   string
+		head []byte
+		want string
+	}{
+		{staged, head, "text/plain; charset=utf-8"},
+		{fifo, nil, "text/plain; charset=utf-8"},
+	} {
 		done := make(chan string, 1)
-		go func() { done <- runner.ArtifactContentType("sizzle.fugaroart", head) }()
+		go func() { done <- runner.ArtifactContentType("sizzle.fugaroart", tc.head) }()
 		select {
 		case got := <-done:
-			if got != "text/plain; charset=utf-8" {
-				t.Fatalf("ArtifactContentType with %s at the staged path = %q, want the render's own bytes' type", filepath.Base(p), got)
+			if got != tc.want {
+				t.Fatalf("case %d: ArtifactContentType with %s at the staged path = %q, want %q", i, filepath.Base(tc.at), got, tc.want)
 			}
 		case <-time.After(15 * time.Second):
-			t.Fatalf("the type was read from %s: reading the staged path blocked", filepath.Base(p))
+			t.Fatalf("case %d: the type was read from %s: reading the staged path blocked", i, filepath.Base(tc.at))
 		}
 	}
 }
