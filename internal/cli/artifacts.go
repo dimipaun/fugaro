@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 )
@@ -35,9 +36,10 @@ import (
 // repository can rewrite it and the artifact together (design §8.3). So
 // everything `get` does with it is fail-closed:
 //
-//   - a name becomes a path only after the same refusal list the upload
-//     sanitiser applies — no absolute path, no ".." element, no control
-//     character, no leading dot, an explicit length limit (design §8.2, §9);
+//   - a name becomes a path only after the upload sanitiser's own refusal
+//     list — runner.ArtifactName, called by both sides — which is no absolute
+//     path, no ".." element, no control character, no leading dot and an
+//     explicit length limit (design §8.2, §9);
 //   - a name the record gives no sha256 and no positive size for is refused,
 //     not downloaded: those two are what make the bytes checkable at all;
 //   - the destination is a fresh directory this command creates
@@ -50,9 +52,12 @@ import (
 //     user named);
 //   - the bytes are written by blobx.GetFile into a temporary file in the
 //     destination's own directory and renamed into place only once the
-//     recorded size and sha256 both match, so a mismatch, an over-cap object
-//     or a truncated one leaves NOTHING at the destination path — not even a
-//     partial file;
+//     recorded size and sha256 both match, and the recorded size is then
+//     checked against what was read — the record's own two fields have to
+//     agree with each other and with the object, or the file is removed
+//     again, so a mismatch, an over-cap object, a truncated one or a record
+//     whose bytes disagree with its hash leaves NOTHING at the destination
+//     path — not even a partial file;
 //   - and nothing downloaded is ever opened, executed or unpacked (§8.1): the
 //     recorded content type is printed as the record's claim and stops there.
 //
@@ -60,12 +65,6 @@ import (
 // bytes the run uploaded — and never authorship: it lives in result.json, in
 // the same repository-scoped prefix as the artifact, so anything that can
 // rewrite one can rewrite the other consistently (§8.3, P11).
-
-// maxArtifactNameBytes caps an artifact's name, mirroring the upload
-// sanitiser's own cap (internal/runner's maxArtifactNameBytes): a longer name
-// is not one any runner could have recorded, so a record carrying one is a
-// record to refuse rather than a path to use.
-const maxArtifactNameBytes = 200
 
 // artifactDirSuffix names get's destination directory: <run-id><suffix> under
 // the parent --out gives (design §9).
@@ -420,40 +419,29 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 }
 
 // artifactNameProblem is why name, read out of a run's result.json, may not
-// become a path under the destination root, or "" when it may. It is the
-// upload sanitiser's own refusal list (internal/runner's sanitiseName,
-// design §8.2): a name is a leaf under a fixed prefix and a path under a
-// fixed root, so the two sides word the rule once and cannot drift.
+// become a path under the destination root, or "" when it may.
+//
+// The rule itself is the uploader's, not a copy of it: runner.ArtifactName is
+// the one refusal list both sides call (design §9: "the upload path cannot
+// produce what the retrieval path refuses"). A copy is what a first draft of
+// this did, and it refused the zero-width and bidi characters
+// internal/safetext escapes — a class the uploader accepts, because a
+// variation selector in a filename is a legal name a run can deliver — so an
+// artifact a run had recorded could never be fetched back by name, and
+// `get RUN` with no NAME refused the whole run because of that one entry.
+//
+// The one refusal this adds is the disagreement between a name the uploader
+// records and the name it was given: sanitiseName returns path.Clean of its
+// input, so a record carrying an unclean name ("clips/./a.png") is one the
+// runner could not have written, and reading it as a path is exactly the
+// "clean it into something plausible" this side must not do.
 func artifactNameProblem(name string) string {
-	switch {
-	case name == "":
-		return "the name is empty"
-	case len(name) > maxArtifactNameBytes:
-		return fmt.Sprintf("the name is %d bytes, over the %d-byte cap", len(name), maxArtifactNameBytes)
-	case path.IsAbs(name):
-		return "the name is absolute"
+	clean, problem := runner.ArtifactName(name)
+	if problem != "" {
+		return problem
 	}
-	// A name oneLine or cellOneLine would alter holds a control character, a
-	// bidi override or invalid UTF-8 — and a name is printed at the operator
-	// and typed at a shell, where such a name reads as a different name
-	// (internal/safetext is this repository's one definition of that).
-	if oneLine(name) != name || cellOneLine(name) != name {
-		return "the name holds a control character"
-	}
-	clean := path.Clean(name)
-	switch {
-	case clean == ".":
-		return "the name names no file"
-	case clean == ".." || strings.HasPrefix(clean, "../"):
-		return "the name walks out of the destination directory"
-	case strings.HasPrefix(clean, "."):
-		return "the name begins with a dot, which this command refuses: a name that is a dot file inside a checkout (.git/hooks/pre-commit, .claude/settings.json, .envrc) is a file the user's next command runs or loads"
-	}
-	// A name that is already clean is used as it is; one that is not (a "//"
-	// or a "./") is refused too, because the record was written by a runner
-	// that cleans its names before recording them.
 	if clean != name {
-		return fmt.Sprintf("the name is not clean (%s)", clean)
+		return fmt.Sprintf("the name is not the cleaned form the uploader records (%s)", clean)
 	}
 	return ""
 }
@@ -496,12 +484,26 @@ func prepareArtifactRoot(root string) error {
 // resolve outside root (a symlinked directory planted under it is the same
 // escape as a name with a ".." in it). It creates the directories the name
 // needs, so every path it returns is inside root.
+//
+// The parent is proved to be inside root BEFORE it is created: checking after
+// the MkdirAll would refuse the write with the outside directory already
+// made, and "writes only under the fresh root it created" has to hold for
+// directories too. Chesterton: a name like frames/sub/a.png whose frames/ is
+// a link out of root would otherwise create outside/sub/ and then be refused.
 func checkArtifactDest(root, name string, force bool) (string, error) {
 	dest := filepath.Join(root, filepath.FromSlash(name))
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return "", userErr("creating %s: %v", filepath.Dir(dest), err)
+	parent := filepath.Dir(dest)
+	if err := parentUnderRoot(root, parent); err != nil {
+		return "", err
 	}
-	if err := underArtifactRoot(root, filepath.Dir(dest)); err != nil {
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", userErr("creating %s: %v", parent, err)
+	}
+	// Again, now that it exists: MkdirAll created nothing outside root (the
+	// check above resolved the deepest directory that was there and the rest
+	// is names it made), and this resolves what is really there now, so a
+	// link swapped in between the two is caught too.
+	if err := underArtifactRoot(root, parent); err != nil {
 		return "", err
 	}
 	fi, err := os.Lstat(dest)
@@ -541,6 +543,39 @@ func underArtifactRoot(root, dir string) error {
 	return nil
 }
 
+// parentUnderRoot is underArtifactRoot for a directory that may not exist yet
+// — the check that has to come before MkdirAll creates it. It resolves the
+// deepest directory of dir that is there and requires that one to be inside
+// root, so nothing is created outside root and a link in the middle of the
+// name is caught before the first directory is made rather than after.
+func parentUnderRoot(root, dir string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return remote(err)
+	}
+	dir = filepath.Clean(dir)
+	for {
+		if _, err := os.Lstat(dir); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return remote(err)
+		}
+		up := filepath.Dir(dir)
+		if up == dir {
+			break
+		}
+		dir = up
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return remote(err)
+	}
+	if real != realRoot && !strings.HasPrefix(real, realRoot+string(filepath.Separator)) {
+		return userErr("the artifact's directory resolves to %s, outside the destination %s: the name reached it through a link", real, root)
+	}
+	return nil
+}
+
 // artifactObjectKey is where an artifact's bytes live: the run's own prefix,
 // artifacts/, and the name. It is also the last of the name refusals — the
 // bucket is asked only for a key under the run's artifacts/ prefix and never
@@ -559,14 +594,23 @@ func artifactObjectKey(prefix, name string) (string, error) {
 //
 // blobx.GetFile streams the bytes into a temporary file in dest's own
 // directory, hashing as it goes, and renames it into place only once the
-// recorded size and sha256 both match: a mismatch, an over-cap object or a
-// truncated one removes the temporary and leaves NOTHING at dest (Review
-// Focus 9), and limit is the record's own byte count, so the download is
-// bounded by what the run recorded rather than by the object's own claim
-// (design §8.4). It is asked for strict classification: an operator or a
-// launcher holds unconditional objectAdmin, which includes
-// storage.objects.list, so a 403 here is an access problem and must not be
-// reported as "no such artifact" (design §3).
+// sha256 matches: a mismatch, an over-cap object or a truncated one removes
+// the temporary and leaves NOTHING at dest (Review Focus 9), and limit is the
+// record's own byte count, so the download is bounded by what the run
+// recorded rather than by the object's own claim (design §8.4). It is asked
+// for strict classification: an operator or a launcher holds unconditional
+// objectAdmin, which includes storage.objects.list, so a 403 here is an
+// access problem and must not be reported as "no such artifact" (design §3).
+//
+// GetFile's limit is an upper bound and not an equality: an object smaller
+// than the recorded size copies to its own end, matches the hash when the
+// record's hash is that smaller object's, and would be written. The record
+// says the artifact is a.Bytes long, so that is checked here as well — the
+// record's own two fields have to agree with each other and with the bytes,
+// and two recorded fields that disagree are a reason to refuse rather than to
+// believe the hash (the record is untrusted text; design §9 "get verifies the
+// byte count and the sha256 against the record"). The file is removed again,
+// so the refusal leaves nothing at dest either.
 func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runstore.ArtifactFile, dest string, out io.Writer) error {
 	key, err := artifactObjectKey(s.Prefix(), a.Name)
 	if err != nil {
@@ -580,6 +624,10 @@ func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runsto
 		return remote(fmt.Errorf("reading %s: %w (this account may not read the run's artifacts: objectViewer on the runs bucket is what an operator holds)", key, err))
 	case err != nil:
 		return remote(err)
+	}
+	if size != a.Bytes {
+		_ = os.Remove(dest)
+		return userErr("run %s/%s recorded %s as %d bytes with the sha256 of a %d-byte object: the record's own size and hash disagree, so nothing is written", s.Slug(), s.RunID(), a.Name, a.Bytes, size)
 	}
 	fmt.Fprintf(out, "%s -> %s (%s, sha256 %s, %s recorded)\n", oneLine(a.Name), dest, byteSize(size), sum, oneLine(a.ContentType))
 	return nil

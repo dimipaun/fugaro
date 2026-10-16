@@ -791,29 +791,49 @@ func commonElems(a, b []string) []string {
 // symlink out of the root has a perfectly good name and must still not be
 // followed.
 func sanitiseName(name string) (string, error) {
-	if name == "" {
-		return "", errors.New("the name is empty")
-	}
-	if i, what := firstControl(name); i >= 0 {
-		return "", fmt.Errorf("the name %q holds %s at byte %d: a name is printed in the report and typed at a shell, and a control character is how a name reads as something other than what it is", name, what, i)
-	}
-	if len(name) > maxArtifactNameBytes {
-		return "", fmt.Errorf("the name is %d bytes, over the %d-byte cap", len(name), maxArtifactNameBytes)
-	}
-	if path.IsAbs(name) {
-		return "", fmt.Errorf("the name %q is absolute: an artifact's name is relative to the outputs root", name)
-	}
-	clean := path.Clean(name)
-	if clean == "." {
-		return "", fmt.Errorf("the name %q names no file", name)
-	}
-	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("the name %q escapes the outputs root", name)
-	}
-	if strings.HasPrefix(clean, ".") {
-		return "", fmt.Errorf("the name %q begins with a dot, which the retriever refuses: a file nobody can fetch back is not uploaded", clean)
+	clean, problem := ArtifactName(name)
+	if problem != "" {
+		return "", errors.New(problem)
 	}
 	return clean, nil
+}
+
+// ArtifactName is the rule above, exported because it is **one rule with two
+// callers**: sanitiseName is the uploader's, and `fugaro artifacts get`
+// (internal/cli) is the retriever's. It returns the name as an artifact's name
+// — path.Clean of it — and the reason it may not be one, or "" when it may.
+//
+// The two sides must not word the rule twice (design §9: the upload path
+// cannot produce what the retrieval path refuses). A retriever that refused
+// one character class more than this list — the zero-width characters and
+// bidi marks a terminal escapes rather than drops, say — would refuse an
+// artifact the run legitimately delivered, and, because `fugaro artifacts get
+// RUN` with no NAME refuses the whole set on one bad entry, would refuse every
+// artifact of that run. So the class is decided here, once, by firstControl's
+// table, and neither caller adds one.
+func ArtifactName(name string) (clean, problem string) {
+	if name == "" {
+		return "", "the name is empty"
+	}
+	if i, what := firstControl(name); i >= 0 {
+		return "", fmt.Sprintf("the name %q holds %s at byte %d: a name is printed in the report and typed at a shell, and a control character is how a name reads as something other than what it is", name, what, i)
+	}
+	if len(name) > maxArtifactNameBytes {
+		return "", fmt.Sprintf("the name is %d bytes, over the %d-byte cap", len(name), maxArtifactNameBytes)
+	}
+	if path.IsAbs(name) {
+		return "", fmt.Sprintf("the name %q is absolute: an artifact's name is relative to the outputs root", name)
+	}
+	clean = path.Clean(name)
+	switch {
+	case clean == ".":
+		return "", fmt.Sprintf("the name %q names no file", name)
+	case clean == ".." || strings.HasPrefix(clean, "../"):
+		return "", fmt.Sprintf("the name %q escapes the outputs root", name)
+	case strings.HasPrefix(clean, "."):
+		return "", fmt.Sprintf("the name %q begins with a dot, which the retriever refuses: a file nobody can fetch back is not uploaded", clean)
+	}
+	return clean, ""
 }
 
 // firstControl returns the byte offset of the first character in name that
@@ -826,6 +846,16 @@ func sanitiseName(name string) (string, error) {
 // a backtick is allowed here and escaped where it is rendered
 // (report.go's tableText and tableCode). NUL and the line breaks are the same
 // rule as the rest of this table rather than a case of their own.
+//
+// What is NOT in this table is as deliberate as what is. The zero-width
+// characters and bidi marks safetext's OneLine escapes (U+200B-U+200D,
+// U+2060, U+FEFF, the soft hyphen, the CGJ, the variation selectors, the tag
+// characters, LRM/RLM/ALM, U+2028/29) are a legal filename a render can
+// deliver — an emoji's variation selector is one — and ArtifactName is the
+// retriever's rule as well as the uploader's, so refusing them here would
+// refuse a name a run legitimately recorded. They are escaped where the name
+// is *printed* (internal/safetext), which is where reading one wrong matters;
+// a path component is not.
 func firstControl(name string) (int, string) {
 	for i, r := range name {
 		switch {

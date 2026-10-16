@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -603,6 +604,244 @@ func TestArtifactsGetRefusesARecordlessRun(t *testing.T) {
 	}
 	if _, _, err := execute(t, "artifacts", "ls", appSlug+"/"+id); err == nil {
 		t.Fatal("ls on a run with no result.json was accepted")
+	}
+}
+
+// TestArtifactNameIsTheUploadersRule: the name rule is ONE rule with two
+// callers — runner.ArtifactName, which the upload sanitiser records with and
+// which this command's artifactNameProblem calls — so the two lists cannot
+// drift (design §9: "the upload path cannot produce what the retrieval path
+// refuses").
+//
+// The class this pins is the one a copy got wrong: the zero-width characters,
+// bidi marks and variation selectors internal/safetext escapes are names the
+// uploader accepts (a variation selector in an emoji's filename is one), so a
+// retriever that refused them could never hand back an artifact a run
+// legitimately delivered. Mutation caught: an artifactNameProblem of its own
+// that compares against oneLine/cellOneLine, which refuses those.
+func TestArtifactNameIsTheUploadersRule(t *testing.T) {
+	// Names the uploader accepts, exactly as given: the retrieval rule must
+	// accept them too, because the record carries them unchanged.
+	accepted := []string{
+		"sizzle.mp4", "clips/a.png", "clips/.hidden.png", "clips/.hidden/a.png",
+		"a|b`c.png", "café.png",
+		"a​b.png",    // zero-width space
+		"a‍b.png",    // zero-width joiner
+		"smoke️.png", // variation selector, as an emoji filename carries
+		"a­b.png",    // soft hyphen
+		"a b.png",    // line separator
+		"a‎b.png",    // LRM
+		"a\xffb.png", // invalid UTF-8: a byte sequence the uploader does not refuse
+	}
+	for _, name := range accepted {
+		clean, problem := runner.ArtifactName(name)
+		if problem != "" || clean != name {
+			t.Errorf("runner.ArtifactName(%q) = %q, %q; want it accepted unchanged", name, clean, problem)
+			continue
+		}
+		if p := artifactNameProblem(name); p != "" {
+			t.Errorf("artifactNameProblem(%q) = %q, but the uploader records that name: an artifact a run delivered could never be fetched", name, p)
+		}
+	}
+	// Names the uploader refuses: the retriever refuses them too.
+	refused := []string{"", "../x.png", "/etc/passwd", "..", "a/..", ".git/hooks/pre-commit",
+		".envrc", "a\x00b.png", "a\tb.png", "a\nb.png", "a\x1b[31mb.png", "a‮b.png",
+		strings.Repeat("a", 201)}
+	for _, name := range refused {
+		if _, problem := runner.ArtifactName(name); problem == "" {
+			t.Errorf("runner.ArtifactName(%q) accepts a name, so this test's premise is wrong", name)
+			continue
+		}
+		if p := artifactNameProblem(name); p == "" {
+			t.Errorf("artifactNameProblem(%q) accepts a name the uploader refuses", name)
+		}
+	}
+	// The one deliberate difference, and the only one: a name the uploader
+	// CLEANS before recording (sanitiseName returns path.Clean) is a name the
+	// record cannot carry, so the retriever refuses it rather than reading a
+	// record no runner could have written. Nothing the uploader can record is
+	// in this list.
+	for _, name := range []string{"clips/./a.png", "a//b.png", "clips/../a.png"} {
+		if _, problem := runner.ArtifactName(name); problem != "" {
+			t.Errorf("runner.ArtifactName(%q) refuses a name it cleans, so this test's premise is wrong", name)
+			continue
+		}
+		if p := artifactNameProblem(name); p == "" {
+			t.Errorf("artifactNameProblem(%q) accepts an unclean name: the uploader records only the clean form", name)
+		}
+	}
+}
+
+// TestArtifactsGetFetchesTheNamesTheUploaderRecords is the same agreement, end
+// to end and over the wire: every one of those names is downloaded, bytes and
+// all, so a retriever that refused one of them fails here rather than in a
+// user's hands.
+func TestArtifactsGetFetchesTheNamesTheUploaderRecords(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	// Names a run can legitimately deliver and a first draft of this command
+	// refused: the spoofing class safetext escapes (an invalid UTF-8 byte is
+	// in the rule test above and not here, because the file:// driver the
+	// fixture uses does not round-trip such an object key — a limit of the
+	// test bucket, not of the rule).
+	names := []string{"a​b.png", "smoke️.png", "a­b.png", "café.png", "clips/.hidden.png"}
+	body := []byte("rendered")
+	files := make([]runstore.ArtifactFile, 0, len(names))
+	bodies := map[string][]byte{}
+	for i, name := range names {
+		// Each name's own bytes, so a mixed-up download is visible.
+		b := append([]byte{}, body...)
+		b = append(b, byte('0'+i))
+		files = append(files, runstore.ArtifactFile{Name: name, Bytes: int64(len(b)), SHA256: sha256Hex(b), ContentType: "image/png"})
+		bodies[name] = b
+	}
+	seedArtifactRun(t, f, id, files, bodies)
+
+	out, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+	if err != nil {
+		t.Fatalf("get of names the uploader records: %v (%s)", err, out)
+	}
+	for _, name := range names {
+		got, err := os.ReadFile(filepath.Join(dir, artifactRunDir(id), filepath.FromSlash(name)))
+		if err != nil {
+			t.Errorf("the artifact %q was not written: %v", name, err)
+			continue
+		}
+		if string(got) != string(bodies[name]) {
+			t.Errorf("the artifact %q = %q, want %q", name, got, bodies[name])
+		}
+	}
+}
+
+// TestArtifactsGetRefusesADirectoryThatLeavesTheRoot: a symlinked directory
+// planted under the destination root is the same escape as a name with a ".."
+// in it, and it is refused BEFORE anything is created: the guarantee is that
+// the command writes only under the fresh root it made, which has to hold for
+// the directories it creates on the way too. Mutation caught: the MkdirAll
+// before the check, which leaves the outside directory behind.
+func TestArtifactsGetRefusesADirectoryThatLeavesTheRoot(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "frames/sub/a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "image/png"},
+	}, map[string][]byte{"frames/sub/a.png": body})
+	root := filepath.Join(dir, artifactRunDir(id))
+	outside := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(outside)
+	if err != nil || !fi.IsDir() {
+		if err := os.Mkdir(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A directory the user (or an earlier run) left under the root: the name
+	// walks through it, and it points out of the root.
+	if err := os.Symlink(outside, filepath.Join(root, "frames")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = execute(t, "artifacts", "get", appSlug+"/"+id, "frames/sub/a.png")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("get through a symlinked directory = %v, want a user error", err)
+	}
+	if entries := dirEntries(t, outside); len(entries) != 0 {
+		t.Errorf("the refusal created %q outside the destination root", entries)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "sub")); err == nil {
+		t.Error("get created a directory outside the destination root")
+	}
+	// The direct check, since it is the one that has to run first: a parent
+	// that does not exist yet under a real root is inside it; the same path
+	// under a link is not.
+	if err := parentUnderRoot(root, filepath.Join(root, "new", "deep")); err != nil {
+		t.Errorf("parentUnderRoot on a missing directory under the root = %v, want it accepted", err)
+	}
+	if err := parentUnderRoot(root, filepath.Join(root, "frames", "sub")); err == nil {
+		t.Error("parentUnderRoot accepted a directory that resolves outside the root")
+	}
+	// And what it checks is the resolved path, not the text: the root itself
+	// reached through a link is the root's business, not the name's.
+	if err := underArtifactRoot(root, root); err != nil {
+		t.Errorf("underArtifactRoot(root, root) = %v, want it accepted", err)
+	}
+}
+
+// TestArtifactsResolvesRepoAndRunLikeRunsLs: --repo is what a bare run ID
+// needs (that is the only reason the flag exists), a RUN that already names a
+// repository has to agree with it, and a bare ID that is not one is refused
+// rather than turned into an object name.
+func TestArtifactsResolvesRepoAndRunLikeRunsLs(t *testing.T) {
+	f := newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	// A bare run ID with --repo: both subcommands.
+	if out, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", id); err != nil || !strings.Contains(out, "sizzle.mp4") {
+		t.Errorf("ls --repo acme/app %s = %v (%s)", id, err, out)
+	}
+	if _, _, err := execute(t, "artifacts", "get", "--repo", "acme/app", id, "sizzle.mp4"); err != nil {
+		t.Errorf("get --repo acme/app %s: %v", id, err)
+	}
+	// A RUN that carries a slug, with the matching --repo: the same run.
+	if _, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", appSlug+"/"+id); err != nil {
+		t.Errorf("ls --repo acme/app %s/%s: %v", appSlug, id, err)
+	}
+	// A RUN that carries a different repository than --repo names is refused,
+	// naming both: the slug is part of the object key, so a mismatch would
+	// read another repository's run.
+	other := mustSlug("gitlab", "acme/app")
+	_, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", other+"/"+id)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "acme-app") {
+		t.Errorf("ls of %s with --repo acme/app = %v, want a user error naming both repositories", other, err)
+	}
+	// A bare ID that is not a run ID never becomes part of an object name.
+	_, _, err = execute(t, "artifacts", "get", "--repo", "acme/app", "not-a-run-id")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run ID") {
+		t.Errorf("get of a malformed run ID = %v, want a user error", err)
+	}
+}
+
+// TestArtifactsGetRefusesARecordedSizeTheObjectDoesNotHave: the record's own
+// byte count is checked as well as used as the cap — an object smaller than
+// the record says, with the hash the record carries for those smaller bytes,
+// is a record whose two fields disagree with each other's premise, and it is
+// refused with the file removed again rather than written. Mutation caught:
+// passing the recorded size to blobx.GetFile as the cap only (an upper bound,
+// which a smaller object satisfies).
+func TestArtifactsGetRefusesARecordedSizeTheObjectDoesNotHave(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		// 100 bytes recorded, 5 in the bucket, and the hash of those 5: the
+		// hash matches and the size does not.
+		{Name: "sizzle.mp4", Bytes: 100, SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("get of a record whose size and hash disagree = %v, want a user error", err)
+	}
+	for _, want := range []string{"100", "5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %s", err, want)
+		}
+	}
+	if names := dirEntries(t, filepath.Join(dir, artifactRunDir(id))); len(names) != 0 {
+		t.Errorf("the refusal left %q behind, want nothing", names)
 	}
 }
 
