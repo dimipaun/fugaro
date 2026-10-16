@@ -24,7 +24,11 @@
 //     spawning anything: the recorder takes its spawner, its clock and its
 //     timers as arguments.
 
-import { describe, expect, it } from 'vitest'
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { CHILD_ENV_KEYS, SHUTDOWN_GRACE_MS } from '../../src/main/spawn'
 import type { ChildSpawner, ReadableLike, SpawnedChildLike, Timers } from '../../src/main/spawn'
@@ -45,6 +49,7 @@ import {
   recorderMeta,
   renderRecording,
   startRecording,
+  writeFixtureFile,
 } from '../../tools/record-fixture/index'
 import type { RecorderOptions } from '../../tools/record-fixture/index'
 
@@ -54,12 +59,12 @@ const OUT = `${FIXTURE_DIRECTORY}/normal.ndjson`
 /** opts parses one invocation against a fixed checkout, with nothing existing
  * yet -- the shape most of the checks below start from. */
 function opts(...argv: readonly string[]): RecorderOptions {
-  return parseRecorderArgs([...argv], CWD, { exists: () => false })
+  return parseRecorderArgs([...argv], CWD, { exists: () => false, consoleRoot: CWD })
 }
 
 /** full is an invocation that passes every check. */
 function full(...extra: readonly string[]): RecorderOptions {
-  return opts('--out', OUT, '--project', 'sandbox', ...extra)
+  return opts('--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1', ...extra)
 }
 
 /** refusal runs `run` and returns the sentence it refused with. */
@@ -259,18 +264,29 @@ describe("the recorder's arguments", () => {
   it('never overwrites a fixture without --force', () => {
     const existing = (path: string): boolean => path === `${CWD}/${OUT}`
     expect(
-      refusal(() => parseRecorderArgs(['--out', OUT, '--project', 'sandbox'], CWD, { exists: existing })),
+      refusal(() =>
+        parseRecorderArgs(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1'], CWD, {
+          exists: existing,
+          consoleRoot: CWD,
+        }),
+      ),
     ).toMatch(/exists; pass --force/)
-    const forced = parseRecorderArgs(['--out', OUT, '--project', 'sandbox', '--force'], CWD, { exists: existing })
+    const forced = parseRecorderArgs(
+      ['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1', '--force'],
+      CWD,
+      { exists: existing, consoleRoot: CWD },
+    )
     expect(forced.force).toBe(true)
-    expect(opts('--out', OUT, '--project', 'sandbox').force).toBe(false)
+    expect(full().force).toBe(false)
     // The check is on the resolved path rather than the spelling: `--out` given
     // from another directory still cannot land on a fixture that is there.
     expect(
       refusal(() =>
-        parseRecorderArgs(['--out', './test/fixtures/x.ndjson', '--project', 'sandbox'], '/a/b/console', {
-          exists: () => true,
-        }),
+        parseRecorderArgs(
+          ['--out', './test/fixtures/x.ndjson', '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1'],
+          '/a/b/console',
+          { exists: () => true, consoleRoot: '/a/b/console' },
+        ),
       ),
     ).toMatch(/\/a\/b\/console\/test\/fixtures\/x\.ndjson exists/)
   })
@@ -298,15 +314,18 @@ describe("the recorder's arguments", () => {
       durationSeconds: 45,
       repo: 'fixture-owner/fixture-repo',
       force: false,
+      gcpProject: 'fixture-gcp-1',
+      projectNumber: undefined,
+      literals: [],
     })
     // `--dir` is resolved against the current directory too, so a relative
     // checkout is a plan the spawner can use.
     expect(full('--dir', '../sandbox').directory).toBe('/home/operator/src/fugaro/sandbox')
     // `--name=value` is the same flag, and the defaults are the documented ones.
-    const inline = opts(`--out=${OUT}`, '--project=sandbox', '--duration=30')
+    const inline = opts(`--out=${OUT}`, '--project=sandbox', '--gcp-project=fixture-gcp-1', '--duration=30')
     expect(inline.project).toBe('sandbox')
     expect(inline.durationSeconds).toBe(30)
-    expect(opts('--out', OUT, '--project', 'sandbox')).toMatchObject({
+    expect(full()).toMatchObject({
       caseName: 'normal',
       durationSeconds: DEFAULT_DURATION_SECONDS,
       binaryPath: 'fugaro',
@@ -604,6 +623,7 @@ describe('the whole tool', () => {
       run: (argv) =>
         main(argv, {
           cwd: CWD,
+          consoleRoot: CWD,
           exists: () => false,
           appEnv: {},
           log: (line) => lines.push(line),
@@ -628,7 +648,7 @@ describe('the whole tool', () => {
       stub.write('{"project":"fixture-sandbox","day":"2026-10-15"}\n')
       stub.exit(0)
     })
-    const code = await run(['--out', OUT, '--project', 'sandbox', '--duration', '30'])
+    const code = await run(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1', '--duration', '30'])
     expect(code).toBe(0)
     expect(lines.join('\n')).toContain('watch --json --project sandbox')
     expect(lines.join('\n')).toContain(`wrote ${CWD}/${OUT}: 1 records`)
@@ -652,7 +672,7 @@ describe('the whole tool', () => {
     const { run, written } = tool((stub) => {
       stub.exit(2)
     })
-    await expect(run(['--out', OUT, '--project', 'sandbox', '--duration', '30'])).rejects.toThrow(
+    await expect(run(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1', '--duration', '30'])).rejects.toThrow(
       /the CLI exited with code 2 and wrote no document; nothing written/,
     )
     expect(written).toEqual([])
@@ -667,7 +687,7 @@ describe('the whole tool', () => {
     // The spawn fault ends the recording before its duration is up. The records
     // it read are not the point: a recording that ended in a failure is not a
     // recording, and the file is not written.
-    await expect(run(['--out', OUT, '--project', 'sandbox', '--duration', '30'])).rejects.toThrow(
+    await expect(run(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1', '--duration', '30'])).rejects.toThrow(
       /nothing written/,
     )
     expect(written).toEqual([])
@@ -679,5 +699,143 @@ describe('the whole tool', () => {
     // A refusal that happens before anything is spawned: the message is the one
     // the owner reads, and no child is reached.
     await expect(main(['--out', OUT])).rejects.toThrow(/--project is required/)
+  })
+})
+
+describe("the recorder's hardening (security review of b65fff5)", () => {
+  it('requires the GCP project, and tells the redactor its ID, bucket and number', () => {
+    expect(refusal(() => opts('--out', OUT, '--project', 'sandbox'))).toMatch(/--gcp-project is required/)
+    expect(refusal(() => full('--gcp-project', 'Not A Project'))).toMatch(/--gcp-project must be a GCP project ID/)
+    const options = full('--project-number', '123456789012', '--literal', 'acme-codename', '--literal', 'second-one')
+    const literals = recorderLiterals(options, {})
+    expect(literals).toContain('fixture-gcp-1')
+    expect(literals).toContain('fugaro-runs-fixture-gcp-1')
+    expect(literals).toContain('123456789012')
+    expect(literals).toContain('acme-codename')
+    expect(literals).toContain('second-one')
+    expect(refusal(() => full('--project-number', '12ab'))).toMatch(/--project-number must be/)
+  })
+
+  it('normalises a value before the out-of-bounds check', () => {
+    for (const project of [' belong', 'belong ', '\tbelong', 'ｂｅｌｏｎｇ', 'BELONG\n']) {
+      expect(refusal(() => opts('--out', OUT, '--project', project)), JSON.stringify(project)).toMatch(/belong/)
+    }
+    expect(refusal(() => full('--gcp-project', 'belong-gcp-1'))).toMatch(/--gcp-project names belong/)
+  })
+
+  it("refuses an --out outside this repository's console/test/fixtures", () => {
+    for (const out of ['/etc/fixtures/x.ndjson', '/home/operator/.ssh/fixtures/x.ndjson', '../other/test/fixtures/x.ndjson']) {
+      expect(refusal(() => opts('--out', out, '--project', 'sandbox')), out).toMatch(/must be written under test\/fixtures\//)
+    }
+  })
+
+  it('refuses a line longer than a feed line can be, before it reaches the redactor', async () => {
+    const options = full('--duration', '30')
+    const stub = new StubChild()
+    const timers = new FakeTimers()
+    const recording = startRecording({
+      options,
+      plan: planForRecording(options, {}),
+      redactor: redactor(),
+      spawner: (() => stub) as ChildSpawner,
+      timers,
+      clock: () => new Date('2026-10-15T12:00:00Z'),
+      maxLineLength: 64,
+    })
+    stub.write('{"day":"2026-10-15"}\n')
+    stub.write('x'.repeat(65))
+    expect(stub.signals).toEqual(['SIGTERM'])
+    timers.advanceTo(SHUTDOWN_GRACE_MS)
+    const result = await recording.finished
+    expect(result.refusal?.message).toMatch(/longer than a feed line/)
+    // A complete line over the bound is refused too, not only a partial one.
+    const second = new StubChild()
+    const again = startRecording({
+      options,
+      plan: planForRecording(options, {}),
+      redactor: redactor(),
+      spawner: (() => second) as ChildSpawner,
+      timers: new FakeTimers(),
+      clock: () => new Date('2026-10-15T12:00:00Z'),
+      maxLineLength: 64,
+    })
+    second.write(`"${'y'.repeat(70)}"\n`)
+    second.exit(0)
+    expect((await again.finished).refusal?.message).toMatch(/longer than a feed line/)
+  })
+})
+
+describe('the write', () => {
+  const made: string[] = []
+  afterEach(() => {
+    for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** consoleRoot is a fresh directory with test/fixtures/ in it. */
+  function consoleRoot(): { root: string; fixtures: string; outside: string } {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'record-fixture-')))
+    made.push(base)
+    const root = join(base, 'console')
+    const fixtures = join(root, 'test', 'fixtures')
+    mkdirSync(fixtures, { recursive: true })
+    const outside = join(base, 'outside')
+    mkdirSync(outside)
+    return { root, fixtures, outside }
+  }
+
+  it('creates a new fixture, and refuses to overwrite one without --force', () => {
+    const { root, fixtures } = consoleRoot()
+    const target = join(fixtures, 'normal.ndjson')
+    writeFixtureFile(target, 'one\n', { force: false, consoleRoot: root })
+    expect(readFileSync(target, 'utf8')).toBe('one\n')
+    expect(refusal(() => { writeFixtureFile(target, 'two\n', { force: false, consoleRoot: root }) })).toMatch(/exists/)
+    writeFixtureFile(target, 'two\n', { force: true, consoleRoot: root })
+    expect(readFileSync(target, 'utf8')).toBe('two\n')
+  })
+
+  it('refuses a symbolic link at the target, dangling or not, even with --force', () => {
+    const { root, fixtures, outside } = consoleRoot()
+    const target = join(fixtures, 'normal.ndjson')
+    const victim = join(outside, 'victim')
+    symlinkSync(victim, target)
+    for (const force of [false, true]) {
+      expect(refusal(() => { writeFixtureFile(target, 'x', { force, consoleRoot: root }) })).toMatch(/symbolic link/)
+    }
+    expect(() => lstatSync(victim)).toThrow()
+    writeFileSync(victim, 'keep')
+    expect(refusal(() => { writeFixtureFile(target, 'x', { force: true, consoleRoot: root }) })).toMatch(/symbolic link/)
+    expect(readFileSync(victim, 'utf8')).toBe('keep')
+    // The default existence check is lstat, so the parser sees the dangling
+    // link too, and does not call the slot free.
+    rmSync(victim)
+    expect(
+      refusal(() =>
+        parseRecorderArgs(['--out', target, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1'], root, {
+          consoleRoot: root,
+        }),
+      ),
+    ).toMatch(/exists/)
+  })
+
+  it('refuses a target that is not a regular file, even with --force', () => {
+    const { root, fixtures } = consoleRoot()
+    mkdirSync(join(fixtures, 'normal.ndjson'))
+    expect(
+      refusal(() => { writeFixtureFile(join(fixtures, 'normal.ndjson'), 'x', { force: true, consoleRoot: root }) }),
+    ).toMatch(/not a regular file/)
+  })
+
+  it('refuses a fixtures directory that is a symbolic link, or a target outside it', () => {
+    const { root, fixtures, outside } = consoleRoot()
+    rmSync(fixtures, { recursive: true })
+    symlinkSync(outside, fixtures)
+    expect(
+      refusal(() => { writeFixtureFile(join(fixtures, 'normal.ndjson'), 'x', { force: false, consoleRoot: root }) }),
+    ).toMatch(/symbolic link/)
+    expect(() => lstatSync(join(outside, 'normal.ndjson'))).toThrow()
+    const other = consoleRoot()
+    expect(
+      refusal(() => { writeFixtureFile(join(other.outside, 'normal.ndjson'), 'x', { force: false, consoleRoot: other.root }) }),
+    ).toMatch(/test\/fixtures/)
   })
 })
