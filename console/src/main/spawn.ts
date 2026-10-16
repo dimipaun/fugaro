@@ -886,7 +886,18 @@ export function cliSentence(stderr: string): string | null {
  */
 export function runToCompletion(
   plan: SpawnPlan,
-  deps: { readonly spawner?: ChildSpawner; readonly log?: SpawnLogWriter; readonly maxStderrBytes?: number },
+  deps: {
+    readonly spawner?: ChildSpawner
+    readonly log?: SpawnLogWriter
+    readonly maxStderrBytes?: number
+    /** `onChild` is how a caller that races this promise -- `probeVersion` and
+     * its timeout -- keeps the one handle it needs to stop the child. Without
+     * it, abandoning the race abandons the *process*: a child reparented to
+     * init when the app quits, with its stdout still draining into a buffer
+     * nothing will read. It is a callback rather than a returned handle so that
+     * every existing caller keeps a promise and nothing else. */
+    readonly onChild?: (child: SpawnedChildLike) => void
+  },
 ): Promise<RunResult> {
   const spawner = deps.spawner ?? nodeSpawner
   const limit = deps.maxStderrBytes ?? MAX_STDERR_BYTES
@@ -907,6 +918,7 @@ export function runToCompletion(
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
+    deps.onChild?.(child)
     let stdout = ''
     let stderr = ''
     child.stdout?.on('data', (chunk) => {
@@ -1000,10 +1012,44 @@ function configuredSource(configuredPath: string | undefined, candidate: string)
  * depends on. */
 export async function probeVersion(
   plan: SpawnPlan,
-  deps: { readonly spawner?: ChildSpawner; readonly log?: SpawnLogWriter; readonly timeoutMs?: number },
+  deps: {
+    readonly spawner?: ChildSpawner
+    readonly log?: SpawnLogWriter
+    readonly timeoutMs?: number
+    readonly timers?: Timers
+    readonly shutdownGraceMs?: number
+  },
 ): Promise<{ readonly ok: true; readonly version: string } | { readonly ok: false; readonly reason: string }> {
   const timeoutMs = deps.timeoutMs ?? 5000
-  const result = await withTimeout(runToCompletion(plan, deps), timeoutMs)
+  const timers = deps.timers ?? NODE_TIMERS
+  const grace = deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS
+  // A probe that times out must stop its child, exactly as every other stop path
+  // in this module does: `SIGTERM`, then `SIGKILL` for the child that ignores it
+  // (section 10.12). Racing the run and walking away would leave a hung binary
+  // running -- reparented to init when the app quits -- with its stdout still
+  // draining into a promise nobody awaits. The reason a caller sees is unchanged:
+  // the binary did not answer in time, whatever stopping it then took.
+  let child: SpawnedChildLike | null = null
+  const result = await withTimeout(
+    runToCompletion(plan, {
+      ...deps,
+      onChild: (started) => {
+        child = started
+        started.on('exit', () => {
+          child = null
+        })
+      },
+    }),
+    timeoutMs,
+    () => {
+      const running = child
+      if (running === null) return
+      running.kill('SIGTERM')
+      timers.setTimeout(() => {
+        if (child !== null) child.kill('SIGKILL')
+      }, grace)
+    },
+  )
   if (result === null) return { ok: false, reason: 'the binary did not answer `version` in time' }
   if (result.signal !== null) {
     return { ok: false, reason: `the binary was killed by ${result.signal} while reporting its version` }
@@ -1017,10 +1063,13 @@ export async function probeVersion(
   return parseVersionLine(result.stdout)
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+async function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout?: () => void): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | null = null
   const timeout = new Promise<null>((resolve) => {
     timer = setTimeout(() => {
+      // Stopping first, resolving second: the caller's `null` must mean "the
+      // child has been told to go", not "the child is still out there".
+      onTimeout?.()
       resolve(null)
     }, ms)
   })
@@ -1314,8 +1363,17 @@ export function startSidecar(
     })
   }
 
-  const stop = (): Promise<SidecarEnd> =>
-    new Promise<SidecarEnd>((resolve) => {
+  // `stop()` is idempotent, and *the promise is what is cached*, not just the
+  // effect: `LiveFeed.stop()` and `CliSource.close()` both reach it, and a
+  // caller that stops a feed and then closes the source without awaiting the
+  // first call must not be left with a promise nothing will ever settle.
+  // Caching the promise also means the second call does not send a second
+  // `SIGTERM` or arm a second `SIGKILL` for a child already on its way out.
+  let stopping: Promise<SidecarEnd> | null = null
+
+  const stop = (): Promise<SidecarEnd> => {
+    if (stopping !== null) return stopping
+    stopping = new Promise<SidecarEnd>((resolve) => {
       if (ended) {
         resolve({ reason: 'stopped', code: null, signal: null, sentence: null, spawns })
         return
@@ -1336,6 +1394,8 @@ export function startSidecar(
         if (child !== null) child.kill('SIGKILL')
       }, grace)
     })
+    return stopping
+  }
 
   spawnOnce()
   return {

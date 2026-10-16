@@ -806,6 +806,29 @@ const SECRET_SCOPES: readonly string[] = Object.freeze(['project-wide', 'repo'])
 const PROTOTYPE_KEYS: readonly string[] = Object.freeze(['__proto__', 'constructor', 'prototype'])
 
 /**
+ * REFUSED_PAIRS is every pair of arguments the CLI refuses *whatever else is
+ * set*, keyed by operation, with the CLI's own sentence. Each pair is a
+ * condition the CLI evaluates before it reads anything from an operator's
+ * config -- `o.repo != "" && o.all` (`internal/cli/budget.go:387`,
+ * `internal/cli/runs.go:118`) and `prSet && o.all` (`internal/cli/runs.go:121`)
+ * -- which is what makes it decidable here. The surface must not be able to
+ * express an argv that can only fail after a child has been spawned: the same
+ * principle the `logs` `--json`/`--url` split states, and the reason
+ * `secrets.inventory`'s scope pairing below is checked at all.
+ *
+ * `runs ls --pr` *without* `--repo` is deliberately not here: whether that is
+ * refused depends on how many repositories the local config lists, and the
+ * console does not read the operator's config (rule 7).
+ */
+const REFUSED_PAIRS: Readonly<Record<string, readonly (readonly [string, string, string])[]>> = Object.freeze({
+  'budget.show': [['repo', 'all', "--repo and --all don't go together"]],
+  'runs.list': [
+    ['repo', 'all', "--repo and --all don't go together"],
+    ['pr', 'all', 'runs ls --pr needs --repo: a pull request number means something only in one repository'],
+  ],
+})
+
+/**
  * hiddenCharacterReason refuses the strings that look like one thing and are
  * another: a bidi override that reorders what a path or a host looks like, a
  * zero-width space that makes two different strings render identically, a BOM,
@@ -1068,6 +1091,17 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
     const decision = validateValue(operation.name, spec, supplied[spec.key])
     if (!decision.ok) return decision
     args[spec.key] = decision.value
+  }
+
+  // The pairs the CLI refuses whatever else is set: an argv that can only fail
+  // is one the surface must not be able to build, because the failure arrives
+  // after a child process has already been spawned. `reachesArgv` and not mere
+  // presence, because `all: false` is a flag the payload did not set -- the
+  // reading `argvFor` gives a boolean (spawn.ts) -- and refusing that would
+  // refuse a payload whose argv has no `--all` in it at all.
+  const reachesArgv = (key: string): boolean => args[key] !== undefined && args[key] !== false
+  for (const [first, second, sentence] of REFUSED_PAIRS[operation.name] ?? []) {
+    if (reachesArgv(first) && reachesArgv(second)) return refuse(sentence)
   }
 
   // The pairing the design states for the secret inventory: the command resolves

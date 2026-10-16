@@ -1235,6 +1235,36 @@ describe('the closed sets', () => {
     ).toBe(false)
     expect(validateArguments('secrets.inventory', { scope: 'global' }).ok).toBe(false)
   })
+
+  it('refuses the pairs the CLI refuses whatever else is set', () => {
+    // `budget show --repo R --all` fails in the CLI (`internal/cli/budget.go:387`)
+    // and `runs ls` refuses both `--repo`/`--all` and `--pr`/`--all`
+    // (`internal/cli/runs.go:118,121`) before it reads anything else, so the
+    // surface must not be able to build those argvs at all: a refusal that
+    // arrives after a child has been spawned is the one outcome the schema
+    // exists to prevent.
+    expect(validateArguments('budget.show', { repo: 'acme/app', all: true })).toEqual({
+      ok: false,
+      reason: "--repo and --all don't go together",
+    })
+    expect(validateArguments('runs.list', { repo: 'acme/app', all: true })).toEqual({
+      ok: false,
+      reason: "--repo and --all don't go together",
+    })
+    expect(validateArguments('runs.list', { pr: 42, all: true })).toEqual({
+      ok: false,
+      reason: 'runs ls --pr needs --repo: a pull request number means something only in one repository',
+    })
+    // The other side of the boundary: either half alone is an argv the CLI
+    // accepts, and so is a flag the payload set to `false` -- that is a flag the
+    // argv does not carry (`argvFor` emits a boolean only when it is true).
+    expect(validateArguments('budget.show', { repo: 'acme/app' }).ok).toBe(true)
+    expect(validateArguments('budget.show', { all: true }).ok).toBe(true)
+    expect(validateArguments('runs.list', { repo: 'acme/app' }).ok).toBe(true)
+    expect(validateArguments('runs.list', { pr: 42 }).ok).toBe(true)
+    expect(validateArguments('runs.list', { repo: 'acme/app', all: false }).ok).toBe(true)
+    expect(validateArguments('runs.list', { pr: 42, all: false }).ok).toBe(true)
+  })
 })
 
 describe('the one URL-shaped argument', () => {

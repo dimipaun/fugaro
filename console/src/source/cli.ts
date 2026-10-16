@@ -355,8 +355,16 @@ class LiveStream implements LiveFeed {
   readonly #change = new Set<(snapshot: Snapshot) => void>()
   readonly #noticeListeners = new Set<(notice: Notice) => void>()
   readonly #endedListeners = new Set<(end: FeedEnd) => void>()
-  #firstFrame: { readonly resolve: (snapshot: Snapshot) => void; readonly reject: (error: Error) => void } | null =
-    null
+  /** #waiting is *every* `current()` call that is waiting for a first frame,
+   * not one slot. `handlersFor`'s `live.watch` calls `current()` on every
+   * invocation and a screen reaches that once per poll, so two polls can
+   * overlap; a single slot would silently replace the first waiter, whose own
+   * budget timer would then reject it -- 'no document arrived within Ns' -- on a
+   * feed that is delivering documents the whole time. */
+  readonly #waiting = new Set<{
+    readonly resolve: (snapshot: Snapshot) => void
+    readonly reject: (error: Error) => void
+  }>()
 
   constructor(plan: SpawnPlan, deps: LiveStreamDeps) {
     this.#budget = deps.firstFrameBudgetMs ?? FIRST_FRAME_BUDGET_MS
@@ -374,9 +382,11 @@ class LiveStream implements LiveFeed {
         this.#notices = []
         this.#latest = snapshot
         for (const listener of [...this.#change]) listener(snapshot)
-        const waiting = this.#firstFrame
-        this.#firstFrame = null
-        waiting?.resolve(snapshot)
+        // Every waiter gets this frame: they all asked the same question of the
+        // same feed, so they all get the same answer.
+        const waiting = [...this.#waiting]
+        this.#waiting.clear()
+        for (const waiter of waiting) waiter.resolve(snapshot)
       },
       onNotice: (notice) => {
         this.#notices = [...this.#notices, notice]
@@ -390,10 +400,10 @@ class LiveStream implements LiveFeed {
           snapshots: this.#snapshots,
         }
         this.#ended = finished
-        const waiting = this.#firstFrame
-        this.#firstFrame = null
-        if (waiting !== null) {
-          waiting.reject(refusalFrom('watch', end.sentence ?? 'the live feed ended before its first document'))
+        const waiting = [...this.#waiting]
+        this.#waiting.clear()
+        for (const waiter of waiting) {
+          waiter.reject(refusalFrom('watch', end.sentence ?? 'the live feed ended before its first document'))
         }
         for (const listener of [...this.#endedListeners]) listener(finished)
       },
@@ -434,7 +444,9 @@ class LiveStream implements LiveFeed {
    * one, and otherwise as soon as the first arrives. A feed that ends first, or
    * that says nothing within the budget, is a refusal rather than a promise that
    * never settles: a screen waiting forever is the one outcome nothing on screen
-   * can describe. */
+   * can describe. Overlapping calls are all answered by the same frame, and each
+   * one's own budget timer is cleared by whichever answer it gets, so a call
+   * that is answered late is not also refused by its own timer. */
   current(): Promise<Snapshot> {
     if (this.#latest !== null) return Promise.resolve(this.#latest)
     if (this.#ended !== null) {
@@ -443,20 +455,22 @@ class LiveStream implements LiveFeed {
       )
     }
     return new Promise<Snapshot>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#firstFrame = null
-        reject(refusalFrom('watch', `no document arrived within ${Math.round(this.#budget / 1000)}s`))
-      }, this.#budget)
-      this.#firstFrame = {
-        resolve: (snapshot) => {
-          clearTimeout(timer)
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const waiter = {
+        resolve: (snapshot: Snapshot) => {
+          if (timer !== null) clearTimeout(timer)
           resolve(snapshot)
         },
-        reject: (error) => {
-          clearTimeout(timer)
+        reject: (error: Error) => {
+          if (timer !== null) clearTimeout(timer)
           reject(error)
         },
       }
+      timer = setTimeout(() => {
+        this.#waiting.delete(waiter)
+        reject(refusalFrom('watch', `no document arrived within ${Math.round(this.#budget / 1000)}s`))
+      }, this.#budget)
+      this.#waiting.add(waiter)
     })
   }
 

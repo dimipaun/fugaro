@@ -64,6 +64,7 @@ import {
   parseVersionLine,
   planFor,
   privateWorkingDirectory,
+  probeVersion,
   resolveBinary,
   restartDecision,
   spawnCommandFor,
@@ -1013,6 +1014,50 @@ describe('the supervisor', () => {
     })
   })
 
+  it('answers a second stop with the same promise, and settles both', async () => {
+    // `LiveFeed.stop()` and `CliSource.close()` both reach this, and a caller
+    // that stops a feed and then closes the source without awaiting the first
+    // call must not be left holding a promise nothing will ever settle. The
+    // child is still alive when the second call arrives -- the *pending* case,
+    // which is the one a cached resolver loses.
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const sidecar = startSidecar(
+      plan,
+      { onFrame: () => undefined, onNotice: () => undefined, onRestart: () => undefined, onEnded: () => undefined },
+      { spawner: () => child, timers },
+    )
+
+    const first = sidecar.stop()
+    const second = sidecar.stop()
+    expect(second).toBe(first)
+    // One SIGTERM and one grace timer, not two: the second call joins the stop
+    // that is already happening rather than starting a second one.
+    expect(child.killed).toEqual(['SIGTERM'])
+    expect(timers.pending()).toBe(1)
+
+    child.exit(null, 'SIGTERM')
+    const end = await first
+    expect(end).toEqual({ reason: 'stopped', code: null, signal: 'SIGTERM', sentence: null, spawns: 1 })
+    await expect(second).resolves.toBe(end)
+  })
+
+  it('stops a binary that never answers `version` instead of abandoning it', async () => {
+    // The one stop path in this module that used to walk away: `withTimeout`
+    // resolved its race and left the child running, reparented to init when the
+    // app quits, with its stdout still draining into a promise nobody awaits.
+    const stub = installStub(freshDirectory(), { commands: { version: { hold: true } } })
+    // A directory that exists: `safeContext`'s default cwd is a checkout path
+    // that is only real on the machine the console ships to.
+    const plan = planFor('cli.version', {}, safeContext({ binaryPath: stub.binary, directory: freshDirectory() }))
+    const probe = await probeVersion(plan, { timeoutMs: 50, shutdownGraceMs: 50 })
+    expect(probe).toEqual({ ok: false, reason: 'the binary did not answer `version` in time' })
+    await waitFor(() => stub.kills().length === 1)
+    expect(stub.kills()[0]?.signal).toBe('SIGTERM')
+    expect(stub.kills()[0]?.argv).toContain('version')
+  })
+
   it('stops a long-lived child with SIGTERM and reports the stop', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
@@ -1138,6 +1183,28 @@ describe('the live subscription', () => {
     await source.close()
     await waitFor(() => stub.kills().length === 2)
     expect(stub.kills().map((kill) => kill.signal)).toEqual(['SIGTERM', 'SIGTERM'])
+  })
+
+  it('answers every overlapping current() with the same first frame', async () => {
+    // `handlersFor`'s `live.watch` calls `current()` on every invocation and a
+    // screen reaches that once per poll, so two polls can overlap. One waiter
+    // slot would drop the first call, whose own budget timer would then refuse
+    // it -- 'no document arrived within Ns' -- on a feed that is delivering
+    // documents the whole time, which is a refusal the operator sees on screen.
+    const stub = installStub(freshDirectory(), {
+      commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
+    })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+      firstFrameBudgetMs: 200,
+    })
+    const feed = source.subscribeLive({})
+    const [first, second] = await Promise.all([feed.current(), feed.current()])
+    expect(second).toEqual(first)
+    expect(first.day).toBe('2026-01-01')
+    await source.close()
   })
 
   it('drops a feed that ended, so the retry after a refusal starts a fresh child', async () => {
