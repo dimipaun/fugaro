@@ -381,7 +381,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 				"%s is named by routing.claude.models and does not resolve: no single provider entry claims it with allow_data_to written, and a call the switch names has no direct fall-back (D1b, design §6.2). config.CheckRouting refuses that switch at load; fix the list or the claim", p.model)})
 		case route == config.RouteDirect:
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
-			if why := claudeDirectRefusal(cfg.Agent, p, lc.Providers, repo, mode); why != "" {
+			if why := claudeDirectRefusal(cfg.Agent, p, claimed, lc.Providers, repo, mode); why != "" {
 				problems = append(problems, config.Problem{Path: p.path, Message: why})
 			}
 		default:
@@ -406,14 +406,20 @@ func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
 // the run cannot make the call as it stands — "" for every other state. It is
 // routingProblems' second rule; the doc comment above has the reading of "no
 // Anthropic key" it rests on.
-func claudeDirectRefusal(a config.Agent, p claudePin, claimed map[string]config.ModelProvider, repo, mode string) string {
+//
+// The two provider tables it asks are two different questions: routes is the
+// table the run will have, which is what "does this run need the key" is about
+// (config.AnthropicKeyNeeded, the rule providerProblems' own note asks), and
+// own is the operator's own table, which is what "does this project route
+// Claude through a provider" is about.
+func claudeDirectRefusal(a config.Agent, p claudePin, routes, own map[string]config.ModelProvider, repo, mode string) string {
 	if mode != policy.ModeEnforce {
 		// Without a gateway there is no routing at all: nothing is sent to a
 		// provider, and "write the switch" would be advice this run cannot take
 		// (the same reading providerProblems' key note gives that state).
 		return ""
 	}
-	if !config.AnthropicKeyNeeded(a, claimed, repo, mode) {
+	if !config.AnthropicKeyNeeded(a, routes, repo, mode) {
 		// The run does not need the key on this configuration (an oauth run
 		// brings its own token): nothing is missing.
 		return ""
@@ -421,7 +427,7 @@ func claudeDirectRefusal(a config.Agent, p claudePin, claimed map[string]config.
 	// Would the switch resolve this model if it named it? The one resolver
 	// answers it over the same routes, so this rule and the run's own
 	// resolution cannot disagree about whether a route is there.
-	if _, _, ok := config.RoutingClaudeFor(&config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{p.model}}, p.model, claimed); !ok {
+	if _, _, ok := config.RoutingClaudeFor(&config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{p.model}}, p.model, own); !ok {
 		return ""
 	}
 	return fmt.Sprintf("%s is pinned and goes direct, and this call needs the Anthropic API key (%s), while a route of this project claims the model and its allow_data_to is written: write `routing.claude: openrouter` in the project config — routing: {claude: {via: openrouter, models: [%s]}} — to send the call there instead (the switch is the operator's and never a repository's; D1a, D1b, design §6.2)", p.model, config.MissingAnthropicKey, p.model)
