@@ -695,6 +695,43 @@ func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishRefusesANegativeRulesMarker: the marker is an integer
+// that no deploy writes. requirePolicyRules branched on `gen < RulesVersion`,
+// so a hand-edited -1 was refused with rulesMarkerBelowText — the sentence for
+// an old deployment, which says this installation's rules predate the policy
+// nodes — while projectpolicy.Read reads the same node as the MarkerError it is
+// (a launcher's -1 would otherwise read as "no policy here", taking a published
+// policy out of every run's reach: the fail-open that check exists to close).
+// A refusal that disagrees with the reader about what the node is sends the
+// operator to redeploy rules that are not what is wrong (the review finding on
+// this change).
+func TestProjectPolicyPublishRefusesANegativeRulesMarker(t *testing.T) {
+	for _, gen := range []int{-1, -projectpolicy.RulesVersion, -1000} {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathRulesMarker(), gen)
+		_, _, err := execute(t, "project", "policy", "publish")
+		if err == nil {
+			t.Fatalf("marker %d: a publish under a hand-edited marker was allowed", gen)
+		}
+		// The refusal's text is the MarkerError's own, through userErr — which
+		// renders the error it is given and so drops the chain errors.As would
+		// walk: the node's name and the value it holds are what the test can
+		// read here.
+		want := (&projectpolicy.MarkerError{Value: strconv.Itoa(gen)}).Error()
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("marker %d: err = %v, want the MarkerError projectpolicy.Read refuses this node as (%q)", gen, err, want)
+		}
+		// Not the old-deployment sentence: nothing here compared the rules
+		// document, and a hand edit is not a generation a deploy left behind.
+		if strings.Contains(err.Error(), "below the generation") || strings.Contains(err.Error(), "older than the marker") {
+			t.Errorf("marker %d: the refusal for a hand-edited marker reuses the old-deployment sentences: %v", gen, err)
+		}
+		if f.db.Value(projectpolicy.PathShared()) != nil {
+			t.Error("a node was written anyway")
+		}
+	}
+}
+
 // TestProjectPolicyPublishRefusesAnEmptyBudgetMode: an unset key falls back to
 // the job environment's value at run time, but a published budget block with
 // no mode would take the mode from a deploy, which nobody reading the policy
