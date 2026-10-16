@@ -27,10 +27,12 @@ var allowedTypes = map[string]bool{
 	"google_cloud_scheduler_job":                     true,
 	// The Batch backend's own root (design compute-backend §8.1 task 6) is a
 	// root of its own, applied by its own stage behind --provision-batch and
-	// its own typed confirmation: these two types are the NAT and its router,
-	// and they are listed here because every module the tree embeds has to be
-	// decided on. The installation root does not include that module, so no
-	// plan this one confirmation covers can carry them.
+	// its own typed confirmation: these three types are the NAT, its router
+	// and the deny-all ingress rule on the run-class accounts, and they are
+	// listed here because every module the tree embeds has to be decided on.
+	// The installation root does not include that module, so no plan this one
+	// confirmation covers can carry them.
+	"google_compute_firewall":                 true,
 	"google_compute_router":                   true,
 	"google_compute_router_nat":               true,
 	"google_firebase_database_instance":       true,
