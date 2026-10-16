@@ -149,10 +149,11 @@ func policyReadErr(err error) error {
 		// removed with `fugaro project policy publish --delete` before this
 		// release publishes again (never a re-run of init, which writes no
 		// policy node), an older binary wants upgrading — and
-		// cliSkewSentence is the one place that picks between the two
-		// sentences (run_allowlist.go, beside the launch gate's own refusal
-		// of the same error).
-		return userErr("%s", cliSkewSentence(ve))
+		// projectpolicy.SkewSentence is the one place that picks between the
+		// two sentences for this reader (the launch gate beside this file
+		// words the same error through it, ReaderCLI, and so does the
+		// runner's own refusal, ReaderRunner).
+		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
 	case errors.As(err, &me):
 		return userErr("%v", err)
 	case errors.Is(err, rtdb.ErrPermission):

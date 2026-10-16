@@ -1,6 +1,7 @@
 package projectpolicy
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -10,7 +11,8 @@ import (
 // differ in the remedy, so the constants must stay in step.
 func TestSkewMessagesShareTheSentence(t *testing.T) {
 	for name, msg := range map[string]string{
-		"RunnerSkew": RunnerSkew, "CLISkew": CLISkew, "CLISkewNewer": CLISkewNewer,
+		"RunnerSkew": RunnerSkew, "RunnerSkewNewer": RunnerSkewNewer,
+		"CLISkew": CLISkew, "CLISkewNewer": CLISkewNewer,
 	} {
 		if len(msg) <= len(Skew) || msg[:len(Skew)] != Skew {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
@@ -63,5 +65,88 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	// this binary may do to the node.
 	if strings.Contains(CLISkew, "--delete") {
 		t.Errorf("CLISkew = %q: the delete refuses a newer node too, so it is not a remedy for one", CLISkew)
+	}
+}
+
+// TestSkewSentencePicksByDirectionAndReader: SkewSentence is the one helper the
+// runner and both CLI callers word a VersionError through, and its whole job is
+// to pick the remedy that fits the state the reader is looking at. The runner
+// printed one sentence for both directions (the review finding on this change),
+// which told the operator of a node that was merely behind its image to refresh
+// the image — a move that changes nothing, since the node is the side that is
+// old. Four combinations, each pinned against the other three: an older node
+// asks for a policy published again from a release the reader understands
+// (never an upgrade), a newer node asks for the reader to be refreshed (never a
+// delete, which refuses a node written by a newer Fugaro and so is no remedy
+// for one), and the two readers must not borrow each other's remedy, since the
+// CLI is not the image and the image is not the CLI.
+func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
+	olderNode := &VersionError{Found: 0, Understood: Version}
+	newerNode := &VersionError{Found: Version + 1, Understood: Version}
+	for _, tc := range []struct {
+		name    string
+		ve      *VersionError
+		reader  Reader
+		want    []string
+		notWant []string
+	}{
+		{
+			// The node is behind this binary: nothing is upgraded, and the node
+			// is removed and published again.
+			name: "an older node, the CLI", ve: olderNode, reader: ReaderCLI,
+			want:    []string{"version 0", "version 1", "fugaro project policy publish --delete", "publish it again"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase", "runner image"},
+		},
+		{
+			// The same node read by an image: the remedy is the operator's and
+			// the run cannot carry it out.
+			name: "an older node, the runner", ve: olderNode, reader: ReaderRunner,
+			want:    []string{"version 0", "version 1", "fugaro project policy publish --delete", "publishes one this image understands", "cannot do either mid-run"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase", "refresh the runner image"},
+		},
+		{
+			// The node is ahead of this binary: the upgrade is missing here.
+			name: "a newer node, the CLI", ve: newerNode, reader: ReaderCLI,
+			want:    []string{"version 2", "version 1", "upgrade Fugaro"},
+			notWant: []string{"publish --delete", "init --firebase", "runner image"},
+		},
+		{
+			name: "a newer node, the runner", ve: newerNode, reader: ReaderRunner,
+			want:    []string{"version 2", "version 1", "refresh the runner image", "fugaro upgrade"},
+			notWant: []string{"publish --delete", "init --firebase", "upgrade Fugaro ("},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := SkewSentence(tc.ve, tc.reader)
+			for _, want := range tc.want {
+				if !strings.Contains(msg, want) {
+					t.Errorf("SkewSentence(%+v, %v) does not say %q: %s", tc.ve, tc.reader, want, msg)
+				}
+			}
+			for _, bad := range tc.notWant {
+				if strings.Contains(msg, bad) {
+					t.Errorf("SkewSentence(%+v, %v) says %q, which is another state's remedy: %s", tc.ve, tc.reader, bad, msg)
+				}
+			}
+			// The remedy alone is the sentence minus the shared prefix, so the
+			// gate that prints Skew itself (with the release the model ships
+			// in) splices in exactly what the whole sentence says.
+			skew := fmt.Sprintf(Skew, tc.ve.Found, tc.ve.Understood)
+			if got, want := SkewRemedy(tc.ve, tc.reader), strings.TrimPrefix(msg, skew+"; "); got != want {
+				t.Errorf("SkewRemedy(%+v, %v) = %q, want %q", tc.ve, tc.reader, got, want)
+			}
+		})
+	}
+
+	// And Error() stays the shared sentence with no remedy at all, which is
+	// what lets each reader add its own.
+	ve := &VersionError{Found: 7, Understood: Version}
+	if got, want := ve.Error(), fmt.Sprintf(Skew, 7, Version); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	for _, reader := range []Reader{ReaderCLI, ReaderRunner} {
+		if SkewRemedy(ve, reader) == ve.Error() {
+			t.Errorf("SkewRemedy(%+v, %v) is the bare sentence: the reader is given no remedy", ve, reader)
+		}
 	}
 }

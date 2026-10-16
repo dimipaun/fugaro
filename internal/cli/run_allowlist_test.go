@@ -260,12 +260,13 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 	}
 }
 
-// The two directions as the sentences themselves, at the layer both callers in
-// this package share (launch_budget.go's policyReadErr and run_allowlist.go's
-// policySkewRefusal word the same VersionError): each names its own remedy and
-// not the other's, and both quote the versions. This is what a change to
-// either constant has to keep true, and the reason the remedy lives in
-// internal/projectpolicy at all — one wording, two readers.
+// The two directions as the sentences themselves, at the layer all three
+// callers share (launch_budget.go's policyReadErr and run_allowlist.go's
+// policySkewRefusal here, internal/runner's unreadablePolicy there, all of
+// them projectpolicy.SkewSentence): each reader names its own remedy and not
+// the other's, and both quote the versions. This is what a change to either
+// constant has to keep true, and the reason the remedy lives in
+// internal/projectpolicy at all — one wording, one helper, three readers.
 func TestSkewSentencesSplitByDirection(t *testing.T) {
 	older := &projectpolicy.VersionError{Found: 0, Understood: projectpolicy.Version}
 	newer := &projectpolicy.VersionError{Found: projectpolicy.Version + 1, Understood: projectpolicy.Version}
@@ -287,15 +288,15 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := cliSkewSentence(tc.ve)
+			msg := projectpolicy.SkewSentence(tc.ve, projectpolicy.ReaderCLI)
 			for _, want := range tc.want {
 				if !strings.Contains(msg, want) {
-					t.Errorf("cliSkewSentence(%+v) does not say %q: %s", tc.ve, want, msg)
+					t.Errorf("SkewSentence(%+v, ReaderCLI) does not say %q: %s", tc.ve, want, msg)
 				}
 			}
 			for _, bad := range tc.notWant {
 				if strings.Contains(msg, bad) {
-					t.Errorf("cliSkewSentence(%+v) says %q, which is the other direction's remedy: %s", tc.ve, bad, msg)
+					t.Errorf("SkewSentence(%+v, ReaderCLI) says %q, which is the other direction's remedy: %s", tc.ve, bad, msg)
 				}
 			}
 		})
