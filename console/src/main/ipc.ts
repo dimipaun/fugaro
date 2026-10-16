@@ -91,7 +91,10 @@ export const IPC_CHANNEL_PREFIX = 'fugaro:console/'
 /** MAX_ARGUMENT_KEYS bounds how many keys a payload may even declare. */
 export const MAX_ARGUMENT_KEYS = 8
 
-/** MAX_REPOSITORY_LENGTH bounds an `owner/name` argument in bytes. */
+/** MAX_REPOSITORY_LENGTH bounds an `owner/name` argument in characters. It is
+ * checked before the grammar runs, so a hostile payload cannot make a regular
+ * expression work: every repository that matches the grammar is ASCII anyway,
+ * and the bound bites first. */
 export const MAX_REPOSITORY_LENGTH = 200
 
 /** MAX_RUN_ID_LENGTH bounds a run id argument. */
