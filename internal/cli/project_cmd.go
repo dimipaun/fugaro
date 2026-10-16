@@ -90,7 +90,9 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 		Long: "Build the project's policy from this machine's project config — the budget\n" +
 			"block, the providers (their secrets by NAME, never a value), the model_prices\n" +
 			"overrides and the allow-list — and write it to config/policy/shared with an\n" +
-			"ETag-guarded write, printing what changes first. From then on the node is the\n" +
+			"ETag-guarded write. The diff follows the write: it is printed once the node\n" +
+			"holds the policy, and a write that failed prints no diff — the node is as it\n" +
+			"was, and the command says so. From then on the node is the\n" +
 			"ceiling for every key it names, and a key it leaves out keeps the value the\n" +
 			"job's environment was deployed with.\n\n" +
 			"Publishing refuses without the rules marker (config/limits/policyRules): a\n" +
