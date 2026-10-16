@@ -1620,14 +1620,19 @@ func TestOverlappingGlobsSelectOneFileOnce(t *testing.T) {
 // object, no result.json, a killed container. The open is what refuses it, so
 // the run ends failed, with nothing in the bucket.
 //
-// The guard that fires here is the open (O_NOFOLLOW): the mutation that shows
-// it is a hang — drop the flag together with the bounded copy and this test
-// fails with "the run did not finish within 30s" instead of uploading. Drop
-// only the flag and the bounded copy's own n != want check still refuses it.
+// The guard that fires here is the Lstat PutFileFrom makes on the path it was
+// given: the swap is a moment old, and a staged file that is not a regular file
+// is refused with blobx.ErrChanged before anything is opened. Behind it are the
+// upload's own open (O_NOFOLLOW) and the copy bounded by the size of the file
+// that open returned, which are what hold if the swap lands after the Lstat
+// instead of before it. Behind both is the staged-hash comparison in
+// PutFileFrom: even bytes read cleanly are refused if they are not the ones
+// this run hashed.
 //
-// Mutation (open the staged file with os.Open and io.Copy it): this test times
-// out; mutation (drop the staged-hash comparison): the run succeeds and the
-// record attests to bytes that are not the render's.
+// Mutation (drop the Lstat together with the open's flags and the bound): the
+// run reads /dev/zero until the container is killed — the red run ends
+// `signal: killed` with no result.json; mutation (drop only the staged-hash
+// comparison): the record attests to bytes the render never wrote.
 func TestAStagedFileSwappedForADeviceIsRefusedBeforeTheUpload(t *testing.T) {
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
@@ -1751,11 +1756,15 @@ func TestAMatchThatGrowsBetweenTheCheckAndTheCopyIsRefused(t *testing.T) {
 // this call wrote is deleted before the error is returned, and the failure is
 // in name order, so the first file is the one that has to go.
 //
-// The unreadable second file is a FIFO, which is also the other hazard: opened
-// without O_NONBLOCK, an upload of it never returns.
+// The unreadable second file is a FIFO, which is also the other hazard: it is
+// the staged file that is not a regular file, and an upload that opens such a
+// path without O_NONBLOCK never returns. PutFileFrom's Lstat refuses it here;
+// the upload's own open is what would answer if the swap landed after that.
 //
 // Mutation (drop the cleanup): the bucket holds a.png and this test fails;
-// mutation (open the staged file with os.Open): the test times out on b.png.
+// mutation (drop the Lstat and the open's O_NONBLOCK together): the upload of
+// b.png blocks on the open and the test fails on runWithin's deadline instead
+// of hanging the package.
 func TestAnUploadThatFailsPartwayLeavesNothingInTheBucket(t *testing.T) {
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
@@ -1852,17 +1861,18 @@ func TestARefusedSetLeavesTheStagingDirectoryEmpty(t *testing.T) {
 // TestASetThatFailsWhileItIsCopiedLeavesNoStagingDirectory: a copy that fails
 // partway must not leave the half-staged set behind — the next step of this
 // run, or a later one reusing the state, would find files that no record
-// describes. The match is swapped for a device between the check and the copy,
-// so the first (and only) copy fails.
+// describes. Two matches, and the second is swapped for a device between the
+// check and the copy: a.png has been copied and hashed by the time b.png is
+// refused, so it is a.png that the removal has to take back.
 //
-// Mutation (return without removing the staging directory): the directory
-// holds a partial set and this test fails on the listing.
+// Mutation (return without emptying the staging directory): a.png is still
+// there and this test fails on the listing.
 func TestASetThatFailsWhileItIsCopiedLeavesNoStagingDirectory(t *testing.T) {
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
-		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+		renderWrites(outFile{name: "a.png", body: "one"}, outFile{name: "b.png", body: "two"}))
 	runner.SetArtifactCheckedSeam(t, func() {
-		p := filepath.Join(h.deps.WorkDir, "out", "sizzle.png")
+		p := filepath.Join(h.deps.WorkDir, "out", "b.png")
 		if err := os.Remove(p); err != nil {
 			t.Error(err)
 			return
@@ -1959,12 +1969,18 @@ func TestASymlinkToADirectoryIsSkippedNotFatal(t *testing.T) {
 // FIFO blocks until a writer appears, and the staging copy takes no context, so
 // copying out/stream.png would hang the run until the job was killed and leave
 // no result.json at all. The mode comes from metadata, which never blocks, so
-// the link is skipped exactly like the plain FIFO beside it.
+// the link is skipped exactly like the plain FIFO beside it — and so is the
+// plain FIFO, which is where the same question is asked of a file that is not
+// a link at all.
 //
-// Mutation (keep a resolved target without checking it is a regular file): the
-// run blocks on the FIFO's open and this test fails on its own deadline — by
-// name, in thirty seconds, rather than as a package-wide "panic: test timed out
-// after 10m" that says nothing about which step hung (runWithin).
+// Three guards stand between this run and that hang, and the first one fires
+// here: outputProblem's resolved-target check refuses the link before it is a
+// copy (drop it alone and the run ends failed with "it is not a regular file",
+// on the copy's own fstat). Drop that check, the copy's fstat check and the
+// open's O_NONBLOCK together and the run blocks on the FIFO's open: this test
+// then fails on the deadline runWithin gives it — by name, in thirty seconds,
+// rather than as the package-wide "panic: test timed out after 10m" that says
+// nothing about which step hung.
 func TestASymlinkToAFifoIsRefusedNotOpened(t *testing.T) {
 	var logs bytes.Buffer
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
