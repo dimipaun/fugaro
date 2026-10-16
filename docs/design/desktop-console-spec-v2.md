@@ -1,7 +1,3 @@
-<!-- The owner's second console spec (Dimi Paun, October 2026), kept verbatim
-     as the source of docs/design/desktop-console-v2.md. Nothing in it is approved
-     or built: that document carries the owner approval gate. -->
-
 # Fugaro Console — Feature Spec
 
 Oct 15, 2026 · @Dimi

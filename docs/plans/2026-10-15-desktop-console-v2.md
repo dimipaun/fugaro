@@ -31,23 +31,31 @@ The second spec asks for six new things (design §1's findings F1–F33). Four o
 11. **A read may not become a write because it is convenient.** Every task below says which of the two it is; the only writes in this plan are V2.5.1 and V2.5.2.
 12. **Every cited symbol was checked against `origin/main`.** Where a task says "the field `x`", the field `x` exists at the commit the design cites; a task that finds it missing stops and says so rather than inventing it.
 
-## 2. The check number: 60
+## 2. The check numbers, allocated
 
-The live checks live in [docs/gcp-live-checklist.md](../gcp-live-checklist.md), and a plan that writes one has to say which number is free — which is a fact about `origin/main`, not about this plan's wishes. **Read from `origin/main` at `a573870`:**
+The live checks live in [docs/gcp-live-checklist.md](../gcp-live-checklist.md), and a plan that writes one has to say which number is whose — a fact about the owner's allocation and about `origin/main`, not about this plan's wishes. **The allocation, stated once for every document in this line of work:**
 
-| Number | State |
+| Number | Whose it is |
 |---|---|
-| **47** | the highest `## Check` section written in the file |
-| **48–56** | reserved in [2026-10-14-project-centric.md](2026-10-14-project-centric.md)'s phase table (56 is that plan's `fugaro project export`) |
+| **47** | the highest `## Check` section written in the file (read from `origin/main` at `a573870`); 1–47 are written |
+| **48–56** | the project-centric plan's ([2026-10-14-project-centric.md](2026-10-14-project-centric.md)'s phase table; 56 is that plan's `fugaro project export`) |
 | **57** | written as a summary row; its section is elsewhere |
-| **58** | [artifact-runs.md](../design/artifact-runs.md) §11 ("Check 58, in outline") and its plan — **merged as `fd06635`, PR #393, 2026-10-15 14:08**, five hours before the `a573870` this table reads. The reservation is therefore **on `main`**, in a design and a plan; only the checklist section is unwritten (that design says the check is not part of its own pull request) |
-| **59** | [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md)'s, written as two sections, 59a and 59b — also a reservation in a merged plan rather than a section in the checklist, and also on `main` |
-| **60** | **free on `origin/main`** — reserved by this plan, for the one owner-run check below |
-| **61, 62** | not reserved anywhere in `docs/` on `origin/main` |
+| **58** | **artifact runs**: [artifact-runs.md](../design/artifact-runs.md) §11 ("Check 58, in outline") and its plan — **merged as `fd06635`, PR #393, 2026-10-15 14:08**, five hours before the `a573870` this table reads. The reservation is **on `main`**, in a design and a plan; only the checklist section is unwritten (that design says the check is not part of its own pull request) |
+| **59**, written as **59a** and **59b** | **the console, v1**: [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md)'s, also a reservation in a merged plan rather than a section in the checklist |
+| **60** | **the budget-token channel** |
+| **61** | **the monorepo folder export** |
+| **62** | **this plan's** — the one owner-run check in §4 |
+| **63** | **this plan's second slot, and it is held rather than spent**: a check that grows a second half is written as **62a** and **62b** in the 59a/59b shape, and 63 is for work in this line that turns out to need a number of its own rather than for a second heading on the same check |
+| **64–66** | **voice** (#428) |
+| **67 onward** | **managed projects** (#429) |
 
-**The brief that carried the second spec said "the budget-token channel 60, the monorepo folder export 61". Neither reservation exists in this repository.** No `Check 60` and no `Check 61` appear anywhere under `docs/`; the token channel is **phase 3b** of the project-centric plan (a design task with no check number), and the nearest thing to a folder export is that plan's phase 6 `fugaro project export`, whose number is **56**. So this plan reserves **60** and applies the tree's own rule: **if the owner holds 60 or 61 for work not in this tree, v2's number moves to 62** — whichever PR merges second renumbers, and the renumber moves the summary row, the section heading and every reference together.
+The blocks are handed out a line of work at a time — this one 62 and 63, voice 64–66, managed projects 67 onward — and a block is held for the work it was given even if only part of it is ever used: **an unused number is not a free number.**
 
-**Before Check 60 is written, its task re-reads `origin/main`** with the three commands the v1 plan's register names (`git show origin/main:docs/gcp-live-checklist.md | grep -n '^## Check 4[5-9]'`, a grep of the summary rows, and a grep of `docs/plans/` and `docs/design/` for the number), because this table is a claim about `main`, and a reservation lives in a merged design or plan rather than as a `## Check` section more often than not — 58 and 59 are both that kind, so a grep of the checklist alone finds neither. (An earlier revision of this table said 58 was reserved by an **open, unmerged** PR #393 and treated `artifact-runs.md` as a second claimant of the same number. Both halves were wrong: #393 **is** `artifact-runs.md`, and it merged as `fd06635` at 14:08 on 2026-10-15, before the `a573870` this table reads. The correction is recorded rather than quietly applied, and it changes no number: 60 was free and stays this plan's.)
+**The rule that produces this table is the checklist's own, and it is stated there in as many words** (`docs/gcp-live-checklist.md`, "Numbering ruling (owner's assistant, 2026-10-13)"): **a check number, once a plan reserves it, is never reused or renumbered, even when its section lands out of order** — later work takes the next free block. So a number is claimed by an **allocation, made before the work is written**, and never by the order two pull requests happen to merge. **Two sentences this tree carries state the other rule, and are superseded:** the checklist's own register states it in one paragraph ("whichever of two open claims merges **second** renumbers **itself**, to the number free at its own merge"), and the v1 console plan's "Open items" list still quotes it (its item 8, "Check 59's number is contended, and now carries two sections": "whichever of the two merges second renumbers its own section, summary row and references together" — [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md)). Under the rule this plan applies, that sentence is wrong rather than merely old: it would make 60 and 61 movable and this plan's own check a coincidence of timing. **The decision numbers are allocated the same way** — this work keeps **D21–D38**, voice keeps **D39–D54**, managed projects takes **D55 onward** (the design's §2 states it) — and a decision number, once allocated, is never reused or renumbered either.
+
+**The brief that carried the second spec said "the budget-token channel 60, the monorepo folder export 61".** Both numbers are now theirs by the owner's allocation. When this plan was written, **neither was a number any document in this tree carried**: no `Check 60` and no `Check 61` appear anywhere under `docs/`, the token channel is **phase 3b** of the project-centric plan (a design task with no check number), and the nearest thing to a folder export is that plan's phase 6 `fugaro project export`, whose number is **56**. That is why an earlier revision of this section reserved **60** for this plan and said it would move to **62** "if the owner holds 60 or 61" — and the owner does hold them, which is why **this plan's check is 62** and why the moving is done here, once, rather than left to whichever pull request merges second. **Nothing in this document reserves 60 or 61, and no task may write them.**
+
+**Before Check 62 is written, its task re-reads `origin/main`** with the three commands the v1 plan's register names (`git show origin/main:docs/gcp-live-checklist.md | grep -n '^## Check 4[5-9]'`, a grep of the summary rows, and a grep of `docs/plans/` and `docs/design/` for the number), because this table is a claim about `main`, and a reservation lives in a merged design or plan rather than as a `## Check` section more often than not — 58 and 59 are both that kind, so a grep of the checklist alone finds neither. **The re-read is a record, not a renegotiation**: 60 and 61 having no section yet does not free them, and 62 does not move. (An earlier revision of this table said 58 was reserved by an **open, unmerged** PR #393 and treated `artifact-runs.md` as a second claimant of the same number. Both halves were wrong: #393 **is** `artifact-runs.md`, and it merged as `fd06635` at 14:08 on 2026-10-15, before the `a573870` this table reads. The correction is recorded rather than quietly applied.)
 
 ## 3. Phases and tasks
 
@@ -62,7 +70,7 @@ The owner answers D21–D38 in [desktop-console-v2.md](../design/desktop-console
 *Independent merge:* yes — it touches one document and one test.
 
 **V2.0.2 — the check-number re-check. (needs nothing)**
-Re-read `origin/main` for `## Check` sections and summary rows and record the result in §2 of this plan before any task writes a number. If 60 is taken by then, this plan's check is 62 and this document says so.
+Re-read `origin/main` for `## Check` sections and summary rows and record the result in §2 of this plan before any task writes a number. **This plan's check is 62 and the number does not move** — the owner's allocation in §2 assigns 60 and 61 elsewhere and 62 here, and a number once reserved is never reused or renumbered. The re-read is a record of what `main` now carries; a number below 62 that is still unwritten is not a number this plan may take.
 *Files:* `docs/plans/2026-10-15-desktop-console-v2.md`; `internal/cli/docs_desktop_console_v2_test.go`.
 *Verification:* `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsDesktopConsoleV2' -count=1`.
 *Independent merge:* yes.
@@ -134,7 +142,7 @@ Spawns of `fugaro cancel RUN` and `fugaro run --retry RUN`, with **the app's own
 *Independent merge:* yes.
 
 **V2.5.3 — the roadmap's "copy the change". (needs D30) — SECURITY-SENSITIVE**
-The console shows the exact command that would change a task's target version; the operator runs it in their own terminal; the guard on that command is the CLI's, and since the command does not exist yet the guard has to be specified with it rather than assumed (design F8: the CLI's existing writes are guarded by a typed confirmation, and `fugaro run` and `fugaro cancel` are not). The console does **not** edit the plan file in the operator's checkout.
+The console shows the exact command that would change a task's target version; the operator runs it in their own terminal; the guard on that command is the CLI's, and since the command does not exist yet the guard has to be specified with it rather than assumed (design F8: the CLI's existing writes carry a **confirmation — typed, or `--yes`** — and `fugaro run` and `fugaro cancel` carry none at all). The console does **not** edit the plan file in the operator's checkout.
 *Why security-sensitive:* **this task does not move the fence** — it writes nothing and spawns nothing; only V2.5.1 does. It is marked because of what it must not do: the string it prints is built from document-derived data (the task's target version) and ends up pasted into a shell, so it has to be a command the operator can read and the app must hold **no path into the checkout** — the test it ships is the one that proves that, and the alternative D30 rejects (the console editing the plan file) is a write into the operator's working tree.
 *Files:* `console/`, `docs/design/desktop-console-v2.md`.
 *Verification:* the console's own test command, plus a test that the app holds no path into the checkout.
@@ -178,9 +186,9 @@ Derived from the watch feed by the console's own long-lived reader, **off by def
 *Verification:* the **skill lint**, which lives in its own package — `GOFLAGS=-p=2 go test ./plugin -run 'PluginSkillsLintClean|LintSizeBudget|LintByteBudget|LintChecksReferenceFiles' -count=1` (`plugin/skills_lint_test.go`, package `plugin_test`) — plus the docs tests that read `docs/design/*.md`, `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`. The skill lint is what decides new-file-versus-inline, so the test is the verification and not a formality; a `-run` pattern aimed at `./internal/cli` cannot reach it.
 *Independent merge:* yes, and it is the **cheapest useful task in this plan**: its output is a file a person can read, so it pays for itself before any console reads it.
 
-## 4. The owner-run check: Check 60
+## 4. The owner-run check: Check 62
 
-**Check 60 (OWNER-RUN, NOT RUN)**, in [docs/gcp-live-checklist.md](../gcp-live-checklist.md), on the **sandbox installation** (`fugaro`) and the sandbox repository only — **never the `belong` installation**. Written with FACT lines, a restore step, and **Check 43's full guard verbatim**: the three hard stops, `--project fugaro` on every `fugaro` command and `--project "${P:?}"` on every `gcloud` command, in a block re-run from a fresh shell before every step. That requirement is not optional — the future `TestChecklistChecksAreGuarded` (project-centric plan Task 6.3) asserts that every `## Check 48`-onward section carries Check 43's three hard stops and its project pinning, not merely a `:?` guard.
+**Check 62 (OWNER-RUN, NOT RUN)**, in [docs/gcp-live-checklist.md](../gcp-live-checklist.md), on the **sandbox installation** (`fugaro`) and the sandbox repository only — **never the `belong` installation**. Written with FACT lines, a restore step, and **Check 43's full guard verbatim**: the three hard stops, `--project fugaro` on every `fugaro` command and `--project "${P:?}"` on every `gcloud` command, in a block re-run from a fresh shell before every step. That requirement is not optional — the future `TestChecklistChecksAreGuarded` (project-centric plan Task 6.3) asserts that every `## Check 48`-onward section carries Check 43's three hard stops and its project pinning, not merely a `:?` guard.
 
 **In outline**, and only for the phases that are built by then: with a plan whose graph has a ready task, a running task and a blocked task, and with two runs whose recorded path sets overlap —
 
@@ -190,7 +198,7 @@ Derived from the watch feed by the console's own long-lived reader, **off by def
 4. **if** V2.5.1 has landed: one launch, from the console — first **declined** at the app's own confirmation, which must leave no run behind, since that dialog is the only confirmation in the chain (`fugaro run` does not prompt; design F8) — and then made, with the argv it built read back from the spawn log (`FUGARO_CONSOLE_SPAWN_LOG`, v1 design D20), the run appearing in `fugaro runs ls --json`, and the same task launched twice answering `already-launched` rather than starting a second container;
 5. the restore step removes every object and every local file the check created, and the check deletes the spawn log it asked for.
 
-**This check cannot be written until the tasks it exercises are approved and built** — which is what the owner approval gate at the top of this document means. Its number is reserved now so that the reservation is not a decision taken in a hurry later; §2 says what to do if the number turns out to be taken.
+**This check cannot be written until the tasks it exercises are approved and built** — which is what the owner approval gate at the top of this document means. Its **number is 62** by the owner's allocation (§2), settled before the work rather than at its merge, and it does not move: 60 and 61 are the budget-token channel's and the monorepo folder export's, and a number once reserved is never reused or renumbered. If this check grows a second half by then, the two halves are written as **62a** and **62b** in the 59a/59b shape rather than as a new number.
 
 ## 5. PR groups
 
