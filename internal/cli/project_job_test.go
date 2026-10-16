@@ -97,6 +97,15 @@ func addRepoToConfig(t *testing.T, f *cloudFixture, repo, provider string) {
 	}
 }
 
+// startRunExecution starts an execution of job for run slug/id, carrying the
+// FUGARO_RUN a real launch sets (backend/gcp's Launch, the container
+// override). A fixture that starts an execution without one is a fixture of
+// an execution no run can claim: since task 3.4 the run's objects name an
+// execution and the execution's own FUGARO_RUN is what says whose it is.
+func startRunExecution(f *cloudFixture, job, slug, id string) string {
+	return f.run.StartWithEnv(job, map[string]string{"FUGARO_RUN": slug + "/" + id})
+}
+
 // seedSharedRun writes a run of repo, stored under slug, whose launch.json
 // names exec: the two bucket objects every view reads, and the only record
 // of which execution a run is following.
@@ -156,8 +165,13 @@ func TestListAndLogsAcrossRepositorySharedJobs(t *testing.T) {
 	f.run.SetState(otherExec, backend.StateRunning)
 	seedSharedRun(t, f.cloudFixture, appSlug, "acme/app", appRun, appExec)
 	seedSharedRun(t, f.cloudFixture, otherSlug, otherRepo, otherRun, otherExec)
-	f.logging.AddJSONLines(appExec, []byte(`{"time":"2026-10-16T10:00:00Z","message":"acme/app said this"}`))
-	f.logging.AddJSONLines(otherExec, []byte(`{"time":"2026-10-16T10:00:01Z","message":"acme/other said that"}`))
+	// The entries are stamped now, after the launches above: logs reads from
+	// shortly before its launch (logQuery), so a fixed timestamp from the
+	// past would be filtered out and this assertion would hold for the wrong
+	// reason.
+	at := time.Now().UTC()
+	f.logging.AddJSONLines(appExec, []byte(`{"time":"`+at.Format(time.RFC3339)+`","message":"acme/app said this"}`))
+	f.logging.AddJSONLines(otherExec, []byte(`{"time":"`+at.Add(time.Second).Format(time.RFC3339)+`","message":"acme/other said that"}`))
 
 	// ls: one shared job, two runs, each followed by its own FUGARO_RUN.
 	rows := rowsByRun(t)

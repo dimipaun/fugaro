@@ -144,8 +144,10 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 // the run (after a double launch, launch.json may name the duplicate);
 // else launch.json's. nil means never launched. Unlike
 // existingLaunch it never writes: it serves read-only views. An execution
-// that is not of the run's own job is an error, never followed: the run's
-// service account can write the objects that name it.
+// that is not the run's own is an error, never followed: the run's service
+// account can write the objects that name it, and on a shared job
+// (design §4.1) the FUGARO_RUN the execution reports is what says whose it
+// is.
 func ownerLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string) (*runstore.Launch, error) {
 	l, err := absent(s.ReadLaunch(ctx))
 	if err != nil {
@@ -167,8 +169,7 @@ func ownerLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id strin
 	if owner == nil || owner.Execution == "" {
 		return owner, nil
 	}
-	spec, _ := s.ReadTask(ctx) // unreadable: checkExecution refuses
-	if err := env.checkExecution(owner.Execution, s.Slug(), spec); err != nil {
+	if _, err := env.checkExecution(ctx, nil, owner.Execution, s.Slug(), id); err != nil {
 		return nil, remote(fmt.Errorf("run %s/%s: %w: %w", s.Slug(), id, errNotFollowing, err))
 	}
 	return owner, nil

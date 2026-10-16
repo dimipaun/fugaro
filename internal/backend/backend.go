@@ -52,6 +52,16 @@ type LaunchSpec struct {
 	Repo     RepoRef
 	Workflow string
 	RunID    string
+	// Job is the job to run, by its own name (not a path): the shared project
+	// job of the profile the workflow selects, under the project-centric model
+	// (docs/design/project-centric.md §4.1, plan task 3.4 step 1). Empty means
+	// the per-repository job of (Repo.Slug, Workflow), which is what every
+	// project that has published no profiles gets, byte for byte, and what
+	// every workflow that is not a `checkout: clone` one keeps until phase 4
+	// ends (§4.4). The launcher computes it (gcp.ProjectJobName, from the
+	// published policy); the backend only runs what it is given, because the
+	// name is a fact about the project's profiles and not about the backend.
+	Job string
 	// Timeout is the workflow's total time for this run; zero means the job's own.
 	// The backend adds TaskTimeoutSlack to it.
 	Timeout time.Duration
