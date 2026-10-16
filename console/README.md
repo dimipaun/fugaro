@@ -51,6 +51,68 @@ packages as this module's, and so a `.go` file put under
 `console/node_modules/` is a `.go` file in this directory and fails a test by
 name. `testdata/` is read deliberately.
 
-What is here today: this file, and the contract the console reads
-(`docs/json-contract.md`, pinned by plan Task 0.1). The Node toolchain (plan
-Task 1.0) comes next, and this file gains Electron's pinned version with it.
+What is here today: this file, the contract the console reads
+(`docs/json-contract.md`, pinned by plan Task 0.1), and the pinned toolchain
+(plan Task 1.0): `package.json`, `package-lock.json`, `tsconfig.json`,
+`playwright.config.ts`, `.npmrc`, `.gitignore`, and the two unit tests that hold
+the pinning rule and the lockfile.
+
+## The toolchain, pinned (Task 1.0)
+
+**Electron is pinned to exactly `44.7.2`, and it is bumped on purpose**, with the
+toolchain task and the lockfile in the same commit — the same rule
+`internal/budget/rules/emulator/package.json` states for its own `firebase-tools`
+pin. Electron is not an ordinary dependency: its postinstall downloads a large
+prebuilt runtime, so the pin, the download and the checksum are hand-bumped and
+documented rather than floated (design section 5.2).
+
+The rest of the pinned set, all exact, all in `devDependencies` — the app ships
+no runtime dependency at all, because the renderer bundles no framework and no
+charting library (design D9, and `test/unit/pinning.test.ts` asserts the
+`dependencies` section is empty):
+
+| Package | Version | Why it is here |
+|---|---|---|
+| `electron` | `44.7.2` | the app's runtime, bumped on purpose |
+| `typescript` | `7.0.2` | `tsc --noEmit`; the type checker, not the build |
+| `vitest` | `5.0.5` | `npm run test:unit` |
+| `@playwright/test` | `1.64.1` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
+| `@types/node` | `22.20.5` | the Node the main process and the tests run on |
+
+`engines.node` is `>=22.12.0`, and it is read off the pinned tools rather than
+guessed: Electron 44.7.2 declares `>= 22.12.0` and Vitest 5.0.5 declares
+`^22.12.0 || ^24.0.0 || >=26.0.0`, so a Node below the intersection is a Node
+that was never going to run this toolchain. The console's CI job takes its
+version from this field (Task 1.4), and `.npmrc` sets `engine-strict=true` so a
+mismatched reader finds out at install time.
+
+### Commands
+
+```
+npm ci --ignore-scripts --no-audit --no-fund   # the install; never `npm install`
+npm run test:unit                              # vitest, test/unit/*.test.ts
+npm run test:e2e                               # playwright, test/e2e/*.spec.ts; passes with no specs
+npm run typecheck                              # tsc --noEmit over src/, test/, tools/
+```
+
+`npm ci` — never `npm install` — is the install step in this file, in the plan's
+command and in the staged console workflow, because it installs exactly the
+lockfile and refuses when the lockfile and the manifest disagree.
+`--ignore-scripts` is passed on the command rather than set in `.npmrc` on
+purpose: Electron's binary download is the one lifecycle script this app is
+expected to need, and the packaging phase (Task 4.1) is where it is allowed,
+package by package.
+
+### The pinning rule is a test, not a habit
+
+`test/unit/pinning.test.ts` reads `package.json` and fails on any specifier that
+is not an exact version — a `^`, a `~`, a `*`, `latest`, or any other range —
+naming the dependency and the marker, and it holds the checker itself to a table
+of specifiers it must accept and refuse, so "package.json is clean" cannot pass
+on a checker that accepts everything. `test/unit/lockfile.test.ts` holds the
+other half: the lockfile exists, is `lockfileVersion` 3, declares exactly the
+names and specifiers `package.json` declares, locks each of them to its pinned
+version with a `resolved` URL and an `integrity` hash, and floats nothing.
+`.npmrc`'s `save-exact=true` is the same rule enforced by the client, so a later
+`npm install <package>` writes an exact pin and not the first range a test would
+have to catch.
