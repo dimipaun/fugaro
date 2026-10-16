@@ -48,7 +48,7 @@ import {
   isMarker,
   pseudonym,
   redactRepository,
-} from '../../tools/record-fixture/redact'
+} from '../../src/source/redact'
 
 /** doc redacts a document with the literals given (none by default) and returns
  * it as an object a test can walk. */

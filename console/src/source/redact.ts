@@ -1,6 +1,18 @@
 // The redactor: what a recording may carry into this repository (desktop-console
 // plan Task 1.4, SECURITY-SENSITIVE; design section 9.1).
 //
+// **Where this file lives, and why** (a deviation from the plan's file list,
+// which names `console/tools/record-fixture/redact.ts`): the plan puts the
+// recorder in `tools/`, and the recorder is the *writer* of a fixture -- but the
+// rules are also the *reader*'s, because `loadFixture` audits every document it
+// loads with exactly these classes, and a fixture is only as safe as the rules
+// that made it. `src/source/fixture.ts` therefore has to import this module, and
+// `tsconfig.build.json` has `rootDir: "src"`: a file under `tools/` cannot be in
+// the app's build. So the redactor lives in `src/source/`, next to the loader
+// that depends on it, and the recorder imports it from there. The plan's own
+// split -- recorder in `tools/`, format and loader in `src/` -- is otherwise
+// exactly as written.
+//
 // A recording is made on a real installation, against a real project, from a
 // real checkout -- so every document in it can carry the operator's world: their
 // project name, their machine, their home directory, their repository names,
@@ -56,7 +68,7 @@
 
 import { createHash } from 'node:crypto'
 
-import { decodeFeedLine } from '../../src/main/spawn'
+import { decodeFeedLine } from '../main/spawn'
 
 /**
  * REDACTOR_VERSION is the marker written into every fixture's header and checked
