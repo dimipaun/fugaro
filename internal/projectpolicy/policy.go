@@ -621,6 +621,18 @@ const (
 	RouteAuto = config.RouteAuto
 )
 
+// routingMembers and routingClaudeMembers are the member names the routing
+// block and its switch are documented with, the names CheckRoutingMemberNames
+// holds a written block to. They are named here rather than written inline in
+// that function so the lists are pinnable: checkMemberNames refuses a *case
+// variant* of a name the list holds and cannot see one it does not, so a field
+// added to the switch without the list is a spelling the decoder reads and
+// this check does not (TestPolicyMemberListsCoverTheirStructs).
+var (
+	routingMembers       = []string{"claude"}
+	routingClaudeMembers = []string{"via", "models"}
+)
+
 // CheckRoutingMemberNames refuses a routing block whose member names encoding/json
 // does not read the way the document spells them: a name written twice, two names
 // that fold to one under Unicode simple case folding, or a modelled name
@@ -648,7 +660,7 @@ func CheckRoutingMemberNames(raw json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("projectpolicy: routing: %w", err)
 	}
-	if err := checkMemberNames("routing", names, []string{"claude"}); err != nil {
+	if err := checkMemberNames("routing", names, routingMembers); err != nil {
 		return fmt.Errorf("projectpolicy: %w", err)
 	}
 	var members map[string]json.RawMessage
@@ -663,7 +675,7 @@ func CheckRoutingMemberNames(raw json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("projectpolicy: routing.claude: %w", err)
 	}
-	if err := checkMemberNames("routing.claude", cnames, []string{"via", "models"}); err != nil {
+	if err := checkMemberNames("routing.claude", cnames, routingClaudeMembers); err != nil {
 		return fmt.Errorf("projectpolicy: %w", err)
 	}
 	return nil
