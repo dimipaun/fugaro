@@ -1404,6 +1404,17 @@ func TestChecklistHasCheck50(t *testing.T) {
 		// Routing exists only with the gateway: with the budget off there is
 		// nothing for the switch to act on.
 		"Routing exists only with the gateway",
+		// Task 1b.3 (doctor's routing-cache-markers info, validate's
+		// resolution line, the missing-key message) is ordered before this
+		// check's task and has not shipped: the section says so, and says a
+		// step whose output is missing for that reason is recorded as not
+		// produced rather than treated as a failure. Without these the owner
+		// reaches step 3 with no line to paste while this test stays green.
+		"Task 1b.3's, and 1b.3 has not shipped",
+		"prints no `routing-cache-markers` info",
+		"recorded as not produced",
+		"If this binary prints no resolution line at all, record that and go on",
+		"the line itself is Task 1b.3's and Task 1b.3 has not shipped",
 	})
 
 	// The steps, in order, and the closing paragraph.
@@ -1612,10 +1623,15 @@ func TestChecklistHasCheck50(t *testing.T) {
 		"never a value",
 	})
 
-	// The numbering ruling names the number, so a later plan does not take it.
+	// The numbering ruling names the number, so a later plan does not take it —
+	// and says Task 1b.3's output is not in the binary, so the section below
+	// does not claim an output this tree cannot produce.
 	ruling := strings.Join(strings.Fields(doc), " ")
 	if !strings.Contains(ruling, "Check 50 is phase 1b's") {
 		t.Error("the Numbering ruling does not name Check 50 as phase 1b's")
+	}
+	if !strings.Contains(ruling, "not in this binary yet") {
+		t.Error("the Numbering ruling does not say `fugaro doctor`'s routing-cache-markers info is Task 1b.3's and not in this binary yet: internal/cli/doctor.go has no such check, so the ruling would claim an output this tree cannot produce")
 	}
 }
 
