@@ -475,11 +475,25 @@ func TestCIWorkflowUsesScripts(t *testing.T) {
 	}
 }
 
+// ciWorkflowPath and pendingCIWorkflowPath: a Fugaro run cannot push a commit
+// that touches .github/workflows/** (GitHub refuses it), so a run that needs
+// the root loop below extended stages the whole file's new content under
+// docs/pending-workflows/ for the owner to copy in by hand
+// (docs/pending-workflows/README.md) — the same mechanism images.yml uses,
+// read back the same way (readWorkflow, base_workflow_test.go). The staged
+// file is what this test reads while it exists; once it is gone the real file
+// is read on its own and must name every root.
+const (
+	ciWorkflowPath        = "../.github/workflows/ci.yml"
+	pendingCIWorkflowPath = "../docs/pending-workflows/ci.yml"
+)
+
 // TestCIWorkflowTestsEveryTerraformRoot: CI validates and tests each
 // Terraform root, and a missing or renamed root fails the job instead of
-// being skipped.
+// being skipped. The loop below is itself the check the real ci.yml must pass
+// once the staged copy is gone, so readWorkflow is given no marker string.
 func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
-	data, err := os.ReadFile("../.github/workflows/ci.yml")
+	data, err := readWorkflow(pendingCIWorkflowPath, ciWorkflowPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}

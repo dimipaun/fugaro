@@ -3705,7 +3705,17 @@ senior reviewer before merge, not just the normal one.
    state prefix of its own (`fugaro/compute`), so the installation's tfvars,
    imports and saved plan are never rewritten by it, every apply passes
    `tf.Guard` with `--allow-delete`, and an empty plan is "No changes" rather
-   than an apply — the stage is idempotent to rerun. Image streaming is **not**
+   than an apply — the stage is idempotent to rerun. **The root is a new
+   directory under `deploy/terraform/gcp/roots/`, and CI's `terraform` job
+   names the roots it validates and tests one by one
+   (`.github/workflows/ci.yml`, `for r in ...`): a Fugaro run cannot push a
+   workflow change, so the one-word addition that puts `compute` in that list
+   is staged as `docs/pending-workflows/ci.yml` for the owner to copy in
+   (that directory's README), and `images/cloudbuild_test.go`'s
+   `TestCIWorkflowTestsEveryTerraformRoot` reads the staged copy the same way
+   it reads `images.yml`'s — until the copy lands, CI checks the root's files
+   through `terraform fmt`, `tflint`, `scan.sh` and the Go-side pins, but does
+   not run its `validate` or its ten mock-provider runs.** Image streaming is **not**
    enabled (C4: the preloaded boot image is the fast-start path, and a Docker
    run's `options` needs streaming off), so `containerfilesystem` is not
    among the APIs it enables. The preload builder's custom role is the build's

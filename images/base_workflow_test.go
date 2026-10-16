@@ -29,7 +29,11 @@ const (
 // readWorkflow implements the fallback described above for any
 // (pendingPath, realPath) pair, so TestReadWorkflowFallsBackOnlyWhilePending
 // can exercise both modes without touching the real repository files.
-func readWorkflow(pendingPath, realPath string) ([]byte, error) {
+// mustContain is a string the real file must hold once the pending file is
+// gone, so a copy-in that dropped the change fails here instead of being read
+// as the workflow the pending file promised; a caller whose own assertions
+// are that check passes "".
+func readWorkflow(pendingPath, realPath, mustContain string) ([]byte, error) {
 	switch _, err := os.Stat(pendingPath); {
 	case err == nil:
 		return os.ReadFile(pendingPath)
@@ -40,15 +44,15 @@ func readWorkflow(pendingPath, realPath string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !strings.Contains(string(data), "fugaro-base:") {
-		return nil, fmt.Errorf("%s has no fugaro-base job and %s does not exist: were the base jobs deleted after the pending file was copied in and removed?", realPath, pendingPath)
+	if mustContain != "" && !strings.Contains(string(data), mustContain) {
+		return nil, fmt.Errorf("%s has no %s and %s does not exist: was the pending change copied in and the pending file removed without it?", realPath, mustContain, pendingPath)
 	}
 	return data, nil
 }
 
 func readImagesWorkflow(t *testing.T) []byte {
 	t.Helper()
-	data, err := readWorkflow(pendingImagesWorkflowPath, imagesWorkflowPath)
+	data, err := readWorkflow(pendingImagesWorkflowPath, imagesWorkflowPath, "fugaro-base:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +74,7 @@ func TestReadWorkflowFallsBackOnlyWhilePending(t *testing.T) {
 	if err := os.WriteFile(real, []byte("jobs:\n  other: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	data, err := readWorkflow(pending, real)
+	data, err := readWorkflow(pending, real, "fugaro-base:")
 	if err != nil || !strings.Contains(string(data), "fugaro-base") {
 		t.Fatalf("pending present: got %q, err %v, want the pending file's content", data, err)
 	}
@@ -81,14 +85,14 @@ func TestReadWorkflowFallsBackOnlyWhilePending(t *testing.T) {
 	if err := os.WriteFile(real, []byte("jobs:\n  fugaro-base: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if data, err := readWorkflow(pending, real); err != nil || !strings.Contains(string(data), "fugaro-base") {
+	if data, err := readWorkflow(pending, real, "fugaro-base:"); err != nil || !strings.Contains(string(data), "fugaro-base") {
 		t.Fatalf("pending gone, real file holds the job: got %q, err %v, want the real file's content", data, err)
 	}
 
 	if err := os.WriteFile(real, []byte("jobs:\n  other: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readWorkflow(pending, real); err == nil {
+	if _, err := readWorkflow(pending, real, "fugaro-base:"); err == nil {
 		t.Fatal("pending gone, real file lacks fugaro-base: passed; a deletion of the base jobs after the copy would go unnoticed")
 	}
 }
