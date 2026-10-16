@@ -195,11 +195,13 @@ handler's root is `src/renderer` under the app's own path
 (`app.getAppPath()`), not `dist/`. Packing the renderer into a packaged app is
 Task 4.1's, and this task builds no package.
 
-What is deliberately **not** here: the preload and its `contextBridge` surface
-(Task 1.2), the spawn allow-list (Task 2.1), and the Electron fuses (Task 4.1).
-The window is built so that each of those lands inside something already
-switched off — `consoleWebPreferences()` asserts the absence of a `preload`
-today precisely so that adding one is a decision rather than an oversight.
+What is deliberately **not** here: the preload attached to the window (Task
+1.2 writes `src/preload/index.ts` — see "The IPC allow-list" below — and
+deliberately does not wire it in), the spawn allow-list (Task 2.1), and the
+Electron fuses (Task 4.1). The window is built so that each of those lands
+inside something already switched off — `consoleWebPreferences()` asserts the
+absence of a `preload` today precisely so that adding one is a decision rather
+than an oversight.
 
 ### The security properties are tests, and each one fails under a mutation
 
@@ -310,3 +312,117 @@ is not an npm dependency** — npm carries the package, but the runtime comes fr
 Electron's download host, so its pin, download and checksum get the hand-bumped
 treatment the repository already gives the Trivy digest and the Dockerfile
 frontend digest (design section 5.2).
+
+## The IPC allow-list (Task 1.2)
+
+Design section 5.1 rule 5: "**an IPC allow-list, not an IPC bridge**". The
+console has no bridge. It has a fixed table of named operations, and three
+prohibitions that are the whole of the rule: **no `invoke(channel, ...)`**
+(nothing in the console takes a channel from a caller), **no channel name from
+the renderer** (the preload exposes one *method* per operation and the renderer
+passes arguments to a method, never a name), and **no dynamic `require`**.
+
+`src/main/ipc.ts` is the table and the gate. Twelve operations — the eleven CLI
+reads of design section 2.1 (`watch`, `budget show`, `report`, `runs ls`,
+`diagnose`, `logs` for the document, `logs` for the link, `secrets ls`,
+`accounts ls`, `version`, `doctor`) plus the one validated external link — each
+with the command it drives, the flags it fixes and a **closed argument schema**
+validated in the main process before any handler sees it. Closed means every key
+is declared (an extra key is refused by name), `__proto__`/`constructor`/
+`prototype` are refused by name and a payload whose prototype is not a plain
+object's is refused whole, every string is bounded and refused when it carries a
+control character, an invisible format character, an unpaired surrogate or
+anything outside its grammar, and the validated arguments are rebuilt into a
+frozen null-prototype object. What an operation may **not** take is the other
+half: no path (the installation's directory and `doctor --dir` are main-process
+state), no command (the verb is a constant in the table) and no URL beyond the
+one link, which is `validateExternalUrl` from `src/main/window.ts` — imported,
+not re-implemented, so the two cannot drift.
+
+`src/preload/index.ts` puts **one frozen, versioned object** on `window.fugaro`,
+one method per operation. It is deliberately a phone book and not a switch: the
+channel a method calls is a constant concatenated from that operation's name,
+the argument object is forwarded untouched (there is one validating gate and it
+is in main), and the reply is checked for the promised envelope before a screen
+sees it.
+
+### Why the preload writes the surface out a second time
+
+The window runs `sandbox: true`, and in a sandboxed preload Electron replaces
+`require` with a polyfill that resolves `electron`, `events`, `timers` and `url`
+and **nothing else** — a relative `require('../main/ipc')`, which is what `tsc`
+emits for a value import, would fail the moment Electron ran the file. The
+alternatives were a bundler (a dependency this task may not add: `package.json`'s
+dependency set is exact and `test/unit/pinning.test.ts` asserts it) or writing
+the list twice. So it is written twice, and `test/unit/ipc.test.ts` closes the
+duplication in both directions: the methods on the frozen object must be exactly
+the table's methods, each must `invoke` the channel `channelForOperation(name)`
+computes for that same operation, and the version in the bridge must be the
+table's. **Types are imported from the table; values are not** — a type-only
+import is erased, which is why the preload can still be typed against
+`ConsoleReply` and `RendererLike` shape-checked against Electron's own types.
+
+### The never-reachable table, and the mutation-proof half
+
+`NEVER_REACHABLE` names what the console must never reach, read off the code
+rather than off a paragraph — every `where` columns names the `internal/cli`
+file and line each entry was grepped from on 2026-10-16. It carries every
+command the CLI has that writes (including `verify`, which runs a workflow's own
+build/test/lint commands in the checkout, and `image build`/`gate`/`record`/
+`refresh`), the `secrets` commands, `init`, `upgrade` and the hidden `exec`, the
+hidden `budget history` job, `image git-credential` (it prints a credential),
+the project-centric phase 1 commands that write or publish (which do not exist
+on this tree yet, and are listed anyway so that the day one appears the
+allow-list is already closed to it), and the flags that turn a read into
+something else: `--follow`, `--check-github-app`, `--strict`, `--csv`,
+`--watch`, and the watch renderer's `--plain`/`--poll`/`--ascii`/`--no-color`.
+
+Two things read that table. `assertReachableSurface` — called by
+`registerConsoleHandlers` before it registers anything — throws at startup if an
+operation drives a row of it, fixes a flag the surface may not fix, or shares a
+name; a console that cannot be built with `budget kill` in it cannot be talked
+into running it later. And the test names **one test per row**: nothing in the
+allow-list drives `budget kill`, or `--follow`, or any other row.
+
+| Mutation | What fails |
+|---|---|
+| `budget kill` (or any row) added to `CONSOLE_OPERATIONS` | the test named for that row, the "argv for argv" test, and `assertReachableSurface` at registration — the plan's red step |
+| a command the snapshot does not classify as one the allow-list admits | "drives *command* only because the design's allow-list admits it" |
+| a writer missing from `NEVER_REACHABLE` | "knows that *command* is on the never table, or is simply unused" |
+| `--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch` or a watch-renderer flag fixed by an operation | the never-table test named for the flag, and the "fixes only the two flags" test |
+| `--url` and `--json` on one operation | "never --url with --json" (the CLI refuses that argv: `internal/cli/logs.go:63`) |
+| an operation with no preload method, or a preload method with no operation | the two-way surface test |
+| a method invoking anything but `channelForOperation(name)` | the channel-routing test |
+| a schema accepting an extra key, a prototype-pollution key, a path, a command, a control or format character, an oversize string or a wrong type | the table entry that names it |
+| a schema that refuses *everything* (the way to pass every refusal test vacuously) | the well-formed-payload table, one row per operation |
+| an unfrozen bridge, a wrong version, a `length > 1` method, an `invoke`/`send`/`on` property | the surface-shape tests |
+| a second `invoke`, a computed `require`, an `eval`, a `child_process`, or a value import in the preload | the source scans |
+
+The red step was run as the plan writes it: `budget kill` added to the
+allow-list fails 21 tests, three of them named for it — "nothing in the
+allow-list drives budget kill", "drives budget kill only because the design's
+allow-list admits it", and the registration throw, which surfaces as "accepts
+the table the console actually has" reporting `budget.kill drives budget kill,
+which the console must never reach`. It also found a real weakness in the test
+file, which is why it is recorded here: the "throws on an operation name that is
+not in the table" test used `budget.kill` as its unknown name, so adding
+`budget.kill` to the table made *that* test pass and hid one of the failures
+behind it. It now uses a name no screen would ever add.
+
+### What is deliberately not here (Task 1.2)
+
+The **handler implementations** — Task 1.3 spawns the CLI; this task defines
+what a handler may be asked for and nothing about how it answers.
+`registerConsoleHandlers` takes the handlers as an argument, so the surface is
+complete and testable today and gains its one implementation without an edit to
+the allow-list. And the **window's `preload` option**: `test/unit/window.test.ts`
+asserts its absence by name, and attaching a bridge over handlers that do not
+exist yet would be the one edit that makes this surface reachable before there
+is anything behind it.
+
+Nothing here loads Electron, and nothing here spawns anything. The whole section
+is driven by `test/unit/ipc.test.ts` under plain Node — a fake `ipcMain` that
+records the channels it was given, a fake `ipcRenderer` that delivers each
+`invoke` to the listener for that channel, and a `codeOnly` helper that strips
+comments before the source scans, so a scan cannot be satisfied by prose that
+happens to name the thing it is looking for.

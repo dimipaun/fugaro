@@ -1102,7 +1102,14 @@ describe('the schema as a whole', () => {
   })
 
   it('throws on an operation name that is not in the table', () => {
-    expect(() => validateArguments('budget.kill' as OperationName, {})).toThrow(/not a console operation/)
+    // A name no screen would ever add, so this test cannot be satisfied by the
+    // very mutation the rest of the file exists to catch: with `budget.kill` as
+    // the unknown name -- which is what this said first -- adding `budget.kill`
+    // to the table would have made *this* test pass and hidden the mutation
+    // behind it.
+    expect(() => validateArguments('nope.not.an.operation' as OperationName, {})).toThrow(
+      /not a console operation/,
+    )
   })
 })
 
