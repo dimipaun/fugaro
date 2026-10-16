@@ -228,4 +228,29 @@ func TestModelPricesRefusesCaseFoldedMembers(t *testing.T) {
 	}
 }
 
+// TestModelPricesRefusesACaseFoldedTierMemberAlone: the long_context tier is
+// held to the same name check as the entry around it, and that check's own
+// rule — a name this Fugaro models, spelled in another case, is refused — only
+// fires for a name the list it is handed holds. priceTierMembers carried
+// input_per_m and output_per_m but not above_input_tokens, which is the tier's
+// third field (projectpolicy.PriceTier), so a lone "ABOVE_INPUT_TOKENS" went
+// through: not the fail-open the two-spelling case is (the decoder still
+// resolves the field and a second spelling beside it is caught by the fold
+// check), but the invariant the function's comment states did not hold, and
+// the next writer of that list would have no reason to notice. Listed, the
+// spelling is refused like any other.
+func TestModelPricesRefusesACaseFoldedTierMemberAlone(t *testing.T) {
+	const raw = `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, ` +
+		`"long_context": {"ABOVE_INPUT_TOKENS": 100000, "input_per_m": 2, "output_per_m": 4}}}}`
+	p, found, err := Decode([]byte(raw))
+	if err == nil || p != nil || !found {
+		t.Fatalf("Decode(%s) = (%v, %v, %v), want a refusal", raw, p, found, err)
+	}
+	for _, w := range []string{"model_prices.long_context", "above_input_tokens", `"ABOVE_INPUT_TOKENS"`} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("err = %v, want it to name %s", err, w)
+		}
+	}
+}
+
 func rate(v float64) *float64 { return &v }

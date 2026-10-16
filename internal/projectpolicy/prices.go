@@ -53,9 +53,15 @@ func (ps Prices) MarshalJSON() ([]byte, error) {
 // DisallowUnknownFields decode, because that decoder refuses only the names no
 // field answers to at all — a rate written INPUT_PER_M answers to input_per_m
 // and would otherwise be priced by whichever spelling the document wrote last.
+//
+// Each list has to carry every field of the struct it describes (Price,
+// PriceTier), because the case-variant half of that check fires only for a name
+// the list holds: above_input_tokens was missing from the tier's list, so a
+// lone ABOVE_INPUT_TOKENS in a tier passed a check whose whole point is that it
+// does not (code review, low).
 var (
 	priceMembers     = []string{"cache_read", "cache_write_1h", "cache_write_5m", "input_per_m", "long_context", "output_per_m", "web_search_per_1k"}
-	priceTierMembers = []string{"input_per_m", "output_per_m"}
+	priceTierMembers = []string{"above_input_tokens", "input_per_m", "output_per_m"}
 )
 
 // UnmarshalJSON reads the block off a node: one member per model, unescaped
