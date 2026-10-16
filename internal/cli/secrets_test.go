@@ -1536,6 +1536,28 @@ func TestNormalizeRepoArgs(t *testing.T) {
 			[]string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo="}},
 		{"init's --repo is a bool", []string{"init", "--repo"},
 			[]string{"init", "--repo"}},
+		// A flag's *value* is not the command: the scan reads argv the way
+		// cobra's own does, so the first token that spells "secrets" being a
+		// value does not hide the subcommand behind it -- the rewrite would
+		// otherwise leave the bare --repo unrewritten and pflag would take the
+		// next token as its value.
+		{"a flag value that spells secrets", []string{"--config", "secrets", "secrets", "set", "npm-token", "--repo"},
+			[]string{"--config", "secrets", "secrets", "set", "npm-token", "--repo="}},
+		{"a flag value that spells secrets, ls", []string{"--project", "secrets", "secrets", "ls", "--repo"},
+			[]string{"--project", "secrets", "secrets", "ls", "--repo="}},
+		{"a one-letter flag's value spells secrets", []string{"-c", "secrets", "secrets", "set", "npm-token", "--repo=acme/app"},
+			[]string{"-c", "secrets", "secrets", "set", "npm-token", "--repo=acme/app"}},
+		// The same token in a command that is not the secrets one: nothing is
+		// rewritten, because the command is the first positional and it is not
+		// "secrets".
+		{"secrets as a bare argument of another command", []string{"run", "secrets", "set", "--repo"},
+			[]string{"run", "secrets", "set", "--repo"}},
+		// A flag written with "=value" takes no separate token, so what
+		// follows it is the command.
+		{"an equals-form flag before the command", []string{"--config=x", "secrets", "set", "npm-token", "--repo"},
+			[]string{"--config=x", "secrets", "set", "npm-token", "--repo="}},
+		{"after -- there is no subcommand", []string{"--", "secrets", "set", "npm-token", "--repo"},
+			[]string{"--", "secrets", "set", "npm-token", "--repo"}},
 		{"another subcommand of secrets", []string{"secrets", "rm", "npm-token", "--repo"},
 			[]string{"secrets", "rm", "npm-token", "--repo"}},
 		{"no subcommand after secrets", []string{"secrets"},
