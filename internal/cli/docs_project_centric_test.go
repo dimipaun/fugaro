@@ -1401,7 +1401,35 @@ func TestChecklistHasCheck50(t *testing.T) {
 			"0.8.0.x",
 			// What the check settles, named in the row too: the number is the point.
 			"cache reads",
+			// The row must carry the section's own hedge: the message that
+			// names the switch is Task 1b.3's, and this binary prints the
+			// older note instead. An owner who reads only the row must not
+			// meet the expected older note as the check's failure.
+			"Task 1b.3 not in this binary",
 		})
+		// The row may still SAY the switch is what the message names — that
+		// is what Task 1b.3's message does — but it may not promise it as
+		// this binary's behaviour, which is the phrasing below.
+		for _, old := range []string{
+			"refused with a message that names the switch",
+		} {
+			if strings.Contains(row, old) {
+				t.Errorf("the Check 50 row still promises the Task 1b.3 message (%q): this binary's missing-key note names no switch, and the section records it as %q rather than a failure", old, "Task 1b.3 not in this binary")
+			}
+		}
+	}
+
+	// Step 2's heading carries the same claim as the row did, so it needs the
+	// same hedge: on this binary the naming safeguard has not landed.
+	var step2Head string
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(line, "### 2.") {
+			step2Head = line
+			break
+		}
+	}
+	if !strings.Contains(step2Head, "Task 1b.3 ships") {
+		t.Errorf("the Check 50 step 2 heading does not say the switch-naming safeguard arrives with Task 1b.3 (%q): this binary prints the older note, so an unhedged heading promises a message that cannot come", step2Head)
 	}
 
 	// Check 43's guard block inside the section — the three hard stops and the
@@ -1717,6 +1745,46 @@ func TestChecklistHasCheck50(t *testing.T) {
 	if !guarded {
 		t.Errorf("Check 50 step 7 does not refuse (exit) when the recorded state is missing or unreadable (no `exit` follows the `[ ! -s ... ]` test in %s): guessing the restore is the destructive case this check must never run", stateFile)
 	}
+	// The one destructive arm must not REPORT a deletion that did not happen.
+	// `--delete` without `--yes` asks for the typed confirmation ("Type fugaro
+	// to confirm") and, with stdin not a terminal — which is what the check's
+	// own "keep the block in one file and run bash chk50.sh" convention gives
+	// it — fails outright instead. An arm that echoes its result without
+	// running the command under a status test reports the restore as done
+	// while the policy this check published is still published, and this is
+	// the check's only destructive moment.
+	chk50MustContain(t, step7, "step 7", []string{
+		// What the operator will be asked, named where the command is.
+		"Type fugaro to confirm",
+		// And the guard itself: the delete runs under a test of its status.
+		"if fugaro project policy publish --delete --project fugaro; then",
+		// The failure says the deletion did NOT happen, so no one reads this
+		// arm as a completed restore.
+		"STILL PUBLISHED",
+	})
+	for _, arm := range []string{
+		"if fugaro project policy publish --remove-routing --project fugaro; then",
+		"if fugaro project policy publish --project fugaro; then",
+	} {
+		if !strings.Contains(step7, arm) {
+			t.Errorf("Check 50 step 7 does not test its command's status in one of its restore arms (%q): an arm that echoes its result without checking reports a restore that did not happen", arm)
+		}
+	}
+
+	// The `route` attribute is emitted only for a call that went to a provider
+	// (`cl.route = rt.provider.Name` inside `if rt.provider != nil`, and the
+	// log appends the attribute only when it is non-empty), so the DIRECT
+	// run's reviewer line carries no `route` at all: its absence is what says
+	// the call went to Anthropic. A FACT that asks for `route` on both runs
+	// names a field the baseline never prints.
+	for _, tc := range []struct{ step, marker string }{
+		{"### 4.", "step 4"},
+		{"### 6.", "step 6"},
+	} {
+		if s := chk50Step(t, section, tc.step); !strings.Contains(s, "no `route` attribute") {
+			t.Errorf("Check 50 %s does not say the direct run's line carries no `route` attribute: the gateway emits that attribute only for a call that went to a provider, so the FACT names a field the direct run never prints", tc.marker)
+		}
+	}
 
 	// Task 1b.3 has not shipped, so every FACT line that names its output is
 	// recorded and the check goes on, never treated as a failure. What "not
@@ -1928,6 +1996,15 @@ var chk50Citations = []chkCitation{
 	{"internal/cli/validate.go:281", "msg := anthropicKeyNeeded"},
 	{"internal/cli/validate.go:444", "\"note: \"+n.String()"},
 	{"internal/cli/validate.go:274-280", "never a warning or a refusal"},
+	// Step 7's `no-policy` arm: --delete without --yes asks for the typed
+	// confirmation (confirmTyped) and fails when stdin is not a terminal.
+	{"internal/cli/project_cmd.go:1089", "confirmRemoval(cmd, lc, o.yes"},
+	{"internal/cli/budget.go:182-200", "func confirmTyped"},
+	{"internal/cli/budget.go:192", "\"Type %s to confirm: \""},
+	// Steps 4 and 6: the `route` attribute exists only for a provider call.
+	{"internal/gateway/log.go:15", "is the Anthropic upstream"},
+	{"internal/gateway/log.go:51-53", "attrs = append(attrs, \"route\", c.route)"},
+	{"internal/gateway/forward.go:554", "cl.route = rt.provider.Name"},
 }
 
 // chk52Citations are the code citations the Check 52 section makes in full,
