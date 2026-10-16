@@ -28,7 +28,12 @@
 //   - a dead child not restarted, or restarted after a refusal, fails the
 //     supervisor tests;
 //   - a second file in `src/` naming `node:child_process` fails "is the only
-//     file in src/ that spawns".
+//     file in src/ that spawns";
+//   - a `subscribeLive` that builds a stream per call fails "answers a second
+//     live.watch from the feed it already has, and spawns no second child";
+//     one that keeps a feed which has ended fails "drops a feed that ended" and
+//     "drops a feed the console stopped" (the two halves of the idempotency:
+//     same arguments, same live feed -- and no feed at all once it is over).
 //
 // The fake CLI of `stub.ts` is the only thing spawned: never the real `fugaro`,
 // never the network. The report file it appends to is the child's *own* account
@@ -76,8 +81,9 @@ import type {
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, createInstallationStore } from '../../src/source/cli'
-import { SourceRefusal } from '../../src/source/source'
+import { SourceRefusal, handlersFor } from '../../src/source/source'
 import { installStub } from './stub'
+import type { Stub } from './stub'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
@@ -1070,6 +1076,109 @@ describe('the supervisor', () => {
     const snapshot = await feed.current()
     expect(snapshot.notices.map((notice) => notice.text)).toEqual(['no budget backend: showing run records only'])
     await source.close()
+  })
+})
+
+/**
+ * The live subscription's idempotency. It is load-bearing rather than an
+ * optimisation: Task 1.2's surface is `invoke`-only, so a screen reaches
+ * `live.watch` once per poll, and an implementation that built a stream per
+ * call would leave one `fugaro watch` child -- against the operator's own
+ * project -- per poll, none of them stopped until `close()`.
+ *
+ * Every count of children here is read from the stub's *own* report file, and
+ * every one is read through `waitFor`: the child writes its line from its own
+ * process, so a count read synchronously after a `subscribeLive` is a count of
+ * the spawns that had landed, not of the spawns that happened.
+ */
+describe('the live subscription', () => {
+  const WATCH_ONE = { lines: ['{"day":"2026-01-01"}'], hold: true }
+  const WATCH_TWO = { lines: ['{"day":"2026-01-02"}'], hold: true }
+
+  /** watchSpawns counts the `watch` children the stub has seen. */
+  const watchSpawns = (stub: Stub): number =>
+    stub.reports().filter((report) => report.argv[0] === 'watch').length
+
+  const liveSource = (stub: Stub): Promise<CliSource> =>
+    CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+
+  it('answers a second live.watch from the feed it already has, and spawns no second child', async () => {
+    const stub = installStub(freshDirectory(), {
+      commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
+    })
+    const source = await liveSource(stub)
+    const handlers = handlersFor(source, { openExternal: async () => {} })
+    const first = await handlers['live.watch']({})
+    await waitFor(() => watchSpawns(stub) === 1)
+    const second = await handlers['live.watch']({})
+    expect(second).toEqual(first)
+    expect(watchSpawns(stub)).toBe(1)
+    // The contract is on the source, so it holds for a caller that reaches it
+    // directly: the handler is not what makes it idempotent.
+    expect(source.subscribeLive({})).toBe(source.subscribeLive({}))
+    await source.close()
+  })
+
+  it('keeps two subscriptions apart, and stops both when the source closes', async () => {
+    const stub = installStub(freshDirectory(), {
+      commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
+    })
+    const source = await liveSource(stub)
+    const handlers = handlersFor(source, { openExternal: async () => {} })
+    await handlers['live.watch']({})
+    await handlers['live.watch']({ repo: 'acme/other' })
+    await waitFor(() => watchSpawns(stub) === 2)
+    expect(watchSpawns(stub)).toBe(2)
+    const argvs = stub
+      .reports()
+      .filter((report) => report.argv[0] === 'watch')
+      .map((report) => report.argv)
+    expect(argvs.some((argv) => argv.includes('acme/other'))).toBe(true)
+    expect(argvs.some((argv) => !argv.includes('acme/other'))).toBe(true)
+    await source.close()
+    await waitFor(() => stub.kills().length === 2)
+    expect(stub.kills().map((kill) => kill.signal)).toEqual(['SIGTERM', 'SIGTERM'])
+  })
+
+  it('drops a feed that ended, so the retry after a refusal starts a fresh child', async () => {
+    const stub = installStub(freshDirectory(), {
+      commands: { version: { stdout: '1.4.2\n' }, watch: { stderr: 'fugaro: no project selected\n', code: 1 } },
+    })
+    const source = await liveSource(stub)
+    const refused = source.subscribeLive({})
+    await expect(refused.current()).rejects.toThrow(/no project selected/)
+    await waitFor(() => watchSpawns(stub) === 1)
+    // The operator fixed what the sentence asked for; the next poll must ask the
+    // CLI again rather than hand back the feed that already ended.
+    stub.write({ commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_TWO } })
+    const retried = source.subscribeLive({})
+    expect(retried).not.toBe(refused)
+    const snapshot = await retried.current()
+    expect(snapshot.day).toBe('2026-01-02')
+    await waitFor(() => watchSpawns(stub) === 2)
+    expect(watchSpawns(stub)).toBe(2)
+    await source.close()
+    await waitFor(() => stub.kills().length === 1)
+    expect(stub.kills()).toHaveLength(1)
+  })
+
+  it('drops a feed the console stopped, so the next watch starts a child again', async () => {
+    const stub = installStub(freshDirectory(), {
+      commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
+    })
+    const source = await liveSource(stub)
+    const feed = source.subscribeLive({})
+    await feed.current()
+    await feed.stop()
+    await waitFor(() => stub.kills().length === 1)
+    expect(stub.kills()[0]?.argv).toContain('watch')
+    const next = source.subscribeLive({})
+    expect(next).not.toBe(feed)
+    await waitFor(() => watchSpawns(stub) === 2)
+    expect(watchSpawns(stub)).toBe(2)
+    await source.close()
+    await waitFor(() => stub.kills().length === 2)
+    expect(stub.kills()).toHaveLength(2)
   })
 })
 
