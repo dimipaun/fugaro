@@ -352,7 +352,7 @@ func jobConfigCopyMountNote(names []string) string {
 	if len(names) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("what a job mounts is still decided here: a project secret was created or deleted since the last one (`fugaro secrets set NAME`, D2's default) is what a re-run is needed for — for this repository those names are %s — while a new version of one of them or a rotated value needs no re-run, because the job mounts the container and not a copy of the value; a run picks a mount change up on the next `fugaro init --repo .` in your own terminal, until phase 3 gives the mounts to a shared profile",
+	return fmt.Sprintf("what a job mounts is still decided here: a project secret created or deleted after the last `fugaro init --repo .` changes what this repository's job mounts (`fugaro secrets set NAME`, D2's default), and for this repository those names are %s — that is what a re-run is for, while a new version of one of them or a rotated value needs no re-run, because the job mounts the container and not a copy of the value; a run picks a mount change up on the next `fugaro init --repo .` in your own terminal, until phase 3 gives the mounts to a shared profile",
 		strings.Join(names, ", "))
 }
 

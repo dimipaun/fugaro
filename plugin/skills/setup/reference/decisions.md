@@ -80,7 +80,7 @@ Its own topic, and only for a workflow that needs nothing a build gives it. `che
 
 ## What scope a secret's value goes to
 
-Init's own prompts (skill step 9) have no `--repo` to pass: a name this repository may mount project-wide is stored in the project's Secret Manager, and `bitbucket-token` never is — a repository access token serves one repository. A project-scope name's reach is its entry's `allow_data_to`, or the provider's for a provider key: say which repositories it reaches when you recommend one. A name the project's copy already covers is not asked for; a prompt that skips one is working as intended, not a missing value.
+Init's own prompts (skill step 9) have no `--repo` to pass: a name this repository may mount project-wide goes to the project's Secret Manager; a per-repository name does not (`bitbucket-token` reaches project scope only through an explicit `project_secrets` entry — its access token serves one repository). A project-scope name's reach is its entry's `allow_data_to`, or the provider's for a provider key: say which repositories it reaches. A covered name is not asked for; a prompt that skips one works as intended.
 
 For this repository's own copy instead, press Ctrl-C at the prompt and run the command it printed with `--repo <owner/name>`, then start init again. The user runs it in their own terminal window, not through the agent:
 
@@ -88,7 +88,7 @@ For this repository's own copy instead, press Ctrl-C at the prompt and run the c
 fugaro secrets set <name> --repo <owner/name>
 ```
 
-A repository copy with an enabled version wins over the project's, so this is also how a covered name gets its own value; disabling that copy's versions falls back to the project's at the next init.
+A repository copy with an enabled version wins over the project's, so this is how a covered name gets its own value; disabling it falls back to the project's at the next init.
 
 ## Minimal file or full file?
 
