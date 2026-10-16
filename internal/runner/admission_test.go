@@ -259,6 +259,56 @@ func TestRunnerAdmitsARemoteNamingItsOwnRepository(t *testing.T) {
 	}
 }
 
+// The remote binds the endpoint, and not only the host and the repository: what
+// a run's git credential is scoped to is scheme://host[:port]
+// (internal/gitops' CredentialURL, which has no allow-list of its own), so an
+// http:// remote on the provider's own host has this repository's credential
+// sent in cleartext, and one naming a port sends it to an endpoint the provider
+// does not serve. The launcher writes neither — internal/infra's repoURL
+// refuses a repository URL unless it is https, on the provider's host, with no
+// port, before it deploys anything — so a launcher-deployed job cannot carry
+// one, and a job environment edited after launch (the case this whole check
+// exists for) can. Both remotes below name the run's own repository on its own
+// provider's host, so the kind comparison and the owner/name comparison admit
+// them (gitprov.KindForURL reads the host and nothing else): without the
+// endpoint check they were admitted, and the credential went where they point
+// (the review finding on this change).
+func TestRunnerRefusesARemoteOffTheProvidersEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name, remote, guard, want string
+	}{
+		{"the scheme is not https", "http://github.com/acme/app.git", "http://github.com/", "not https"},
+		{"the authority names a port", "https://github.com:8443/acme/app.git", "https://github.com:8443/", "8443"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			guardProviderHost(t, tc.guard)
+			b.deps.Remote = tc.remote
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, tc.want, "FUGARO_REMOTE", "before any git credential")
+		})
+	}
+}
+
+// A remote that carries the credential and is refused for its endpoint must not
+// quote the credential either: the refusal names the port, and the two shapes
+// the port check reads (a userinfo) are exactly where a forge puts one. The
+// endpoint check is what the refusal is about, so the text it adds is the text
+// this test reads.
+func TestRunnerRefusesAnEndpointWithoutQuotingItsCredential(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	// Every https URL in play is this remote, so the guard's prefix is the
+	// scheme: a run that went on would fail its clone locally, whatever
+	// endpoint the remote named.
+	guardProviderHost(t, "https://")
+	b.deps.Remote = "https://x-token-auth:ATBBsecret@github.com:8443/acme/app.git"
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "https://github.com:8443/acme/app.git", "8443", "FUGARO_REMOTE", "before any git credential")
+	if strings.Contains(err.Error(), "ATBBsecret") || strings.Contains(rec.Reason, "ATBBsecret") {
+		t.Errorf("the refusal quotes the remote's credential: %v", err)
+	}
+}
+
 // guardProviderHost rewrites every https://github.com/ URL to a path that does
 // not exist, so a run that went on would fail its clone locally and offline
 // (internal/cli's clone test rewrites the fixture's remote the same way, for the

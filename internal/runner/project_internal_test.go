@@ -95,6 +95,58 @@ func TestRemoteHost(t *testing.T) {
 	}
 }
 
+// The endpoint half of the remote binding: the scheme and the port a run's git
+// credential would be scoped to (internal/gitops' CredentialURL is scheme +
+// "://" + the authority), read off the remote as git hands it to the
+// credential helper rather than as url.Parse reads it. A remote that names no
+// URL at all answers false: it names no endpoint for a credential to go to, and
+// the shape it does name is gitprov's question, read the same way here as in
+// SplitRemoteRaw (the cut at "//", the userinfo ending at the last "@" of the
+// authority).
+func TestRemoteEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		remote, scheme, port string
+		endpoint             bool
+	}{
+		{"https://github.com/acme/app.git", "https", "", true},
+		{"https://github.com/", "https", "", true},
+		// The two the check exists for: the credential's endpoint is not the
+		// launcher's.
+		{"http://github.com/acme/app.git", "http", "", true},
+		{"https://github.com:8443/acme/app.git", "https", "8443", true},
+		{"http://github.com:80/acme/app.git", "http", "80", true},
+		// The userinfo is not the host, and it is not the port: what is read
+		// off here is what follows the last "@", where git and curl end it.
+		{"https://x:token@github.com/acme/app.git", "https", "", true},
+		{"https://x:token@github.com:8443/acme/app.git", "https", "8443", true},
+		{"https://x-token-auth:t%6fk@github.com/repo.git", "https", "", true},
+		// An IPv6 literal's own colons are the address's; a port is what
+		// follows the "]".
+		{"https://[2001:db8::1]/acme/app.git", "https", "", true},
+		{"https://[2001:db8::1]:8443/acme/app.git", "https", "8443", true},
+		// The query and the fragment are not the authority, and the path is
+		// where the authority ends.
+		{"https://github.com/acme/app.git?access_token=x", "https", "", true},
+		{"https://github.com:8443", "https", "8443", true},
+		{"https://github.com", "https", "", true},
+		// No URL: the scp-like form (its colon is git's separator, and what
+		// follows is not "//"), a local path, a bare host, an empty remote, a
+		// file URL (nothing after its "//"), and a Windows path.
+		{"git@github.com:acme/app.git", "", "", false},
+		{"github.com:acme/app.git", "", "", false},
+		{"/tmp/fixture.git", "", "", false},
+		{"", "", "", false},
+		{"github.com", "", "", false},
+		{"file:///tmp/web.git", "", "", false},
+		{"C:\\src\\app", "", "", false},
+	} {
+		scheme, port, endpoint := remoteEndpoint(tc.remote)
+		if scheme != tc.scheme || port != tc.port || endpoint != tc.endpoint {
+			t.Errorf("remoteEndpoint(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.remote, scheme, port, endpoint, tc.scheme, tc.port, tc.endpoint)
+		}
+	}
+}
+
 // The owner/name half of the remote binding: the same repository written the
 // ways git writes it — .git or not, mixed case, an scp-like remote, a userinfo
 // — is one repository, and a remote that names no repository path at all is
