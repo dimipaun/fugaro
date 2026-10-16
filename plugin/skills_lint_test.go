@@ -528,9 +528,12 @@ func negatedBefore(prefix string) bool {
 
 var (
 	// forbiddenFlags the agent never passes: they confirm for the user, skip a
-	// check, or widen trust.
+	// check, or widen trust. --provision-batch belongs here with the other
+	// owner-typed flags of init: what it applies is billable and permanent (a
+	// Cloud Build, a NAT, a custom role, a scheduled job), --yes never covers
+	// it, and a skill is not the place to hand an agent an apply of it.
 	forbiddenFlags = []string{"--yes", "-y", "--allow-delete", "--forget", "--allow-job-delete", "--no-budget-check", "--allow-fork",
-		"--onboard-repo", "--replace-image", "--create-project", "--link-billing"}
+		"--onboard-repo", "--replace-image", "--create-project", "--link-billing", "--provision-batch"}
 	safetyFlags     = regexp.MustCompile(`(^|\s)(--no-verify|--no-gpg-sign|--no-smoke|--dangerously-skip-permissions|--force)(\s|=|$)`)
 	tokenCommands   = regexp.MustCompile(`print-access-token|print-identity-token|GOOGLE_IMPERSONATE_SERVICE_ACCOUNT|\bprintenv\b|\becho\s+"?\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD)|(^|[\s;|&])env\s*[|>]|\bBearer\s+\$|/proc/[^\s]*environ|\bdeclare\s+-x\b`)
 	credentialPaths = regexp.MustCompile(`~/\.config/gcloud|~/\.config/fugaro/(credentials|tokens?|secrets?)\S*|application_default_credentials|(^|[\s/"'])\.env($|[\s"'])|\.git-credentials|\.netrc`)
@@ -1575,9 +1578,9 @@ func TestLintForbidsBypassFlags(t *testing.T) {
 }
 
 // TestLintForbidsOnboardingAndMoneyFlags: opting a repository in, replacing a
-// registry image, creating a project and linking billing are the user's, typed
-// at their own terminal: a skill never has the agent pass these flags, in any
-// spelling.
+// registry image, creating a project, linking billing and provisioning the
+// Batch backend are the user's, typed at their own terminal: a skill never has
+// the agent pass these flags, in any spelling.
 func TestLintForbidsOnboardingAndMoneyFlags(t *testing.T) {
 	for _, body := range []string{
 		"```bash\nfugaro init --onboard-repo acme/app\n```\n",
@@ -1588,6 +1591,9 @@ func TestLintForbidsOnboardingAndMoneyFlags(t *testing.T) {
 		"```bash\nfugaro init --create-project --gcp-project my-proj-123\n```\n",
 		"Run `fugaro init --link-billing 0123AB-4567CD-89EF01`.\n",
 		"The user runs this:\n\n```bash user-runs\nfugaro init --create-project --gcp-project my-proj-123\n```\n",
+		"```bash\nfugaro init --provision-batch\n```\n",
+		"Run `fugaro init --provision-batch --yes`.\n",
+		"The user runs this:\n\n```bash user-runs\nfugaro init --provision-batch\n```\n",
 	} {
 		expectViolation(t, demoTree(t, body), "a flag")
 	}
