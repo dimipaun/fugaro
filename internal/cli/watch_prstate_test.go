@@ -198,8 +198,8 @@ func TestWatchNeverExecutesGHForOtherURLs(t *testing.T) {
 	}
 }
 
-// The --json feed is a contract a console reads (console/docs/json-contract.md
-// §2): the PR-state filter is a human-view filter and never touches it. The
+// The --json feed is a contract the desktop console reads (the JSON contract
+// doc, §2): the PR-state filter is a human-view filter and never touches it. The
 // document is identical with the filter on and off — a merged PR is still in
 // ready[] — and its key sets are pinned against a golden, so neither this
 // change nor a later one can add or drop a field by accident.
