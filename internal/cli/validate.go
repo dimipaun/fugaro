@@ -318,8 +318,8 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 }
 
 // routingProblems are plan task 1b.3's two routing rules: the resolution the
-// switch licenses, printed when this command can read it, and the refusal of a
-// Claude pin that a project routing Claude through a provider leaves on the
+// switch licenses, printed when this command can read it, and the note a Claude
+// pin carries when a project routing Claude through a provider leaves it on the
 // direct route.
 //
 // The resolution is printed only when the switch is readable, and the switch is
@@ -341,19 +341,33 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // under an observing budget is refused by the gateway rule (the resolution is
 // the first half of a halt, not the whole of a valid configuration).
 //
-// The refusal is design §6.2's safeguard read from the offline side. A project
-// that routes Claude through a provider is a project with no Anthropic key to
-// fall back on (docs/design/mixed-credentials.md §1: an OpenRouter key and
-// subscription OAuth tokens, no Anthropic one), and a Claude pin the switch
-// leaves on the direct route is a call nothing can make — the gateway refuses
-// it by name when no key is stored (config.MissingAnthropicKey). That a key
-// version exists is a fact only the cloud knows, so this refuses the state
-// validate *can* read offline: an api-key run under an enforcing budget, whose
-// Claude call therefore goes to Anthropic (config.AnthropicKeyNeeded), and a
-// route of the owner's that claims this model with allow_data_to written — the
-// resolver answers whether it would take the call. A Claude pin nothing claims
-// keeps the note it always was: there is no route to send it to, and "write the
-// switch" would be advice this project's own providers cannot take.
+// The note beside a pin that goes direct is design §6.2's safeguard read from
+// the offline side. A project that routes Claude through a provider is a
+// project with no Anthropic key to fall back on (docs/design/mixed-credentials.md
+// §1: an OpenRouter key and subscription OAuth tokens, no Anthropic one), and a
+// Claude pin the switch leaves on the direct route is a call that needs the key
+// whenever the job holds none — the gateway refuses it by name when none is
+// stored (config.MissingAnthropicKey). Whether the job holds one is the fact
+// this command cannot read, which is why this is a note and never a refusal.
+// What it *can* read offline is the pair that makes the key matter: an api-key
+// run under an enforcing budget, whose Claude call therefore goes to Anthropic
+// (config.AnthropicKeyNeeded), and a route of the owner's that claims this model
+// — the resolver answers whether that route would take the call. Reporting that
+// pair as a problem was the same error the resolution lines had stopped making,
+// and the harsher version of it: it refused a configuration that is valid
+// whenever a key *is* stored, and told an operator who has one to send Claude
+// prompts to a third party. A Claude pin nothing claims keeps the note it always
+// was: there is no route to send it to, and "write the switch" would be advice
+// this project's own providers cannot take.
+//
+// A note the reader would see twice — the same path and the same sentence —
+// is printed once (dedupeNotes). claudePins enumerates the three pin paths, and
+// the routing lines are keyed by the model rather than by the pin, so a file
+// whose agent.model serves both the coder and the reviewer printed the same
+// routing line twice. A pin's own line keeps its own path, which is what the
+// run's own pin rules name (internal/config's pinPaths), so a note has to
+// repeat in both to be dropped: what carries no information is the sentence,
+// not the key the owner edits.
 //
 // That route is looked for in lc.Providers, the operator's own table, and never
 // in the checkout layer's claude_models claims (which the resolution above does
@@ -400,7 +414,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		// ownProviders is the same table before the filter: the operator's own
 		// providers exactly as the operator wrote them, which is the only table
 		// that can answer whether an entry's allow_data_to was *written*
-		// (claudeDirectRefusal). runner.ProvidersFor rewrites every entry it
+		// (claudeDirectKeyNote). runner.ProvidersFor rewrites every entry it
 		// keeps to `allow_data_to: [repo]` and so answers "written" for one that
 		// never wrote the key at all.
 		ownProviders = lc.Providers
@@ -449,8 +463,8 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			} else {
 				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
 			}
-			if why := claudeDirectRefusal(cfg.Agent, p, routes, ownProviders, repo, mode); why != "" {
-				problems = append(problems, config.Problem{Path: p.path, Message: why})
+			if msg := claudeDirectKeyNote(cfg.Agent, p, routes, ownProviders, repo, mode); msg != "" {
+				notes = append(notes, config.Problem{Path: p.path, Message: msg})
 			}
 		case rerr != nil:
 			// Everything below is a question about the routes a run carries,
@@ -462,8 +476,8 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			// for the same reason).
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
 				"%s unresolved: the routes a run carries are the ones its repository may send code to (allow_data_to), and this checkout's origin could not be read (%v), so no repository can be said to carry the switch's route; run validate in the checkout, or from one whose origin names owner/name", p.model, rerr)})
-			if why := claudeDirectRefusal(cfg.Agent, p, routes, ownProviders, repo, mode); why != "" {
-				problems = append(problems, config.Problem{Path: p.path, Message: why})
+			if msg := claudeDirectKeyNote(cfg.Agent, p, routes, ownProviders, repo, mode); msg != "" {
+				notes = append(notes, config.Problem{Path: p.path, Message: msg})
 			}
 		case !ok:
 			// The switch names this model and no route a run of this repository
@@ -475,9 +489,10 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			// path. A problem here is a claim about a run, so it is reported
 			// only where every run of this configuration reaches the switch —
 			// the other states are notes, because that halt is not this
-			// command's to promise. The refusal beside this case is gated on
-			// the same difference (claudeDirectRefusal): the two halves of one
-			// function may not disagree about whether routing reaches here.
+			// command's to promise. The note a pin that goes direct carries is
+			// gated on the same difference (claudeDirectKeyNote): the two halves
+			// of one function may not disagree about whether routing reaches
+			// here — and the note, unlike this problem, never turns on the key.
 			msg := fmt.Sprintf("%s is named by routing.claude.models and does not resolve over the routes a run of %s carries: no single provider entry claims it with allow_data_to written, or the entry that claims it does not admit this repository, and a call the switch names has no direct fall-back (D1b, design §6.2)", p.model, repo)
 			fix := "fix the list, the claim, or the allow_data_to of the entry that claims it"
 			switch reach {
@@ -550,7 +565,30 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			}
 		}
 	}
-	return problems, notes
+	return problems, dedupeNotes(notes)
+}
+
+// dedupeNotes drops a note the reader would see twice: the same path and the
+// same sentence, which is what a configuration serving two pins from one model
+// produces. claudePins enumerates the three pin paths and a file may fill two of
+// them from one key (agent.model, or an unset agent.models.reviewer), while the
+// routing lines name the model rather than the pin — so the same line came back
+// once per pin, and the second copy says nothing the first did not. A note about
+// a pin keeps that pin's path, which is what the run's own pin rules name
+// (internal/config's pinPaths), so a path that differs is not repetition: only
+// both together are.
+func dedupeNotes(ns []config.Problem) []config.Problem {
+	seen := make(map[string]bool, len(ns))
+	out := make([]config.Problem, 0, len(ns))
+	for _, n := range ns {
+		key := n.Path + "\x00" + n.Message
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, n)
+	}
+	return out
 }
 
 // routingReach is what a run of this configuration does with the switch: the
@@ -678,10 +716,23 @@ func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
 	return r.Claude
 }
 
-// claudeDirectRefusal is the message a Claude pin that goes direct carries when
-// the run cannot make the call as it stands — "" for every other state. It is
-// routingProblems' second rule; the doc comment above has the reading of "no
-// Anthropic key" it rests on.
+// claudeDirectKeyNote is the note a Claude pin that goes direct carries when the
+// call would need the Anthropic API key — "" for every state where there is
+// nothing to say. It is routingProblems' second rule; the doc comment above has
+// the reading of "no Anthropic key" it rests on.
+//
+// It is a note and never a problem for the reason the resolution lines beside it
+// are notes: whether the job holds a key is the one fact this command cannot read
+// offline (the agent.auth note above says the key is *needed*, and the version
+// that would settle it is the cloud's). A refusal here would fail a
+// configuration that is valid whenever one is stored, and would tell an operator
+// who has one to send Claude prompts to a third party. So the sentence names
+// both runs — one with a version of the anthropic-api-key secret mounted sends
+// the call to Anthropic as it stands, and one with none halts with the gateway's
+// own message — and leaves the judgement to the operator. What validate can read
+// is the pair that makes the key matter at all (an enforcing api-key run whose
+// call goes to Anthropic, and a route that would take it), and that pair is what
+// this note turns on.
 //
 // The two provider tables it asks are two different questions. routes is the
 // table the run will have, which is what "does this run need the key" is about
@@ -693,7 +744,7 @@ func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
 // That question must be asked of own and never of runner.ProvidersFor's table:
 // the filter rewrites every entry it keeps to `allow_data_to: [repo]` (its own
 // doc — the run only needs to know it is allowed), so over it an entry that
-// never wrote allow_data_to reads as written, and this refusal stated a premise
+// never wrote allow_data_to reads as written, and this note stated a premise
 // the warning providerProblems prints for the same file contradicts (an absent
 // allow_data_to is exactly what OpenToEveryRepoReason describes). Which entry
 // claims the model for this repository is still the run's own filter's answer —
@@ -701,7 +752,7 @@ func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
 // "write the switch" is not advice that run can take — and that filter is asked
 // first, for the entry's name; the written question is then asked of the
 // operator's entry by that name.
-func claudeDirectRefusal(a config.Agent, p claudePin, routes, own map[string]config.ModelProvider, repo, mode string) string {
+func claudeDirectKeyNote(a config.Agent, p claudePin, routes, own map[string]config.ModelProvider, repo, mode string) string {
 	if mode != policy.ModeEnforce {
 		// Without a gateway there is no routing at all: nothing is sent to a
 		// provider, and "write the switch" would be advice this run cannot take
@@ -738,9 +789,19 @@ func claudeDirectRefusal(a config.Agent, p claudePin, routes, own map[string]con
 		if repo != "" {
 			what = fmt.Sprintf(`allow_data_to: [%q]`, repo)
 		}
-		return fmt.Sprintf(`%s is pinned and goes direct, and this call needs the Anthropic API key (%s), while provider %s of this project claims the model and its allow_data_to names no repository: an absent allow_data_to already means every repository of the project may mount its key and send it code, and an empty list is refused as naming nobody, which is why D1b's safeguard requires the list to be written before the switch may route a Claude call through that entry. Write %s on %s — or ["*"] to mean every repository on purpose — and then write routing.claude: openrouter in the project config: routing: {claude: {via: openrouter, models: [%s]}} (the switch is the operator's and never a repository's; D1a, D1b, design §6.2)`, p.model, config.MissingAnthropicKey, name, what, name, p.model)
+		return keyStates(p.model) + fmt.Sprintf(`, and provider %s of this project claims the model and its allow_data_to names no repository: an absent allow_data_to already means every repository of the project may mount its key and send it code, and an empty list is refused as naming nobody, which is why D1b's safeguard requires the list to be written before the switch may route a Claude call through that entry. Write %s on %s — or ["*"] to mean every repository on purpose — and then write routing.claude: openrouter in the project config: routing: {claude: {via: openrouter, models: [%s]}} (the switch is the operator's and never a repository's; D1a, D1b, design §6.2)`, name, what, name, p.model)
 	}
-	return fmt.Sprintf("%s is pinned and goes direct, and this call needs the Anthropic API key (%s), while a route of this project claims the model and its allow_data_to is written: write `routing.claude: openrouter` in the project config — routing: {claude: {via: openrouter, models: [%s]}} — to send the call there instead (the switch is the operator's and never a repository's; D1a, D1b, design §6.2)", p.model, config.MissingAnthropicKey, p.model)
+	return keyStates(p.model) + fmt.Sprintf(", and a route of this project claims the model and its allow_data_to is written: write `routing.claude: openrouter` in the project config — routing: {claude: {via: openrouter, models: [%s]}} — to send the call there instead of to Anthropic (the switch is the operator's and never a repository's; D1a, D1b, design §6.2)", p.model)
+}
+
+// keyStates opens claudeDirectKeyNote with the two states of the one fact the
+// note cannot read. Both halves are the run's own: the halt quotes the gateway's
+// message verbatim (config.MissingAnthropicKey is what a call that finds no key
+// stored is refused with), and the working configuration is the same call with
+// the version in place. Naming both is the point — picking one would be validate
+// asserting a secret it never looked at.
+func keyStates(model string) string {
+	return fmt.Sprintf(`%s is pinned and goes direct, and this call needs a stored Anthropic API key whenever the job holds none: a job with a version of the anthropic-api-key secret mounts one and sends this call to Anthropic as it stands, and a job with none halts — "%s". Whether this job holds one is not a fact this command reads offline, so this is a note and never a refusal`, model, config.MissingAnthropicKey)
 }
 
 // setsPolicy is whether the file has a budget: block or a token limit: the

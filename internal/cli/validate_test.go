@@ -1239,33 +1239,53 @@ func TestValidateSaysARoutedPinHaltsUnderAnObservingBudget(t *testing.T) {
 	}
 }
 
-// TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch is plan task 1b.3's second
+// TestValidateNotesAClaudePinWithNoKeyAndNoSwitch is plan task 1b.3's second
 // requirement, design §6.2's safeguard: a project that routes Claude through a
 // provider — the owner docs/design/mixed-credentials.md §1 describes, an
 // OpenRouter key and no Anthropic one — and pins a Claude model the switch
-// leaves on the direct route is refused, and the message names the one line
-// that fixes it. Without the claim there is nothing to route the call to, and
-// the state stays the note it always was.
-func TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
+// leaves on the direct route is told so, and the line names the one write that
+// sends the call to that route.
+//
+// It is a note and not a refusal, which is the review finding on this change:
+// the refusal was gated on what validate can read (an enforcing api-key run and
+// a route claiming the model) yet spoke as if it had read the job's secret, so
+// it failed a configuration that is valid whenever an Anthropic key *is* stored
+// — telling an operator who has one to send Claude prompts to a third party.
+// The two states are named instead, which is what the sibling `!ok` path already
+// does for the same unread fact (routingKeyless). Without the claim there is no
+// route to send the call to, and there is nothing to say at all.
+func TestValidateNotesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
 	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	pinned := func() string {
 		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
 	}
 	// The route claims the model and its allow_data_to is written; the switch
-	// does not name it, so the call goes direct and needs a key nobody has. The
-	// checkout is the one the route admits: the refusal asks whether this
-	// repository's run has a route to take at all.
+	// does not name it, so the call goes direct and needs a key whenever the job
+	// holds none. The checkout is the one the route admits: the note asks whether
+	// this repository's run has a route to take at all.
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, budget+routedProjectBlock)
 	inCheckoutOf(t, "acme/sandbox")
-	out, _, err := execute(t, "validate", pinned())
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "routing.claude: openrouter") {
-		t.Fatalf("exit %d, out %q: want a refusal naming `routing.claude: openrouter`", ExitCode(err), out)
+	out, errOut, err := execute(t, "validate", pinned())
+	if err != nil {
+		t.Fatalf("a configuration that works whenever a key is stored is refused (%v):\n%s%s", err, out, errOut)
 	}
-	// The refusal is the pin's own, so its path is the key the owner fixes.
-	if !strings.Contains(out, "agent.models.coder") {
-		t.Fatalf("the refusal does not name the pin: %q", out)
+	if !strings.Contains(errOut, "routing.claude: openrouter") {
+		t.Fatalf("the note does not name the line that sends the call to that route:\n%s", errOut)
+	}
+	// The note is the pin's own, so its path is the key the owner fixes, and it
+	// never rides the problem channel.
+	if !strings.Contains(errOut, "agent.models.coder") || strings.Contains(out, "goes direct") {
+		t.Fatalf("the note is not the pin's own, or it is on stdout:\nout %q\nerr %q", out, errOut)
+	}
+	// Both states, because which one holds is the fact validate cannot read: the
+	// job with a key sends the call to Anthropic as it stands, and the job with
+	// none halts with the gateway's own message.
+	if !strings.Contains(errOut, "a job with a version of the anthropic-api-key secret") ||
+		!strings.Contains(errOut, "a job with none halts") ||
+		!strings.Contains(errOut, config.MissingAnthropicKey) {
+		t.Fatalf("the note picks one state instead of naming both:\n%s", errOut)
 	}
 	// With the switch written the same file is valid: the route is one the
 	// owner already claims, and the resolution is what the run takes.
@@ -1274,12 +1294,14 @@ func TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
 	if out, _, err := execute(t, "validate", pinned()); err != nil {
 		t.Fatalf("a switch naming the pinned model is refused: %v\n%s", err, out)
 	}
-	// A Claude pin nothing claims is not this refusal: there is no route to
-	// send it to, and the missing key stays the note it has always been.
+	// A Claude pin nothing claims has nothing to say: there is no route to send
+	// it to, and the missing key stays the note it has always been.
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, budget)
-	if out, _, err := execute(t, "validate", pinned()); err != nil {
+	if out, errOut, err := execute(t, "validate", pinned()); err != nil {
 		t.Fatalf("a Claude pin with no route to take is refused: %v\n%s", err, out)
+	} else if strings.Contains(errOut, "routing.claude: openrouter") {
+		t.Fatalf("a pin no route claims is told to write a switch it cannot take:\n%s", errOut)
 	}
 }
 
@@ -1289,7 +1311,7 @@ func TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
 // `allow_data_to: [repo]` (runner.ProvidersFor's own doc — the run only needs
 // to know it is allowed), so an entry whose allow_data_to was *never written*
 // read as written: D1b's safeguard, decided by the filter that erases the
-// difference. The refusal then stated a premise the warning validate prints
+// difference. The note then stated a premise the warning validate prints
 // for the same file contradicts ("has no allow_data_to, so every repository of
 // the project may mount its key and send it code" — OpenToEveryRepoReason), and
 // sent the owner to write a switch whose route is not ready. The question is
@@ -1297,7 +1319,7 @@ func TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
 // as the two different things they are.
 func TestValidateAsksWhetherAllowDataToWasWritten(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
-	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\nworkflows:"
+	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	pinned := func() string {
 		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
 	}
@@ -1305,8 +1327,8 @@ func TestValidateAsksWhetherAllowDataToWasWritten(t *testing.T) {
 	// claims the model, admits every repository of the project (an absent
 	// allow_data_to already means that) and never wrote the list D1b is about.
 	// A run of acme/sandbox carries it — ProvidersFor keeps it and rewrites its
-	// allow_data_to — so the refusal fires: the call goes direct and needs a key
-	// nobody has. What it may not say is that the route is ready.
+	// allow_data_to — so the note fires: the call goes direct and needs a key
+	// whenever the job holds none. What it may not say is that the route is ready.
 	unwritten := strings.Replace(routedProjectBlock, `    allow_data_to: ["acme/sandbox"]`+"\n", "", 1)
 	if unwritten == routedProjectBlock {
 		t.Fatal("the fixture still carries an allow_data_to")
@@ -1314,31 +1336,76 @@ func TestValidateAsksWhetherAllowDataToWasWritten(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, budget+unwritten)
 	inCheckoutOf(t, "acme/sandbox")
-	out, errOut, err := execute(t, "validate", pinned())
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "routing.claude: openrouter") {
-		t.Fatalf("exit %d, out %q: want a refusal naming `routing.claude: openrouter`", ExitCode(err), out)
+	_, errOut, err := execute(t, "validate", pinned())
+	if err != nil {
+		t.Fatalf("a note was reported as a problem: %v\n%s", err, errOut)
 	}
-	if strings.Contains(out, "its allow_data_to is written") {
-		t.Fatalf("the refusal reads allow_data_to as written over the table that rewrites it, next to its own warning (%q):\n%s", errOut, out)
+	if !strings.Contains(errOut, "routing.claude: openrouter") {
+		t.Fatalf("the note does not name `routing.claude: openrouter`:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "its allow_data_to is written") {
+		t.Fatalf("the note reads allow_data_to as written over the table that rewrites it:\n%s", errOut)
 	}
 	// The truth about that entry, and what to write instead: the entry names no
-	// repository, and the message names the entry, the missing list and the
-	// switch, in that order.
-	if !strings.Contains(out, "its allow_data_to names no repository") || !strings.Contains(out, "provider openrouter of this project") || !strings.Contains(out, `allow_data_to: ["acme/sandbox"]`) {
-		t.Fatalf("the refusal does not say the entry names no repository and what to write:\n%s", out)
+	// repository, and the line names the entry, the missing list and the switch,
+	// in that order.
+	if !strings.Contains(errOut, "its allow_data_to names no repository") || !strings.Contains(errOut, "provider openrouter of this project") || !strings.Contains(errOut, `allow_data_to: ["acme/sandbox"]`) {
+		t.Fatalf("the note does not say the entry names no repository and what to write:\n%s", errOut)
 	}
 	if !strings.Contains(errOut, "providers.openrouter: has no allow_data_to") {
-		t.Fatalf("the refusal's premise must be the warning's too, and the warning is:\n%s", errOut)
+		t.Fatalf("the note's premise must be the warning's too, and the warning is:\n%s", errOut)
 	}
 	// An entry that lists the repository is the other state, and it counts as
-	// written: the same file with the list in place is refused for the missing
-	// switch alone, which is what the message then says.
+	// written: the same file with the list in place takes the other branch of the
+	// note, which is what the line then says.
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, budget+routedProjectBlock)
 	inCheckoutOf(t, "acme/sandbox")
-	out, _, err = execute(t, "validate", pinned())
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "its allow_data_to is written") {
-		t.Fatalf("an entry that lists the repository must count as written: exit %d, out %q", ExitCode(err), out)
+	_, errOut, err = execute(t, "validate", pinned())
+	if err != nil || !strings.Contains(errOut, "its allow_data_to is written") {
+		t.Fatalf("an entry that lists the repository must count as written: err %v\n%s", err, errOut)
+	}
+}
+
+// TestValidatePrintsOneRoutingNotePerModel pins the count of the routing lines,
+// which is the review finding on this change: claudePins enumerates the three pin
+// paths and a file whose agent.model serves both the coder and the reviewer
+// gives two of them one model — while the routing line names the model and not
+// the pin, so the same sentence came back once per pin and the second copy said
+// nothing. The lines are deduped by path and sentence (dedupeNotes) and the test
+// counts them, because every other routing test only asks whether a substring is
+// there at all.
+func TestValidatePrintsOneRoutingNotePerModel(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	// agent.model serves the coder and the reviewer; only the background pin is
+	// a key of its own. Both models are canonical Claude IDs, so the switch's own
+	// line is printed for each.
+	const shared = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, budget+routedProjectBlock)
+	inCheckoutOf(t, "acme/sandbox")
+	out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", shared, 1)))
+	// The counts first: in the state this test is about — the line printed once
+	// per pin, with the same sentence each time — these are what fail.
+	for _, line := range []string{
+		"routing.claude: claude-sonnet-5-5 -> direct",
+		"routing.claude: claude-haiku-4-5 -> direct",
+	} {
+		if n := strings.Count(errOut, line); n != 1 {
+			t.Errorf("the routing line %q is printed %d times, want once:\n%s", line, n, errOut)
+		}
+	}
+	// The pin's own note is keyed by the pin and keeps its path, which is what
+	// the run's own pin rules name (internal/config's pinPaths): both roles that
+	// carry the model are told, each on the key the owner edits.
+	if n := strings.Count(errOut, "agent.models.coder: claude-sonnet-5-5 is pinned and goes direct"); n != 1 {
+		t.Errorf("the coder's own note is printed %d times, want once:\n%s", n, errOut)
+	}
+	if !strings.Contains(errOut, "agent.models.reviewer: claude-sonnet-5-5 is pinned and goes direct") {
+		t.Errorf("the reviewer's own note is missing, and its path is the key the owner edits:\n%s", errOut)
+	}
+	if err != nil {
+		t.Fatalf("validate failed: %v\n%s%s", err, out, errOut)
 	}
 }
 
