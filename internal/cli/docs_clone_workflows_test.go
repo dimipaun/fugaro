@@ -174,6 +174,18 @@ func TestChecklistHasCheck38(t *testing.T) {
 			t.Errorf("the Check 38 section's base-image record does not say %q", want)
 		}
 	}
+	// ... and the re-record is atomic like the recorded state's own block: it
+	// writes the new ref to a temp file and moves it over the record only once
+	// the read came back, because `> "$S/base-image"` truncates the only
+	// record of the pre-move ref before doctor's output is known.
+	for _, want := range []string{"check38-base-image.XXXXXX", `mv "$T" "$S/base-image"`} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's re-record does not say %q", want)
+		}
+	}
+	if strings.Contains(section, `> "$S/base-image"`) {
+		t.Error("the Check 38 section's re-record still writes the base-image record in place, truncating the pre-move ref")
+	}
 
 	// The recorded HEAD is informational, and says so: it is the base
 	// branch's tip when the record was taken, which is not what anything
@@ -275,8 +287,8 @@ func TestChecklistHasCheck38(t *testing.T) {
 	// sandbox's own file at all — the case the old two-branch Restore read as
 	// "default" and then dropped a key that was never there.
 	for _, want := range []string{
-		"says `repo`", "says `default`", "says `project`", "says `profile <name>`",
-		"not in the sandbox's fugaro.yaml", "never edit the project layer",
+		"says `repo`", "anything else — `default`, `project` or `profile <name>`",
+		"not in the sandbox's fugaro.yaml", "Never edit the project layer",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Check 38 section's Restore does not say %q", want)
@@ -312,6 +324,7 @@ func TestChecklistHasCheck38(t *testing.T) {
 	// Restore refuses rather than guessing when the record is missing or the
 	// commit is not an ancestor. Never a forced push.
 	for _, want := range []string{
+		"step 1's agent commit",
 		"$S/base-commit", "git merge-base --is-ancestor",
 		`git revert --no-edit "$(cat "$S/base-commit")"`,
 		"origin/${BASE}", "https://bitbucket.org/edgeappinc/fugarosandbox.git", "`--force`",
@@ -386,6 +399,7 @@ func TestChecklistHasCheck38(t *testing.T) {
 		{"sandbox-head", "the recorded HEAD named as the revert's target"},
 		{"git push --force", "a forced push to the sandbox's base branch"},
 		{"`bash` sub-shell", "the old advice to run the guard where its variables die"},
+		{"the earlier change to the same path", "the wrong account of what HEAD~1 is (step 1's agent commit, not a change to check38-note.txt)"},
 	} {
 		if strings.Contains(section, row.banned) {
 			t.Errorf("the Check 38 section still carries %q (%s)", row.banned, row.why)
