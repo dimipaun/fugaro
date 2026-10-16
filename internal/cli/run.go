@@ -110,7 +110,14 @@ type runOptions struct {
 	// pr is --pr, repeated: a single entry continues Fugaro's own pull
 	// request N (the only meaning before Task 12 of the generic-tool
 	// plan); 2 to 4 need a mode: review recipe such as pick (G13).
-	pr            []int
+	pr []int
+	// attach is --attach, repeated: files this launch uploads into the
+	// run's own inputs/ for a mode: artifact run to download (design
+	// artifact-runs.md §4, plan Task 6). It is refused outright on a run id
+	// that already holds a task, refused unless the launch resolves to an
+	// artifact recipe, and refused over any of the workflow's three
+	// inputs caps before the first byte is uploaded.
+	attach        []string
 	asJSON        bool
 	noBudgetCheck bool
 	recipe        string
@@ -164,6 +171,7 @@ func newRunCmd() *cobra.Command {
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
+	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
@@ -172,7 +180,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe", "token"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe", "token", "attach"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -347,9 +355,32 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
+	// The run-id freshness check, first of everything an --attach launch
+	// does and before the first byte it could upload (design §4 step 1,
+	// plan Review Focus 11). It is outside the prior == nil block below
+	// because a repeated --run-id that already launched must be refused
+	// here too rather than report the existing launch while holding
+	// attachments that never went anywhere.
+	if len(o.attach) > 0 {
+		if err := attachRefusesStoredRun(ctx, s, spec.RunID); err != nil {
+			return launchResult{}, err
+		}
+	}
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
 		return launchResult{}, err
+	}
+	// The other half of that check, and the last place --attach can still
+	// refuse a run that exists: launch.json (or result.json's execution)
+	// says this run id has launched while no task.json is there to read (a
+	// task deleted after the fact, a record backfilled without one). Every
+	// --attach step lives inside the prior == nil block below — the caps,
+	// the image gate, the upload itself — so a launch that found a prior
+	// would write a task naming no inputs while the files the owner named
+	// went nowhere, silently. No attachment is added to a run that already
+	// went: it started with the task it started with.
+	if prior != nil && len(o.attach) > 0 {
+		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", spec.RunID)
 	}
 	if prior == nil && reused {
 		if err := recheckFollowUp(ctx, env, slug, spec, warn); err != nil {
@@ -372,6 +403,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	if prior == nil {
+		// --attach, before the gates below: its recipe refusal, its caps,
+		// D9's line and its image gate (design §4, plan P7/P9). It uploads
+		// nothing here — attachUpload does that below, after the last gate
+		// that can still refuse this launch, so a refused launch leaves
+		// nothing in the bucket under a run id that never gets a task. A
+		// launch with no --attach does nothing here at all.
 		agentRecipe, kind, clone := "", "", false
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
@@ -379,6 +416,10 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				kind = w.BaseKind()
 				clone = w.Checkout == config.CheckoutClone
 			}
+		}
+		caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
+		if err != nil {
+			return launchResult{}, err
 		}
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
@@ -428,6 +469,23 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				}
 			}
 		}
+		if spec.Mode == recipe.ModeArtifact {
+			// The mode: artifact gate: a task carrying mode is refused
+			// outright by a runner older than artifactsSince (task.Parse
+			// decodes with DisallowUnknownFields), so the launch must not
+			// reach such a job at all. Judged from the deployed job's build
+			// record exactly as the project layer's and the named token's
+			// gates above are, and for an artifact recipe launched with
+			// nothing attached just as much as for one launched with
+			// --attach.
+			if clone {
+				if err := checkCloneImageSince(env.lc, spec, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
+				return launchResult{}, err
+			}
+		}
 		if err := checkMaxParallel(ctx, env); err != nil {
 			return launchResult{}, err
 		}
@@ -442,6 +500,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := env.budgetPrecheck(ctx, slug, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+		}
+		// The upload, last of everything an --attach launch does and still
+		// before createTask: every refusal this launcher can make from what
+		// it already has has been made above, so a refused launch leaves no
+		// input object under a run id that never gets a task (design §4
+		// step 1, plan Review Focus 11), and the task written next names
+		// exactly the bytes that are in the bucket.
+		if err := attachUpload(ctx, env, spec, s.Prefix(), o.attach, caps); err != nil {
+			return launchResult{}, err
 		}
 	}
 	if o.retry == "" {
@@ -515,6 +582,11 @@ func taskText(cmd *cobra.Command, file string, args []string, optional bool) (st
 type attemptPlan struct {
 	repo, slug, workflow, ref, me, account, totalOverride string
 	recipe                                                *task.Recipe
+	// mode is the resolved recipe's mode when the runner cannot read it
+	// from the task alone (mode: artifact today): buildAttemptSpec writes it
+	// into the spec, and it is empty for implement and review, so those
+	// specs stay byte-identical to what the previous release wrote.
+	mode string
 }
 
 // resolveAttemptPlan resolves everything a new run's spec needs except its
@@ -574,11 +646,11 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	rcp, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn, forAttempts)
+	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn, forAttempts)
 	if err != nil {
 		return nil, err
 	}
-	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, me: me, account: account, totalOverride: totalOverride, recipe: rcp}, nil
+	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode}, nil
 }
 
 // buildAttemptSpec stamps a fresh run id (or o.runID, when given) onto plan,
@@ -592,7 +664,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 			return "", nil, err
 		}
 	}
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -903,7 +975,7 @@ func claudeAccountAllowed(env *cloudEnv, repo, name string, co *config.Config) e
 // forAttempts gives a mode: review refusal that fits runAttempts's caller
 // (--attempts refuses --pr, so the plain launch's "add --pr" advice would be
 // wrong there).
-func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer, forAttempts bool) (*task.Recipe, error) {
+func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer, forAttempts bool) (*task.Recipe, string, error) {
 	name, explicit := flag, flag != ""
 	var cfg *config.Config
 	if c := checkout(); c != nil {
@@ -917,20 +989,43 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	}
 	rr, err := resolveRecipe(ctx, env, root, name, time.Now(), false)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if rr.Recipe.Mode == recipe.ModeReview {
 		if forAttempts {
-			return nil, userErr("recipe %s is mode: review, which only reviews pull requests; --attempts launches a fresh batch and cannot use it (review one with fugaro run --recipe %s --pr N instead)", rr.Name, rr.Name)
+			return nil, "", userErr("recipe %s is mode: review, which only reviews pull requests; --attempts launches a fresh batch and cannot use it (review one with fugaro run --recipe %s --pr N instead)", rr.Name, rr.Name)
 		}
-		return nil, userErr("recipe %s is mode: review, which only reviews pull requests; launch it with --recipe %s --pr N (1 to 4 times)", rr.Name, rr.Name)
+		return nil, "", userErr("recipe %s is mode: review, which only reviews pull requests; launch it with --recipe %s --pr N (1 to 4 times)", rr.Name, rr.Name)
+	}
+	// A mode: artifact launch carries its mode in the task, and the runner
+	// selects the run's shape from that field before it resolves the recipe
+	// itself. So the launcher may only write it when it is sure of the
+	// recipe the run will get: resolveRecipe has paths where what it
+	// returned is NOT that recipe (a project layer this launcher may not
+	// read, a stale cached project recipe standing in for an unreachable
+	// bucket), and on those the mode would stay empty for a recipe that is
+	// mode: artifact, the spec would be indistinguishable from an implement
+	// one, and the image gate below would not fire: a silent pull request
+	// where the owner asked for a file. The conservative direction is the
+	// right one; the owner reruns when the layer is reachable.
+	if rr.Recipe.Mode == recipe.ModeArtifact {
+		if rr.Note != "" {
+			return nil, "", userErr("recipe %s is mode: artifact, but %s; the launch is refused rather than run without the recipe's mode in its task (retry when the layer is reachable)", rr.Name, rr.Note)
+		}
+		if forAttempts {
+			return nil, "", userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name)
+		}
 	}
 	printRecipeNote(warn, rr, explicit)
 	// An explicit --recipe default overrides agent.recipe, which applies when
 	// the checkout sets it, or when there is no checkout and the runner reads
 	// it at the ref: then the default is carried in the task.
 	override := flag == recipe.DefaultName && (cfg == nil || cfg.Agent.Recipe != "")
-	return rr.taskRecipeEmbedding(override), nil
+	mode := ""
+	if rr.Recipe.Mode == recipe.ModeArtifact {
+		mode = recipe.ModeArtifact
+	}
+	return rr.taskRecipeEmbedding(override), mode, nil
 }
 
 // printRecipeNote prints rr's note when the user chose the recipe by name
@@ -981,13 +1076,33 @@ func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
 // recipeForLaunch is the recipe this launch will run, parsed: the task's own
 // (the text the launcher embedded for a project or catalog recipe, else the
 // repository file a repo-sourced one names, read from this checkout), or,
-// for a task that names none, the one this checkout's config selects
-// (localRecipe, exactly as `fugaro validate` resolves it). nil when the
-// launcher cannot read or parse it here: the runner resolves the same
-// recipe at the task's ref and refuses it there.
+// for a task that names none, the one the runner will resolve for it —
+// agent.recipe from this checkout's config, for a FIRST run (localRecipe,
+// exactly as `fugaro validate` resolves it), and the catalog default for a
+// follow-up, which never takes agent.recipe at all (the runner's
+// resolveRecipe, internal/runner/recipe.go: `r.follow == nil &&
+// cfg.Agent.Recipe != ""`). nil when the launcher cannot read or parse it
+// here: the runner resolves the same recipe at the task's ref and refuses it
+// there.
+//
+// The follow-up arm is not a detail: --attach resolves the mode through this
+// function (checkAttachRecipe), and reading agent.recipe for a follow-up made
+// the launcher allow, upload for and write a task for an artifact recipe the
+// runner would then not run — it takes the default (mode: implement) — so the
+// run failed at bootstrap with the bytes already in the bucket.
 func recipeForLaunch(ctx context.Context, cfg *config.Config, spec *task.Spec) *recipe.Recipe {
 	root := checkoutRoot(ctx, spec.Repo)
 	if spec.Recipe == nil {
+		if spec.IsFollowUp() {
+			// Resolved without cfg: agent.recipe is not consulted for a
+			// follow-up, so the name is the default's and this checkout's
+			// layer, when there is one, is read for it exactly as the runner
+			// reads that layer at the base — from the working tree here, which
+			// is the approximation every launcher-side read of a base file
+			// makes, and the runner stays the backstop for a base whose file
+			// differs from it.
+			return localRecipeNamed(root, recipe.DefaultName)
+		}
 		if cfg == nil {
 			return nil
 		}

@@ -257,8 +257,22 @@ type run struct {
 	ckpt checkpointState
 	// skipPR is set when the check gate already ended the run (clean, or an
 	// infra error of its own, gate.go): finalize, which still runs after,
-	// does nothing more.
+	// does nothing more. A review run and an artifact run set it for their
+	// whole lives: neither ever pushes or opens a pull request.
 	skipPR bool
+	// artifact is whether this run is a mode: artifact run (design
+	// artifact-runs.md §3): set at bootstrap from the task spec's Mode,
+	// beside r.review, and confirmed against the resolved recipe's mode
+	// there (an empty spec.Mode takes the recipe's). out is that recipe's
+	// outputs: block, artifactPlan whether its steps lead with a plan
+	// stage, and useWhen its use_when text for the plan prompt.
+	artifact     bool
+	out          *recipe.Outputs
+	artifactPlan bool
+	useWhen      string
+	// renderRec is what the render step did, stored as Record.Render: the
+	// same record the report and result.json are written from.
+	renderRec *runstore.RenderRecord
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -405,9 +419,12 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
-	if r.review {
+	switch {
+	case r.artifact:
+		r.runArtifactMode(runCtx)
+	case r.review:
 		r.runReviewMode(runCtx)
-	} else {
+	default:
 		r.runAgentLoop(runCtx)
 	}
 	// From here nothing the backend says can stop a stage.
@@ -640,8 +657,11 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 	// A follow-up's agent gets no git credentials (design §6.1): the
 	// runner fetches and pushes for it. Neither does a review run's
 	// (design generic-tool §3.6, G12): the runner fetches its checkout(s)
-	// itself, and never pushes or opens anything on its behalf.
-	if r.env != nil && r.follow == nil && !r.review {
+	// itself, and never pushes or opens anything on its behalf. Nor an
+	// artifact run's (design artifact-runs.md §3): its deliverable goes to
+	// the runs bucket, nothing is ever pushed, and the plan stage is the
+	// only agent stage there is.
+	if r.env != nil && r.follow == nil && !r.review && !r.artifact {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -840,6 +860,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if len(spec.ReviewPRs) > 0 {
 		r.review = true
 	}
+	// An artifact run's shape comes from the TASK SPEC's mode, beside
+	// r.review and for the same reason: resolveRecipe runs further down,
+	// after the configuration is read, and the checkout arm above is
+	// decided in between (design artifact-runs.md §3, plan Task 2). The
+	// resolved recipe is cross-checked against this below, in both
+	// directions.
+	if spec.Mode == recipe.ModeArtifact {
+		r.artifact = true
+	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
 		return err
 	}
@@ -941,14 +970,58 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
 	case !r.review && rcp.Mode == recipe.ModeReview:
 		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
-	case rcp.Mode == recipe.ModeArtifact:
-		// Fail closed until Task 2 of the artifact-runs plan lands the
-		// mode in the runner (the render step, the staging directory and
-		// the runstore types it writes). An artifact recipe parsed by this
-		// runner but not implemented by it is refused here, before any
-		// agent call, push or write: running it as an implement run would
-		// be the one outcome a task's own recipe must never get.
-		return fmt.Errorf("recipe %s is mode: artifact, which this runner does not implement", rrec.Name)
+	}
+	// A follow-up continues a pull request: it inherits that PR's branch
+	// and base, pushes to the branch and reports on the PR. A mode:
+	// artifact recipe renders a deliverable into the run's bucket and opens
+	// no pull request at all (design artifact-runs.md §3), so there is no
+	// pull request for one to continue — and a follow-up does not ask for
+	// its recipe anyway: it INHERITS it (the previous task's embedded text,
+	// a repository recipe carried by name, or the one the runner chose for
+	// the previous run), so an artifact recipe can arrive here without
+	// anyone choosing it for this task. Refused before any stage, and keyed
+	// on the RESOLVED recipe rather than any mode the task carries, because
+	// a follow-up spec carries none and an empty one takes the recipe's
+	// (below). This is the backstop the launcher's own refusal cannot be:
+	// a repository recipe by name is read here, at this run's base, and not
+	// there (refuseFollowUpArtifactMode, internal/cli/recipes_resolve.go).
+	if r.follow != nil && rcp.Mode == recipe.ModeArtifact {
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; this task continues pull request #%d, so it cannot run that recipe", rrec.Name, spec.PR)
+	}
+	// The spec's mode and the resolved recipe's mode must agree, and an
+	// EMPTY spec.Mode takes the resolved recipe's mode rather than
+	// defaulting to implement: the launcher leaves the recipe to the runner
+	// whenever it cannot resolve one (runnerChooses, internal/cli/run.go),
+	// so a spec that carries no mode is a real launch and not a mistake.
+	// Both directions are refused, because both are silent pull requests
+	// otherwise: an artifact spec against a non-artifact recipe would run
+	// the mode the recipe names instead, and a non-artifact spec against an
+	// artifact recipe would run an implement loop and push a branch for a
+	// recipe that asked for a file (design §8.2, Review Focus 10).
+	mode := spec.Mode
+	if mode == "" {
+		mode = rcp.Mode
+	}
+	if mode != rcp.Mode {
+		return fmt.Errorf("recipe %s is mode: %s, but the task says mode: %s", rrec.Name, rcp.Mode, spec.Mode)
+	}
+	r.artifact, r.out = rcp.Mode == recipe.ModeArtifact, rcp.Outputs
+	// A task that attached files under a resolved recipe of another mode
+	// fails the run before its first step (design §8.2): the launcher
+	// refuses this for every launch that resolves a recipe, and this is the
+	// arm that catches the ones it could not resolve — a recipe the runner
+	// chose, or a hand-written task.json — where the inputs would otherwise
+	// be downloaded into a run that commits a diff and opens a pull request,
+	// and nothing in its steps reads inputs/. Keyed on the RESOLVED mode, not
+	// on spec.Mode, because a spec is allowed to carry none.
+	if len(spec.Inputs) > 0 && !r.artifact {
+		return fmt.Errorf("the task attached %d file(s), but recipe %s is mode: %s: an attached file is only read by a mode: artifact run", len(spec.Inputs), rrec.Name, rcp.Mode)
+	}
+	if r.artifact {
+		r.artifactPlan, r.useWhen = artifactHasPlan(rcp), r.redact(rcp.UseWhen)
+		if err := r.downloadInputs(ctx, wf.Inputs); err != nil {
+			return err
+		}
 	}
 	if lo, hi, ok := recipe.ReviewPRRange(rrec.Name); ok {
 		if n := len(spec.ReviewPRs); n < lo || n > hi {
@@ -960,11 +1033,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
-	plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
-	if err := checkPlan(plan); err != nil {
-		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+	if !r.artifact {
+		// An artifact run has no implement/fix/review loop: planOf builds
+		// the ordinary loop's plan and checkPlan demands a trailing review
+		// step, neither of which an artifact recipe's [plan], render shape
+		// has. Its own stage list is read directly (artifactHasPlan), and
+		// the render is the runner's (artifact.go).
+		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
+		if err := checkPlan(plan); err != nil {
+			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+		}
+		r.plan = plan
 	}
-	r.plan = plan
 	r.gateSteps = checkGateSteps(rcp)
 	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
@@ -1146,16 +1226,26 @@ func (r *run) bootstrap(ctx context.Context) error {
 		"BASH_DEFAULT_TIMEOUT_MS": bashMS,
 		"BASH_MAX_TIMEOUT_MS":     bashMS,
 	}
+	if len(r.spec.Inputs) > 0 {
+		// The directory the task's attachments were downloaded into, for
+		// the run that has them (design §4 step 5). It is absolute, so a
+		// step that changes directory still finds it, and it is set only
+		// when the task attached something: a variable naming a directory
+		// that does not exist is worse than no variable at all.
+		set["FUGARO_INPUTS_DIR"] = filepath.Join(r.d.WorkDir, inputsDir)
+	}
 	for k, v := range gitops.Identity {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review {
+	if r.follow == nil && !r.review && !r.artifact {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
 		// none either (design generic-tool §3.6, G12): it only ever reads
 		// the checkout, and the runner never pushes or opens anything on
-		// its behalf.
+		// its behalf. An artifact run's gets none for the same reason
+		// (design artifact-runs.md §3): no branch is pushed, and the
+		// deliverable is uploaded by the runner.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -1172,6 +1262,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, Gateway: r.gateway(),
+		// Docker stays false here, so the agent's environment has no
+		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
+		// for `docker: true` (the workflow field and the runner's copy of it
+		// are compute-backend Task 8's config plumbing). It fails closed: a
+		// run with no socket mounted is a run with no daemon to point at,
+		// and an operator's own exported DOCKER_HOST must not follow an
+		// agent into one (design compute-backend.md §4.4 check 6).
+		Docker: false,
 	})
 	if err != nil {
 		return fmt.Errorf("building agent environment: %w", err)

@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -479,6 +481,9 @@ func TestTouchForbiddenIsClassified(t *testing.T) {
 //	TestPutFileWithoutIfNotExistOverwrites       the condition is forced create-only, so the second write is refused
 //	TestPutFileAbortsTheWriteBeforeClosingOnAFailedRead  the cancel before Close is removed
 //	TestPutFileAbortsOnAShortRead                the size-changed check is removed
+//	TestPutFileRefusesASourceThatIsNotARegularFile  the regular-file refusal is removed, so a FIFO parks the copy and the test fails on its deadline instead of hanging the package
+//	TestCopyBoundedStopsAtTheSizeItWasGiven     the copy's size bound is removed, so a source that never ends is drained and then parked instead of returning
+//	TestCopyBoundedStopsAtTheContext            the copy's context bound is removed, so a read parked on a fd no writer sends to is never woken
 //	TestPutFileClassifiesARefusalFromTheWriter   every copy failure is reported as a source problem
 //	TestGetFileRefusesOverTheLimitAndLeavesNothing  both cap checks are removed — and this one alone is NOT enough to catch the post-copy one: every backend it uses reports an accurate Size(), so the pre-check fires first and the line below is the test that pins the other arm
 //	TestGetFileRefusesAnOverCapObjectTheReaderDoesNotAnnounce  the post-copy n > limit check is removed
@@ -693,10 +698,11 @@ func TestPutFileAbortsTheWriteBeforeClosingOnAFailedRead(t *testing.T) {
 	ctx := context.Background()
 	d := &abortDriver{}
 	b := blobx.Wrap(blob.NewBucket(d))
-	// A directory opens and stats fine and its first Read fails (EISDIR),
-	// which is the shape of a source that errors before any byte is
-	// written.
-	_, _, err := b.PutFile(ctx, "artifacts/x.mp4", t.TempDir(), "video/mp4", false)
+	// A regular file whose first Read fails (EIO), which is the shape of a
+	// source that errors before any byte is written. It has to be a regular
+	// file: one that is not is refused before the copy, so it never reaches
+	// the abort rule at all.
+	_, _, err := b.PutFile(ctx, "artifacts/x.mp4", unreadableRegularSource(t), "video/mp4", false)
 	if err == nil {
 		t.Fatal("PutFile of an unreadable source succeeded")
 	}
@@ -742,6 +748,305 @@ func TestPutFileAbortsOnAShortRead(t *testing.T) {
 	}
 	if _, _, err := b.Read(ctx, "artifacts/x.mp4"); !errors.Is(err, blobx.ErrNotExist) {
 		t.Fatalf("the aborted write left an object: %v", err)
+	}
+}
+
+// TestPutFileOpenedUploadsExactlyTheSizeTheCallerJudged is the half of
+// PutFileOpened that PutFile cannot give a caller: the handle is the one the
+// caller fstat'ed, and the size it read there is the copy's bound, so a file
+// that GREW after the caller looked cannot be uploaded past what it judged.
+// The extra bytes are never read (the copy stops one byte past the size) and
+// what arrives one byte past it is refused, leaving no object rather than one
+// nobody checked the size of.
+//
+// Mutation (take a fresh fstat in PutFileOpened, or drop the n != want check):
+// the grown source is uploaded whole as a success and this test fails on both
+// the error and the object's content.
+func TestPutFileOpenedUploadsExactlyTheSizeTheCallerJudged(t *testing.T) {
+	ctx := context.Background()
+	src := writeSource(t, bytes.Repeat([]byte("x"), 1024))
+	f, err := blobx.OpenSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The path is a different, longer file by the time the upload runs. The
+	// handle is still the old one, but the bytes behind it grew.
+	if err := os.WriteFile(src, bytes.Repeat([]byte("x"), 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := &abortDriver{}
+	b := blobx.Wrap(blob.NewBucket(d))
+	n, _, err := b.PutFileOpened(ctx, "artifacts/x.mp4", f, st, "video/mp4", false)
+	if !errors.Is(err, blobx.ErrChanged) {
+		t.Fatalf("PutFileOpened of a grown source = %v, want ErrChanged", err)
+	}
+	if n != 0 {
+		t.Fatalf("PutFileOpened reported %d bytes for an aborted write", n)
+	}
+	if d.commits != 0 {
+		t.Fatalf("the refused write committed %d times", d.commits)
+	}
+	if _, _, err := b.Read(ctx, "artifacts/x.mp4"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("the aborted write left an object: %v", err)
+	}
+	// The judged size is what goes up when the file did not move: the first
+	// 1024 bytes of what is now at that path, hashed as they were read.
+	same := writeSource(t, bytes.Repeat([]byte("y"), 1024))
+	f2, err := blobx.OpenSource(same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f2.Close()
+	st2, err := f2.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok := blobx.Wrap(memblob.OpenBucket(nil))
+	n, sum, err := ok.PutFileOpened(ctx, "artifacts/y.mp4", f2, st2, "video/mp4", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256(bytes.Repeat([]byte("y"), 1024))
+	if n != 1024 || sum != hex.EncodeToString(want[:]) {
+		t.Fatalf("PutFileOpened = %d bytes, %s, want 1024 and the file's own sha256", n, sum)
+	}
+	if got, _, err := ok.Read(ctx, "artifacts/y.mp4"); err != nil || !bytes.Equal(got, bytes.Repeat([]byte("y"), 1024)) {
+		t.Fatalf("the object is %d bytes and err %v, want the 1024 judged bytes", len(got), err)
+	}
+}
+
+// TestPutFileOpenedRefusesAHandleThatIsNotARegularFile: the fstat check is
+// made on the handle being read, not on the path it was opened from, so a
+// caller that holds a FIFO open (the launcher opening every path --attach
+// named, one handle each, before it judges their caps) is refused here even
+// though its own open succeeded. Nothing is read and no writer is asked for.
+//
+// Mutation (drop the regular-file check from PutFileOpened): the copy reads
+// the FIFO and this test fails on the error and on the driver's counts.
+func TestPutFileOpenedRefusesAHandleThatIsNotARegularFile(t *testing.T) {
+	ctx := context.Background()
+	fifo, _ := fifoSource(t, true)
+	f, err := blobx.OpenSource(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &abortDriver{}
+	b := blobx.Wrap(blob.NewBucket(d))
+	if _, _, err := b.PutFileOpened(ctx, "artifacts/x.mp4", f, st, "video/mp4", false); !errors.Is(err, blobx.ErrChanged) {
+		t.Fatalf("PutFileOpened of a FIFO handle = %v, want ErrChanged", err)
+	}
+	if d.commits != 0 || d.closes != 0 {
+		t.Fatalf("the refused handle was written anyway: commits = %d, closes = %d", d.commits, d.closes)
+	}
+}
+
+// TestPutFileDoesNotFollowASymlinkSource: PutFile is given a path by a caller
+// that has decided a moment earlier that the path holds the file it wants, and
+// anything the same user is running can replace it in between. The open is
+// O_NOFOLLOW, so a link is refused rather than followed: what goes up is never
+// the bytes behind a link the caller did not choose, and the refusal names the
+// path the caller named like every other source failure.
+//
+// Mutation (open the source with os.Open): the link is followed, the object is
+// written from its target, and this test fails on the error and on the
+// object's absence.
+func TestPutFileDoesNotFollowASymlinkSource(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	target := writeSource(t, []byte("the bytes behind the link"))
+	link := filepath.Join(t.TempDir(), "src")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := b.PutFile(ctx, "artifacts/x.mp4", link, "video/mp4", false)
+	if err == nil {
+		t.Fatal("PutFile followed a symlink source")
+	}
+	if !strings.Contains(err.Error(), "reading "+link) {
+		t.Fatalf("the refusal does not name the file the caller named: %v", err)
+	}
+	if _, _, err := b.Read(ctx, "artifacts/x.mp4"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("the refused write left an object: %v", err)
+	}
+}
+
+// fifoSource makes a FIFO and returns its path. With hold it also returns the
+// test's own end of it, held open read-write and never written to: a plain
+// write end blocks in its open until the reader's, and a FIFO that no writer
+// has ever opened reads as an empty file — an end of file, not a source that
+// stalls — so holding both ends (which Linux allows, and is why the writer
+// here is not a subprocess) is what gives a reader on it a read that parks
+// waiting for data that never comes.
+func fifoSource(t *testing.T, hold bool) (string, *os.File) {
+	t.Helper()
+	fifo := filepath.Join(t.TempDir(), "src")
+	if out, err := exec.Command("mkfifo", fifo).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo %s: %v: %s", fifo, err, out)
+	}
+	if !hold {
+		return fifo, nil
+	}
+	w, err := os.OpenFile(fifo, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.Close() })
+	return fifo, w
+}
+
+// unreadableRegularSource is a path that stats as a regular file and whose
+// first read fails: /proc/self/mem's offset 0 is not mapped, so reading it
+// answers EIO. That is the shape of a source that fails partway through the
+// copy, which is now the only shape that reaches it — anything that is not a
+// regular file is refused before the first read.
+func unreadableRegularSource(t *testing.T) string {
+	t.Helper()
+	const p = "/proc/self/mem"
+	if _, err := os.Stat(p); err != nil {
+		t.Skipf("no %s to read on this machine: %v", p, err)
+	}
+	return p
+}
+
+// TestPutFileRefusesASourceThatIsNotARegularFile: what PutFile streams is a
+// file, and the path it is given is one a caller looked at a moment ago — so
+// anything the same user is running can have replaced it with something else
+// by the time this call opens it. O_NOFOLLOW refuses a link and the copy's
+// size bound bounds bytes, but neither bounds time: a FIFO another process
+// holds open with nothing to send gives os.NewFile a non-blocking fd that is
+// registered with the netpoller, so the first read parks on EAGAIN until a
+// writer sends data, and nothing the caller does with its context reaches a
+// parked read. The fstat the size bound comes from is already made before any
+// read, so the refusal is made there and every caller gets it. A FIFO with no
+// writer at all is the other half of the same hole: it reads as an empty file,
+// so streamed it would leave an empty object at the key as a success.
+//
+// Mutation (drop the regular-file refusal): the two FIFO arms never return
+// from their first read and this test fails on its own deadline by name
+// instead of wedging the package, while the directory and device arms stream
+// something that is not a file. Nothing is written before the refusal: the
+// driver is never even asked for a writer, which is what d.closes pins.
+func TestPutFileRefusesASourceThatIsNotARegularFile(t *testing.T) {
+	ctx := context.Background()
+	for name, src := range map[string]func(*testing.T) string{
+		"a FIFO with an idle writer": func(t *testing.T) string { p, _ := fifoSource(t, true); return p },
+		"a FIFO with no writer":      func(t *testing.T) string { p, _ := fifoSource(t, false); return p },
+		"a directory":                func(t *testing.T) string { return t.TempDir() },
+		"a device":                   func(t *testing.T) string { return "/dev/null" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := src(t)
+			if _, err := os.Stat(path); err != nil {
+				t.Skipf("no %s on this machine: %v", path, err)
+			}
+			d := &abortDriver{}
+			b := blobx.Wrap(blob.NewBucket(d))
+			done := make(chan error, 1)
+			go func() {
+				_, _, err := b.PutFile(ctx, "artifacts/x.mp4", path, "video/mp4", false)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatalf("PutFile streamed %s", path)
+				}
+				if !errors.Is(err, blobx.ErrChanged) {
+					t.Fatalf("PutFile of %s = %v, want ErrChanged", path, err)
+				}
+				if !strings.Contains(err.Error(), path) {
+					t.Fatalf("the refusal does not name the path it refused: %v", err)
+				}
+			case <-time.After(20 * time.Second):
+				t.Fatalf("PutFile of %s did not return: it is not refused before it is read", path)
+			}
+			if d.commits != 0 || d.closes != 0 {
+				t.Fatalf("the refused source was written anyway: commits = %d, closes = %d", d.commits, d.closes)
+			}
+			if _, _, err := b.Read(ctx, "artifacts/x.mp4"); !errors.Is(err, blobx.ErrNotExist) {
+				t.Fatalf("the refused write left an object: %v", err)
+			}
+		})
+	}
+}
+
+// TestCopyBoundedStopsAtTheSizeItWasGiven: the copy is bounded by the size
+// that was stat'ed, plus the one byte that makes a source that grew visible to
+// the caller's n != want check. A FIFO's size is zero and its writer here
+// holds the other end with bytes already in it, so the copy reads exactly one
+// byte and returns: the source never ends, and the bound is what ends it.
+// Without the bound the read drains what is there and then parks for more,
+// which is this test's deadline.
+func TestCopyBoundedStopsAtTheSizeItWasGiven(t *testing.T) {
+	ctx := context.Background()
+	fifo, w := fifoSource(t, true)
+	if _, err := w.Write([]byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	f, err := blobx.OpenSource(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	type result struct {
+		n   int64
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		n, err := blobx.CopyBounded(ctx, io.Discard, f, 0)
+		done <- result{n, err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil || got.n != 1 {
+			t.Fatalf("copyBounded of a source that never ends = %d bytes, %v; want 1 and no error", got.n, got.err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the copy of a source that never ends did not return: it is not bounded")
+	}
+}
+
+// TestCopyBoundedStopsAtTheContext: the byte bound has nothing to bound when a
+// source stalls instead of producing — a read parked on a fd that no writer
+// sends to is woken by nothing the copy itself does — so the copy also runs
+// under a watchdog that closes the source when the context ends, and Close
+// evicts the parked read. The error is the context's: the read's own failure
+// is this call closing the file under it.
+//
+// Mutation (drop the watchdog, so the copy is io.Copy alone): this test's
+// deadline is what reports it, by name, instead of the package hanging.
+func TestCopyBoundedStopsAtTheContext(t *testing.T) {
+	fifo, _ := fifoSource(t, true) // idle writer, nothing sent
+	f, err := blobx.OpenSource(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := blobx.CopyBounded(ctx, io.Discard, f, 0)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("copyBounded of a stalled source = %v, want the context's deadline", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the copy of a stalled source outlived its context: nothing closes the source it is parked on")
 	}
 }
 
@@ -795,7 +1100,7 @@ func TestPutFileClassifiesARefusalFromTheWriter(t *testing.T) {
 // is the other half of the same rule.
 func TestPutFileReportsASourceFailureAsTheSource(t *testing.T) {
 	ctx := context.Background()
-	src := t.TempDir() // opens and stats fine; its first Read fails (EISDIR)
+	src := unreadableRegularSource(t) // stats as a regular file; its first Read fails
 	d := &abortDriver{}
 	b := blobx.Wrap(blob.NewBucket(d))
 	_, _, err := b.PutFile(ctx, "artifacts/x.mp4", src, "video/mp4", false)
@@ -846,6 +1151,11 @@ func TestGetFileRefusesOverTheLimitAndLeavesNothing(t *testing.T) {
 // returns, the shape of a connection dropped mid-download.
 var errReadFailure = errors.New("fake: read failed")
 
+// errNoHardLinks is what a filesystem without hard links answers to a link —
+// the case the placement's fallback exists for, and the one this machine's
+// filesystems never produce.
+var errNoHardLinks = errors.New("fake: link not supported")
+
 // sizedDriver serves one object whose reader reports a size the caller
 // chooses: a backend that tells the reader nothing (Size() == -1) or one
 // that understates the object. blob.Reader.Size is the driver's
@@ -859,6 +1169,12 @@ type sizedDriver struct {
 	size      int64 // what the reader announces
 	failAfter int   // bytes served before the read fails; 0 means never
 	reads     int   // Read calls on the body, of every reader it served
+	// appear, if set, is a path a file is created at on the first read of the
+	// body: the destination arriving after the caller's check and before the
+	// placement. It is how the placement's own no-replace promise is tested
+	// rather than the caller's pre-check.
+	appear   string
+	appeared bool
 }
 
 func (d *sizedDriver) ErrorCode(error) gcerrors.ErrorCode { return gcerrors.Unknown }
@@ -878,6 +1194,12 @@ type sizedReader struct {
 
 func (r *sizedReader) Read(p []byte) (int, error) {
 	r.d.reads++
+	if r.d.appear != "" && !r.d.appeared {
+		r.d.appeared = true
+		if err := os.WriteFile(r.d.appear, []byte("the operator's own file"), 0o600); err != nil {
+			return 0, err
+		}
+	}
 	if r.d.failAfter > 0 && r.served >= r.d.failAfter {
 		return 0, errReadFailure
 	}
@@ -1197,5 +1519,270 @@ func assertDirEmpty(t *testing.T, dir string) {
 			names = append(names, e.Name())
 		}
 		t.Fatalf("%s holds %v, want nothing", dir, names)
+	}
+}
+
+// TestGetFileExactlyEnforcesTheRecordedSize: GetFileExactly is for the caller
+// that knows the object's exact size — `fugaro artifacts get`, whose run
+// record carries the byte count it uploaded — and the size is then an
+// equality, not a ceiling. The distinction is what the caller's own
+// comparison could not make: an object LARGER than the record has to be
+// refused from the size the reader announces, before its body is fetched
+// (that is what "bounded by the recorded size" buys), while one that is
+// shorter, or the right length with other bytes, is refused on the temporary
+// file. The mutation caught: passing the caller's count as a ceiling instead
+// of as the equality, which reads the whole object and then reports a size
+// difference — or, in the caller, compares after the rename.
+func TestGetFileExactlyEnforcesTheRecordedSize(t *testing.T) {
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("z"), 100)
+	sum := sha256Hex(data)
+
+	// Larger than the record: refused from the announced size, with no read
+	// of the body at all.
+	d := &sizedDriver{data: data, size: int64(len(data))}
+	b := blobx.Wrap(blob.NewBucket(d))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp4")
+	_, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, sum, 4, true, true)
+	if !errors.Is(err, blobx.ErrTooLarge) {
+		t.Fatalf("GetFileExactly of a 100-byte object recorded as 4 bytes = %v, want ErrTooLarge", err)
+	}
+	if !strings.Contains(err.Error(), "4") || !strings.Contains(err.Error(), "100") {
+		t.Errorf("the refusal names neither the recorded size nor the object's: %v", err)
+	}
+	if d.reads != 0 {
+		t.Errorf("the body was read %d times: an object over the recorded size is refused before a byte of it is fetched", d.reads)
+	}
+	assertDirEmpty(t, dir)
+
+	// Shorter than the record, and the right length with another hash: both
+	// are refusals on the temporary file, before the rename.
+	for name, tc := range map[string]struct {
+		want int64
+		sum  string
+		wont error
+	}{
+		"an object shorter than the record": {200, sum, blobx.ErrChanged},
+		"the record's size, other bytes":    {100, sha256Hex([]byte("other bytes")), blobx.ErrMismatch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := blobx.Wrap(blob.NewBucket(&sizedDriver{data: data, size: int64(len(data))}))
+			dir := t.TempDir()
+			path := filepath.Join(dir, "a.mp4")
+			if _, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, tc.sum, tc.want, true, true); !errors.Is(err, tc.wont) {
+				t.Fatalf("GetFileExactly(record=%d, sum=%s) = %v, want %v", tc.want, tc.sum, err, tc.wont)
+			}
+			assertDirEmpty(t, dir)
+		})
+	}
+
+	// The record's own size and hash: the ordinary download, and the size is
+	// returned rather than merely checked.
+	n, got, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, sum, int64(len(data)), true, true)
+	if err != nil || n != int64(len(data)) || got != sum {
+		t.Fatalf("GetFileExactly of the exact object = %d, %q, %v", n, got, err)
+	}
+	if back, err := os.ReadFile(path); err != nil || !bytes.Equal(back, data) {
+		t.Fatalf("GetFileExactly wrote %q, %v", back, err)
+	}
+}
+
+// TestGetFileExactlyClassifiesForbiddenLikeGetFile: the new entry point
+// answers a 403 exactly as GetFile does, in both modes — a second read path
+// that classified differently would give `artifacts get` one answer and the
+// runner's input download another for the same refusal.
+func TestGetFileExactlyClassifiesForbiddenLikeGetFile(t *testing.T) {
+	ctx := context.Background()
+	b := forbiddenBucket(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp4")
+	if _, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, "", 1<<20, true, true); !errors.Is(err, blobx.ErrForbidden) {
+		t.Fatalf("strict GetFileExactly of a 403 = %v, want ErrForbidden", err)
+	}
+	assertDirEmpty(t, dir)
+	if _, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, "", 1<<20, false, true); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("non-strict GetFileExactly of a 403 = %v, want ErrNotExist", err)
+	}
+	assertDirEmpty(t, dir)
+}
+
+// TestGetFileExactlyWithoutReplaceFallsBackToAnExclusiveCreate: the placement
+// promises not to replace anything, and the promise is kept twice over — by a
+// hard link where the filesystem has them, and by an O_EXCL create plus a copy
+// where it does not. The second is the path no test on this machine can reach
+// on its own (every filesystem here supports hard links) and no test exercised
+// at all, so dropping its O_EXCL — the flag that IS the promise — failed
+// nothing. The link is made to fail here, and the destination is made to
+// appear during the read, which is the window the promise covers.
+//
+// Mutation caught: opening the fallback's destination without O_EXCL, or with
+// O_TRUNC, which replaces the file the operator has and reports the download as
+// a success.
+func TestGetFileExactlyWithoutReplaceFallsBackToAnExclusiveCreate(t *testing.T) {
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("z"), 100)
+	sum := sha256Hex(data)
+	restore := blobx.SetLinkFile(func(oldname, newname string) error { return errNoHardLinks })
+	defer restore()
+
+	t.Run("a file that appeared mid-read is not replaced", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "a.mp4")
+		d := &sizedDriver{data: data, size: int64(len(data)), appear: path}
+		n, got, err := blobx.Wrap(blob.NewBucket(d)).GetFileExactly(ctx, "artifacts/a.mp4", path, sum, int64(len(data)), true, false)
+		if !errors.Is(err, blobx.ErrDestExists) {
+			t.Fatalf("GetFileExactly over a file that appeared mid-read = %d, %q, %v, want ErrDestExists", n, got, err)
+		}
+		// The operator's file, exactly as it was, and nothing else: the
+		// fallback's own create is removed when it is refused, and the
+		// temporary file with it, so a refused download leaves no half-file
+		// beside the good one.
+		assertOnlyFile(t, dir, "a.mp4", "the operator's own file")
+	})
+
+	t.Run("a free path is written, 0600", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "a.mp4")
+		n, got, err := blobx.Wrap(blob.NewBucket(&sizedDriver{data: data, size: int64(len(data))})).
+			GetFileExactly(ctx, "artifacts/a.mp4", path, sum, int64(len(data)), true, false)
+		if err != nil || n != int64(len(data)) || got != sum {
+			t.Fatalf("GetFileExactly into a free path = %d, %q, %v", n, got, err)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o600 {
+			t.Errorf("the fallback created %s with mode %v, want 0600 (the temporary's own mode)", path, fi.Mode().Perm())
+		}
+		assertOnlyFile(t, dir, "a.mp4", string(data))
+	})
+}
+
+// assertOnlyFile requires dir to hold exactly one entry, name, with the
+// content want: no leftover temporary, no failure piece, and the bytes that
+// were there before.
+func assertOnlyFile(t *testing.T, dir, name, want string) {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(ents))
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	if len(names) != 1 || names[0] != name {
+		t.Fatalf("%s holds %v, want just %s", dir, names, name)
+	}
+	back, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(back) != want {
+		t.Fatalf("%s holds %q, want %q", name, back, want)
+	}
+}
+
+// TestGetFileExactlyWithReplaceLeavesTheFileOnAMismatch: the size and hash are
+// checked on the temporary file BEFORE the placement, and the placement is what
+// replaces the operator's file. So a record whose object is not what it
+// describes must leave the file that is at the destination untouched even with
+// replace — the flag is permission to replace a file with the artifact, not
+// permission to replace it with anything at all. This is the round-1 bug the
+// CLI test covers from the command's side; here it is the download's own
+// promise, on the exact path (an existing destination, replace true, a bad
+// size and a bad hash) that had no test.
+//
+// Mutation caught: checking the size or the hash after the placement, or
+// placing the temporary before it has been verified.
+func TestGetFileExactlyWithReplaceLeavesTheFileOnAMismatch(t *testing.T) {
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("z"), 100)
+	sum := sha256Hex(data)
+	for name, tc := range map[string]struct {
+		want int64
+		sum  string
+		wont error
+	}{
+		"an object shorter than the record": {200, sum, blobx.ErrChanged},
+		"the record's size, other bytes":    {100, sha256Hex([]byte("other bytes")), blobx.ErrMismatch},
+		"an object over the record":         {4, sum, blobx.ErrTooLarge},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "a.mp4")
+			if err := os.WriteFile(path, []byte("the operator's own file"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			b := blobx.Wrap(blob.NewBucket(&sizedDriver{data: data, size: int64(len(data))}))
+			if _, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, tc.sum, tc.want, true, true); !errors.Is(err, tc.wont) {
+				t.Fatalf("GetFileExactly(record=%d, sum=%s, replace=true) = %v, want %v", tc.want, tc.sum, err, tc.wont)
+			}
+			assertOnlyFile(t, dir, "a.mp4", "the operator's own file")
+		})
+	}
+}
+
+// TestGetFileExactlyDoesNotReplaceWithoutReplace: `fugaro artifacts get`
+// without --force must not write over anything, and its pre-check cannot
+// promise that — a file that appears between the check and the placement, or
+// one this filesystem folds the artifact's name onto, is invisible to the
+// check. The placement is where the promise is kept: with replace false the
+// file is put in place without replacing what is there, so the caller's file
+// survives and the download is refused as ErrDestExists. Here the destination
+// appears during the read of the body — strictly between the caller's check
+// and the placement — which is exactly the window the pre-check leaves open.
+// Mutation caught: placing the file with os.Rename regardless of replace.
+func TestGetFileExactlyDoesNotReplaceWithoutReplace(t *testing.T) {
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("z"), 100)
+	sum := sha256Hex(data)
+
+	for name, replace := range map[string]bool{"without replace": false, "with replace": true} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "a.mp4")
+			// The caller's check has run and found nothing: the file is not
+			// here yet.
+			if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("the destination exists before the download: %v", err)
+			}
+			d := &sizedDriver{data: data, size: int64(len(data)), appear: path}
+			b := blobx.Wrap(blob.NewBucket(d))
+			n, got, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, sum, int64(len(data)), true, replace)
+
+			ents, rerr := os.ReadDir(dir)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			names := make([]string, 0, len(ents))
+			for _, e := range ents {
+				names = append(names, e.Name())
+			}
+			if len(names) != 1 || names[0] != "a.mp4" {
+				t.Fatalf("the directory holds %v, want just the destination (no leftover temporary file)", names)
+			}
+			back, rerr := os.ReadFile(path)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			if !replace {
+				if !errors.Is(err, blobx.ErrDestExists) {
+					t.Fatalf("GetFileExactly over a file that appeared mid-read = %d, %q, %v, want ErrDestExists", n, got, err)
+				}
+				if string(back) != "the operator's own file" {
+					t.Fatalf("the file the operator had was replaced by %q", back)
+				}
+				return
+			}
+			if err != nil || n != int64(len(data)) || got != sum {
+				t.Fatalf("GetFileExactly(..., replace=true) = %d, %q, %v", n, got, err)
+			}
+			if !bytes.Equal(back, data) {
+				t.Fatalf("the replace wrote %q, want the object", back)
+			}
+		})
 	}
 }

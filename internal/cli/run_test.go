@@ -803,7 +803,11 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:0.7.5")
+	// A job image whose runner knows mode: artifact (artifactsSince): a spec
+	// carrying the mode is refused outright by an older one, so the launch
+	// would be refused by that gate before it reached the memory arithmetic
+	// this test is about.
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release080)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
