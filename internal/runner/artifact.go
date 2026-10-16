@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -180,7 +181,12 @@ func (r *run) artifactMode(ctx context.Context) {
 				return
 			}
 			if r.isCancelled() {
-				r.endArtifactCancelled(ctx, "cancelled while uploading the artifacts")
+				// The window this branch is in is the whole artifact step,
+				// not the upload alone: staging, the probe (which can block
+				// for timeouts.verify plus its grace) and the upload all run
+				// inside collectArtifacts, so a cancel that landed during a
+				// slow probe is not reported as an upload cancellation.
+				r.endArtifactCancelled(ctx, "cancelled while collecting the artifacts")
 				return
 			}
 			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, r.redact(aerr.Error())
@@ -312,9 +318,11 @@ func (r *run) runRender(ctx context.Context) (runstore.RenderRecord, error) {
 }
 
 // collectArtifacts is the step after a successful render: stage the set,
-// hash it in the staging directory, upload it, and record it (design §3, P5).
-// Nothing is staged until every refusal has been made, so a refused set
-// leaves the staging directory empty and the bucket untouched.
+// hash it in the staging directory, probe it, upload it, and record it
+// (design §3, P5). Nothing is staged until every refusal has been made, so a
+// refused set leaves the staging directory empty and the bucket untouched;
+// the probe runs on the staged bytes and, when it fails, nothing is uploaded
+// at all (Review Focus 6).
 func (r *run) collectArtifacts(ctx context.Context) error {
 	set, err := r.stageArtifacts(r.out)
 	if err != nil {
@@ -323,9 +331,33 @@ func (r *run) collectArtifacts(ctx context.Context) error {
 	if artifactStagedSeam != nil {
 		artifactStagedSeam()
 	}
+	// The probe's place is exactly here: after the render (there are bytes to
+	// judge), after the caps (a set nobody may upload is not worth probing)
+	// and before the upload (a probe that fails must be able to refuse it).
+	// It sees the STAGED copies, which are the bytes that would go to the
+	// bucket, not the render's originals.
+	probe, detail, err := r.runProbe(ctx, set)
+	if err != nil {
+		return probeFailure(err, detail)
+	}
 	files, err := r.uploadArtifacts(ctx, set)
 	if err != nil {
 		return err
+	}
+	for i := range files {
+		// One invocation covered the whole set, so every artifact carries the
+		// same verdict — including {ran: false} for a recipe that asked for
+		// no probe, so "there is no probe" is in the record rather than
+		// inferred from a field that is not there (Review Focus 6).
+		//
+		// A copy each, not one pointer shared by every row. Nothing writes to
+		// a recorded verdict today, which is exactly why this is worth being
+		// exact about: the schema keeps a per-artifact warning field for the
+		// per-artifact nuance this release defers, and the first writer of one
+		// would otherwise silently change every row of the record and of the
+		// report with it.
+		p := probe
+		files[i].Probe = &p
 	}
 	// Left nil rather than set to an empty slice: the record writes no
 	// artifacts key at all when a run delivered none (runstore.Record), so
@@ -335,6 +367,255 @@ func (r *run) collectArtifacts(ctx context.Context) error {
 		r.rec.Artifacts = files
 	}
 	return nil
+}
+
+// probeFailure is a failed probe's error as the run records it: what the
+// probe did (runProbe's own error) and, when it printed anything, the last
+// line it printed — a repository command's own last word is usually what
+// explains its exit code, and it is redacted on the way through the probe's
+// log tail, so a secret a probe echoes never reaches the record.
+func probeFailure(err error, detail string) error {
+	if detail == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, detail)
+}
+
+// artifactNamesFile is the file FUGARO_ARTIFACTS_FILE names: the staged names,
+// one per line, in the state directory. A file and not a value in the
+// environment, because a newline-separated list inside one variable cannot
+// survive a name that holds a newline (design §3) — and every shell reads a
+// file with `while IFS= read -r` without quoting rules in play.
+const artifactNamesFile = "artifact-names.txt"
+
+// probeGrace is how long the probe's process group gets between SIGTERM and
+// SIGKILL once its deadline has ended: internal/verify's commandGrace, the
+// grace verify.Run gives every command it runs (verify.go:35, 5s). The plan
+// names it for the probe for the reason the number matters — the probe's
+// deadline is a bound on the RUN, with the finalize reserve behind it, and
+// procgroup's own default of 10s would let a repository's probe that ignores
+// SIGTERM hold the run that long past the deadline it was given. It is
+// repeated here rather than referenced because internal/verify's is
+// unexported and Task 5 makes no edit to internal/verify (plan Task 5's file
+// list); the value is the contract, and TestProbeGraceBoundsAProbeThat
+// IgnoresSIGTERM fails if it drifts back to procgroup's default.
+const probeGrace = 5 * time.Second
+
+// runProbe runs commands.probe once, after the render and before the upload,
+// over the whole staged set (design §3, plan Task 5). It is ONE invocation for
+// every artifact, never one per artifact: a per-file probe would mean the
+// runner interpolating a runner-derived name into a command line, which is the
+// one thing the design rejects outright.
+//
+// The command comes from the runner's IN-MEMORY workflow config
+// (r.wf.Commands.Probe) and never through verify.LoadSettings — the rule
+// runRender follows, for the same reason: <StateDir>/workflow.json is 0644
+// inside a directory the plan-stage agent can write (same user, same
+// container), so a probe that loaded its command from there could be made to
+// run a string nobody read, while the record attested to the string that was
+// read (design §3, Review Focus 1).
+//
+// The environment is the render's own — r.env, the workflow's secrets
+// included (Global Constraints, design §8.6/D10) — plus exactly two names:
+//
+//	FUGARO_OUT_DIR         the staging directory's absolute path. It is FLAT:
+//	                       it holds exactly the files that will be uploaded,
+//	                       one per name below, so "$FUGARO_OUT_DIR/$name" is
+//	                       always the staged file, whatever shape the recipe's
+//	                       globs have. It is the staging root and never the
+//	                       checkout's outputs root. It EXISTS whenever a probe
+//	                       runs, empty set included — the directory is created
+//	                       here for the arms that staged nothing — so a probe
+//	                       may cd into it or list it; what it must not assume
+//	                       is that anything is in it.
+//	FUGARO_ARTIFACTS_FILE  the path of the file holding those names, one per
+//	                       line, in upload order — each the relative, sanitised
+//	                       name, which is also the object key's leaf under
+//	                       artifacts/ and the path under FUGARO_OUT_DIR.
+//
+// It runs in the checkout, as the workflow's own command, through procgroup,
+// under timeouts.verify (a probe is a check, not a render) and under the run's
+// finalize reserve. It is NOT a sandbox and nothing here claims it is: the
+// probe is repository text running as the same user, in the same container,
+// with the same environment as the render, and it can read whatever the render
+// can (design §3, P2/D8).
+//
+// The verdict is fail-closed and is never interpreted (Review Focus 6): a
+// non-zero exit, a timeout, or a failure to start the process fails the run
+// and refuses the upload, even though the files are staged and within every
+// cap — the probe is the only thing that can say a 0-byte render is not a
+// video, so it must be able to stop one. The probe's own output is streamed
+// through the same redactor the agent's streams go through and kept as a log
+// tail, which is what the report quotes when the probe fails.
+//
+// The returned ProbeResult is what the record carries for each uploaded
+// artifact, and the returned string is the last line the probe printed
+// (redacted, "" when it printed nothing), which the caller joins onto its
+// error. A recipe that asks for no probe (outputs.probe: none, the default)
+// starts no process and gets {ran: false, exit_code: -1} — "no probe ran" said
+// out loud rather than inferred from an absent field. (-1 rather than 0, the
+// shape RenderRecord's ExitCode uses for a render that never ran: a reader
+// skimming an exit code must not read "skipped" as "passed".)
+//
+// ProbeResult's Warning is deliberately not set here and is not recorded by
+// this release: a probe that fails refuses the upload, so the record carries
+// no artifacts and no per-file verdict at all — what an owner reads about a
+// failed probe is the run's reason and the report's log tail, and there is no
+// artifact whose probe object could hold a warning.
+func (r *run) runProbe(ctx context.Context, set artifactSet) (runstore.ProbeResult, string, error) {
+	skipped := runstore.ProbeResult{Ran: false, ExitCode: -1}
+	if r.out == nil || r.out.Probe != recipe.ProbeCommand {
+		return skipped, "", nil
+	}
+	command := r.wf.Commands.Probe
+	if strings.TrimSpace(command) == "" {
+		// Fail closed behind bootstrap's checkGateCommands, which refuses
+		// this pairing — outputs.probe: probe over a workflow with no
+		// commands.probe — before the first step: an empty command through
+		// sh -c exits 0, which would record a check that never ran as a pass.
+		return skipped, "", errors.New("commands.probe is empty")
+	}
+	// FUGARO_OUT_DIR must name a directory that IS there, and only the path
+	// that stages a file creates it (stageArtifacts' own MkdirAll). The two
+	// arms that stage nothing — a render that matched no glob, and a set every
+	// match of which was refused — return after the RemoveAll above, so
+	// without this the design's §8.4 case (a render that produced nothing, the
+	// one case where the probe is what decides an empty set) would hand the
+	// probe a path that does not exist: a probe that cd's into it, or lists it,
+	// would die with a shell error instead of judging an empty directory. The
+	// documented interface says the directory holds exactly the files that
+	// will be uploaded, and the empty set is the case with none.
+	//
+	// Created here and not in collectArtifacts, so a run that asks for no
+	// probe still leaves no staging directory behind: the skipped arm above
+	// has already returned.
+	if err := os.MkdirAll(set.dir, 0o755); err != nil {
+		return skipped, "", fmt.Errorf("creating the staging directory %s for the probe: %w", set.dir, err)
+	}
+	namesPath, err := r.writeArtifactNames(set)
+	if err != nil {
+		return skipped, "", err
+	}
+	// The record's stage is deliberately left where the render step saved it
+	// ("render"). The probe is not a stage — no model turn, no timeout of its
+	// own; design §3 says exactly that about the render, and the probe stands
+	// in the same place — and result.json's stage enum is a contract the
+	// schema owns: a value a schema-conformant reader has never heard of
+	// would make a probe that crashed the run a record the reader rejects.
+	// What names the probe in a failed run is the reason ("commands.probe
+	// timed out after 20s"), which is the reader's account of the step.
+	//
+	// A fresh slice rather than append(r.env, …): append writes into r.env's
+	// own backing array when it has room, and the probe's two names would then
+	// be sitting in the array the next caller appends to.
+	env := make([]string, 0, len(r.env)+2)
+	env = append(env, r.env...)
+	env = append(env, "FUGARO_OUT_DIR="+set.dir, "FUGARO_ARTIFACTS_FILE="+namesPath)
+	deadline, cutByReserve := r.budget.StepDeadline(r.wf.Timeouts.Verify.Duration)
+	probeCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	// The probe's output is a repository's own command's, so it goes through
+	// the same redactor the agent's and the render's streams do, whole lines
+	// at a time, and only its tail is kept.
+	tail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
+	out := agent.NewRedactor(tail, r.secretList())
+	code, runErr := procgroup.Run(probeCtx, procgroup.Cmd{
+		Name: "sh", Args: []string{"-c", command}, Dir: r.d.WorkDir, Env: env, Stdout: out, Stderr: out,
+		Grace: probeGrace,
+	})
+	// Flushed before the tail is read, exactly as the render's is: a probe
+	// whose failing line has no newline is the ordinary shape of a failure
+	// message, and the redactor holds a line until a newline arrives.
+	out.Flush()
+	rec := runstore.ProbeResult{Ran: true, ExitCode: code}
+	log := r.d.Log.With("stage", "probe")
+	switch {
+	case errors.Is(probeCtx.Err(), context.DeadlineExceeded) && cutByReserve:
+		// The run's own reserve ended the probe, not timeouts.verify: the
+		// deadline above is whichever of the two comes first, and the reason
+		// says which one it was, so the record never blames a timeout that had
+		// time left to run (design §4.5).
+		log.Warn("commands.probe cut at the finalize reserve", "reserve", r.budget.Reserve, "total", r.budget.Total, "exit_code", code)
+		r.noteProbeTail(tail)
+		return rec, probeLastLine(tail), fmt.Errorf("commands.probe was cut at the run's finalize reserve, not at its timeouts.verify (%s): the %s run budget keeps %s for finalize",
+			r.wf.Timeouts.Verify.Duration, r.budget.Total, r.budget.Reserve)
+	case errors.Is(probeCtx.Err(), context.DeadlineExceeded):
+		// procgroup.Run reports a command killed by ctx as ctx.Err().
+		log.Warn("commands.probe timed out", "timeout", r.wf.Timeouts.Verify.Duration, "exit_code", code)
+		r.noteProbeTail(tail)
+		return rec, probeLastLine(tail), fmt.Errorf("commands.probe timed out after %s", r.wf.Timeouts.Verify.Duration)
+	case runErr != nil:
+		r.noteProbeTail(tail)
+		return rec, probeLastLine(tail), fmt.Errorf("running commands.probe: %w", runErr)
+	case code != 0:
+		log.Warn("commands.probe failed", "exit_code", code)
+		r.noteProbeTail(tail)
+		return rec, probeLastLine(tail), fmt.Errorf("commands.probe exited %d", code)
+	}
+	log.Info("commands.probe passed", "exit_code", code)
+	for _, l := range tail.Lines() {
+		log.Info("probe output", "line", l)
+	}
+	return rec, "", nil
+}
+
+// writeArtifactNames writes the staged names into <StateDir>/artifact-names.txt
+// and returns its path: one name per line, in upload order, each the same
+// relative sanitised name the upload uses as the object key's leaf.
+//
+// The path is cleared and recreated O_EXCL|O_NOFOLLOW at 0600, the shape the
+// staging copy uses: the state directory is one the plan stage's agent can
+// write — the same user in the same container — so a symlink planted at this
+// path must fail the create rather than choose what the probe later reads.
+func (r *run) writeArtifactNames(set artifactSet) (string, error) {
+	path := filepath.Join(r.d.StateDir, artifactNamesFile)
+	if err := os.RemoveAll(path); err != nil {
+		return "", fmt.Errorf("clearing the probe's list of staged names %s: %w", path, err)
+	}
+	var b strings.Builder
+	for _, f := range set.files {
+		b.WriteString(f.name)
+		b.WriteString("\n")
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("writing the probe's list of staged names %s: %w", path, err)
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		return "", fmt.Errorf("writing the probe's list of staged names %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("writing the probe's list of staged names %s: %w", path, err)
+	}
+	return path, nil
+}
+
+// probeLastLine is the probe's last non-empty line and nothing else, one-lined
+// and clipped: the one line a run's reason quotes, since a reason is a sentence
+// and the probe's whole output is in the report. It is "" when the probe said
+// nothing, so the reason carries only the exit code — provision.go's lastLine
+// substitutes a phrase of its own, which belongs to the toolchain step and not
+// to a repository command's silence.
+func probeLastLine(tail *logtail.Writer) string {
+	lines := tail.Lines()
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return logtail.Clip(safetext.OneLine(l), logtail.DefaultLineBytes)
+		}
+	}
+	return ""
+}
+
+// noteProbeTail keeps the probe's last lines as the report's log tail: a
+// failed probe's output is the one thing that explains it, and the probe is a
+// repository command whose own message an owner wrote.
+func (r *run) noteProbeTail(tail *logtail.Writer) {
+	lines := tail.Lines()
+	if len(lines) == 0 {
+		return
+	}
+	r.tail = &LogTail{Source: "the probe step", Lines: r.redactAll(lines)}
 }
 
 // stageArtifacts matches the recipe's globs against the checkout, refuses
