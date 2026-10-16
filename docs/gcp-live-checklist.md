@@ -1370,7 +1370,7 @@ echo "base image: $(cat "$S/base-image") (moved from $(cat "$S/base-image-moved-
 **Steps.** Each run below is a **⚠ CONFIRM**: you launch it, with your own task text. Except where a step says otherwise, every command runs **in the sandbox checkout**, with the guard sourced (`. ./check38-env.sh`) in that shell first.
 
 0. **The one build, and the base image read rather than built (the order's (c)).** Read the two paragraphs above first. This is the only step that runs **outside the sandbox checkout** — in a scratch checkout of `origin/main` — and it writes nothing anywhere: no image, no registry, no installation change. Keep it in **one shell**, so the guard's variables and its hard stop (`P` must be `fugaro-dev`) are in that shell:
-   - **Start from the sandbox checkout**, in the shell you will use: source the guard there (`. ./check38-env.sh`), so `$P`, `$R` and its hard stops are in this shell, and — the first time through — run the recorded-state block too, in the same shell.
+   - **Start from the sandbox checkout**, in the shell you will use: source the guard there (`. ./check38-env.sh`), so `$P`, `$R` and its hard stops are in this shell. The recorded state is **not** taken here: it is (a), the block the "order, once" paragraph places first, and it must be taken **before** the Setup paragraph edits the sandbox's `fugaro.yaml` — this step runs after that edit, so a record taken here records `checkout: clone` with source `repo` and the Restore's step 1 writes `clone` back, which is the failure the record-first rule exists to prevent, and the block's own `[ ! -e "$S" ]` guard cannot catch it (there is no record to be left over). So take it in the earlier shell, per (a)'s block and the paragraph above it. If you have not taken it, do **not** take it here: put the sandbox's `checkout:` back to its pre-check value by hand first, then take the record with (a)'s block, and only then go on.
    - **The binary.** `cd` to a scratch checkout of `origin/main` (a fresh `git clone` or a `git worktree` of the main checkout), set `cloneShipped` to `true` in `internal/cli/recipes_skew.go` — one line, left **uncommitted**, never committed and never pushed — then build it and put it first on `PATH`, so every `fugaro` below is this build:
      ```bash
      mkdir -p /tmp/check38-bin
@@ -1644,7 +1644,7 @@ V=$(fugaro version | awk '{print $NF}'); V=${V#v}   # `fugaro version`: no --ver
 # argument that gcloud would resolve from its ambient configuration.
 # (Same rule as Check 38's guard: no apostrophe inside a ${VAR:?...} message —
 # bash reads the message as a word expecting a closing quote and the whole
-# block then fails to parse. The 43c block below carried one.)
+# block then fails to parse. The 43e block below carried one.)
 I=${L:?re-run the Check 43 setup block}-docker.pkg.dev/${P:?re-run the Check 43 setup block}/${R:?re-run the Check 43 setup block}/${U:?re-run the Check 43 setup block}
 
 [ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \

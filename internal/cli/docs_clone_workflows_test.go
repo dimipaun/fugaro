@@ -198,6 +198,33 @@ func TestChecklistHasCheck38(t *testing.T) {
 		}
 	}
 
+	// Step 0 must not send the owner to the recorded-state block: step 0 is
+	// printed after the Setup paragraph, whose (b) has already set
+	// `checkout: clone` and merged it, so a record taken there would record
+	// `clone` — and the Restore's step 1 would write `clone` back. The block
+	// cannot catch it either: `[ ! -e "$S" ]` refuses a leftover record, not a
+	// record that is simply late. It points at (a) instead.
+	for _, want := range []string{"The recorded state is **not** taken here", "there is no record to be left over"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's step 0 does not say %q", want)
+		}
+	}
+	if strings.Contains(section, "run the recorded-state block too, in the same shell") {
+		t.Error("the Check 38 section's step 0 still tells the owner to take the record after the first change")
+	}
+
+	// ... and the one comment this PR added to another check names the right
+	// item: the two apostrophe-bearing ${VAR:?...} messages were in Check 43's
+	// 43e block (the digest pull and the digest assignment), not in 43c's, and
+	// a comment that sends a reader to a block which never had the defect is
+	// the same wrong reference the step-5 assertions above ban.
+	if strings.Contains(doc, "The 43c block below carried one") {
+		t.Error("the Check 43 guard comment points at 43c for a defect that was in 43e")
+	}
+	if !strings.Contains(doc, "The 43e block below carried one") {
+		t.Error("the Check 43 guard comment does not name 43e, where the apostrophes were")
+	}
+
 	// The order, written once: the Setup paragraph needs step 0's build for
 	// its `init`, and it is printed above step 0, so an owner reading the
 	// section top to bottom would run it without the build and be refused.
