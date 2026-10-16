@@ -64,6 +64,20 @@ type Run struct {
 	patches  []map[string]any
 	faults   JobFaults
 	pending  map[string]*runOp // a patch's operations by name
+	// projectJobs are the jobs registered as shared project jobs, by name
+	// (AddProjectJob): one job per (profile, provider, account), shared by
+	// every repository admitted to the profile (design §4.1).
+	projectJobs map[string]projectJobTriple
+}
+
+// projectJobTriple is the (profile, provider, account) a shared project
+// job's name was computed from (plan task 3.4 step 4). The fake cannot
+// compute the name itself — internal/backend/gcp's own tests import this
+// package, so importing it back is an import cycle — and a second copy of
+// the naming rule here would be a second rule (R2-5). The name is therefore
+// the caller's (gcp.ProjectJobName) and the triple is what this records.
+type projectJobTriple struct {
+	profile, provider, account string
 }
 
 // JobFaults inject failures into jobs get and patch and into a patch's
@@ -168,6 +182,38 @@ func (f *Run) AddJob(name string, cpu, memory string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// AddProjectJob registers the shared project job of (profile, provider,
+// account) — name, which the caller computes with gcp.ProjectJobName — with
+// the given CPU and memory limits: one Cloud Run job shared by every
+// repository admitted to the profile (design §4.1, plan task 3.4 step 4).
+//
+// A project job is what makes the fake hold a launch to the one rule a
+// shared job has: the job's name no longer says which run it is, so an
+// execution of it must be launched with FUGARO_RUN. Real Cloud Run accepts
+// such a launch and starts a run nothing can be attributed to; the fake
+// refuses it, as it does for the other name and shape mistakes Cloud Run
+// would accept (the "known differences" above).
+func (f *Run) AddProjectJob(name, profile, provider, account, cpu, memory string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.projectJobs == nil {
+		f.projectJobs = map[string]projectJobTriple{}
+	}
+	f.projectJobs[name] = projectJobTriple{profile: profile, provider: provider, account: account}
+	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// ProjectJobOf reports the (profile, provider, account) name was registered
+// as a shared project job with, and whether it is one at all. A test asks
+// the fake what a launcher selected, rather than comparing against a name it
+// computed itself: the triple is what the launcher had to resolve.
+func (f *Run) ProjectJobOf(name string) (profile, provider, account string, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.projectJobs[name]
+	return t.profile, t.provider, t.account, ok
 }
 
 // SetJob creates job name, or updates it, with labels and its container's
