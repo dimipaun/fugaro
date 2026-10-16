@@ -221,6 +221,12 @@ func SetPrefetchFetch(t *testing.T, f func(repo *gitops.Repo, ctx context.Contex
 // a table over it.
 func SanitiseName(name string) (string, error) { return sanitiseName(name) }
 
+// ArtifactContentType exposes the recorded content type (artifact.go's
+// artifactContentType) to the runner_test package: the sniff fallback only
+// runs for a name whose extension the mime table does not know, which no
+// fixture artifact is, so the branch needs its own table.
+func ArtifactContentType(name, path string) (string, error) { return artifactContentType(name, path) }
+
 // SetArtifactStagedSeam runs f in collectArtifacts after the set is staged
 // and hashed and before anything is uploaded, for the rest of t: it is how a
 // test replaces a staged file between the hash and the upload (Review Focus

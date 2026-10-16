@@ -1485,6 +1485,186 @@ func TestASymlinkOutOfTheOutputsRootIsRefusedNotFollowed(t *testing.T) {
 	}
 }
 
+// TestAMatchUnderASymlinkedDirectoryIsRefusedNotFollowed is the half of the
+// symlink rule that a check on the match's own mode cannot see: out/evil is a
+// symlink to the checkout root, so out/evil/secret.png is a plain regular file
+// that only exists because the DIRECTORY on the way to it is a link. Nothing
+// about the match itself is remarkable, so the question has to be asked of the
+// whole path — resolve every element and compare what is left against the
+// resolved outputs root — or the run copies, uploads and records bytes from
+// outside the root as the render's own output, which is the one thing the rule
+// is for.
+//
+// Mutation (Lstat only the match's final component): secret.png is uploaded
+// under the name evil/secret.png and this test fails on the bucket's key set
+// and on the "secret" scan.
+func TestAMatchUnderASymlinkedDirectoryIsRefusedNotFollowed(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p out/real\nprintf 'ok' > out/real/sizzle.png\nprintf 'secret' > secret.png\nln -s .. out/evil\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"real/sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only real/sizzle.png", got)
+	}
+	for _, k := range bucketKeys(t, h.bucket) {
+		if strings.Contains(string(objectBytes(t, h.bucket, k)), "secret") {
+			t.Fatalf("%s holds bytes reached through a symlinked directory", k)
+		}
+	}
+	if !strings.Contains(logs.String(), "out/evil/secret.png") {
+		t.Fatalf("the refusal is not in the log:\n%s", logs.String())
+	}
+}
+
+// TestASymlinkToADirectoryIsSkippedNotFatal pins what happens when a link's
+// target IS inside the outputs root: the resolved path passing the root check
+// is not the whole answer, because what it resolves TO still has to be a file
+// whose bytes can be copied. out/alias -> real is a directory, which the
+// plain-directory branch skips with a warning; keeping the resolved path
+// instead fails the copy with EISDIR and turns a skipped match into a failed
+// run. The record ends succeeded with the one file the render wrote, and the
+// warning names the link.
+//
+// Mutation (keep a resolved target without checking it is a regular file): the
+// run ends failed and this test fails on the status.
+func TestASymlinkToADirectoryIsSkippedNotFatal(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*] }")),
+		renderScript("#!/bin/sh\nmkdir -p out/real\nprintf 'ok' > out/sizzle.png\nln -s real out/alias\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	if !strings.Contains(logs.String(), "alias") {
+		t.Fatalf("the refusal is not in the log:\n%s", logs.String())
+	}
+}
+
+// TestASymlinkToAFifoIsRefusedNotOpened is the same check where the old
+// behaviour did not merely answer wrongly, it never answered: os.Open on a
+// FIFO blocks until a writer appears, and the staging copy takes no context, so
+// copying out/stream.png would hang the run until the job was killed and leave
+// no result.json at all. The mode comes from metadata, which never blocks, so
+// the link is skipped exactly like the plain FIFO beside it.
+//
+// Mutation (keep a resolved target without checking it is a regular file): this
+// test never finishes; go test kills it with a panic on the test timeout rather
+// than reporting a failure.
+func TestASymlinkToAFifoIsRefusedNotOpened(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p out\nprintf 'ok' > out/sizzle.png\nmkfifo out/pipe\nln -s pipe out/stream.png\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	if !strings.Contains(logs.String(), "stream.png") {
+		t.Fatalf("the refusal is not in the log:\n%s", logs.String())
+	}
+}
+
+// TestOneEmptyGlobAmongSeveralIsReported takes design §8.4's "it is reported"
+// at the glob rather than at the run: the recipe names two patterns and the
+// render produces one of them, so the run is not empty and the all-or-nothing
+// warning said nothing about the pattern that matched nothing — the typo a
+// reader most needs to see. The file still uploads and the run still succeeds;
+// only the log gains a line, and that line names the empty glob and no other.
+//
+// Mutation (warn only when every glob matched nothing): no line names
+// out/*.mp4 and this test fails.
+func TestOneEmptyGlobAmongSeveralIsReported(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png, out/*.mp4] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	var line string
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, "matched nothing") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("the empty glob is not reported:\n%s", logs.String())
+	}
+	if !strings.Contains(line, "out/*.mp4") {
+		t.Fatalf("the report does not name the empty glob: %s", line)
+	}
+	if strings.Contains(line, "out/*.png") {
+		t.Fatalf("the report names a glob that matched: %s", line)
+	}
+}
+
+// TestArtifactContentTypeIsTheExtensionThenTheSniff covers both branches of
+// the recorded type (design §8.1: recorded, never trusted): the name's
+// extension when it means something, and the file's own first bytes when it
+// does not — an extension-less name, a name whose extension the mime table
+// does not know, a body shorter than the 512-byte sniff buffer and one longer
+// than it. Where the two disagree the extension wins, because the record says
+// what the artifact is called.
+//
+// Mutation (sniff before the extension): the GIF called sizzle.png is recorded
+// as image/gif and this test fails; mutation (drop the sniff): every
+// extension-less case is recorded as "" and fails.
+func TestArtifactContentTypeIsTheExtensionThenTheSniff(t *testing.T) {
+	dir := t.TempDir()
+	gif := "GIF89a" + strings.Repeat("\x00", 32)
+	png := "\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 32)
+	cases := []struct{ name, body, want string }{
+		{"sizzle.png", gif, "image/png"},
+		{"sizzle", png, "image/png"},
+		{"sizzle", "sizzle", "text/plain; charset=utf-8"},
+		{"sizzle.fugaroart", strings.Repeat("a", 600), "text/plain; charset=utf-8"},
+	}
+	for i, c := range cases {
+		path := filepath.Join(dir, fmt.Sprintf("f%d", i))
+		if err := os.WriteFile(path, []byte(c.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := runner.ArtifactContentType(c.name, path)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("ArtifactContentType(%q, %d bytes) = %q, want %q", c.name, len(c.body), got, c.want)
+		}
+	}
+}
+
 // TestResultJSONCarriesRenderAndArtifacts: the stored record is the whole
 // account of an artifact run — the render step and the files it uploaded,
 // each with the name, size, hash and recorded content type — and carries no

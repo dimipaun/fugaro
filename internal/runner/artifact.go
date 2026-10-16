@@ -329,33 +329,50 @@ func (r *run) collectArtifacts(ctx context.Context) error {
 //     claim an artifact the retriever cannot hand back, and a set that
 //     silently drops one is a record that lies about what the render
 //     produced.
-//   - a match that is a symlink out of the outputs root is skipped with a
-//     warning and the run goes on (the plan's own rule): the bytes would be a
-//     file the render never wrote, so they are not copied, but a repository
-//     whose outputs hold such a link has not thereby escaped anything — the
-//     file is simply not a deliverable.
+//   - a match whose bytes would come from outside the outputs root — a link to
+//     somewhere else, or a file reached through a symlinked directory — and a
+//     match that is not a regular file are skipped with a warning and the run
+//     goes on (the plan's own rule): the bytes would be a file the render never
+//     wrote, so they are not copied, but a repository whose outputs hold such a
+//     link has not thereby escaped anything — the file is simply not a
+//     deliverable. A glob that matched nothing is reported the same way, one
+//     line per glob (design §8.4), and is not a refusal at all.
 func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 	set := artifactSet{dir: filepath.Join(r.d.StateDir, artifactStageDir)}
 	if out == nil || len(out.Globs) == 0 {
 		return set, errors.New("the recipe names no outputs.globs: an artifact run with nothing to select has nothing to upload")
 	}
 	root := outputsRoot(out.Globs)
-	matches, err := matchOutputs(r.d.WorkDir, out.Globs)
+	matches, empty, err := matchOutputs(r.d.WorkDir, out.Globs)
 	if err != nil {
 		return set, err
+	}
+	if len(matches) == 0 {
+		// Not an error by itself: a render may legitimately produce nothing
+		// (design §8.4), and the probe step is what turns "nothing" into a
+		// failure when the recipe's owner wants one. It is reported rather
+		// than silent — this line, and the report's own "no files" line,
+		// which the record's empty artifacts carries — and nothing is
+		// staged, so the run leaves the bucket exactly as it found it. Every
+		// glob is in empty here, so the one line naming the list is exact.
+		r.d.Log.Warn("commands.render matched none of the recipe's outputs.globs", "globs", strings.Join(out.Globs, ", "))
+		return set, nil
+	}
+	// One line per glob that matched nothing, naming that glob and no other
+	// (design §8.4, "it is reported"): a set that came out of the other
+	// patterns is no reason for a typo in this one to go unsaid.
+	for _, g := range empty {
+		r.d.Log.Warn("commands.render matched nothing for one of the recipe's outputs.globs", "glob", g)
 	}
 	kept, err := r.usableOutputs(matches, root)
 	if err != nil {
 		return set, err
 	}
 	if len(kept) == 0 {
-		// Not an error by itself: a render may legitimately produce nothing
-		// (design §8.4), and the probe step is what turns "nothing" into a
-		// failure when the recipe's owner wants one. It is reported rather
-		// than silent — this line, and the report's own "no files" line,
-		// which the record's empty artifacts carries — and nothing is
-		// staged, so the run leaves the bucket exactly as it found it.
-		r.d.Log.Warn("commands.render matched none of the recipe's outputs.globs", "globs", strings.Join(out.Globs, ", "))
+		// Every match was refused above, each with its own warning saying why,
+		// so this line only marks the step as over: nothing is staged and the
+		// record carries no artifacts.
+		r.d.Log.Warn("commands.render left no usable file for the recipe's outputs.globs", "globs", strings.Join(out.Globs, ", "))
 		return set, nil
 	}
 	if len(kept) > out.FileCount() {
@@ -436,23 +453,31 @@ func (r *run) uploadArtifacts(ctx context.Context, set artifactSet) ([]runstore.
 	return files, nil
 }
 
-// matchOutputs expands the recipe's globs against the checkout. A pattern
-// that cannot be parsed is refused rather than skipped: a glob nobody can
-// match is a recipe bug, and silently uploading less than the recipe asked
-// for is the failure this whole step exists to prevent.
-func matchOutputs(workDir string, globs []string) ([]string, error) {
-	var out []string
+// matchOutputs expands the recipe's globs against the checkout, in glob order,
+// and names the globs that matched nothing. A pattern that cannot be parsed is
+// refused rather than skipped: a glob nobody can match is a recipe bug, and
+// silently uploading less than the recipe asked for is the failure this whole
+// step exists to prevent.
+//
+// empty is per glob rather than per run because that is what design §8.4's "it
+// is reported" has to mean: a recipe whose second pattern is a typo is exactly
+// the case a reader needs to hear about, and it is invisible to a test that
+// only asks whether the whole set came out empty.
+func matchOutputs(workDir string, globs []string) (matches, empty []string, err error) {
 	for _, g := range globs {
 		if filepath.IsAbs(g) {
-			return nil, fmt.Errorf("the outputs.globs entry %q is absolute: a glob is relative to the checkout", g)
+			return nil, nil, fmt.Errorf("the outputs.globs entry %q is absolute: a glob is relative to the checkout", g)
 		}
 		m, err := filepath.Glob(filepath.Join(workDir, filepath.FromSlash(g)))
 		if err != nil {
-			return nil, fmt.Errorf("the outputs.globs entry %q: %w", g, err)
+			return nil, nil, fmt.Errorf("the outputs.globs entry %q: %w", g, err)
 		}
-		out = append(out, m...)
+		if len(m) == 0 {
+			empty = append(empty, g)
+		}
+		matches = append(matches, m...)
 	}
-	return out, nil
+	return matches, empty, nil
 }
 
 // usableOutputs drops the matches that must not be copied, with a warning
@@ -481,25 +506,49 @@ func (r *run) usableOutputs(matches []string, root string) ([]string, error) {
 }
 
 // outputProblem is why path must not be copied, or "" when it may be. root is
-// the outputs root with every symlink resolved, which is what a symlink's own
-// target is compared against: the check is on the resolved target, never on
-// the link's name.
+// the outputs root with every symlink resolved.
+//
+// The question is about the file the bytes would come from, never about the
+// name that reaches it, so every element of the path is resolved:
+// filepath.EvalSymlinks turns out/evil/secret.png into the file behind a
+// symlinked DIRECTORY, and a match like that is refused exactly as a match that
+// is itself a link is. Lstat'ing the final component alone would see a plain
+// regular file there and copy bytes from outside the root — the one thing this
+// check exists to prevent — because the link is in the middle of the path, not
+// at its end.
+//
+// What the path resolves TO matters as well, not just where it is: a link to a
+// directory would fail the copy with EISDIR where the plain directory is
+// skipped with a warning, and a link to a FIFO would block the copy forever
+// (the staging copy takes no context, so nothing could interrupt it). Both get
+// the answer their unlinked selves get, from metadata that cannot block.
 func outputProblem(path, root string) (string, error) {
 	st, err := os.Lstat(path)
 	if err != nil {
 		return "", fmt.Errorf("examining the render's %s: %w", path, err)
 	}
-	if st.Mode()&os.ModeSymlink != 0 {
-		target, err := filepath.EvalSymlinks(path)
-		if err != nil {
+	link := st.Mode()&os.ModeSymlink != 0
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		if link {
 			return fmt.Sprintf("it is a symlink whose target cannot be resolved (%v)", err), nil
 		}
-		if !withinDir(root, target) {
+		return "", fmt.Errorf("examining the render's %s: %w", path, err)
+	}
+	if !withinDir(root, target) {
+		if link {
 			return fmt.Sprintf("it is a symlink to %s, outside the outputs root %s", target, root), nil
 		}
-		return "", nil
+		return fmt.Sprintf("it reaches %s through a symlinked directory, outside the outputs root %s", target, root), nil
 	}
-	if !st.Mode().IsRegular() {
+	// target holds no symlink of its own, so Lstat answers about the file the
+	// copy would open — and answers it without the open, which is what keeps a
+	// FIFO from blocking here.
+	tst, err := os.Lstat(target)
+	if err != nil {
+		return "", fmt.Errorf("examining the render's %s: %w", path, err)
+	}
+	if !tst.Mode().IsRegular() {
 		return "it is not a regular file", nil
 	}
 	return "", nil
