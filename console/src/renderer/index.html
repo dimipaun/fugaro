@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The CSP of design section 5.1 rule 3, and it is the *copy*. The real one is
+      delivered as a `Content-Security-Policy` response header by
+      `src/main/protocol.ts`, over the registered `app://` scheme; that header is
+      the reason the scheme exists, because it cannot be attached to a `file://`
+      document at all. This meta element is belt and braces: it is parsed late
+      and it cannot cover everything the header covers, but a document carrying
+      both cannot end up with neither, and `console/test/unit/window.test.ts`
+      asserts the two strings are still byte-identical, so the copy cannot drift
+      into a lie.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+    />
+    <title>Fugaro console</title>
+  </head>
+  <body>
+    <!--
+      The document of Task 1.1 draws nothing but this. It is deliberately
+      script-free and style-free: the CSP of rule 3 allows neither inline
+      scripts nor inline styles, so both will arrive as files served from this
+      same bundle and from nowhere else. It exists so that every rule the window
+      enforces has something real to enforce it against, a document loaded over
+      `app://console`, with an origin, a title and no capabilities. The console's
+      data arrives over IPC from the main process in Task 1.2, and nothing here
+      reaches for it.
+    -->
+    <main>
+      <h1>Fugaro console</h1>
+      <p>The console's window is up. It has no data yet.</p>
+    </main>
+  </body>
+</html>
