@@ -743,9 +743,19 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
   literals. A document with a key nobody anticipated still cannot carry an
   address out of the room, and a test per class holds each one — a run title, a
   requester address, a repository name in the field *and* in a sentence, a
-  branch name, a POSIX and a Windows path, a token by shape and by key, a URL
-  with userinfo, the installation's own literals, and an address under a key
-  nobody anticipated.
+  branch name, a POSIX and a Windows path (including the `/usr`, `/etc`,
+  `/System` and firmlink forms a prefix whitelist would have missed), a token by
+  shape and by key, a URL with userinfo, the installation's own literals, and an
+  address under a key nobody anticipated.
+- **A key is a string too, and it is the one string a rule cannot replace.**
+  Renaming a key would change a document's shape — `repo`, `title`, `day` and
+  `burn` are names the console reads — so a key that carries identity is a
+  **refusal** instead: `{"ana@example.com": …}`, `{"acme/secret-repo": …}`,
+  `{"/Users/ana/src/fugaro": 1}` and a key naming the installation's own project
+  all end a recording rather than travelling inside one that redacts to itself.
+  The audit walks keys with the same rules as values, and reads a key's *parent*
+  through an array index, so `{"kill":[{"by":"Ana Smith"}]}` is a person there
+  as it is in the object form.
 - **Redaction is a marker, not a deletion, and the markers are a closed set**
   (`<path>`, `<project>`, `<host>`, `<branch>`, `[redacted-token]`,
   `[redacted-url]`, `redacted@example.invalid`, `[redacted]`). A marked value is
@@ -813,8 +823,11 @@ Everything the recorder does before it spawns is a refusal rather than a
 guess, and this is what makes it a tool an agent cannot be talked into
 misusing. `parseRecorderArgs` refuses, by name: a missing `--project`; the
 project `belong`; **any `--out` outside a `fixtures/` directory or not ending
-`.ndjson`**; an existing fixture without `--force`; an unknown flag; and a
-`--duration` that is not a positive number. `OUT_OF_BOUNDS` also refuses a path
+`.ndjson`**; an existing fixture without `--force`; an unknown flag; a
+`--duration` that is not a positive number; and a `--case` outside
+`FIXTURE_CASES` — a `--case wibble` would write `test/fixtures/wibble.ndjson`, a
+file `fixture.test.ts` then refuses, so the refusal would land on whoever
+replays the recording rather than on the invocation that made it. `OUT_OF_BOUNDS` also refuses a path
 carrying the fragment `.config/fugaro`, normalised for case and for Windows
 separators, so an invocation pointed at the operator's config stops before it
 spawns anything. And a recording that read **no document at all** is a refusal
@@ -837,7 +850,13 @@ fixture `--out` names, and only after the text has gone back through the real
 | Mutation | What fails |
 |---|---|
 | a title passed through untouched | "redacts run titles: the words stay, the people and the places go" |
+| the path rule narrowed back to a whitelist of first segments, or its leading-context lookbehind restored | "redacts the paths a whitelist of prefixes would have missed" |
+| the literal rule's lookbehind restored, so a literal glued to a word character or a slash is missed | "redacts a literal whose first character is not a word character, glued into a word" |
+| the repository rule back to two-character segments, so `and/or` becomes a repository | "finds a repository behind a host, and never invents one out of prose" |
+| keys left outside the rules and the audit | "refuses a key that carries identity, because a key cannot be renamed" |
+| `parentKeyOf` reading the raw trail, so an array index hides the parent | "reads the class of a key through an array index" |
 | a fixture in `test/fixtures/` with a planted address | "refuses a fixture whose records carry what the redactor removes" |
+| a fixture committed into `test/fixtures/` with a stale digest or a planted address | "loads every file in test/fixtures/, and refuses one that does not verify" |
 | `redactDocument` made non-idempotent | "redacting twice changes nothing" |
 | a frame that cannot be parsed passed through | "fails closed on a frame it cannot parse" |
 | the audit's throw turned into a return of the problems | "the audit accepts what redaction produces, and refuses what it does not" |
@@ -848,7 +867,7 @@ fixture `--out` names, and only after the text has gone back through the real
 | the replay firing records back-to-back instead of on their stamps | "replays the recording on the recording's own clock" |
 | the committed synthetic fixture hand-edited, digest and all | "is exactly what the redaction path writes from the documents in source" |
 | a stray file in `test/fixtures/` — a hand-made copy, a recording under a name no case holds | "holds exactly the synthetic fixture plus, at most, one file per recorded case" |
-| a `--project` defaulted to the ambient project, `belong` accepted, or an `--out` outside `fixtures/` | "refuses an invocation that would record the wrong thing" (one table, one row per refusal) |
+| a `--project` defaulted to the ambient project, `belong` accepted, an `--out` outside `fixtures/`, or a `--case` outside `FIXTURE_CASES` | "refuses an invocation that would record the wrong thing" (one table, one row per refusal) |
 | an existing fixture overwritten without `--force` | "never overwrites a fixture without --force" |
 | the spawn built from a hand-written argv instead of `planFor` | "is the console's live.watch plan, --project and all" |
 | the child's environment inherited instead of built | "gives the child CHILD_ENV_KEYS and nothing else" |
@@ -864,6 +883,19 @@ mutation and the planted-address fixture both failed the tests named above, and
 the two workflow mutations the plan says to run first (a `console` job renamed,
 and one carrying `paths: ['console/**']`) were run with them — see the
 `docs/pending-workflows/console-tests.yml` section below for those two.
+
+Seven more were run after a review of this task, one per row above that names a
+mutation of the redactor or the recorder's arguments: the path rule restored to
+its whitelist and lookbehind, the literal rule's lookbehind restored, the
+repository rule's segments shortened to two, `auditKey` removed, `parentKeyOf`
+left reading the raw trail, `--case` accepted unchecked, and a `test/fixtures/`
+file written with a stale digest. Each failed exactly the test named beside it
+and nothing else, which is what makes the row a promise rather than a note. One
+mutation is *not* in the table because nothing failed it: dropping the
+repository rule's dotted host prefix. The widened path class reaches
+`github.com/acme/secret-repo` on its own, so that half of the rule is the second
+of two rather than the only one, and `src/source/redact.ts` says so where the
+rule is written.
 
 ### What is deliberately not here (Task 1.4)
 
@@ -922,13 +954,15 @@ about this directory rather than about the workflow:
   (design §9.4).
 - **The job runs unconditionally, and that is what makes it gate-able.** It has
   no `paths:` filter and no job-level `if:`, and its name is exactly `console`
-  — the string in `scripts/release-gate.sh`'s `names` list. The gate requires a
-  check named `console` on a tag's commit and, in its `identical_tree_checks`
-  fallback, the same names on the pull request head whose tree matches; **a check
-  that does not exist is not a success and neither is a skipped one**, so a
-  `console` job filtered to `console/**` would make the gate refuse **every**
-  release tag in this repository, including the ones that never touch the
-  console (design §9.4; plan Task 4.6). Two tests in
+  — the string Task 4.6 adds to `scripts/release-gate.sh`'s `names` list (that
+  line reads `names="test terraform rules"` today, so the check is not required
+  yet). From that edit on, the gate requires a check named `console` on a tag's
+  commit and, in its `identical_tree_checks` fallback, the same names on the
+  pull request head whose tree matches; **a check that does not exist is not a
+  success and neither is a skipped one**, so a `console` job filtered to
+  `console/**` would then make the gate refuse **every** release tag in this
+  repository, including the ones that never touch the console (design §9.4;
+  plan Task 4.6). Two tests in
   `internal/cli/docs_desktop_console_test.go` —
   `TestConsoleTestsWorkflowIsStagedAndPinned` and `TestConsoleWorkflowJobIsGateable`
   — assert the pins, the absence of any secret, the job's name and the absence

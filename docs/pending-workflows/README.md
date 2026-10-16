@@ -60,15 +60,17 @@ from `console/package.json`'s `engines.node`, `npm ci --ignore-scripts
 the app first and passes on a tree with no spec). **It holds no secret at all**,
 and its triggers are `pull_request` and `push` to `main` **with no `paths:`
 filter and no job-level `if:`** — and that is a correctness requirement rather
-than taste: `scripts/release-gate.sh` requires a check named `console` on a tag's
-commit and, in its `identical_tree_checks` fallback, the same names on the pull
-request head whose tree matches. **A check a filter skipped is not a success**, so
-a `console` job filtered to `console/**` would refuse **every** release tag in
-this repository, including the releases that never touch the console (plan Task
-4.6, design section 9.4). The signing, notarising and stapling job and the Apple
-material it reads are Task 4.2's **separate** `console-release.yml`, precisely so
-that this file — which runs on every pull request from any branch — never sits
-next to them.
+than taste. **Task 4.6 is what adds `console` to `scripts/release-gate.sh`'s
+`names` list** (that line reads `names="test terraform rules"` today, so this
+check is not yet required), and from that edit on the gate requires a check named
+`console` on a tag's commit and, in its `identical_tree_checks` fallback, the
+same names on the pull request head whose tree matches. **A check a filter
+skipped is not a success**, so a `console` job filtered to `console/**` would
+then refuse **every** release tag in this repository, including the releases that
+never touch the console (plan Task 4.6, design section 9.4). The signing,
+notarising and stapling job and the Apple material it reads are Task 4.2's
+**separate** `console-release.yml`, precisely so that this file — which runs on
+every pull request from any branch — never sits next to them.
 
 The owner applies it with one command, from the repository root:
 

@@ -114,6 +114,44 @@ describe('the redactor', () => {
     expect(redactRepository('dimipaun/fugaro')).toBe(repo)
   })
 
+  it('finds a repository behind a host, and never invents one out of prose', () => {
+    // Both halves of this rule were wrong in an earlier version, in opposite
+    // directions. `github.com/acme/secret-repo` is a repository path with a host
+    // in front of it -- there is no scheme, so the URL rule does not want it,
+    // and the leading-context lookbehind refused a match after the host's dot --
+    // and it came out unchanged *and audited clean*. And two-letter segments let
+    // the prose pair `and/or` through as a repository, which turned `fix auth
+    // and/or retries` into `fix auth r-fbfed1d0/r-554072a2 retries`: data the
+    // document never held, which is the one thing rule 4 forbids.
+    const out = doc({
+      runs: [
+        { title: 'see github.com/acme/secret-repo for details' },
+        { title: 'rebase acme/secret-repo onto main' },
+        { title: 'fix auth and/or retries, then he/she reviews it' },
+        { title: 'n/a, y/n, 24/7, w/o, i/o and input/output' },
+      ],
+    })
+    const titles = list(out, 'runs').map((run) => str(run, 'title'))
+    // The host-prefixed one is now reached by *two* rules -- the path class sees
+    // a `/`-rooted run, the repository class sees the host in front of an
+    // `owner/name` -- and which of them names it is not the property; that the
+    // repository and its owner are gone is. The bare form below is the
+    // repository class's own work: no scheme for the URL rule, no leading `/`
+    // for the path rule.
+    for (const title of [titles[0], titles[1]]) {
+      expect(title).not.toContain('secret-repo')
+      expect(title).not.toContain('acme')
+    }
+    expect(titles[1]).toBe(`rebase ${redactRepository('acme/secret-repo')} onto main`)
+    expect(titles[2]).toBe('fix auth and/or retries, then he/she reviews it')
+    // **The false positive that stays, said out loud:** two ordinary words of
+    // four characters or more -- `input/output` is the one in this line -- are
+    // still pseudonymised as though they were a repository, and
+    // `src/source/redact.ts` says why that is the cheaper of the two mistakes.
+    expect(titles[3]).toBe(`n/a, y/n, 24/7, w/o, i/o and ${redactRepository('input/output')}`)
+    expect(createRedactor().problems(out)).toEqual([])
+  })
+
   it('redacts branch names', () => {
     const out = doc({
       runs: [{ title: 'merge feat/console-fixtures into main' }],
@@ -134,6 +172,36 @@ describe('the redactor', () => {
     expect(str(list(out, 'runs')[0] ?? {}, 'title')).toBe(`reading ${PATH_MARKER}`)
     expect(str(list(out, 'finished')[0] ?? {}, 'title')).toBe(`the build in ${PATH_MARKER} failed`)
     expect(str(obj(out, 'environment'), 'binary')).toBe(PATH_MARKER)
+  })
+
+  it('redacts the paths a whitelist of prefixes would have missed', () => {
+    // **The prefixes are not the rule.** An earlier version matched a `/`-rooted
+    // run only when its first segment was one of `Users`, `home`, `Volumes`, ...
+    // so `/usr/local/bin/fugaro` and `/etc/fugaro/config.json` went through
+    // untouched *and audited clean*, because the audit shares this rule. The
+    // macOS firmlink form was missed twice over: `/System` was not on the list
+    // either, so the match had to start at `/Volumes/...` -- preceded by a
+    // letter, which the leading-context lookbehind refused.
+    const out = doc({
+      runs: [
+        { title: 'the binary is /usr/local/bin/fugaro and the config /etc/fugaro/config.json' },
+        { title: '/System/Volumes/Data/Users/ana/src/fugaro is the checkout' },
+        { title: 'logs land in /Library/Logs/fugaro.log' },
+      ],
+    })
+    const titles = list(out, 'runs').map((run) => str(run, 'title'))
+    expect(titles).toEqual([
+      `the binary is ${PATH_MARKER} and the config ${PATH_MARKER}`,
+      `${PATH_MARKER} is the checkout`,
+      `logs land in ${PATH_MARKER}`,
+    ])
+    expect(createRedactor().problems(out)).toEqual([])
+    // A single segment is not a path: `/etc` on its own says nothing about
+    // whose machine it is, and eating it would corrupt ordinary prose. The
+    // structure is what carries the identity, so the structured `path` key is
+    // where a lone directory name is redacted (see the class table in
+    // `src/source/redact.ts`).
+    expect(doc({ note: 'see /etc and /usr for the layout' })).toEqual({ note: 'see /etc and /usr for the layout' })
   })
 
   it('redacts tokens, by shape and by key', () => {
@@ -175,6 +243,28 @@ describe('the redactor', () => {
     // of its own, and corrupting the recording would not protect anyone.
     expect(str(out, 'note')).toBe('an announcement for the team')
     expect(str(list(out, 'runs')[0] ?? {}, 'halt')).toBe(`${LITERAL_MARKER} stopped it`)
+  })
+
+  it('redacts a literal whose first character is not a word character, glued into a word', () => {
+    // **The literals an installation hands the recorder are mostly paths**, and
+    // the place a boundary rule misses them is glued to the text around them --
+    // after a word character, or after a slash. The earlier rule put a
+    // lookbehind in front of *every* literal, so both of these came through
+    // untouched. `/ana` is written as one segment on purpose: the path class
+    // cannot cover for the literal class there, which is what keeps this test
+    // about the boundary rather than about the test above it.
+    const out = doc(
+      { tree: 'the checkout is Data/ana', note: 'copied to home/.fugarorc' },
+      ['/ana', '.fugarorc'],
+    )
+    // A word character in front of a `/`-leading literal...
+    expect(str(out, 'tree')).toBe(`the checkout is Data${LITERAL_MARKER}`)
+    // ...and a slash in front of any other. Both literals are one segment or
+    // slashed-once, which is the whole point: a longer path-shaped literal is
+    // also covered by the path class, and a test that let those two rules cover
+    // for each other would pass while the boundary rule was broken.
+    expect(str(out, 'note')).toBe(`copied to home/${LITERAL_MARKER}`)
+    expect(createRedactor(['/ana', '.fugarorc']).problems(out)).toEqual([])
   })
 
   it('redacts an address under a key nobody anticipated', () => {
@@ -274,6 +364,48 @@ describe('the redactor', () => {
     // fabricated document.
     expect(str(obj(out, 'kill'), 'by')).toMatch(PERSON_PSEUDONYM_RE)
     expect(str(obj(out, 'report'), 'by')).toBe('model')
+  })
+
+  it('refuses a key that carries identity, because a key cannot be renamed', () => {
+    // A key is the one string redaction cannot replace -- `repo`, `title`, `day`
+    // and `burn` are names the console reads, so renaming one would change a
+    // shape rather than protect anyone. An earlier version ignored keys
+    // entirely, so every one of these redacted to *itself* and audited clean: a
+    // document could carry the operator's address, a private repository, the
+    // checkout path and the project's own name past every rule at once.
+    const cases: [string, Record<string, unknown>][] = [
+      ['an address', { 'ana@example.com': { ok: true } }],
+      ['a repository path', { repos_by_name: { 'acme/secret-repo': {} } }],
+      ['a filesystem path', { '/Users/ana/src/fugaro': 1 }],
+    ]
+    for (const [what, value] of cases) {
+      expect(() => doc(value), what).toThrow(/is a key that carries/)
+    }
+    // The installation's own literals are the fifth class a key can carry, and
+    // a key named after the project names the operator just as loudly.
+    expect(() => createRedactor(['fixture-sandbox']).redactDocument({ 'fixture-sandbox': 1 })).toThrow(
+      /is a key that carries one of the installation's own literals/,
+    )
+    // The refusal is the guarantee, not a blanket ban on objects: ordinary keys
+    // -- including one keyed by something already pseudonymised -- are left as
+    // they were.
+    const ordinary = { repos_by_name: { 'r-1a2b3c4d': 1 }, day: '2026-10-15' }
+    expect(doc(ordinary)).toEqual(ordinary)
+  })
+
+  it('reads the class of a key through an array index', () => {
+    // `kill` is written as an object *and* as an array of them, and
+    // `parentKeyOf` read the raw trail: for `kill[0].by` it returned `kill[0]`,
+    // `classFor` has no entry for that, and `by` fell through as a plain string
+    // -- so a person's name in the array form audited clean. The class is a fact
+    // about the key's parent, and an index is not part of the parent's name.
+    expect(() => { assertRedacted({ kill: [{ on: true, by: 'Ana Smith' }] }) }).toThrow(/kill\[0\]\.by/)
+    const out = doc({ kill: [{ on: true, by: 'ann' }] })
+    expect(str(list(out, 'kill')[0] ?? {}, 'by')).toMatch(PERSON_PSEUDONYM_RE)
+    // Both spellings of the same document land in the same class, and on the
+    // same pseudonym: reading the parent through the index is what makes the
+    // array form not a hole and not a different answer.
+    expect(str(list(out, 'kill')[0] ?? {}, 'by')).toBe(str(obj(doc({ kill: { on: true, by: 'ann' } }), 'kill'), 'by'))
   })
 
   it('names the class it refused on, so a failed recording can be read', () => {

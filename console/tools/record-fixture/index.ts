@@ -17,8 +17,11 @@
 //      (`parseRecorderArgs`): no `--project` is a refusal rather than a fall
 //      back to whatever the ambient selection happens to be (design section 3.4
 //      rule 3), `belong` is a refusal, an `--out` outside a `fixtures/`
-//      directory or not ending `.ndjson` is a refusal, and overwriting an
-//      existing fixture needs `--force`.
+//      directory or not ending `.ndjson` is a refusal, overwriting an existing
+//      fixture needs `--force`, and a `--case` outside the design's list is a
+//      refusal too -- otherwise the tool writes `test/fixtures/wibble.ndjson`
+//      and the *suite* refuses it later, on whoever replays it rather than on
+//      the invocation that made it.
 //   2. **builds the spawn through the console's own rules** (`planFor`): the
 //      exact argv of `live.watch` from `SPAWN_COMMANDS`, the fixed child
 //      environment of `CHILD_ENV_KEYS`, an explicit working directory and
@@ -55,8 +58,8 @@ import { basename, dirname, resolve } from 'node:path'
 import { SHUTDOWN_GRACE_MS, decodeFeedLine, nodeSpawner, planFor } from '../../src/main/spawn'
 import type { ChildSpawner, SpawnPlan, SpawnedChildLike, Timers } from '../../src/main/spawn'
 import type { ValidatedArguments } from '../../src/main/ipc'
-import { FIXTURE_DIRECTORY, loadFixture, stampOf, writeFixture } from '../../src/source/fixture'
-import type { FixtureMeta, FixtureRecord } from '../../src/source/fixture'
+import { FIXTURE_CASES, FIXTURE_DIRECTORY, loadFixture, stampOf, writeFixture } from '../../src/source/fixture'
+import type { FixtureCaseName, FixtureMeta, FixtureRecord } from '../../src/source/fixture'
 import { PROJECT_MARKER, RedactionRefusal, createRedactor } from '../../src/source/redact'
 import type { Redactor } from '../../src/source/redact'
 import type { JSONDoc } from '../../src/source/source'
@@ -83,7 +86,7 @@ export interface RecorderOptions {
   readonly configPath?: string | undefined
   readonly binaryPath: string
   readonly directory: string
-  readonly caseName: string
+  readonly caseName: FixtureCaseName
   readonly durationSeconds: number
   readonly repo?: string | undefined
   readonly force: boolean
@@ -178,6 +181,17 @@ export function parseRecorderArgs(
   if (!Number.isInteger(duration) || duration <= 0) {
     throw new RecorderRefusal('--duration must be a positive whole number of seconds')
   }
+  const caseName = flags.get('case') ?? 'normal'
+  if (!isFixtureCase(caseName)) {
+    // A recorder that writes `test/fixtures/wibble.ndjson` has produced a file
+    // its own suite refuses, and the refusal lands on whoever replays it rather
+    // than on the invocation that made it. `synthetic` is deliberately not
+    // accepted either: a recording is never synthetic, and the header this tool
+    // writes says `synthetic: false`.
+    throw new RecorderRefusal(
+      `--case must name one of the design's recorded cases (${FIXTURE_CASES.join(', ')}), not ${JSON.stringify(caseName)}`,
+    )
+  }
   const force = switches.has('force')
   const exists = deps.exists ?? existsOnDisk
   if (!force && exists(resolvedOut)) {
@@ -190,11 +204,18 @@ export function parseRecorderArgs(
     configPath,
     binaryPath,
     directory,
-    caseName: flags.get('case') ?? 'normal',
+    caseName,
     durationSeconds: duration,
     repo: flags.get('repo'),
     force,
   }
+}
+
+/** isFixtureCase narrows a `--case` value to the design's list, so the options
+ * the rest of this file gets are a case `FixtureMeta` accepts rather than an
+ * arbitrary string that happens to have been typed on a command line. */
+function isFixtureCase(value: string): value is FixtureCaseName {
+  return (FIXTURE_CASES as readonly string[]).includes(value)
 }
 
 /** splitFlag splits `--name=value` into its two halves. */

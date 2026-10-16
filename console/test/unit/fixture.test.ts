@@ -24,6 +24,7 @@
 // waited for, and the *recorded* delays are asserted directly.
 
 import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -369,6 +370,26 @@ describe('the committed synthetic fixture', () => {
     expect(text).toContain('<branch>')
     expect(text).toContain('[redacted-url]')
     expect(text).toContain(SYNTHETIC_NOTE)
+  })
+
+  it('loads every file in test/fixtures/, and refuses one that does not verify', () => {
+    // **This is the directory the plan's eight OWNER-RUN recordings land in, and
+    // the test above it checks only *names*.** A recording committed with a
+    // planted address, a stale digest or a wrong record count would then replay
+    // into a screen with a green suite -- the suite would be asserting the shape
+    // of a directory rather than the contents of the files the owner adds.
+    // So every fixture here goes through the loader a screen uses, which
+    // verifies the redactor marker, the digest, the count, the record order and
+    // the redaction audit, and refuses by name when any of them is wrong.
+    const files = readdirSync(FIXTURE_DIRECTORY).filter((name) => name.endsWith('.ndjson'))
+    expect(files).toContain('synthetic.ndjson')
+    for (const name of files) {
+      const path = join(FIXTURE_DIRECTORY, name)
+      const text = readFileSync(path, 'utf8')
+      // The throw carries the path and the reason (the loader's `where`), so a
+      // failure here reads as which file and which check.
+      expect(() => loadFixture(text, path)).not.toThrow()
+    }
   })
 
   it('holds exactly the synthetic fixture plus, at most, one file per recorded case', () => {

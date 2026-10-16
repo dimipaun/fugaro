@@ -28,7 +28,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CHILD_ENV_KEYS, SHUTDOWN_GRACE_MS } from '../../src/main/spawn'
 import type { ChildSpawner, ReadableLike, SpawnedChildLike, Timers } from '../../src/main/spawn'
-import { FIXTURE_DIRECTORY, FixtureRefusal, loadFixture } from '../../src/source/fixture'
+import { FIXTURE_CASES, FIXTURE_DIRECTORY, FixtureRefusal, loadFixture } from '../../src/source/fixture'
 import type { FixtureRecord } from '../../src/source/fixture'
 import { PROJECT_MARKER, RedactionRefusal, createRedactor } from '../../src/source/redact'
 import type { Redactor } from '../../src/source/redact'
@@ -229,11 +229,22 @@ describe("the recorder's arguments", () => {
       [['--out', OUT, '--project'], /--project needs a value/],
       [['--out', OUT, '--project', 'sandbox', '--duration', '0'], /positive whole number of seconds/],
       [['--out', OUT, '--project', 'sandbox', '--duration', '2.5'], /positive whole number of seconds/],
+      // A case the design does not name would be written as
+      // `test/fixtures/wibble.ndjson` -- a file `fixture.test.ts` then refuses,
+      // so the refusal would land on whoever replays it instead of on the
+      // invocation that made it. `synthetic` is named and still refused: a
+      // recording is never synthetic, and this tool's header says so.
+      [['--out', OUT, '--project', 'sandbox', '--case', 'wibble'], /--case must name one of the design's recorded cases/],
+      [['--out', OUT, '--project', 'sandbox', '--case', 'synthetic'], /--case must name one of the design's recorded cases/],
+      [['--out', OUT, '--project', 'sandbox', '--case', 'Normal'], /--case must name one of the design's recorded cases/],
       [[`${FIXTURE_DIRECTORY}/normal.ndjson`], /unexpected argument/],
     ]
     for (const [argv, expected] of cases) {
       expect(refusal(() => opts(...argv)), JSON.stringify(argv)).toMatch(expected)
     }
+    // The `--case` refusal is the one an owner meets while following the plan's
+    // own list, so it prints the list rather than only the value it rejected.
+    expect(refusal(() => full('--case', 'wibble'))).toContain(FIXTURE_CASES.join(', '))
   })
 
   it('prints the one documented command when it is asked for help', () => {

@@ -28,7 +28,11 @@
 //      is -- an address, a token, a URL, an absolute path, a branch name, a
 //      repository path, or one of the installation's own literals. A document
 //      with a key nobody anticipated still cannot carry an address out of the
-//      room.
+//      room. **The keys are strings too**, and a key is the one string that
+//      cannot be replaced: renaming it would change a shape the console reads,
+//      so a key carrying identity is a *refusal* instead (`auditKey`) -- an
+//      address, a repository path, a checkout or the operator's project name in
+//      the key position fails the recording rather than being written out.
 //   2. **Redaction is a marker, not a deletion, and the markers are a closed
 //      set** (`<path>`, `<project>`, `<host>`, `<branch>`, `[redacted-token]`,
 //      `[redacted-url]`, `redacted@example.invalid`, `[redacted]`). A marked
@@ -311,12 +315,33 @@ const TOKEN_RES: readonly RegExp[] = Object.freeze([
  * real address. */
 const ADDRESS_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g
 
-/** ABS_PATH_RE matches an absolute POSIX path in the places one appears: a home
- * directory, a system prefix, a macOS private directory. It is deliberately a
- * *prefix* whitelist rather than "anything with a slash", so a sentence is not
- * eaten whole. */
-const ABS_PATH_RE =
-  /(?<![\w.~])(?:~\/|\/(?:Users|home|root|private|var|tmp|opt|srv|mnt|Volumes|Applications)\/)[^\s"'`,;:)\]}]*/g
+/**
+ * ABS_PATH_RE matches an absolute POSIX path: a run rooted at `/` (or at `~/`)
+ * with at least two segments.
+ *
+ * **This rule is deliberately not a prefix whitelist, and an earlier version's
+ * was a real hole.** That version listed the prefixes a person expects --
+ * `Users|home|root|private|var|tmp|opt|srv|mnt|Volumes|Applications` -- and
+ * required the match not to be preceded by a word character. Both halves missed
+ * paths a recording really carries: `/usr/local/bin/<binary>`, `/etc/<...>/config.json`
+ * and `/Library/...` were never matched whatever the context, and macOS's
+ * firmlink form -- `/System/Volumes/Data/Users/<user>/src/<binary>`, which is
+ * what a real `HOME` looks like on Catalina and later -- was missed twice over,
+ * because `/System` is not on the list and the `/Volumes/...` inside it is
+ * preceded by the `m` of `System`. A recording of the operator's own checkout
+ * walked straight through, and the audit shared the pattern, so the audit
+ * reported clean.
+ *
+ * What it matches now is any `/`-rooted run of path characters **with a second
+ * slash in it**, plus the `~/` form. Two slashes is what keeps a sentence from
+ * being eaten: a lone `/` in prose ("either/or", "24/7", "and/or") has no
+ * leading `/` at all, and a relative path (`src/source/redact.ts`) is not
+ * rooted, so neither is touched. The cost is that a single-segment absolute
+ * path (`/opt`, `/etc`) in free text is not redacted -- a structured key carrying
+ * one is (`FIELD_CLASSES`'s `path` class), and the trade is worth stating rather
+ * than hiding.
+ */
+const ABS_PATH_RE = /(?:~\/|\/)[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)+/g
 
 /** WIN_PATH_RE matches a Windows path and a UNC path, so a recording made on one
  * machine is not safe only because the rules were written on another. */
@@ -328,14 +353,46 @@ const WIN_PATH_RE = /(?:\b[A-Za-z]:\\[^\s"'`,;:)\]}]*|\\\\[^\s"'`,;:)\]}]+)/g
 const BRANCH_RE =
   /\b(?:refs\/heads\/)?(?:feature|feat|fix|bugfix|hotfix|chore|release|dependabot|renovate|topic|wip)\/[A-Za-z0-9._\/-]+/g
 
-/** REPO_TOKEN_RE matches a repository path anywhere a string carries one -- `in
- * dimipaun/fugaro#412` in a title, a repository named in a log line -- which is
- * the class the structured `repo` key alone would miss. It asks for two segments
- * of at least two characters, so `n/a` and `1/2` are left alone, and it does not
- * match inside a word, a path or a URL (the URL and path rules have already
- * replaced those). A match that is already a pseudonym is left as it is, which
- * is what keeps the rule idempotent. */
-const REPO_TOKEN_RE = /(?<![\w./~-])[A-Za-z0-9][A-Za-z0-9._-]+\/[A-Za-z0-9][A-Za-z0-9._-]*(?![\w/~-])/g
+/**
+ * REPO_TOKEN_RE matches a repository path anywhere a string carries one -- `in
+ * dimipaun/fugaro#412` in a title, `github.com/acme/secret-repo` in a log line --
+ * which is the class the structured `repo` key alone would miss.
+ *
+ * **Two shapes, and both halves were wrong in an earlier version.** It matched a
+ * bare `owner/name` only, with a lookbehind that refused a match after `.`: so
+ * `see github.com/acme/secret-repo for details` came out unchanged *and audited
+ * clean*, because the URL rule needs a scheme (`://`), the path rule needs a
+ * leading `/`, and the lookbehind rejected the match after the host's dot. A
+ * dotted host prefix is now part of the shape. And every segment must be at
+ * least **four** characters, where the earlier version asked for two: two let
+ * the prose pair `fix auth and/or retries` through and turned it into
+ * `fix auth r-fbfed1d0/r-554072a2 retries` -- a repository-shaped token the
+ * document never contained, which is the one thing rule 4 forbids. `and/or`,
+ * `he/she`, `him/her`, `either/or`, `w/o`, `i/o`, `n/a`, `y/n` and `24/7` are
+ * all shorter than four on one side and are now left as they were written.
+ *
+ * A match preceded by a word character, a slash, a dot or a tilde is not a match
+ * (it is part of a longer path or a word), and one that is already a pseudonym
+ * is left alone, which keeps the rule idempotent.
+ *
+ * **The host prefix is the second of two rules, not the only one**, and no test
+ * isolates it: the pattern class above now matches *any* `/`-rooted run of
+ * segments, where it once needed a whitelisted first segment, so
+ * `github.com/acme/secret-repo` is reached by both. It is kept because the shape
+ * is the repository class's business and a reader of this rule should see it
+ * here; a test that claimed to pin it alone would be asserting the path class's
+ * work.
+ *
+ * **The false positive this keeps, said out loud:** two ordinary words of four
+ * characters or more -- `input/output`, `read/write`, `yes/no` is short but
+ * `input/output` is not -- are pseudonymised as though they were a repository.
+ * The two directions do not cost the same thing: this one costs a recorded
+ * title's wording, and the other costs a private repository's name in a
+ * committed file. Nothing in the text itself tells the two apart, and nothing
+ * downstream parses a title, so the rule takes the first.
+ */
+const REPO_TOKEN_RE =
+  /(?<![\w./~-])(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+\/)?[A-Za-z0-9][A-Za-z0-9._-]{3,}\/[A-Za-z0-9][A-Za-z0-9._-]{3,}(?![\w/~-])/g
 
 /** LiteralRule is one of the installation's own strings, as a pattern that only
  * matches it on a boundary. */
@@ -346,24 +403,34 @@ interface LiteralRule {
 
 /**
  * literalPatterns turns the installation's literals into boundary-anchored
- * patterns. The boundary matters at both ends: a literal is redacted where it
- * stands alone -- in a sentence, in a field, after a slash -- and **not** where
- * it is part of a longer word, because replacing a user name called `ann` inside
- * `announcement` would corrupt the recording rather than protect it. A literal
- * made only of letters and digits and shorter than four characters is therefore
- * matched only where it is not glued to another word character; every other
- * literal is matched on a word boundary.
+ * patterns. The boundary matters at one end only, and which end depends on the
+ * literal's own first and last character.
+ *
+ * A literal that begins with a letter or a digit is matched only where it is not
+ * glued to another word character, because replacing a user name called `ann`
+ * inside `announcement` would corrupt the recording rather than protect it. A
+ * literal that begins with anything else -- `/Users/ana`, `~/src`, `github.com` --
+ * is matched wherever it stands, because **its own first character is the
+ * boundary**: a `/` is not a word character, so requiring a non-word character
+ * before it is what let `Data/Users/ana/...` through, where the operator's real
+ * home directory sits inside macOS's firmlink path. The trailing side is the
+ * mirror of the same rule.
+ *
+ * An earlier version also refused a match preceded by `/` or `\` for literals
+ * shorter than four characters. That exclusion is gone: a literal preceded by a
+ * path separator is a **path segment**, which is exactly a place a user name
+ * appears (`/Users/ana`), and over-redaction is the safe direction. What is kept
+ * is the word boundary on both sides of an alphanumeric literal, so `ann` in
+ * `announcement` is still left alone.
  */
 function literalPatterns(literals: readonly string[]): readonly LiteralRule[] {
   const rules: LiteralRule[] = []
   for (const value of literals) {
     if (value === '') continue
     const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const alnumShort = /^[A-Za-z0-9]+$/.test(value) && value.length < 4
-    const pattern = alnumShort
-      ? new RegExp(`(?<![A-Za-z0-9/\\\\])${escaped}(?![A-Za-z0-9/])`, 'g')
-      : new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, 'g')
-    rules.push({ value, re: pattern })
+    const before = /^[A-Za-z0-9]/.test(value) ? '(?<![A-Za-z0-9])' : ''
+    const after = /[A-Za-z0-9]$/.test(value) ? '(?![A-Za-z0-9])' : ''
+    rules.push({ value, re: new RegExp(`${before}${escaped}${after}`, 'g') })
   }
   return rules
 }
@@ -424,19 +491,27 @@ export function redactPerson(value: string): string {
 /**
  * redactFreeText runs every pattern class over one string, in the order that
  * keeps a rule from eating another rule's input: URLs first (they contain
- * everything else), then tokens, then addresses, then paths, then branches, then
- * repository paths, then the installation's own literals. A value that is
+ * everything else), then tokens, then addresses, then **branches**, then paths,
+ * then repository paths, then the installation's own literals. A value that is
  * already a marker is returned untouched, which is what makes the function
  * idempotent.
+ *
+ * **Branches run before paths** because the path rule is the broad one: it
+ * matches any `/`-rooted run of segments, so `refs/heads/fix/cap-rollover`
+ * would come out as `refs<path>` -- redacted, but as the wrong class, and the
+ * branch class is one the plan names. The reverse collision is bounded: a real
+ * path that happens to contain a `feat/`, `fix/`, `chore/`-style segment comes
+ * out as two markers (`<path><branch>`) rather than one, which over-redacts the
+ * same characters and never leaves one behind.
  */
 export function redactFreeText(text: string, literals: readonly LiteralRule[]): string {
   if (text === '' || isMarker(text)) return text
   let out = text.replace(URL_RE, URL_MARKER)
   for (const re of TOKEN_RES) out = out.replace(re, TOKEN_MARKER)
   out = out.replace(ADDRESS_RE, (match) => (isAddressMarker(match) ? match : ADDRESS_MARKER))
+  out = out.replace(BRANCH_RE, BRANCH_MARKER)
   out = out.replace(ABS_PATH_RE, PATH_MARKER)
   out = out.replace(WIN_PATH_RE, PATH_MARKER)
-  out = out.replace(BRANCH_RE, BRANCH_MARKER)
   out = out.replace(REPO_TOKEN_RE, (match) => (REPO_PSEUDONYM_RE.test(match) ? match : redactRepository(match)))
   for (const rule of literals) out = out.replace(rule.re, LITERAL_MARKER)
   return out
@@ -570,6 +645,14 @@ function auditProblems(
   }
   if (value !== null && typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      // **The key is a string too, and it is the one string redaction cannot
+      // replace.** Renaming a key would change the document's shape -- `repo`,
+      // `title`, `day` and `burn` are names the console reads -- so a key that
+      // carries identity is not redacted, it is a *refusal*. Without this, an
+      // address, a repository path or the operator's checkout could sit in the
+      // key position of a document that redacts to itself and audits clean:
+      // `{ "acme/secret-repo": { … } }`, `{ "/Users/ana/src/fugaro": 1 }`.
+      problems.push(...auditKey(key, literals, where, trail))
       const cls = classFor(key, parentKeyOf(trail))
       if (typeof child === 'string' && cls !== undefined && !matchesClass(child, cls)) {
         problems.push(
@@ -583,28 +666,46 @@ function auditProblems(
   return problems
 }
 
-/** auditString reports the pattern classes a single string still carries. */
-function auditString(value: string, where: string, trail: string): string[] {
-  if (value === '' || isMarker(value)) return []
+/** auditKey reports whether a *key* carries identity. It is the same rules as a
+ * value, plus the installation's own literals -- a key is the one string
+ * redaction cannot rename, so a key that names the operator's project, checkout
+ * or repository is a refusal rather than something to replace. */
+function auditKey(key: string, literals: readonly LiteralRule[], where: string, trail: string): string[] {
   const problems: string[] = []
-  if (hits(URL_RE, value)) problems.push(`${at(where, trail)} still holds a URL`)
+  for (const rule of literals) {
+    if (hits(rule.re, key)) {
+      problems.push(`${at(where, trail)} is a key that carries one of the installation's own literals`)
+      break
+    }
+  }
+  problems.push(...auditString(key, where, trail, true))
+  return dedupe(problems)
+}
+
+/** auditString reports the pattern classes a single string still carries.
+ * `asKey` changes only the wording: a key does not *hold* a class, it *is* one,
+ * and a refusal that says which it was is a refusal a reader can act on. */
+function auditString(value: string, where: string, trail: string, asKey = false): string[] {
+  if (value === '' || isMarker(value)) return []
+  const say = (what: string): string =>
+    asKey ? `${at(where, trail)} is a key that carries ${what}` : `${at(where, trail)} still holds ${what}`
+  const problems: string[] = []
+  if (hits(URL_RE, value)) problems.push(say('a URL'))
   for (const re of TOKEN_RES) {
     if (hits(re, value)) {
-      problems.push(`${at(where, trail)} still holds something credential-shaped`)
+      problems.push(say('something credential-shaped'))
       break
     }
   }
   for (const match of value.matchAll(ADDRESS_RE)) {
-    if (!isAddressMarker(match[0])) problems.push(`${at(where, trail)} still holds an address`)
+    if (!isAddressMarker(match[0])) problems.push(say('an address'))
   }
-  if (hits(ABS_PATH_RE, value) || hits(WIN_PATH_RE, value)) {
-    problems.push(`${at(where, trail)} still holds a filesystem path`)
-  }
-  if (hits(BRANCH_RE, value)) problems.push(`${at(where, trail)} still holds a branch name`)
+  if (hits(ABS_PATH_RE, value) || hits(WIN_PATH_RE, value)) problems.push(say('a filesystem path'))
+  if (hits(BRANCH_RE, value)) problems.push(say('a branch name'))
   // A pseudonym is a repository *path* by grammar and the marker by intent, so
   // only the matches that are not already pseudonyms are a problem.
   for (const match of value.matchAll(REPO_TOKEN_RE)) {
-    if (!REPO_PSEUDONYM_RE.test(match[0])) problems.push(`${at(where, trail)} still holds a repository path`)
+    if (!REPO_PSEUDONYM_RE.test(match[0])) problems.push(say('a repository path'))
   }
   return dedupe(problems)
 }
@@ -641,10 +742,17 @@ function at(where: string, trail: string): string {
 }
 
 /** parentKeyOf returns the last key of a trail, which is what tells a `kill`
- * object's `by` from a report dimension's `by`. */
+ * object's `by` from a report dimension's `by`. **Array indices are stripped
+ * first**, and that is what makes the answer the same in both shapes of the
+ * documents: `{ kill: { by: … } }` walks the object at trail `.kill`, and
+ * `{ kill: [{ by: … }] }` walks the object at trail `.kill[0]`, so a version
+ * that read the parent off the raw trail returned `kill[0]` -- a key no class
+ * table holds -- and the person class went unchecked in the array form. The
+ * value was still pseudonymised; the *audit* was the half that was blind. */
 function parentKeyOf(trail: string): string | null {
-  const index = trail.lastIndexOf('.')
-  return index < 0 ? null : trail.slice(index + 1)
+  const trimmed = trail.replace(/(?:\[\d+\])+$/, '')
+  const index = trimmed.lastIndexOf('.')
+  return index < 0 ? null : trimmed.slice(index + 1)
 }
 
 function dedupe(values: readonly string[]): string[] {

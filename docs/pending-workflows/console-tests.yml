@@ -29,15 +29,19 @@
 #     separate file, because a job that runs on every pull request must not sit
 #     next to the Apple signing material (design section 9.4).
 #   - It has **no path filter and no job-level `if:`**, and that is a
-#     correctness requirement rather than a taste: scripts/release-gate.sh
-#     requires a check named `console` on the tag's commit and, in its
-#     identical_tree_checks fallback, the same names on the pull request head
-#     whose tree matches. A check that does not exist is not a success, so a
-#     `console` job filtered to console/** would refuse **every** release tag in
-#     this repository, including the ones that never touch the console
-#     (design section 9.4; plan Task 4.6). The docs-only skip ci.yml gives
-#     `test`, `rules` and `terraform` is deliberately NOT copied here, for the
-#     same reason: a skipped check is not a success either.
+#     correctness requirement rather than a taste. **Task 4.6 is what puts
+#     `console` into scripts/release-gate.sh's `names` list** -- that line reads
+#     `names="test terraform rules"` today, so the gate does not require this
+#     check yet -- and from that edit on, the gate requires a check named
+#     `console` on the tag's commit and, in its identical_tree_checks fallback,
+#     the same names on the pull request head whose tree matches. A check that
+#     does not exist is not a success, so a `console` job filtered to
+#     console/** would then refuse **every** release tag in this repository,
+#     including the ones that never touch the console (design section 9.4;
+#     plan Task 4.6). The docs-only skip ci.yml gives `test`, `rules` and
+#     `terraform` is deliberately NOT copied here, for the same reason: a
+#     skipped check is not a success either. Ordering the gate edit after the
+#     copy-in does not help -- the filter is the bug.
 #   - The job's `name:` is the static string `console`, never an interpolated
 #     one: the gate matches the check-run *name*, and a matrix value appended to
 #     it (`console (ubuntu-latest)`) would be a check the gate cannot find. Both
