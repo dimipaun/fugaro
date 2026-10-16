@@ -1449,6 +1449,12 @@ func TestChecklistHasCheck50(t *testing.T) {
 		"recorded as *not produced*",
 		"If this binary prints no resolution line at all, record this FACT as *not produced* and go on",
 		"the line itself is Task 1b.3's and Task 1b.3 has not shipped",
+		// What "not landed" looks like is per step, and the opener says which
+		// each one is: step 3's line is simply absent, step 2's note IS
+		// printed and only fails to name the switch — which is why step 2
+		// records its own word and not "not produced".
+		`"not landed" looks like differs by the step`,
+		"so step 2 records this FACT as",
 	})
 
 	// The steps, in order, and the closing paragraph.
@@ -1712,17 +1718,30 @@ func TestChecklistHasCheck50(t *testing.T) {
 		t.Errorf("Check 50 step 7 does not refuse (exit) when the recorded state is missing or unreadable (no `exit` follows the `[ ! -s ... ]` test in %s): guessing the restore is the destructive case this check must never run", stateFile)
 	}
 
-	// Task 1b.3 has not shipped, so every FACT line that names its output says
-	// the same thing: record it as "not produced" and go on. A step that stops,
-	// or that reads as if the line must exist, contradicts the opener and
-	// leaves the owner with a check that cannot be finished.
-	for _, tc := range []struct{ step, marker string }{
-		{"### 2.", "step 2"},
-		{"### 3.", "step 3"},
+	// Task 1b.3 has not shipped, so every FACT line that names its output is
+	// recorded and the check goes on, never treated as a failure. What "not
+	// landed" looks like is per step, and asking them for the same word would
+	// be wrong: step 3's resolution line is simply absent from this binary,
+	// while step 2's missing-key note IS printed — it is the older note that
+	// names no switch (anthropicKeyNeeded, internal/cli/validate.go:28) — so
+	// step 2 records this FACT as "Task 1b.3 not in this binary". A step that
+	// stops, or that reads as if the 1b.3 line must exist, contradicts the
+	// opener and leaves the owner with a check that cannot be finished.
+	for _, tc := range []struct{ step, marker, want, why string }{
+		{"### 2.", "step 2", "Task 1b.3 not in this binary",
+			"this binary does print a missing-key note; it only does not name the switch, so a binary without 1b.3 is not silent here"},
+		{"### 3.", "step 3", "not produced",
+			"this binary prints no resolution line at all"},
 	} {
-		if s := chk50Step(t, section, tc.step); !strings.Contains(s, "not produced") {
-			t.Errorf("Check 50 %s does not say Task 1b.3's missing output is recorded as %q: the opener rules that a step whose output is missing because its task has not landed is recorded and not treated as a failure, and this step must say the same", tc.marker, "not produced")
+		if s := chk50Step(t, section, tc.step); !strings.Contains(s, tc.want) {
+			t.Errorf("Check 50 %s does not record Task 1b.3's absent output as %q (%s): the opener rules that a step whose output the task has not landed to print is recorded and not treated as a failure, and this step must say the same", tc.marker, tc.want, tc.why)
 		}
+	}
+	// "the old one that names no switch" is only actionable if the step names
+	// the message it means: without it the owner cannot tell 1b.3's absence
+	// from a wrong answer, which the same step calls a failure.
+	if s := chk50Step(t, section, "### 2."); !strings.Contains(s, "anthropicKeyNeeded") || !strings.Contains(s, "not a failure") {
+		t.Error("Check 50 step 2 does not name both the message it records as \"Task 1b.3 not in this binary\" (anthropicKeyNeeded) and that the record is \"not a failure\": the old note is what tells the owner this is 1b.3's absence rather than the wrong answer the step stops on")
 	}
 
 	// No step handles a secret VALUE: the check reads a version number, a set
@@ -1901,6 +1920,14 @@ var chk50Citations = []chkCitation{
 	{"internal/infra/spec.go:765", "env[ModelPricesEnv]"},
 	{"internal/cli/cloud.go:54", "\"project\", \"\", \"the Fugaro project"},
 	{"internal/cli/doctor.go:1448", "\"project: %s (GCP %s, %s)\\n\""},
+	// Step 2's "the old note that names no switch": the message a binary
+	// without Task 1b.3 prints, and the reason the step records it instead of
+	// stopping on it.
+	{"internal/cli/validate.go:28", "const anthropicKeyNeeded"},
+	{"internal/cli/validate.go:37", "const anthropicKeyNoEnforce"},
+	{"internal/cli/validate.go:281", "msg := anthropicKeyNeeded"},
+	{"internal/cli/validate.go:444", "\"note: \"+n.String()"},
+	{"internal/cli/validate.go:274-280", "never a warning or a refusal"},
 }
 
 // chk52Citations are the code citations the Check 52 section makes in full,
