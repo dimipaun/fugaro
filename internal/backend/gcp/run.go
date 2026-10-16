@@ -83,16 +83,31 @@ func CheckRunExecution(name, region, slug, workflow string) error {
 // It returns once Cloud Run has accepted the execution; the operation it
 // returns completes only when the execution ends, so Launch never waits.
 func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
+	// Cloud Run has no Docker daemon and no way to give a run one: a job
+	// that asked for docker: true would start, run its stages, and fail
+	// stage by stage with nothing to talk to (design compute-backend.md
+	// §4.2/§4.3). The ask is the workflow's, so it is refused here, before
+	// the run exists, and nothing can have started.
+	if spec.Docker {
+		return backend.ExecutionRef{}, fmt.Errorf("launching %s/%s: this workflow asks for docker: true, and Cloud Run cannot give a run a Docker daemon: it has no VM to mount one from. Run it on a backend that has VMs, or drop docker: true: %w", spec.Repo.Slug, spec.Workflow, backend.ErrRejected)
+	}
 	job := b.JobPath(spec.Repo.Slug, spec.Workflow)
-	env := []*run.GoogleCloudRunV2EnvVar{{Name: "FUGARO_RUN", Value: spec.Repo.Slug + "/" + spec.RunID}}
 	// The spec's own variables (the launcher's budget marker) go in the same
-	// override: the API merges these into the job's environment.
-	for _, kv := range spec.Env {
-		name, value, ok := strings.Cut(kv, "=")
-		if !ok || name == "" {
-			return backend.ExecutionRef{}, fmt.Errorf("launch env %q: it must be NAME=value", kv)
-		}
-		env = append(env, &run.GoogleCloudRunV2EnvVar{Name: name, Value: value})
+	// override as FUGARO_RUN: the API merges these into the job's environment.
+	// backend.LaunchEnv is where both backends read them, so an entry this one
+	// refuses (a malformed one, or one naming FUGARO_RUN, the variable this
+	// very override sets) is refused on Cloud Batch too.
+	extra, err := backend.LaunchEnv(spec, "FUGARO_RUN")
+	if err != nil {
+		// Nothing has been sent, so this is a refusal and not an ambiguity:
+		// the launcher's ErrRejected branch drops its claim and the token it
+		// minted, and its ambiguous branch keeps both.
+		return backend.ExecutionRef{}, fmt.Errorf("launching %s: %v, so nothing was submitted: %w", job, err, backend.ErrRejected)
+	}
+	env := make([]*run.GoogleCloudRunV2EnvVar, 0, len(extra)+1)
+	env = append(env, &run.GoogleCloudRunV2EnvVar{Name: "FUGARO_RUN", Value: spec.Repo.Slug + "/" + spec.RunID})
+	for _, kv := range extra {
+		env = append(env, &run.GoogleCloudRunV2EnvVar{Name: kv.Name, Value: kv.Value})
 	}
 	req := &run.GoogleCloudRunV2RunJobRequest{Overrides: &run.GoogleCloudRunV2Overrides{
 		ContainerOverrides: []*run.GoogleCloudRunV2ContainerOverride{{Env: env}},

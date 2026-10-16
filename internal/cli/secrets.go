@@ -103,11 +103,11 @@ func NormalizeRepoArgs(args []string) []string {
 	out := slices.Clone(args)
 	// Everything before the secrets subcommand -- the global flags and their
 	// values -- is left exactly as it came in.
-	at := slices.IndexFunc(args, func(a string) bool { return a == "secrets" || a == "secret" })
-	if at < 0 || at+1 >= len(args) || (args[at+1] != "set" && args[at+1] != "ls") {
+	verbAt, ok := secretsVerb(args)
+	if !ok {
 		return out
 	}
-	for i := at + 2; i < len(args); i++ {
+	for i := verbAt + 1; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
 			break
@@ -121,6 +121,66 @@ func NormalizeRepoArgs(args []string) []string {
 		out[i] = "--repo="
 	}
 	return out
+}
+
+// secretsVerb returns the index of the `set` or `ls` that follows the secrets
+// command, and whether there is one. The argv is scanned into its positional
+// arguments the way cobra's own command scan does it (stripFlags), because
+// that is what decides which token cobra reads as the command: a flag's *value*
+// is not a command name. Searching the slice for the first token that spells
+// "secrets" answers a different question — `fugaro --config secrets secrets set
+// npm-token --repo` has one as a flag's value — and answering that one leaves
+// the bare --repo of the real subcommand unrewritten.
+//
+// The scan, over args without the program name:
+//
+//   - a token after `--` is a positional argument and is not read as a flag,
+//     and neither is what follows it;
+//   - a long flag with no "=value" ("--config", "--repo") consumes the next
+//     token as its value, if there is one, and so does a one-letter short flag
+//     ("-c"): pflag has no other reading for them, and this repository
+//     declares no NoOptDefVal anywhere (see the doc above: if one is ever
+//     added, this scan and pflag stop agreeing on that flag);
+//   - a flag written with "=" ("--config=x", "-c=x") and a bundled short flag
+//     ("-qv") take no separate token;
+//   - anything left that is not "-" is a positional argument, in order.
+//
+// The first positional argument is the command, the second is the subcommand:
+// the pair has to be `secrets`/`secret` then `set`/`ls`, or there is nothing
+// here to rewrite.
+func secretsVerb(args []string) (at int, ok bool) {
+	var positionals []int
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return verbOf(args, positionals)
+		case strings.HasPrefix(a, "--") && !strings.Contains(a, "="):
+			i++ // its value, when the next token is one
+		case len(a) == 2 && a[0] == '-' && a != "--" && !strings.Contains(a, "="):
+			i++ // a one-letter short flag: same, its value
+		case a != "-" && strings.HasPrefix(a, "-"):
+			// --config=x, -c=x, or a bundled short flag: no value of its own.
+		default:
+			positionals = append(positionals, i)
+		}
+	}
+	return verbOf(args, positionals)
+}
+
+// verbOf reads the secrets subcommand out of the positional arguments the scan
+// found — the first is the command, the second the verb — and returns the
+// index of the verb (where the rewrite starts) and whether the pair names it
+// at all.
+func verbOf(args []string, positionals []int) (at int, ok bool) {
+	if len(positionals) < 2 {
+		return 0, false
+	}
+	cmd, verb := args[positionals[0]], args[positionals[1]]
+	if (cmd != "secrets" && cmd != "secret") || (verb != "set" && verb != "ls") {
+		return 0, false
+	}
+	return positionals[1], true
 }
 
 // checkScope refuses --repo with --project-wide before anything is read or

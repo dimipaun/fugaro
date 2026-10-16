@@ -227,6 +227,38 @@ func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 	refusedAdmission(t, b, rec, err, "https://github.com/acme/app.git", "github", "bitbucket", "FUGARO_REMOTE", "before any git credential")
 }
 
+// The same refusal one host over, and the one the kind cannot see: the remote
+// is on the kind's own host and names another repository of the same forge.
+// gitprov.KindForURL reads a host and nothing else, so this remote agrees with
+// the slug by kind and disagrees with it by repository — FUGARO_REMOTE is a
+// launcher's to set, and the run's slug keys its locks, its cache, its budget
+// session and the policy that admitted it, all of them for one repository.
+// The refusal quotes the repository the remote names, so a launcher that made
+// the edit can see what it named.
+func TestRunnerRefusesARemoteOnAnotherRepositoryOfTheSameHost(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	guardProviderHost(t, "https://github.com/")
+	b.deps.Remote = "https://github.com/acme/other.git"
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "https://github.com/acme/other.git", "acme/other", "FUGARO_REMOTE", "before any git credential")
+}
+
+// And the check is the repository the remote names, not the fact that it names
+// a URL at all: the fixture's own repository, written the way the launcher
+// writes it (internal/infra's repoURL — https://github.com/acme/app.git, on
+// the URL that job's FUGARO_REMOTE carries), is admitted and the run
+// completes. A guard that refused every remote on the kind's own host would
+// stop every job a launcher deploys. Only the transport is local: git's own
+// insteadOf rule rewrites the URL onto the fixture's bare remote.
+func TestRunnerAdmitsARemoteNamingItsOwnRepository(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	guardProviderHostTo(t, "https://github.com/acme/app.git", "file://"+b.remote)
+	b.deps.Remote = "https://github.com/acme/app.git"
+	if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v: the run's own repository, written as its clone URL, must be admitted", rec, err)
+	}
+}
+
 // guardProviderHost rewrites every https://github.com/ URL to a path that does
 // not exist, so a run that went on would fail its clone locally and offline
 // (internal/cli's clone test rewrites the fixture's remote the same way, for the
@@ -234,8 +266,19 @@ func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 // test covers regresses.
 func guardProviderHost(t *testing.T, host string) {
 	t.Helper()
+	guardProviderHostTo(t, host, "file:///nonexistent/fugaro-admission-guard")
+}
+
+// guardProviderHostTo is guardProviderHost with the rewrite's target named:
+// "nothing may reach the forge" and "the forge's URL reaches the fixture" are
+// the same rule. from is a URL or a URL prefix — git's insteadOf replaces the
+// prefix it matches, so https://github.com/ lands the rest of the path on the
+// target and the full clone URL lands on the fixture's own remote — and the
+// rule applies to the push as much as to the clone.
+func guardProviderHostTo(t *testing.T, from, target string) {
+	t.Helper()
 	gitcfg := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = "+host+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(gitcfg, []byte("[url \""+target+"\"]\n\tinsteadOf = "+from+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)

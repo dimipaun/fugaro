@@ -927,3 +927,38 @@ func TestCancelUnfinalizedForgottenExecutionReportsLiveLock(t *testing.T) {
 		t.Fatal("the lock did not survive: clearStaleLock cleared it on a merely-forgotten execution")
 	}
 }
+
+// TestCancelDoesNotClaimAPullRequestForAnArtifactRun: a mode: artifact run
+// finalizes succeeded with outcome artifacts and never opens a pull request,
+// so cancel must say so rather than sending the caller to fugaro diagnose to
+// look for one (design artifact-runs.md §3).
+//
+// Mutation (drop runstore.OutcomeArtifacts from finalized's NoPR expression,
+// so an artifact run falls through to the "check fugaro diagnose" branch):
+// this test fails.
+func TestCancelDoesNotClaimAPullRequestForAnArtifactRun(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateRunning)
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	_ = runstore.Open(b, appSlug, id).WriteRecord(context.Background(), &runstore.Record{Version: 1, RunID: id, Execution: exec,
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeArtifacts, Stage: "writeback",
+		Render: &runstore.RenderRecord{Command: "sh render.sh", CommandSHA256: strings.Repeat("a", 64), Tree: "working", ExitCode: 0}})
+	out, _, err := execute(t, "cancel", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r cancelResult
+	if jerr := json.Unmarshal([]byte(out), &r); jerr != nil {
+		t.Fatal(jerr)
+	}
+	if r.Status != cancelFinalized || r.PR != "" || !r.NoPR {
+		t.Fatalf("cancelResult = %+v", r)
+	}
+	plain, _, err := execute(t, "cancel", id)
+	if err != nil || !strings.Contains(plain, "finalized; no pull request was needed") || strings.Contains(plain, "diagnose") {
+		t.Fatalf("cancel = %q, %v", plain, err)
+	}
+}

@@ -1,0 +1,11 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  artifact-render:
+    description: Renders a file set
+    commands: { build: make, test: make test, render: make shots, probe: make check }
+    timeouts: { render: 30m }
+    inputs: { max_files: 4, max_bytes: 1048576, max_total_bytes: 4194304 }
+    resources: { cpu: 4, memory: 16Gi }
+default_profile: artifact-render

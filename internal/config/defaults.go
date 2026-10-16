@@ -88,6 +88,18 @@ func applyDefaults(c *Config) {
 		if t.Verify.Duration == 0 {
 			t.Verify.Duration = min(30*time.Minute, t.Total.Duration)
 		}
+		// The render step is one command with its own timeout, so it gets
+		// what is left of the run once the finalize reserve is set aside,
+		// and never more than verify's own share (design artifact-runs.md
+		// §3). The guard keeps a tiny total from defaulting it to zero,
+		// which Validate would then refuse as "must be positive".
+		if t.Render.Duration == 0 {
+			if d := t.Total.Duration - t.FinalizeReserve.Duration; d > 0 && d < t.Verify.Duration {
+				t.Render.Duration = d
+			} else {
+				t.Render.Duration = t.Verify.Duration
+			}
+		}
 		c.Workflows[name] = w
 	}
 }

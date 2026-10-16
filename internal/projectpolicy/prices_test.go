@@ -152,50 +152,6 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 	}
 }
 
-// TestModelPricesRefusesOneModelUnderTwoKeys: unescaping is not one-to-one,
-// so a hand-written node can spell one model ID both ways — the catalogue's
-// "anthropic/claude-sonnet-5.5" beside the escaped form this package writes,
-// "anthropic/claude-sonnet-5%2E5". Both members unescape to the same ID and
-// the old loop left whichever price it wrote last, decided by map iteration
-// order, so the same node priced a run differently from read to read. The
-// block is refused instead, and both keys are named.
-func TestModelPricesRefusesOneModelUnderTwoKeys(t *testing.T) {
-	const raw = `{"version": 1, "model_prices": {` +
-		`"anthropic/claude-sonnet-5.5": {"input_per_m": 5, "output_per_m": 1},` +
-		`"anthropic/claude-sonnet-5%2E5": {"input_per_m": 500, "output_per_m": 100}}}`
-	p, found, err := Decode([]byte(raw))
-	if err == nil || p != nil {
-		t.Fatalf("Decode(%s) = (%v, %v), want a refusal", raw, p, err)
-	}
-	if !found {
-		t.Error("the block is there: the refusal is about its contents, not about a missing block")
-	}
-	for _, w := range []string{"model_prices", `"anthropic/claude-sonnet-5.5"`, `"anthropic/claude-sonnet-5%2E5"`} {
-		if !strings.Contains(err.Error(), w) {
-			t.Errorf("err = %v, want it to name %s", err, w)
-		}
-	}
-	// The same model under one key is what every writer produces, escaped or
-	// not, and stays readable.
-	for _, key := range []string{"anthropic/claude-sonnet-5.5", escKey("anthropic/claude-sonnet-5.5")} {
-		one, found, err := Decode([]byte(`{"version": 1, "model_prices": {"` + key + `": {"input_per_m": 5, "output_per_m": 1}}}`))
-		if err != nil || !found || one == nil {
-			t.Fatalf("one key %q was refused: %v", key, err)
-		}
-		if _, ok := one.Prices["anthropic/claude-sonnet-5.5"]; !ok {
-			t.Errorf("key %q: Prices = %v, want the model ID", key, one.Prices)
-		}
-	}
-	// Two different models that share a key spelling are not a collision:
-	// only the keys that unescape to the same ID are.
-	two, _, err := Decode([]byte(`{"version": 1, "model_prices": {` +
-		`"anthropic/claude-sonnet-5.5": {"input_per_m": 5, "output_per_m": 1},` +
-		`"anthropic/claude-opus-5.5": {"input_per_m": 5, "output_per_m": 1}}}`))
-	if err != nil || len(two.Prices) != 2 {
-		t.Errorf("two distinct models = (%v, %v), want both", two, err)
-	}
-}
-
 // A price entry's member names are held to the documented spelling, like the
 // budget block's: DisallowUnknownFields refuses a rate written "input_perm",
 // and encoding/json matches "INPUT_PER_M" to the same field as input_per_m, so
@@ -249,6 +205,53 @@ func TestModelPricesRefusesACaseFoldedTierMemberAlone(t *testing.T) {
 	for _, w := range []string{"model_prices.long_context", "above_input_tokens", `"ABOVE_INPUT_TOKENS"`} {
 		if !strings.Contains(err.Error(), w) {
 			t.Errorf("err = %v, want it to name %s", err, w)
+		}
+	}
+}
+
+// TestModelPricesRefusesOneModelPricedTwice: the block is keyed by model ID,
+// and the ID is the *unescaped* key, so one model has two spellings on the
+// node — the escaped one this package writes and the literal one a person
+// writes by hand. A block that carries both is a block whose two prices land
+// on one map entry, and which of the two survives is the order the members
+// were read in: the run's accounting and the per_run_usd comparison would move
+// run to run, from a document nobody edited between them. An exact repeat of
+// one key is the same loss one step earlier (the map keeps the last of the
+// two), so both are refused and both name what was written.
+func TestModelPricesRefusesOneModelPricedTwice(t *testing.T) {
+	const id = "deepseek/deepseek-v4.1-flash"
+	for name, raw := range map[string]string{
+		"the escaped spelling beside the literal one": `{"version": 1, "model_prices": {"` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}, "` + id + `": {"input_per_m": 99, "output_per_m": 2}}}`,
+		"the literal spelling first":                  `{"version": 1, "model_prices": {"` + id + `": {"input_per_m": 99, "output_per_m": 2}, "` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}}}`,
+		"the same key twice":                          `{"version": 1, "model_prices": {"deepseek/*": {"input_per_m": 1, "output_per_m": 2}, "deepseek/*": {"input_per_m": 99, "output_per_m": 2}}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "model_prices") {
+			t.Errorf("%s: err = %v, want it to name the block", name, err)
+		}
+	}
+	// The same two keys under two different models are two entries and are
+	// read: the refusal is the collision, not the spelling.
+	raw := []byte(`{"version": 1, "model_prices": {"` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}, "deepseek/other": {"input_per_m": 99, "output_per_m": 2}}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found || p == nil || len(p.Prices) != 2 {
+		t.Fatalf("Decode(%s) = (%v, %v, %v), want both entries", raw, p, found, err)
+	}
+	// And one model written once is priced at what it says, whichever spelling
+	// was used: the escaped form is what this package writes, the literal one
+	// is what a person writes.
+	for _, key := range []string{escKey(id), id} {
+		raw := []byte(`{"version": 1, "model_prices": {"` + key + `": {"input_per_m": 7, "output_per_m": 2}}}`)
+		p, found, err := Decode(raw)
+		if err != nil || !found || p == nil {
+			t.Fatalf("Decode(%s) = (%v, %v, %v), want it read", raw, p, found, err)
+		}
+		if price, ok := p.Prices[id]; !ok || price.InputPerM == nil || *price.InputPerM != 7 {
+			t.Errorf("Prices = %+v, want %s priced at 7 under the catalogue's spelling", p.Prices, id)
 		}
 	}
 }

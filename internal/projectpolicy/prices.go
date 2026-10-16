@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"maps"
-	"slices"
-	"strconv"
-	"strings"
+	"sort"
 )
 
 // Prices is the model_prices block of a policy: the owner's price overrides,
@@ -73,27 +70,48 @@ var (
 // folds case, so "input_per_m" written twice, or "INPUT_PER_M" beside it,
 // is one field to it and the rate this run is priced by would depend on the
 // order the keys were written in. The long_context tier is held to the same
-// check, for the same reason.
-//
-// Unescaping is not one-to-one either, so two member names can unescape to one
-// model ID: a node written by hand may spell an ID both ways — the catalogue's
-// "anthropic/claude-sonnet-5.5" beside the escaped form this package writes,
-// "anthropic/claude-sonnet-5%2E5" — and one of the two prices would then be
-// kept, decided by map iteration order, which is to say a coin toss per read.
-// A block that does that is refused, naming both keys.
+// check, for the same reason. The block's own keys are held to a rule of their
+// own: one model may be named once, whether it is repeated under one key or
+// written under two spellings of its ID (checkNoDuplicateNames, then the
+// unescaped IDs), because a model priced twice is priced by whichever of the
+// two members the read happened to see last.
 func (ps *Prices) UnmarshalJSON(raw []byte) error {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return err
 	}
+	// The block's own key names, as the document writes them: the map above
+	// keeps the last of a repeated key, and one model can also be written
+	// under two *different* keys — the escaped spelling this package writes
+	// and the literal model ID a person writes by hand both unescape to the
+	// same ID. Either way only one of the two prices can survive, so which one
+	// this run is billed by (and the ceiling it is compared against) would
+	// depend on the order the keys were read in, and one of them was written
+	// by someone who meant it.
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return err
+	}
+	if err := checkNoDuplicateNames("model_prices", names); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys) // a stable order, so the refusal below names the same pair every time
 	out := make(Prices, len(entries))
-	spellings := make(map[string][]string, len(entries))
-	for key, entry := range entries {
+	spelled := make(map[string]string, len(entries)) // model ID -> the key it was written under
+	for _, key := range keys {
+		entry := entries[key]
 		id, err := unescKey(key)
 		if err != nil {
 			return fmt.Errorf("%q: %w", key, err)
 		}
-		spellings[id] = append(spellings[id], key)
+		if first, dup := spelled[id]; dup {
+			return fmt.Errorf("%q and %q are both the model ID %q, and a model may be named once: the price this run is billed by would otherwise depend on the order the block's keys are in", first, key, id)
+		}
+		spelled[id] = key
 		if err := checkPriceMemberNames(entry); err != nil {
 			return fmt.Errorf("%q: %w", id, err)
 		}
@@ -105,31 +123,8 @@ func (ps *Prices) UnmarshalJSON(raw []byte) error {
 		}
 		out[id] = price
 	}
-	if len(out) != len(entries) {
-		return fmt.Errorf("model_prices writes one model under two keys (%s): write each model once", priceCollisions(spellings))
-	}
 	*ps = out
 	return nil
-}
-
-// priceCollisions names every model ID that more than one member name
-// unescaped to, and the names themselves, in sorted order so the message is
-// the same for the same document however the decode iterated it.
-func priceCollisions(spellings map[string][]string) string {
-	var parts []string
-	for _, id := range slices.Sorted(maps.Keys(spellings)) {
-		keys := spellings[id]
-		if len(keys) < 2 {
-			continue
-		}
-		slices.Sort(keys)
-		quoted := make([]string, 0, len(keys))
-		for _, k := range keys {
-			quoted = append(quoted, strconv.Quote(k))
-		}
-		parts = append(parts, fmt.Sprintf("%s (%s)", strconv.Quote(id), strings.Join(quoted, " and ")))
-	}
-	return strings.Join(parts, "; ")
 }
 
 // checkPriceMemberNames applies checkMemberNames to one price entry and to its

@@ -274,6 +274,41 @@ func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T)
 	}
 }
 
+// The drift note above is asked before the generic "your budget is on and you
+// carry no backend" one, and this is why: a config that lost its
+// budget.rtdb_url still carries the mode its owner set (budgetEnv writes the
+// mode whenever it is not off), so both notes are true at once, and only the
+// drift one names the damage — that this apply is what removes the policy from
+// the jobs that can read it today. Asking about the mode first would answer
+// "nothing refuses this deploy" for exactly that apply.
+func TestReadinessPrefersTheDriftNoteOverTheModeNote(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, "\nbudget:\n  mode: enforce\n  per_run_usd: 5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	for _, ws := range spec.Workflows {
+		if ws.Env[BudgetModeEnv] != "enforce" {
+			t.Fatalf("workflow %s carries %s=%q, want the mode the config names: this test is about the two notes being true together",
+				ws.Job, BudgetModeEnv, ws.Env[BudgetModeEnv])
+		}
+		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+		f.run.SetJobEnv(ws.Job, map[string]string{
+			RTDBURLEnv:        "https://aurora-fp-default-rtdb.firebaseio.com",
+			FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
+		})
+	}
+	_, missing := readinessPolicy(t, f, spec, false)
+	for name := range spec.Workflows {
+		if !slices.ContainsFunc(missing, func(m Missing) bool {
+			return m.Kind == MissingNote && strings.Contains(m.Reason, name) && strings.Contains(m.Reason, "would remove them")
+		}) {
+			t.Errorf("workflow %s: missing = %v, want the drift note (the mode note is true too, and it is not the one with damage to name)", name, missing)
+		}
+	}
+}
+
 // The same apply with no backend in the jobs is silent: a legacy installation
 // must not be warned about a model it never adopted.
 func TestReadinessSaysNothingAboutFirebaseWhenTheJobsHaveNone(t *testing.T) {

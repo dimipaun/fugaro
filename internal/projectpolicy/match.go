@@ -161,6 +161,15 @@ func ValidPattern(pattern string) error {
 // of the pattern fails. That is at most len(pattern)*len(s) steps, where a
 // backtracking scan of every star is exponential in their number (a pattern is
 // attacker-chosen text on a node, so the cost must not be).
+//
+// The "*" case must come before the literal one, because s is not always a
+// repository name: MatchRepo's callers read a pattern as its second argument
+// too (cli's admittedBy asks whether a removed entry's runs are still
+// admitted), and there s carries "*" characters of its own. When both are
+// "*", treating the pattern's star as that literal spends the wildcard on a
+// single character and loses it, so "*" would not admit "*app" and "*b" would
+// not admit "*ab" -- a matcher that refuses a string its pattern does match,
+// which reads as a revocation that did not happen.
 func matchSeg(pattern, s string) bool {
 	var (
 		p, i     int // the positions being compared
@@ -169,12 +178,12 @@ func matchSeg(pattern, s string) bool {
 	)
 	for i < len(s) {
 		switch {
-		case p < len(pattern) && pattern[p] == s[i]:
-			p++
-			i++
 		case p < len(pattern) && pattern[p] == '*':
 			star, at, has = p, i, true
 			p++
+		case p < len(pattern) && pattern[p] == s[i]:
+			p++
+			i++
 		case has:
 			// The last "*" takes one more character and the rest of the
 			// pattern is tried again from there.

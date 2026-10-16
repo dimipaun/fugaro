@@ -297,7 +297,73 @@ was already reserved when this design read the register (§7.1). It is split
 into **57a, the pre-build probe** (no Fugaro change; committed job JSON and
 `gcloud`) and **57b, the post-build acceptance run** (after the backend can
 be enabled). Its full text lives in that design's §7.2 and its row is in the
-table below.
+table below. **There is no `## Check 57` section in this file yet**, on
+purpose: the design's §7.2 carries the body until that design's task 10 writes
+the section here, with its guard block, from §7.2 — so this paragraph, the row
+below and the RESULTS block under them are what this file records for 57.
+
+**RESULTS — the owner's Check 57a, run 2026-10-15 on installation `fugaro`
+(GCP project `fugaro-dev`), sandbox only, never `belong`; 57b NOT RUN.** Times
+are submit-to-first-log-line. The full per-step record, the setup findings and
+what the design now recommends are in the design's §7.2, under "RESULTS of the
+57a run"; the numbers themselves:
+
+| Step | Measured |
+|---|---|
+| 57a-1, Cloud Run baseline | **median 13.0 s** over 5 runs (an earlier attempt: 12.0 s) |
+| 57a-2, cold start, plain pull | 154, 145, 137, 152, 135 s → **median 145 s** |
+| 57a-3a, `enableImageStreaming` | 98, 97, 96 s → **median 97 s**; **2 of the 5 jobs gave no first-line time and the record does not say whether they were refused, failed or simply not collected** — the step's "did streaming accept the job at all" question, left open |
+| 57a-3b, preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**, submit-to-first-log-line; Batch accepted the custom boot image and ran it. **The split of the 66 s is not measured** — the 9 s pull / 1 s to `pg_isready` recorded in the same run belong to 57a-6's timed submission, a small `postgres:17` container on a plain `batch-cos` VM, not the preloaded image |
+| 57a-4/6, the socket | no `options`: **refused**; `--group-add 412`: **works**; `--user 0`: **works**; `--privileged`: **does not** (uid stays 1000); `--group-add` **with streaming**: the group is **not applied**, so streaming makes Batch ignore `options` — **one variant, one job**, so it is the one 57a result to re-confirm (the design's §9) |
+| 57a-5, the cost of one run | a 143 s `e2-standard-4` window at 0.13402284 USD/h ≈ **$0.0053** (disk and NAT outside it; the bill was not read) |
+| 57a-8, teardown | VM gone 25 s after `SUCCEEDED`, 26 s after `FAILED`, 3 s after `jobs.cancel`, 26 s after a crashed runner |
+| 57a-9, the IAM Condition | a conditional `roles/batch.jobsEditor` with `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")` was **accepted and read back as written** — acceptance only: **no request was made under the binding**, so what it denies is inferred, not measured (design §3.7, §9) |
+| 57a-10, the log entry | `labels.job_uid` **equals the job's uid**; `resource.labels.job_id` holds the **uid-form id, not the job name**; the job's own `fugaro_chk=57` **is on the entries**; the job ran as the dedicated service account, not the default Compute account |
+| 57a-12, the signal | job-level (`taskSpec.environment`, both vars set to `99`): the container saw the injected **`IDX=0 COUNT=1`**, so it did **not** override. Task-level (`taskEnvironments[0].variables`, both `99`): the container saw **`IDX=99`** with `COUNT=1` — the task environment **does** reach the container |
+
+**Restore status — NOT FINISHED (owner note, 2026-10-15; the owner updates
+this).** The run's Restore did not complete: `gcloud` reauthentication failed
+part-way through the cleanup, so **a VM survived** — the 57a-12 signal job's
+VM, `fugaro-chk57-signa-…-hwt4`, still there when the cleanup stopped. **Why it
+survived is not recorded** — 57a-8's times were measured on four other jobs and
+Batch's own teardown is what normally deletes a run's VM (design §3.4, §3.7) —
+so it is an **open teardown question for the re-run**, not a settled finding.
+The run started with **`compute.googleapis.com` and `batch.googleapis.com`
+off** and the check **enabled them**, and 57a-0c enabled
+`containerfilesystem.googleapis.com` under its marker file; at cleanup the
+Restore logged it **could not disable compute/batch/containerfilesystem (left
+on)**, the same reauth failure. **Those two lines are the owner's run output,
+not this file's blocks**: the committed setup block has steps 0, 0b and 0c and
+no enable step, and the committed Restore has only step 7 — the run's script
+numbered the enable step `57a-0a`, and the revision that adds it belongs to the
+design's §8.1 task 10 (design §7.2, "Restore status", carries the full note).
+The fresh-project finding behind it — the APIs off by default, and Compute's
+enable creating the default network and service account — is the design's
+**§1.9**. The committed Restore block disables **only**
+`containerfilesystem.googleapis.com` (step 7) and has **no step for the Compute
+or Batch APIs** — an item for that revision (the setup block must record which
+APIs it turned on, as step 7's marker file does, and the Restore must read that
+record) — so closing 57a takes: the restore re-run on its own until its
+assertion reads `0` on every line, the survived VM deleted, the teardown
+question the re-run answers, and those APIs switched back off **by hand**,
+outside that assertion (`gcloud services list --enabled --project=fugaro-dev`,
+the only way to see them).
+
+**Not run: 57b (all eight steps), 57a step 7 (Spot preemption — a separate
+script is being written), 57a step 11 (quota/queueing), the billed amount,
+`TaskGroup.runAsNonRoot: true` (only the unset branch is measured), 57a step
+12's metadata half (the signal submission's recorded result covers the
+environment variables only, so whether a job can read its own VM's identity
+from the metadata server is still open — the design's §9), the log sink
+arm, which was not applied by decision, and **the re-confirmation of
+streaming's disregard for `options`** — that result is from one variant and
+one job (57a-4/6), and the design's §9 holds it open for a repeat.** The design's own
+recommendation changes that follow — the preloaded boot image over image
+streaming, `--group-add <socket gid>` as the socket recipe, the explicit
+network+subnetwork in the job JSON, the provisioning wait for IAM propagation,
+and the reaper as a safety net — are amended in
+[design/compute-backend.md](design/compute-backend.md) §§0, 1.1, 1.2, 1.3,
+1.5, 1.7, 1.9, 2.2, 3.4, 3.7, 8.1 and 9.
 
 | # | Check | Command | Expected |
 |---|---|---|---|
@@ -348,7 +414,7 @@ table below.
 | 46 | A Claude senior through OpenRouter by the owner's opt-in (design `mixed-credentials.md` §4, §10 Phase 2): an unclaimed `anthropic/<id>` still refused at every surface, the claim accepted from the local config first and from the project layer once that slice ships (step 4), a claim never creatable by a repository, and `cache_read`/`cache_write_5m` on the reviewer's own calls against the same task run direct | See "Check 46" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and no agent runs any step of it. | Two small sandbox runs per claim location, plus the route fee. **USER-RUN, NOT RUN.** |
 | 47 | The subscription OAuth token for the reviewer stage only (design `mixed-credentials.md` §5, Path B): the one permitted mix validating, the account's variant job and its token mount, whether an `anthropic-api-key` is still asked for (on this tree it is, only when a call goes to Anthropic), a run whose coder stage goes through the gateway and whose reviewer stage does not, the stage recorded as notional with `credential: oauth`, the role-swap, launch and public-follow-up refusals with review mode left permitted, the same run with the budget off, and the dashboard's notional column | See "Check 47" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and **you** type the token. | A few small sandbox runs and one stored secret. **USER-RUN, NOT RUN.** **HELD until phase 5 of `docs/design/project-centric.md` (D9, 2026-10-14) — do not run as written; steps 2 and 6 are rewritten against the person-owned OAuth pool.** |
 | 52 | The UNVERIFIED questions phase 3 depends on, written and answered **before any phase 3 code** (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access`; **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names); and **U1**, which is **no longer a probe** — the owner ruled on 2026-10-15 that a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket credentials stay per repository and phase 3's shared jobs are GitHub's, with D5 amended to record the ruling (plan Task 0.5) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and **no Bitbucket credential, project or repository is created, read or written at all** (U1 is answered by ruling, not by a probe), never anything under `edgeappinc`. | A few `gcloud` reads, **three** override executions on the sandbox job (the secret-reference call in (a), the plain-literal comparison in (c), and the length-only run when the container's command is a shell — (b) is a template-level `--update-secrets` update, and the bare `gcloud run jobs execute` carries no override at all, so neither is one of the three), the check's own probe service account `fugaro-chk52-probe` and its two throwaway secrets (`fugaro-probe-in`, inside the condition's prefix, and `fugaro-other-probe`, outside it), and **nothing on the Bitbucket side**. **USER-RUN, NOT RUN.** |
-| 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, and the fail-closed marker. | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image, the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **USER-RUN, NOT RUN.** |
+| 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image, the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 

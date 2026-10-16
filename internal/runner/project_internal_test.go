@@ -63,6 +63,54 @@ func TestRemoteOfAnotherKind(t *testing.T) {
 	}
 }
 
+// The other half of the same guard, and the half the host cannot see:
+// gitprov.KindForURL reads a host and nothing else, so another repository of
+// the same forge — another owner, another name, or the same name under another
+// case — is a remote on the derived kind's own host and agrees with it by kind.
+// FUGARO_REMOTE is a launcher's to set, and the run's slug (its locks, its
+// cache, its budget session, and which repository the policy admitted) names
+// one repository, so the repository in the remote's path is what is compared.
+// A remote this Fugaro cannot place keeps the reading it had: a local path, an
+// httptest URL and a self-hosted installation are the launcher's own business
+// (internal/infra's repoURL), not a claim about another repository.
+func TestRemoteOfAnotherRepository(t *testing.T) {
+	for _, tc := range []struct{ name, kind, repo, remote, want string }{
+		{"https, another owner", "github", "acme/app", "https://github.com/other/app.git", "other/app"},
+		{"https, another name", "github", "acme/app", "https://github.com/acme/other.git", "acme/other"},
+		{"scp-like, another name", "github", "acme/app", "git@github.com:acme/other.git", "acme/other"},
+		{"ssh, another name", "github", "acme/app", "ssh://git@github.com/acme/other.git", "acme/other"},
+		{"another case of another name", "github", "acme/app", "https://github.com/acme/Other.git", "acme/other"},
+		{"a credential and a query", "github", "acme/app", "https://x:tok@github.com/acme/other.git?ref=main", "acme/other"},
+		{"bitbucket, another name", "bitbucket", "acme/app", "https://bitbucket.org/acme/other.git", "acme/other"},
+
+		{"the same repository", "github", "acme/app", "https://github.com/acme/app.git", ""},
+		{"the same repository, scp-like", "github", "acme/app", "git@github.com:acme/app.git", ""},
+		{"the same repository, no .git", "github", "acme/app", "https://github.com/acme/app", ""},
+		{"the same repository in another case", "github", "acme/app", "https://github.com/ACME/App.git", ""},
+		{"the task's own spelling", "github", "ACME/App.git", "https://github.com/acme/app", ""},
+
+		{"another provider's host", "github", "acme/app", "https://bitbucket.org/acme/other.git", ""},
+		{"no host this Fugaro knows", "github", "acme/app", "https://git.example.com/acme/other.git", ""},
+		{"a look-alike host", "github", "acme/app", "https://github.com.evil.example/acme/other.git", ""},
+		{"a local path", "github", "acme/app", "/srv/git/acme/other", ""},
+		{"an httptest URL", "github", "acme/app", "http://127.0.0.1:8080/acme/other.git", ""},
+		{"a path with more than owner and name", "github", "acme/app", "https://github.com/group/sub/app.git", ""},
+		{"no repository in the path at all", "github", "acme/app", "https://github.com/", ""},
+		{"no kind derived", "", "acme/app", "https://github.com/acme/other.git", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := remoteOfAnotherRepository(tc.kind, tc.repo, tc.remote); got != tc.want {
+				t.Errorf("remoteOfAnotherRepository(%q, %q, %q) = %q, want %q", tc.kind, tc.repo, tc.remote, got, tc.want)
+			}
+		})
+	}
+	// A repository the task cannot name is not this check's to refuse: there is
+	// no slug to derive, and the binding above stops that run on its own.
+	if got := remoteOfAnotherRepository("github", "not a repository", "https://github.com/acme/other.git"); got != "" {
+		t.Errorf("a task repository CanonicalRepo refuses was compared anyway: got %q", got)
+	}
+}
+
 // A refusal quotes the remote, and a remote URL is where a launcher may have
 // put a token: in its userinfo, in a query parameter (?access_token= is how
 // Bitbucket's forge URLs are written) or in a fragment. The display form drops
