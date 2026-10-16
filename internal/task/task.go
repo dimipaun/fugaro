@@ -147,6 +147,19 @@ var inputSHA256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // truncation.
 const MaxInputNameBytes = 200
 
+// InputNameBlank reports whether an attached file's name is no name at all:
+// empty, or nothing but whitespace. It is the ONE predicate for that rule,
+// shared by InputNameProblem below and by Spec.Validate's required-name check,
+// because a name one of them accepts has to be a name the other accepts.
+//
+// They disagreed once, and the disagreement was not academic: "   " is a legal
+// file name and a legal JSON string, so the launcher (which asked only for
+// non-empty) uploaded it and wrote the task.json naming it, and the runner's
+// decoder (which asked for TrimSpace(name) != "") refused that task at
+// bootstrap — bytes in the bucket under a run that never starts, the one
+// outcome design §4 step 1's ordering exists to prevent.
+func InputNameBlank(name string) bool { return strings.TrimSpace(name) == "" }
+
 // InputNameProblem reports what is wrong with an attached file's name as a
 // filesystem path — "" when nothing is — for the two places one becomes a
 // path: the launcher, choosing it (the base name of the path --attach named),
@@ -167,6 +180,11 @@ func InputNameProblem(name string) string {
 	switch {
 	case name == "":
 		return "is empty"
+	case InputNameBlank(name):
+		// Nothing but whitespace: the name Spec.Validate refuses as missing,
+		// so it is refused here too — before the file is uploaded, rather
+		// than by the runner reading the task back (InputNameBlank).
+		return "is only whitespace"
 	case len(name) > MaxInputNameBytes:
 		return fmt.Sprintf("is longer than %d bytes", MaxInputNameBytes)
 	case strings.ContainsAny(name, "\x00\n\r"):
@@ -392,7 +410,10 @@ func (s *Spec) Validate() error {
 	// make the runner's own check unreachable — this decoder runs first —
 	// and the list belongs beside the write it protects.
 	for i, in := range s.Inputs {
-		if strings.TrimSpace(in.Name) == "" {
+		// The same predicate the launcher's InputNameProblem applies to a
+		// name, so that a name this refuses is a name the launcher refuses
+		// before it uploads anything (InputNameBlank).
+		if InputNameBlank(in.Name) {
 			bad("task spec: inputs[%d].name is required", i)
 		}
 		if in.Bytes < 0 {

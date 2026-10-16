@@ -324,6 +324,12 @@ func TestTaskSchemaCorpus(t *testing.T) {
 // rule: the launcher and the runner are where a name becomes a path, and
 // they refuse it there (design §8.2).
 //
+// The ONE exception is emptiness, which the schema can express and which the
+// decoder refuses anyway (Spec.Validate's required-name check): minLength 1
+// does not catch a name of nothing but whitespace, so the pattern below asks
+// for at least one non-whitespace character — the same rule as
+// task.InputNameBlank, which the launcher applies before it uploads.
+//
 // Mutation (drop the inputs property from schemas/task.schema.json): the
 // valid instance below is rejected as an unknown key and this test fails.
 func TestTaskSchemaInputs(t *testing.T) {
@@ -346,6 +352,7 @@ func TestTaskSchemaInputs(t *testing.T) {
 	for _, tc := range []struct{ name, lit string }{
 		{"not an array", `,"inputs":{}`},
 		{"empty name", `,"inputs":[{"name":"","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"whitespace-only name", `,"inputs":[{"name":"   ","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
 		{"negative bytes", `,"inputs":[{"name":"a.png","bytes":-1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
 		{"short sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"abc"}]`},
 		{"upper-case sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"` + strings.Repeat("A", 64) + `"}]`},

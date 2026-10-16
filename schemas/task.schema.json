@@ -47,7 +47,7 @@
         "additionalProperties": false,
         "required": ["name", "bytes", "sha256"],
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "The name the file is stored and written under. A name of nothing but whitespace is no name, the same rule task.InputNameBlank applies before the launcher uploads anything." },
           "bytes": { "type": "integer", "minimum": 0 },
           "sha256": {
             "type": "string",

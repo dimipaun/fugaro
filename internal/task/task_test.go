@@ -605,6 +605,11 @@ func TestSpecInputsValidate(t *testing.T) {
 		{"none", `,"inputs":[]`, ""},
 		{"absent", ``, ""},
 		{"no name", `,"inputs":[{"bytes":1,"sha256":"` + sha + `"}]`, "name is required"},
+		// A name of nothing but whitespace is no name HERE, and it must be no
+		// name in InputNameProblem too (the case above): the launcher writes
+		// this task and the runner reads it back, so a name this refuses is a
+		// name the launcher must refuse before it uploads the file.
+		{"a whitespace-only name", `,"inputs":[{"name":"   ","bytes":1,"sha256":"` + sha + `"}]`, "name is required"},
 		{"negative bytes", `,"inputs":[{"name":"a.png","bytes":-1,"sha256":"` + sha + `"}]`, "negative"},
 		{"no sha256", `,"inputs":[{"name":"a.png","bytes":1}]`, `sha256 "" must be`},
 		{"short sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"abc"}]`, "sha256"},
@@ -638,6 +643,12 @@ func TestInputNameProblem(t *testing.T) {
 		{"a/b/shot.png", ""},
 		{"inputs/shot.png", ""},
 		{"", "is empty"},
+		{"   ", "is only whitespace"},
+		{" \t ", "is only whitespace"},
+		// Whitespace AROUND a name is a name: the rule is for a string that
+		// holds nothing but whitespace, not for whitespace in one.
+		{" shot.png", ""},
+		{"shot .png", ""},
 		{strings.Repeat("a", MaxInputNameBytes), ""},
 		{strings.Repeat("a", MaxInputNameBytes+1), "is longer than 200 bytes"},
 		{"/etc/passwd", "is an absolute path"},

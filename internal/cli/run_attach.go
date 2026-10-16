@@ -91,20 +91,23 @@ func attachPrepared(paths []string, caps config.Inputs) ([]preparedInput, error)
 	}
 	perFile := caps.MaxFileBytes()
 	out := make([]preparedInput, 0, len(paths))
-	seen := map[string]bool{}
+	seen := map[string]string{}
 	var total int64
 	for _, p := range paths {
 		name := filepath.Base(p)
 		if problem := task.InputNameProblem(name); problem != "" {
 			return nil, userErr("--attach %s: its name %s", p, problem)
 		}
-		if seen[name] {
+		if first, dup := seen[name]; dup {
 			// Refused rather than overwritten: two paths with one base name
 			// would be one object and one entry, and the second upload would
-			// be a create-only write against an object already up.
-			return nil, userErr("--attach: %s is named twice (both as %s); rename one of them or attach them from different directories", name, name)
+			// be a create-only write against an object already up. Both
+			// PATHS are named, not the base name twice: the collision is
+			// between two directories holding one file name, so the two
+			// paths are the whole of what the owner has to tell apart.
+			return nil, userErr("--attach: %s and %s are both named %s; a run stores one object per name, so rename one of them or attach them from different directories", first, p, name)
 		}
-		seen[name] = true
+		seen[name] = p
 		st, err := os.Stat(p)
 		switch {
 		case err != nil:

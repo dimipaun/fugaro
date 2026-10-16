@@ -305,6 +305,31 @@ func TestAttachRefusesMoreFilesThanTheCap(t *testing.T) {
 	wantRefused(t, f, "max_files", append(args, "Render the nightly bundle")...)
 }
 
+// TestAttachRefusesAWhitespaceOnlyNameBeforeUploading: a name that is nothing
+// but whitespace is a legal file name and a legal JSON string, so the
+// launcher's own name rule (task.InputNameProblem, which asked only for
+// non-empty) let it through — while the decoder that reads the task back
+// (task.Spec.Validate's required-name check, which asks for
+// strings.TrimSpace(name) != "") refused the same name. So --attach uploaded
+// the file, createTask wrote the task.json naming it, and the runner's
+// ReadTask refused the task at bootstrap: the bytes were in the bucket under a
+// run that could never start, which is the one thing design §4 step 1's
+// ordering exists to prevent. The two rules are one predicate now
+// (task.InputNameBlank), and the refusal happens where every other name
+// refusal happens: in attachPrepared, before the first byte.
+//
+// Mutation (drop the whitespace arm from InputNameProblem): the launch
+// uploads, writes the task and starts, and this test fails on the missing
+// refusal, on the upload count and on the object.
+func TestAttachRefusesAWhitespaceOnlyNameBeforeUploading(t *testing.T) {
+	f := artifactAttachFixture(t)
+	n := guardAttach(t)
+	shot := attachShot(t, "   ", "png")
+	wantRefused(t, f, "is only whitespace", "run", "--repo", "acme/app", "--recipe", "sizzle",
+		"--run-id", "20261015-100000-abcd", "--attach", shot, "Render the nightly bundle")
+	wantNoUpload(t, f, n)
+}
+
 // TestAttachRefusesAnOversizedFile: workflows.inputs.max_bytes is PER FILE,
 // and the refusal names that one file's own size beside it — a set of many
 // small files is not what trips it, and the count is unaffected.
@@ -422,12 +447,16 @@ func TestAttachUploadsCreateOnly(t *testing.T) {
 
 // TestAttachRefusesDuplicateBaseNames: two attachments with one base name
 // would be one object and one entry, so the second is refused rather than
-// overwriting the first.
+// overwriting the first — and the refusal names BOTH paths the user typed,
+// because one base name and two directories is exactly the case where "shot.png
+// is named twice" leaves the owner looking for the second one: the whole
+// reason the two collide is that the paths differ.
 //
 // Mutation (drop the duplicate-name refusal): the second upload is a
 // create-only write against the first and the launch fails at the bucket
 // instead, with a message that names neither the file nor the reason; the
-// test fails on wantRefused's own wording.
+// test fails on the refusal. Mutation (print the base name twice instead of
+// the two paths, the way it did): the test fails on the missing path.
 func TestAttachRefusesDuplicateBaseNames(t *testing.T) {
 	f := artifactAttachFixture(t)
 	first := attachShot(t, "shot.png", "one")
@@ -435,8 +464,19 @@ func TestAttachRefusesDuplicateBaseNames(t *testing.T) {
 	if err := os.WriteFile(second, []byte("two"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	wantRefused(t, f, "named twice", "run", "--repo", "acme/app", "--recipe", "sizzle", "--run-id", "20261015-100000-abcd",
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "sizzle", "--run-id", "20261015-100000-abcd",
 		"--attach", first, "--attach", second, "Render the nightly bundle")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	for _, p := range []string{first, second} {
+		if !strings.Contains(err.Error(), p) {
+			t.Fatalf("the refusal does not name %s:\n%v", p, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
 }
 
 // TestAttachNeedsAResolvableRepo: --attach resolves its repository exactly as

@@ -1040,9 +1040,16 @@ produced (out), and files an operator handed to a model-driven job (in).
    which §4's own reasoning already treats as untrusted for the caps. A spec
    whose `inputs[].name` is `../../.git/hooks/pre-commit` must be refused by
    the runner, not sanitised into something plausible: the runner applies the
-   same list (no absolute path, no `..` element, no NUL or newline, a length
-   limit, no duplicate after cleaning) and **fails the run** with the name
-   quoted, rather than writing outside `inputs/`.
+   same list (no empty or whitespace-only name, no absolute path, no `..`
+   element, no NUL or newline, a length limit, no duplicate after cleaning) and
+   **fails the run** with the name quoted, rather than writing outside
+   `inputs/`. It is one predicate in one place (`task.InputNameProblem`, with
+   `task.InputNameBlank` for the emptiness half, which `Spec.Validate`'s
+   required-name check shares), because the launcher and the runner have to
+   agree: a name the launcher accepts and the decoder refuses is a file in the
+   bucket under a run that never starts, which is what a whitespace-only name
+   was — it is a legal file name and a legal JSON string, so the launcher took
+   it and the runner's `ReadTask` refused the task at bootstrap.
 
    **And the runner does not trust `Spec.Mode` either, because it may be
    empty.** The launcher does not always resolve the recipe: when it leaves the
@@ -1185,8 +1192,13 @@ produced (out), and files an operator handed to a model-driven job (in).
    **What the set is, exactly.** The model route is decided by
    `config.ProviderFor` over the local config's `providers` block
    (`internal/config/providers.go:268-275`) for each model the run will use
-   (`Agent.PinnedModels` — the coder's, the reviewer's and the background model,
-   `internal/config/config.go:236-244`); a model no such provider claims goes to
+   (`config.NeedsAnthropicKey`'s three, in its own order — the coder's, the
+   reviewer's and `config.EffectiveBackground`, `internal/config/providers.go:670`;
+   **not** `Agent.PinnedModels`, whose third entry is the raw
+   `Models.Background`, empty unless the config sets it: a run whose coder a
+   provider claims never makes an unset-background call to Anthropic at all,
+   so `PinnedModels` would name `Anthropic (direct)` for a run that makes no
+   Anthropic call); a model no such provider claims goes to
    **Anthropic, direct** — the `oauth` path and the Anthropic-key path both do,
    and `oauth` is never proxied (`docs/design/m9-budget-and-dashboard.md:8`). The
    only providers a run can use at all are the ones that list the repository in
