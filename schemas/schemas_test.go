@@ -317,6 +317,54 @@ func TestTaskSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaInputs: the attached-files list a launcher writes (design
+// artifact-runs.md §4, plan Task 6) is an array of closed {name, bytes,
+// sha256} objects, and an absent list stays absent. The name's own shape
+// (no ".." element, no NUL, a length limit) is deliberately not a schema
+// rule: the launcher and the runner are where a name becomes a path, and
+// they refuse it there (design §8.2).
+//
+// The ONE exception is emptiness, which the schema can express and which the
+// decoder refuses anyway (Spec.Validate's required-name check): minLength 1
+// does not catch a name of nothing but whitespace, so the pattern below asks
+// for at least one non-whitespace character — the same rule as
+// task.InputNameBlank, which the launcher applies before it uploads.
+//
+// Mutation (drop the inputs property from schemas/task.schema.json): the
+// valid instance below is rejected as an unknown key and this test fails.
+func TestTaskSchemaInputs(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261015-100000-abcd","repo":"acme/app","ref":"main","task":"x","mode":"artifact"`
+	ok := head + `,"inputs":[{"name":"shot.png","bytes":1024,"sha256":"` + strings.Repeat("a", 64) + `"}]` + `}`
+	if err := validate(ok); err != nil {
+		t.Fatalf("schema rejects a task carrying inputs: %v", err)
+	}
+	if err := validate(head + `}`); err != nil {
+		t.Fatalf("schema rejects a task carrying none: %v", err)
+	}
+	for _, tc := range []struct{ name, lit string }{
+		{"not an array", `,"inputs":{}`},
+		{"empty name", `,"inputs":[{"name":"","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"whitespace-only name", `,"inputs":[{"name":"   ","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"negative bytes", `,"inputs":[{"name":"a.png","bytes":-1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"short sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"abc"}]`},
+		{"upper-case sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"` + strings.Repeat("A", 64) + `"}]`},
+		{"unknown key", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `","content_type":"image/png"}]`},
+		{"missing sha256", `,"inputs":[{"name":"a.png","bytes":1}]`},
+	} {
+		if err := validate(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+}
+
 func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
@@ -406,6 +454,7 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Workflow: "app",
 		Status: runstore.StatusSucceeded, Stage: "render", Outcome: runstore.OutcomeArtifacts,
 		StartedAt: at, Render: render,
+		Inputs: []runstore.InputFile{{Name: "shot.png", Bytes: 2048, SHA256: strings.Repeat("b", 64)}},
 		Artifacts: []runstore.ArtifactFile{{Name: "sizzle.png", Bytes: 6, SHA256: strings.Repeat("b", 64),
 			ContentType: "image/png", Probe: &runstore.ProbeResult{Ran: true, ExitCode: 0}}},
 	}
@@ -463,6 +512,8 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		{"bad hash", strings.Repeat("a", 64), "not-a-hash"},
 		{"bad tree", `"tree":"working"`, `"tree":"head"`},
 		{"unknown key", `"exit_code":-1`, `"exit_code":-1,"extra":1`},
+		{"negative input size", `"bytes":2048`, `"bytes":-1`},
+		{"input without a hash", `"sha256":"` + strings.Repeat("b", 64) + `"`, `"sha256":"abc"`},
 		{"artifact without a name", `"name":"sizzle.png"`, `"nope":"sizzle.png"`},
 		{"artifact unknown key", `"bytes":6`, `"bytes":6,"extra":1`},
 		{"artifact bad content type", `"content_type":"image/png"`, `"content_type":7`},
@@ -480,6 +531,74 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		if err := sch.Validate(inst); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, raw)
 		}
+	}
+}
+
+// TestResultSchemaStatesTheNoProbeVerdict is Review Focus 6's schema half for
+// the probe: a record this runner writes carries a probe verdict for every
+// artifact it uploaded, and a recipe that asked for no probe records
+// {ran: false, exit_code: -1} rather than leaving the key out — "no probe
+// ran" is stated in the record, not inferred from a field that is not there
+// (plan Task 5). The schema says the same thing in the one place it can
+// enforce it: a verdict that did not run must carry the -1 that marks it, so
+// a record — hand-edited, or written by something that got this wrong — can
+// never read as a probe that ran and passed with exit code 0.
+//
+// The key itself stays out of the item's required list, and the description
+// says why: a record written before the probe step existed carries none, the
+// same reason the artifacts array is optional at the record level. What is
+// required is the shape of a verdict that IS there.
+//
+// Mutation (drop the allOf from the schema's probe object, or set its const
+// to 0): this test fails on the {ran: false, exit_code: 0} document it
+// builds, which the schema then accepts.
+func TestResultSchemaStatesTheNoProbeVerdict(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20261016-100000-abcd", Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeArtifacts,
+		StartedAt: at,
+		Artifacts: []runstore.ArtifactFile{{
+			Name: "sizzle.png", Bytes: 6, SHA256: strings.Repeat("b", 64), ContentType: "image/png",
+			Probe: &runstore.ProbeResult{Ran: false, ExitCode: -1},
+		}},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"probe":{"ran":false,"exit_code":-1}`) {
+		t.Fatalf("the record does not carry the no-probe verdict this test is about: %s", data)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a no-probe verdict: %v\n%s", err, data)
+	}
+	// The same artifact with the exit code a PASSING probe would have: the
+	// schema must refuse it, because a reader cannot tell the two apart
+	// otherwise and the whole point of the -1 is that it is not 0.
+	raw := strings.Replace(string(data), `"exit_code":-1`, `"exit_code":0`, 1)
+	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader([]byte(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Fatalf("the schema accepts a probe that did not run with a passing exit code: %s", raw)
+	}
+	// A verdict that ran is unconstrained on the far side: a probe killed by
+	// its deadline is {ran: true, exit_code: -1}, which is also what
+	// procgroup reports for a signalled process.
+	raw = strings.Replace(string(data), `"ran":false,"exit_code":-1`, `"ran":true,"exit_code":-1`, 1)
+	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader([]byte(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a probe that ran and was killed: %v\n%s", err, raw)
 	}
 }
 

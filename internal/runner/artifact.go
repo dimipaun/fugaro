@@ -1,12 +1,14 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"net/http"
 	"os"
@@ -20,10 +22,15 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // artifactStageDir is the staging directory under the state directory:
@@ -177,7 +184,12 @@ func (r *run) artifactMode(ctx context.Context) {
 				return
 			}
 			if r.isCancelled() {
-				r.endArtifactCancelled(ctx, "cancelled while uploading the artifacts")
+				// The window this branch is in is the whole artifact step,
+				// not the upload alone: staging, the probe (which can block
+				// for timeouts.verify plus its grace) and the upload all run
+				// inside collectArtifacts, so a cancel that landed during a
+				// slow probe is not reported as an upload cancellation.
+				r.endArtifactCancelled(ctx, "cancelled while collecting the artifacts")
 				return
 			}
 			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, r.redact(aerr.Error())
@@ -309,9 +321,11 @@ func (r *run) runRender(ctx context.Context) (runstore.RenderRecord, error) {
 }
 
 // collectArtifacts is the step after a successful render: stage the set,
-// hash it in the staging directory, upload it, and record it (design §3, P5).
-// Nothing is staged until every refusal has been made, so a refused set
-// leaves the staging directory empty and the bucket untouched.
+// hash it in the staging directory, probe it, upload it, and record it
+// (design §3, P5). Nothing is staged until every refusal has been made, so a
+// refused set leaves the staging directory empty and the bucket untouched;
+// the probe runs on the staged bytes and, when it fails, nothing is uploaded
+// at all (Review Focus 6).
 func (r *run) collectArtifacts(ctx context.Context) error {
 	set, err := r.stageArtifacts(r.out)
 	if err != nil {
@@ -320,9 +334,33 @@ func (r *run) collectArtifacts(ctx context.Context) error {
 	if artifactStagedSeam != nil {
 		artifactStagedSeam()
 	}
+	// The probe's place is exactly here: after the render (there are bytes to
+	// judge), after the caps (a set nobody may upload is not worth probing)
+	// and before the upload (a probe that fails must be able to refuse it).
+	// It sees the STAGED copies, which are the bytes that would go to the
+	// bucket, not the render's originals.
+	probe, detail, err := r.runProbe(ctx, set)
+	if err != nil {
+		return probeFailure(err, detail)
+	}
 	files, err := r.uploadArtifacts(ctx, set)
 	if err != nil {
 		return err
+	}
+	for i := range files {
+		// One invocation covered the whole set, so every artifact carries the
+		// same verdict — including {ran: false} for a recipe that asked for
+		// no probe, so "there is no probe" is in the record rather than
+		// inferred from a field that is not there (Review Focus 6).
+		//
+		// A copy each, not one pointer shared by every row. Nothing writes to
+		// a recorded verdict today, which is exactly why this is worth being
+		// exact about: the schema keeps a per-artifact warning field for the
+		// per-artifact nuance this release defers, and the first writer of one
+		// would otherwise silently change every row of the record and of the
+		// report with it.
+		p := probe
+		files[i].Probe = &p
 	}
 	// Left nil rather than set to an empty slice: the record writes no
 	// artifacts key at all when a run delivered none (runstore.Record), so
@@ -332,6 +370,255 @@ func (r *run) collectArtifacts(ctx context.Context) error {
 		r.rec.Artifacts = files
 	}
 	return nil
+}
+
+// probeFailure is a failed probe's error as the run records it: what the
+// probe did (runProbe's own error) and, when it printed anything, the last
+// line it printed — a repository command's own last word is usually what
+// explains its exit code, and it is redacted on the way through the probe's
+// log tail, so a secret a probe echoes never reaches the record.
+func probeFailure(err error, detail string) error {
+	if detail == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, detail)
+}
+
+// artifactNamesFile is the file FUGARO_ARTIFACTS_FILE names: the staged names,
+// one per line, in the state directory. A file and not a value in the
+// environment, because a newline-separated list inside one variable cannot
+// survive a name that holds a newline (design §3) — and every shell reads a
+// file with `while IFS= read -r` without quoting rules in play.
+const artifactNamesFile = "artifact-names.txt"
+
+// probeGrace is how long the probe's process group gets between SIGTERM and
+// SIGKILL once its deadline has ended: internal/verify's commandGrace, the
+// grace verify.Run gives every command it runs (verify.go:35, 5s). The plan
+// names it for the probe for the reason the number matters — the probe's
+// deadline is a bound on the RUN, with the finalize reserve behind it, and
+// procgroup's own default of 10s would let a repository's probe that ignores
+// SIGTERM hold the run that long past the deadline it was given. It is
+// repeated here rather than referenced because internal/verify's is
+// unexported and Task 5 makes no edit to internal/verify (plan Task 5's file
+// list); the value is the contract, and TestProbeGraceBoundsAProbeThat
+// IgnoresSIGTERM fails if it drifts back to procgroup's default.
+const probeGrace = 5 * time.Second
+
+// runProbe runs commands.probe once, after the render and before the upload,
+// over the whole staged set (design §3, plan Task 5). It is ONE invocation for
+// every artifact, never one per artifact: a per-file probe would mean the
+// runner interpolating a runner-derived name into a command line, which is the
+// one thing the design rejects outright.
+//
+// The command comes from the runner's IN-MEMORY workflow config
+// (r.wf.Commands.Probe) and never through verify.LoadSettings — the rule
+// runRender follows, for the same reason: <StateDir>/workflow.json is 0644
+// inside a directory the plan-stage agent can write (same user, same
+// container), so a probe that loaded its command from there could be made to
+// run a string nobody read, while the record attested to the string that was
+// read (design §3, Review Focus 1).
+//
+// The environment is the render's own — r.env, the workflow's secrets
+// included (Global Constraints, design §8.6/D10) — plus exactly two names:
+//
+//	FUGARO_OUT_DIR         the staging directory's absolute path. It is FLAT:
+//	                       it holds exactly the files that will be uploaded,
+//	                       one per name below, so "$FUGARO_OUT_DIR/$name" is
+//	                       always the staged file, whatever shape the recipe's
+//	                       globs have. It is the staging root and never the
+//	                       checkout's outputs root. It EXISTS whenever a probe
+//	                       runs, empty set included — the directory is created
+//	                       here for the arms that staged nothing — so a probe
+//	                       may cd into it or list it; what it must not assume
+//	                       is that anything is in it.
+//	FUGARO_ARTIFACTS_FILE  the path of the file holding those names, one per
+//	                       line, in upload order — each the relative, sanitised
+//	                       name, which is also the object key's leaf under
+//	                       artifacts/ and the path under FUGARO_OUT_DIR.
+//
+// It runs in the checkout, as the workflow's own command, through procgroup,
+// under timeouts.verify (a probe is a check, not a render) and under the run's
+// finalize reserve. It is NOT a sandbox and nothing here claims it is: the
+// probe is repository text running as the same user, in the same container,
+// with the same environment as the render, and it can read whatever the render
+// can (design §3, P2/D8).
+//
+// The verdict is fail-closed and is never interpreted (Review Focus 6): a
+// non-zero exit, a timeout, or a failure to start the process fails the run
+// and refuses the upload, even though the files are staged and within every
+// cap — the probe is the only thing that can say a 0-byte render is not a
+// video, so it must be able to stop one. The probe's own output is streamed
+// through the same redactor the agent's streams go through and kept as a log
+// tail, which is what the report quotes when the probe fails.
+//
+// The returned ProbeResult is what the record carries for each uploaded
+// artifact, and the returned string is the last line the probe printed
+// (redacted, "" when it printed nothing), which the caller joins onto its
+// error. A recipe that asks for no probe (outputs.probe: none, the default)
+// starts no process and gets {ran: false, exit_code: -1} — "no probe ran" said
+// out loud rather than inferred from an absent field. (-1 rather than 0, the
+// shape RenderRecord's ExitCode uses for a render that never ran: a reader
+// skimming an exit code must not read "skipped" as "passed".)
+//
+// ProbeResult's Warning is deliberately not set here and is not recorded by
+// this release: a probe that fails refuses the upload, so the record carries
+// no artifacts and no per-file verdict at all — what an owner reads about a
+// failed probe is the run's reason and the report's log tail, and there is no
+// artifact whose probe object could hold a warning.
+func (r *run) runProbe(ctx context.Context, set artifactSet) (runstore.ProbeResult, string, error) {
+	skipped := runstore.ProbeResult{Ran: false, ExitCode: -1}
+	if r.out == nil || r.out.Probe != recipe.ProbeCommand {
+		return skipped, "", nil
+	}
+	command := r.wf.Commands.Probe
+	if strings.TrimSpace(command) == "" {
+		// Fail closed behind bootstrap's checkGateCommands, which refuses
+		// this pairing — outputs.probe: probe over a workflow with no
+		// commands.probe — before the first step: an empty command through
+		// sh -c exits 0, which would record a check that never ran as a pass.
+		return skipped, "", errors.New("commands.probe is empty")
+	}
+	// FUGARO_OUT_DIR must name a directory that IS there, and only the path
+	// that stages a file creates it (stageArtifacts' own MkdirAll). The two
+	// arms that stage nothing — a render that matched no glob, and a set every
+	// match of which was refused — return after the RemoveAll above, so
+	// without this the design's §8.4 case (a render that produced nothing, the
+	// one case where the probe is what decides an empty set) would hand the
+	// probe a path that does not exist: a probe that cd's into it, or lists it,
+	// would die with a shell error instead of judging an empty directory. The
+	// documented interface says the directory holds exactly the files that
+	// will be uploaded, and the empty set is the case with none.
+	//
+	// Created here and not in collectArtifacts, so a run that asks for no
+	// probe still leaves no staging directory behind: the skipped arm above
+	// has already returned.
+	if err := os.MkdirAll(set.dir, 0o755); err != nil {
+		return skipped, "", fmt.Errorf("creating the staging directory %s for the probe: %w", set.dir, err)
+	}
+	namesPath, err := r.writeArtifactNames(set)
+	if err != nil {
+		return skipped, "", err
+	}
+	// The record's stage is deliberately left where the render step saved it
+	// ("render"). The probe is not a stage — no model turn, no timeout of its
+	// own; design §3 says exactly that about the render, and the probe stands
+	// in the same place — and result.json's stage enum is a contract the
+	// schema owns: a value a schema-conformant reader has never heard of
+	// would make a probe that crashed the run a record the reader rejects.
+	// What names the probe in a failed run is the reason ("commands.probe
+	// timed out after 20s"), which is the reader's account of the step.
+	//
+	// A fresh slice rather than append(r.env, …): append writes into r.env's
+	// own backing array when it has room, and the probe's two names would then
+	// be sitting in the array the next caller appends to.
+	env := make([]string, 0, len(r.env)+2)
+	env = append(env, r.env...)
+	env = append(env, "FUGARO_OUT_DIR="+set.dir, "FUGARO_ARTIFACTS_FILE="+namesPath)
+	deadline, cutByReserve := r.budget.StepDeadline(r.wf.Timeouts.Verify.Duration)
+	probeCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	// The probe's output is a repository's own command's, so it goes through
+	// the same redactor the agent's and the render's streams do, whole lines
+	// at a time, and only its tail is kept.
+	tail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
+	out := agent.NewRedactor(tail, r.secretList())
+	code, runErr := procgroup.Run(probeCtx, procgroup.Cmd{
+		Name: "sh", Args: []string{"-c", command}, Dir: r.d.WorkDir, Env: env, Stdout: out, Stderr: out,
+		Grace: probeGrace,
+	})
+	// Flushed before the tail is read, exactly as the render's is: a probe
+	// whose failing line has no newline is the ordinary shape of a failure
+	// message, and the redactor holds a line until a newline arrives.
+	out.Flush()
+	rec := runstore.ProbeResult{Ran: true, ExitCode: code}
+	log := r.d.Log.With("stage", "probe")
+	switch {
+	case errors.Is(probeCtx.Err(), context.DeadlineExceeded) && cutByReserve:
+		// The run's own reserve ended the probe, not timeouts.verify: the
+		// deadline above is whichever of the two comes first, and the reason
+		// says which one it was, so the record never blames a timeout that had
+		// time left to run (design §4.5).
+		log.Warn("commands.probe cut at the finalize reserve", "reserve", r.budget.Reserve, "total", r.budget.Total, "exit_code", code)
+		r.noteProbeTail(tail)
+		return rec, probeLastLine(tail), fmt.Errorf("commands.probe was cut at the run's finalize reserve, not at its timeouts.verify (%s): the %s run budget keeps %s for finalize",
+			r.wf.Timeouts.Verify.Duration, r.budget.Total, r.budget.Reserve)
+	case errors.Is(probeCtx.Err(), context.DeadlineExceeded):
+		// procgroup.Run reports a command killed by ctx as ctx.Err().
+		log.Warn("commands.probe timed out", "timeout", r.wf.Timeouts.Verify.Duration, "exit_code", code)
+		r.noteProbeTail(tail)
+		return rec, probeLastLine(tail), fmt.Errorf("commands.probe timed out after %s", r.wf.Timeouts.Verify.Duration)
+	case runErr != nil:
+		r.noteProbeTail(tail)
+		return rec, probeLastLine(tail), fmt.Errorf("running commands.probe: %w", runErr)
+	case code != 0:
+		log.Warn("commands.probe failed", "exit_code", code)
+		r.noteProbeTail(tail)
+		return rec, probeLastLine(tail), fmt.Errorf("commands.probe exited %d", code)
+	}
+	log.Info("commands.probe passed", "exit_code", code)
+	for _, l := range tail.Lines() {
+		log.Info("probe output", "line", l)
+	}
+	return rec, "", nil
+}
+
+// writeArtifactNames writes the staged names into <StateDir>/artifact-names.txt
+// and returns its path: one name per line, in upload order, each the same
+// relative sanitised name the upload uses as the object key's leaf.
+//
+// The path is cleared and recreated O_EXCL|O_NOFOLLOW at 0600, the shape the
+// staging copy uses: the state directory is one the plan stage's agent can
+// write — the same user in the same container — so a symlink planted at this
+// path must fail the create rather than choose what the probe later reads.
+func (r *run) writeArtifactNames(set artifactSet) (string, error) {
+	path := filepath.Join(r.d.StateDir, artifactNamesFile)
+	if err := os.RemoveAll(path); err != nil {
+		return "", fmt.Errorf("clearing the probe's list of staged names %s: %w", path, err)
+	}
+	var b strings.Builder
+	for _, f := range set.files {
+		b.WriteString(f.name)
+		b.WriteString("\n")
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("writing the probe's list of staged names %s: %w", path, err)
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		return "", fmt.Errorf("writing the probe's list of staged names %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("writing the probe's list of staged names %s: %w", path, err)
+	}
+	return path, nil
+}
+
+// probeLastLine is the probe's last non-empty line and nothing else, one-lined
+// and clipped: the one line a run's reason quotes, since a reason is a sentence
+// and the probe's whole output is in the report. It is "" when the probe said
+// nothing, so the reason carries only the exit code — provision.go's lastLine
+// substitutes a phrase of its own, which belongs to the toolchain step and not
+// to a repository command's silence.
+func probeLastLine(tail *logtail.Writer) string {
+	lines := tail.Lines()
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return logtail.Clip(safetext.OneLine(l), logtail.DefaultLineBytes)
+		}
+	}
+	return ""
+}
+
+// noteProbeTail keeps the probe's last lines as the report's log tail: a
+// failed probe's output is the one thing that explains it, and the probe is a
+// repository command whose own message an owner wrote.
+func (r *run) noteProbeTail(tail *logtail.Writer) {
+	lines := tail.Lines()
+	if len(lines) == 0 {
+		return
+	}
+	r.tail = &LogTail{Source: "the probe step", Lines: r.redactAll(lines)}
 }
 
 // stageArtifacts matches the recipe's globs against the checkout, refuses
@@ -1049,13 +1336,17 @@ func (r *run) noteRenderTail(tail *logtail.Writer) {
 // the only place the run describes the deliverable to the agent, so it says
 // plainly that the render is the runner's, not the agent's.
 //
-// It names no FUGARO_INPUTS_DIR and no attachment: that variable arrives
-// with the task that adds attachments, beside FUGARO_STATE_DIR in the env
-// this run builds, and until then a plan stage cannot see an input because
-// nothing can attach one.
+// When the task attached files it names the directory they were downloaded
+// into, absolute and the same value FUGARO_INPUTS_DIR carries in this run's
+// environment; a task that attached nothing gets no such paragraph, so a
+// plan stage is never pointed at a directory that does not exist.
 func (r *run) artifactPlanPrompt() string {
 	var b strings.Builder
 	b.WriteString("This is a Fugaro artifact run: the deliverable is a set of files uploaded to this run's bucket, not a pull request. There is no pull request to open, no branch is pushed, and the plan you write is not the deliverable.\n\n")
+	if len(r.spec.Inputs) > 0 {
+		fmt.Fprintf(&b, "The task attached %d file(s): they are in `%s` (also named by FUGARO_INPUTS_DIR), already verified against the hashes in the task, and read-only input to you — the run was given them, it did not produce them. They are excluded from git, so `git add -A` never commits one.\n\n",
+			len(r.spec.Inputs), filepath.Join(r.d.WorkDir, inputsDir))
+	}
 	name := r.rec.Recipe.Name
 	fmt.Fprintf(&b, "The runner renders the deliverable itself, once, after this stage: it runs the workflow's own render command (commands.render in fugaro.yaml at %s) in this checkout and uploads the files the recipe's outputs.globs name. Do not run that render command, and do not try to produce the artifacts yourself.\n\n", r.spec.Ref)
 	if u := r.useWhen; u != "" {
@@ -1165,4 +1456,293 @@ func artifactHasPlan(rcp *recipe.Recipe) bool {
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// inputsDir is the checkout directory a mode: artifact run downloads its
+// attached files into, and the name excluded from git so the run can never
+// commit one (design §4 step 5).
+const inputsDir = runstore.InputsDir
+
+// downloadInputs downloads every file the task spec attached into the
+// checkout's inputs/, before the run's first step (design §4 step 4), and
+// records them on the run. It is called only for a mode: artifact run whose
+// spec carries inputs; bootstrap has already refused the other modes.
+//
+// The spec is text a launcher wrote, so nothing here trusts it. The caps are
+// re-applied before the first GetFile — the count against
+// workflows.<wf>.inputs.max_files, EACH entry's own bytes against
+// inputs.max_bytes, and the SUM of the entries' bytes against
+// inputs.max_total_bytes, the set cap and never one entry's size times the
+// count — so an over-cap spec downloads nothing and leaves inputs/ empty.
+// Each name is refused by task.InputNameProblem before it becomes a path, so
+// a spec whose name is ../../.git/hooks/pre-commit fails the run rather than
+// writing outside inputs/, and is never cleaned into something plausible.
+//
+// Each accepted name is then read from runs/<slug>/<run>/inputs/<name> with
+// blobx.GetFile, passing the spec's own sha256 as the expected hash and
+// strict false: the job's account cannot list that prefix, so a 403 is what
+// a MISSING input looks like to it, and the run must say "the task names an
+// input that is not in the bucket" rather than report an IAM problem. A
+// mismatch — or an object bigger than the size the spec claims — leaves
+// nothing at the destination: GetFile writes a temporary beside it and
+// renames only after the hash matched. A file the bucket holds but the spec
+// does not name is not downloaded at all; it cannot be named, which is the
+// whole reason the list lives in the spec.
+// The workflow's caps come in as an argument rather than from r.wf: this runs
+// before bootstrap assigns r.wf (the assignment sits with the record's own
+// fields, after the recipe checks), and reading the field here would silently
+// judge every run by the zero config's defaults instead of by the workflow's
+// own `inputs:` block — the caps would never bite.
+func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
+	if len(r.spec.Inputs) == 0 {
+		return nil
+	}
+	if r.d.Bucket == nil {
+		return errors.New("the task attached files, and this run has no runs bucket to download them from")
+	}
+	if err := checkInputCaps(r.spec.Inputs, caps); err != nil {
+		return err
+	}
+	// Keyed on the FOLDED name, the rule the launcher applies to the same set
+	// and the one Task 4's artifact names are keyed on: the downloads below
+	// all land in one directory, and a name that differs only in case is one
+	// name there — the second file would replace the first while the task
+	// named both. A spec written by hand reaches this with no launcher to
+	// have refused it, which is why the rule is here too and not only there.
+	seen := map[string]string{}
+	for _, in := range r.spec.Inputs {
+		if problem := task.InputNameProblem(in.Name); problem != "" {
+			return fmt.Errorf("attached input %q %s", in.Name, problem)
+		}
+		if first, dup := seen[strings.ToLower(in.Name)]; dup {
+			if first == in.Name {
+				return fmt.Errorf("attached input %q is named twice; one file cannot be two", in.Name)
+			}
+			return fmt.Errorf("attached inputs %q and %q differ only in case, and both are downloaded into the same directory, where that is one name", first, in.Name)
+		}
+		seen[strings.ToLower(in.Name)] = in.Name
+	}
+	dir := filepath.Join(r.d.WorkDir, inputsDir)
+	tracked, err := r.trackedInputs(ctx)
+	if err != nil {
+		return err
+	}
+	if err := prepareInputDir(dir, tracked); err != nil {
+		return err
+	}
+	for _, in := range r.spec.Inputs {
+		dest := filepath.Join(dir, filepath.FromSlash(in.Name))
+		if err := mkdirInputParents(dir, in.Name); err != nil {
+			return err
+		}
+		key := runstore.InputKey(r.d.Store.Prefix(), in.Name)
+		// The limit is the size the spec claims, not the workflow's
+		// per-file cap: the cap was just checked, so this is the tighter of
+		// the two, and an object bigger than the claim never reaches the
+		// destination.
+		size, _, err := r.d.Bucket.GetFile(ctx, key, dest, in.SHA256, in.Bytes, false)
+		switch {
+		case errors.Is(err, blobx.ErrNotExist):
+			return fmt.Errorf("the task names an attached input %q that is not in this run's bucket (%s)", in.Name, key)
+		case err != nil:
+			return fmt.Errorf("downloading attached input %q: %w", in.Name, err)
+		}
+		if size != in.Bytes {
+			return fmt.Errorf("attached input %q is %d bytes, and the task claims %d", in.Name, size, in.Bytes)
+		}
+	}
+	if err := r.excludeInputsFromGit(ctx); err != nil {
+		return err
+	}
+	// The record's inputs are the spec's list, echoed, and they are stored
+	// once the files they name are actually in the checkout: a reader sees
+	// exactly what the run was given, and never sees a list for a download
+	// that failed.
+	r.rec.Inputs = r.spec.Inputs
+	r.save(ctx)
+	return nil
+}
+
+// trackedInputs names the paths the checkout commits under inputs/, so the
+// directory can be judged by what the repository owns rather than by what is
+// lying in it: a run leaves its own downloads there, and the run's own
+// exclusion of inputs/ in the git directory means bootstrap's `git clean -fd`
+// keeps them (it keeps ignored files), so a non-empty directory is the normal
+// state of a second run in one checkout — the local `fugaro exec --workdir`
+// shape — and only git can tell that file from one the repository committed.
+func (r *run) trackedInputs(ctx context.Context) ([]string, error) {
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		return nil, fmt.Errorf("reading the checkout to see whether it commits %s/: %w", inputsDir, err)
+	}
+	paths, err := repo.TrackedPaths(ctx, inputsDir)
+	if err != nil {
+		return nil, fmt.Errorf("listing the paths the checkout commits under %s/: %w", inputsDir, err)
+	}
+	return paths, nil
+}
+
+// prepareInputDir creates the checkout's inputs/ directory and refuses to
+// write through anything that is not the run's own. The checkout is the
+// repository at the run's ref, so:
+//
+//   - a `inputs` the checkout commits as a symbolic link — to an absolute
+//     path, to a sibling directory, anywhere — would be followed by every
+//     write below, so the attached bytes would land outside the checkout
+//     entirely and the name refusals above (which judge the NAME) would have
+//     had nothing to say about it. A link is refused rather than followed,
+//     the rule readRepoRecipe already reads a repository file by;
+//   - a directory the checkout COMMITS under inputs/ is refused (tracked,
+//     git's own answer): an attached file whose name is one of the committed
+//     paths' would replace it in the checkout the run commits from, and the
+//     committed files would sit beside the run's inputs as though the task
+//     had attached them. The directory is the run's, and a repository that
+//     wants the name has to give it up (rename it, or drop the attachments
+//     from the launch); and
+//   - anything else in the directory is emptied out and the directory is
+//     reused. Nothing tracked is there, so it is not the repository's: it is
+//     what an earlier run of this same checkout left behind, and those are
+//     not this run's inputs — a file the bucket no longer names would sit in
+//     inputs/ looking exactly like one the task did attach. An empty
+//     directory (the first run in a fresh checkout, or a local run reusing a
+//     working directory) is likewise used as it is.
+func prepareInputDir(dir string, tracked []string) error {
+	st, err := os.Lstat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("creating %s: %w", dir, err)
+		}
+		return nil
+	case err != nil:
+		return fmt.Errorf("creating %s: %w", dir, err)
+	case !st.IsDir():
+		return fmt.Errorf("%s is %s, and this run's attached inputs are written inside it: a checkout cannot commit it as a link or a file", dir, st.Mode())
+	}
+	if len(tracked) > 0 {
+		return fmt.Errorf("the checkout commits %s under %s, and this run's attached inputs are written inside it: an attached file landing on one of those names would replace a file the repository committed, in the checkout the run goes on to commit from — rename those paths in the repository, or run without attachments",
+			strings.Join(inputDirNames(tracked), ", "), inputsDir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return fmt.Errorf("clearing %s: %w", filepath.Join(dir, e.Name()), err)
+		}
+	}
+	return nil
+}
+
+// inputDirNames names up to three of the paths the checkout commits under
+// inputs/ for the refusal above, so the owner is told which paths are in the
+// way and a repository with hundreds of them does not produce a wall.
+func inputDirNames(paths []string) []string {
+	out := make([]string, 0, 4)
+	for _, p := range paths {
+		if len(out) == 3 {
+			return append(out, fmt.Sprintf("and %d more", len(paths)-3))
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// mkdirInputParents creates the directories a name with path elements needs
+// inside inputs/, one element at a time: os.MkdirAll would follow a symbolic
+// link a committed checkout put there, which is the same hole prepareInputDir
+// closes one level up. The launcher never attaches anything but base names
+// (its duplicate-name rule depends on that), so a nested name arrives only in
+// a task written by hand — the spec this has to hold for.
+func mkdirInputParents(dir, name string) error {
+	parts := strings.Split(name, "/")
+	cur := dir
+	for _, part := range parts[:len(parts)-1] {
+		cur = filepath.Join(cur, part)
+		st, err := os.Lstat(cur)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			if err := os.Mkdir(cur, 0o755); err != nil {
+				return fmt.Errorf("creating %s: %w", cur, err)
+			}
+		case err != nil:
+			return fmt.Errorf("creating %s: %w", cur, err)
+		case !st.IsDir():
+			return fmt.Errorf("%s is %s, and this run's attached inputs are written inside it: a checkout cannot commit it as a link or a file", cur, st.Mode())
+		}
+	}
+	return nil
+}
+
+// checkInputCaps applies the workflow's three inputs caps to the claims a
+// task spec makes, before anything is downloaded. The three are independent
+// and each means one thing (design §4 step 2): max_files counts ENTRIES,
+// max_bytes bounds ONE ENTRY's own size, max_total_bytes bounds THE SET —
+// never one entry's size, and never the count times the per-file cap. An
+// entry's `bytes` is the launcher's own claim about what it uploaded, which
+// is exactly why it is judged here and again against the object that comes
+// down.
+func checkInputCaps(inputs []task.InputFile, caps config.Inputs) error {
+	if n := len(inputs); n > caps.MaxFileCount() {
+		return fmt.Errorf("the task attached %d files, and workflows.inputs.max_files allows %d", n, caps.MaxFileCount())
+	}
+	var total int64
+	for _, in := range inputs {
+		if in.Bytes > caps.MaxFileBytes() {
+			return fmt.Errorf("the task's attached input %q claims %s, and workflows.inputs.max_bytes allows %s per file", in.Name, fmtBytes(in.Bytes), fmtBytes(caps.MaxFileBytes()))
+		}
+		total += in.Bytes
+	}
+	if set := caps.MaxSetBytes(); total > set {
+		return fmt.Errorf("the task's %d attached inputs claim %s in all, and workflows.inputs.max_total_bytes allows %s for the set", len(inputs), fmtBytes(total), fmtBytes(set))
+	}
+	return nil
+}
+
+// excludeInputsFromGit appends inputs/ to the checkout's own exclude file,
+// <git dir>/info/exclude, once and idempotently (design §4 step 5): an
+// artifact run must never commit a screenshot, and the agent's own `git add
+// -A` is the way it otherwise would. It is the git directory's exclude and
+// not .gitignore, because .gitignore is repository text the run would then
+// be proposing as part of its work.
+//
+// It fails the run rather than warning: a run whose inputs/ were not
+// excluded is a run whose plan stage can commit them.
+func (r *run) excludeInputsFromGit(ctx context.Context) error {
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		return fmt.Errorf("excluding %s/ from git: %w", inputsDir, err)
+	}
+	gitDir, err := repo.GitDir(ctx)
+	if err != nil {
+		return fmt.Errorf("finding the git directory: %w", err)
+	}
+	path := filepath.Join(gitDir, "info", "exclude")
+	line := inputsDir + "/"
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	for _, have := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(have) == line {
+			return nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	add := line + "\n"
+	if len(data) > 0 && !bytes.HasSuffix(data, []byte("\n")) {
+		add = "\n" + add
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(add); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
 }

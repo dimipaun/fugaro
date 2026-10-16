@@ -60,14 +60,26 @@ func TestRenderRecordShape(t *testing.T) {
 // TestArtifactFileShape is the artifact entry's JSON as the design fixes it
 // (artifact-runs.md §3, §8): the name is the sanitised one the object's key
 // leaf is built from, the size and the sha256 are what the upload wrote, the
-// content type is recorded and never trusted, and the probe's verdict is
-// written only when a probe ran. A record that delivered nothing writes no
-// artifacts key at all, so an old reader sees exactly the record it saw
-// before this field existed.
+// content type is recorded and never trusted, and the probe's verdict is an
+// object of its own. A record that delivered nothing writes no artifacts key
+// at all, so an old reader sees exactly the record it saw before this field
+// existed.
+//
+// Every artifact a runner of this release uploads carries a verdict — the
+// probe runs once over the whole set, and a recipe asking for none records
+// {ran: false, exit_code: -1} rather than leaving the key out (plan Review
+// Focus 6, and the schema's own required ["ran", "exit_code"]). The fixture's
+// first entry has no Probe for the one reason a stored record can: it is the
+// shape a record written BEFORE the probe step existed has, which is what the
+// field's absence means on disk and what this test pins. That is why Probe is
+// a pointer: a value type would make every such record unmarshal to the zero
+// ProbeResult and re-marshal as {ran: false, exit_code: 0} — a claim about a
+// check rather than the absence of one.
 func TestArtifactFileShape(t *testing.T) {
 	rec := Record{Version: 1, RunID: runID, Repo: "acme/app", Status: StatusSucceeded,
 		Stage: "render", Outcome: OutcomeArtifacts,
 		Artifacts: []ArtifactFile{
+			// No Probe: a pre-probe record's artifact, not a runner's.
 			{Name: "sizzle.mp4", Bytes: 4096, SHA256: strings.Repeat("c", 64), ContentType: "video/mp4"},
 			{Name: "clips/a.png", Bytes: 12, SHA256: strings.Repeat("d", 64), ContentType: "image/png",
 				Probe: &ProbeResult{Ran: true, ExitCode: 0}},
@@ -89,8 +101,10 @@ func TestArtifactFileShape(t *testing.T) {
 		got.Artifacts[0]["sha256"] != strings.Repeat("c", 64) || got.Artifacts[0]["content_type"] != "video/mp4" {
 		t.Fatalf("artifact = %v", got.Artifacts[0])
 	}
+	// The pre-probe shape round-trips as the absence it is: no verdict on the
+	// artifact, no key in the JSON.
 	if _, ok := got.Artifacts[0]["probe"]; ok {
-		t.Fatalf("an artifact with no probe writes one: %v", got.Artifacts[0])
+		t.Fatalf("a record with no recorded verdict writes one: %v", got.Artifacts[0])
 	}
 	if p, ok := got.Artifacts[1]["probe"].(map[string]any); !ok || p["ran"] != true || p["exit_code"] != float64(0) {
 		t.Fatalf("probe = %v", got.Artifacts[1]["probe"])

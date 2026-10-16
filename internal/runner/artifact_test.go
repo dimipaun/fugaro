@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -351,6 +352,91 @@ func TestRenderCommandAndItsHashDivergeOnlyWhenRedactionFires(t *testing.T) {
 	redacted := sha256.Sum256([]byte(rec.Render.Command))
 	if rec.Render.CommandSHA256 == hex.EncodeToString(redacted[:]) {
 		t.Fatal("CommandSHA256 hashes the redacted text: D8's claim would be false")
+	}
+}
+
+// TestAPassingRendersOutputIsRedactedInTheLog is the leak a SUCCESSFUL step
+// has and a failing one does not. runRender streams the render's output
+// through agent.NewRedactor(tail, r.secretList()) and then logs every line of
+// the tail it kept — log.Info("render output", "line", l) — so a render that
+// exits 0 and echoes a workflow secret (D10: the render runs with the
+// workflow's own secret environment, the same as the agent) has exactly one
+// place its output goes, and the redactor is the only thing in front of it. A
+// failed render stores a redacted reason and a redacted report tail; a passing
+// one stores neither.
+//
+// Mutation (agent.NewRedactor(tail, nil), or logging the raw line instead of
+// the redacted tail's): the runner's log carries the secret and this test
+// fails. TestProbeOutputIsRedacted cannot see that mutation: it fails the
+// probe, and its reason and report are redacted again on the way out
+// (r.redact, agent.Redact), so the layered redaction hides a missing one.
+func TestAPassingRendersOutputIsRedactedInTheLog(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nprintf 'the fixture secret is %s\\n' \"$FIXTURE_FAILS_FILE\"\n"+
+			"mkdir -p out && printf 'sizzle' > out/sizzle.png\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	assertTheSecretIsNotPublished(t, h, logs.String(), "render")
+}
+
+// TestAPassingProbesOutputIsRedactedInTheLog is the same test for the probe,
+// which is the step with the sharper version of the leak: the probe's whole
+// job is to inspect what the render produced, so a probe that echoes its
+// environment — by accident, in a debug line — is the ordinary shape of a
+// repository command, and a passing probe's lines reach the runner's log
+// (log.Info("probe output", "line", l)) and nowhere else at all.
+//
+// Mutation (agent.NewRedactor(tail, nil) in runProbe): the log carries the
+// secret and this test fails.
+func TestAPassingProbesOutputIsRedactedInTheLog(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nprintf 'the fixture secret is %s\\n' \"$FIXTURE_FAILS_FILE\"\nexit 0\n")))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 1 || rec.Artifacts[0].Probe == nil || !rec.Artifacts[0].Probe.Ran || rec.Artifacts[0].Probe.ExitCode != 0 {
+		t.Fatalf("artifacts = %+v, want one passed probe", rec.Artifacts)
+	}
+	assertTheSecretIsNotPublished(t, h, logs.String(), "probe")
+}
+
+// assertTheSecretIsNotPublished checks the three places a PASSING step's own
+// output can reach: the runner's log, result.json and report.md. The log must
+// hold the step's line — otherwise a mutation that simply stops logging the
+// tail would pass this test by publishing nothing — and none of the three may
+// hold the workflow's secret.
+func assertTheSecretIsNotPublished(t *testing.T, h *harness, logs, step string) {
+	t.Helper()
+	if strings.Contains(logs, h.failsFile) {
+		t.Fatalf("the runner's log publishes the workflow's secret:\n%s", logs)
+	}
+	if !strings.Contains(logs, "[REDACTED]") {
+		t.Fatalf("the runner's log does not hold the %s step's own output at all:\n%s", step, logs)
+	}
+	for _, key := range []string{"result.json", "report.md"} {
+		body, err := h.store.ReadFile(context.Background(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), h.failsFile) {
+			t.Fatalf("%s publishes the workflow's secret:\n%s", key, body)
+		}
 	}
 }
 
@@ -1412,6 +1498,145 @@ func TestAStagedFileReplacedBeforeTheUploadFailsTheRun(t *testing.T) {
 	}
 }
 
+// TestAProbeThatRewritesAStagedFileFailsTheUpload is the same hash check from
+// the probe's side, and it is the one window the probe itself opens: the probe
+// runs AFTER the set is staged and hashed and BEFORE the upload (design §3),
+// with FUGARO_OUT_DIR naming the staging directory — so a probe is the one
+// repository command that is handed the staged bytes by name, and the bytes it
+// leaves there need not be the bytes the record describes. Task 4's upload
+// compares each staged file's hash with the one taken at staging time, and
+// that comparison is what must refuse this: the run ends failed with nothing
+// in the bucket, rather than uploading a file whose recorded sha256 is a lie
+// about what a reader downloads.
+//
+// Mutation (upload the staged file without comparing it with the hash taken at
+// staging time, or record that hash without checking the upload): the run
+// succeeds and the bucket holds bytes the record's sha256 does not describe,
+// so this test fails.
+func TestAProbeThatRewritesAStagedFileFailsTheUpload(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nprintf 'rewritten by the probe' > \"$FUGARO_OUT_DIR/sizzle.png\"\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run", rec)
+	}
+	if !strings.Contains(rec.Reason, "changed before the upload") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run left %v in the bucket", keys)
+	}
+}
+
+// TestAStagedPathThatIsASymlinkIsRefused is the staging copy's own
+// O_EXCL|O_NOFOLLOW, tested where a test can reach it: the staging directory
+// sits in a state directory the plan stage's agent can write (same user, same
+// container), so a link planted at a staged path — between the check that
+// sized the match and the copy that writes it, which is the window
+// artifactCheckedSeam stands in — must fail the create rather than choose what
+// the run writes through. The link here points at a file in the checkout; what
+// the test asserts is the property, not the errno: the run fails, nothing is
+// uploaded, and the target is untouched. (Removing both flags lets the copy
+// follow the link and write the render's bytes through it, and the run then
+// succeeds with the target rewritten.)
+//
+// writeArtifactNames carries the same two flags, behind the RemoveAll that
+// clears its path first — see TestTheProbesNamesFileIsNotWrittenThroughAPlantedLink.
+func TestAStagedPathThatIsASymlinkIsRefused(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	victim := filepath.Join(h.deps.WorkDir, "victim.txt")
+	runner.SetArtifactCheckedSeam(t, func() {
+		dir := filepath.Join(h.deps.StateDir, "artifacts")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Errorf("creating the staging directory: %v", err)
+			return
+		}
+		if err := os.WriteFile(victim, []byte("untouched"), 0o644); err != nil {
+			t.Errorf("writing the victim file: %v", err)
+			return
+		}
+		if err := os.Symlink(victim, filepath.Join(dir, "sizzle.png")); err != nil {
+			t.Errorf("planting the link: %v", err)
+		}
+	})
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run", rec)
+	}
+	// The assertion is the property, not the errno: the refusal may come from
+	// the copy's own create (EEXIST/ELOOP) or from the upload's Lstat seeing
+	// the link still there, and both are the run refusing a link. What must
+	// never happen is the third outcome — the copy following it.
+	if got := readText(t, victim); got != "untouched" {
+		t.Fatalf("the copy wrote through the planted link: the victim holds %q", got)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run left %v in the bucket", keys)
+	}
+}
+
+// TestTheProbesNamesFileIsNotWrittenThroughAPlantedLink is the same threat at
+// the probe's own file: FUGARO_ARTIFACTS_FILE names a path in the state
+// directory, which the plan stage's agent can write, so a link planted there
+// must not become the file the runner writes the staged names into — and must
+// not become what the probe reads either. writeArtifactNames clears the path
+// before it creates it (RemoveAll, then O_EXCL|O_NOFOLLOW), so the link is
+// removed and a fresh regular file takes its place; what this test asserts is
+// the property that matters: the probe reads the staged names, and the link's
+// target is exactly as the test left it.
+//
+// Mutation (create the names file with O_CREATE|O_TRUNC and no RemoveAll, so
+// the planted link is followed): the names are written into the victim and
+// this test fails. It does NOT see a mutation that drops only the two flags
+// while keeping the RemoveAll — the link is already gone by then — which is
+// why the same flags are pinned on the staging copy instead
+// (TestAStagedPathThatIsASymlinkIsRefused).
+func TestTheProbesNamesFileIsNotWrittenThroughAPlantedLink(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ncat \"$FUGARO_ARTIFACTS_FILE\" > probe-names.txt\n")))
+	victim := filepath.Join(h.deps.WorkDir, "victim.txt")
+	runner.SetArtifactStagedSeam(t, func() {
+		if err := os.WriteFile(victim, []byte("untouched"), 0o644); err != nil {
+			t.Errorf("writing the victim file: %v", err)
+			return
+		}
+		if err := os.Symlink(victim, filepath.Join(h.deps.StateDir, "artifact-names.txt")); err != nil {
+			t.Errorf("planting the link: %v", err)
+		}
+	})
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v, want a successful run", rec)
+	}
+	if got := readText(t, filepath.Join(h.deps.WorkDir, "probe-names.txt")); got != "sizzle.png\n" {
+		t.Fatalf("the probe read %q, want the staged names", got)
+	}
+	if got := readText(t, victim); got != "untouched" {
+		t.Fatalf("the runner wrote the names through the planted link: the victim holds %q", got)
+	}
+}
+
 // TestArtifactsAreUploadedInNameOrder: the set is uploaded, and recorded, in
 // name order — not in glob order, which is what filepath.Glob returns and
 // which puts every match of the first glob before every match of the second.
@@ -1454,6 +1679,13 @@ func TestArtifactsAreUploadedInNameOrder(t *testing.T) {
 // succeeds with two artifacts and this test fails; mutation (let the second
 // match overwrite the first): the record carries one artifact where the render
 // produced two.
+//
+// It is skipped where the filesystem folds case — macOS's APFS, the default
+// there — because the fixture cannot then hold the premise: the render's two
+// writes land on one file, so there is one match and no collision to refuse.
+// The skip is the fixture's, not the rule's: the rule is about what a
+// case-insensitive filesystem would make of two names, which is exactly why it
+// cannot be staged on one.
 func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T) {
 	// Two names that differ only in case are one file on a case-insensitive
 	// filesystem, APFS among them, and the render's own write merges them
@@ -2338,12 +2570,17 @@ func TestTheStagedTypeIsAFunctionOfTheHead(t *testing.T) {
 
 // TestResultJSONCarriesRenderAndArtifacts: the stored record is the whole
 // account of an artifact run — the render step and the files it uploaded,
-// each with the name, size, hash and recorded content type — and carries no
-// probe key, which is the probe step's own field (Task 5).
+// each with the name, size, hash, recorded content type and the probe
+// verdict the run recorded for it. This recipe asks for no probe
+// (outputs.probe is absent, and its default is none), so every artifact
+// carries {"ran": false, "exit_code": -1}: "no probe ran" is stated in the
+// record rather than left as a key a reader would have to interpret
+// (Task 5, plan Review Focus 6 — the earlier shape of this test asserted the
+// opposite, that the key is absent, and moved with the contract).
 //
 // Mutation (write the record before the upload): the artifacts array is
-// empty and this test fails; mutation (record the probe as a false verdict
-// here): the probe key appears.
+// empty and this test fails; mutation (leave the probe key off an artifact
+// when no probe ran): the verdict assertion fails.
 func TestResultJSONCarriesRenderAndArtifacts(t *testing.T) {
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
@@ -2377,8 +2614,12 @@ func TestResultJSONCarriesRenderAndArtifacts(t *testing.T) {
 	if sum, _ := a["sha256"].(string); len(sum) != 64 {
 		t.Fatalf("artifact sha256 = %v", a["sha256"])
 	}
-	if _, ok := a["probe"]; ok {
-		t.Fatalf("the record carries a probe the probe step has not run: %v", a)
+	p, ok := a["probe"].(map[string]any)
+	if !ok {
+		t.Fatalf("the record carries no probe verdict for the artifact: %v", a)
+	}
+	if p["ran"] != false || p["exit_code"] != float64(-1) {
+		t.Fatalf("a recipe that asks for no probe must record {ran: false, exit_code: -1}, got %v", p)
 	}
 	stored, err := h.store.ReadRecord(context.Background())
 	if err != nil {
@@ -2390,9 +2631,10 @@ func TestResultJSONCarriesRenderAndArtifacts(t *testing.T) {
 }
 
 // TestReportListsTheArtifacts: the report's per-file table — name, size, a
-// short sha256 and the recorded content type — is the upload step's own
-// types, so it appears exactly when the record carries artifacts (a record
-// without them prints no header over nothing, which Task 2's test pins).
+// short sha256, the recorded content type and the probe's verdict (Task 5's
+// column) — is the upload step's own types, so it appears exactly when the
+// record carries artifacts (a record without them prints no header over
+// nothing, which Task 2's test pins).
 //
 // Mutation (drop the table): this test fails; mutation (print the full
 // sha256): the short-hash row assertion fails.
@@ -2411,11 +2653,13 @@ func TestReportListsTheArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := fmt.Sprintf("| `sizzle.png` | 6 | `%s` | image/png |", rec.Artifacts[0].SHA256[:12])
+	// The recipe asks for no probe, so the verdict column says so — "none",
+	// never an empty cell that reads as "passed" (Task 5).
+	row := fmt.Sprintf("| `sizzle.png` | 6 | `%s` | image/png | none |", rec.Artifacts[0].SHA256[:12])
 	if !strings.Contains(string(report), row) {
 		t.Fatalf("the report has no row %q:\n%s", row, report)
 	}
-	if !strings.Contains(string(report), "| Artifact | Bytes | sha256 | Type |") {
+	if !strings.Contains(string(report), "| Artifact | Bytes | sha256 | Type | Probe |") {
 		t.Fatalf("the report has no table header:\n%s", report)
 	}
 }
@@ -2426,10 +2670,10 @@ func TestReportListsTheArtifacts(t *testing.T) {
 // pipe ends the cell — the row grows a column and every value after it moves —
 // and a backtick ends the code span around it, so what a reader sees is the
 // render's text where the run's account should be. The row is asserted by
-// shape: four columns, five separators, and the pipe escaped inside the name.
+// shape: five columns, six separators, and the pipe escaped inside the name.
 //
-// Mutation (put the name into the cell unescaped): the row has six separators
-// and this test fails.
+// Mutation (put the name into the cell unescaped): the row has seven
+// separators and this test fails.
 func TestTheReportEscapesANameThatCouldBreakTheTable(t *testing.T) {
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
@@ -2457,8 +2701,8 @@ func TestTheReportEscapesANameThatCouldBreakTheTable(t *testing.T) {
 	if !strings.Contains(row, `\|`) || !strings.Contains(row, "c.png") {
 		t.Fatalf("the row does not carry the name, escaped: %s", row)
 	}
-	if cells := strings.Count(row, "|") - strings.Count(row, `\|`); cells != 5 {
-		t.Fatalf("the row has %d cell separators, want 5 (four columns): %s", cells, row)
+	if cells := strings.Count(row, "|") - strings.Count(row, `\|`); cells != 6 {
+		t.Fatalf("the row has %d cell separators, want 6 (five columns): %s", cells, row)
 	}
 }
 
@@ -2498,4 +2742,786 @@ func TestAnOverMemoryArtifactRecipeIsRefusedAtBootstrap(t *testing.T) {
 		t.Fatalf("%d pushes, want none", n)
 	}
 	assertNothingUploaded(t, h)
+}
+
+// --- Task 5: the probe — commands.probe, one invocation for the whole set ---
+
+// probeScript is the repository file commands.probe runs, committed to the
+// remote beside render.sh: repository text, like the render's (P2/D8).
+func probeScript(body string) map[string]string {
+	return map[string]string{"probe.sh": body}
+}
+
+// probeCfg is renderCfg with commands.probe set: the probe half of an
+// artifact workflow. probe "" is a fugaro.yaml with no commands.probe at all,
+// which is what outputs.probe: none over a workflow that never configured one
+// looks like — and which the gate refuses the moment a recipe names
+// outputs.probe: probe.
+func probeCfg(t *testing.T, probe, timeouts string) string {
+	t.Helper()
+	cfg := renderCfg(t, "", timeouts)
+	if probe == "" {
+		return cfg
+	}
+	out := strings.Replace(cfg, "      render: sh render.sh\n", "      render: sh render.sh\n      probe: "+probe+"\n", 1)
+	if out == cfg {
+		t.Fatal("the fixture has no commands.render line to add commands.probe beside")
+	}
+	return out
+}
+
+// mergeFiles joins the extra-file maps one harness fixture needs: an artifact
+// run with a probe has both a render script and a probe script committed.
+func mergeFiles(maps ...map[string]string) map[string]string {
+	out := make(map[string]string)
+	for _, m := range maps {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// assertNoUpload is assertNothingUploaded's bucket-only half, and the probe is
+// why the other half cannot be used here: the probe runs AFTER the set is
+// staged (it inspects the staged bytes, design §3), so a run it fails has a
+// populated staging directory and no object. What must be empty is the
+// bucket, and what must be absent is the record's claim.
+func assertNoUpload(t *testing.T, h *harness) {
+	t.Helper()
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run uploaded %v", keys)
+	}
+}
+
+// readText is a file the fixture's own commands wrote, read for an assertion.
+func readText(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(data)
+}
+
+// envDump is one of the fixture's `env | sort` dumps, by variable name.
+func envDump(t *testing.T, path string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, line := range strings.Split(readText(t, path), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// TestProbeFailureFailsTheRunAndUploadsNothing is Review Focus 6's first half:
+// a probe that exits non-zero fails the run and the upload is refused even
+// though the files are staged and within every cap. The probe is the only
+// thing that can tell a 0-byte render from a video, so a verdict the runner
+// ignored — or a failure it treated as a pass — is the whole feature failing
+// open.
+//
+// Mutation (ignore the probe's exit code): the run ends succeeded/artifacts,
+// the artifact is in the bucket, and this test fails on the status and on the
+// bucket; mutation (fail the run but upload anyway): the bucket assertion
+// fails.
+func TestProbeFailureFailsTheRunAndUploadsNothing(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nprintf 'not a video\\n' >&2\nexit 1\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	// The reason names the exit code, and the probe's own last line with it:
+	// a repository command's failure is the one thing that explains itself.
+	for _, want := range []string{"commands.probe exited 1", "not a video"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason %q does not name %q", rec.Reason, want)
+		}
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	// The stage a probe failure ends on is the run's own last step, not one
+	// the probe made up: the probe is not a stage (no model turn, no timeout
+	// of its own — design §3's rule about the render), result.json's stage
+	// enum is a contract a schema-conformant reader validates, and what names
+	// the probe is the reason asserted above. The property is enforced in
+	// runProbe's shape — it assigns no stage at all — which is why there is
+	// no mutation to pin here; this line is the guard that keeps it that way
+	// from the record's side.
+	if rec.Stage != "writeback" {
+		t.Fatalf("stage = %q, want the artifact run's own writeback: a failed probe names itself in the reason, never in the stage", rec.Stage)
+	}
+	assertNoUpload(t, h)
+	// The staged file was there to be inspected: the probe's refusal is about
+	// the bytes the run would have uploaded, not about their absence.
+	if files := stagedFiles(t, h); len(files) != 1 {
+		t.Fatalf("the staging directory holds %v, want the staged set the probe refused", files)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "not a video") {
+		t.Fatalf("the report does not quote the probe's output:\n%s", report)
+	}
+}
+
+// TestProbeEnvironmentNamesTheStagedSet pins the two variables the design
+// fixes (design §3): FUGARO_OUT_DIR is the FLAT staging root — so
+// "$FUGARO_OUT_DIR/$name" is always the staged file, whatever shape the
+// recipe's globs have — and FUGARO_ARTIFACTS_FILE is a file holding the
+// sanitised names, one per line, in upload order.
+//
+// It also pins the environment, which is the other half of what the probe may
+// see: the render's own environment plus exactly those two names, no more and
+// no less. The probe is repository text like the render, so it gets what the
+// render gets — the workflow's secrets included (D10) — and the run adds
+// nothing to it beyond the two variables.
+//
+// Mutation (hand the probe the checkout's outputs root instead of the staging
+// directory): the OUT_DIR assertion fails; mutation (a newline-joined list in
+// an environment variable instead of a file): FUGARO_ARTIFACTS_FILE's contents
+// are not the staged names and the addition assertion fails too; mutation
+// (pass an empty env, or r.env plus the git credential): the added-key set is
+// not exactly the two, or FIXTURE_FAILS_FILE is missing; mutation (assign
+// &probe itself to every row instead of a copy each): the two rows are one
+// object and this test fails on the aliasing assertion.
+func TestProbeEnvironmentNamesTheStagedSet(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(
+			renderScript("#!/bin/sh\nmkdir -p out\nprintf 'one' > out/a.png\nprintf 'two' > out/b.png\nenv | sort > render-env.txt\n"),
+			probeScript("#!/bin/sh\nprintf '%s' \"$FUGARO_OUT_DIR\" > probe-out-dir.txt\ncat \"$FUGARO_ARTIFACTS_FILE\" > probe-names.txt\nenv | sort > probe-env.txt\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 2 {
+		t.Fatalf("artifacts = %+v", rec.Artifacts)
+	}
+	for _, a := range rec.Artifacts {
+		// One invocation for the whole set, so every file carries the same
+		// verdict (design §3).
+		if a.Probe == nil || !a.Probe.Ran || a.Probe.ExitCode != 0 || a.Probe.Warning != "" {
+			t.Errorf("%s carries %+v, want a passed probe", a.Name, a.Probe)
+		}
+	}
+	// One verdict each, not one verdict shared. Equal in value either way
+	// today, because nothing writes to a recorded verdict — which is exactly
+	// why the aliasing is worth pinning: the schema keeps a per-artifact
+	// warning field for the per-artifact nuance this release defers, and the
+	// first writer of one would otherwise change every row of the record and
+	// every cell of the report at once. The record asserted here is the
+	// runner's own, before result.json round-trips it through JSON, which
+	// would give each row its own object regardless.
+	if rec.Artifacts[0].Probe == rec.Artifacts[1].Probe {
+		t.Fatal("both artifacts share one verdict object: a per-artifact write would change every row")
+	}
+	dir := filepath.Join(h.deps.StateDir, "artifacts")
+	if got := readText(t, filepath.Join(h.deps.WorkDir, "probe-out-dir.txt")); got != dir {
+		t.Errorf("FUGARO_OUT_DIR = %q, want the staging directory %q", got, dir)
+	}
+	if got := readText(t, filepath.Join(h.deps.WorkDir, "probe-names.txt")); got != "a.png\nb.png\n" {
+		t.Errorf("FUGARO_ARTIFACTS_FILE holds %q, want the two staged names one per line in upload order", got)
+	}
+	// Two names, one root: the name the probe is handed is the staged file's
+	// path under FUGARO_OUT_DIR, and the object's key leaf too.
+	for name, body := range map[string]string{"a.png": "one", "b.png": "two"} {
+		if got := readText(t, filepath.Join(dir, name)); got != body {
+			t.Errorf("%s holds %q, want the rendered bytes %q", name, got, body)
+		}
+	}
+	renderEnv := envDump(t, filepath.Join(h.deps.WorkDir, "render-env.txt"))
+	probeEnv := envDump(t, filepath.Join(h.deps.WorkDir, "probe-env.txt"))
+	var added []string
+	for k := range probeEnv {
+		if _, ok := renderEnv[k]; !ok {
+			added = append(added, k)
+		}
+	}
+	sort.Strings(added)
+	if want := []string{"FUGARO_ARTIFACTS_FILE", "FUGARO_OUT_DIR"}; !reflect.DeepEqual(added, want) {
+		t.Errorf("the probe's environment adds %v to the render's, want %v", added, want)
+	}
+	for k := range renderEnv {
+		if _, ok := probeEnv[k]; !ok {
+			t.Errorf("the probe's environment lost %s, which the render had", k)
+		}
+	}
+	if probeEnv["FIXTURE_FAILS_FILE"] == "" {
+		t.Error("the probe does not have the workflow's secret the render has (design §8.6, D10)")
+	}
+	// And the report says the check passed, per file: this is the "ok" cell a
+	// real passing probe produces, end to end (probeCell's other arms are in
+	// TestReportProbeColumn).
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(report), "| image/png | ok |"); n != 2 {
+		t.Fatalf("the report's Probe column says %d files passed, want 2:\n%s", n, report)
+	}
+}
+
+// TestNoProbeIsRecordedAsRanFalse is Review Focus 6's second half: a recipe
+// that asks for no probe (`outputs.probe: none`, the default) runs none, and
+// the record SAYS so — {ran: false} on every artifact — rather than leaving a
+// reader to infer it from a field that is not there. A commands.probe that is
+// configured anyway is not run: the recipe decides, and a workflow that
+// carries a probe command for its other recipes must not have it applied here.
+//
+// Mutation (run commands.probe whenever it is configured): the marker the
+// probe would leave exists, the run fails, and this test fails; mutation
+// (omit the record's probe object instead of writing {ran: false}): the
+// Probe assertion fails.
+func TestNoProbeIsRecordedAsRanFalse(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: none }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ntouch probe-ran.txt\nexit 1\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 1 {
+		t.Fatalf("artifacts = %+v", rec.Artifacts)
+	}
+	if p := rec.Artifacts[0].Probe; p == nil || p.Ran || p.ExitCode != -1 {
+		t.Fatalf("the record's probe = %+v, want {ran: false}", rec.Artifacts[0].Probe)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "probe-ran.txt")); err == nil {
+		t.Fatal("the probe ran although the recipe asked for none")
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "| Probe |") || !strings.Contains(string(report), "| none |") {
+		t.Fatalf("the report's table does not say no probe ran:\n%s", report)
+	}
+}
+
+// TestProbeTimeoutFailsTheRun: the probe runs under timeouts.verify (it is a
+// check, not a render) and under the run's finalize reserve, and a probe the
+// deadline kills fails the run rather than being read as a pass — the exit
+// code of a killed process says nothing about the deliverable.
+//
+// Mutation (run the probe with no deadline, or under timeouts.render): the
+// probe sleeps its 30s, the run ends succeeded/artifacts, and this test fails
+// on the status and on the reason.
+func TestProbeTimeoutFailsTheRun(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", "{ total: 5m, stage: 2m, verify: 1s, finalize_reserve: 30s }"),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nsleep 30\n")))
+	start := time.Now()
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe timed out after 1s") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("the run took %s: timeouts.verify did not bound the probe", d)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestProbeRunsOnlyOnceForTheWholeSet: one process for the whole set, not one
+// per artifact (design §3). The alternative — a probe per artifact with the
+// path interpolated into a command line — is the one thing the design rejects
+// outright, because it puts a runner-derived name inside a shell command.
+//
+// Mutation (invoke the probe once per staged file): the counter file holds
+// two lines and this test fails.
+func TestProbeRunsOnlyOnceForTheWholeSet(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "a.png", body: "one"}, outFile{name: "b.png", body: "two"}),
+			probeScript("#!/bin/sh\nprintf 'x\\n' >> \"$FUGARO_STATE_DIR/probe-calls.txt\"\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 2 {
+		t.Fatalf("artifacts = %+v", rec.Artifacts)
+	}
+	calls := readText(t, filepath.Join(h.deps.StateDir, "probe-calls.txt"))
+	if calls != "x\n" {
+		t.Fatalf("the probe ran %d times, want once for the whole set", strings.Count(calls, "x"))
+	}
+}
+
+// TestBlankProbeCommandRefusesTheRun is the probe's fail-closed half, the twin
+// of TestBlankRenderCommandRefusesTheRun: a recipe whose outputs.probe names
+// commands.probe over a workflow that has none is refused at bootstrap, before
+// the agent runs and before anything is rendered. Running the empty string
+// through sh -c would exit 0 and record a bogus pass — the failure mode
+// commands.lint, commands.fix and commands.render all refuse outright.
+//
+// Mutation (drop the probe arm of RecipeGateProblems): the run renders, probes
+// nothing, and ends succeeded/artifacts with a record that attests to a check
+// that never ran.
+func TestBlankProbeCommandRefusesTheRun(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	pushes := countPushes(t, h)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !strings.Contains(rec.Reason, "probe step needs commands.probe") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if n := len(h.agent.calls); n != 0 {
+		t.Fatalf("%d agent calls, want none", n)
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+	assertNothingUploaded(t, h)
+}
+
+// TestProbeOutputIsRedacted is the probe's redaction half, and it is about a
+// leak path the render does not have: the probe prints whatever it likes to
+// stderr, and it runs with the workflow's own secret environment (D10), so a
+// probe that echoes a secret — by accident, in a debug line — must not publish
+// it into result.json's reason or report.md's log tail. The output goes
+// through the same redactor the agent's streams do.
+//
+// Redaction here is deliberately layered, so no single mutation of the probe's
+// own redactor is observable: the line the probe prints is redacted a second
+// time when the run's reason is built and the whole report a third time before
+// it is stored. The layers are what make the property survive a mistake in any
+// one of them; this test pins the property itself, and the mutation it catches
+// is the one that takes the layers away.
+//
+// Mutation (record the probe's raw tail and stop redacting the reason the
+// probe's failure becomes): the secret reaches result.json's reason and this
+// test fails on it.
+func TestProbeOutputIsRedacted(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nprintf 'the fixture secret is %s\\n' \"$FIXTURE_FAILS_FILE\" >&2\nexit 3\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe exited 3") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, "[REDACTED]") {
+		t.Fatalf("the reason does not carry the redacted probe line: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, h.failsFile) {
+		t.Fatalf("the reason publishes the workflow's secret: %q", rec.Reason)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(report), h.failsFile) {
+		t.Fatalf("the report publishes the workflow's secret:\n%s", report)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestProbeCommandComesFromTheWorkflowNotTheSettingsFile is Review Focus 1's
+// probe half, the twin of the render's test. The probe that runs is
+// commands.probe as bootstrap read it from fugaro.yaml at the task's ref — the
+// runner's in-memory r.wf — never a probe key of <StateDir>/workflow.json,
+// which is 0644 inside the directory the plan-stage agent writes, because it
+// is the same user in the same container. The plan stage here rewrites
+// exactly that file: the command that runs is unchanged, and the repository
+// text the plan stage substituted never executes. (verify.Settings has no
+// Probe field at all, which is the point — the file cannot name a probe even
+// if a later change adds one to the struct; what this pins is that the
+// runner's command comes from the config it read once.)
+//
+// Mutation (take the probe's command from verify.LoadSettings, or from any
+// file under the state directory, instead of r.wf): the substituted command
+// runs, out/HACKED.png exists, and this test fails.
+func TestProbeCommandComesFromTheWorkflowNotTheSettingsFile(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec("version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - plan: {}\n  - render: {}\n"+
+			"outputs: { globs: [out/*.png], probe: probe }\n"),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ntouch \"$FUGARO_STATE_DIR/probe-ran.txt\"\n")))
+	rewrite := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		settings := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "workflow.json")
+		body := `{"build":"sh build.sh","test":"sh test.sh","probe":"mkdir -p out && echo hacked > out/HACKED.png"}`
+		if err := os.WriteFile(settings, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return planStage(t, ctx, req)
+	}
+	rec, err := h.run(t, rewrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.StateDir, "probe-ran.txt")); err != nil {
+		t.Fatalf("the workflow's own commands.probe did not run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "HACKED.png")); err == nil {
+		t.Fatal("the probe ran the command the plan stage wrote into the state directory")
+	}
+}
+
+// TestProbeIsCutAtTheFinalizeReserve is the probe's other bound, the twin of
+// TestRenderIsCutAtTheFinalizeReserve: the probe runs under timeouts.verify
+// AND under the run's finalize reserve (design §4.5), and when the reserve
+// comes first it is the reserve that ends the probe. The budget below leaves
+// about eight seconds between the run's start and finalizeAt, with
+// timeouts.verify asking for 60s, so a probe that sleeps 30s can only be cut
+// by the reserve — and the reason the record carries names the bound that
+// applied, rather than quoting a timeouts.verify that still had 58s to run.
+//
+// Mutations: drop the `f.Before(deadline)` arm of Budget.StepDeadline and
+// nothing cuts the probe — it sleeps its full 30s, exits 0, and the run ends
+// succeeded/artifacts, so this test fails on its first assertion. Keep the cap
+// and revert the reason to "timed out after 60s" and it fails on the reason,
+// which no longer names the bound that ended the probe.
+func TestProbeIsCutAtTheFinalizeReserve(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", "{ total: 30s, stage: 10s, verify: 60s, finalize_reserve: 22s }"),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nsleep 30\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run with no artifacts", rec)
+	}
+	if !strings.Contains(rec.Reason, "finalize reserve") {
+		t.Fatalf("the reason does not name the bound that ended the probe: %q", rec.Reason)
+	}
+	// Naming the STEP and not only the bound. The render's own reserve reason
+	// uses the same words ("... was cut at the run's finalize reserve"), and
+	// the budget here leaves the render only about eight seconds — so a slow
+	// startup could make the RENDER the step the reserve cuts and leave every
+	// other assertion in this test satisfied. This one cannot be satisfied
+	// that way: it pins the probe as the command the reason names.
+	if !strings.Contains(rec.Reason, "commands.probe was cut at the run's finalize reserve") {
+		t.Fatalf("the reason does not name the probe as the step the reserve cut: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "timed out after 60s") {
+		t.Fatalf("the reason blames a timeout that never fired: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "time budget exhausted") {
+		t.Fatalf("the reserve did not hold: %q", rec.Reason)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestProbeGraceBoundsAProbeThatIgnoresSIGTERM: timeouts.verify bounds the
+// RUN, not the repository's willingness to stop. The probe runs through
+// procgroup, which sends the group SIGTERM when the deadline ends and then
+// SIGKILLs it after a grace — so a probe that ignores SIGTERM decides, by
+// itself, how long past its deadline the run goes. The probe here traps TERM
+// and spins in the shell: no child can die for it, which is the only shape
+// that survives SIGTERM, and it costs one core for the few seconds the test
+// takes. It records when it started, so what the assertion measures is the
+// probe's own wall clock and not the run's (the clone and the render are not
+// part of the bound).
+//
+// The command is `exec sh probe.sh`, and the exec is the point rather than
+// decoration: procgroup signals and reaps the process it started, so a
+// wrapper shell that does not trap TERM would die on the deadline itself and
+// the grace would never be exercised. `exec` makes the trapped shell the
+// tracked process, which is what a repository's own probe is when it names a
+// binary directly (commands.probe: ./tools/check --slow).
+//
+// Mutation (drop Grace from the probe's procgroup.Cmd): the SIGKILL lands 10s
+// after the deadline — procgroup's default — instead of the 5s verify.Run
+// gives its own commands, and this test fails on the elapsed time.
+func TestProbeGraceBoundsAProbeThatIgnoresSIGTERM(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "exec sh probe.sh", "{ total: 5m, stage: 2m, verify: 1s, finalize_reserve: 30s }"),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ntrap '' TERM\ndate +%s%N > \"$FUGARO_STATE_DIR/probe-started\"\nwhile :; do :; done\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe timed out after 1s") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	ns, err := strconv.ParseInt(strings.TrimSpace(readText(t, filepath.Join(h.deps.StateDir, "probe-started"))), 10, 64)
+	if err != nil {
+		t.Fatalf("the probe's own start time: %v", err)
+	}
+	// The probe cannot end itself (it ignores TERM and spins), so this is the
+	// deadline plus the grace the runner passed, plus the moment between the
+	// SIGKILL and the run finishing. The ceiling is the deadline plus the 5s
+	// grace verify uses, with room for a slow box — and well under the 10s
+	// procgroup defaults to, which is what makes the mutation visible.
+	if d := time.Since(time.Unix(0, ns)); d > 1*time.Second+5*time.Second+4*time.Second {
+		t.Fatalf("the probe ran %s past its own start: timeouts.verify (1s) plus the grace the runner passes did not bound it", d)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestProbeTailKeepsAFinalLineWithoutANewline is the probe's half of the
+// render's flush test: a failed probe's output is what explains the failure to
+// an owner, and it goes through the redactor a line at a time — the redactor
+// holds a partial line until a newline arrives, so runProbe must flush it
+// before reading the tail. A probe whose failing message ends without a
+// newline (a printf with no trailing \n is the ordinary shape of one) is in
+// report.md with the flush and gone without it.
+//
+// Mutation: drop out.Flush() from runProbe and the report's log tail stops
+// after the lines that ended in a newline, so this test fails.
+func TestProbeTailKeepsAFinalLineWithoutANewline(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\necho 'first line'\nprintf 'the probe failed without a newline'\nexit 4\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe exited 4") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "the probe failed without a newline") {
+		t.Fatalf("the probe's last line, which has no trailing newline, is not in the report:\n%s", report)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestProbeReasonQuotesTheProbesLastLine: a run's reason is a sentence, so it
+// carries the probe's LAST non-empty line — the one a repository's own check
+// usually ends on, after whatever it printed while working — and the whole
+// output is in the report's log tail instead. A reason that quoted the first
+// line would send an owner to the top of a build log rather than to the line
+// that explains the exit code.
+//
+// Mutation (return the first line, or the first non-empty one, from
+// probeLastLine): the reason quotes "checking sizzle" and this test fails.
+func TestProbeReasonQuotesTheProbesLastLine(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\necho 'checking sizzle'\necho 'sizzle.png is 0 bytes, not a video'\nexit 5\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe exited 5: sizzle.png is 0 bytes, not a video") {
+		t.Fatalf("the reason does not quote the probe's last line: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "checking sizzle") {
+		t.Fatalf("the reason quotes the probe's first line: %q", rec.Reason)
+	}
+	// The whole output is still in the report, first line included: the
+	// reason is a sentence, the report is the account.
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"checking sizzle", "sizzle.png is 0 bytes, not a video"} {
+		if !strings.Contains(string(report), want) {
+			t.Errorf("the report does not hold %q:\n%s", want, report)
+		}
+	}
+}
+
+// TestProbeOverAnEmptyStagedSetFailsTheRun is the design's §8.4 headline: a
+// render that legitimately produces nothing is not an error by itself, and
+// the probe is what turns "nothing" into a failure when the recipe's owner
+// asked for one. So the probe runs over an empty set exactly as it runs over
+// a full one — one invocation, the same environment, the same deadline — and
+// its verdict decides the run: a check that exits non-zero over nothing fails
+// the run and uploads nothing (there is nothing to upload, and the record
+// claims no artifacts either way).
+//
+// The probe also exercises the interface it is handed: FUGARO_OUT_DIR must
+// name a directory that is really there, empty set included, or the design's
+// §8.4 case — the one case where the probe is what judges an empty set — is
+// exactly where a probe that cd's into it or lists it dies with a shell error
+// instead. So the script below refuses to report its own verdict unless the
+// directory exists (exit 3) and holds nothing (exit 4), and the reason the
+// record carries is the only one of the three the test accepts.
+//
+// Mutation (short-circuit the probe when the staged set is empty, skipping it
+// as if the recipe had asked for none): the run ends succeeded/artifacts with
+// no artifacts and a record that attests to nothing, and this test fails on
+// the status, on the reason and on the marker file the probe never wrote.
+// Mutation (drop the MkdirAll that creates the staging directory for the arms
+// that stage nothing): the probe's own check fails and the reason reads
+// "commands.probe exited 3: FUGARO_OUT_DIR is not a directory".
+func TestProbeOverAnEmptyStagedSetFailsTheRun(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderScript("#!/bin/sh\nmkdir -p out\n"),
+			probeScript("#!/bin/sh\ntouch \"$FUGARO_STATE_DIR/probe-ran.txt\"\n"+
+				"[ -d \"$FUGARO_OUT_DIR\" ] || { echo 'FUGARO_OUT_DIR is not a directory'; exit 3; }\n"+
+				"if [ -n \"$(ls -A \"$FUGARO_OUT_DIR\")\" ]; then echo 'the staging directory is not empty'; exit 4; fi\n"+
+				"echo 'the render produced nothing'\nexit 1\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run", rec)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe exited 1: the render produced nothing") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.StateDir, "probe-ran.txt")); err != nil {
+		t.Fatalf("the probe did not run over the empty set: %v", err)
+	}
+	// The set it was handed was empty, and it was told so: the probe's own
+	// script (above) got past both checks — the directory exists, and it held
+	// nothing while the probe ran — since the reason is its exit 1 and not its
+	// exit 3 or 4. The staging directory is still empty afterwards, and
+	// stagedFiles cannot tell a missing directory from an empty one, which is
+	// why the check belongs in the probe.
+	if files := stagedFiles(t, h); len(files) != 0 {
+		t.Fatalf("the staging directory holds %v, want nothing", files)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestReportProbeColumn pins every arm of the report's Probe column from a
+// record, including the two a run of this release cannot produce on its own:
+// a non-zero verdict (a failing probe refuses the upload, so no artifact ever
+// carries one) and no verdict at all (a record written before the probe step
+// existed). Those two are exactly where the column could lie to a reader —
+// "ok" for a check the record says failed, or "none" for a recipe whose
+// intent the record cannot know — so they are asserted from the record the
+// report is rendered from rather than left to whatever a run happens to make.
+//
+// Mutation (fold !Ran and nil together, or print "ok" for any recorded
+// verdict): this test fails on the unprobed and failed rows.
+func TestReportProbeColumn(t *testing.T) {
+	at := time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20261016-100000-abcd", Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeArtifacts,
+		StartedAt: at,
+		Artifacts: []runstore.ArtifactFile{
+			{Name: "legacy.png", Bytes: 6, SHA256: strings.Repeat("a", 64), ContentType: "image/png"},
+			{Name: "unprobed.png", Bytes: 6, SHA256: strings.Repeat("b", 64), ContentType: "image/png",
+				Probe: &runstore.ProbeResult{Ran: false, ExitCode: -1}},
+			{Name: "passed.png", Bytes: 6, SHA256: strings.Repeat("c", 64), ContentType: "image/png",
+				Probe: &runstore.ProbeResult{Ran: true, ExitCode: 0}},
+			{Name: "failed.png", Bytes: 6, SHA256: strings.Repeat("d", 64), ContentType: "image/png",
+				Probe: &runstore.ProbeResult{Ran: true, ExitCode: 3}},
+		},
+	}
+	report := runner.Report(&rec, "runs/acme-app/20261016-100000-abcd/", nil)
+	for _, tc := range []struct{ name, sum, cell string }{
+		{"legacy.png", "aaaaaaaaaaaa", "—"},
+		{"unprobed.png", "bbbbbbbbbbbb", "none"},
+		{"passed.png", "cccccccccccc", "ok"},
+		{"failed.png", "dddddddddddd", "exit 3"},
+	} {
+		row := fmt.Sprintf("| `%s` | 6 | `%s` | image/png | %s |", tc.name, tc.sum, tc.cell)
+		if !strings.Contains(report, row) {
+			t.Errorf("the report has no row %q:\n%s", row, report)
+		}
+	}
+}
+
+// TestCancelDuringTheProbeEndsTheRunCancelled is the cancel branch's probe
+// half. The branch reports one reason for the whole artifact step, and the
+// probe now sits inside it — it can block for timeouts.verify plus its grace
+// — so a run cancelled while a slow probe is checking the set must not be
+// told it was cancelled while uploading: nothing had been uploaded, and the
+// owner looking for what was running would be sent to the wrong step.
+//
+// Mutation (name the upload in the collect branch's reason again): the reason
+// reads "cancelled while uploading the artifacts" and this test fails.
+func TestCancelDuringTheProbeEndsTheRunCancelled(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ntouch probe-started\nsleep 30\n")))
+	stop := make(chan struct{})
+	var done sync.WaitGroup
+	done.Add(1)
+	go func() {
+		defer done.Done()
+		marker := filepath.Join(h.deps.WorkDir, "probe-started")
+		for i := 0; i < 1000; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := os.Stat(marker); err == nil {
+				_ = h.store.RequestCancel(context.Background())
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	pushes := countPushes(t, h)
+	rec, err := h.run(t)
+	close(stop)
+	done.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusCancelled || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Reason != "cancelled while collecting the artifacts" {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "upload") {
+		t.Fatalf("a run cancelled in its probe is reported as an upload cancellation: %q", rec.Reason)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	assertNoUpload(t, h)
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
 }

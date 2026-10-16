@@ -551,15 +551,15 @@ the context, then close the driver writer).
 
 **`fugaro run` gains `--attach PATH` (repeatable)**, and the launch order
 already supports it: the launcher mints the run id
-(`task.NewRunID`, `internal/cli/run.go:819`), writes `task.json`
-(`runstore.CreateTask`, `:1147`) and only then submits the execution
-(`backend.Launch`, `:1392`). `--attach` fills the gap between the mint and the
+(`task.NewRunID`, `internal/cli/run.go:887`), writes `task.json`
+(`runstore.CreateTask`, `:1329`) and only then submits the execution
+(`backend.Launch`, `:1574`). `--attach` fills the gap between the mint and the
 write:
 
 1. **Resolve the run id first**, and **establish that it is a new one before a
    single byte is uploaded.** A repeated `--run-id` is not a new run: the
    launcher adopts the stored task when it is byte-identical and refuses a
-   different one (`createTask`, `internal/cli/run.go:1146-1172`, over
+   different one (`createTask`, `internal/cli/run.go:1328`, over
    `runstore.CreateTask`'s `ErrExists`) — and that check happens *after* an
    upload would have. Uploading first would therefore **overwrite a finished
    run's `inputs/` objects before the launcher ever looked at its task**, which
@@ -578,6 +578,19 @@ write:
    read this slice does not do. So the refusal is the honest answer, and it
    happens **before the caps are checked and before the first byte is
    uploaded**, so a mistyped `--run-id` costs nothing and changes nothing.
+
+   **The round-4 correction: a run id that has already gone is refused too,
+   stored task or not.** The run-id rule above reads `task.json`; a run that
+   started and wrote `task.json` under a checked-in placeholder — or whose task
+   the launcher never got to write — leaves a `launch.json` and no task, and
+   that run is exactly as gone as the adopted one. A launch that then found
+   `prior != nil` (`existingLaunch`) skipped both the attach checks and the
+   upload, and `createTask` wrote a task with no inputs: the user's `--attach`
+   silently did nothing, and the run would run without the files it was
+   promised. So `--attach` refuses whenever the run id already has a
+   `launch.json`, naming the run, whether or not a task was stored: an
+   attachment is uploaded before a run starts, and a run that already started
+   is not one this launch can give files to.
 
    (The upload itself is create-only, and it is create-only on **every**
    backend: `blobx.PutFile` takes an `ifNotExist` argument carrying `Create`'s
@@ -598,20 +611,45 @@ write:
    Task 6, with its own test). An attachment is only meaningful to a run that
    will produce files rather than a pull request: on an implement or review
    recipe the inputs would be downloaded into a run that commits a diff and
-   opens a PR, and nothing in its steps reads `inputs/`. Two arms, both
-   fail-closed:
+   opens a PR, and nothing in its steps reads `inputs/`. Every arm fails
+   closed, and **no follow-up is ever an artifact run** (the runner refuses
+   every follow-up whose *resolved* recipe is `mode: artifact`,
+   `internal/runner/runner.go`): the two ways a launch can be an artifact run
+   are allowed for a first run only, and a follow-up that reaches either is
+   refused with the reason. So:
 
    - **A resolved recipe whose mode is not `artifact` is refused**, naming the
      recipe and its mode — "`--attach` needs an artifact recipe; <name> is
      mode: <mode>".
    - **A launch that leaves the recipe to the runner is refused too.** When
      `spec.Recipe` is nil the CLI cannot know what the runner will pick
-     (`runnerChooses`, `internal/cli/run.go:950`: no recipe in the task, not a
+     (`runnerChooses`, `internal/cli/run.go:1128`: no recipe in the task, not a
      follow-up, no checkout here — the runner then takes `agent.recipe` from
      `fugaro.yaml` at the ref, else the catalog default), so it cannot promise
      an artifact run. The refusal says so and names the fix: pass the artifact
      recipe explicitly. Being unable to *prove* the recipe is artifact mode is
      not a reason to upload the files anyway.
+   - **A follow-up whose resolved recipe is `mode: artifact` is refused**, and
+     this is not the arm below: a follow-up inherits the recipe it resolves
+     rather than choosing one, so an artifact recipe can arrive without anyone
+     asking for one — a repository may commit `.fugaro/recipes/default.yaml` as
+     an artifact recipe, which is what a follow-up that inherited nothing runs.
+     The runner refuses it unconditionally, at bootstrap; the launcher refuses
+     it before the first byte, rather than uploading files for a run that
+     cannot start. A follow-up's task *carrying* `mode: artifact` is refused
+     the same way, since that mode is only reachable from a spec the launcher
+     did not build (a stored task re-launched, or a forged one).
+   - **A follow-up whose previous run left no recipe behind is refused.** A
+     follow-up runs the recipe of the run it continues — the previous task's,
+     else that run's record's — and when both are silent the runner runs its
+     own default, because `resolveRecipe` reads `agent.recipe` only for a first
+     run (`r.follow == nil && cfg.Agent.Recipe != ""`). The launcher resolves
+     the same way (`recipeForLaunch`), so the refusal names the recipe the run
+     will really use and says why: reading `agent.recipe` here would let an
+     artifact recipe in `fugaro.yaml` — which the follow-up will not run — pass
+     the check, and the bytes would leave the machine for a run that fails at
+     bootstrap with "the task attached N file(s), but recipe default is mode:
+     implement".
 
    The rule is deliberately the launcher's, because the launcher is where the
    bytes are: a refusal there costs nothing and leaves nothing in the bucket.
@@ -636,20 +674,46 @@ write:
    The checks all happen before the first `PutFile`, and a refusal names the
    number, the cap and the count.
    **One printed line names where the file may go (D9's whole mechanism, and the
-   round-3 review's correction).** With the caps checked, the launcher prints
-   **one** line — the destination set of §8 item 8, which is every allowed
-   provider that claims one of the run's models plus **`Anthropic (direct)`**
-   whenever a model is unclaimed — on the `warn` writer beside the other launch
-   notes. It is **not a gate**, it is printed once per launch and **only when
-   `--attach` carried a file**, and it never tells a default Claude workflow that
-   its screenshot "routes nowhere": `lc.Providers` holds only the non-Anthropic
-   backends (`internal/localcfg/localcfg.go:89-91`), so a set read from it alone
-   would be empty exactly for the owner's own workflows. The *local* wording is
-   for the case where nothing receives the bytes at all — no claiming provider
-   **and** no Anthropic path.
+   round-3 and round-4 reviews' corrections).** With the caps checked, the
+   launcher prints **one** line — the destination set of §8 item 8, which is
+   every allowed provider that claims one of the run's models plus the run's
+   **own auth route** whenever a model is unclaimed — on the `warn` writer beside
+   the other launch notes. It is **not a gate**, it is printed once per launch
+   and **only when `--attach` carried a file**, and it never tells a default
+   Claude workflow that its screenshot "routes nowhere": `lc.Providers` holds
+   only the non-Anthropic backends (`internal/localcfg/localcfg.go:89-91`), so a
+   set read from it alone would be empty exactly for the owner's own workflows.
+   The *local* wording is for the case where nothing receives the bytes at all —
+   no claiming provider **and** no auth route.
+
+   **The round-4 correction: the launcher opens each path exactly once.**
+   Judging a path (`os.Stat`) and then uploading that path (`PutFile(path)`) are
+   two opens of a name, and a name can be a different file at the second one —
+   the file swapped for a FIFO, a device, or something grown past the cap in the
+   instant between. So `--attach` opens the path once (`blobx.OpenSource`, the
+   `O_NOFOLLOW` open the merged `blobx` grew for exactly this), `fstat`s the
+   **held handle** for every judgement — regular file, per-file cap, set total —
+   and hands **that same handle** to the upload, which bounds the copy by the
+   size it was judged at (`PutFileOpened`, whose copy takes the judged size and
+   refuses a source that no longer matches it). The handle survives a rename or
+   removal of its path, so what was judged is what is uploaded. `--attach` is
+   therefore also the place a **symlink** is refused: `Lstat`, not `Stat`, so a
+   link to a file elsewhere is not silently read and stored under the link's own
+   name — the launch would be uploading a file it never named. And two names
+   that differ only in case are refused here too, on the same rule Task 4
+   applies to a render's outputs (`strings.ToLower`): the runner writes the set
+   into one directory, where `A.png` and `a.png` are one name, so one of the two
+   would be refused — or overwrite the other — only after the bytes were up.
 
 3. **Upload each file to `runs/<slug>/<run>/inputs/<name>`**, hashing it as it
-   goes, recording `{name, bytes, sha256, content_type}` in the task spec.
+   goes, recording `{name, bytes, sha256}` in the task spec — the plan's
+   Interfaces block is authoritative for that record (Task 6), and the content
+   type is a property of the **object**, taken from the file's extension with
+   an `application/octet-stream` fallback when `blobx.PutFile` writes it: it is
+   a recorded hint no reader trusts (§8.1), not a spec field, and
+   `schemas/task.schema.json` closes the item (`TestTaskSchemaInputs` refuses a
+   `content_type` key). This line listed a fourth field while the slice was
+   built; the code is the authority.
    The launcher's own credentials suffice: a launcher holds `objectUser`
    under `runs/` (`docs/design/bucket-iam.md:126-128`) and an operator holds
    `objectAdmin` (`:88`) — **no new grant is needed to attach a file.**
@@ -659,13 +723,37 @@ write:
    caps **and the same name refusals** again (§8.2), because the task spec is
    text a launcher wrote: a spec that claims 3 files cannot cause 300
    downloads, and a spec whose name is `../../.git/hooks/pre-commit` cannot
-   write one byte outside `inputs/`.
+   write one byte outside `inputs/`. **The name refusals include the case-fold
+   rule** (round 4): a spec naming both `A.png` and `a.png` is refused, because
+   both land in one directory where that is one name.
+   **And what the checkout commits under `inputs/` is refused, while the run's
+   own leftovers are emptied and the directory reused** (round 4, corrected by
+   the review of round 4). The two halves are the same question asked of git
+   rather than of the directory: `git ls-files -- inputs` says what the
+   *repository* put there, and only the repository's own paths are a hazard —
+   an attached file landing on one of those names would replace committed
+   content, silently, in the checkout the run goes on to commit from. A
+   non-empty `inputs/` that git tracks nothing under is the run's own: the run
+   excludes `inputs/` in the git directory (§ step 5), so bootstrap's `git
+   clean -fd` keeps ignored files and a second artifact run in one checkout —
+   the local `fugaro exec --workdir` shape — finds exactly what the first run
+   downloaded. Refusing on "not empty" would fail that second run in bootstrap,
+   blaming the repository for a directory the run itself created, and it would
+   leave a stale file (one the bucket no longer names) sitting in `inputs/`
+   looking exactly like an attachment the task did name. So the directory is
+   emptied and reused when nothing under it is tracked, and refused by name when
+   something is.
 5. **`inputs/` is excluded from git** — the runner writes it into
    `.git/info/exclude` — because an artifact run must never commit a
    screenshot. The plan step's prompt names it, and the environment gains
    `FUGARO_INPUTS_DIR`.
 6. **The report and `result.json` record each input** (name, bytes, sha256) so
-   a reader can see exactly what the run was given.
+   a reader can see exactly what the run was given. Task 6 writes the half it
+   owns — `runstore.InputFile` and `Record.Inputs`, in `result.json`, once the
+   files the list names are actually in the checkout — and nothing renders it
+   yet: the report and the `runs ls`/`diagnose` display that read the record
+   belong to the CLI surface of the task that owns them (the plan's Task 7).
+   This line describes the finished feature, not what Task 6 ships alone.
 
 *Alternatives, and their costs:* **`--attach-stdin`/a directory flag** —
 convenience only; **attaching after the launch** (an upload to a run already
@@ -776,8 +864,8 @@ memory rule goes **there**, and `RecipeGateProblems` takes the whole
 - **the launch** refuses it in `finishLaunch`'s pre-write block, beside the
   recipe-image gate where the launcher already holds both the resolved recipe and
   the workflow from `checkoutConfig` (after the image gates and
-  `checkMaxParallel` at `internal/cli/run.go:430`, around `budgetPrecheck` at
-  `:434-438`, **before `createTask` writes anything** at `:440`);
+  `checkMaxParallel` at `internal/cli/run.go:477`, around `budgetPrecheck` at
+  `:488`, **before `createTask` writes anything** at `:503`);
 - **the runner's bootstrap** refuses it through `checkGateCommands` when the
   launcher could not resolve the recipe at all (the `runnerChooses` launch), so
   that case fails closed before any stage runs rather than only in `validate`.
@@ -1003,13 +1091,22 @@ produced (out), and files an operator handed to a model-driven job (in).
    which §4's own reasoning already treats as untrusted for the caps. A spec
    whose `inputs[].name` is `../../.git/hooks/pre-commit` must be refused by
    the runner, not sanitised into something plausible: the runner applies the
-   same list (no absolute path, no `..` element, no NUL or newline, a length
-   limit, no duplicate after cleaning) and **fails the run** with the name
-   quoted, rather than writing outside `inputs/`.
+   same list (no empty or whitespace-only name, no absolute path, no `..`
+   element, no NUL or newline, a length limit, no repeated name — the exact
+   name, not a cleaned one: the list REFUSES a `.` or empty path element
+   rather than normalising it away) and
+   **fails the run** with the name quoted, rather than writing outside
+   `inputs/`. It is one predicate in one place (`task.InputNameProblem`, with
+   `task.InputNameBlank` for the emptiness half, which `Spec.Validate`'s
+   required-name check shares), because the launcher and the runner have to
+   agree: a name the launcher accepts and the decoder refuses is a file in the
+   bucket under a run that never starts, which is what a whitespace-only name
+   was — it is a legal file name and a legal JSON string, so the launcher took
+   it and the runner's `ReadTask` refused the task at bootstrap.
 
    **And the runner does not trust `Spec.Mode` either, because it may be
    empty.** The launcher does not always resolve the recipe: when it leaves the
-   choice to the runner (`runnerChooses`, `internal/cli/run.go:950`) the spec
+   choice to the runner (`runnerChooses`, `internal/cli/run.go:1128`) the spec
    carries **no** `mode`, and the runner takes it from the recipe it resolves
    (`agent.recipe` at the ref, else the catalog default). So the runner's rule
    is: **`Spec.Mode` when set, the resolved recipe's mode when not**, and the
@@ -1148,10 +1245,21 @@ produced (out), and files an operator handed to a model-driven job (in).
    **What the set is, exactly.** The model route is decided by
    `config.ProviderFor` over the local config's `providers` block
    (`internal/config/providers.go:268-275`) for each model the run will use
-   (`Agent.PinnedModels` — the coder's, the reviewer's and the background model,
-   `internal/config/config.go:236-244`); a model no such provider claims goes to
-   **Anthropic, direct** — the `oauth` path and the Anthropic-key path both do,
-   and `oauth` is never proxied (`docs/design/m9-budget-and-dashboard.md:8`). The
+   (`config.NeedsAnthropicKey`'s three, in its own order — the coder's, the
+   reviewer's and `config.EffectiveBackground`, `internal/config/providers.go:670`;
+   **not** `Agent.PinnedModels`, whose third entry is the raw
+   `Models.Background`, empty unless the config sets it: a run whose coder a
+   provider claims never makes an unset-background call to Anthropic at all,
+   so `PinnedModels` would name a direct route for a run that makes no such
+   call); a model no such provider claims goes to the run's **own auth route**,
+   which `agent.auth` decides: `vertex` — Fugaro's default, written into every
+   config the launcher reads by `config.applyDefaults`
+   (`internal/config/defaults.go:48-50`) — is Claude on **Google Vertex AI**,
+   `api-key` is Anthropic's own API, and `oauth` is Anthropic on a subscription's
+   token, never proxied (`docs/design/m9-budget-and-dashboard.md:8`). Naming one
+   of the three for all three would tell the owner of a default configuration
+   that a screenshot goes straight to Anthropic while the call, and the bytes in
+   it, go to Google. The
    only providers a run can use at all are the ones that list the repository in
    `allow_data_to` (`config.ModelProvider.AllowsData`,
    `internal/config/providers.go:194`; the job's environment is built from
@@ -1159,16 +1267,23 @@ produced (out), and files an operator handed to a model-driven job (in).
    So the line is the union of:
 
    - **each allowed provider that claims one of the run's models**, by name; and
-   - **`Anthropic (direct)`**, whenever any of the run's models is *not* claimed
-     by one of those providers.
+   - **the run's own auth route**, whenever any of the run's models is *not*
+     claimed by one of those providers: `Google Vertex AI` under `agent.auth`
+     `vertex` (the default), `Anthropic (direct)` under `api-key`, and
+     `Anthropic (oauth token)` under `oauth`.
 
    **The correction the review asked for:** `lc.Providers` is documented as
    **"the non-Anthropic backends models may be routed to"**
    (`internal/localcfg/localcfg.go:89-91`), so a set built from it *alone* is
    **empty for a default Claude workflow** — and a line that read "routes
    nowhere" there would be telling an owner their screenshot stays local while it
-   is on its way to Anthropic. The line therefore never claims the file stays on
-   the machine unless **there is no Anthropic path and no claiming provider**.
+   is on its way to the model's route. The line therefore never claims the file
+   stays on the machine unless **there is no auth route and no claiming
+   provider**.
+   **The round-4 correction:** the route an unclaimed model takes is the run's
+   `agent.auth`, so naming "Anthropic (direct)" for it was wrong for the default
+   configuration — `applyDefaults` writes `vertex`, so those bytes go to Google
+   Vertex AI — and the line names the auth mode's own destination.
 
    **And the gate it is not:** `allow_data_to` answers "may this repository's
    content reach this provider?", and an attachment is *task text*, not
@@ -1504,12 +1619,12 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V14 | No signed URL and no `signBlob` grant anywhere; only `iam.serviceAccounts.signJwt` for the budget identity | grep over `internal/` and `cmd/`, `deploy/terraform/gcp/modules/firebase/iam.tf:23` |
 | V15 | `result.json`'s schema is `additionalProperties: false` and is validated **only by tests**, never at read time; readers use the Go struct | `schemas/result.schema.json`, `schemas/schemas_test.go:23`, `internal/runstore/runstore.go:532` |
 | V16 | `runs ls` and `diagnose` read named files, never enumerate the prefix | `internal/cli/runs.go:379-390`, `internal/cli/diagnose.go:158,177` |
-| V17 | The launcher mints the run id, writes `task.json`, then submits the execution — so `--attach` has a place to stand | `internal/cli/run.go:819,1147,1392`, `internal/runstore/runstore.go:502` |
+| V17 | The launcher mints the run id, writes `task.json`, then submits the execution — so `--attach` has a place to stand | `internal/cli/run.go:887,1329,1574`, `internal/runstore/runstore.go:509` |
 | V18 | The VM backend is a merged design (#375) with **Tasks 1–3 merged** (#380, #381, #389 — the price table included); `backend: cloud-batch` is refused by config validation, not by a flag; a VM run prices the machine type's quantities from its boot window | `internal/localcfg/localcfg.go:711-719`, `internal/backend/batch/prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`), `internal/backend/backend.go:103,147,174-205,285-289,292-296` (`MachineType`, `VMMinimumBilled`, `BilledWindow`, `WindowNote`, `Prices.Quantities`, `Prices.ComputeUSD` — it is `backend.Prices.ComputeUSD`, there is no `pricing.ComputeUSD`), read at `origin/main` b9d5c5d |
 | V19 | GPUs are out of scope in the VM design, by name | `docs/design/compute-backend.md:1485` (§6.3) |
 | V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:51-58`, `internal/cli/docs_checkout_test.go:123-132` |
 | V21 | Check numbers: rows exist for 40–47 (`:317-324`) and 57 (`:325`); **48–56 are reserved by the project-centric plan** (PR #366) and 57 by the compute backend, so **58 is the next free number**; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md:250-257,317-325,1431,1437-1458` |
-| V24 | A repeated `--run-id` adopts a byte-identical stored task and refuses a different one, **after** `CreateTask` — so an upload ordered before it would rewrite a finished run's inputs | `createTask` `internal/cli/run.go:1146-1172`, `runstore.CreateTask`/`ErrExists`, `blobx.Create`'s `IfNotExist` `internal/blobx/blobx.go:107-127` |
+| V24 | A repeated `--run-id` adopts a byte-identical stored task and refuses a different one, **after** `CreateTask` — so an upload ordered before it would rewrite a finished run's inputs | `createTask` `internal/cli/run.go:1328`, `runstore.CreateTask`/`ErrExists`, `blobx.Create`'s `IfNotExist` `internal/blobx/blobx.go:107-127` |
 | V25 | An artifact run would checkpoint like an implement run unless it is stopped: the gate is `checkpointsOn()`, not the checkout arm | `internal/runner/checkpoint.go:65` (`r.follow == nil && r.baseSHA != "" && r.startSHA != "" && cfg.Git.PR.CheckpointsOn()`), `runner.go:1684` (`startCheckpoints` inside the stage runner) |
 | V26 | The agent's git credentials enter its environment at **two** sites inside `bootstrap` (the repo env and the stage env map), and the workflow's secrets at a third (`!r.review`) | `internal/runner/runner.go:635`, `:1135`, `:1091-1099` |
 | V27 | `verify.Settings` is written at bootstrap, before any stage, from the workflow's commands — and it is a **0644 file re-read per invocation** by `verify.LoadSettings`, so it is not a place a fixed command can live | `verify.WriteSettings` call, `internal/runner/runner.go:1073-1081`; `internal/verify/verify.go:26,60,85` |
