@@ -993,9 +993,13 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 // "secret-scope" is the info line: for every name this checkout's jobs
 // mount, the copy Fugaro resolves for it (facts.logical, facts.repoIDs,
 // facts.candidates, and the two listings doctor already fetched), naming
-// the scope rather than either container's ID. Informational and never
-// failing, exactly like provider-open-to-every-repository: the state is the
-// owner's, and this only makes it readable in one place.
+// the scope rather than either container's ID — "project scope", "repository
+// copy", or "no copy stored" for a name neither listing holds an enabled
+// version of (code review, minor: the docs say the line answers this for
+// every name, so it does, rather than silently dropping the names nothing
+// is stored for). Informational and never failing, exactly like
+// provider-open-to-every-repository: the state is the owner's, and this only
+// makes it readable in one place.
 //
 // "secret-scope-shadowed" is the warning: a name stored both project-wide
 // and in this repository's own container, where the repository copy wins
@@ -1041,6 +1045,14 @@ func doctorSecretScopeChecks(facts doctorRepoSecrets, listed []secretEntry, proj
 			lines = append(lines, printable+" — repository copy")
 		case inProject:
 			lines = append(lines, printable+" — project scope")
+		default:
+			// A name this checkout's jobs mount with no enabled version in
+			// either container: the listing answers the question the docs
+			// ask it ("which copy does this name resolve to") for every
+			// name, not only for the ones something is stored for, and
+			// "nothing yet" is the answer that matters most to a reader
+			// (project-secret-stored is the red check for it).
+			lines = append(lines, printable+" — no copy stored")
 		}
 	}
 	var out []doctorCheck
@@ -1052,10 +1064,17 @@ func doctorSecretScopeChecks(facts doctorRepoSecrets, listed []secretEntry, proj
 	}
 	if len(shadowed) > 0 {
 		printable := printableNames(shadowed)
+		// Every shadowed name gets its own command (code review, minor): the
+		// fix is printed to be pasted, and naming only the first left the
+		// others with no command at all.
+		cmds := make([]string, 0, len(shadowed))
+		for _, name := range shadowed {
+			cmds = append(cmds, selfCommand()+" secrets set "+quoteWord(name)+" --repo "+quoteWord(facts.repo))
+		}
 		out = append(out, doctorCheck{ID: "secret-scope-shadowed", Severity: "warning",
 			Problem: fmt.Sprintf("%s: stored in %s's own container and project-wide at once, and a repository copy with an enabled version wins over the project copy, so the project's value never reaches this repository",
 				strings.Join(printable, ", "), pluginwire.Printable(facts.repo)),
-			Fix: "store the value you mean with " + selfCommand() + " secrets set " + quoteWord(shadowed[0]) + " --repo " + quoteWord(facts.repo) +
+			Fix: "store the value you mean with " + strings.Join(cmds, ", or ") +
 				" to keep this repository's own copy up to date, or disable the repository copy's versions (gcloud secrets versions disable) if the project's value is the one this repository should mount"})
 	}
 	return out
