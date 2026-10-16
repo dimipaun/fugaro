@@ -111,6 +111,27 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	if gotEnv["FUGARO_RUN"] != "acme-app/20260927-100000-abcd" {
 		t.Errorf("env = %v, want the run's own identity", gotEnv)
 	}
+	// And an entry naming any other variable the container's environment
+	// already holds: the installation's own five (backend.PlatformEnvNames —
+	// the bucket, the backend, the project name, the project ID and the
+	// region, which internal/infra's platformEnv writes into the deployed
+	// job) and the two Cloud Run fills in itself, which the codec reads back
+	// to say which job and execution this is (internal/backend's codec.go).
+	// The override is merged into that environment rather than replacing it,
+	// so each of these was applied over the value the run reads its own
+	// identity and configuration from — the reservation the seam documents,
+	// which Batch makes for every key of its map and this backend made for
+	// FUGARO_RUN alone (the review finding on this change).
+	for _, name := range append([]string{"CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION"}, backend.PlatformEnvNames...) {
+		before := len(fr.Requests())
+		spec.Env = []string{name + "=someone-elses-" + strings.ToLower(name)}
+		if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {
+			t.Errorf("Launch overriding %s = %v, want a refusal", name, err)
+		}
+		if got := len(fr.Requests()); got != before {
+			t.Errorf("a launch env naming %s was sent to the API: %d requests, want the %d before it", name, got, before)
+		}
+	}
 }
 
 func TestNamesAreCanonicalWhateverTheAPISends(t *testing.T) {

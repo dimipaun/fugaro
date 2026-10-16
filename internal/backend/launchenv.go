@@ -8,6 +8,24 @@ import (
 // EnvVar is one NAME=value entry of a launch's own environment, parsed.
 type EnvVar struct{ Name, Value string }
 
+// PlatformEnvNames are the names every deployed job's own environment carries
+// the installation's identity and configuration under: the runs bucket, which
+// compute backend the run is on, the installation's project name, the GCP
+// project ID and the region (design §2.1, §2.5). internal/infra's platformEnv
+// is where those five are written into every job (and the check job), so a
+// launch lands in an environment that already holds them on either backend —
+// Cloud Run's container override is merged into the job's environment, and
+// Batch's task variables are that environment (design §2.1). A backend
+// therefore reserves them with the rest of what its environment holds, which
+// is the rule LaunchEnv's own doc states: an entry naming one of them would
+// replace a value the run reads its own configuration from.
+//
+// The list is pinned to platformEnv by internal/infra's
+// TestPlatformEnvIsWhatTheBackendsReserve, so a platform variable added there
+// without being added here is a failing test rather than an environment a
+// launch can silently rewrite. Not to be written to.
+var PlatformEnvNames = []string{"FUGARO_BUCKET", "FUGARO_BACKEND", "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION"}
+
 // LaunchEnv parses LaunchSpec.Env — the variables a launcher adds for one
 // execution only — into entries, in the order they were given, and refuses
 // the two an entry must not be. Both backends build the run's environment
