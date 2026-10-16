@@ -164,6 +164,17 @@ said out loud rather than slipped in:
   scheme before `whenReady`, installs the three denials on every
   `web-contents-created`, serves `src/renderer` and builds the window. It holds
   no decision the unit tests cannot reach.
+
+  Its two halves are deliberately separate, and `activate` is the reason: macOS
+  keeps the process alive when the window closes and `activate` (the dock icon)
+  has to build the window again, but the scheme is registered **once** per
+  process — `protocol.handle` refuses a second registration with "Failed to
+  register protocol: app", and `reportAndQuit` would turn that into
+  `app.exit(1)`, quitting the console exactly when the user asked for it back.
+  `activate` therefore calls `openConsoleWindow` and never `main`. The e2e spec
+  runs that sequence for real: it checks that the second registration really is
+  an error on this Electron, closes the window, emits `activate`, and asserts a
+  window is there again.
 - **`tsconfig.build.json` and package.json's `main`/`build`.** Electron runs a
   file, and `tsc` is the only transform available: the pinning rule holds
   `dependencies` to the one entry Task 1.0 installed, so a bundler would be a
@@ -204,19 +215,32 @@ does with them.
 | the protocol handler serving another scheme or host | the row's status and reason |
 | serving a path outside the bundle root | the traversal row, the `%2e%2e%2f` row, and `isInsideBundleRoot`'s own cases |
 | `registerSchemesAsPrivileged` without `standard`/`secure`, or with `bypassCSP` | the registration test |
-| the CSP losing a directive (`connect-src 'none'` above all) | the directive test, and the e2e probe: no `securitypolicyviolation` naming `connect-src` |
+| the CSP losing a directive, or `connect-src` relaxed to `'self'` | the directive test, and the two e2e probes: the remote one (a `securitypolicyviolation` naming `connect-src`, and nothing recorded by the route handler) and the same-origin one (a fetch for the console's own document is refused — the plan's red step) |
+| `activate` calling the module's `main` again (the scheme registered twice) | the e2e `activate` test: `protocol.handle` throws, `reportAndQuit` exits the app |
 | the `<meta>` copy drifting from the header | "byte for byte" |
 | `loadURL` to anything but the bundled document | `createConsoleWindow`'s test |
 
-The e2e network probe is the one place where two gates stand behind one
-assertion, and it is worth being precise about which is which: `connect-src
-'none'` refuses the request inside Blink and produces a
-`securitypolicyviolation` event naming the directive, and a Playwright route
-handler aborts every remote request that gets that far and records it. A
-relaxed CSP fails on both counts — the violation never fires and the request
-shows up in the handler's record. The record is asserted empty, which is also
-the assertion to revisit first if a future Chromium starts reporting
-CSP-blocked requests to Playwright's network events.
+The e2e network probes are where two gates stand behind one assertion, and it is
+worth being precise about which is which *and* about which probe catches which
+mutation. `connect-src 'none'` refuses a request inside Blink and produces a
+`securitypolicyviolation` event naming the directive, while a Playwright route
+handler aborts every remote request that gets that far and records it: a CSP
+that stops refusing remote requests fails on both counts — the violation never
+fires, and the request shows up in the handler's record, which is asserted
+empty, and which is also the assertion to revisit first if a future Chromium
+starts reporting CSP-blocked requests to Playwright's network events.
+
+A CSP relaxed to `connect-src 'self'` is a different mutation and needs a
+different probe, which is the plan's Task 1.1 red step: the remote target is not
+this origin, so `'self'` refuses it exactly as `'none'` does — same violation
+event, and nothing for the route handler to abort. The second probe therefore
+asks for the console's own document, `app://console/index.html`, and asserts the
+**violation event**, which is the only thing that separates the two directives
+here: under `'none'` Blink refuses the fetch and dispatches a violation naming
+`connect-src`, and under `'self'` it permits the request and dispatches nothing
+(the fetch still fails, because Chromium's `fetch()` does not support a custom
+scheme, so an assertion on the failure alone would pass under the mutation).
+That test fails under the red step, and the remote one does not.
 
 ### The pinning rule is a test, not a habit
 

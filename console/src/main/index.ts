@@ -52,13 +52,33 @@ function reportAndQuit(error: unknown): void {
 }
 
 /**
- * main is what `whenReady` resolves into: serve the bundle, then build the
- * window that draws it. `session.defaultSession` is read here rather than at
- * module scope because it does not exist until the app is ready.
+ * serveBundle puts the protocol handler in place, and there is exactly one of
+ * these per process: `protocol.handle` refuses a scheme that is already
+ * registered ("Failed to register protocol: app"), so a second call is not a
+ * harmless no-op but a thrown error. It is therefore separate from
+ * `openConsoleWindow` below, which is the half that may run again.
+ */
+function serveBundle(): void {
+  handleAppRequests(protocol, rendererRoot())
+}
+
+/**
+ * openConsoleWindow builds the window that draws the bundle, and is the
+ * repeatable half: macOS's `activate` calls it again after the window has been
+ * closed. `session.defaultSession` is read here rather than at module scope
+ * because it does not exist until the app is ready.
+ */
+async function openConsoleWindow(): Promise<void> {
+  await createConsoleWindow({ BrowserWindow, session: session.defaultSession })
+}
+
+/**
+ * main is what `whenReady` resolves into: serve the bundle once, then build the
+ * window. Everything a second call would repeat is in `openConsoleWindow`.
  */
 async function main(): Promise<void> {
-  handleAppRequests(protocol, rendererRoot())
-  await createConsoleWindow({ BrowserWindow, session: session.defaultSession })
+  serveBundle()
+  await openConsoleWindow()
 }
 
 app.whenReady().then(main).catch(reportAndQuit)
@@ -70,8 +90,13 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
+// Note which of the two halves this calls. `serveBundle` here would re-register
+// the scheme on every dock-icon click -- the window is gone, the process is not
+// -- and `protocol.handle` throws on the second registration, which
+// `reportAndQuit` would turn into `app.exit(1)`: the console would quit the
+// moment the user asked it to come back.
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    main().catch(reportAndQuit)
+    openConsoleWindow().catch(reportAndQuit)
   }
 })

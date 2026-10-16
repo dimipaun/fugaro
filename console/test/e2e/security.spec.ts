@@ -18,9 +18,23 @@
 // `http(s)` request that gets that far. The probe asserts the first gate by its
 // own evidence -- a `securitypolicyviolation` event naming `connect-src`, which
 // a request refused by the *network* never produces -- and asserts the second by
-// the absence of the request. A `connect-src 'self'` regression therefore fails
-// this file twice over: the violation event never fires, and the route handler
-// records the request it had to abort.
+// the absence of the request.
+//
+// One probe cannot see every relaxation, and it is worth being exact about
+// which one sees what, because the plan's red step for this task is the CSP
+// with `connect-src 'self'` instead of `'none'`. `'self'` refuses the *remote*
+// probe exactly as `'none'` does -- it is not this origin, so the request still
+// dies in Blink with the same violation and still never reaches the route
+// handler -- so the remote probe does not catch that mutation at all. The
+// probe that does is the second one below, which asks for the console's own
+// document and reads the **violation event**: under `'none'` the CSP refuses it
+// and says so, under `'self'` the CSP permits it and stays silent. (The fetch
+// fails either way -- `fetch()` does not support a custom scheme -- so the
+// event, not the outcome, is what tells the two directives apart; the test says
+// so where it is made.) Between them, the two probes are what hold the directive
+// at `'none'`: the remote one catches a CSP that stops refusing remote
+// requests (its record of aborted requests must stay empty), and the same-origin
+// one catches `'self'`.
 //
 // Nothing here reaches the network even in principle: the probe's target is
 // `example.invalid`, a name the IANA reserves precisely so that it never
@@ -148,14 +162,59 @@ test.describe('the hardened window', () => {
     }, `${PROBE_ORIGIN}/console-security-probe`)
 
     expect(probe.outcome).toBe('rejected')
-    // `connect-src 'none'`, by name: this is the assertion that fails when the
-    // directive is relaxed to `'self'`, because the request would then reach the
-    // route handler instead of being refused in Blink.
+    // The violation is named, so the refusal is the CSP's and not the route
+    // handler's: a request that reached the network and was aborted there
+    // produces no `securitypolicyviolation` event at all. This is the assertion
+    // that fails when the CSP stops refusing remote requests -- `connect-src *`,
+    // or the directive gone -- and the next assertion fails with it.
     expect(probe.violations).toContain('connect-src')
     expect(
       remoteRequests,
       'a CSP-refused request must never reach the network stack. If this fails on a Chromium that reports blocked requests to Playwright, this assertion is what to revisit, not the CSP.',
     ).toEqual([])
+  })
+
+  test("refuses a request for its own document too: the directive is 'none', not 'self'", async () => {
+    // This is the plan's red step for Task 1.1, and it is why this test stands
+    // beside the one above rather than inside it: `connect-src 'self'` refuses
+    // the *remote* probe exactly as `'none'` does, so that probe cannot see this
+    // mutation. The console's own origin is where the two directives part
+    // company, and the assertion that tells them apart is the **violation
+    // event** -- the CSP's own evidence that it, and not something downstream,
+    // refused the request:
+    //
+    //   - under `connect-src 'none'`, Blink refuses the fetch for
+    //     `app://console/index.html` and dispatches a violation naming
+    //     `connect-src`;
+    //   - under `connect-src 'self'`, the CSP permits the request (it is this
+    //     origin) and **no violation is dispatched**; the fetch still fails,
+    //     because Chromium's `fetch()` does not support a custom scheme --
+    //     observed as `TypeError: Failed to fetch` -- so the `outcome`
+    //     assertion alone would pass under the mutation and this test would be
+    //     worthless. Both halves were run: `'none'` passes here, `'self'` fails
+    //     on the violation assertion.
+    const probe = await page.evaluate(async (target) => {
+      const violations: string[] = []
+      const onViolation = (event: Event) => {
+        violations.push((event as SecurityPolicyViolationEvent).violatedDirective)
+      }
+      document.addEventListener('securitypolicyviolation', onViolation)
+
+      let outcome = 'resolved'
+      try {
+        await fetch(target)
+      } catch {
+        outcome = 'rejected'
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      document.removeEventListener('securitypolicyviolation', onViolation)
+      return { outcome, violations }
+    }, APP_ENTRY_URL)
+
+    // No bytes of the console's own document arrive over the network layer,
+    // whatever the directive says; and the refusal is the CSP's.
+    expect(probe.outcome).toBe('rejected')
+    expect(probe.violations).toContain('connect-src')
   })
 
   test('cannot read a file:// URL either', async () => {
@@ -211,5 +270,53 @@ test.describe('the hardened window', () => {
       heading: 'Fugaro console',
     })
     expect(remoteRequests).toEqual([])
+  })
+
+  // The last test in the file, because it is the one that takes the shared
+  // instance down to zero windows: the `page` the tests above use is gone after
+  // it, and Playwright runs a file's tests in order inside a worker, so nothing
+  // after it is left without one.
+  test('survives macOS activate: the window comes back, the scheme is not registered twice', async () => {
+    // The premise, checked against the Electron this runs on rather than
+    // assumed: registering the scheme a second time is an error, not a no-op.
+    const secondRegistration = await app.evaluate(({ protocol }) => {
+      try {
+        protocol.handle('app', () => new Response('x'))
+        return 'accepted'
+      } catch (error) {
+        return `refused: ${(error as Error).message}`
+      }
+    })
+    expect(secondRegistration).toContain('Failed to register protocol')
+
+    // Armed before `activate` is emitted, so the window it builds is the one
+    // awaited rather than whichever `app.windows()` happens to list first.
+    const rebuiltWindow = app.waitForEvent('window')
+
+    // The sequence `activate` is: no windows, dock icon clicked. On macOS the
+    // app is still running at that point; here `window-all-closed` would have
+    // quit it, so the quit is held back for the length of the check.
+    const windows = await app.evaluate(async ({ app: electronApp, BrowserWindow }) => {
+      const quit = electronApp.quit
+      electronApp.quit = () => {}
+      for (const window of BrowserWindow.getAllWindows()) window.destroy()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      electronApp.emit('activate')
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      const open = BrowserWindow.getAllWindows().length
+      electronApp.quit = quit
+      return open
+    })
+    // One window, built by the `activate` handler. This is what the mutation
+    // looks like here: with `main()` called from `activate` instead of the
+    // window half alone, the second `protocol.handle` throws, `reportAndQuit`
+    // runs, and the app exits with `app.exit(1)` -- so the evaluate above never
+    // returns and Playwright reports it as "Execution context was destroyed,
+    // most likely because of a navigation". Run both ways: `openConsoleWindow`
+    // passes, `main` fails here.
+    expect(windows).toBe(1)
+
+    const rebuilt = await rebuiltWindow
+    expect(await rebuilt.evaluate(() => window.location.href)).toBe(APP_ENTRY_URL)
   })
 })
