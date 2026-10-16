@@ -100,29 +100,33 @@ Created by this plan (nothing here exists yet, and **none of it is created by th
 
 ```
 internal/infra/managed/
-  marker.go            # Task 0.1: the managed marker object, its shape, and its write
-  read.go              # Task 0.2: the read, project-number-checked, failing closed
-  read_test.go         # Task 0.2: the read against every mismatch
+  marker.go             # Task 0.1: the managed marker object, its shape, and its write
+  marker_test.go        # Task 0.1: the round trip, the shape, and the one-writer refusal
+  read.go               # Task 0.2: the read, project-number-checked, failing closed
+  read_test.go          # Task 0.2: the read against every mismatch
 internal/cli/
-  managed_test.go      # Task 0.3: the property test - a non-managed project never skips a confirmation
+  managed_test.go       # Task 0.3: the property test - a non-managed project never skips a confirmation
+  init_budget_test.go   # Task 4.2: the budget required for a managed project, and unchanged for the rest
+  restore.go            # Task 5.2: fugaro restore
+  restore_test.go       # Task 5.2: no state read, the fresh ID, the not-restored list
 internal/infra/tf/
-  managed_cover.go     # Task 1.1: the managed-project instantiation of Cover
-  managed_cover_test.go# Task 1.1: a refused fixture per rule
-  managed_cost.go      # Task 1.3: the cost-bearing attribute allowlist and the flag
-  managed_cost_test.go
+  managed_cover.go      # Tasks 1.1, 1.2: the managed-project instantiation of Cover and its attributes
+  managed_cover_test.go # Tasks 1.1, 1.2: a refused fixture per rule
+  managed_cost.go       # Task 1.3: the cost-bearing attribute list, its flags and its blocks
+  managed_cost_test.go  # Task 1.3: one fixture per entry, and the below-the-threshold pass
 internal/managed/
-  review.go            # Task 2.1: the advisory review artifact
-  review_test.go
-  redact.go            # Task 2.2: the plan -> summary redaction
-  redact_test.go
-  plan.go              # Task 3.1: the saved plan's lifecycle through the gate
+  plan.go               # Task 1.0: the saved plan's path through the guard and the cover
   plan_test.go
-  inventory.go         # Task 4.1: the whole-project inventory and its fallback
+  review.go             # Task 2.0: MayApply, and the review as a refusal only
+  review_test.go
+  review_store.go       # Task 2.1: the review artifact in the run's own record prefix
+  review_store_test.go
+  redact.go             # Task 2.2: the plan -> summary redaction
+  redact_test.go
+  apply.go              # Tasks 3.1, 3.2: the apply of a saved plan, and its refusals
+  apply_test.go
+  inventory.go          # Task 4.1: the whole-project inventory and its fallback
   inventory_test.go
-internal/cli/
-  restore.go           # Task 5.2: fugaro restore
-  restore_test.go
-docs/design/managed-projects.md      # Task 5.4 only, if the owner's decisions differ from the recommendations
 ```
 
 Edited by this plan:
@@ -132,10 +136,13 @@ internal/initflow/stage.go                    # Task 0.3 only: no behaviour chan
 internal/cli/init_project.go                  # Task 0.1: record the creation fact; Task 4.2: require the budget
 internal/infra/projectcreate.go               # Task 0.1 only, if the fact is written beside the project's creation
 internal/cli/init.go                          # Task 4.2: the budget becomes required, not optional
+internal/cli/root.go                          # Task 3.2: the exit codes the managed refusals return
 internal/cli/secrets.go                       # Task 5.1: the required-and-missing column on `secrets ls`
 internal/infra/statebucket.go                 # Task 5.2 reads it, and changes nothing
 .gitignore                                     # Task 2.2: `*.tfplan`
 docs/gcp-live-checklist.md                    # Task 5.3 only: Check 60's rows and sections (60a, 60b)
+docs/design/managed-projects.md               # Tasks 2.3, 4.3, 5.4: the retention, alert-reach and decision rows
+docs/plans/2026-10-16-managed-projects.md     # Task 5.4 only, if an answer changes a task's shape
 ```
 
 ## PR groups
@@ -211,7 +218,7 @@ Each row is one mergeable PR, green on its own:
 
 ## Phase 1 — The gate
 
-**Why this is second.** The spec asks for a plan gate (its steps 2 to 4) and treats the model's review as it. The reconciliation's finding is that the gate already exists — `tf.Guard` refuses every delete and replace unless the exact address is allow-listed (`internal/infra/tf/guard.go:19-45`) and `tf.Cover` decides what may share a confirmation at all (`internal/infra/tf/cover.go:15-46`, `:63-113`, `:169-182`, `:198-266`, `:609-728`) — and that it was built for Fugaro's own embedded modules, whose resource-type allowlist is tested against them. Reusing it for an agent-authored plan means **a new allowlist, and choosing it is a decision, not a copy** (design finding 22). Phase 1 builds the gate and the choice, with the delete/replace rule inherited unchanged.
+**Why this is second.** The spec asks for a plan gate (its steps 2 to 4) and treats the model's review as it. The reconciliation's finding is that the gate already exists — `tf.Guard` refuses every delete and replace unless the exact address is allow-listed (`internal/infra/tf/guard.go:16-44`) and `tf.Cover` decides what may share a confirmation at all (`internal/infra/tf/cover.go:15-46`, `:63-113`, `:169-182`, `:198-266`, `:609-728`) — and that it was built for Fugaro's own embedded modules, whose resource-type allowlist is tested against them. Reusing it for an agent-authored plan means **a new allowlist, and choosing it is a decision, not a copy** (design finding 22). Phase 1 builds the gate and the choice, with the delete/replace rule inherited unchanged.
 
 ### Task 1.0: The plan's path through the gate, and what a refusal does
 
@@ -247,23 +254,23 @@ Each row is one mergeable PR, green on its own:
 
 **Files:** `internal/infra/tf/managed_cover.go`, `internal/infra/tf/managed_cover_test.go`
 
-**Steps.** `Cover`'s attribute checks (`attributes`, `cover.go:609-728`) already cover the images' registry, schedulers calling this run's jobs, the sink's project, a private bucket and the billing account. This task extends them for a managed project: **the project every resource is in** (already `Cover.Projects`, and the spec's step 3 — kept as the *wider* rule it is rather than narrowed to "must be in the managed project", since the wider one catches more), **the billing account the review showed** (already checked, and it is what makes a plan that moves billing refuse), and **one new check the spec asks for that does not exist: a resource whose lifecycle is `prevent_destroy` in a plan that would otherwise replace it**, which is the shape where a plan is refused by Terraform at apply time rather than by the gate.
+**Steps.** `Cover`'s attribute checks (`attributes`, `cover.go:609-728`) already cover the images' registry, schedulers calling this run's jobs, the sink's project, a private bucket and the billing account. This task re-derives them for a managed project the same way Task 1.1 re-derives the type list — **each check re-justified for an agent-authored plan rather than inherited by default, with the ones that only make sense for Fugaro's own embedded modules dropped and said to be dropped** — and it keeps the two that carry the spec's step 3: **the project every resource is in** (`Cover.Projects`, kept as the *wider* rule it is rather than narrowed to "must be in the managed project", since the wider one catches more, including a resource in a second project Fugaro owns), and **the billing account the review showed**, which is what makes a plan that moves billing refuse. **No check outside this set is added.** The design's D27 fixes the checkable set as an enumeration and closes it: a rule that is not on that list is not a check this design has, and adding one is a new decision, not an implementation detail. (An earlier revision of this task smuggled in a `lifecycle.prevent_destroy` check and attributed it to the spec. The spec asks for no such check, the design's D27 does not list one, and it is not buildable as written — `prevent_destroy` is a lifecycle meta-argument that does not appear in a saved plan's JSON, and Terraform refuses such a change at plan time. It is dropped, and the design's D27 row now says the set is closed.)
 
-**Tests:** each attribute check with a violating fixture and a passing one; and the project-scope check with a resource in a **second** project, which must refuse — this is the spec's step 3's own case and the task asserts the refusal is by address, not by count.
+**Tests:** each retained attribute check with a violating fixture and a passing one; a check **deliberately dropped** with a fixture that now passes, so the dropping is visible in a diff rather than silent; and the project-scope check with a resource in a **second** project, which must refuse — this is the spec's step 3's own case and the task asserts the refusal is by address, not by count.
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/infra/tf -run 'Managed|Cover|Attribute' -count=1`
 
 **Depends on:** Task 1.1.
 
-**Commit:** `tf: the managed plan's attribute checks, including the second project`
+**Commit:** `tf: the managed plan's attribute checks, re-derived and closed`
 
 ### Task 1.3: The cost attributes, flagged and blocked
 
 **Files:** `internal/infra/tf/managed_cost.go`, `internal/infra/tf/managed_cost_test.go`
 
-**Steps.** The spec's step 4 asks the agent to flag "new or upsized resources that bill continuously, such as Cloud Run min instances, Cloud SQL tiers, GPUs and large VMs". This task builds it as a **list, not an estimate** — because Fugaro cannot price an arbitrary plan and must not pretend to (design D28). A short, explicit list of cost-bearing attributes: a Cloud Run service or job with a minimum instance count above a threshold the task states, a machine type above a named class, a GPU attachment, a Cloud SQL tier above a named class, a `prevent_destroy`-free continuously-billing resource of any type the allowlist admits. Each entry has a **flag** behaviour (recorded in the verdict and shown to whoever confirms) and the ones the owner names have a **block** behaviour (the plan is refused and falls back to a confirmation). The task states the threshold of each blocking entry as a constant in one place, and its test asserts the constant.
+**Steps.** The spec's step 4 asks the agent to flag "new or upsized resources that bill continuously, such as Cloud Run min instances, Cloud SQL tiers, GPUs and large VMs". This task builds it as a **list, not an estimate** — because Fugaro cannot price an arbitrary plan and must not pretend to (design D28) — and it takes the spec's four examples as the list, one entry each, with the threshold or class stated as a constant in one place: a Cloud Run service or job whose **minimum instance count** is above the stated number, a Cloud SQL tier above the named class, any **GPU attachment**, and a machine type above the named class. **An entry is a property a plan can be above or below, never a resource type.** "A continuously-billing resource of any type the allowlist admits" is deliberately not an entry: nearly every resource a managed project creates bills continuously by existing — a Cloud Run service with min instances 0 included — so that criterion flags essentially every plan, and a gate that flags everything is one that gets switched off (which is the false-positive test below, stated as a rule rather than as a hope). An entry has a **flag** behaviour (recorded in the verdict and shown to whoever confirms) and the ones the owner names have a **block** behaviour (the plan is refused and falls back to a confirmation).
 
-**Tests:** one fixture per entry, each asserting flag-or-block as the list says; a plan that is over the threshold blocked and recorded; and a **below-the-threshold** plan passing the false-positive test, since a cost gate that refuses ordinary work is a cost gate that gets switched off.
+**Tests:** one fixture per entry, each asserting flag-or-block as the list says; a plan that is over the threshold blocked and recorded; and a **below-the-threshold** plan — an ordinary plan creating a Cloud Run job with min instances 0 and a small VM — passing with **no** entry fired, since a cost gate that refuses ordinary work is a cost gate that gets switched off.
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/infra/tf -run 'Managed|Cost' -count=1`
 
@@ -281,7 +288,7 @@ Each row is one mergeable PR, green on its own:
 
 **Files:** `internal/managed/review.go`, `internal/managed/review_test.go`
 
-**Steps.** The review is produced by the existing `review` stage — `r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, Schema: VerdictSchema}, …)`, `internal/runner/runner.go:1559`, its prompt `internal/runner/prompts.go:72`, its schema `internal/runner/verdict.go:13` — given the **redacted plan summary** (Task 2.2) rather than the plan file, and its output is stored as an artifact the run record points at. This task changes nothing about the stage's own behaviour (it runs when the recipe says so, and its verdict still gates pull-request readiness exactly as before) and adds the managed-mode rule: **the review's verdict may never be the reason an apply happens.** `managed.MayApply(gateVerdict, reviewVerdict) bool` returns `gateVerdict.OK && reviewVerdict != "changes"` — the review can refuse, never permit — and it is the only function in the package that decides, so a caller cannot compose its own rule.
+**Steps.** The review is produced by the existing `review` stage — `r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, JSONSchema: VerdictSchema}, …)`, `internal/runner/runner.go:1559`, its prompt `internal/runner/prompts.go:72`, its schema `internal/runner/verdict.go:13` — given the **redacted plan summary** (Task 2.2) rather than the plan file, and its output is stored as an artifact the run record points at. This task changes nothing about the stage's own behaviour (it runs when the recipe says so, and its verdict still gates pull-request readiness exactly as before) and adds the managed-mode rule: **the review's verdict may never be the reason an apply happens.** `managed.MayApply(gateVerdict, reviewVerdict) bool` returns `gateVerdict.OK && reviewVerdict != "changes"` — the review can refuse, never permit — and it is the only function in the package that decides, so a caller cannot compose its own rule.
 
 **Tests:** the truth table of `MayApply` exhaustively, with the case that matters named: **gate OK and review `ship` applies, gate refused and review `ship` does not, gate OK and review `changes` does not.** Plus a test that the prompt handed to the stage is the summary and never a path to the plan file.
 
@@ -427,7 +434,7 @@ Each row is one mergeable PR, green on its own:
 
 **Files:** `internal/cli/init.go`, `internal/cli/init_project.go`, `internal/cli/init_budget_test.go`
 
-**Steps.** Today the budget is opt-in and its three flags must come together (`--budget`, `--budget-currency`, `--billing-account`, refused unless all three: `internal/cli/init.go:356-358`, `:800`), and the module's thresholds default to `[0.5, 0.9, 1.0]` (`deploy/terraform/gcp/roots/installation/variables.tf:182`). For a **managed** project this task makes the amount **required at creation** — the design's D30 recommendation — with a refusal that prints a suggested value and says why it is being asked for; and it writes the amount and the currency into the project's own persisted record (Task 0.1's marker, extended) so a later run and a restore can read what was chosen. Non-managed projects keep today's opt-in behaviour exactly, and a test asserts that, because the change must not reach them.
+**Steps.** Today the budget is opt-in and its three flags must come together (`--budget`, `--budget-currency`, `--billing-account`, refused unless all three: `internal/cli/init.go:356-358`, `:800`), and the module's thresholds default to `[0.5, 0.9, 1.0]` (`deploy/terraform/gcp/modules/installation/variables.tf:182`). For a **managed** project this task makes the amount **required at creation** — the design's D30 recommendation — with a refusal that prints a suggested value and says why it is being asked for; and it writes the amount and the currency into the project's own persisted record (Task 0.1's marker, extended) so a later run and a restore can read what was chosen. Non-managed projects keep today's opt-in behaviour exactly, and a test asserts that, because the change must not reach them.
 
 **Tests:** a managed creation with no amount refused, with the suggestion in the message; a managed creation with an amount recorded; a **non-managed** creation unchanged; and a test asserting the managed default is absent — there is no constant a caller can fall back on.
 
