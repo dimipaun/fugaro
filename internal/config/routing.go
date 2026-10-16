@@ -103,14 +103,25 @@ func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) [
 	// D1b's safeguard, per ID the switch names: the route must exist (exactly
 	// one provider entry claims it) and that provider's allow_data_to must be
 	// *written*.
+	//
+	// providers is the table the caller judges over, and the two callers hold
+	// different ones: the config loader and the policy reader pass the
+	// operator's own entries, and a run passes the routes its job carries —
+	// runner.ProvidersFor's table, every entry whose allow_data_to does not
+	// name that repository dropped (internal/runner/providers.go). The
+	// no-claim message therefore names both causes rather than only the first,
+	// because "no provider entry claims it" is false of a project whose entry
+	// claims the model for other repositories: an operator sent to add a route
+	// entry that already exists edits the wrong file. A caller that holds both
+	// tables can sharpen it (internal/cli/validate.go's switch-list rule).
 	for i, m := range r.Claude.Models {
 		at := fmt.Sprintf("%s.claude.models[%d]", path, i)
 		claims := claudeClaimsFor(providers, m)
 		switch {
 		case len(claims) == 0:
-			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is named by the switch but no provider entry claims it: a route entry lists the models it serves, and only the owner can add one, in the project config (or through the layer's claude_models claim, which only adds to a route the config defines) — never in a repository's fugaro.yaml", m)})
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is named by the switch but no provider entry claims it: a route entry lists the models it serves, and only the owner can add one, in the project config (or through the layer's claude_models claim, which only adds to a route the config defines) — never in a repository's fugaro.yaml. Where this table is a run's own routes, an entry that claims the model for other repositories is not among them at all: add this repository to that entry's allow_data_to, then run fugaro init --repo for it (the list a run reads is built into its job at deploy time)", m)})
 		case len(claims) > 1:
-			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by two provider entries, %s: two spellings of one model are one model, and a switch that resolved to whichever name sorts first would route by provider name. Leave the claim on one entry and remove it from the other", m, claimNames(claims))})
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by %d provider entries, %s: two spellings of one model are one model, and a switch that resolved to whichever name sorts first would route by provider name. Leave the claim on one entry and remove it from the others", m, len(claims), claimNames(claims))})
 		case reservedRouteName(claims[0].name):
 			// The entry's name is what the resolver hands back as the route,
 			// and "direct" is the resolver's own value for the direct route:

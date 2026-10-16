@@ -1598,6 +1598,43 @@ func TestProjectReposAddRefusesUnicodeLookalikes(t *testing.T) {
 	}
 }
 
+// TestProjectReposAddRefusesAProviderKindNothingCanMatch is the review finding
+// on projectpolicy.ValidPattern: it held the first allow_repos segment to
+// task.ValidProvider — the shape of a slug, which accepts any lower-case word a
+// slug could be built from — rather than to the kinds a canonical repository can
+// carry (config.Providers, the values a repository's git.provider may be). So
+// `fugaro project repos add githubb/acme/app` published an entry that matches no
+// repository that can exist, which is exactly the silent un-enrollment that
+// function's own doc says it exists to prevent: the operator saw the entry
+// published, and the repository's runs were refused at admission with nothing
+// else to read.
+func TestProjectReposAddRefusesAProviderKindNothingCanMatch(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{"githubb/acme/app", "gitlab/acme/app", "gce/acme/app"} {
+		_, _, err := execute(t, "project", "repos", "add", arg)
+		if err == nil {
+			t.Errorf("%q was accepted; no repository's git.provider can be that kind", arg)
+			continue
+		}
+		// The refusal names the kinds, so the fix is one word rather than a
+		// guess.
+		if !strings.Contains(err.Error(), "github, bitbucket") {
+			t.Errorf("%q was refused without naming the kinds: %v", arg, err)
+		}
+	}
+	if got := publishedPolicy(t, f).AllowRepos; len(got) != 2 {
+		t.Fatalf("allow_repos = %v: a refused argument was written", got)
+	}
+	for _, arg := range []string{"github/acme/app", "bitbucket/acme/app", "*/acme/*"} {
+		if _, _, err := execute(t, "project", "repos", "add", arg); err != nil {
+			t.Errorf("%q is a provider kind and was refused: %v", arg, err)
+		}
+	}
+}
+
 // writeSharedConfig writes the project's shared config into its runs bucket,
 // the way fugaro config publish does, so a seed can read its repository list.
 // It is a full published config because ParseShared validates one against the

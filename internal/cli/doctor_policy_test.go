@@ -850,6 +850,137 @@ func TestDoctorResolvesTheSwitchOverTheLayerARunMerges(t *testing.T) {
 	}
 }
 
+// doctorSwitchTo is the node the routing-resolution tests publish: one route
+// entry that claims the model the switch names, and the switch itself. The node
+// needs its own providers block (projectpolicy holds a published switch to
+// claiming provider entries, validRouting), while the routes a *run* resolves
+// over are this machine's config's (doctorRunRoutes) — two tables, and the
+// check must read the second.
+func doctorSwitchTo(via string) func(*projectpolicy.Policy) {
+	return func(p *projectpolicy.Policy) {
+		p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+			AllowDataTo: []string{"*"},
+		}}}
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{Via: via, Models: []string{"claude-sonnet-5-5"}}}
+	}
+}
+
+// TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps is the review finding on
+// doctorNodeMode: it read a node with no budget block as mode off, and both
+// facts it stands on say otherwise. projectpolicy's decoder refuses a published
+// block that names no mode (validBudget), so leaving the key out is how a policy
+// sets no budget at all, and runner.policyCeiling replaces the environment's
+// ceiling key by key — a node that says nothing about the mode leaves the mode
+// the job was deployed with standing. An enforcing installation whose node says
+// nothing about the budget therefore runs with its gateway on, and halts on a
+// switch no run of the repository can carry out, while doctor printed "no run of
+// this repository reaches the switch (budget.mode is off) … nothing halts under
+// it" — the opposite of what every run does.
+//
+// The mode the check answers the node's silence with is the job's own: this
+// machine's config, whose ceiling init --repo deploys into the environment, the
+// same reading the drift note compares the deployed job with. Both sides are
+// exercised here, so the check is pinned to that reading rather than to the
+// string "off" happening to be wrong.
+func TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps(t *testing.T) {
+	// The node with no budget key at all: the block is deleted rather than
+	// emptied, because an empty one is a node projectpolicy refuses.
+	node := func(t *testing.T) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(doctorPolicy(doctorSwitchTo(config.RouteOpenRouter)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		delete(m, "budget")
+		return m
+	}
+	// The machine's route admits acme/other only, so a run of acme/app carries
+	// none and the switch is unresolved for it: the reach is the half that
+	// changes between the two states below.
+	rows := doctorRunRoutes(`["acme/other"]`, "  acme/app:\n    provider: github\n")
+	// The machine enforces (doctorPolicyRig's own ceiling): the job's gateway is
+	// on, so every run of the project reaches the switch and halts at it.
+	_, db := doctorPolicyRig(t, nil, rows)
+	db.Set(projectpolicy.PathShared(), node(t))
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("the unresolved state is not printed: %+v", res)
+	}
+	if !strings.Contains(res.Problem, "whose gateway is on halts at it") {
+		t.Errorf("a node that sets no budget is not read with the job's own mode (enforce): %+v", res)
+	}
+	if strings.Contains(res.Problem, "budget.mode is off") {
+		t.Errorf("a node that sets no budget key is read as mode off: %+v", res)
+	}
+	// The same node under a machine that is off: nothing reaches the switch
+	// now, which is the state the line has to say — the node's silence is
+	// answered by the environment, in both directions.
+	r, db2 := doctorPolicyRig(t, nil, rows)
+	cfg := strings.Replace(r.cfg, "budget: { mode: enforce", "budget: { mode: off", 1)
+	if cfg == r.cfg {
+		t.Fatal("the rig's ceiling moved: this test rewrites its mode")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.cfg = cfg
+	db2.Set(projectpolicy.PathShared(), node(t))
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
+		t.Fatalf("a machine that is off is read as reaching the switch: %+v", res)
+	}
+}
+
+// TestDoctorDoesNotResolveASwitchNoRunTakes is the review finding on the
+// resolved arm of the routing-resolution check: it printed the resolution and
+// set routed, without ever asking whether a run of the repository reaches the
+// switch. Under a node whose budget mode is off doctor printed
+// "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5"
+// — a route no run takes, since the gateway is off and applyRouting returns
+// before it reads the switch — and routing-cache-markers followed it into "a
+// routed Claude senior's cost is unmeasured", for a policy whose calls all go
+// to Anthropic. validate prints the same state as "nothing takes it here", and
+// the two commands read one switch.
+func TestDoctorDoesNotResolveASwitchNoRunTakes(t *testing.T) {
+	// The machine's route admits this repository, so the switch resolves for it:
+	// the resolved arm, which is the one that was never reach-aware.
+	rows := doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n")
+	const resolved = "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5"
+	_, db := doctorPolicyRig(t, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter)), rows)
+	off := doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))
+	off.Budget.Mode = "off"
+	db.Set(projectpolicy.PathShared(), off)
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, resolved) {
+		t.Fatalf("the resolution is not printed at all: %+v", res)
+	}
+	if !strings.Contains(res.Problem, "nothing takes it here") || !strings.Contains(res.Problem, "budget.mode is off") {
+		t.Fatalf("a resolution no run of this repository takes is printed as the run's: %+v", res)
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "no Claude ID is routed") {
+		t.Errorf("a cost no run of this policy pays is called unmeasured: %+v", cm)
+	}
+	// The contrast on the same fixture: with the node enforcing, every run takes
+	// the route, the line says so, and the cost question is live.
+	doctorPolicyRig(t, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter)), rows)
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, resolved) {
+		t.Fatalf("the resolution is not printed: %+v", res)
+	}
+	if strings.Contains(res.Problem, "nothing takes it here") {
+		t.Errorf("a resolution the runs do take is hedged: %+v", res)
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "unmeasured") {
+		t.Errorf("a routed cost is not called unmeasured: %+v", cm)
+	}
+}
+
 // layerBucketWith writes text as the project layer in a file:// bucket of the
 // test's own and returns the bucket_url a config must carry to read it. A
 // config with no bucket_url: computes the installation's gs:// runs bucket,

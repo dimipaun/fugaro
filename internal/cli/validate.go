@@ -124,7 +124,18 @@ func ceilingText(l policy.Layer) string {
 // with the checkout layer's claims merged in. The *prices* stay lc.Providers'
 // — the claim-blind table the run's environment builds — so a claimed ID is
 // priced by the owner's model_prices and never by the catalog here either.
-func budgetProblems(cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, warnings []config.Problem) {
+//
+// The pins judged here are the pins of a *run*, which are not always the pins
+// the file wrote: applyRouting rewrites every Claude pin the switch names to the
+// route's own ID, and checkProviderModels derives agent.models.background from
+// those pins over the routes the run carries — both before checkBudget reads
+// the allow-list and prices the pins. Judging the file's own pins judged a run
+// that may not exist, in both directions the review found (splitByReach and
+// runPins below carry the details). Which run it is is the switch's reach
+// (routingReachOf), the same question routingProblems asks; the routed pins'
+// provider and price rules are that function's, so the pins it rewrote are
+// left to it here.
+func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, warnings, notes []config.Problem) {
 	// The day cap is the runner's to enforce; the database never sees it.
 	if cfg.Budget != nil && cfg.Budget.PerDayUSD > 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_day_usd",
@@ -137,12 +148,8 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config, claimed map[string]
 		if cfg.Agent.Auth == "vertex" && cfg.Budget != nil && cfg.Budget.Mode == policy.ModeEnforce {
 			problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
 		}
-		return problems, warnings
+		return problems, warnings, nil
 	}
-	// The runner's default background model (a provider coder's own) is the
-	// run's, so the pin rules judge it, not an unset one.
-	agentPins := cfg.Agent
-	agentPins.Models.Background = config.EffectiveBackground(agentPins, claimed)
 	e := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg))
 	for _, ig := range e.Ignored {
 		warnings = append(warnings, clampWarning(ig))
@@ -157,25 +164,64 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config, claimed map[string]
 		}
 		ef.Sources[k] = v
 	}
-	// The switch and the routes the run will have: validate resolves a route ID
-	// the same way the run does, so a pin that names one is admitted here
-	// exactly when the run would route it (config.CheckAllowed's `allowed`).
-	// The switch is the operator's own — the policy node is published from it,
-	// and this command reads no node (design §11: offline) — which is the same
-	// reading the rest of this function gives the providers.
-	allowed := config.CheckAllowed(agentPins, ef, ceilingLayer(lc).AllowedModels, lc.Routing, claimed)
+	// The switch, the routes and the reach: validate resolves a route ID the
+	// same way the run does, so a pin that names one is admitted here exactly
+	// when the run would route it (config.CheckAllowed's `allowed`), and which
+	// pins the run has is the switch's reach. The switch is the operator's own —
+	// the policy node is published from it, and this command reads no node
+	// (design §11: offline) — which is the same reading the rest of this
+	// function gives the providers. The routes are the run's own table, the
+	// operator's providers filtered by allow_data_to for this repository
+	// (runner.ProvidersFor), the same table routingProblems and providerProblems
+	// read.
+	repo, rerr := originRepo(ctx)
+	if rerr != nil {
+		// An unknown repository: only the routes written for every repository
+		// are carried, the reading providerProblems and routingProblems give
+		// the same state (they pass "" to the rules that name a repository).
+		repo = ""
+	}
+	routes := runner.ProvidersFor(claimed, repo)
+	sw := claudeSwitchOf(lc.Routing)
+	reach, _ := routingReachOf(sw, cfg.Agent.Auth, e.Mode)
+	// runPins is what checkProviderModels leaves the pins of the run that
+	// carries a: the agent as applyRouting left it (routedAgent), with its
+	// background derived from those pins over the routes that run carries
+	// (r.backgroundModel is exactly this). The derivation is why an unset
+	// background is not judged as unset: the run fills it with the coder's own
+	// model, and a routed coder is the route's ID, which is the ID the
+	// allow-list has to admit.
+	routed, rewritten := routedAgent(cfg.Agent, sw, routes)
+	rewrittenSet := make(map[string]bool, len(rewritten))
+	for _, p := range rewritten {
+		rewrittenSet[p] = true
+	}
+	runPins := func(a config.Agent) config.Agent {
+		a.Models.Background = config.EffectiveBackground(a, routes)
+		return a
+	}
+	allow := func(a config.Agent) []config.Problem {
+		return config.CheckAllowed(a, ef, ceilingLayer(lc).AllowedModels, lc.Routing, routes)
+	}
+	allowed, allowNotes := splitByReach(reach, allow(runPins(routed)), allow(runPins(cfg.Agent)))
 	problems = append(problems, allowed...)
+	notes = append(notes, allowNotes...)
 	// A role with no model already has its problem: not a second one, from
-	// the pins, saying much the same.
+	// the pins, saying much the same. A pin the allow-list refused, or one it
+	// left to a note (a state that hangs on the job's key), is that pin's line:
+	// the price rule below does not add a second one to it.
 	named := map[string]bool{}
 	for _, p := range allowed {
+		named[p.Path] = true
+	}
+	for _, p := range allowNotes {
 		named[p.Path] = true
 	}
 	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce {
 		problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
 	}
 	if e.Mode == "" || e.Mode == policy.ModeOff {
-		return problems, warnings
+		return problems, warnings, notes
 	}
 	o, err := lc.Overrides()
 	if err != nil {
@@ -190,11 +236,29 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config, claimed map[string]
 		problems = append(problems, config.Problem{Path: "providers", Message: err.Error() + " (in the project config)"})
 	} else if cfg.Agent.Auth != "oauth" {
 		// An oauth run has no gateway: nothing is priced or pinned.
-		for _, p := range config.CheckPins(agentPins, prices) {
-			if !named[p.Path] {
-				problems = append(problems, p)
+		//
+		// The pins priced are the runs' own (runPins), for the same reason the
+		// allow-list is asked of them: CheckPins is the run's own second half of
+		// this gate, over the agent applyRouting and checkProviderModels left
+		// and only with the gateway on — which for auth other than "oauth" is
+		// the mode being on, the check above (checkBudget). The pins the switch
+		// rewrote are left to routingProblems, which judges exactly those with
+		// the run's own provider checks (its routed-pin block): one pin's price
+		// said twice, in two near-identical sentences, is noise dedupeLines
+		// cannot drop, its key being path and message both.
+		pins := func(a config.Agent, takesRoute bool) []config.Problem {
+			var ps []config.Problem
+			for _, q := range config.CheckPins(a, prices) {
+				if named[q.Path] || takesRoute && rewrittenSet[q.Path] {
+					continue
+				}
+				ps = append(ps, q)
 			}
+			return ps
 		}
+		p, n := splitByReach(reach, pins(runPins(routed), true), pins(runPins(cfg.Agent), false))
+		problems = append(problems, p...)
+		notes = append(notes, n...)
 	}
 	if cfg.Agent.Auth == "api-key" && e.Mode == policy.ModeEnforce && e.PerRunUSD <= 0 {
 		// The database's caps are what the rules compare against (D6): a
@@ -203,7 +267,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config, claimed map[string]
 		warnings = append(warnings, config.Problem{Path: "budget.per_run_usd",
 			Message: "the mode is enforce but no per-run cap is set in the project config or here; the database's effective per-run cap still bounds the run when one is set anywhere (the repository's own, the default for repositories without one, or the project's global one), and the run halts (no_cap) only when all three are unset"})
 	}
-	return problems, warnings
+	return problems, warnings, notes
 }
 
 // providerProblems are the rules for models another provider serves, with the
@@ -553,6 +617,14 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 					continue
 				}
 				msg := q.Message
+				if m, ok := switchListModel(sw, q.Path); ok {
+					// The state CheckRouting cannot see from the table it is
+					// handed: the entry that claims this model exists and its
+					// allow_data_to leaves this repository out, so the entry is
+					// not in the run's table at all and the rule above reads it
+					// as a model nobody claims. validate holds both tables.
+					msg += switchListFilteredClause(sw, m, repo, claimed, routes)
+				}
 				verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth, mode)
 				msg += verdict
 				if halt {
@@ -876,6 +948,107 @@ func switchVerdict(reach routingReach, why runner.RoutingInert, auth, mode strin
 	}
 }
 
+// splitByReach sorts the findings two runs produce into refusals and notes:
+// routed is what a run whose pins the switch rewrote refuses, direct what a run
+// that kept the file's pins refuses.
+//
+//   - routingAlways: every run of this configuration takes the route, so the
+//     routed run's findings are the configuration's — problems.
+//   - routingInert: no run reaches the switch, so the pins are the file's own
+//     and the direct run's findings are.
+//   - routingKeyless (via: auto with an api-key credential, where a stored
+//     Anthropic API key turns the run back to the direct path): both runs exist
+//     and which one a job is is not a fact this command reads, so a finding
+//     *both* runs make is a problem — every run of this configuration halts on
+//     it, which is the rule switchVerdict states for the routing lines — and
+//     one only one of them makes is a note naming which run halts. The note is
+//     the owner's ruling on the same question (the no-key Claude pin): name
+//     both states rather than pick one.
+//
+// The two runs' findings are keyed by path, not by message: one pin refused by
+// both runs is one defect even where the two name different IDs for it (the
+// file's spelling and the route's are the same model). The routed run's line is
+// the one reported where both make it, because that is the run the switch's own
+// lines talk about.
+func splitByReach(reach routingReach, routed, direct []config.Problem) (problems, notes []config.Problem) {
+	switch reach {
+	case routingAlways:
+		return routed, nil
+	case routingInert:
+		return direct, nil
+	}
+	byPath := func(ps []config.Problem) map[string]bool {
+		m := make(map[string]bool, len(ps))
+		for _, p := range ps {
+			m[p.Path] = true
+		}
+		return m
+	}
+	routedPaths, directPaths := byPath(routed), byPath(direct)
+	for _, p := range routed {
+		if directPaths[p.Path] {
+			problems = append(problems, p)
+			continue
+		}
+		notes = append(notes, config.Problem{Path: p.Path, Message: p.Message + noKeyRunHalts})
+	}
+	for _, p := range direct {
+		if routedPaths[p.Path] {
+			continue // said above, once, with the routed run's own words
+		}
+		notes = append(notes, config.Problem{Path: p.Path, Message: p.Message + keyRunHalts})
+	}
+	return problems, notes
+}
+
+// The two clauses splitByReach ends a note with under via: auto: which of the
+// two runs the finding belongs to, and what the other one does instead. Both
+// runs are named because the fact that decides it — the Anthropic API key
+// stored in the job — is not a fact validate reads offline (the owner's ruling
+// on the no-key Claude pin).
+const (
+	noKeyRunHalts = " (via: auto, which this depends on: a run of this repository with no Anthropic API key stored takes the switch's route, and this is refused there, so that run halts; one with a key stored keeps the pins direct and does not)"
+	keyRunHalts   = " (via: auto, which this depends on: a run of this repository with an Anthropic API key stored keeps the pins direct, and this is refused there, so that run halts; one with no key stored takes the switch's route and does not)"
+)
+
+// switchListFilteredClause is the clause a switch-list line gets where the model
+// does resolve over the operator's own table but not over the routes a run of
+// this repository carries. config.CheckRouting wrote its line from the table it
+// was handed — the run's own, which is what the run judges: runner.ProvidersFor
+// keeps the entries whose allow_data_to admits the repository and drops the
+// rest, so an entry this repository may not send code to is not in it at all,
+// and the rule reads that state as "no provider entry claims it". A line saying
+// only that sends the operator to write a route entry that already exists; this
+// names the entry, its allow_data_to and the repository, so the write is one
+// line rather than a search (the review finding on that message).
+//
+// Empty for every state it is not about: no repository was named (nothing was
+// filtered out over "", so the two tables cannot differ about it), the switch
+// does not name the model, the operator's own table does not resolve it either
+// (nothing claims it, or the claims are ambiguous — CheckRouting has its own
+// line for each of those, and RoutingClaudeFor answers !ok for both), or the
+// run's table does resolve it after all.
+func switchListFilteredClause(sw *config.RoutingClaude, model, repo string, own, routes map[string]config.ModelProvider) string {
+	if sw == nil || repo == "" {
+		return ""
+	}
+	entry, sent, ok := config.RoutingClaudeFor(sw, model, own)
+	if !ok || entry == config.RouteDirect {
+		return ""
+	}
+	if _, _, ok := config.RoutingClaudeFor(sw, model, routes); ok {
+		return ""
+	}
+	p, ok := own[entry]
+	if !ok || len(p.AllowDataTo) == 0 {
+		// An entry that wrote no allow_data_to is carried by every repository's
+		// run (config.ModelProvider.AllowsData), so it cannot be the one the
+		// filter dropped: there is nothing to point the operator at.
+		return ""
+	}
+	return fmt.Sprintf(". The entry that claims it is %s, which serves %s: this repository's run does not carry that entry, because its allow_data_to (%s) does not name %s — add %s to it in the project config and run fugaro init --repo for this repository (the list a run reads is built into its job at deploy time)", entry, sent, `"`+strings.Join(p.AllowDataTo, `", "`)+`"`, repo, repo)
+}
+
 // switchListPrefix is config.CheckRouting's own path for one entry of the
 // switch's list, with the "routing" path validate passes it: the key the owner
 // edits, spelled the same on both sides of the rule.
@@ -1170,8 +1343,8 @@ func newValidateCmd() *cobra.Command {
 				// The model checks judge the roles as the effective recipe
 				// leaves them.
 				ecfg := withRecipeRoles(filepath.Dir(path), cfg)
-				bp, bw := budgetProblems(ecfg, lc, claimed)
-				problems, warnings = append(problems, bp...), append(bw, rw...)
+				bp, bw, bn := budgetProblems(cmd.Context(), ecfg, lc, claimed)
+				problems, warnings, notes = append(problems, bp...), append(bw, rw...), append(notes, bn...)
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc, claimed)

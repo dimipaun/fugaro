@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -339,7 +340,7 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 		ModelPrices: map[string]localcfg.ModelPrice{"sonnet": {InputPerM: one(1), OutputPerM: one(5)}},
 	}
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "api-key", Model: "claude-acme-1", Models: config.ModelRoles{Background: "claude-haiku-4-5"}}}
-	ps, _ := budgetProblems(cfg, lc, lc.Providers)
+	ps, _, _ := budgetProblems(context.Background(), cfg, lc, lc.Providers)
 	if len(ps) != 1 || ps[0].Path != "model_prices" {
 		t.Fatalf("problems = %v, want only the model_prices one", ps)
 	}
@@ -349,11 +350,11 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 func TestBudgetProblemsSkipPinsForOAuth(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", Budget: &localcfg.Budget{Mode: localcfg.BudgetObserve}}
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "oauth"}}
-	if ps, _ := budgetProblems(cfg, lc, lc.Providers); len(ps) != 0 {
+	if ps, _, _ := budgetProblems(context.Background(), cfg, lc, lc.Providers); len(ps) != 0 {
 		t.Fatalf("problems = %v", ps)
 	}
 	cfg.Agent.Auth = "api-key"
-	if ps, _ := budgetProblems(cfg, lc, lc.Providers); len(ps) == 0 {
+	if ps, _, _ := budgetProblems(context.Background(), cfg, lc, lc.Providers); len(ps) == 0 {
 		t.Fatal("api-key with no models passed")
 	}
 }
@@ -631,7 +632,7 @@ func TestValidateWarnsPerDayIsClientEnforced(t *testing.T) {
 	}
 	// With no project config the warning stays.
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "api-key"}, Budget: &config.Budget{PerDayUSD: 10}}
-	if _, ws := budgetProblems(cfg, nil, nil); len(ws) != 1 || ws[0].Path != "budget.per_day_usd" {
+	if _, ws, _ := budgetProblems(context.Background(), cfg, nil, nil); len(ws) != 1 || ws[0].Path != "budget.per_day_usd" {
 		t.Fatalf("warnings = %v", ws)
 	}
 	path = fileWithBudget(t, "budget: { mode: observe }\n", "budget: { per_run_usd: 1 }\n", pinnedAgent)
@@ -1400,6 +1401,87 @@ func TestValidateJudgesTheSwitchOverTheModelsItNames(t *testing.T) {
 	}
 }
 
+// TestValidatePointsAtAllowDataToWhenTheEntryIsThere is the review finding on
+// the switch-list line "no provider entry claims it". The rule is asked of the
+// routes a run of this repository carries — runner.ProvidersFor keeps the
+// entries whose allow_data_to admits the repository and drops the rest — so an
+// entry that claims the model for *other* repositories is not in that table at
+// all, and the rule cannot tell that state from a model nobody claims. The
+// operator reading the first sentence goes and writes a route entry that already
+// exists; the fix is one word in its allow_data_to (and then init --repo, since
+// the list a run reads is built into its job at deploy time).
+//
+// config.CheckRouting judges one table and cannot know which of the two it is
+// holding; validate holds both, and this is the clause only a caller with both
+// can write. The same fixture in the checkout the entry is written for resolves,
+// which is the contrast that makes the clause about the filter rather than about
+// the switch.
+func TestValidatePointsAtAllowDataToWhenTheEntryIsThere(t *testing.T) {
+	const project = "budget: { mode: enforce, per_run_usd: 5 }\n" + `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["anthropic/claude-sonnet-5.5"]
+    allow_data_to: ["acme/sandbox"]
+` + "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n"
+	// The pins are another Claude model, so the switch's own list is the whole
+	// of the question (the pin rule judges a model the file pins itself).
+	const agent = "agent:\n  auth: api-key\n  model: claude-opus-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	run := func(t *testing.T, repo string) (string, string, error) {
+		t.Helper()
+		isolateProjects(t, t.TempDir())
+		projectRouting(t, project)
+		inCheckoutOf(t, repo)
+		return execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", agent, 1)))
+	}
+	out, _, err := run(t, "acme/app")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, want %d: a switch no run of this repository can carry out is a halt\n%s", ExitCode(err), ExitUserError, out)
+	}
+	// The rule's own sentence is still there — this clause is added to it, not
+	// instead of it — and the entry, its list and the repository are named
+	// beside it.
+	if !strings.Contains(out, "no provider entry claims it") {
+		t.Fatalf("the rule's own sentence is gone:\n%s", out)
+	}
+	for _, want := range []string{"openrouter", "allow_data_to", `"acme/sandbox"`, "acme/app", "fugaro init --repo"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the line does not name %q, so the operator is sent to write an entry that is there:\n%s", want, out)
+		}
+	}
+	// The entry it names is the one that claims the model, not any entry.
+	if !strings.Contains(out, "serves anthropic/claude-sonnet-5.5") {
+		t.Errorf("the line does not say what the entry serves:\n%s", out)
+	}
+	// The contrast: in the checkout that entry is written for, the switch
+	// resolves and the file is valid.
+	if out, errOut, err := run(t, "acme/sandbox"); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("the clause's own fixture is refused where it resolves: %v\n%s%s", err, out, errOut)
+	}
+	// The clause is empty for the states it is not about, which the CLI path
+	// cannot all reach (a project config whose own table does not resolve the
+	// model at all is refused at load, before this rule is asked).
+	sw := &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}
+	own := map[string]config.ModelProvider{"openrouter": {Models: []string{"anthropic/claude-sonnet-5.5"}, AllowDataTo: []string{"acme/sandbox"}}}
+	for _, tc := range []struct {
+		name, model, repo string
+		own, routes       map[string]config.ModelProvider
+	}{
+		{"no repository named", "claude-sonnet-5-5", "", own, nil},
+		{"the switch does not name the model", "claude-opus-5-5", "acme/app", own, nil},
+		{"nothing claims it at all", "claude-sonnet-5-5", "acme/app", map[string]config.ModelProvider{}, nil},
+		{"the run carries the entry", "claude-sonnet-5-5", "acme/app", own, own},
+		{"the entry wrote no allow_data_to", "claude-sonnet-5-5", "acme/app",
+			map[string]config.ModelProvider{"openrouter": {Models: []string{"anthropic/claude-sonnet-5.5"}}}, nil},
+	} {
+		if got := switchListFilteredClause(sw, tc.model, tc.repo, tc.own, tc.routes); got != "" {
+			t.Errorf("%s: clause = %q, want empty", tc.name, got)
+		}
+	}
+}
+
 // TestValidateDoesNotJudgeTheSwitchOverARepositoryNobodyNamed pins the state
 // this rule learned to leave alone. With no origin remote there is no repository
 // to filter the routes by, and runner.ProvidersFor keeps only the entries
@@ -1802,6 +1884,72 @@ func TestValidateAgreesWithTheRunAboutTheRoutedPins(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestValidateJudgesTheAllowListOfThePinsTheRunHas is the review finding on
+// budgetProblems: it asked config.CheckAllowed of the pins the file wrote and
+// derived the background pin before routing, while the run asks both of the pins
+// applyRouting left. Two configurations a run admits were refused here:
+//
+//   - the allow-list spells the model as the route's own ID
+//     (allowed_models: ["anthropic/claude-sonnet-5.5"]) while the file pins the
+//     canonical ID: applyRouting rewrites that pin to the route's ID, which the
+//     run admits by its own name, and validate reported "claude-sonnet-5-5 is
+//     not an allowed model";
+//   - the file names no background at all: the run derives it from the *routed*
+//     pins over the routes it carries (checkProviderModels sets
+//     agent.models.background before checkBudget reads the allow-list), so the
+//     pin is the route's ID — on the list — and validate reported
+//     "agent.models.background names no model, but the run has an allow-list".
+//
+// Both are the same fixture, because both are the same run: the file pins the
+// canonical coder, names no background, and the switch routes that coder to the
+// ID the allow-list spells.
+//
+// The two vias are the two reaches: with via: openrouter every run of the
+// configuration takes the route and the pins judged are those, so validate has
+// nothing to say; under via: auto the run with a stored Anthropic API key keeps
+// the pins direct and *does* halt on the file's own spelling, a fact that hangs
+// on the job's key, so the line is a note naming which run halts (the owner's
+// ruling on the sibling no-key case) and validate still exits 0.
+func TestValidateJudgesTheAllowListOfThePinsTheRunHas(t *testing.T) {
+	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+	const enforce = "budget: { mode: enforce, per_run_usd: 5, allowed_models: [\"" + routed + "\"] }\n"
+	// The file: the canonical coder the switch routes, and no background model.
+	const claude = "agent:\n  auth: api-key\n  model: " + canonical + "\nworkflows:"
+	for _, via := range []string{config.RouteOpenRouter, config.RouteAuto} {
+		t.Run("via: "+via, func(t *testing.T) {
+			isolateProjects(t, t.TempDir())
+			projectRouting(t, enforce+routedProjectBlock+"routing:\n  claude:\n    via: "+via+"\n    models: ["+canonical+"]\n")
+			inCheckoutOf(t, "acme/sandbox")
+			out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
+			if err != nil {
+				t.Fatalf("validate refused a configuration the run admits (via: %s): %v\n%s%s", via, err, out, errOut)
+			}
+			// The two lines the file's own spelling produced, in the words
+			// budgetProblems used: neither may be a problem in any state.
+			for _, said := range []string{"is not an allowed model", "names no model, but the run has an allow-list"} {
+				if strings.Contains(out, said) {
+					t.Errorf("a pin the run admits is refused: %q\n%s", said, out)
+				}
+			}
+			if via == config.RouteOpenRouter {
+				// Every run takes the route: there is no state left to name.
+				if strings.Contains(errOut, "is not an allowed model") || strings.Contains(errOut, "names no model") {
+					t.Fatalf("a resolution every run takes is hedged:\n%s", errOut)
+				}
+				return
+			}
+			// via: auto: the run that keeps the pins direct refuses the
+			// canonical spelling, which is a note and names that run.
+			if !strings.Contains(errOut, "`"+canonical+"` is not an allowed model") {
+				t.Fatalf("the run that keeps the pins direct is not named:\n%s", errOut)
+			}
+			if !strings.Contains(errOut, "with an Anthropic API key stored keeps the pins direct") {
+				t.Fatalf("the note does not say which run halts:\n%s", errOut)
+			}
+		})
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -221,10 +222,29 @@ func TestValidPattern(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"", "acme/*", "github", "github/acme", "GitHub/acme/app", "github/acme/app.git", "github/acme/a b", "github//app", "github/acme/",
-		"github/../app", "github/./app", "github/acme/..", "github/acme/."} {
+		"github/../app", "github/./app", "github/acme/..", "github/acme/.",
+		// The first segment is a git provider *kind*, not any lower-case word:
+		// task.CanonicalRepo takes a repository's kind from its own
+		// git.provider, which config.Providers lists, so a pattern spelled with
+		// anything else admits no repository. Accepting it published an entry
+		// that silently enrolled nothing (the review finding on this check),
+		// which is the one failure the function exists to prevent.
+		"githubb/acme/app", "gitlab/acme/app", "gcp/acme/*", "githu*/acme/app"} {
 		if err := ValidPattern(bad); err == nil {
 			t.Errorf("ValidPattern(%q) = nil, want an error", bad)
 		}
+	}
+	// Every kind a canonical repository may carry is accepted, and the message
+	// for a kind that is not one names them: the operator's fix is the word,
+	// not the shape (test.CanonicalRepo accepts "githubb" as a slug).
+	for _, kind := range config.Providers {
+		if err := ValidPattern(kind + "/acme/app"); err != nil {
+			t.Errorf("ValidPattern(%q) = %v, want nil", kind+"/acme/app", err)
+		}
+	}
+	err := ValidPattern("githubb/acme/app")
+	if err == nil || !strings.Contains(err.Error(), strings.Join(config.Providers, ", ")) {
+		t.Errorf("the refusal of a misspelt kind does not name the kinds: %v", err)
 	}
 }
 
