@@ -970,6 +970,56 @@ func projectRouting(t *testing.T, body string) {
 	}
 }
 
+// TestValidateReportsAProjectConfigItCouldNotRead is the review finding on
+// validate's project config and the unresolved-offline line: selectedProjectConfig
+// answers nil both for a machine where nothing selects a project config and for
+// one whose config is there and was refused at load, and the routing line read
+// the second as the first — "the switch is the operator's project config for
+// aurora and this command has none selected" for a config that is selected and
+// unreadable — and validate exited 0, so a CI job saw a green run of a config
+// nobody could read.
+//
+// A config that is there and refused is a real problem with the operator's
+// config: validate says which it is, in the words of the error the loader
+// itself gave, and fails. A machine with no config selected at all is the state
+// that line was written for, and it stays a note with exit 0.
+func TestValidateReportsAProjectConfigItCouldNotRead(t *testing.T) {
+	const claude = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\nworkflows:"
+	// The switch names a Claude model no provider entry claims, which is a
+	// refusal at load (localcfg's own CheckRouting): the config exists, and
+	// nothing can read it.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, routedSwitchBlock)
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	out, errOut, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit code = %d, want %d (err %v)\n%s", ExitCode(err), ExitUserError, err, out)
+	}
+	if !strings.Contains(out, "could not be read") {
+		t.Fatalf("a project config that could not be read is not reported:\n%s\n%s", out, errOut)
+	}
+	if !strings.Contains(out, "claude-sonnet-5-5") {
+		t.Errorf("the line does not carry the loader's own reason:\n%s", out)
+	}
+	if strings.Contains(errOut, "none selected") {
+		t.Errorf("a config that is there is reported as none selected:\n%s", errOut)
+	}
+	// The state that line is for: no project config at all is a note, and
+	// validate still passes the file (nothing here is wrong with it).
+	isolateProjects(t, t.TempDir())
+	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	out, errOut, err = execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("validate with no project config at all: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "none selected") {
+		t.Fatalf("no project config at all no longer says so:\n%s", errOut)
+	}
+	if strings.Contains(out, "could not be read") {
+		t.Errorf("a machine with no project config reports one that could not be read:\n%s", out)
+	}
+}
+
 // TestValidatePrintsUnresolvedOffline is plan task 1b.3's first requirement
 // (design §11): the routing resolution is printed when validate can read the
 // switch — the operator's own project config — and the line says "unresolved

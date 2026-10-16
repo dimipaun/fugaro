@@ -378,7 +378,7 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // repository asking for a model to be served by a route the owner defines — the
 // interim path the switch does not replace (D1a) — and it is not the owner
 // saying this project has no Anthropic key; the owner's own route table is.
-func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, notes []config.Problem) {
+func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider, lcErr error) (problems, notes []config.Problem) {
 	pins := claudePins(cfg.Agent, claimed)
 	readable := lc != nil && lc.Name == cfg.Project
 	// The switch is the operator's project config: with none there is nothing
@@ -487,6 +487,14 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	routedPaths := map[string]bool{}
 	for _, p := range pins {
 		if !readable {
+			if lcErr != nil {
+				// The project config is there and was refused at load: the
+				// reason is the loader's own, reported once as a problem (the
+				// caller's line). The words below — "this command has none
+				// selected" — are false of that state, so the resolution is not
+				// said a second time here, in those words.
+				continue
+			}
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
 				"%s unresolved offline: the switch is the operator's project config for %s and this command has none selected (design §11), so a resolution it cannot read is not printed as one; `fugaro doctor` reads the published policy and prints it", p.model, cfg.Project)})
 			continue
@@ -976,7 +984,12 @@ func newValidateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rf, err := resolveFugaroYAML(cmd.Context(), data, selectedProjectConfig(cmd.Context()), layerOptions{File: layerFile, Offline: offline, Lenient: true})
+			// The project config, and the reason there is none: a config that is
+			// there and was refused at load is a real problem with it
+			// (selectedProjectConfigErr), never the state "nothing selected"
+			// (the routing note below), and the file's own checks cannot see it.
+			lc, lcErr := selectedProjectConfigErr(cmd.Context())
+			rf, err := resolveFugaroYAML(cmd.Context(), data, lc, layerOptions{File: layerFile, Offline: offline, Lenient: true})
 			if err != nil {
 				return err
 			}
@@ -1002,7 +1015,10 @@ func newValidateCmd() *cobra.Command {
 				// of a valid file, from a config the rules below do not judge
 				// anything by either (budgetProblems and providerProblems
 				// return early for another project).
-				lc := selectedProjectConfig(cmd.Context())
+				// lc is the config selected above, read once for the whole
+				// command: a broken one is already reported as a problem
+				// (selectedProjectConfigErr), so the rules below see the same
+				// nil they saw before.
 				var claimed map[string]config.ModelProvider
 				if lc != nil {
 					claimed = lc.Providers
@@ -1024,7 +1040,7 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc, claimed)
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
-				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, claimed)
+				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, claimed, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
@@ -1040,6 +1056,18 @@ func newValidateCmd() *cobra.Command {
 						problems[i].Message = fmt.Sprintf("is required: add `project: %s` (the Fugaro project this repository belongs to)", name)
 					}
 				}
+			}
+			if lcErr != nil {
+				// Prepended, not appended: this is the reason the lines below it
+				// said less — there is no switch to resolve, and the budget and
+				// provider rules each return early with no project config — and
+				// an operator reading top-down should meet it first. Added here
+				// rather than where the selection was made because the file's own
+				// checks above rebuild the problem list (a config that resolved
+				// carries no problems of its own, so rf.Problems is empty and the
+				// list is built from config.Check on).
+				problems = append([]config.Problem{{Path: "project config",
+					Message: "could not be read: " + oneLineCLI(lcErr.Error())}}, problems...)
 			}
 			warnings = append(layerWarnings, warnings...)
 			out := cmd.OutOrStdout()

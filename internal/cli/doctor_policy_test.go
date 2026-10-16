@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // doctorPolicyRig is newDoctorRig with the project's budget backend: the RTDB
@@ -756,24 +758,122 @@ func TestDoctorDoesNotPromiseAHaltTheSwitchNeverReaches(t *testing.T) {
 	if !strings.Contains(res.Problem, "whose gateway is on halts at it") {
 		t.Fatalf("an explicit switch's halt is not reported: %+v", res)
 	}
-	// And with this machine's budget off, no run of the repository reaches the
+	// And with the node's own mode off, no run of the repository reaches the
 	// switch at all: nothing halts here, which the line now says instead of
-	// asserting the halt the budget's own state rules out.
-	r, _ := doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteAuto)), rows())
-	off := strings.Replace(r.cfg, "mode: enforce, per_run_usd: 5", "mode: off", 1)
-	if off == r.cfg {
-		t.Fatal("the rig's budget line was not found to turn off")
-	}
-	if err := os.WriteFile(r.cfgPath, []byte(off), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// asserting the halt the budget's own state rules out. The mode is the
+	// node's, not this machine's config's: a run's ceiling is the node's key by
+	// key (runner.policyCeiling), so a machine whose own budget block says off
+	// under a node that says enforce runs with its gateway on — the check reads
+	// the node, and this is the state that shows it.
+	_, db := doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteAuto)), rows())
+	off := doctorPolicy(switchTo(config.RouteAuto))
+	off.Budget.Mode = "off"
+	db.Set(projectpolicy.PathShared(), off)
 	res = doctorChecksByID(t)["routing-resolution"]
 	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
-		t.Fatalf("a switch the machine's budget never reaches is reported as a halt: %+v", res)
+		t.Fatalf("a switch the node's budget never reaches is reported as a halt: %+v", res)
 	}
 	if strings.Contains(res.Problem, "whose gateway is on halts") {
-		t.Errorf("nothing halts under a budget that is off, and the line says one does: %+v", res)
+		t.Errorf("nothing halts under a node that is off, and the line says one does: %+v", res)
 	}
+}
+
+// TestDoctorResolvesTheSwitchOverTheLayerARunMerges is the second review
+// finding on the routing-resolution line: it resolved over this machine's own
+// providers alone, and a run's routes are those providers with the project
+// layer's claude_models merged in (runner.resolveConfig: config.ClaimsOnRoutes
+// then config.ApplyClaudeClaims). A layer claim is exactly how a route the
+// owner defined comes to serve a Claude ID the owner's own models list does not
+// name, so with one doctor printed "none of the routes a run of this repository
+// carries claims it ... halts at it" for a run whose switch resolves — the
+// false confidence, in the other direction, of the finding beside it.
+//
+// The claims are read from the checkout doctor is in, over the layer that
+// checkout's fugaro.yaml resolves (fugaroYAMLCheck, the same resolution
+// doctorLayerChecks reads): a layer applies to a repository whose own
+// fugaro.yaml names the layer's project and gcp_project, which this machine can
+// read for its checkout alone. doctor therefore merges the claims for that
+// repository, and says so — rather than resolving over claims it cannot know —
+// for every other repository its config names.
+func TestDoctorResolvesTheSwitchOverTheLayerARunMerges(t *testing.T) {
+	// The layer claims the very model the switch names on the owner's route:
+	// the entry's own models list does not name it, so without the claim the
+	// route serves nothing the switch can resolve.
+	bucket := layerBucketWith(t, testProjectLayer+"claude_models:\n  openrouter: [anthropic/claude-sonnet-5.5]\n")
+	policy := doctorPolicy(func(p *projectpolicy.Policy) {
+		p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: "anthropic-compat", BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+			AllowDataTo: []string{"*"},
+		}}}
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{
+			Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}}
+	})
+	// The machine's own entry serves a different Claude model: the switch's ID
+	// is the layer's to claim, and the route is the owner's (base_url, auth,
+	// secret, allow_data_to and the ID are not the layer's to write).
+	rows := "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n" +
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"anthropic/claude-opus-4.5\"]\n" +
+		"    allow_data_to: [\"acme/app\"]\nrepos:\n  acme/app: { provider: github }\n  acme/other: { provider: github }\n"
+	doctorPolicyRig(t, policy, "bucket_url: "+bucket+"\n"+rows)
+	// doctor's own checkout is acme/app's, so acme/app's run is the one whose
+	// layer this machine can read.
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": minimalAnchored, "build.sh": "true\n", "test.sh": "true\n", "package-lock.json": "{}\n"})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Fatalf("the layer's claim does not resolve the switch for the repository doctor is in: %+v", res)
+	}
+	if strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Errorf("a run that resolves is reported as halting: %+v", res)
+	}
+	// The other repository's layer is that repository's own fugaro.yaml's to
+	// name, and this machine has no checkout of it: the line says the claim is
+	// unknown there rather than asserting either outcome.
+	other := res.Problem[strings.Index(res.Problem, "acme/other: "):]
+	if !strings.Contains(other, "acme/other: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("a repository with no checkout of its own is resolved over this checkout's layer: %+v", res)
+	}
+	if !strings.Contains(other, "project layer") {
+		t.Errorf("the unresolved line for another repository does not say the layer is unknown there: %+v", other)
+	}
+
+	// And with no layer published the owner's table is the whole truth: the
+	// same switch is unresolved for acme/app too, with nothing to hedge about.
+	doctorPolicyRig(t, policy, "bucket_url: "+layerBucketWith(t, "")+"\n"+rows)
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("without a layer the switch resolves over a claim that is not there: %+v", res)
+	}
+	if strings.Contains(res.Problem, "-> openrouter") {
+		t.Errorf("a resolution is printed for a run whose routes serve nothing the switch names: %+v", res)
+	}
+}
+
+// layerBucketWith writes text as the project layer in a file:// bucket of the
+// test's own and returns the bucket_url a config must carry to read it. A
+// config with no bucket_url: computes the installation's gs:// runs bucket,
+// which fakeEndpointsOnGS refuses to read for real behind the doctor rig's fake
+// endpoints — so a test that wants a layer resolved names a real one, exactly
+// as newCloudFixture does.
+func layerBucketWith(t *testing.T, text string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, filepath.FromSlash(config.LayerKey))
+	if text == "" {
+		// An empty bucket: no object, so no layer applies.
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return "file://" + dir
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return "file://" + dir
 }
 
 // doctorRunRoutes is the machine's own side of a routing resolution: the
