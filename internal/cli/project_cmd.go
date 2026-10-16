@@ -590,7 +590,9 @@ func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 //     would drop `routing.gemini` with no refusal and no diff line (the review
 //     of PR #414), and the node is the only place that block exists.
 //
-// A node with no routing member is written without one, which is direct (D1b).
+// A node with no routing member, and one whose member is written as null, are
+// both written without one — that is direct (D1b), and the policy's own decode
+// reads the two the same way.
 func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouting bool) ([]byte, error) {
 	node, err := json.Marshal(pol)
 	if err != nil {
@@ -606,7 +608,14 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 		// that silently lost the block.
 		return nil, userErr("%s cannot be read back as a document, so its routing block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
 	}
-	if !ok {
+	if !ok || projectpolicy.IsNull(routing) {
+		// No member and a null member are one thing here, as they are to Decode
+		// (validRoutingMembers reads a null block as the absent one): the node
+		// carries no switch, so there is nothing to keep and nothing to patch,
+		// and the node the publisher built is written as it is. Refusing a null
+		// member instead — the check below reads it as a non-object block — made
+		// a published `"routing": null` unpublishable until it was edited by
+		// hand (review finding on this change).
 		return node, nil
 	}
 	// The member names, before anything is written into the block. Decode refuses
@@ -660,7 +669,9 @@ func mergeRoutingClaude(routing json.RawMessage, c *projectpolicy.ClaudeRoute) (
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
+	if !ok || projectpolicy.IsNull(claude) {
+		// No claude member, or one written as null: the config's switch is the
+		// whole of it (the null member is an absent one to Decode too).
 		return json.Marshal(c)
 	}
 	if len(c.Models) > 0 {

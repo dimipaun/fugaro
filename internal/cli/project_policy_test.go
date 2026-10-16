@@ -2157,6 +2157,68 @@ func TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting(t *testing.
 	}
 }
 
+// TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent: a document can carry
+// `"routing": null`, and a null member inside the block. The read path reads
+// both as the absent thing they are — jsonMember returns the four bytes,
+// projectpolicy's IsNull calls that absent, and validRoutingMembers skips a null
+// block without a word — but the write path judged the member by its bytes, so
+// policyNodeBytes refused such a node with "carries a routing block this Fugaro
+// cannot read the way it is written", and mergeRoutingClaude refused the null
+// `claude` inside it the same way. One member read two ways by the two halves of
+// one release (review finding on this change).
+//
+// It is exercised where it stands rather than through the command surface, for
+// the reason TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers gives: RTDB
+// writes a null as a delete, so the service never serves such a document, which
+// is exactly why the half that only *writes* documents must not be the half that
+// gets this wrong. The null is what this reader already allows for a document
+// that arrived by another route (a hand-written node, an import).
+func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
+	quiet := &projectpolicy.Policy{Version: projectpolicy.Version}
+	switchOn := &projectpolicy.Policy{Version: projectpolicy.Version, Routing: &config.Routing{
+		Claude: &projectpolicy.ClaudeRoute{Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}},
+	}}
+	for _, tc := range []struct {
+		name, old string
+		pol       *projectpolicy.Policy
+		keep      bool
+	}{
+		{"a null routing member, kept", `{"version": 1, "routing": null}`, quiet, true},
+		{"a null routing member, replaced by the config's switch", `{"version": 1, "routing": null}`, switchOn, false},
+		{"a null claude member, replaced by the config's switch", `{"version": 1, "routing": {"claude": null}}`, switchOn, false},
+	} {
+		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep)
+		if err != nil {
+			t.Errorf("%s: policyNodeBytes = %v, want the node written", tc.name, err)
+			continue
+		}
+		var got map[string]any
+		if err := json.Unmarshal(node, &got); err != nil {
+			t.Errorf("%s: the node is not a document: %v", tc.name, err)
+			continue
+		}
+		routing, ok := nodeAt(got, "routing")
+		if !tc.keep {
+			// The config's switch is what the node now says, over the null it
+			// found.
+			if !ok {
+				t.Errorf("%s: the node carries no routing block: %s", tc.name, node)
+				continue
+			}
+			if v, _ := nodeAt(got, "routing", "claude", "via"); v != string(config.RouteOpenRouter) {
+				t.Errorf("%s: routing.claude.via = %v, want the config's %q (routing %v)",
+					tc.name, v, config.RouteOpenRouter, routing)
+			}
+			continue
+		}
+		// Kept, with nothing to keep: a null member is not a block to carry
+		// over, and the node is the policy the publisher built.
+		if ok && routing != nil {
+			t.Errorf("%s: the node carries routing %v, want none", tc.name, routing)
+		}
+	}
+}
+
 // TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers: the publish path's own gate
 // on the member names it is about to patch into. It is not reachable through the
 // command surface — Decode refuses such a node first (validRoutingMembers calls
