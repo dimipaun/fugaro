@@ -55,7 +55,7 @@ func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) boo
 	if cfg != nil {
 		layer = cfg.Layer
 	}
-	providers, _ := layerRoutes(lc, layer, repo)
+	providers, _, _ := layerRoutes(lc, layer, repo)
 	return config.AnthropicKeyNeeded(cfg.Agent, providers, repo, mode)
 }
 
@@ -121,10 +121,15 @@ func ceilingText(l policy.Layer) string {
 // loosen is a warning, as is an enforce with no cap anywhere (the run would
 // halt no_cap). With no project config, or one for another project, only the
 // file's shape (checked by config.Check) applies.
-// claimed is the route table the run will have (layerRoutes): lc.Providers
-// with the checkout layer's claims merged in. The *prices* stay lc.Providers'
-// — the claim-blind table the run's environment builds — so a claimed ID is
-// priced by the owner's model_prices and never by the catalog here either.
+// claimed is the owner's whole route table with the checkout layer's claims
+// written over the entries this repository's runs carry (layerRoutes). The
+// routes judged here are the run's own, filtered out of it with
+// runner.ProvidersFor, exactly as the run's job environment is written; a rule
+// that reads an entry's own allow_data_to needs the entries the filter drops,
+// which is why providerProblems gets this table and not the filtered one. The
+// *prices* stay lc.Providers' — the claim-blind table the run's environment
+// builds — so a claimed ID is priced by the owner's model_prices and never by
+// the catalog here either.
 //
 // The pins judged here are the pins of a *run*, which are not always the pins
 // the file wrote: applyRouting rewrites every Claude pin the switch names to the
@@ -278,9 +283,13 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 // the warnings of the pins' prices (unverified placeholders, defaulted cache
 // rates). The repository is the checkout's origin; without one the
 // allow_data_to rule can't be checked, and a warning says so.
-// claimed is the route table the run will have (layerRoutes); the price table
-// is lc.Providers' own, exactly as budgetProblems builds it and as the run's
-// environment does.
+// claimed is the owner's whole route table with the layer's claims written over
+// the entries this repository's runs carry (layerRoutes), which is what the
+// rules here read: CheckProviderPolicy asks which entry serves a pin *and*
+// whether that entry's own allow_data_to names this repository, so the entries
+// the run does not carry — the ones whose allow_data_to is the reason a pin is
+// refused — must be in the table. The price table is lc.Providers' own, exactly
+// as budgetProblems builds it and as the run's environment does.
 func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, warnings, notes []config.Problem) {
 	if lc == nil || lc.Name != cfg.Project {
 		return nil, nil, nil
@@ -367,10 +376,12 @@ type claudePin struct{ path, model string }
 // use. A pin that is not a canonical Claude ID — a provider's own model, a
 // route's ID, an alias, nothing at all — is not one: those have their own
 // rules (providerProblems, CheckAllowed) and the switch never names them.
-func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claudePin {
+func claudePins(a config.Agent, routes map[string]config.ModelProvider) []claudePin {
 	// The runner's default background model (a provider coder's own) is the
-	// run's, exactly as budgetProblems judges it.
-	a.Models.Background = config.EffectiveBackground(a, claimed)
+	// run's, exactly as budgetProblems judges it: derived over the routes the
+	// run carries, not over the owner's whole table, since a coder only a route
+	// this repository may not use serves is no coder of this run's.
+	a.Models.Background = config.EffectiveBackground(a, routes)
 	var out []claudePin
 	for i, path := range [...]string{"agent.models.coder", "agent.models.reviewer", "agent.models.background"} {
 		// The same three paths config's own pin rules name (internal/config's
@@ -506,8 +517,8 @@ func shortPath(path string) string {
 // repository asking for a model to be served by a route the owner defines — the
 // interim path the switch does not replace (D1a) — and it is not the owner
 // saying this project has no Anthropic key; the owner's own route table is.
-func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider, lcErr error) (problems, notes []config.Problem) {
-	pins := claudePins(cfg.Agent, claimed)
+func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, runRoutes map[string]config.ModelProvider, lcErr error) (problems, notes []config.Problem) {
+	pins := claudePins(cfg.Agent, runRoutes)
 	readable := lc != nil && lc.Name == cfg.Project
 	// The switch is the operator's project config: with none there is nothing
 	// to read (the unresolved-offline note below) and nothing to ask the
@@ -537,13 +548,16 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		repo = "" // an unknown repository: no provider's allow_data_to can be said to cover it
 	}
 	// The routes a run of this checkout carries, which is the table the switch
-	// resolves over: the run's own (claimed — the operator's providers with the
-	// layer's claude_models claims), filtered by allow_data_to for this
-	// repository, exactly as runner.ProvidersEnv writes FUGARO_MODEL_PROVIDERS
-	// (runner.ProvidersFor, the same filter doctor's check reads). Resolving
-	// over the unfiltered table printed a route this run does not have — the
-	// run halts with "the project's routing switch is not usable" — which is
-	// the false confidence doctor's check stopped giving (runner.ProvidersFor's
+	// resolves over: runRoutes, the run's own (the caller's layerRoutes table
+	// for the routing rules — the operator's providers with the layer's
+	// claude_models claims), filtered by allow_data_to for this repository,
+	// exactly as runner.ProvidersEnv writes FUGARO_MODEL_PROVIDERS
+	// (runner.ProvidersFor, the same filter doctor's check reads). The caller
+	// hands over a table that a layer with no claim left unfiltered (its
+	// lc.Providers), so the filter is asked here rather than assumed.
+	// Resolving over the unfiltered table printed a route this run does not have
+	// — the run halts with "the project's routing switch is not usable" — which
+	// is the false confidence doctor's check stopped giving (runner.ProvidersFor's
 	// own doc: a resolution read over the unfiltered block is a route a run may
 	// not carry). With no origin there is no repository to filter by, so repo is
 	// "" and only the routes written for every repository survive — the reading
@@ -554,7 +568,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		// Only a readable project config has an operator's table to filter;
 		// without one nothing is resolved at all (the note below), so there is
 		// no table to build.
-		routes = runner.ProvidersFor(claimed, repo)
+		routes = runner.ProvidersFor(runRoutes, repo)
 		// ownProviders is the same table before the filter: the operator's own
 		// providers exactly as the operator wrote them, which is the only table
 		// that can answer whether an entry's allow_data_to was *written*
@@ -630,8 +644,10 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 					// handed: the entry that claims this model exists and its
 					// allow_data_to leaves this repository out, so the entry is
 					// not in the run's table at all and the rule above reads it
-					// as a model nobody claims. validate holds both tables.
-					msg += switchListFilteredClause(sw, m, repo, claimed, routes)
+					// as a model nobody claims. validate holds both tables: the
+					// operator's own, exactly as written (ownProviders, which the
+					// key is read from below too), and the run's (routes).
+					msg += switchListFilteredClause(sw, m, repo, ownProviders, routes)
 				}
 				verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth, mode)
 				msg += verdict
@@ -1345,30 +1361,38 @@ func newValidateCmd() *cobra.Command {
 			var warnings, notes []config.Problem
 			if cfg != nil {
 				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
-				// The project config, and the routes the run will have: the
-				// owner's own with the checkout layer's claude_models merged
-				// in (layerRoutes), so a layer-claimed pin is judged by the
-				// routes the run will have instead of refused here. A merge
-				// the rules refuse is a problem of the layer's own, and the
-				// owner's own routes are what the rules below see then.
+				// The project config, and the two route tables the rules below
+				// read: routes, the run's own — the owner's with the checkout
+				// layer's claude_models merged in (layerRoutes), so a
+				// layer-claimed pin is judged by the routes the run will have
+				// instead of refused here — which the routing rules take, and
+				// claimed, the owner's whole table with those claims written
+				// over the entries this repository's runs carry, which is what
+				// the rules that name a provider or read an allow_data_to read:
+				// over the filtered table those sentences lose the entry they
+				// are about and send the operator to add a provider that
+				// already exists. A merge the rules refuse is a problem of the
+				// layer's own, and the owner's own routes are what the rules
+				// below see then.
 				//
-				// Only when the selected config is this file's own project.
-				// A layer belongs to the installation of the project the file
-				// being validated names, and it is judged against that
-				// installation's routes; another project's config holds other
-				// routes, so merging the claim into it would report a claim
-				// this file's own installation serves as "names provider X,
-				// which the project config does not define" — a false refusal
-				// of a valid file, from a config the rules below do not judge
-				// anything by either (budgetProblems and providerProblems
-				// return early for another project).
+				// With no project config there is no table at all. Only when
+				// the selected config is this file's own project: a layer belongs
+				// to the installation of the project the file being validated
+				// names, and it is judged against that installation's routes;
+				// another project's config holds other routes, so merging the
+				// claim into it would report a claim this file's own
+				// installation serves as "names provider X, which the project
+				// config does not define" — a false refusal of a valid file,
+				// from a config the rules below do not judge anything by either
+				// (budgetProblems and providerProblems return early for another
+				// project).
 				// lc is the config selected above, read once for the whole
 				// command: a broken one is already reported as a problem
 				// (selectedProjectConfigErr), so the rules below see the same
 				// nil they saw before.
-				var claimed map[string]config.ModelProvider
+				var routes, claimed map[string]config.ModelProvider
 				if lc != nil {
-					claimed = lc.Providers
+					routes, claimed = lc.Providers, lc.Providers
 				}
 				if lc != nil && lc.Name == cfg.Project {
 					// The filter layerRoutes merges over is the repository's:
@@ -1379,8 +1403,8 @@ func newValidateCmd() *cobra.Command {
 					if rerr != nil {
 						repo = ""
 					}
-					merged, lp := layerRoutes(lc, rf.Layer.Layer, repo)
-					claimed = merged
+					merged, withClaims, lp := layerRoutes(lc, rf.Layer.Layer, repo)
+					routes, claimed = merged, withClaims
 					problems = append(problems, lp...)
 				}
 				rp, rw := recipeDirProblems(filepath.Dir(path), cfg)
@@ -1395,7 +1419,7 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc, claimed)
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
-				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, claimed, lcErr)
+				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
