@@ -141,7 +141,17 @@ func catalogWarning(model string, m pricing.Model) string {
 // print the same node under two labels) and the ceiling has a list of its own
 // (ceiling, nil when it has none), the message gives that list too, so an
 // empty intersection can be understood.
-func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
+//
+// rt and providers are the routing switch and the routes the caller has, in
+// that caller's own sense of "has": the run passes the policy node's switch and
+// the routes its job carries, `fugaro validate` the operator's config and the
+// routes the run will have. They are what a *route's* own ID is judged against
+// (see allowed): a pin that names a route ID is admitted by an allow-list only
+// when that switch routes the model to that route (review finding on this
+// change — before it, any well-formed anthropic/<id> was admitted by its
+// canonical ID alone, so a repository's own pin reached a route the owner's
+// switch never opted in).
+func CheckAllowed(a Agent, e policy.Effective, ceiling []string, rt *Routing, providers map[string]ModelProvider) []Problem {
 	if !e.HasAllowList() {
 		return nil
 	}
@@ -159,7 +169,7 @@ func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
 		switch {
 		case r.model == "":
 			ps = append(ps, Problem{Path: r.path, Message: "names no model, but the run has an allow-list (" + where + "): set it, or agent.model, to a model on the list"})
-		case !allowed(e, r.model):
+		case !allowed(e, r.model, rt, providers):
 			ps = append(ps, Problem{Path: r.path, Message: CodeSpan(r.model) + " is not an allowed model (" + where + ")"})
 		}
 	}
@@ -171,15 +181,34 @@ func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
 // routed pin names the route's own ID (anthropic/claude-sonnet-5.5) and the
 // list the owner wrote names the model (claude-sonnet-5-5): one model, one
 // entry, and the list is about which models may run rather than which route
-// serves them (plan Task 1b.2). The second answer is the checked-in map's
-// (pricing.CanonicalFor), so it can only ever admit the model the list already
-// names — and it admits nothing at all for the models that map does not carry.
-func allowed(e policy.Effective, model string) bool {
+// serves them (plan Task 1b.2).
+//
+// The second answer is the checked-in map's inverse (pricing.CanonicalFor) plus
+// the switch, and it takes all of: the map must carry the pair *inverse* (so
+// the spelling is a route ID at all), the list must name the canonical ID the
+// pair gives (the model, which is what allowed_models is about), and rt must
+// route that canonical ID to exactly this ID — the same resolution the run
+// itself performs (RoutingClaudeFor, over the same routes), so the allow-list
+// can only admit a pin the run was going to route anyway. Without that half, any well-formed
+// anthropic/<id> a repository wrote for itself was admitted by its canonical ID
+// alone, which is the owner's allowed_models *and* the switch's explicit-list
+// opt-in (D1a) both bypassed by one spelling (review finding on this change).
+// An absent switch, a switch that does not name the model, and a route the map
+// does not pair all admit nothing.
+func allowed(e policy.Effective, model string, rt *Routing, providers map[string]ModelProvider) bool {
 	if e.Allows(model) {
 		return true
 	}
 	canonical, ok := pricing.CanonicalFor(model)
-	return ok && e.Allows(canonical)
+	if !ok || !e.Allows(canonical) || rt == nil || rt.Claude == nil {
+		return false
+	}
+	// The model is on the list; the question left is whether this spelling is
+	// the route's own ID for it. It is admitted when the switch resolves the
+	// canonical ID to exactly this one, and not otherwise — a spelling the
+	// switch does not route is a route's ID the run is not carrying.
+	route, sent, ok := RoutingClaudeFor(rt.Claude, canonical, providers)
+	return ok && route != RouteDirect && sent == model
 }
 
 // CodeSpan quotes s as a markdown code span with the characters that could

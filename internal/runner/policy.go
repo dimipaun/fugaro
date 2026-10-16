@@ -80,13 +80,6 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	// The routing switch is applied here, once, before anything reads the
-	// run's pins: the policy is where D1a delivers it, and the pins it
-	// rewrites are what the pins renderer renders, the gateway routes and
-	// prices, and the record names (Task 1b.2).
-	if err := r.applyRouting(pp, found); err != nil {
-		return err
-	}
 	var fromPolicy map[string]bool
 	if found {
 		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c); err != nil {
@@ -151,6 +144,23 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// configuration: it carries the merged limits from here on.
 	cfg.Agent.MaxOutputTokens = config.RoleTokens{Coder: e.MaxOutputCoder, Reviewer: e.MaxOutputReviewer}
 	r.spend, r.policy = s, e
+	// The routing switch is applied here, once, after r.spend and before
+	// anything reads the run's pins: the policy is where D1a delivers it, and
+	// the pins it rewrites are what the pins renderer renders, the gateway
+	// routes and prices, and the record names (Task 1b.2).
+	//
+	// It comes *after* the assignment above because `gatewayOn` — which
+	// decides whether the switch has anything to act on at all — is read off
+	// r.spend: applied before it, every run would look like a run with the
+	// gateway off, and the switch would silently never take effect (the
+	// critical finding of this PR's review). The gap between here and
+	// checkBudget (runner.go, right after this returns) is the window in
+	// which nothing has read a pin yet: planOf above took no model, and the
+	// price table this function built is keyed by the routes and the catalog
+	// rather than by the pins.
+	if err := r.applyRouting(pp, found); err != nil {
+		return err
+	}
 	r.rec.Policy = r.recordPolicy(nDef)
 	return nil
 }

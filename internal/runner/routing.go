@@ -43,8 +43,11 @@ import (
 //
 // via: auto is key-presence driven, as the design spells it: with an Anthropic
 // key in the job the direct route is taken (the pins are left alone), and with
-// none the provider route is taken. The line `fugaro validate` prints for the
-// same switch is Task 1b.3's.
+// none the provider route is taken. It never applies to a Vertex run, which
+// serves Claude under the project's own credential and carries no such key:
+// the pins stay Claude's own, with one line saying so (review finding on this
+// change). The line `fugaro validate` prints for the same switch is Task
+// 1b.3's.
 func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {
 		return nil // absent means direct (D1b)
@@ -63,6 +66,33 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 	if sw.ViaValue() == config.RouteDirect {
 		return nil
 	}
+	if sw.ViaValue() == config.RouteAuto {
+		// auto routes only when the Claude call has nowhere else to go, and it
+		// asks that by the credential the run already has. A Vertex run has
+		// one — Vertex serves Claude, under the owner's own GCP project, and
+		// its jobs carry no Anthropic API key — so auto leaves its pins alone
+		// rather than reading the absent key as "no route but the provider"
+		// and sending the prompt to a third party the switch never chose for
+		// this credential. That is a skip, not a refusal: the same policy
+		// serves a project's api-key jobs too, and the owner wrote auto to
+		// follow the credential. via: openrouter still routes a Vertex run —
+		// and is refused downstream for the reason it always is, that a run
+		// does not mix credentials (config.CheckProviderAuth).
+		//
+		// Both skips come before CheckRouting for the reason the gateway-off
+		// one does: a switch this run has nothing to act on does not halt it
+		// either.
+		if r.cfg != nil && r.cfg.Agent.Auth == "vertex" {
+			r.d.Log.Info("routing.claude: via auto does not route a Vertex run: Vertex serves Claude under this project's own credential, so the pins keep Claude's own IDs (a provider route needs agent.auth: api-key)",
+				"code", "routing_auto_vertex")
+			return nil
+		}
+		if envLookup(r.d.Env, "ANTHROPIC_API_KEY") != "" {
+			// A stored key is the direct path, and the pins stay as they are
+			// (D1b).
+			return nil
+		}
+	}
 	// The block is judged against the routes this run has, exactly as the
 	// config loader and the policy reader judge it: the run must not act on a
 	// switch it cannot carry out.
@@ -72,11 +102,6 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 			msgs[i] = p.String()
 		}
 		return fmt.Errorf("the project's routing switch is not usable: %s", strings.Join(msgs, "; "))
-	}
-	if sw.ViaValue() == config.RouteAuto && envLookup(r.d.Env, "ANTHROPIC_API_KEY") != "" {
-		// auto routes only when the call has nowhere else to go: a stored key
-		// is the direct path, and the pins stay as they are (D1b).
-		return nil
 	}
 	for _, p := range r.pinSlots() {
 		model := p.get()
@@ -92,6 +117,19 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 		p.set(sent)
 	}
 	return nil
+}
+
+// routingSwitch is the routing switch this run carries, or nil: the policy
+// node's block when the run read one (projectPolicy, called by resolvePolicy),
+// and nothing when there is no node. It reads nothing itself — the node's read
+// is memoized and resolvePolicy is the one caller — so a later caller asks
+// about the switch that was applied, not about a second read that could have
+// answered differently.
+func (r *run) routingSwitch() *config.Routing {
+	if !r.projPolicy.found || r.projPolicy.policy == nil {
+		return nil
+	}
+	return r.projPolicy.policy.Routing
 }
 
 // pinSlot is one of the run's three pins: the model the configuration answers

@@ -336,8 +336,11 @@ func (r *run) checkBudget() error {
 	if err := r.checkProviderModels(); err != nil {
 		return err
 	}
-	// The allow-list bounds the models whatever the credential or the mode.
-	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed()); len(ps) > 0 {
+	// The allow-list bounds the models whatever the credential or the mode. The
+	// switch and the routes are the run's own: a route ID is admitted only
+	// where the switch routes the model to it, which is the resolution
+	// applyRouting performed a step ago (resolvePolicy).
+	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders()); len(ps) > 0 {
 		msgs := make([]string, len(ps))
 		for i, p := range ps {
 			msgs[i] = p.String()

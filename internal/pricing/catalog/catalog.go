@@ -100,6 +100,15 @@ func (f *File) validate() error {
 			switch prev, dup := canonical[e.CanonicalID]; {
 			case e.CanonicalID == id:
 				errs = append(errs, fmt.Errorf("%s: canonical_id is its own key: the canonical ID is the direct spelling (claude-sonnet-5-5) and the key is the route's (anthropic/claude-sonnet-5.5)", id))
+			case strings.Contains(e.CanonicalID, "/"):
+				// A canonical ID is the direct spelling a pin carries and the
+				// price table keys, and that spelling carries no vendor
+				// prefix: a value with one is another route's own ID, which
+				// would pair a model with a second route and leave the map
+				// (pricing's canonical-to-route table) with two answers to
+				// where a call goes and what it costs. Refused here, at the
+				// loader, so no shipped or generated row can say it.
+				errs = append(errs, fmt.Errorf("%s: canonical_id %s is a route ID, not the canonical one: the canonical ID is the direct spelling (claude-sonnet-5-5), which carries no provider prefix", id, e.CanonicalID))
 			case dup:
 				errs = append(errs, fmt.Errorf("%s and %s both claim canonical_id %s: one canonical ID identifies one model", prev, id, e.CanonicalID))
 			default:
