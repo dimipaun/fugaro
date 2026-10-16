@@ -44,11 +44,22 @@ func TestChecklistHasCheck38(t *testing.T) {
 	}
 
 	// The recorded state: taken once, before the first change, and a leftover
-	// record from an earlier attempt refuses the run (the rule Checks 50 and
-	// 58 use).
+	// record from an earlier attempt refuses the run. No other check in the
+	// file carries this rule (Checks 50 and 58 are reserved numbers with no
+	// section yet), so the assertions here are the only thing pinning it.
 	for _, want := range []string{"check38-state", "left over", "before the first change"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Check 38 section's recorded state does not say %q", want)
+		}
+	}
+
+	// The recorded base image is re-taken if the prerequisite move had to
+	// change it: step 2 and the Restore both judge the installation against
+	// $S/base-image, so a record still holding the pre-move ref would fail
+	// step 2 on a correct installation and have the Restore undo the fix.
+	for _, want := range []string{"$S/base-image", "base-image-moved-from", "re-record"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's base-image record does not say %q", want)
 		}
 	}
 
@@ -74,6 +85,21 @@ func TestChecklistHasCheck38(t *testing.T) {
 	// image that is gone.
 	if !strings.Contains(section, "no gate warning") {
 		t.Error("the Check 38 section does not say that a release base image at cloneSince draws no gate warning")
+	}
+
+	// The Restore, which is where an attempt that never finished is caught:
+	// it branches on the recorded state (the sandbox's own fugaro.yaml set
+	// the key, so write it back; it did not, so drop it), undoes step 4's
+	// base-branch commit against the recorded HEAD, and deletes the record
+	// last. A later edit that silently dropped any of these would leave a
+	// half-restored sandbox with nothing to notice it.
+	for _, want := range []string{
+		"$S/checkout", "$S/checkout-source", "says `repo`", "says `default`",
+		"$S/sandbox-head", "git revert --no-edit HEAD", "`rm -rf \"$S\"`", "last",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's Restore does not say %q", want)
+		}
 	}
 
 	// The old step 0, gone: no dev base image, no docker, no registry write,
