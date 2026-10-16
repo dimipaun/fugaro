@@ -129,6 +129,13 @@ var consoleBoundaryAllowList = []string{
 // slice, made in the same commit as the require line and said out loud in that
 // commit's message. A require line that arrives WITHOUT an edit here is the
 // failure this test exists for.
+//
+// The one entry that rule has already been applied to: `spf13/pflag` was
+// promoted from the indirect block to the direct one by `next`'s Task 1.6 work
+// (internal/cli and plugin test files import it directly, so the direct require
+// is what the toolchain asks for), which is why its line here carries no
+// "// indirect" comment. The promotion is next's, not the console's: the
+// console still contributes nothing to this module.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
@@ -177,7 +184,7 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/rivo/uniseg v0.4.7 // indirect",
 	"github.com/santhosh-tekuri/jsonschema/v6 v6.0.3",
 	"github.com/spf13/cobra v1.10.2",
-	"github.com/spf13/pflag v1.0.9 // indirect",
+	"github.com/spf13/pflag v1.0.9",
 	"github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect",
 	"github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect",
 	"go.opentelemetry.io/auto/sdk v1.2.1 // indirect",
