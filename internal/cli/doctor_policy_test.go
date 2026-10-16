@@ -452,3 +452,61 @@ func TestDoctorRoutingCheckNamesTheLiveQuestion(t *testing.T) {
 		t.Fatalf("no policy published: routing-resolution = %+v (present %v), want an info check saying unresolved", c, ok)
 	}
 }
+
+// TestDoctorReportsAPolicyNodeEveryReaderRefuses is the review of this task's
+// doctor change: a node can be published, in force by version and marker, and
+// still be refused by every reader — policy show, project show, repos ls and
+// the launch gates all refuse a node that lists a top-level key this Fugaro
+// does not know, because a key nobody reads is a policy that never takes
+// effect. doctor, the command an operator runs to find out why a run stopped,
+// printed that node as "a policy is published" (info) and nothing else, so it
+// was the one reader that reported it as governing a run. The check is a
+// warning (it fails doctor under --strict, like allow-list-empty) and is
+// worded by refuseUnknownPolicyKeys, the helper the readers themselves use, so
+// doctor cannot come to say something else about the same node.
+//
+// Mutation (verified, run and restored): carry the check as Severity "info" —
+// the severity subtest fails, "policy-unknown-keys carries severity "info",
+// want warning: runs are refused by this node". Mutation (verified, run and
+// restored): make the branch fire on a node with only known keys
+// (`if err := refuseUnknownPolicyKeys(p); err != nil || len(p.AllowRepos) < 100`)
+// — the second half fails, the check appearing for a node nothing refuses.
+func TestDoctorReportsAPolicyNodeEveryReaderRefuses(t *testing.T) {
+	// The node is seeded as raw JSON: UnknownKeys is json:"-", filled in by
+	// Decode and never written back, so a Policy value built in Go cannot carry
+	// the key the case is about.
+	_, db := doctorPolicyRig(t, nil, "")
+	db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":      projectpolicy.Version,
+		"budget":       map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos":  []string{"github/acme/app"},
+		"nonsense_key": true,
+	})
+	checks := doctorChecksByID(t)
+	if _, ok := checks["policy-published"]; !ok {
+		t.Fatal("the node was not read at all: no policy-published check")
+	}
+	c, ok := checks["policy-unknown-keys"]
+	if !ok {
+		t.Fatalf("a node every reader refuses is reported without a policy-unknown-keys check: %+v", checks)
+	}
+	if c.Severity != "warning" {
+		t.Errorf("policy-unknown-keys carries severity %q, want warning: runs are refused by this node", c.Severity)
+	}
+	for _, want := range []string{"nonsense_key", projectpolicy.PathShared(), "does not know", "never takes effect"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("policy-unknown-keys does not name %q: %s", want, c.Problem)
+		}
+	}
+	// And it must not fire on a node whose keys are all known: a check that
+	// always fires is a check nobody reads.
+	_, known := doctorPolicyRig(t, nil, "")
+	known.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	if c, ok := doctorChecksByID(t)["policy-unknown-keys"]; ok {
+		t.Errorf("a node with only known keys is refused: %+v", c)
+	}
+}

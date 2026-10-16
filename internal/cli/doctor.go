@@ -1588,6 +1588,21 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 	checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 		Problem: fmt.Sprintf("a policy is published at %s (version %d, %d allow-list entries)", shared, p.Version, len(p.AllowRepos)),
 		Fix:     "fugaro project policy show prints it"})
+	if err := refuseUnknownPolicyKeys(p); err != nil {
+		// Published and in force by version and marker, and refused by every
+		// reader anyway: `policy show`, `project show` and `repos ls` refuse it
+		// through this same helper, and so do the launch gates that decide
+		// whether a run is bounded by it at all (projectPolicyRead). A key
+		// nobody reads is a policy that never takes effect, and doctor — the
+		// command an operator runs to find out why a run stopped — reported
+		// this node as published and said nothing else, which read as "in
+		// force". The body is the helper's own sentence rather than a second
+		// wording of it, so what doctor prints is what the command that refused
+		// the operator printed, and the two cannot drift.
+		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
+			Problem: "no run is bounded by the policy node: " + err.Error(),
+			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (fugaro upgrade) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
+	}
 	if len(p.AllowRepos) == 0 {
 		// Empty inside a *published* policy is deny-all (design §5), which is a
 		// different state from an installation that published nothing: every
