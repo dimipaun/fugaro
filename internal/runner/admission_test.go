@@ -68,8 +68,7 @@ func admissionRunCfg(t *testing.T, kind, slugRepo, mode, capUSD, cfg, policy str
 	// run cannot place, and would halt these runs before the check they are
 	// about (TestJobIdentityRefusesANameItCannotPlace).
 	const workflow = "app"
-	b.deps.Execution = "projects/aurora-fp/locations/europe-west1/jobs/" +
-		gcp.JobName(slug, gcp.WorkflowVariant(workflow, "")) + "/executions/" + runID
+	b.deps.Execution = cloudRunExecution(gcp.JobName(slug, gcp.WorkflowVariant(workflow, "")))
 	store := runstore.Open(b.harness.bucket, slug, runID)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: workflow, Task: "Add a feature"}
 	if err := store.WriteTask(context.Background(), spec); err != nil {
@@ -296,13 +295,30 @@ func TestRunnerRefusesSlugNotInAllowList(t *testing.T) {
 // R2-12: a run that is not admitted changes nothing. The refusal lands before
 // the provider is opened (no git credential request), before the lock, and
 // before the budget session exists — so no lease is reserved and no spend is
-// accounted for a repository the project's policy does not admit. This is the
-// mode-on case of the same fixture the refusal tests above use, with the whole
+// accounted for a repository the project's policy does not admit. These are the
+// mode-on cases of the same fixtures the refusal tests use, with the whole
 // ledger asserted (refusedAdmission).
+//
+// The same ordering holds on a project job (plan task 3.3 step 2: the check is
+// before the call to openProvider and before the session takes a lease), and
+// the project case is the one where it is not implied: the provider, the
+// profile and the clone URL all come from a decision this run makes, so an
+// ordering that put any of them after the credential would hand a git
+// credential to a run the profile does not admit. The project fixture brings
+// its host local, so a regression that went on to clone would fail locally
+// rather than at github.com.
 func TestRunnerChecksBeforeTheTokenAndTheLease(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/other/*"]}`)
-	rec, err := b.run(t)
-	refusedAdmission(t, b, rec, err, "github/acme/app", "fugaro project repos add")
+	t.Run("a per-repository job", func(t *testing.T) {
+		b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/other/*"]}`)
+		rec, err := b.run(t)
+		refusedAdmission(t, b, rec, err, "github/acme/app", "fugaro project repos add")
+	})
+	t.Run("a project job", func(t *testing.T) {
+		b := projectRun(t, projectJobOf(), "enforce", "50", projectPolicyFor(`["github/acme/*"]`, `["github/other/*"]`))
+		projectHost(t, b)
+		rec, err := b.run(t)
+		refusedAdmission(t, b, rec, err, "github/acme/app", "standard", "github/other/*", "never widen")
+	})
 }
 
 // A policy this run can see and may not read stops the run (R2-3). It is not
