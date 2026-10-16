@@ -85,6 +85,32 @@ type ExecutionRef struct {
 	LogURL string
 }
 
+// JobOf is the name of the job an execution was launched from: the field the
+// platform's own report of an execution carries (Cloud Run's CLOUD_RUN_JOB,
+// codec.go), read out of the execution name a run already has
+// (Platform.ExecutionFromEnv, wired at internal/cli/exec.go).
+//
+// It is how a run learns the job it is in without reading its environment
+// again. The job's name is what a project job's identity rests on (plan task
+// 3.3 step 1, design §4.1): the provider is part of it, Cloud Run sets it, and
+// a launcher cannot write it — unlike $FUGARO_GIT_PROVIDER, which any launcher
+// can override (design §12a item 2, finding 4). The name is therefore read
+// from the platform's own answer and never from a variable, and the runner
+// computes the names a policy defines and matches this one against them
+// (R2-5: the name is written, never parsed).
+//
+// An error means the name is not one any backend of this build parses, so the
+// job cannot be named from it: the run halts rather than guessing an identity
+// (fail closed). A local invocation has no execution name at all and never
+// reaches this (its ExecutionFromEnv is "").
+func JobOf(execution string) (string, error) {
+	id, ok := ParseExecution(execution)
+	if !ok {
+		return "", fmt.Errorf("%s is not an execution name of any backend this build knows, so the job this run is in cannot be named", execution)
+	}
+	return id.Job, nil
+}
+
 // Execution is one execution as the platform reports it.
 type Execution struct {
 	Name, Job                   string

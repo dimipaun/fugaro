@@ -151,6 +151,53 @@ func (p *Policy) Admits(profile, canonical string) (bool, error) {
 	return AdmitRepo(p.AllowRepos, canonical) && AdmitRepo(list, canonical), nil
 }
 
+// AdmissionRefusal is the sentence refusing a repository on a profile, and ""
+// when the profile admits it. It is the profile half of the admission the
+// runner makes on a project job (design §4.1, plan task 3.3 step 4) and the
+// sentence the launcher's advisory twin prints (§4.3), worded once for both:
+// the two must refuse the same repository for the same reason, and a second
+// wording would be a second rule the moment either changed.
+//
+// err is ProfileFor's fail-closed error for a profile the policy does not
+// define, never a refusal: the caller reports it as the halt it is. The
+// refusal itself answers both ways a profile says no, because they need
+// different fixes and a reader must be able to tell which happened: the
+// repository is of another provider than the profile serves (nothing but a
+// different profile can admit it), or it is not on the lists the profile
+// admits through (which the owner edits).
+//
+// The verdict is Admits', and only Admits': this function reads which gate
+// closed, never re-decides it.
+func (p *Policy) AdmissionRefusal(profile, canonical string) (string, error) {
+	ok, err := p.Admits(profile, canonical)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return "", nil
+	}
+	pr, err := p.ProfileFor(profile)
+	if err != nil {
+		return "", err
+	}
+	if got := providerOf(canonical); got != pr.Provider {
+		return fmt.Sprintf("the job profile %q serves %s, and %s is a %s repository: one job serves one provider (the provider is part of the job's name and of the git credential the job holds), so this repository is not admitted to that profile however its allow_repos is spelled",
+			profile, pr.Provider, canonical, got), nil
+	}
+	if !AdmitRepo(p.AllowRepos, canonical) {
+		return NotAdmitted(p.AllowRepos, canonical), nil
+	}
+	list, err := p.ProfileAllowRepos(profile)
+	if err != nil {
+		return "", err
+	}
+	// The list is the profile's own here, and not empty: the project's list
+	// admitted this repository above, and a profile that names no list falls
+	// back to the project's (ProfileAllowRepos), which admits it.
+	return fmt.Sprintf("the job profile %q does not admit %s: its allow_repos is %s, and a profile's own list can only narrow the project's enrollment, never widen it. The project's owner adds the repository to the profile's list, or removes the profile's list so the project's applies, and publishes the policy again",
+		profile, canonical, strings.Join(list, ", ")), nil
+}
+
 // providerOf is the provider a canonical repository names: Canonical spells one
 // "github/owner/name", so the first segment is the provider ("", never a
 // provider a policy could name, when the string is not canonical at all).

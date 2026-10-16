@@ -189,7 +189,16 @@ type run struct {
 	// projPolicy and ident memoize the run's read of the project's policy and
 	// the Firebase identity it is read with, so the node is read once, decoded
 	// once and its token taken once (projectpolicy.go).
-	projPolicy   policyRead
+	projPolicy policyRead
+	// job is the identity this run adopted from the Cloud Run job it is in,
+	// computed and matched in admissionCheck (projectjob.go, plan task 3.3):
+	// the (profile, provider, account) the job's own name was computed from.
+	// A zero value means the run is in a per-repository job — or is not on
+	// Cloud Run at all — and r.job.Profile == "" is how every reader tells
+	// them apart (projectJob). It is written once, before any git credential
+	// exists, and never from the environment: the provider, the admission and
+	// the clone URL of a project job all come from it.
+	job          jobTriple
 	ident        budgetIdentity
 	defFile      defaultBranchData
 	instructions string
