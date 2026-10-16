@@ -463,9 +463,11 @@ func (s *Store) PutFileFrom(ctx context.Context, name, path, contentType, want s
 	// The file was staged by this run a moment ago, so a symlink or a device
 	// at path is not the staged artifact: it is something that got between the
 	// two steps. This names that in the record's own words; what makes the
-	// upload itself safe is blobx.PutFile's open (O_NOFOLLOW|O_NONBLOCK) and
-	// its copy bounded by the size it stats through the file it opened, which
-	// is why this check may be a check and not the guard.
+	// upload itself safe is blobx.PutFile's own guards — the open
+	// (O_NOFOLLOW|O_NONBLOCK), the fstat on the fd it opened that refuses
+	// anything which is not a regular file before a byte is read, and the copy
+	// bounded by that size and by the context — which is why this check may be
+	// a check and not the guard.
 	if st, err := os.Lstat(path); err != nil {
 		return 0, "", fmt.Errorf("reading the staged artifact %s: %w", path, err)
 	} else if !st.Mode().IsRegular() {

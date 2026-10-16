@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -185,6 +186,42 @@ func (s sourceReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
 	if err != nil && !errors.Is(err, io.EOF) {
 		err = sourceReadErr{err}
+	}
+	return n, err
+}
+
+// copyAborted is a copy that stopped because the context ended and not because
+// the source or the bucket failed and not because the source ran out: the fd
+// was closed under a read that was parked, so the error the read reports is
+// this call's own doing and the context's error is the honest one.
+type copyAborted struct{ err error }
+
+func (e copyAborted) Error() string { return e.err.Error() }
+func (e copyAborted) Unwrap() error { return e.err }
+
+// copyBounded copies src into dst, bounded twice: by the size that was
+// stat'ed plus one byte, and by ctx. want is that size, so what arrives is at
+// most one byte more than the file this call accounted for — a source that
+// grows while it is copied (a writer that was never stopped) is refused by the
+// caller's own n != want check rather than drained. Without the byte bound a
+// source that keeps producing never reaches an end at all.
+//
+// The context bound is what stops a copy of a source that *stalls*, which no
+// byte bound can: a non-blocking FIFO that some other process holds open with
+// nothing to send reads as a fd parked on EAGAIN, and a parked read is only
+// woken by something else touching the fd. Closing it is that something —
+// Close evicts the parked read (internal/poll's evict, which is why the read
+// comes back "file already closed" rather than blocking on) — so the watchdog
+// closes src when ctx is done and the copy returns copyAborted around ctx.Err.
+// src is PutFile's own fd and PutFile closes it again on the way out, which is
+// harmless; the stop returned by context.AfterFunc is what keeps the watchdog
+// from closing a source whose copy has already finished.
+func copyBounded(ctx context.Context, dst io.Writer, src *os.File, want int64) (int64, error) {
+	stop := context.AfterFunc(ctx, func() { src.Close() })
+	defer stop()
+	n, err := io.Copy(dst, io.LimitReader(sourceReader{src}, want+1))
+	if err != nil && ctx.Err() != nil && errors.Is(err, fs.ErrClosed) {
+		return n, copyAborted{ctx.Err()}
 	}
 	return n, err
 }
@@ -431,6 +468,17 @@ func (b *Bucket) Put(ctx context.Context, key string, data []byte, contentType s
 // to reach this path at all: gocloud buffers a non-file driver's bytes until
 // Close, so a test driver that fails there is how the classification is
 // pinned.)
+//
+// What is streamed is a regular file, and nothing else, checked on the fd this
+// call opened and before a byte is read. O_NOFOLLOW refuses a symlink and the
+// size bound bounds bytes, but neither bounds *time*: a path replaced by a
+// FIFO that another process holds open with nothing to send gives os.NewFile a
+// non-blocking fd that is registered with the netpoller, so the first Read
+// parks on EAGAIN until a writer sends data, and no context reaches a parked
+// read. Close does — it evicts the parked read — which is why the copy is run
+// under a watchdog that closes the source when the context ends: a source that
+// is refused outright costs nothing, and one that stalls is bounded by the
+// caller's own deadline instead of by the container's.
 func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifNotExist bool) (size int64, sum string, err error) {
 	// openSource, not os.Open: the path is opened without following a final
 	// symlink and without blocking on a FIFO, because between a caller's own
@@ -448,6 +496,18 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 	if err != nil {
 		return 0, "", err
 	}
+	// The fstat the copy's size bound comes from is already made here, so the
+	// regular-file check costs nothing, happens before any read, and every
+	// caller gets it. A directory (its first read is EISDIR), a device, a
+	// socket and a FIFO are all refusals rather than streams: a FIFO with an
+	// idle writer is the one that never returns, but none of them is the file
+	// a caller staged. ErrChanged is the sentinel because that is exactly what
+	// happened to the path — it was one thing when the caller looked at it and
+	// another when this call opened it — and it is the same answer
+	// runstore.PutFileFrom gives a staged path that is not a regular file.
+	if !st.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("%s: %w (it is not a regular file)", path, ErrChanged)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	w, err := b.NewWriter(ctx, key, &blob.WriterOptions{ContentType: contentType, IfNotExist: ifNotExist})
@@ -455,17 +515,19 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 		return 0, "", writeErr(err, ifNotExist)
 	}
 	h := sha256.New()
-	// Bounded by the size that was stat'ed, plus one byte: a source that grows
-	// while it is copied — a writer that was never stopped, a device, a FIFO
-	// with a writer on the other end — is read at most one byte past the file
-	// this call accounted for, which the check below then refuses. Without the
-	// bound the copy of a source that never ends never returns.
-	n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(sourceReader{f}, st.Size()+1))
+	n, err := copyBounded(ctx, io.MultiWriter(w, h), f, st.Size())
 	if err != nil {
 		// The abort rule: cancel, then close, and report the cause rather
 		// than whatever Close says about the aborted write.
 		cancel()
 		_ = w.Close()
+		// A copy the watchdog cut short is the context's, not the source's:
+		// the fd was closed under a read that was never going to return, so
+		// what the read reports is this call's own doing.
+		var ab copyAborted
+		if errors.As(err, &ab) {
+			return 0, "", fmt.Errorf("reading %s: %w", path, ab.err)
+		}
 		var se sourceReadErr
 		if errors.As(err, &se) {
 			return 0, "", fmt.Errorf("reading %s: %w", path, se.err)
