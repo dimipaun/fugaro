@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	batch "google.golang.org/api/batch/v1"
@@ -94,6 +95,24 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		"FUGARO_PROJECT":     b.o.FugaroProject,
 		"FUGARO_GCP_PROJECT": b.o.GCPProject,
 		"FUGARO_REGION":      b.o.Region,
+	}
+	// The launch's own variables go into the same map. A Batch job is created
+	// per run (design §2.3), so unlike Cloud Run's shared job there is no
+	// deployed environment for a per-execution override to disturb: the job's
+	// own variables ARE this run's environment, which is where the design says
+	// Batch's job env goes (taskSpec.environment.variables, §2.3). The
+	// launcher's budget marker travels here -- FUGARO_BUDGET_TOKEN=1, set by
+	// the launch path in internal/cli (internal/runner's BudgetTokenEnv) --
+	// and without it a run of a project with a published policy would execute
+	// unbudgeted, since the runner reads the marker's absence as "no policy".
+	// The form is the seam's own: NAME=value, the same one the Cloud Run
+	// backend parses (internal/backend/gcp/run.go).
+	for _, kv := range spec.Env {
+		name, value, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			return nil, fmt.Errorf("launching %s: launch env %q is not NAME=value", full, kv)
+		}
+		vars[name] = value
 	}
 	// The task runs for the workflow's total time plus the slack every other
 	// backend adds, so a run whose own watchdog is late is still bounded by

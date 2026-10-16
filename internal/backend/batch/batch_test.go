@@ -546,6 +546,47 @@ func TestLaunchNeedsARun(t *testing.T) {
 	}
 }
 
+// TestLaunchMergesAPerExecutionEnv: a Batch job is created per run, so the
+// launch's own variables have a home -- the job's own taskSpec environment,
+// which is where the design puts Batch's job env (design §2.3). The launcher
+// sets the budget marker FUGARO_BUDGET_TOKEN=1 there (internal/runner's
+// BudgetTokenEnv), and a run that dropped it would execute a project with a
+// published policy unbudgeted; this test is what keeps the marker in the job
+// when the Batch backend becomes selectable.
+func TestLaunchMergesAPerExecutionEnv(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	s := spec()
+	s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
+	ref, err := b.Launch(ctx, s)
+	if err != nil {
+		t.Fatalf("Launch with a per-execution env: %v", err)
+	}
+	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if got := vars["FUGARO_BUDGET_TOKEN"]; got != "1" {
+		t.Errorf("job env FUGARO_BUDGET_TOKEN = %v, want \"1\": a launch's variables go into the job's own environment", got)
+	}
+	// The merge adds to the job's own variables, it does not replace them.
+	if got := vars["FUGARO_RUN"]; got != backendtest.Slug+"/"+s.RunID {
+		t.Errorf("job env FUGARO_RUN = %v, want %v", got, backendtest.Slug+"/"+s.RunID)
+	}
+	// A malformed variable is a caller's own mistake, caught before the create
+	// like every other argument this function cannot build a job from.
+	bad := spec()
+	bad.Env = []string{"FUGARO_BUDGET_TOKEN"}
+	if _, err := b.Launch(ctx, bad); err == nil || !strings.Contains(err.Error(), "NAME=value") {
+		t.Fatalf("Launch with a malformed env entry = %v, want a NAME=value refusal", err)
+	}
+	if got := bf.Creates(); len(got) != 1 {
+		t.Fatalf("jobs.create calls = %d, want 1: the malformed launch must create nothing", len(got))
+	}
+	// The run the job reports back is still read from the same place, so the
+	// merged variable did not displace FUGARO_RUN.
+	if x, err := b.Execution(ctx, ref.Name); err != nil || x.Run != backendtest.Slug+"/"+s.RunID {
+		t.Errorf("Execution after a merged env = %+v, %v; want Run %q", x, err, backendtest.Slug+"/"+s.RunID)
+	}
+}
+
 // TestLaunchRefusalIsRejected: a 4xx other than 408, 429 and 499 created
 // nothing and says so, so the launcher may undo its own bookkeeping. A
 // conflict is the same run id launched twice: a Batch job is created per run
