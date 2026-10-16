@@ -162,14 +162,17 @@ func ValidPattern(pattern string) error {
 // backtracking scan of every star is exponential in their number (a pattern is
 // attacker-chosen text on a node, so the cost must not be).
 //
-// The "*" case must come before the literal one, because s is not always a
-// repository name: MatchRepo's callers read a pattern as its second argument
-// too (cli's admittedBy asks whether a removed entry's runs are still
-// admitted), and there s carries "*" characters of its own. When both are
-// "*", treating the pattern's star as that literal spends the wildcard on a
-// single character and loses it, so "*" would not admit "*app" and "*b" would
-// not admit "*ab" -- a matcher that refuses a string its pattern does match,
-// which reads as a revocation that did not happen.
+// The "*" case must come before the literal one, and that order is
+// load-bearing: s is not always a concrete repository name. MatchRepo's callers
+// read a pattern as its second argument too — cli's admittedBy asks whether the
+// runs of a *removed* entry are still admitted — and there s carries "*"
+// characters of its own, which must be read as ordinary characters. Testing
+// equality first spends the pattern's star on that single character and loses
+// it, so "*" would not admit "*app" and "a*" would not admit "a*b": a matcher
+// that refuses a string its pattern does match. In `fugaro project repos rm`
+// that read as a revocation which did not happen — the confirmation said "its
+// runs are refused from now on" while a broader remaining entry still admitted
+// every expansion of what was removed.
 func matchSeg(pattern, s string) bool {
 	var (
 		p, i     int // the positions being compared
