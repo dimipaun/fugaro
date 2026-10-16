@@ -1412,8 +1412,8 @@ func TestChecklistHasCheck50(t *testing.T) {
 		// reaches step 3 with no line to paste while this test stays green.
 		"Task 1b.3's, and 1b.3 has not shipped",
 		"prints no `routing-cache-markers` info",
-		"recorded as not produced",
-		"If this binary prints no resolution line at all, record that and go on",
+		"recorded as *not produced*",
+		"If this binary prints no resolution line at all, record this FACT as *not produced* and go on",
 		"the line itself is Task 1b.3's and Task 1b.3 has not shipped",
 	})
 
@@ -1605,6 +1605,89 @@ func TestChecklistHasCheck50(t *testing.T) {
 			if !cmdHasFlag(cmd, m[1]) {
 				t.Errorf("the Check 50 section's %q shows --%s, which that command does not declare: the owner would meet 'unknown flag' at that step", cmd.CommandPath(), m[1])
 			}
+		}
+	}
+
+	// Step 7's Restore is the one destructive block in this check: step 3
+	// published the switch, so a `--delete` that runs whatever the state was
+	// would delete a policy the owner had published and never asked this check
+	// to touch. Step 1 therefore RECORDS the pre-check policy state and step 7
+	// branches on that record, refusing when it is missing.
+	step1 := chk50Step(t, section, "### 1.")
+	step7 := chk50Step(t, section, "### 7.")
+	stateFile := "/tmp/chk50-policy-state-before.txt"
+	chk50MustContain(t, step1, "step 1", []string{stateFile})
+	if !regexp.MustCompile(`(?m)^[^#\n]*>[^|\n]*` + regexp.QuoteMeta("chk50-policy-state-before.txt")).MatchString(step1) {
+		t.Errorf("Check 50 step 1 does not WRITE the pre-check policy state to %s: step 7 branches on that record, and a restore whose record nothing writes is a restore that guesses", stateFile)
+	}
+	chk50MustContain(t, step7, "step 7", []string{
+		stateFile,
+		"no-policy",
+		"policy-no-routing",
+		"policy-routing",
+		"--remove-routing",
+		"exit 1",
+	})
+	if !strings.Contains(step7, `case "$(cat "$STATE")" in`) {
+		t.Error("Check 50 step 7 does not branch on the state step 1 recorded: the three restores (delete, drop the switch, republish) are chosen by that record and by nothing else")
+	}
+	// Every `--delete` in the step's own blocks must sit inside the ONE arm
+	// that tests the recorded state: a plain line whose only guard is a
+	// trailing comment runs whatever the state was. A comment or a message that
+	// mentions the flag is not a command; anything else on a line with it is.
+	armRE := regexp.MustCompile(`^(no-policy|policy-no-routing|policy-routing)\)`)
+	for _, block := range chk49FencedBlocks(step7) {
+		lines := strings.Split(block, "\n")
+		for i, line := range lines {
+			if !strings.Contains(line, "--delete") {
+				continue
+			}
+			if t := strings.TrimSpace(line); strings.HasPrefix(t, "#") || strings.HasPrefix(t, "echo ") {
+				continue
+			}
+			arm := ""
+			for j := i - 1; j >= 0; j-- {
+				if m := armRE.FindStringSubmatch(strings.TrimSpace(lines[j])); m != nil {
+					arm = m[1]
+					break
+				}
+			}
+			if arm != "no-policy" {
+				t.Errorf("Check 50 step 7 runs %q and it is not inside the branch that tests the state step 1 recorded (it is in the %q arm, or in no arm at all): --delete may run only when step 1 recorded that no policy was published", strings.TrimSpace(line), arm)
+			}
+		}
+	}
+	// And the missing-record case stops the step instead of guessing: the test
+	// of the record is followed by an `exit`, in the same branch — a guard whose
+	// message says "STOP" and then runs on is not a stop.
+	var guarded bool
+	for _, block := range chk49FencedBlocks(step7) {
+		lines := strings.Split(block, "\n")
+		for i, line := range lines {
+			if !strings.Contains(line, "[ ! -s ") || !strings.Contains(line, "STATE") {
+				continue
+			}
+			for j := i + 1; j < len(lines) && j <= i+5; j++ {
+				if strings.HasPrefix(strings.TrimSpace(lines[j]), "exit ") {
+					guarded = true
+				}
+			}
+		}
+	}
+	if !guarded {
+		t.Errorf("Check 50 step 7 does not refuse (exit) when the recorded state is missing or unreadable (no `exit` follows the `[ ! -s ... ]` test in %s): guessing the restore is the destructive case this check must never run", stateFile)
+	}
+
+	// Task 1b.3 has not shipped, so every FACT line that names its output says
+	// the same thing: record it as "not produced" and go on. A step that stops,
+	// or that reads as if the line must exist, contradicts the opener and
+	// leaves the owner with a check that cannot be finished.
+	for _, tc := range []struct{ step, marker string }{
+		{"### 2.", "step 2"},
+		{"### 3.", "step 3"},
+	} {
+		if s := chk50Step(t, section, tc.step); !strings.Contains(s, "not produced") {
+			t.Errorf("Check 50 %s does not say Task 1b.3's missing output is recorded as %q: the opener rules that a step whose output is missing because its task has not landed is recorded and not treated as a failure, and this step must say the same", tc.marker, "not produced")
 		}
 	}
 
