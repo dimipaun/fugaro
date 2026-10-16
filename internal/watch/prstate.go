@@ -377,7 +377,8 @@ func (p *PRState) start(ref prRef) {
 }
 
 // look asks gh once and records the answer. Only the state word leaves gh's
-// output: everything else is discarded here.
+// output, and only a fixed reason for a failure (classify): everything gh
+// printed is discarded with this call.
 func (p *PRState) look(ref prRef) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
