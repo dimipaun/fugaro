@@ -48,3 +48,28 @@ module "installation" {
   history                   = var.history
   project_secrets           = var.project_secrets
 }
+
+# The shared project jobs (design docs/design/project-centric.md §4.1): one
+# Cloud Run job and one job service account per (profile, provider,
+# account), from the local config's profiles. The key is absent for an
+# installation that names no profile, and the module then creates nothing.
+#
+# They belong to the installation, not to a repository root: a project job
+# serves every repository admitted to its profile, and its account must
+# outlive any one repository's root. fugaro init computes every name, env
+# and condition of each entry (internal/infra.ProjectJobs); nothing here
+# derives one.
+module "project" {
+  source   = "../../modules/project"
+  for_each = var.project_jobs
+
+  project         = var.project
+  fugaro_project  = var.fugaro_project
+  region          = var.region
+  job             = each.value
+  runs_bucket     = var.runs_bucket
+  secrets         = module.installation.project_secrets
+  job_runner_role = module.installation.role_ids.job_runner
+  launchers       = var.launchers
+  operators       = var.operators
+}

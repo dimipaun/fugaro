@@ -17,9 +17,8 @@ import (
 // scripts/gen-golden-plans.sh plans): the local config's profiles, and
 // nothing of any repository — the installation root never sees one.
 type installationFixture struct {
-	RunsBucket   string `json:"runs_bucket"`
-	ProjectJobs  map[string]projectJobFixture
-	ProjectCount int `json:"-"`
+	RunsBucket  string                       `json:"runs_bucket"`
+	ProjectJobs map[string]projectJobFixture `json:"project_jobs"`
 }
 
 // projectJobFixture is one project_jobs entry, as the fixture writes it.
