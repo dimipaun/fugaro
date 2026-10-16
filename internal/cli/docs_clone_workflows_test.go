@@ -150,6 +150,26 @@ func TestChecklistHasCheck38(t *testing.T) {
 		}
 	}
 
+	// The table row prices the same check the same way, and it is outside the
+	// section (docSection stops at the next heading). "nothing billable" was
+	// scoped to registry storage in the old text; the check does launch real
+	// sandbox runs, and the row says so in its own first words — a whole-check
+	// "nothing billable" understates what the owner is agreeing to.
+	if i := strings.Index(doc, "\n| 38 |"); i >= 0 {
+		row := doc[i+1:]
+		if j := strings.Index(row, "\n"); j >= 0 {
+			row = row[:j]
+		}
+		if strings.Contains(row, "nothing billable") {
+			t.Error("the Check 38 table row still calls the check free")
+		}
+		if !strings.Contains(row, "$0.21") {
+			t.Error("the Check 38 table row does not price the prerequisite fix path")
+		}
+	} else {
+		t.Error("the Check 38 table row is gone")
+	}
+
 	// With a release base image at cloneSince the gate warns about nothing,
 	// and the section has to say so — and only that: the budget precheck and
 	// other launch warnings can print, so "any warning at all is a finding"
@@ -227,6 +247,7 @@ func TestChecklistHasCheck38(t *testing.T) {
 		{"revert --no-edit HEAD", "the revert of whatever HEAD is, not of the check's commit"},
 		{"sandbox-head", "the recorded HEAD named as the revert's target"},
 		{"git push --force", "a forced push to the sandbox's base branch"},
+		{"`bash` sub-shell", "the old advice to run the guard where its variables die"},
 	} {
 		if strings.Contains(section, row.banned) {
 			t.Errorf("the Check 38 section still carries %q (%s)", row.banned, row.why)
