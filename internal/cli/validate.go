@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -391,11 +392,21 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // directory is deep the reason was what got cut ("routing.claude.models[0]:
 // claude-sonnet-5-… (truncated)"): measured on macOS's default per-user TMPDIR,
 // where the reviewed test failed and passed with TMPDIR=/tmp. The reason is the
-// half an operator cannot guess and the path is the half they can, and the
-// loader's own reasons are long — this one names the key, the model and the
-// fix — so the reason leads and keeps the line's room, and the place comes
-// last, shortened to its last elements. Cut either way, it is the place that is
-// cut.
+// half an operator cannot guess and the path is the half they can, so the
+// reason leads and the place comes last, shortened to its last elements.
+//
+// The reason is printed whole, though — escaping kept, no cut. Padding it into
+// MaxPrintable was not enough: the loader's reasons are long and end in the
+// instruction (the fix), so a cap anywhere near 200 runes took exactly the half
+// the line exists for — "…whose allow_data_to is not written: name the
+// repositories whose code may b... (truncated)" loses the "or write ["*"] to
+// mean every one of them on purpose" that tells the operator what to do, and
+// the switch's empty list lost "one explicit Claude ID per entry" the same way.
+// Every other config error validate prints is already whole (budgetProblems and
+// providerProblems print localcfg's own error as it is), and the file this
+// reason comes from is the operator's own local config rather than a
+// repository's, so there is no hostile-file budget to keep here; the escaping
+// stays, which is the part a terminal needs.
 func unreadableProjectConfig(err error) string {
 	// The loader's own shape, and nothing else's: an error that does not carry
 	// it is printed as it is (nil or empty is not a state this is called in).
@@ -405,16 +416,13 @@ func unreadableProjectConfig(err error) string {
 			reason, path = r, p
 		}
 	}
+	// whole is pluginwire's escaping with its rune cap lifted: the cap counts
+	// runes and MaxInt is one more than any string has.
+	whole := pluginwire.PrintableN(reason, math.MaxInt)
 	if path == "" {
-		return pluginwire.Printable(reason)
+		return whole
 	}
-	where := " (in " + shortPath(path) + ")"
-	// truncLead is room for pluginwire's own "... (truncated)", which its cap
-	// adds to a reason long enough to be cut: leaving it here is what keeps the
-	// whole line — reason, marker and place — inside MaxPrintable, so the place
-	// is never the part a later cap takes.
-	const truncLead = len("... (truncated)")
-	return pluginwire.PrintableN(reason, pluginwire.MaxPrintable-len([]rune(where))-truncLead) + where
+	return whole + " (in " + shortPath(path) + ")"
 }
 
 // shortPath is where a project config is, cut to its last elements: what names
