@@ -255,7 +255,13 @@ checklist does not name its sub-checks); and **57 is reserved by the
 compute-backend design** (`docs/design/compute-backend.md` §7, **PR #375** —
 the design that owns the number; the restore of generic-tool's Task 28 that
 this design's status line cites is a different pull request, **PR #374**,
-merged as `a1464c5`). The rows
+merged as `a1464c5`). **58 is the artifact-runs design's**
+(`docs/design/artifact-runs.md` §11, merged with its plan as PR #393,
+`fd06635` — the first number past every reservation, its row and its
+`## Check 58` section written here and not yet run), and **59 is the desktop
+console plan's** (`docs/plans/2026-10-15-desktop-console.md`, whose own
+register yields 58 to #393 and takes 59 for itself, written as two sections
+59a and 59b because the second needs a published feed to run). The rows
 for a reservation appear when its plan lands, so the gap between 47 and 57 is
 deliberate, not a missing check.
 
@@ -389,6 +395,7 @@ and the reaper as a safety net — are amended in
 | 46 | A Claude senior through OpenRouter by the owner's opt-in (design `mixed-credentials.md` §4, §10 Phase 2): an unclaimed `anthropic/<id>` still refused at every surface, the claim accepted from the local config first and from the project layer once that slice ships (step 4), a claim never creatable by a repository, and `cache_read`/`cache_write_5m` on the reviewer's own calls against the same task run direct | See "Check 46" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and no agent runs any step of it. | Two small sandbox runs per claim location, plus the route fee. **USER-RUN, NOT RUN.** |
 | 47 | The subscription OAuth token for the reviewer stage only (design `mixed-credentials.md` §5, Path B): the one permitted mix validating, the account's variant job and its token mount, whether an `anthropic-api-key` is still asked for (on this tree it is, only when a call goes to Anthropic), a run whose coder stage goes through the gateway and whose reviewer stage does not, the stage recorded as notional with `credential: oauth`, the role-swap, launch and public-follow-up refusals with review mode left permitted, the same run with the budget off, and the dashboard's notional column | See "Check 47" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and **you** type the token. | A few small sandbox runs and one stored secret. **USER-RUN, NOT RUN.** **HELD until phase 5 of `docs/design/project-centric.md` (D9, 2026-10-14) — do not run as written; steps 2 and 6 are rewritten against the person-owned OAuth pool.** |
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image, the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
+| 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` (U6), and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch carries this check's own batch label and run id, and step 1 is the only step that refuses to run over an earlier attempt's records. | One Cloud Build (the image that carries ffmpeg) and four tiny sandbox runs, one of them driven past its memory limit. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -2119,3 +2126,311 @@ Confirms `docs/design/mixed-credentials.md` §5 (Path B) and `docs/plans/2026-10
 8. **Restore** step 1's state (the `agent` block, the `followup` block, the budget mode and caps, the stored secret if you do not want to keep it), re-run `fugaro init --repo` so the sandbox's jobs match the restored config again, and confirm one ordinary sandbox run still succeeds.
 
 **Paste back:** every `FACT` line above, never a secret value and never a token value. Until this check runs, `docs/design/mixed-credentials.md` §5's Path B is implemented but unverified live, and `SECURITY.md`'s known-gaps line for it stands as written. Never run this against `belong`; no agent runs any step of this check — every step is yours, including typing the token.
+## Check 58: artifact runs — a file out of a cloud run, and the three ways that can fail (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
+
+Confirms [design/artifact-runs.md](design/artifact-runs.md) §3–§9 against the real substrate rather than the fakes, and settles four rows of its §12: **U2** (whether ffmpeg reaches a run through `image.apt` on a real image), **U3** (what a render's own peak does to the container's memory, and what a killed container looks like from outside), **U5** (the content type the object store reports for a `.mp4` written by ffmpeg on the base image) and **U6** (the real wall clock of the upload inside `finalize_reserve`). Number 58 is the artifact-runs design's — the first number past every reservation the register above records (48–56 project-centric, 57 compute-backend); 59 is the desktop console plan's, and if two plans ever claim one number, the one that merges second renumbers itself, row, heading and every reference together.
+
+**Method.** All of it happens in the installation's own project (`fugaro-dev`) and the **sandbox** repository, from the sandbox checkout. **Never `belong`** (EdgeWeb's and EdgeServer's): nothing below creates, changes or deletes anything there. **No agent runs any step of this check — every command is yours**, typed at your own terminal: the two that would change the installation (`fugaro image refresh` and `fugaro init --repo .`) are refused in a coding agent's session anyway. Three things change in the sandbox and the Restore at the end undoes them: the workflow's `image.apt` (step 1), and three fixture commits made and reverted inside step 7.
+
+**Why a script file rather than an interactive shell.** Every step starts by re-running the setup + guard block, and the fresh-record rule `exit 1`s. In a terminal that closes the window — the intended outcome, nothing after it runs — so run this check from a script file or a `bash` sub-shell if you would rather keep the window (the reason Check 43 states).
+
+⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every step and before the Restore.** This is Check 43's guard block in this check's variables: the same three stops, the same assertions, `${VAR:?}` the same way. The block is self-contained and idempotent: it makes one local `fugaro doctor` call and one `git` call, and nothing below the three stops runs unless all three pass.
+
+```bash
+# === Check 58: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1, 2, 3, 4, 5, 6, 7, Restore). It is idempotent, and nothing below
+# the three hard stops runs unless all three pass. ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+L=us-east5                   # the installation's region
+R=edgeappinc/fugarosandbox   # the sandbox repository, owner/name: the only repository this check touches
+S=edgeappinc-fugarosandbox   # the sandbox's slug WITHOUT its 16-hex tail (task.Slug): every run this check reads back is asserted to sit under a slug that starts with it, which is what keeps the check off `belong`
+W=web                        # the sandbox workflow this check adds ffmpeg to: it MUST be a key of the checkout's fugaro.yaml `workflows:` — the read-back block below refuses a W the checkout has no job for, so pick another key if the sandbox has no `web`
+B=chk58                      # this check's batch label, on every launch; the fresh-record rule and every read-back use it
+
+# ${VAR:?} everywhere: an empty variable is a hard error, never an empty
+# argument that gcloud would resolve from its ambient configuration (the
+# owner's ambient project is a *-prod one).
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$S" ] && [ -n "$W" ] && [ -n "$B" ] \
+  || { echo "Check 58 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R S=$S W=$W B=$B must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 58 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 58 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**Why the guard is one block, and why it is re-run.** This check *writes*: one Cloud Build that moves the sandbox workflow's job onto an image carrying ffmpeg, and four runs of the sandbox repository, each of which uploads objects into the runs bucket. A `fugaro-dev` shell sitting in EdgeWeb's or EdgeServer's checkout would put all of that on `belong`, which is why the checkout's origin is a hard stop and not a print. The stops are the ones a skipped or half-pasted block fails: the first asserts that the block itself ran (`P` is exactly `fugaro-dev` **and** every other variable is non-empty), the second is `fugaro doctor`'s `project:` line — the local config's own project, no cloud call (`internal/cli/doctor.go`), read from the same file `fugaro init --repo .` writes — and the third is the checkout's own origin. **And this check has a fourth guard of its own, one block down:** `--workflow` takes a name, and `W` naming a workflow the checkout does not have is a launch that would reach a job of some other repository. It lives in the read-back block because that block *parses* the config (`--print-vars`) rather than grepping `fugaro.yaml` for an indentation, so it holds whatever shape the sandbox's file is written in; it refuses there, before anything is launched.
+
+**Every `fugaro` command that takes `--project` gets `--project fugaro`** (the installation's *name*: the project is `fugaro-dev`), the same way every `gcloud` command gets `--project="${P:?}"`. Which command picks its installation from where: `fugaro image refresh`, `fugaro init --repo .`, `fugaro run` and `fugaro validate` resolve it from the checkout's `fugaro.yaml`, so they must run **only from the sandbox checkout**, and `--project fugaro` is what enforces it — a `--project` that disagrees with the checkout's `project:` is refused, not silently resolved. `fugaro version` is the one exception: it takes no flags at all and makes no cloud call.
+
+**The read-back block: nothing below constructs a bucket path or a slug, and no run is named by hand.** A run ID is a UTC timestamp and four hex digits — `task.ValidRunID`'s form, `20261016-103840-58a1` — and `--run-id` takes exactly that form, so a readable name like `chk58-ok` is refused. Each launch below therefore **mints its ID at the moment it runs** (`new_run_id a1`) and keeps it in a variable; a step that lost its shell recovers it with `batch_refs`. A run's slug carries a 16-hex hash of (provider, repository) and the runs bucket's name is a Terraform variable, so both are read back from the installation, never assembled. This block runs with the guard block at the start of every step: it reads the workflow's job name, that job's image and its `FUGARO_BUCKET`, and defines the three helpers every later step uses.
+
+```bash
+# === Check 58: read-back block. Re-run with the guard block at every step.
+# --print-vars makes no cloud call; the two gcloud describes are read-only.
+# A step that lost its shell gets the run ID it needs back with, e.g.:
+#   REF_OK=$(batch_refs | head -1 | sed 's|.*/||')
+J=$(fugaro init --repo . --project fugaro --print-vars 2>/dev/null | jq -r --arg w "${W:?}" '.repo.workflows[$w].job // empty')
+[ -n "$J" ] || { echo "Check 58 stopped: the checkout's fugaro.yaml has no workflow $W (--print-vars names one job per workflow key, and those keys are the names --workflow wants: set W to one of them; a key with a _<account> suffix is a variant, not a workflow)" >&2; exit 1; }
+IMAGE=$(gcloud run jobs describe "${J:?}" --project="${P:?}" --region="${L:?}" --format='value(spec.template.template.containers[0].image)')
+BUCKET=$(gcloud run jobs describe "${J:?}" --project="${P:?}" --region="${L:?}" --format=json \
+  | jq -r '.spec.template.template.containers[0].env[]? | select(.name=="FUGARO_BUCKET") | .value')
+[ -n "$BUCKET" ] || { echo "Check 58 stopped: job $J carries no FUGARO_BUCKET in its environment" >&2; exit 1; }
+
+# batch_refs: this batch's runs, oldest first, one <slug>/<run-id> per line.
+batch_refs() {
+  fugaro runs ls --project fugaro --repo "${R:?}" --batch "${B:?}" --since 0 --json \
+    | jq -r '.runs | sort_by(.created) | .[].run'
+}
+# new_run_id <4 hex digits>: this instant in UTC plus this check's own tag, so
+# every launch is stamped with when it ran and none of them can collide.
+new_run_id() { printf '%s-58%s' "$(date -u +%Y%m%d-%H%M%S)" "$1"; }
+# ref_of <run-id>: <slug>/<run-id>, the form `fugaro diagnose` wants (it has
+# no --repo, unlike `artifacts ls|get`), and prefix_of <run-id>:
+# gs://<runs bucket>/runs/<slug>/<run-id>/. Both read the run out of THIS
+# batch and refuse a slug that is not the sandbox's before anything is read
+# or deleted, so every path below stays inside this repository's own prefix.
+ref_of() {
+  local ref
+  ref=$(batch_refs | grep -E "/${1:?}\$" | head -1)
+  [ -n "$ref" ] || { echo "Check 58: no run $1 in batch ${B:?} of ${R:?}" >&2; return 1; }
+  case "$ref" in "${S:?}"-*/"$1") ;; *) echo "Check 58: run $1 is $ref, not a run of the sandbox repository ($S-…/$1): refusing to address it" >&2; return 1 ;; esac
+  printf '%s' "$ref"
+}
+prefix_of() { printf '%s/runs/%s/' "${BUCKET:?}" "$(ref_of "$1")"; }
+```
+
+**The fresh-record rule — step 1's alone.** Every launch below carries `--batch "${B:?}"`, so one listing says whether an earlier attempt left records behind. **Step 1 is the only step that refuses to start over one**, because it is the only step that creates state; every later step expects the records its predecessor made. A leftover from an earlier attempt is caught by the batch and not by the ID (IDs are timestamps, so a second attempt mints different ones) — and two launches cannot collide by accident: `--attach` is refused on a run ID that already has a task, and a repeated `--run-id` adopts a byte-identical stored task rather than starting a second run.
+
+```bash
+# === Check 58: fresh-record rule. It is STEP 1's first command, and only
+# there: a later step's runs are supposed to exist. Nothing below step 1 has
+# run yet when this refuses. ===
+left=$(fugaro runs ls --project fugaro --repo "${R:?}" --batch "${B:?}" --since 0 --json \
+  | jq -r '.runs[] | "\(.run) \(.status) \(.reason // "")"')
+[ -z "$left" ] || { echo "Check 58 stopped: batch ${B:?} already holds runs from an earlier attempt:" >&2; printf '%s\n' "$left" >&2; echo "delete them (the Restore block at the end says how) or re-run this whole check under another batch label (B=chk58b)" >&2; exit 1; }
+```
+
+1. **The sandbox's prerequisites — the only step that changes the sandbox's configuration, and the one Cloud Build this check pays for (U2).** *(Re-run the setup + guard block, the read-back block then the fresh-record rule first.)* In the sandbox checkout. These fixture commits go to the sandbox's **base branch**, because that is what the runs below clone by default — it is the sandbox, and that is what it is for — and the checkout must be at the same commit you pushed, since the launcher resolves the recipe from the checkout while the runner reads `commands.render` and `commands.probe` at the run's ref. (A protected base branch is the one case that changes this: then push the fixture commits to a branch of your own and add `--ref <that branch>` to every launch below, so the fixture and the ref are still the same commit.)
+
+   - **ffmpeg into the image, and the two commands the run reads.** Add to the `${W:?}` workflow in `fugaro.yaml`:
+
+     ```yaml
+     workflows:
+       web:                              # ${W:?}: the workflow the read-back block checked
+         image:
+           apt: [ffmpeg]                 # the render's tool: baked in at image build time, never installed mid-run (an agent has no sudo, by design)
+         commands:
+           render: bash check58/render.sh   # repository text, read by the runner at the run's ref
+           probe: bash check58/probe.sh
+     ```
+
+   - **The fixture recipe**, `.fugaro/recipes/sizzle-check.yaml` (the file name and the recipe's `name:` must agree):
+
+     ```yaml
+     version: 1
+     name: sizzle-check
+     description: Render a short video from attached PNGs, and probe it.
+     use_when: "Check 58 only: three attached PNGs in, a video out."
+     mode: artifact
+     steps:
+       - plan: {}       # the agent: writes the render plan, no push, no git token
+       - render: {}     # deterministic: runs commands.render in the checkout
+     outputs:
+       globs: ["out/*.mp4"]
+       max_files: 4
+       max_bytes: 67108864        # 64 MiB, per artifact
+       max_total_bytes: 268435456 # 256 MiB, the whole set
+       probe: probe               # names commands.probe of the repository's fugaro.yaml
+     ```
+
+   - **The render script**, `check58/render.sh`, and **the probe**, `check58/probe.sh` — real files, committed, because step 7 varies one of them at a time. A command that names a *file* runs **that file's working-tree bytes**, and the plan stage is the same container, the same user and the same environment — the plan stage could have rewritten it, and the runner does not promise which copy runs (`docs/artifact-runs.md` §2, `SECURITY.md`). That is a deliberate trade here, made for step 7's sake: the record's `command` and `command_sha256` are the *string* the runner read (`bash check58/render.sh`), not the file's bytes, and step 3 says so. For the strongest form of this half, write `commands.render` as an inline `|` script instead for the first pass, and switch to the file only for step 7.
+
+     ```bash
+     # check58/render.sh — commands.render. The attached PNGs are already in
+     # ./inputs/ (the runner downloaded them there and verified their hashes);
+     # the outputs root is out/, relative to the checkout, which is where the
+     # recipe's outputs.globs look. No git token, no push: nothing here opens a
+     # pull request.
+     #!/usr/bin/env bash
+     set -euo pipefail
+     rm -rf out && mkdir -p out          # the set is exactly what this render wrote
+     for name in sizzle sizzle-b; do
+       ffmpeg -hide_banner -y \
+         -framerate 5/8 -pattern_type glob -i 'inputs/*.png' \
+         -vf "scale=1280:720,noise=alls=30:allf=t" -r 25 \
+         -c:v libx264 -pix_fmt yuv420p -crf 23 "out/${name}.mp4"
+     done
+     ```
+
+     (Three inputs at `5/8` fps are 4.8 s, resampled to 25 fps on output — inside the 4.5–5.5 s window the probe below demands. Both names come from the same three PNGs, so the set has two members: that is what makes the caps and the retrieval exercise a *set* rather than one file.)
+
+     ```bash
+     # check58/probe.sh — commands.probe. The runner runs it ONCE for the
+     # whole staged set, after the caps and before the upload, under
+     # timeouts.verify and the run's finalize reserve. Its two variables are
+     # the interface: FUGARO_OUT_DIR holds the staged copies (flat, and it
+     # exists even when the set is empty) and FUGARO_ARTIFACTS_FILE names
+     # them, one per line. Fail closed: any non-zero exit refuses the upload.
+     #!/usr/bin/env bash
+     set -euo pipefail
+     : "${FUGARO_OUT_DIR:?}" "${FUGARO_ARTIFACTS_FILE:?}"
+     [ -s "${FUGARO_ARTIFACTS_FILE}" ] || { echo "probe: the staged set is empty"; exit 1; }
+     while IFS= read -r name; do
+       [ -n "$name" ] || continue
+       f="${FUGARO_OUT_DIR}/${name}"
+       w=$(ffprobe -v error -select_streams v:0 -show_entries stream=width  -of csv=p=0 "${f}")
+       h=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "${f}")
+       d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "${f}")
+       echo "probe: ${name} ${w}x${h} ${d}s"
+       awk -v d="${d}" 'BEGIN { exit (d >= 4.5 && d <= 5.5) ? 0 : 1 }' \
+         || { echo "probe: ${name} is ${d}s, wanted 4.5 to 5.5"; exit 1; }
+       { [ "${w}" = 1280 ] && [ "${h}" = 720 ]; } \
+         || { echo "probe: ${name} is ${w}x${h}, wanted 1280x720"; exit 1; }
+     done < "${FUGARO_ARTIFACTS_FILE}"
+     ```
+
+   - **Then commit, push to the sandbox's base branch, and rebuild the image:** `fugaro image refresh --project fugaro --workflow "${W:?}"` at your own terminal (it reads `fugaro.yaml` from the checkout, confirms each billable build, and is refused in a coding agent's session; `--yes` would script it and is not needed here). The run clones the base branch, so the push comes **first**: the runner reads `commands.render` and `commands.probe` from `fugaro.yaml` at the run's ref, and the launcher resolves the recipe from the checkout.
+   - **FACT:** the image the job names after the refresh, digest included (`echo "$IMAGE"` from the read-back block), the job's name, and one line saying whether the refresh rebuilt the image or reused it. **Until this step succeeds, ffmpeg is not in the image and every render below fails with `ffmpeg: not found`** — which is itself the U2 answer, so record it if you see it.
+
+2. **Files in.** *(Re-run the setup + guard block and the read-back block first.)* In a directory of your own (the check uses `/tmp/chk58`), write the three PNGs with the generator — a real command, not a description, `python3` over `zlib`/`struct`, 320×240 8-bit RGB, and each file comes out a few hundred bytes:
+
+   ```bash
+   mkdir -p /tmp/chk58 && cd /tmp/chk58
+   python3 - <<'PY'
+   import zlib, struct
+   for name, rgb in (("a.png", (220, 40, 40)), ("b.png", (40, 180, 90)), ("c.png", (60, 90, 220))):
+       w, h = 320, 240
+       raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+       def chunk(t, d):
+           return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+       png = (b"\x89PNG\r\n\x1a\n"
+              + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+              + chunk(b"IDAT", zlib.compress(raw, 9))
+              + chunk(b"IEND", b""))
+       open(name, "wb").write(png)
+       print(name, len(png))
+   PY
+   sha256sum a.png b.png c.png
+   ```
+
+   Then launch, from the **sandbox checkout**, with **no `--repo`** (a plain launch resolves the repository from the checkout) and with TEXT, which `fugaro run` requires of every launch that is not a follow-up:
+
+   ```bash
+   cd <the sandbox checkout>
+   REF_OK=$(new_run_id a1); echo "$REF_OK"
+   fugaro run --project fugaro --workflow "${W:?}" --recipe sizzle-check --run-id "${REF_OK:?}" --batch "${B:?}" \
+     --attach /tmp/chk58/a.png --attach /tmp/chk58/b.png --attach /tmp/chk58/c.png \
+     "Render a five-second 1280x720 video from the three attached PNGs, input order, into out/."
+   ```
+
+   **FACT:** the launch line's own output (the run ID `${REF_OK:?}`, its branch and workflow), and `task.json`'s `inputs` beside `sha256sum` of the three local files —
+
+   ```bash
+   p=$(prefix_of "${REF_OK:?}"); echo "$p"
+   gcloud storage cat "${p:?}task.json" --project="${P:?}" | jq '.inputs'
+   ```
+
+   The three entries must carry the same `name`, `bytes` and `sha256` the local files have, which is what proves the launcher hashed the same bytes it stored (a name that is absolute, holds a `..`, a control character or a leading dot is refused before the first byte is uploaded at all).
+
+3. **The render record.** *(Re-run the setup + guard block and the read-back block; `REF_OK` and `p` must still be set. In a new shell, recover both before going on: `REF_OK=$(batch_refs | head -1 | sed 's|.*/||')` and `p=$(prefix_of "${REF_OK:?}")`.)* The plan stage runs the agent (which writes the render plan), then the runner — never the agent — runs `commands.render`, once:
+
+   ```bash
+   gcloud storage cat "${p:?}result.json" --project="${P:?}" \
+     | jq '{status, outcome, reason, render, cost, branch, pr, pushed_head, base_branch}'
+   gcloud run jobs describe "${J:?}" --project="${P:?}" --region="${L:?}" --format='value(spec.template.template.containers[0].resources)'
+   ```
+
+   **FACT:** `outcome` is `artifacts` and `status` is `succeeded`; `render.command` is the repository's own `commands.render` text (`bash check58/render.sh`) with its `command_sha256` — the hash of *that string*, the text the runner read from `fugaro.yaml` at the task's ref, and **not** the hash of the script file it names (step 1 says why) — plus `tree: "working"`, `exit_code` 0, `timed_out` false and a `duration_s`; `cost.model_usd` is **the plan stage alone** and `cost.compute_usd` sits beside it with `compute_estimated: true` (`cost.total_usd` is the two added up; only the model half could ever have been capped, design §6); **`branch`, `pr` and `pushed_head` are all absent** — no branch was pushed and no pull request was opened, which is the whole point of the mode; and the job's `resources` are the workflow's own (`4` and `8Gi` when `fugaro.yaml` writes none), which is what the §5.2 arithmetic was checked against: `2 × outputs.max_total_bytes` (512 MiB) `+ inputs.max_total_bytes` (the 1 GiB default) = 1.5 GiB, inside 8 GiB.
+
+4. **The probe, both halves.** *(Guard block, read-back block.)* The record's own verdict, then an independent one from your machine:
+
+   ```bash
+   p=$(prefix_of "${REF_OK:?}")                            # in a new shell, first: steps 4 to 6 read ${p:?}
+   fugaro artifacts ls "${REF_OK:?}" --project fugaro --repo "${R:?}"
+   gcloud storage cat "${p:?}result.json" --project="${P:?}" | jq '.artifacts[] | {name, bytes, sha256, content_type, probe}'
+   mkdir -p /tmp/chk58 && cd /tmp/chk58                    # step 6 fetches the same set again, into its own directory
+   fugaro artifacts get "${REF_OK:?}" --project fugaro --repo "${R:?}" --out /tmp/chk58
+   ffprobe -v error -show_entries stream=width,height -show_entries format=duration \
+     -of default=noprint_wrappers=1 "/tmp/chk58/${REF_OK:?}-artifacts/sizzle.mp4"
+   ```
+
+   (The local `ffprobe` is the *independent* half, and the one thing here that needs something on your own machine; the record's half needs nothing installed. If your machine has no ffmpeg, say so and read the retrieved bytes another way — the point is a reader that is not the probe.) **FACT:** per artifact, `probe` is `{"ran": true, "exit_code": 0}` — `ran: true` and exit 0, not `{"ran": false, "exit_code": -1}`, which is what a recipe with `outputs.probe: none` records; and the local `ffprobe`'s duration and resolution for the file `get` just wrote, which must be the ~5 s and 1280×720 the probe demanded. **The two must agree**: a probe that passes what an independent reader calls broken is the failure this half exists to catch.
+
+5. **The recorded content type against the object's own (U5).** *(Guard block, read-back block.)*
+
+   ```bash
+   gcloud storage cat "${p:?}result.json" --project="${P:?}" | jq -r '.artifacts[] | "\(.name) recorded=\(.content_type)"'
+   for n in sizzle.mp4 sizzle-b.mp4; do
+     echo "$n object=$(gcloud storage objects describe "${p:?}artifacts/${n}" --project="${P:?}" --format='value(contentType)')"
+   done
+   ```
+
+   **FACT:** the record's `content_type` and the object's own `contentType`, per artifact, and whether they agree. The record's is a **recorded hint** — the name's extension first, then a sniff of the first bytes when the extension names nothing (`artifactContentType`), never a claim about the content — and the upload hands that same string to the store as the object's `Content-Type`, so agreement is the expected result and a disagreement is the U5 answer: the store's own default won instead. Nothing in Fugaro trusts the recorded one either way: `fugaro artifacts get` prints it as the record's claim and stops there.
+
+6. **Retrieval, and the upload's wall clock (U6).** *(Guard block, read-back block.)* Fetch the set back and check it against the record:
+
+   ```bash
+   mkdir -p /tmp/chk58-get && cd /tmp/chk58-get
+   fugaro artifacts get "${REF_OK:?}" --project fugaro --repo "${R:?}" --out /tmp/chk58-get
+   sha256sum "/tmp/chk58-get/${REF_OK:?}-artifacts"/*
+   gcloud storage objects list "${p:?}artifacts/**" --project="${P:?}" --format='value(name,timeCreated)'   # first to last: the upload's wall clock
+   gcloud storage buckets describe "${BUCKET:?}" --project="${P:?}" --format='value(lifecycle)'
+   gcloud storage cat "${p:?}result.json" --project="${P:?}" | jq '{finalize_reserve_s}'
+   fugaro diagnose "$(ref_of "${REF_OK:?}")" --project fugaro --json | jq -r '.artifact_paths[]'
+   ```
+
+   (`diagnose` takes `<repo-slug>/<run-id>` and has no `--repo`, which is what `ref_of` is for; it names one bucket path per artifact from the record.) **FACT:** every `sha256sum` equals the `sha256` the record carries for that name, and the sizes match (`get` verifies both as the bytes arrive and leaves nothing behind when they do not — a mismatch here means the object in the bucket is not the bytes the run uploaded); the destination is the fresh `<run-id>-artifacts/` directory `get` created under the parent `--out` named, never the directory you stood in. **Then the upload's wall clock:** the span between the first and the last object's creation time, written down beside the record's own `finalize_reserve_s` (the workflow's `timeouts.finalize_reserve` at the run's ref, 5m when `fugaro.yaml` writes none) — that is U6, and it is the number the upload has to fit in. **And the retention:** every object sits under `runs/<slug>/<run-id>/artifacts/`, and the bucket's rule for `runs/` is Delete at `runs_days` (90 unless the installation says otherwise), so the artifacts expire with the run and not before it — which is why `fugaro artifacts ls` shows a row `get` can no longer fetch once they are gone, and says exactly that.
+
+7. **The failure direction, in three halves (U3).** *(Guard block, read-back block at each half; each half is one commit on the sandbox's base branch, one push, one run, and then its revert.)* Each of the three launches is the shape step 2's was — from the sandbox checkout, `--project fugaro --workflow "${W:?}" --recipe <this half's recipe> --run-id "<this half's id>" --batch "${B:?}"` and a task text (`fugaro run` requires TEXT of every launch that is not a `--pr` follow-up) — with only the recipe, the run ID and the attachments differing. One half is a probe that must refuse, one a set over a cap, and one a render driven past the container's memory — the last one **states no expected outcome**, because the design does not know one, and writing down what you saw is what settles U3.
+
+   - **7a — a probe that demands an impossible duration.** Revert the probe the recipe names: commit `commands.probe: bash check58/probe-impossible.sh` in `fugaro.yaml` plus that file, which asks for a duration the render cannot produce:
+
+     ```bash
+     #!/usr/bin/env bash
+     set -euo pipefail
+     : "${FUGARO_OUT_DIR:?}" "${FUGARO_ARTIFACTS_FILE:?}"
+     name=$(head -1 "${FUGARO_ARTIFACTS_FILE}")
+     d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "${FUGARO_OUT_DIR}/${name}")
+     awk -v d="${d}" 'BEGIN { exit (d >= 30 && d <= 40) ? 0 : 1 }' \
+       || { echo "probe: ${name} is ${d}s, wanted at least 30s: refusing the upload"; exit 1; }
+     ```
+
+     Commit, push, then launch the same recipe as step 2 — `REF_BAD=$(new_run_id b2)`, `--run-id "${REF_BAD:?}" --batch "${B:?}"`, the same three `--attach` and the same task text. **FACT:** the run is `failed` with `outcome: none` (never `artifacts`), its `reason` carries the probe's own last printed line verbatim, `render.exit_code` is still 0 (the render was fine — the probe is what refused), the record carries **no `artifacts` at all**, and `gcloud storage objects list "$(prefix_of "${REF_BAD:?}")artifacts/**" --project="${P:?}"` finds **nothing**: a failed probe refuses the upload even though the files were staged and within every cap. Then `git revert --no-edit HEAD` and push.
+   - **7b — a set over `outputs.max_total_bytes`, with every member under `outputs.max_bytes`.** Commit `.fugaro/recipes/sizzle-overcap.yaml` — the same shape as `sizzle-check.yaml`, with `max_files: 4`, `max_bytes: 1048576` (1 MiB) and `max_total_bytes: 1048576` (1 MiB — the parser requires the total to be at least the per-file cap, and the two being *equal* is what makes this the total's refusal and not a file's) — plus `check58/render-overcap.sh`, which writes three 700 KiB files under `out/`:
+
+     ```bash
+     #!/usr/bin/env bash
+     set -euo pipefail
+     rm -rf out && mkdir -p out
+     for n in 1 2 3; do head -c 716800 /dev/urandom > "out/big-${n}.mp4"; done
+     ```
+
+     (`commands.render: bash check58/render-overcap.sh` for this run, in the same commit. The bytes need not be playable: the caps are judged **before** the probe, so no probe ever sees these.) Launch with `REF_CAP=$(new_run_id c3)`, `--recipe sizzle-overcap --run-id "${REF_CAP:?}" --batch "${B:?}"`, with or without attachments. **FACT:** the run is `failed`/`none`, and its `reason` is the cap refusal verbatim — it names the count, the set's total, `outputs.max_total_bytes`, and says *every file is under outputs.max_bytes*: `the render's 3 files total …, over outputs.max_total_bytes … (every file is under outputs.max_bytes …)`. **The container was not killed**: the record exists to carry that line (a killed one writes no `result.json`), and `gcloud storage objects list "$(prefix_of "${REF_CAP:?}")artifacts/**" --project="${P:?}"` finds nothing. Then revert and push.
+   - **7c — a render whose own peak exceeds the job's memory.** This is the half the design could not predict: on Cloud Run the container's filesystem *is* memory, so the staging copy and the render's own temp files are both charged to the job's `resources.memory`, and the §5.2 rule bounds only what the *caps* allow, never what the render writes. Commit `.fugaro/recipes/sizzle-oom.yaml` (`max_files: 1`, `max_bytes: 2147483648` and `max_total_bytes: 2147483648` — 2 GiB, the per-file ceiling, so the rule's arithmetic still fits: 2 × 2 GiB + 1 GiB of inputs = 5 GiB, inside the 8 GiB the job has) plus `check58/render-oom.sh`:
+
+     ```bash
+     #!/usr/bin/env bash
+     set -euo pipefail
+     rm -rf out && mkdir -p out
+     head -c $((16*1024*1024*1024)) /dev/zero > out/huge.mp4
+     ```
+
+     (and `commands.render: bash check58/render-oom.sh` in the same commit). Launch with `REF_OOM=$(new_run_id d4)`, `--recipe sizzle-oom --run-id "${REF_OOM:?}" --batch "${B:?}"`, no attachments needed. **FACT — and here the FACT is the whole point: write down what you saw, whichever it is.** Either the container was killed and there is **no `result.json` at all** for that run (`fugaro artifacts ls "${REF_OOM:?}" --project fugaro --repo "${R:?}"` refuses with "run … has no result.json: it never finished, so it recorded no artifacts"; `gcloud storage objects list "$(prefix_of "${REF_OOM:?}")**" --project="${P:?}"` reaches no `result.json`, and nothing under the run's `artifacts/`), or the write failed cleanly and the run is a recorded `failed`/`none` whose `reason` says why (a full `out/`, or a per-artifact cap the truncated file broke). Record the execution's own terminal state, `fugaro runs ls`'s row, how long the run lasted, and whether anything survived under the run's prefix. **Lowering `resources.memory` instead is the plan's other form of this half** — `resources: {cpu: 1, memory: 1Gi}` needs `fugaro init --repo . --project fugaro --gcp-project "${P:?}"` (an apply, and the reason this version raises the render's peak instead: the job's memory is deployed, so it is the one number here a commit alone cannot move) — and if you use it, adjust `outputs.max_total_bytes` so the arithmetic still fits and say which form you ran. Then revert and push.
+
+**Restore** (the last step: it deletes only what this check created — the runs of this check's own batch — and `prefix_of` refuses any run that is not under the sandbox's own slug). **Re-run the setup + guard block and the read-back block first**, then:
+
+```bash
+# Every run of this batch, printed before it goes: these are this check's own
+# runs, under the sandbox's own slug, and prefix_of will address no other.
+for ref in $(batch_refs); do
+  id=${ref##*/}
+  p=$(prefix_of "$id") || continue
+  echo "== ${p}"; gcloud storage objects list "${p:?}**" --project="${P:?}" --format='value(name)' || true
+  gcloud storage rm --recursive "${p:?}" --project="${P:?}" || echo "Check 58: nothing to delete at ${p}"
+done
+rm -rf /tmp/chk58 /tmp/chk58-get
+```
+
+Then: **the fixture commits** — `git revert --no-edit` each of the three step-7 commits and step 1's, for a clean sandbox tree (`git log --oneline` shows all four, and the sandbox is the one repository where you may commit to the base branch); **the local PNGs and videos** — the three PNGs and anything `ffmpeg` wrote locally are gone with `/tmp/chk58`; and **the `image.apt` revert** — the reverted commit removes ffmpeg from the workflow, but the **derived image stays until the next `fugaro image refresh`** (this check deliberately does not pay for a second Cloud Build; say so if you leave it). **Nothing else was created:** no IAM binding, no bucket, no lifecycle rule and no new job — `image refresh` moved the *existing* `${J:?}` job onto a new image, which the revert leaves in place until that next refresh — and everything the runs wrote is under `runs/<slug>/<run-id>/`, which the bucket's own `runs/` rule expires at `runs_days` whether the runs are deleted here or not.
+
+**Paste back:** every `FACT` line above — the image digest and job, `task.json`'s inputs against `sha256sum`, the `render` record and the counters, both halves of the probe's verdict, the recorded and the object's own content type, the retrieved files' hashes and the upload's wall clock, and 7a, 7b and 7c's reason lines — **and never a secret value or the contents of an attached file**. Until this check runs, `docs/design/artifact-runs.md` §12's **U2, U3, U5 and U6** stay open, and that is the honest state of the design's claims rather than a fault list. Never run any step of this check against `belong`; no agent runs any step of it — every command is yours.
