@@ -344,6 +344,13 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // resolver answers whether it would take the call. A Claude pin nothing claims
 // keeps the note it always was: there is no route to send it to, and "write the
 // switch" would be advice this project's own providers cannot take.
+//
+// That route is looked for in lc.Providers, the operator's own table, and never
+// in the checkout layer's claude_models claims (which the resolution above does
+// read: those are the routes the run will have). A claim in the layer is a
+// repository asking for a model to be served by a route the owner defines — the
+// interim path the switch does not replace (D1a) — and it is not the owner
+// saying this project has no Anthropic key; the owner's own route table is.
 func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, notes []config.Problem) {
 	pins := claudePins(cfg.Agent, claimed)
 	if len(pins) == 0 {
@@ -374,7 +381,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 				"%s is named by routing.claude.models and does not resolve: no single provider entry claims it with allow_data_to written, and a call the switch names has no direct fall-back (D1b, design §6.2). config.CheckRouting refuses that switch at load; fix the list or the claim", p.model)})
 		case route == config.RouteDirect:
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
-			if why := claudeDirectRefusal(cfg.Agent, p, claimed, repo, mode); why != "" {
+			if why := claudeDirectRefusal(cfg.Agent, p, lc.Providers, repo, mode); why != "" {
 				problems = append(problems, config.Problem{Path: p.path, Message: why})
 			}
 		default:
