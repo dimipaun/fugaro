@@ -583,9 +583,13 @@ func commonElems(a, b []string) []string {
 // The dot rule is a matched pair with the retriever's (design §9): `fugaro
 // artifacts get` refuses a dot-named entry, and Go's filepath.Glob — unlike a
 // shell — matches a leading dot, so without this rule out/*.mp4 would upload
-// and record a .hidden.mp4 that can never be handed back. Nothing else about
-// a dot is affected: sizzle.v2.mp4 and clips/a.mp4 are both names this
-// accepts.
+// and record a .hidden.mp4 that can never be handed back. It is the NAME's
+// first character and nothing else, which is exactly how the retrieval path
+// words its own rule (design §9: "the refusal is only on a name whose first
+// character is `.`"), so the two sides cannot drift: a dot inside a name
+// (sizzle.v2.mp4) and a name inside a dot-named directory below the outputs
+// root (clips/.hidden/a.png) are both names this accepts, and both are names
+// `get` hands back.
 //
 // This function is about the NAME and nothing else. Whether a match is a file
 // whose bytes may be copied is stageArtifacts' question (outputProblem): a
@@ -611,10 +615,8 @@ func sanitiseName(name string) (string, error) {
 	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("the name %q escapes the outputs root", name)
 	}
-	for _, el := range strings.Split(clean, "/") {
-		if strings.HasPrefix(el, ".") {
-			return "", fmt.Errorf("the name %q begins with a dot, which the retriever refuses: a file nobody can fetch back is not uploaded", clean)
-		}
+	if strings.HasPrefix(clean, ".") {
+		return "", fmt.Errorf("the name %q begins with a dot, which the retriever refuses: a file nobody can fetch back is not uploaded", clean)
 	}
 	return clean, nil
 }

@@ -1091,7 +1091,7 @@ func TestStageArtifactsRefusesEscapes(t *testing.T) {
 		{"a\nb.png", "newline"},
 		{strings.Repeat("a", 201), "200"},
 		{".hidden.mp4", "begins with a dot"},
-		{"clips/.hidden.png", "begins with a dot"},
+		{".hidden/a.png", "begins with a dot"},
 	}
 	for _, c := range refused {
 		got, err := runner.SanitiseName(c.name)
@@ -1109,6 +1109,12 @@ func TestStageArtifactsRefusesEscapes(t *testing.T) {
 		{"sizzle.v2.mp4", "sizzle.v2.mp4"},
 		{"clips/./a.png", "clips/a.png"},
 		{strings.Repeat("a", 200), strings.Repeat("a", 200)},
+		// The dot rule is the name's first character and nothing else
+		// (design §9), so a dot inside a name and a file inside a dot-named
+		// directory below the outputs root are both names the retriever
+		// hands back, and both accepted here.
+		{"clips/.hidden.png", "clips/.hidden.png"},
+		{"clips/.hidden/a.png", "clips/.hidden/a.png"},
 	}
 	for _, c := range accepted {
 		got, err := runner.SanitiseName(c.in)
