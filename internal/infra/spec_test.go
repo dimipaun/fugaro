@@ -1832,23 +1832,33 @@ func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// D2 (plan Task 2.1 step 3b): the sandbox's git credential is a reserved
+	// name, and the one reserved name the sweep does not take in -- a
+	// Bitbucket repository access token is issued for one repository and
+	// authenticates no other (owner ruling of 2026-10-15,
+	// config.PerRepositorySecret). With no project_secrets entry it has no
+	// project-wide candidate at all, and no other name the sandbox mounts is
+	// one, so the set is empty.
 	if len(before.ProjectSecretCandidates) != 0 {
 		t.Fatalf("ProjectSecretCandidates = %+v, want none with no project_secrets configured", before.ProjectSecretCandidates)
 	}
 	// bitbucket-token is the sandbox's git credential, mounted by every
 	// workflow (SecretMounts's unconditional first entry) -- allow-listing
-	// it project-wide here is the design's own worked example (§6).
+	// it project-wide here is the owner's explicit opt-in and the design's
+	// own worked example (§6), and it is the only thing that gives the name
+	// a project copy.
 	after, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
 	// (a) P2's golden property: the key SET (and every ID) is identical,
 	// unaffected by project_secrets existing at all.
 	if !maps.Equal(before.Secrets, after.Secrets) {
 		t.Fatalf("rs.Secrets changed:\nbefore: %+v\nafter:  %+v", before.Secrets, after.Secrets)
 	}
-	// (b) ProjectSecretCandidates gains EXACTLY the expected new entry.
-	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	// (b) The entry's own list is what decides the candidate, and it names
+	// this repository.
 	if !maps.Equal(after.ProjectSecretCandidates, want) {
 		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
 	}

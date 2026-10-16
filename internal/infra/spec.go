@@ -552,6 +552,11 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // GitSecret is the logical name of the git credential of provider (the
 // secret every job mounts), and false for a provider that is neither
 // Bitbucket nor GitHub. The one place that names them.
+//
+// Bitbucket's is the per-repository one of the two: a repository access token
+// is issued for one repository and works for no other, so it is never stored
+// project-wide (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
+// GitHub's App key is a project's, mounted by every repository the App serves.
 func GitSecret(provider string) (string, bool) {
 	switch provider {
 	case gitprov.KindBitbucket:
@@ -906,18 +911,33 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 
 // ProjectSecretCandidate is the one place that answers "may this repository
 // use logical project-wide, and what ID would that be": the name is an
-// entry of project_secrets that lists repo, or a named Claude account's own
-// derived secret whose account lists repo, or a model provider's own key
-// whose provider lists repo -- AllowsData uniformly across all three, so
-// §3a's no-list/["*"]-means-any-repository rule applies to a provider's key
-// exactly as it does everywhere else. ok is false, id "" otherwise. It is
-// exported because fugaro init --repo's secrets stage (before any RepoSpec
-// exists) needs the identical answer.
+// entry of project_secrets that lists repo, or a reserved secret D2 swept
+// into project scope with no project_secrets entry at all, or a named Claude
+// account's own derived secret whose account lists repo, or a model
+// provider's own key whose provider lists repo -- AllowsData uniformly
+// across the last three, so §3a's no-list/["*"]-means-any-repository rule
+// applies to a provider's key exactly as it does everywhere else. ok is
+// false, id "" otherwise. It is exported because fugaro init --repo's
+// secrets stage (before any RepoSpec exists) needs the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {
 		return "", false
 	}
 	eligible := config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)
+	if !eligible && config.ProjectScopeByDefault(logical) {
+		// D2 (plan Task 2.1 step 2, finding 13): a reserved name the platform
+		// itself mounts is eligible project-wide with no per-name list, which
+		// is the case this function refused before -- only an entry of
+		// project_secrets reached it. An *entry* still decides: an owner who
+		// wrote project_secrets.<name>.allow_data_to said who may read it, and
+		// "absent or empty means nobody" stays true of a list someone wrote.
+		// Without one, the sweep applies, and every repository may read it --
+		// the same reach the CLI's default store announces, which is what
+		// makes "stored project-wide" mean what a person reads it to mean.
+		if _, listed := lc.ProjectSecrets[logical]; !listed {
+			eligible = true
+		}
+	}
 	if !eligible {
 		// ClaudeAccountBySecret always resolves the bare claude-oauth-token
 		// to DefaultClaudeAccount, which is never a key of the map

@@ -404,11 +404,20 @@ const AnthropicSecret = "anthropic-api-key"
 // deploy), or route the model through a provider.
 const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro init --repo, or route the model through a provider"
 
+// BitbucketSecret is the logical secret that holds a Bitbucket credential: a
+// repository access token, issued for one repository and unusable for any
+// other (docs/git-providers.md). It is the one reserved name D2's
+// project-scope default leaves out, so `fugaro secrets set` and init's
+// secrets stage store it in the repository's own copy unless the owner's
+// local config allow-lists a repository for it
+// (config.PerRepositorySecret, owner ruling of 2026-10-15).
+const BitbucketSecret = "bitbucket-token"
+
 // ReservedSecrets are the logical secret names the platform itself mounts,
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
 var ReservedSecrets = map[string]string{
-	"bitbucket-token":    "FUGARO_BITBUCKET_TOKEN",
+	BitbucketSecret:      "FUGARO_BITBUCKET_TOKEN",
 	"github-app-key":     "FUGARO_GITHUB_APP_PRIVATE_KEY",
 	"claude-oauth-token": "CLAUDE_CODE_OAUTH_TOKEN",
 	AnthropicSecret:      "ANTHROPIC_API_KEY",

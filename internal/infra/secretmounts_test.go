@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -84,6 +85,39 @@ func TestGitSecret(t *testing.T) {
 	}
 	if got, ok := GitSecret("gitlab"); ok || got != "" {
 		t.Errorf("GitSecret(gitlab) = %q, %v", got, ok)
+	}
+}
+
+// Every git credential GitSecret names is classified for scope, and the
+// per-repository one is the scope D2's sweep must leave alone (round 2, item
+// 2): a provider's credential is either per repository -- issued for one
+// repository, so never stored project-wide (config.PerRepositorySecret, the
+// owner's ruling of 2026-10-15, which is bitbucket-token) -- or the project's
+// (github-app-key, one App serving a team's repositories). This is the check
+// the review asked for over "the git-provider secret names in the code": a
+// provider added here without a decision fails rather than inheriting a scope.
+func TestGitSecretScopeIsDecidedPerProvider(t *testing.T) {
+	perRepo := map[string]bool{
+		gitprov.KindBitbucket: true,
+		gitprov.KindGitHub:    false,
+	}
+	for provider, want := range perRepo {
+		logical, ok := GitSecret(provider)
+		if !ok {
+			t.Fatalf("GitSecret(%q) = no secret: this test's table is out of date", provider)
+		}
+		if _, reserved := config.ReservedSecrets[logical]; !reserved {
+			t.Errorf("%s's credential %q is not a reserved secret, so no scope rule reaches it", provider, logical)
+		}
+		if got := config.PerRepositorySecret(logical); got != want {
+			t.Errorf("PerRepositorySecret(%q) = %v, want %v for %s's credential", logical, got, want, provider)
+		}
+		// A per-repository credential is never swept into project scope; a
+		// project's is.
+		if got := config.ProjectScopeByDefault(logical); got != !want {
+			t.Errorf("ProjectScopeByDefault(%q) = %v, want %v (%s's credential is %s)",
+				logical, got, !want, provider, map[bool]string{true: "per repository", false: "the project's"}[want])
+		}
 	}
 }
 

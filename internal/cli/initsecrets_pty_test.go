@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -96,8 +97,15 @@ func TestSecretPromptHidden(t *testing.T) {
 	if lr.err != nil || lr.res.Failed != nil || stateOf(lr.res, "secrets") != initflow.Changed {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
 	}
+	// bitbucket-token has no project-wide default (round 2, the owner's ruling
+	// of 2026-10-15: a repository access token is issued for one repository),
+	// so the prompt stores this repository's own copy -- where claude-oauth-token
+	// goes too, for its own reason (person-owned; see the next test).
 	if got := r.store.latest(bitbucketSlug, "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
 		t.Errorf("bitbucket-token = %q", got)
+	}
+	if got := r.store.latestProject("aurora", "bitbucket-token"); got != "" {
+		t.Errorf("bitbucket-token was stored project-wide: %q", got)
 	}
 	if got := r.store.latest(bitbucketSlug, "claude-oauth-token"); got != tokenValue { // the default choice
 		t.Errorf("claude-oauth-token = %q", got)
@@ -121,6 +129,43 @@ func TestSecretPromptHidden(t *testing.T) {
 	}
 }
 
+// A repository the project's own allow_data_to does not name never writes the
+// project copy (code review, high). project_secrets.bitbucket-token lists
+// acme/other alone, so the shared copy belongs to acme/other: init on
+// acme/app must store this repository's own copy -- the container the job it
+// is about to deploy mounts -- and leave the shared one exactly as it found
+// it. The scope test the stage used before this was repo-unaware ("the list
+// is non-empty, so the name has a project-wide meaning"), so the prompt wrote
+// the typed value over acme/other's copy, a copy acme/app may not even mount,
+// and Verify then failed: it reads the same eligibility back per repository.
+func TestSecretsStageKeepsTheProjectCopyForARepoItDoesNotAllow(t *testing.T) {
+	f := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, f.tty)
+	r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+		"bitbucket-token": {AllowDataTo: []string{"acme/other"}},
+	}
+	// The shared copy, already stored by the repository the list names.
+	r.store.seedProject("aurora", "bitbucket-token", "acme-others-token-EXAMPLE")
+	done := r.start(context.Background())
+	r.bitbucketSession(t, f, "claude-oauth-token")
+	lr := waitLoop(t, done)
+	if lr.err != nil || lr.res.Failed != nil || stateOf(lr.res, "secrets") != initflow.Changed {
+		t.Fatalf("%v, %+v", lr.err, lr.res)
+	}
+	if got := r.store.latestProject("aurora", "bitbucket-token"); got != "acme-others-token-EXAMPLE" {
+		t.Errorf("the shared project copy another repository mounts was overwritten: %q", got)
+	}
+	if got := r.store.latest(bitbucketSlug, "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
+		t.Errorf("this repository's own copy = %q", got)
+	}
+	if !strings.Contains(r.errOut.String(), "in this repository's own copy") {
+		t.Errorf("the prompt does not say where the value goes: %q", r.errOut.String())
+	}
+	for _, v := range []string{"bb-secret-value-EXAMPLE", tokenValue} {
+		noLeak(t, v, r.out.String(), r.errOut.String(), resultJSON(t, lr.res))
+	}
+}
+
 // The Claude credential asked for is the one agent.auth names, with no
 // choice offered: api-key asks for the API key and never for the OAuth token.
 func TestSecretPromptFollowsAgentAuth(t *testing.T) {
@@ -133,7 +178,7 @@ func TestSecretPromptFollowsAgentAuth(t *testing.T) {
 	if lr.err != nil || lr.res.Failed != nil {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
 	}
-	if r.store.latest(bitbucketSlug, "anthropic-api-key") != tokenValue || r.store.latest(bitbucketSlug, "claude-oauth-token") != "" {
+	if r.store.latestProject("aurora", "anthropic-api-key") != tokenValue || r.store.latest(bitbucketSlug, "claude-oauth-token") != "" {
 		t.Errorf("stored the wrong Claude credential")
 	}
 	if strings.Contains(r.errOut.String(), "Type 1 or 2") {
@@ -155,8 +200,16 @@ func TestMultilinePEMAccepted(t *testing.T) {
 			if lr.err != nil || lr.res.Failed != nil {
 				t.Fatalf("%v, %+v", lr.err, lr.res)
 			}
-			if got := r.store.latest(mustSlug("github", "acme/app"), "github-app-key"); got != pemValue {
+			if got := r.store.latestProject("aurora", "github-app-key"); got != pemValue {
 				t.Fatalf("stored %q", got)
+			}
+			// The project-scope prompt names the command that stores this
+			// repository's own copy instead (code review, low): the stage has
+			// no --repo flag of its own and `fugaro init --repo` never runs
+			// it, so pointing at a flag of this command would send the person
+			// looking for one that does not exist.
+			if !strings.Contains(r.errOut.String(), "secrets set github-app-key --repo acme/app") {
+				t.Errorf("the prompt does not name the repository-copy command: %q", r.errOut.String())
 			}
 			// Typed in this run: the App pre-check may use it from memory.
 			if string(r.e.r.appKeyMem) != pemValue {
@@ -288,6 +341,8 @@ func TestExistingSecretNotOverwritten(t *testing.T) {
 		done := r.start(context.Background())
 		r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
 		lr := waitLoop(t, done)
+		// The repository's own container, which is where the git credential
+		// goes: it has no project-wide default (round 2, item 2).
 		if lr.err != nil || r.store.latest(bitbucketSlug, "bitbucket-token") != "bb-secret-value-EXAMPLE" {
 			t.Fatalf("%v, %+v", lr.err, lr.res)
 		}
@@ -354,9 +409,16 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 		if lr.res.Failed != nil || stateOf(lr.res, "secrets") != initflow.Changed {
 			t.Fatalf("%+v", lr.res)
 		}
+		// The prompt stores the git credential in the repository's own
+		// container, where the prompt's own text says it will (round 2, the
+		// owner's ruling of 2026-10-15: bitbucket-token has no project-wide
+		// default) -- with the repository's labels, never the installation's.
 		id := gcp.SecretID(bitbucketSlug, "bitbucket-token")
 		if string(sm.Latest(id)) != val {
-			t.Fatalf("stored %q", sm.Latest(id))
+			t.Fatalf("stored %q, want %s", sm.Latest(id), id)
+		}
+		if sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token")) != nil {
+			t.Error("the prompt stored a project copy of a per-repository credential")
 		}
 		var labels map[string]string
 		for _, rq := range sm.Requests() {
@@ -366,7 +428,7 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 				labels = body.Labels
 			}
 		}
-		if labels[gcp.LabelManaged] != gcp.ManagedValue || labels[gcp.LabelRepo] != mustLabel(t, bitbucketSlug) || labels[gcp.LabelSecret] != "bitbucket-token" {
+		if labels[gcp.LabelManaged] != gcp.ManagedValue || labels[gcp.LabelProject] != "" || labels[gcp.LabelRepo] != mustLabel(t, bitbucketSlug) || labels[gcp.LabelSecret] != "bitbucket-token" {
 			t.Errorf("labels = %v", labels)
 		}
 	})
@@ -467,6 +529,11 @@ func initOnTTY(t *testing.T, asJSON bool) {
 			t.Fatalf("%v:\n%s", jerr, out.String())
 		}
 		last := res.Left[len(res.Left)-1]
+		// The whole command, not the name alone (code review, low): the bare
+		// `secrets set bitbucket-token` is a prefix of both scopes, so it
+		// passed whatever scope the line named -- and for this name the
+		// scope is the repository's own copy, which is what the assertion
+		// has to pin.
 		if last["stage"] != "secrets" || !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
 			t.Fatalf("left %v", res.Left)
 		}
@@ -495,8 +562,14 @@ func initOnTTY(t *testing.T, asJSON bool) {
 		t.Fatalf("%v\n%s", err, errOut.String())
 	}
 	slug := mustSlug("bitbucket", "acme/sandbox")
+	// Both land in the repository's own container: bitbucket-token has no
+	// project-wide default (a repository access token serves one repository),
+	// and the Claude token is person-owned.
 	if string(r.sm.Latest(gcp.SecretID(slug, "bitbucket-token"))) != val || string(r.sm.Latest(gcp.SecretID(slug, "claude-oauth-token"))) != tokenValue {
 		t.Fatal("the values were not stored")
+	}
+	if r.sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token")) != nil {
+		t.Error("the git credential was stored project-wide")
 	}
 	f.waitEcho(t, true)
 	time.Sleep(100 * time.Millisecond)

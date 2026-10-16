@@ -1445,15 +1445,20 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
-		// The broader pattern really does keep every repository the removed one
-		// admitted, so the runs are not refused (the review of PR #390).
-		"pattern, a broader pattern": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
+		// A broader pattern is not the bare wildcard and still admits every
+		// repository the removed one did (code review, medium): */acme/*
+		// matches github/acme/app, and canonicalRepoArg accepts the entry, so
+		// claiming the runs stop here would be a stop that does not happen.
+		"pattern, a broader pattern remains": {[]string{"*/acme/*", "github/acme/*"}, "github/acme/*", true, "*/acme/*"},
 		// A covering entry need not be written with bare "*" segments: github/ac*
 		// admits every owner whose name starts with "ac", which is every owner
 		// github/acme/* admitted, so the runs are not refused either. MatchRepo
 		// answers this — and coversRepo did not, which is why the sentence could
 		// claim a stop the removal does not make (the review of PR #402).
 		"pattern, a partial wildcard that covers it": {[]string{"github/ac*/*", "github/acme/*"}, "github/acme/*", true, "github/ac*/*"},
+		"pattern, another provider's remains":        {[]string{"gitlab/acme/*", "github/acme/*"}, "github/acme/*", false, ""},
+		"pattern, the same width narrower":           {[]string{"github/acme/*", "github/*/*"}, "github/*/*", false, ""},
+		"pattern, its own repo entry remains":        {[]string{"github/acme/app", "github/acme/*"}, "github/acme/*", false, ""},
 		// The other direction: github/a*/app admits github/acme/app, but not
 		// github/acme/anything-else, which the removed pattern did admit — so the
 		// removal does refuse something and must say so.

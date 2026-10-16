@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -619,8 +620,8 @@ func TestSecretsSetProjectWideRefusesEmptyAllowList(t *testing.T) {
 	cmd.SetErr(&errOut)
 	cmd.SetArgs([]string{"secrets", "set", "bitbucket-token", "--project-wide"})
 	err := cmd.Execute()
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project_secrets") {
-		t.Fatalf("err = %v", err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project_secrets") || !strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("err = %v, want the refusal to name the field and the --repo way out", err)
 	}
 	if spy.read {
 		t.Fatal("the value was read before the refusal")
@@ -996,5 +997,571 @@ func TestSecretsLsProjectWideNeverPrintsValue(t *testing.T) {
 		if strings.Contains(r.Path, ":access") {
 			t.Fatalf("ls --project-wide read a value: %s", r.Path)
 		}
+	}
+}
+
+// --- Task 2.1: project scope is the default (D2) -------------------------
+//
+// D2 (design docs/design/project-centric.md §6.3) reverses #343's
+// default-safe rule for a name that has a project-wide meaning:
+// `fugaro secrets set NAME` with neither flag stores the PROJECT copy, and
+// `--repo` -- bare, or with a slug -- is what asks for one repository's own
+// copy. `--project-wide` stays an accepted synonym of the default, so every
+// existing script and skill keeps working. A repository's own application
+// secret has no project-wide meaning and keeps today's repository scope:
+// the default is "project where project exists", never "project always"
+// (plan Task 2.1 step 3b).
+
+// TestSecretsSetDefaultsToProjectScope: the value lands under the
+// installation's own secret ID with the project's labels, and no repository
+// container is created for it.
+func TestSecretsSetDefaultsToProjectScope(t *testing.T) {
+	sm := secretsFixture(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "anthropic-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID("aurora", "anthropic-api-key")
+	if got := string(sm.Latest(id)); got != tokenValue {
+		t.Fatalf("stored %q, want the project copy %s", got, id)
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "anthropic-api-key")) != nil {
+		t.Error("a repository copy was stored as well")
+	}
+	if !strings.Contains(out, id) || strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("out %q errOut %q", out, errOut)
+	}
+	// The reach is stated where the person storing it reads it (plan Task
+	// 2.1 step 3): the project copy, and the profile as the boundary.
+	for _, want := range []string{"project", "profile"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q does not say %q", errOut, want)
+		}
+	}
+	var sec struct{ Labels map[string]string }
+	for _, r := range sm.Requests() {
+		if r.Method == "POST" && strings.HasSuffix(r.Path, "/secrets") {
+			_ = json.Unmarshal(r.Body, &sec)
+		}
+	}
+	if sec.Labels[gcp.LabelProject] != "aurora" || sec.Labels[gcp.LabelRepo] != "" {
+		t.Fatalf("labels = %v, want the installation's, never a repository's", sec.Labels)
+	}
+}
+
+// A project-wide store names the repositories whose own copy wins over it
+// (code review, medium): §5's precedence has no override-the-override, and
+// §6 step 4a is the state both existing installations are in, so a rotation
+// of the project copy reaches no repository that already has its own copy
+// with an enabled version -- and saying so is the difference between a
+// rotation that worked and one that only looked like it did. Names only,
+// never a value, and before the value is read.
+func TestSecretsSetProjectWideNamesTheRepoCopiesThatWin(t *testing.T) {
+	sm := secretsFixture(t)
+	label, err := gcp.RepoLabel(appSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A name D2's sweep stores project-wide is the one this note is about
+	// (anthropic-api-key; bitbucket-token has no project-wide default any
+	// more, TestSecretsSetBitbucketTokenStaysRepoScope).
+	const name = config.AnthropicSecret
+	repoCopy := gcp.SecretID(appSlug, name)
+	// acme/app's own copy, with an enabled version: it wins over the project
+	// copy from now on.
+	sm.Seed(repoCopy, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}, []byte("old-repo-key-EXAMPLE"))
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", name)
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if !strings.Contains(errOut, "acme/app") || !strings.Contains(errOut, "wins over the project copy") {
+		t.Errorf("stderr does not name the repository whose copy wins: %q", errOut)
+	}
+	// What the note says is what the store does: the project copy takes the
+	// new version, the repository copy keeps the old one.
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", name))); got != tokenValue {
+		t.Errorf("the project copy = %q", got)
+	}
+	if got := string(sm.Latest(repoCopy)); got != "old-repo-key-EXAMPLE" {
+		t.Errorf("the repository copy was overwritten: %q", got)
+	}
+	if strings.Contains(out+errOut, tokenValue) || strings.Contains(errOut, "old-repo-key-EXAMPLE") {
+		t.Fatalf("a value leaked: %q %q", out, errOut)
+	}
+}
+
+// The same store says nothing when no repository's copy wins: the note is
+// about a state, not about every project-wide store. A container with no
+// version is not that state -- §5 resolves to a repository copy only when it
+// has an enabled version.
+func TestSecretsSetProjectWideIsSilentWithoutARepoCopy(t *testing.T) {
+	sm := secretsFixture(t)
+	label, err := gcp.RepoLabel(appSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const name = config.AnthropicSecret
+	sm.Seed(gcp.SecretID(appSlug, name), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}, nil)
+	_, errOut, err := executeStdin(t, tokenValue, "secrets", "set", name)
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if strings.Contains(errOut, "wins over the project copy") {
+		t.Errorf("a versionless repository copy was called a winner: %q", errOut)
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", name))); got != tokenValue {
+		t.Errorf("stored %q", got)
+	}
+}
+
+// TestSecretsSetRepoFlagStoresTheRepoCopy: --repo, with a slug or bare, is
+// the opt-out of the project default: one repository's own container, whose
+// version wins over the project copy from then on (design §5).
+func TestSecretsSetRepoFlagStoresTheRepoCopy(t *testing.T) {
+	sm := secretsFixture(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "anthropic-api-key", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "anthropic-api-key"))); got != tokenValue {
+		t.Fatalf("stored %q, want the repository copy", got)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "anthropic-api-key")) != nil {
+		t.Error("--repo stored the project copy too")
+	}
+}
+
+// The bare command decides its scope with the repository in hand (code
+// review, low): an entry of project_secrets that lists another repository
+// does not make the name project-scope for this checkout. Storing the shared
+// copy from here would overwrite the value the repositories the entry does
+// list mount, from a repository that may not mount it -- and it is not what
+// the person meant: with no flag, the copy being stored is this repository's
+// own, the same place init's secrets stage stores it (initsecrets.go
+// projectScope). The note names the other intent.
+func TestSecretsSetFromACheckoutTheEntryExcludesStoresTheRepoCopy(t *testing.T) {
+	sm := secretsFixture(t)
+	// The shared copy the repositories the entry lists mount.
+	shared := gcp.ProjectSecretID("aurora", "bitbucket-token")
+	sm.Seed(shared, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora", gcp.LabelSecret: "bitbucket-token"}, []byte("shared-token-EXAMPLE"))
+	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/other] }\n")
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "bitbucket-token"))); got != tokenValue {
+		t.Errorf("acme/app's own copy = %q, want the value just stored", got)
+	}
+	if got := string(sm.Latest(shared)); got != "shared-token-EXAMPLE" {
+		t.Errorf("the shared copy = %q: a checkout the entry excludes overwrote it", got)
+	}
+	if !strings.Contains(errOut, "acme/app") || !strings.Contains(errOut, "--project-wide") {
+		t.Errorf("stderr does not say where the value went, or what the other intent is: %q", errOut)
+	}
+	if strings.Contains(out+errOut, tokenValue) || strings.Contains(errOut, "shared-token-EXAMPLE") {
+		t.Fatalf("a value leaked: %q %q", out, errOut)
+	}
+}
+
+// A D2-swept name whose project_secrets entry allows nobody is the case the
+// bare command has an answer for (code review, low): from a checkout it
+// stores this repository's own copy -- an entry that lists no repository
+// leaves no shared copy it could mean -- and --project-wide, the explicit ask,
+// refuses in a message that names that way out instead of leaving the person
+// with a config list to edit and no --repo.
+//
+// This is also the one state where the note cannot offer the flag as typed
+// (code review, round 2, low): the name has a project-wide shape, so the note
+// fires, and projectWideAccepted is false for it all the same -- a present and
+// empty allow_data_to means nobody may mount the project copy, so
+// `--project-wide` refuses. The note names the field to fill in instead; a
+// note pointing at a command that fails is a dead end.
+func TestSecretsSetEmptyAllowListNamesTheRepoWayOut(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  "+config.AnthropicSecret+": { allow_data_to: [] }\n")
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", config.AnthropicSecret)
+	if err != nil {
+		t.Fatalf("the no-flag form from a checkout: %v (%s)", err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, config.AnthropicSecret))); got != tokenValue {
+		t.Errorf("acme/app's own copy = %q", got)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", config.AnthropicSecret)) != nil {
+		t.Error("the no-flag form stored a project copy the entry allows nobody to mount")
+	}
+	// The field to edit, and the fact that the flag is refused until it names
+	// at least one repository -- not the flag alone, which would fail.
+	if !strings.Contains(errOut, "project_secrets."+config.AnthropicSecret+".allow_data_to") ||
+		!strings.Contains(errOut, "is refused until it names at least one repository") {
+		t.Errorf("stderr does not say what makes --project-wide work: %q", errOut)
+	}
+	if strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("a value leaked: %q %q", out, errOut)
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", config.AnthropicSecret, "--project-wide"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("--project-wide err = %v, want the refusal to name --repo", err)
+	}
+}
+
+// The other eligibility refusal the note used to be printed over (code
+// review, low): a provider's key from a checkout the provider's allow_data_to
+// excludes is refused just below, and the note saying "this value goes to
+// <repo>'s own copy, which overrides the project copy for it" promises a store
+// that does not happen. The note is printed after the checks, so a refused
+// command carries none.
+//
+// The refusal names the way forward (code review, medium): SECURITY.md calls
+// --project-wide a synonym of the default, and here the bare command is
+// refused while that flag stores the project's copy -- the copy the
+// repositories the provider *does* list mount -- so a person left with the
+// bare command's refusal alone has no way to store it. The command the
+// refusal names is run below and must work.
+func TestSecretsSetRefusedProviderKeyPrintsNoRepoCopyNote(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/other"]
+`)
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "openrouter-api-key")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "allow_data_to") {
+		t.Fatalf("err = %v, want the allow_data_to refusal", err)
+	}
+	if !strings.Contains(err.Error(), "secrets set openrouter-api-key --project-wide") {
+		t.Errorf("the refusal does not name the store that does work: %v", err)
+	}
+	if strings.Contains(out+errOut, "own copy") {
+		t.Errorf("the refusal carries the note that promises a store: out %q errOut %q", out, errOut)
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "openrouter-api-key")) != nil {
+		t.Error("a refused value was stored")
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatalf("the command the refusal names: %v", err)
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", "openrouter-api-key"))); got != tokenValue {
+		t.Errorf("the project copy = %q, want the value the refusal pointed at", got)
+	}
+}
+
+// TestSecretsSetBitbucketTokenStaysRepoScope: bitbucket-token is the one
+// reserved name with no project-wide default (config.PerRepositorySecret, the
+// owner's ruling of 2026-10-15): a repository access token is issued for one
+// repository and authenticates no other, so a project-wide copy would hand
+// every repository the first one's token. The bare command -- which for the
+// other reserved names stores the project copy -- therefore stores this
+// repository's own, from a checkout and with no flag, exactly as `--repo`
+// would; and --project-wide, with no project_secrets entry, is refused before
+// the value is read.
+func TestSecretsSetBitbucketTokenStaysRepoScope(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", config.BitbucketSecret)
+	if err != nil {
+		t.Fatalf("the bare command from a checkout: %v (%s)", err, errOut)
+	}
+	if got := string(sm.Latest(bitbucketSecret)); got != tokenValue {
+		t.Fatalf("stored %q, want acme/app's own copy %s", got, bitbucketSecret)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", config.BitbucketSecret)) != nil {
+		t.Error("the bare command stored the project copy of a per-repository credential")
+	}
+	if !strings.Contains(out, bitbucketSecret) || strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("out %q errOut %q", out, errOut)
+	}
+	// The store never announces a project reach for it, because it has none.
+	if strings.Contains(errOut, "is stored project-wide") {
+		t.Errorf("stderr claims a project-wide reach for a per-repository credential: %q", errOut)
+	}
+
+	// --project-wide without an allow-list is refused, before the value is read.
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var wideOut, wideErr bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&wideOut)
+	cmd.SetErr(&wideErr)
+	cmd.SetArgs([]string{"secrets", "set", config.BitbucketSecret, "--project-wide"})
+	err = cmd.Execute()
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project_secrets."+config.BitbucketSecret) ||
+		!strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("err = %v, want the refusal to name the entry and the --repo way out", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", config.BitbucketSecret)) != nil {
+		t.Fatal("a refused value was stored")
+	}
+
+	// The owner's explicit opt-in is still the owner's: an entry that lists a
+	// repository is accepted, as it was before D2 (#343's own path).
+	projectSecretFixture(t, "project_secrets:\n  "+config.BitbucketSecret+": { allow_data_to: [acme/app] }\n")
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", config.BitbucketSecret, "--project-wide"); err != nil {
+		t.Fatalf("an allow-listed project-wide store: %v", err)
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", config.BitbucketSecret))); got != tokenValue {
+		t.Fatalf("the allow-listed project copy = %q", got)
+	}
+}
+
+// TestBareRepoOptsAProjectScopeNameOutOfTheProjectDefault: `--repo` with no
+// value is the documented opt-out of the project-scope default (the checkout's
+// origin supplies the repository), and it is the one spelling that reaches the
+// `!cmd.Flags().Changed("repo")` branch with a name that HAS a project-wide
+// meaning. The valued form never gets there, and npm-token is repository-scoped
+// either way, so nothing else covers this: a bare `--repo` that fell through to
+// the default would store the project copy instead of the repository's own.
+func TestBareRepoOptsAProjectScopeNameOutOfTheProjectDefault(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	const name = config.AnthropicSecret
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", name, "--repo")
+	if err != nil {
+		t.Fatalf("secrets set %s --repo: %v (%s)", name, err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, name))); got != tokenValue {
+		t.Fatalf("stored %q, want the repository copy %s", got, gcp.SecretID(appSlug, name))
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", name)) != nil {
+		t.Error("the bare --repo stored the project copy of a name it opted out of")
+	}
+	if !strings.Contains(out, gcp.SecretID(appSlug, name)) || strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("out %q errOut %q", out, errOut)
+	}
+	// An explicit request for this repository's own copy needs no note about
+	// the project copy it is opting out of.
+	if strings.Contains(errOut, "is stored project-wide") {
+		t.Errorf("the bare --repo printed the project-scope note: %q", errOut)
+	}
+}
+
+// TestProjectWideIsStillAccepted: the flag every existing script and skill
+// writes stays a synonym of the default, and lands on the same container.
+func TestProjectWideIsStillAccepted(t *testing.T) {
+	sm := secretsFixture(t)
+	const name = config.AnthropicSecret
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", name, "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID("aurora", name)
+	if got := string(sm.Latest(id)); got != tokenValue {
+		t.Fatalf("stored %q, want %s", got, id)
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", name); err != nil {
+		t.Fatalf("the default: %v", err)
+	}
+	if got := string(sm.Latest(id)); got != tokenValue {
+		t.Fatalf("the default stored somewhere else: %q", got)
+	}
+	if sm.Latest(gcp.SecretID(appSlug, name)) != nil {
+		t.Error("the default stored a repository copy")
+	}
+}
+
+// TestAnthropicKeyNeedsNoAllowDataToList: D2 sweeps the reserved names in
+// (plan Task 2.1 step 2): the key stores project-wide with no
+// project_secrets entry anywhere, and the value is never read before a
+// refusal that would still be a refusal.
+func TestAnthropicKeyNeedsNoAllowDataToList(t *testing.T) {
+	sm := secretsFixture(t) // the fixture's local config has no project_secrets at all
+	for _, args := range [][]string{
+		{"secrets", "set", "anthropic-api-key"},
+		{"secrets", "set", "anthropic-api-key", "--project-wide"},
+	} {
+		if _, _, err := executeStdin(t, "sk-ant-not-a-real-key-01", args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", "anthropic-api-key"))); got != "sk-ant-not-a-real-key-01" {
+		t.Fatalf("stored %q", got)
+	}
+}
+
+// TestOAuthTokenStillRefusesProjectScope: D2 covers the API keys and the git
+// credential, not the Claude OAuth token (design project-centric §7, §6.3):
+// the default account's bare claude-oauth-token is not swept in. With no
+// flag it keeps the repository scope it has today, and --project-wide still
+// needs the project_secrets entry that lists a repository -- refused before
+// the value is read.
+func TestOAuthTokenStillRefusesProjectScope(t *testing.T) {
+	sm := secretsFixture(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "claude-oauth-token"))); got != tokenValue {
+		t.Fatalf("stored %q, want the repository copy", got)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "claude-oauth-token")) != nil {
+		t.Error("the default Claude account's token went project-wide")
+	}
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "claude-oauth-token", "--project-wide"})
+	err := cmd.Execute()
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project_secrets") {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "claude-oauth-token")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+}
+
+// TestSecretsSetBareRepoUsesThisCheckout: a bare `--repo` means this
+// checkout's repository, the same one a missing --repo used to mean, and
+// asks for its copy (plan Task 2.1 step 3b, finding 13).
+func TestSecretsSetBareRepoUsesThisCheckout(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token", "--repo")
+	if err != nil {
+		t.Fatalf("bare --repo: %v (%s)", err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "npm-token"))); got != tokenValue {
+		t.Fatalf("stored %q, want this checkout's repository copy", got)
+	}
+	if !strings.Contains(out, gcp.SecretID(appSlug, "npm-token")) {
+		t.Fatalf("out = %q", out)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Error("a bare --repo stored a project copy")
+	}
+	// The listing takes the same bare form: one repository's view.
+	if out, _, err := execute(t, "secrets", "ls", "--repo"); err != nil || !strings.Contains(out, gcp.SecretID(appSlug, "npm-token")) {
+		t.Fatalf("ls --repo = %q, %v", out, err)
+	}
+}
+
+// TestSecretsSetKeepsRepoScopeForAWorkflowSecret: a repository's own
+// application secret has no project-wide meaning, so the new default does
+// not sweep it in: with no flag it keeps today's repository scope.
+func TestSecretsSetKeepsRepoScopeForAWorkflowSecret(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "npm-token"))); got != tokenValue {
+		t.Fatalf("stored %q, want the repository copy", got)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Error("a workflow secret was stored project-wide")
+	}
+}
+
+// TestSecretsLsDefaultsToProjectAndSaysSo: the listing follows the same
+// default as set, with --repo for one repository's view, and says which
+// container its rows come from (plan Task 2.1 step 3b).
+func TestSecretsLsDefaultsToProjectAndSaysSo(t *testing.T) {
+	sm := secretsFixture(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", config.AnthropicSecret, "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "secrets", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, gcp.ProjectSecretID("aurora", config.AnthropicSecret)) {
+		t.Fatalf("the default listing is not the project's:\n%s", out)
+	}
+	if strings.Contains(out, gcp.SecretID(appSlug, "claude-oauth-token")) {
+		t.Fatalf("the default listing is not the project's: it shows a repository container:\n%s", out)
+	}
+	if strings.Contains(out, tokenValue) {
+		t.Fatal("the value leaked")
+	}
+	// --project-wide is still accepted, and is the same listing.
+	wide, _, err := execute(t, "secrets", "ls", "--project-wide")
+	if err != nil || wide != out {
+		t.Fatalf("--project-wide differs from the default: %q, %v", wide, err)
+	}
+	// The help text says which container each form shows.
+	help, _, _ := execute(t, "secrets", "ls", "--help")
+	if !strings.Contains(help, "--repo") || !strings.Contains(help, "project") {
+		t.Fatalf("secrets ls help does not say which container each form lists:\n%s", help)
+	}
+	_ = sm
+}
+
+// TestNormalizeRepoArgs is the table the argv rewrite is pinned by: a bare
+// `--repo` (no "=value", no token after it) becomes `--repo=`, whose empty
+// value resolveSecretRepo reads as this checkout's origin, and nothing else
+// changes -- the space-separated form every script writes, `--repo=` as typed,
+// anything after `--`, anything outside `secrets set` / `secrets ls` (init's
+// --repo is a bool), and everything before the subcommand (the global flags
+// and their values) are left byte for byte as they came in. The input slice is
+// not mutated: cmd/fugaro/main.go passes os.Args[1:] into it.
+func TestNormalizeRepoArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"bare after set", []string{"secrets", "set", "bitbucket-token", "--repo"},
+			[]string{"secrets", "set", "bitbucket-token", "--repo="}},
+		{"with a value", []string{"secrets", "set", "bitbucket-token", "--repo", "acme/app"},
+			[]string{"secrets", "set", "bitbucket-token", "--repo", "acme/app"}},
+		{"equals form", []string{"secrets", "set", "bitbucket-token", "--repo=acme/app"},
+			[]string{"secrets", "set", "bitbucket-token", "--repo=acme/app"}},
+		{"bare before another flag", []string{"secrets", "set", "npm-token", "--repo", "--json"},
+			[]string{"secrets", "set", "npm-token", "--repo=", "--json"}},
+		{"bare at the end of ls", []string{"secrets", "ls", "--repo"},
+			[]string{"secrets", "ls", "--repo="}},
+		{"bare with no NAME yet", []string{"secrets", "set", "--repo"},
+			[]string{"secrets", "set", "--repo="}},
+		{"the singular alias", []string{"secret", "set", "npm-token", "--repo"},
+			[]string{"secret", "set", "npm-token", "--repo="}},
+		{"bare followed by --", []string{"secrets", "set", "npm-token", "--repo", "--"},
+			[]string{"secrets", "set", "npm-token", "--repo=", "--"}},
+		{"after -- it is positional", []string{"secrets", "set", "npm-token", "--", "--repo"},
+			[]string{"secrets", "set", "npm-token", "--", "--repo"}},
+		{"global flags stay put", []string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo"},
+			[]string{"--config", "/tmp/c.yaml", "secrets", "set", "npm-token", "--repo="}},
+		{"init's --repo is a bool", []string{"init", "--repo"},
+			[]string{"init", "--repo"}},
+		{"another subcommand of secrets", []string{"secrets", "rm", "npm-token", "--repo"},
+			[]string{"secrets", "rm", "npm-token", "--repo"}},
+		{"no subcommand after secrets", []string{"secrets"},
+			[]string{"secrets"}},
+		{"no secrets at all", []string{"run", "--repo", "acme/app", "a task"},
+			[]string{"run", "--repo", "acme/app", "a task"}},
+		{"empty", nil, []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := slices.Clone(tc.in)
+			got := NormalizeRepoArgs(tc.in)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("NormalizeRepoArgs(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			// The caller's slice is not written through: main passes
+			// os.Args[1:] straight in.
+			if !slices.Equal(tc.in, in) {
+				t.Errorf("the argument slice was mutated: %q, want %q", tc.in, in)
+			}
+		})
+	}
+	// The rewritten form is what cobra then parses as "no value": the empty
+	// value is resolveSecretRepo's "this checkout's origin", not a repository
+	// named "".
+	if got := NormalizeRepoArgs([]string{"secrets", "ls", "--repo"}); got[2] != "--repo=" {
+		t.Fatalf("the rewritten token is %q, not the --repo= form pflag reads as empty", got[2])
 	}
 }

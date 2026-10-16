@@ -174,8 +174,11 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 	// the one that resolves; fix names the command that would change that.
 	resolveProject := func(logical string) (resolved bool, fix string, err error) {
 		// The command that would store a copy, from the one place that
-		// decides where it belongs (SecretFix): --project-wide when this
-		// repository may use a project copy, --repo otherwise.
+		// decides where it belongs (SecretFix): the bare command when this
+		// repository may use a project copy -- which D2 made the default
+		// store, so it is what an operator is asked to type, and no longer
+		// the --project-wide synonym (plan Task 2.1 step 3, the message
+		// half of finding 13) -- and the repository-copy command otherwise.
 		fix = SecretFix(spec, logical, "fugaro", func(s string) string { return s })
 		cand, isCandidate := spec.ProjectSecretCandidates[logical]
 		if !isCandidate {
