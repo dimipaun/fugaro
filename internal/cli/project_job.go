@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -85,6 +86,9 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		return nil, nil
 	}
 	account, _ := config.ClaudeAccountOfSecrets(pr.Secrets)
+	if err := checkProjectJobAccount(profile, spec.OAuthToken, account); err != nil {
+		return nil, err
+	}
 	// The timeout_class of a decoded policy is a duration: projectpolicy's
 	// strict decode validates every profile (validProfiles → validTimeoutClass)
 	// before this read can return one, which is why the error is dropped here
@@ -96,4 +100,57 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		Profile: profile,
 		Timeout: timeout + backend.TaskTimeoutSlack,
 	}, nil
+}
+
+// checkProjectJobAccount refuses a launch whose run selects a Claude account
+// the selected profile's job does not run as (plan task 3.4 step 1).
+//
+// On a per-repository job the account is part of the job's own name
+// (gcp.JobName with gcp.WorkflowVariant(workflow, token)), so a run that
+// selects an account is launched on the job that mounts that account's token.
+// A project job's account is fixed where the job is deployed: it is the
+// account segment of gcp.ProjectJobName, computed from the profile's secrets
+// (internal/infra's projectJobSecrets), and the container reads that account's
+// token, whatever the run's own task.json says. So a run that selects another
+// account would run — and be recorded, and be shown by `runs ls` — as an
+// account its own fugaro.yaml did not choose, and the credential the job holds
+// is not the one this launch's allow_data_to check was made for (that check
+// validates the selected name, agent.oauth_token or --token). The launch stops
+// instead, as the rest of this release's selections do: a repository that must
+// run as another account belongs on a profile that mounts it.
+//
+// The two selections are compared the way the model spells them elsewhere: the
+// default account (config.DefaultClaudeAccount) and a profile that mounts no
+// Claude token at all are both the empty account — gcp.WorkflowVariant joins no
+// account segment for either, and the account axis of a job's name is empty for
+// both — so a run that selects nothing is not refused on an api-key or Vertex
+// installation for a token no job of it mounts.
+func checkProjectJobAccount(profile, selected, mounted string) error {
+	selected, mounted = projectJobAccount(selected), projectJobAccount(mounted)
+	if selected == mounted {
+		return nil
+	}
+	what := "mounts no Claude token, so its job runs as no account at all"
+	if mounted != "" {
+		what = fmt.Sprintf("mounts the Claude account %q, so its job runs as that account", mounted)
+	}
+	chose := "the default Claude account"
+	if selected != "" {
+		chose = fmt.Sprintf("the Claude account %q", selected)
+	}
+	return userErr("this run selects %s, and the job profile %q %s: a project job's Claude account is fixed where the job is deployed — it is the account segment of the job's own name, computed from the profile's secrets — and its container reads that account's token, so a run on it cannot run as another account, and the credential the job holds is not the one this launch's allow_data_to check was made for. The launch stops rather than running this repository's work as an account its own fugaro.yaml did not choose: name the profile's account in the repository's fugaro.yaml (agent.oauth_token), or run the repository on a profile that mounts the account it selects",
+		chose, profile, what)
+}
+
+// projectJobAccount is a Claude account name as a job's account axis spells it:
+// the default account and no account at all are both "". They are one selection
+// everywhere the axis is computed — gcp.WorkflowVariant joins no segment for
+// either, and internal/infra's projectJobSecrets reports "" for a profile that
+// mounts no Claude token — so a comparison of two accounts is a comparison of
+// what each names beyond the default.
+func projectJobAccount(name string) string {
+	if name == config.DefaultClaudeAccount {
+		return ""
+	}
+	return name
 }

@@ -19,8 +19,8 @@ const DefaultProfileName = config.DefaultJobProfile
 // Profile is one project job's shape (design §4.1): the unit shared by every
 // repository admitted to it. Cloud Run cannot vary the image, the service
 // account, cpu, memory or the task timeout per execution, so a profile names
-// them once and Task 3.2 creates one job and one job service account per
-// (profile, provider, account).
+// them once and one job and one job service account is deployed per (profile,
+// provider, account) — `fugaro init`, from the local config's own profiles.
 //
 // It embeds config.JobProfile rather than respelling its fields, the way
 // Provider embeds config.ModelProvider: the operator's config file declares
@@ -50,11 +50,15 @@ func ValidProfileName(name string) error {
 // (§5(3), the Task 1.3 path). The error lists the profiles the policy does
 // define, so an operator reads one line.
 //
-// The runner calls it at run start (internal/runner's checkJobProfile), which
-// is the plan's fail-closed half: a workflow naming a profile the published
-// policy does not define halts the run. Task 3.2's job layout calls it again
-// when it builds the job the run is launched as (the profile's cpu, memory,
-// timeout and secrets), which is the half that does not exist yet.
+// Three callers apply it. The runner calls it at run start (internal/runner's
+// checkJobProfile), which is the plan's fail-closed half: a workflow naming a
+// profile the published policy does not define halts the run. The job layout
+// calls it where the job a run is launched as is built, which is where the
+// profile's cpu, memory, timeout and secrets are applied (internal/infra's
+// ProjectJobs, the function `fugaro init` deploys one job per (profile,
+// provider, account) from). And the launcher calls it to compute that job's
+// own name (internal/cli's launchProjectJobFor) — the name the runner matches
+// CLOUD_RUN_JOB against, so the two sides resolve the same profile.
 func (p *Policy) ProfileFor(name string) (Profile, error) {
 	if name == "" {
 		name = DefaultProfileName
@@ -129,13 +133,18 @@ func (p *Policy) ProfileAllowRepos(profile string) ([]string, error) {
 // name", and reading it as the verdict admits every repository the project's
 // list denies while the profile's list is the wider one.
 //
-// Admits and ProfileAllowRepos have no caller outside tests in this release: the run
-// refuses an undefined profile (ProfileFor, checkJobProfile) but holds a
-// repository to the project's allow_repos alone, because the job it is in does
-// not carry a selected profile yet (internal/runner/project.go,
-// internal/cli/run_allowlist.go). These are the gates Task 3.3's admission
-// check applies — which is why a profile's list is validated strictly here
-// (validProfiles) rather than trusted to a caller that does not exist yet.
+// Admits has one caller outside tests, and it is the one that counts:
+// AdmissionRefusal, which the run's own admission check makes on a project job
+// — internal/runner's admissionCheck, before any git credential exists and
+// before the lock — so a repository this profile does not admit never runs on
+// its job. A run in a per-repository job is held to the project's allow_repos
+// alone, because the job it is in carries no selected profile: that is a baked
+// workflow, or a policy that defines no profiles, and internal/cli's
+// run_allowlist.go is the launcher's advisory twin of that one gate.
+// ProfileAllowRepos answers the narrower question a message or a listing asks
+// ("what does this profile name"), never the verdict. A profile's list is
+// validated strictly where it is published (validProfiles) because this is the
+// gate it becomes.
 func (p *Policy) Admits(profile, canonical string) (bool, error) {
 	pr, err := p.ProfileFor(profile)
 	if err != nil {

@@ -369,6 +369,25 @@ workflows:
     timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
 `
 
+// projectJobOAuthRepoYAML is the same checkout under agent.auth: oauth, the
+// mode a named Claude account is only legal in (claudeAccountAllowed), which
+// is what a repository whose fugaro.yaml names one has.
+const projectJobOAuthRepoYAML = `version: 1
+project: aurora
+git:
+  provider: github
+  base_branch: main
+agent:
+  auth: oauth
+workflows:
+  web:
+    checkout: clone
+    commands:
+      build: sh build.sh
+      test: sh test.sh
+    timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
+`
+
 // projectJobCheckout puts a checkout of acme/app in the working directory, so
 // a launch of it reads the repository's own fugaro.yaml — which is what says
 // whether its workflow is a checkout: clone one, and so whether it runs on a
@@ -376,11 +395,105 @@ workflows:
 // per-repository path).
 func projectJobCheckout(t *testing.T) string {
 	t.Helper()
+	return projectJobCheckoutYAML(t, projectJobRepoYAML)
+}
+
+// projectJobCheckoutYAML is projectJobCheckout with the repository's own
+// fugaro.yaml spelled by the caller.
+func projectJobCheckoutYAML(t *testing.T, yaml string) string {
+	t.Helper()
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": projectJobRepoYAML})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
 	t.Chdir(dir)
 	return dir
+}
+
+// projectJobAccountPolicy is the fixture's policy with the standard profile
+// mounting acme-personal's token: the profile's account is the account segment
+// of its job's name (gcp.ProjectJobName), which is what the launch has to
+// agree with.
+const projectJobAccountPolicy = `{"version":1,"allow_repos":["github/acme/*"],` +
+	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
+	`"secrets":["claude-oauth-token-acme-personal"]}}}`
+
+// projectJobAccountConfig is the local config beside it: the two named Claude
+// accounts this repository may use (config.AllowedClaudeAccounts), one of them
+// the profile's, and the profile the installation deploys the job from.
+const projectJobAccountConfig = "claude_accounts:\n" +
+	"  acme-personal:\n    allow_data_to: [\"acme/app\"]\n" +
+	"  acme-work:\n    allow_data_to: [\"acme/app\"]\n"
+
+// newProjectJobAccountFixture is newProjectJobFixture with the profile's
+// account axis: the standard profile mounts acme-personal's token, so the job
+// the installation deploys for it is gcp.ProjectJobName("standard", "github",
+// "acme-personal") and every run on it reads that account's token.
+func newProjectJobAccountFixture(t *testing.T) *projectJobFixture {
+	t.Helper()
+	f := newLaunchBudget(t, "off")
+	f.appendConfig(t, projectJobAccountConfig+
+		"profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] } }\n"+
+		"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.5 }\n")
+	publishPolicy(t, f, projectJobAccountPolicy)
+	job := gcp.ProjectJobName("standard", "github", "acme-personal")
+	f.run.AddProjectJob(job, "standard", "github", "acme-personal", "2", "4Gi")
+	f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+	return &projectJobFixture{launchBudgetFixture: f, job: job}
+}
+
+// TestLaunchRefusesAnAccountTheProfileDoesNotMount is the account half of task
+// 3.4 step 1: the account is an axis of the project job's own name, fixed by
+// the profile's secrets where the job is deployed, so a run that selects
+// another account would run as one its own fugaro.yaml did not choose — and
+// the credential the job holds is not the one the launch's allow_data_to check
+// was made for. The launch stops instead.
+//
+// Mutation (run, restore): drop checkProjectJobAccount and read the profile's
+// account unconditionally — the first launch below succeeds, lands on the
+// acme-personal job, and its task.json says the default account.
+func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
+	f := newProjectJobAccountFixture(t)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+
+	// A run that selects nothing runs on the default account, and the profile's
+	// job is not it.
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261016-140000-aaaa", "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-personal") || !strings.Contains(err.Error(), "standard") {
+		t.Fatalf("a launch selecting the default account: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+
+	// --token naming another account the repository may use is the same
+	// refusal: the allow-list gate above it passed, and the profile's job still
+	// does not hold that account's token.
+	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", "20261016-140000-bbbb", "--token", "acme-work", "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-work") || !strings.Contains(err.Error(), "acme-personal") {
+		t.Fatalf("a launch selecting acme-work: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+
+	// The profile's own account is the one it runs as, and the run records it.
+	const run = "20261016-140000-cccc"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-personal", "Add a feature"); err != nil {
+		t.Fatalf("a launch selecting the profile's account: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the accepted launch made %d jobs.run calls (%+v), want one on %s", len(calls), calls, f.job)
+	}
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	spec, err := runstore.Open(b, appSlug, run).ReadTask(context.Background())
+	if err != nil || spec.OAuthToken != "acme-personal" {
+		t.Errorf("the stored task = %+v, %v; want the profile's account", spec, err)
+	}
 }
