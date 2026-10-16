@@ -257,11 +257,21 @@ func cloudExec(t *testing.T, files map[string]string, edit func(string) string, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { b.Close() })
-	store := runstore.Open(b, "acme-app", runID)
+	// The storage slug is the launcher's: task.Slug of the provider kind and
+	// the repository, never the readable name. "acme-app" is a slug no kind
+	// produces, and an unclaimed process is in the cloud — so the run reaches
+	// the admission check, which refuses a slug that is not its repository's
+	// (the review finding on this change). A fixture that wants the checks
+	// *after* the admission needs the slug a launcher would have written.
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := runstore.Open(b, slug, runID)
 	if err := store.WriteTask(context.Background(), &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Workflow: "app", Ref: "main", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	args := append([]string{"exec", "--bucket", "file://" + dir, "--run", "acme-app/" + runID, "--remote", remote,
+	args := append([]string{"exec", "--bucket", "file://" + dir, "--run", slug + "/" + runID, "--remote", remote,
 		"--provider", "fake", "--provider-state", filepath.Join(t.TempDir(), "provider.json"),
 		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state")}, flags...)
 	out, errOut, err := execute(t, args...)
@@ -498,11 +508,11 @@ func TestExecPassesProject(t *testing.T) {
 	}
 	defer b.Close()
 	ctx := context.Background()
-	store := runstore.Open(b, "acme-app", runID)
+	store := runstore.Open(b, appSlug, runID)
 	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/"+runID, "--remote", remote,
+	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", appSlug+"/"+runID, "--remote", remote,
 		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state"))
 	if ExitCode(err) != ExitRemoteError || err == nil ||
 		!strings.Contains(err.Error(), "project mismatch: fugaro.yaml on main names project borealis; this job belongs to project aurora") {

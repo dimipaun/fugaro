@@ -274,6 +274,11 @@ func ProviderFor(providers map[string]ModelProvider, model string) (name string,
 	return "", ModelProvider{}, false
 }
 
+// keyPrefix is how every model provider's API key begins ("sk-ant-…",
+// "sk-proj-…", "sk-…"): a .secret value starting with it is a key pasted where
+// its name belongs, and is refused rather than stored as a name.
+const keyPrefix = "sk-"
+
 // ValidateModelProviders reports every rule the providers block breaks. Paths
 // are relative to the local config ("providers.<name>.<field>").
 func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
@@ -289,6 +294,21 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 		if !providerNameRE.MatchString(name) {
 			add(at, "provider name must match %s", providerNameRE)
 		}
+		if name == RouteDirect {
+			// The one name the pattern allows and routing cannot carry. A
+			// resolved route is the provider entry's *name* (RoutingClaudeFor),
+			// and the direct route is spelled with the same string, so a call
+			// routed to an entry named "direct" reads as a call that went
+			// direct: the resolver fails closed for the name
+			// (reservedRouteName), CheckRouting refuses the switch that names a
+			// model the entry claims, and a pin carrying the entry's own route
+			// ID is refused as a direct pin (internal/config/pins.go). This is
+			// that same refusal where the *name* is judged, and it is the one
+			// of the three an entry nothing routes to yet reaches: the entry is
+			// refused beside its name rather than at the first switch that
+			// reads it.
+			add(at, "a provider entry may not be named %q: that is the switch's own value for the direct route (routing.claude.via: %s, config.RouteDirect), so a call routed to this entry would read as a call that went direct and the run would halt. Name the entry after the service that serves it (for openrouter-compatible routes, 'openrouter')", name, RouteDirect)
+		}
 		if p.Kind != ModelProviderKind {
 			add(at+".kind", "must be %s", ModelProviderKind)
 		}
@@ -301,6 +321,20 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 		switch {
 		case !SecretNameRE.MatchString(p.Secret):
 			add(at+".secret", "must be a secret name (lower-case letters, digits and '-'), the name of the secret that holds the key, never the key")
+		case strings.HasPrefix(p.Secret, keyPrefix):
+			// A secret name may be spelled like one; a key that *is* one is
+			// another matter. Every provider's keys start with "sk-" (and
+			// the rest of a key is lower-case and dashes often enough to pass
+			// the name rule), so a pasted key would otherwise be accepted
+			// here, written into the config and stored as the name of a
+			// secret — the one thing .secret must never carry.
+			//
+			// The value is never echoed: this check exists because the value
+			// IS a key, and a %q of it would print one into a terminal, a
+			// log, a halt message or result.json — the leak the check is
+			// for, and the field path already says which value it refuses
+			// (M1, the security review of PR #379).
+			add(at+".secret", "starts with %q: that is the beginning of an API key, not a secret's name; .secret is the NAME of the secret in Secret Manager that holds the key", keyPrefix)
 		case reservedSecretName(p.Secret):
 			add(at+".secret", "%q is a secret Fugaro already uses: give the provider key its own name", p.Secret)
 		default:

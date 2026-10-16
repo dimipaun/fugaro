@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
@@ -30,6 +33,26 @@ func TestPlatformEnvNames(t *testing.T) {
 	ws, err = Workflow(in, "web")
 	if err != nil || ws.Env["FUGARO_PROJECT"] != "aurora" {
 		t.Errorf("without outputs: %v, %v", ws.Env, err)
+	}
+}
+
+// The five names platformEnv writes into every job are the five the backends
+// reserve a launch override for (backend.PlatformEnvNames, which Cloud Run asks
+// backend.LaunchEnv for): the two lists are one fact, and a platform variable
+// added here without being added there is an environment a launcher's entry
+// silently rewrites — the value the run reads its own bucket, backend, project
+// and region from. Both directions are checked, because a name reserved that
+// nothing writes is the same claim made about the wrong fact.
+func TestPlatformEnvIsWhatTheBackendsReserve(t *testing.T) {
+	c, err := resolve(sandboxInputs(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := slices.Sorted(maps.Keys(c.platformEnv()))
+	want := slices.Clone(backend.PlatformEnvNames)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("platformEnv writes %v, and the backends reserve %v: the two must be the same names", got, want)
 	}
 }
 

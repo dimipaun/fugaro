@@ -429,6 +429,10 @@ type initRun struct {
 	// (init_review.go).
 	review *runReview
 
+	// policy is the project's published policy, read at most once per run
+	// through the operator's own credentials (policyReadOnce.read). Readiness's
+	// D11 gate turns on whether one exists.
+	policy policyReadOnce
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -2072,17 +2076,27 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// apply just wrote, Readiness's own output: the first build below reads
 	// its resolved secret IDs back out of it instead of resolving them
 	// again (B1), since the grants the apply just made were fixed for them.
-	ready, missing, err := r.planRepo(ctx, c, t, wd, spec, rootOpts, true)
+	ready, missing, err := r.planRepo(ctx, c, t, wd, spec, lc, rootOpts, true)
 	if err != nil {
 		return err
 	}
-	versions, err := infra.SecretVersions(ctx, c, spec)
+	// ready, not spec: a name Readiness resolved to the project-wide copy
+	// has a version the job mounts, and D2 made that the default store (see
+	// infra.SecretVersions). Passing the pre-Readiness spec would leave
+	// every workflow whose git credential was stored with `fugaro secrets
+	// set github-app-key` unbuildable -- no first image build offered, no
+	// job ever deployed -- and would print the repository-copy command for a
+	// secret that already exists. (github-app-key, not bitbucket-token, is
+	// the example: the App key is the one git credential D2's default sweeps
+	// project-wide, while bitbucket-token has no project-wide default at all
+	// -- config.PerRepositorySecret, the owner's ruling of 2026-10-15.)
+	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))
 	}
 	if !o.planOnly && !o.noBuild {
 		// 6. The first image builds, then the plan that deploys them.
-		names, err := infra.NeedsBuild(ctx, c, spec, versions)
+		names, err := infra.NeedsBuild(ctx, c, ready, versions)
 		if err != nil {
 			return r.retireLeftover(spec, initErr(err))
 		}
@@ -2110,7 +2124,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			return r.retireLeftover(spec, err)
 		}
 		if built > 0 {
-			if _, missing, err = r.planRepo(ctx, c, t, wd, spec, rootOpts, false); err != nil {
+			if _, missing, err = r.planRepo(ctx, c, t, wd, spec, lc, rootOpts, false); err != nil {
 				return r.retireLeftover(spec, err)
 			}
 		}
@@ -2443,7 +2457,7 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 // checkoutConfig does not, once the job is already deployed). --plan-only
 // skips the refusal so the plan can still be shown; --print-vars never
 // reaches planRepo at all.
-func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) (infra.RepoSpec, []infra.Missing, error) {
+func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, lc *localcfg.Config, opts infra.RepoRootOptions, first bool) (infra.RepoSpec, []infra.Missing, error) {
 	if !r.o.planOnly {
 		if err := refuseClonesNotShipped(spec.Name, "fugaro init --repo", "deploy", cloneWorkflowNames(spec.Workflows)); err != nil {
 			return infra.RepoSpec{}, nil, err
@@ -2453,12 +2467,18 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}
+	// Whether the project has published a policy decides whether the jobs
+	// must be able to read one (D11): the database is read with the
+	// operator's own credentials, which only this side holds.
+	if ex.PolicyExists, err = r.policy.exists(ctx, lc); err != nil {
+		return infra.RepoSpec{}, nil, initErr(err)
+	}
 	if first {
 		for _, n := range im.Notes {
 			r.warn(n)
 		}
 	}
-	ready, missing, err := infra.Readiness(ctx, c, spec, ex)
+	ready, missing, err := infra.Readiness(ctx, c, spec, ex, r.o.planOnly)
 	if err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}

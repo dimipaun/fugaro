@@ -266,7 +266,9 @@ type BudgetRecord struct {
 type PolicyRecord struct {
 	Effective PolicyEffective `json:"effective"`
 	// Sources maps each key that is set to the layer that set it:
-	// "ceiling", "default-branch" or "branch".
+	// "ceiling", "default-branch", "branch", or "policy" for a key the
+	// project's published policy named (internal/policy.SourcePolicy —
+	// the policy replaces the ceiling key by key, plan task 1.3).
 	Sources map[string]string `json:"sources,omitempty"`
 	Ignored []PolicyIgnored   `json:"ignored,omitempty"`
 }

@@ -31,6 +31,17 @@
 // and no ancestor has one, so a write must name the field (a multi-path
 // update with keys like runs/<slug>/<run>/reserved). Writing a whole ledger,
 // or deleting a field, is denied: validation rules do not run on a delete.
+//
+// The project policy (docs/design/project-centric.md §5). config/policy is
+// readable *per child*, never on the parent, because an RTDB read grant
+// cascades to children: config/policy/shared is readable by any token of the
+// project, config/policy/repos/$slug only by the token whose fs claim is that
+// slug (as config/caps/repos/$slug is), and config/admin by nobody with a
+// client token. No location under config is writable by a run token: admin
+// writes are IAM-only (deploy/terraform/gcp/modules/firebase/iam.tf). The
+// rules are not what keeps config/admin private from a launcher, which holds
+// roles/firebasedatabase.viewer and bypasses them, so nothing
+// secret-adjacent may be stored there (design §12a item 7).
 package rules
 
 import (

@@ -251,6 +251,30 @@ func TestModelOutsideAllowListInfraError(t *testing.T) {
 		h.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, both)
 		refused(t, h, "agent.models.reviewer", "names no model")
 	})
+	// A published policy *is* the ceiling, so the refusal names the node once:
+	// the old wording printed the policy's own list as "the project's
+	// allow-list" beside "allowed_models from policy", the same node under two
+	// labels (the review's low finding on internal/config/pins.go).
+	t.Run("the policy's own list is not repeated as the project's", func(t *testing.T) {
+		b := policyRun(t, gwConfig(t, ""), "off", "",
+			`{"version":1,"budget":{"mode":"off","allowed_models":["`+haiku+`"]}}`, capScript(3)...)
+		b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, both)
+		withBucket(b.harness)
+		rec, err := b.run(t) // no agent step may run
+		if err == nil || rec.Status != runstore.StatusInfraError {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if !strings.Contains(rec.Reason, "allowed_models from policy") || !strings.Contains(rec.Reason, "agent.models.coder") {
+			t.Fatalf("reason %q: want the policy's list named as the policy's", rec.Reason)
+		}
+		// The environment's list is a different list, and the policy replaced it:
+		// neither label may appear beside the node's own.
+		for _, w := range []string{"the project's allow-list", "allowed_models from ceiling"} {
+			if strings.Contains(rec.Reason, w) {
+				t.Errorf("reason %q names the policy's own list twice (%q)", rec.Reason, w)
+			}
+		}
+	})
 }
 
 func TestAllowedModelsAllInListRuns(t *testing.T) {

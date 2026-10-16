@@ -44,15 +44,17 @@ func buildAccountMember(email string) string {
 // otherwise. It reads that decision back out of the applied spec rather than
 // resolving it live, because the grants the apply just made were fixed for
 // this exact choice: re-deriving it could only disagree with them.
+//
+// Which ID that is is RepoSpec.MountSecretID's answer, not this function's:
+// the mount the job got and the ID the build is submitted with must be the
+// same choice, and the Terraform merge that decides the former is the map
+// precedence MountSecretID spells.
 func appliedGitSecretID(spec infra.RepoSpec) string {
 	logical, ok := infra.GitSecret(spec.Provider)
 	if !ok {
 		return ""
 	}
-	if id := spec.ProjectSecrets[logical]; id != "" {
-		return id
-	}
-	return spec.Secrets[logical]
+	return spec.MountSecretID(logical)
 }
 
 // resolveGitSecretID is gitSecretID's body over the names themselves, for

@@ -1668,7 +1668,8 @@ happen.
   workflows) and requires the socket-permission path of §1.1.
 - On the Cloud Run backend, `docker: true` is **refused by `fugaro validate`**
   with a message naming `backend: cloud-batch` (this is the eventual successor
-  of the 0.8.0 "Docker stays out" message).
+  of the "Docker stays out" message generic-tool §1 documents, whose release the
+  owner's ruling of 2026-10-15 moved to 0.9.0 with this backend).
 - Veto alternatives: `runtime: docker` (a second key meaning the same thing;
   `runtime` invites a container-runtime reading it does not have); or no key at
   all, with `backend: cloud-batch` implying Docker everywhere in the project
@@ -1840,7 +1841,15 @@ real run, which is the only thing that settles the three corrections above.
 - The seam generalisation (§2.5) is internal; it changes no stored data for
   existing runs once it formats Cloud Run names exactly as today.
 
-### 6.2 Interplay with the 0.8.0 phases
+### 6.2 Interplay with the 0.9.0 phases
+
+**The phases in question are project-centric phases 3 to 6, and 0.9.0 is their
+release.** The owner's release ruling of 2026-10-15 cut 0.8.0 after project-centric
+phases 1 and 2 and moved **phases 3, 4, 5 and 6 to 0.9.0 together with this
+backend**, so this section's title and the pairing it describes are one release:
+everything below that says "before phase 3" or "after phase 3" is
+also "before 0.9.0" or "in 0.9.0". 0.8.0 carries the model's first half
+(policy as data, the routing switch, project-scope keys) and nothing from here.
 
 A VM backend is **orthogonal to shared project jobs** (project-centric phase
 3). Shared jobs exist because Cloud Run cannot vary a job per execution; a VM

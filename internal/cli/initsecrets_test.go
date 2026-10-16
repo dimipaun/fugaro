@@ -128,6 +128,17 @@ func (m *memStore) latest(slug, name string) string {
 	return ""
 }
 
+// latestProject is latest for a project-wide copy (D2's default scope for a
+// name that has a project-wide meaning, gcp.ProjectSecretID).
+func (m *memStore) latestProject(project, name string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s := m.secrets[gcp.ProjectSecretID(project, name)]; s != nil && len(s.versions) > 0 {
+		return string(s.versions[len(s.versions)-1])
+	}
+	return ""
+}
+
 func (m *memStore) setCalls() int { m.mu.Lock(); defer m.mu.Unlock(); return m.sets }
 
 // secretsRig is the secrets stage in the loop, in a checkout of origin, with
@@ -331,15 +342,20 @@ func TestNonTTYNeverReadForValues(t *testing.T) {
 	})
 }
 
-// The commands left for the user are one line each, name the secret and the
-// repository, use the binary path the user ran (quoted as one word), and
-// hold no value, no continuation and no heredoc.
+// The commands left for the user are one line each, name the secret and --
+// for a name that keeps repository scope -- the repository, use the binary
+// path the user ran (quoted as one word), and hold no value, no continuation
+// and no heredoc. D2 stores a swept-in reserved name project-wide, where no
+// repository belongs in the command, so those lines carry no --repo.
 func TestPrintedCommandsHaveNoValues(t *testing.T) {
 	for _, tc := range []struct {
 		origin string
 		want   []string
 	}{
-		{githubOrigin, []string{"fugaro secrets set github-app-key --repo acme/app < PATH-TO-THE-KEY-FILE", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
+		{githubOrigin, []string{"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
+		// bitbucket-token's own command carries --repo: a Bitbucket
+		// credential is a repository access token, so it has no project-wide
+		// default (config.PerRepositorySecret, owner ruling of 2026-10-15).
 		{bitbucketOrigin, []string{"fugaro secrets set bitbucket-token --repo acme/app", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
 	} {
 		r := newSecretsRig(t, tc.origin, strings.NewReader(""))
@@ -362,6 +378,33 @@ func TestPrintedCommandsHaveNoValues(t *testing.T) {
 		if !strings.Contains(r.out.String(), "left for you (secrets, command): "+text+"\n    "+strings.Join(tc.want, "\n    ")+"\n") {
 			t.Errorf("not printed once, whole: %q", r.out.String())
 		}
+	}
+}
+
+// A repository the project's own allow_data_to does not name keeps
+// repository scope (code review, high): the scope decision is per repository
+// (infra.ProjectSecretCandidate, the same answer find() reads to call a name
+// covered), so project_secrets.bitbucket-token listing acme/other alone
+// leaves acme/app's own command naming acme/app's copy -- the container its
+// job will mount -- rather than the shared copy it may not mount. A
+// repo-unaware test called the name project-scope here, because the list is
+// non-empty, and the command it printed stored a value over acme/other's.
+func TestLeftKeepsRepoScopeForARepoTheListExcludes(t *testing.T) {
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+		"bitbucket-token": {AllowDataTo: []string{"acme/other"}},
+	}
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	want := []string{
+		"fugaro secrets set bitbucket-token --repo acme/app",
+		"claude setup-token",
+		"fugaro secrets set claude-oauth-token --repo acme/app",
+	}
+	if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("commands %q, want %q", got, want)
 	}
 }
 
@@ -503,14 +546,22 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 	if err != nil || len(res.Left) != 1 {
 		t.Fatalf("%v, left %v", err, res.Left)
 	}
-	cmds := strings.Join(res.Left[0].Commands, "\n")
-	for _, want := range []string{
+	// The whole list, not a piece of it: the default's pair, then
+	// acme-personal's, with nothing for the name that already has a stored
+	// version and nothing for the one this repository is not allowed.
+	// strings.Contains over the joined lines would pass for a command that
+	// only *begins* with the wanted text — a different name suffix, another
+	// --repo, another flag — which is the shape this test exists to pin.
+	wantCmds := []string{
+		"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE",
+		"claude setup-token",
 		"fugaro secrets set claude-oauth-token --repo acme/app",
-		"fugaro secrets set claude-oauth-token-acme-personal --repo acme/app",
-	} {
-		if !strings.Contains(cmds, want) {
-			t.Errorf("missing %q in %q", want, cmds)
-		}
+		"claude setup-token",
+		"fugaro secrets set claude-oauth-token-acme-personal",
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(wantCmds) {
+		t.Errorf("commands %q, want %q", got, wantCmds)
 	}
 	if strings.Contains(cmds, "acme-overflow") {
 		t.Errorf("a stored name was asked for again: %q", cmds)
@@ -776,6 +827,74 @@ func TestInitSecretsFindSkipsNameWithProjectVersion(t *testing.T) {
 	})
 }
 
+// TestInitRepoDoesNotAskForAProjectCoveredSecret: D2 extends #343's 40i to
+// the swept-in reserved names (plan Task 2.1 step 4). A git credential the
+// project already holds is not missing here even though the local config has
+// no project_secrets entry and no allow-list at all: eligibility for a
+// reserved name no longer needs one, so the stage must not ask for a value
+// that would then be stored as a repository copy and win over the project's
+// forever.
+//
+// The GitHub App key is the git credential this holds for now (githubOrigin):
+// bitbucket-token is no longer swept in at all (round 2, item 2), and
+// TestInitRepoAsksForTheBitbucketToken pins the other side.
+func TestInitRepoDoesNotAskForAProjectCoveredSecret(t *testing.T) {
+	ctx := context.Background()
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	if r.e.lc.ProjectSecrets != nil {
+		t.Fatalf("the rig's local config has project_secrets; this test proves nothing: %v", r.e.lc.ProjectSecrets)
+	}
+	r.stage.resolve(ctx)
+	if _, ok := infra.ProjectSecretCandidate(r.e.lc, "github-app-key", "acme/app"); !ok {
+		t.Fatal("the swept-in name is not a project candidate here: the test would prove nothing")
+	}
+	r.store.seedProject(r.e.lc.Name, "github-app-key", tokenValue)
+	got, err := r.stage.find(ctx, r.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(got, "github-app-key") {
+		t.Errorf("find = %v, want the project-covered git credential not missing", got)
+	}
+	if r.store.setCalls() != 0 {
+		t.Fatal("a value was stored")
+	}
+}
+
+// TestInitRepoAsksForTheBitbucketToken: bitbucket-token has no project-wide
+// default (config.PerRepositorySecret, the owner's ruling of 2026-10-15), so
+// the initialisation of a Bitbucket repository asks for it even when a
+// project-wide copy of that name exists: the name is not a project candidate
+// for this repository, nothing may mount the project copy, and reading it as
+// covered would leave the repository's runs authenticating with another
+// repository's token. The stage's scope decision is the same
+// infra.ProjectSecretCandidate the store uses, so where it asks is where the
+// value goes -- the repository's own copy.
+func TestInitRepoAsksForTheBitbucketToken(t *testing.T) {
+	ctx := context.Background()
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	if r.e.lc.ProjectSecrets != nil {
+		t.Fatalf("the rig's local config has project_secrets; this test proves nothing: %v", r.e.lc.ProjectSecrets)
+	}
+	r.stage.resolve(ctx)
+	if _, ok := infra.ProjectSecretCandidate(r.e.lc, "bitbucket-token", "acme/app"); ok {
+		t.Fatal("bitbucket-token was treated as project-wide eligible")
+	}
+	if r.stage.projectScope("bitbucket-token") {
+		t.Fatal("init would store the per-repository credential project-wide")
+	}
+	// A project-wide copy of the name exists -- as one built before this
+	// ruling leaves behind -- and does not cover this repository.
+	r.store.seedProject(r.e.lc.Name, "bitbucket-token", tokenValue)
+	got, err := r.stage.find(ctx, r.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "bitbucket-token") {
+		t.Errorf("find = %v, want the git credential still missing: a project copy of it is not this repository's", got)
+	}
+}
+
 // End to end at a terminal: the stage never reaches the prompt for a name the
 // project copy already covers. It is not merely told the names exist -- the
 // stage is Done, so nothing it would print or store is anywhere, and no
@@ -906,17 +1025,21 @@ func TestInitSecretsStillPromptsWhenNothingStoredAnywhere(t *testing.T) {
 	if got := stateOf(res, initflow.Secrets); got != initflow.NeedsYou {
 		t.Fatalf("state = %q, want needs-you (the values are the user's to type)", got)
 	}
-	cmds := ""
+	// The fix line carries the scope the default stores to (D2): both names
+	// are allow-listed in project_secrets here, so neither line names --repo.
+	// Every command is compared whole: `strings.Contains` on the joined lines
+	// passes for a line that merely begins with the wanted text, and the
+	// exact form is the thing under test — the command a user pastes.
+	var got []string
 	for _, l := range res.Left {
-		cmds += strings.Join(l.Commands, "\n") + "\n"
+		got = append(got, l.Commands...)
 	}
-	for _, want := range []string{
-		"fugaro secrets set bitbucket-token --repo acme/app",
-		"fugaro secrets set claude-oauth-token --repo acme/app",
-	} {
-		if !strings.Contains(cmds, want) {
-			t.Errorf("missing %q in %q", want, cmds)
-		}
+	if wantCmds := []string{
+		"fugaro secrets set bitbucket-token",
+		"claude setup-token",
+		"fugaro secrets set claude-oauth-token",
+	}; fmt.Sprint(got) != fmt.Sprint(wantCmds) {
+		t.Errorf("commands %q, want %q (no --repo: neither name has repository scope here)", got, wantCmds)
 	}
 	if r.store.setCalls() != 0 {
 		t.Fatal("a value was stored with none to store from")
@@ -976,6 +1099,9 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		}
 		if len(res.Left) > 0 {
 			last := res.Left[len(res.Left)-1]
+			// The whole command (code review, low): `secrets set
+			// bitbucket-token` alone is a prefix of both scopes, and this
+			// name's scope is the repository's own copy.
 			if last["stage"] == "secrets" && !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
 				t.Fatalf("%v: left %v", flags, res.Left)
 			}

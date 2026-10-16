@@ -15,7 +15,12 @@ const SharedMaxBytes = 64 << 10
 // (terraform:), personal (user:, endpoints:), derived (bucket_url, the
 // legacy registry), deprecated (build.service_account) or local-only:
 // providers:, whose base_url is where a key and a repository's code are
-// sent, claude_accounts:, whose allow-list is decision T1's operator-only
+// sent, routing:, which is that same decision from the other side — the Claude
+// IDs opted in to a provider route, and therefore the models whose prompts may
+// leave for a third party; it resolves through the providers this file does not
+// carry, so a published switch would name routes nothing in the file defines
+// (the node, where a run is actually routed, is written by `project policy
+// publish`), and claude_accounts:, whose allow-list is decision T1's operator-only
 // trust anchor (design docs/design/named-oauth-tokens.md §3: never
 // published, never settable from fugaro.yaml or the project layer, so it
 // must not round-trip through the runs bucket either, which any launcher
@@ -35,6 +40,7 @@ func (c *Config) Shared() *Config {
 	s.Bucket = ""
 	s.Registry = ""
 	s.Providers = nil
+	s.Routing = nil
 	s.ClaudeAccounts = nil
 	s.ProjectSecrets = nil
 	s.UpdateCheck = nil

@@ -681,6 +681,21 @@ func TestSpecRefuses(t *testing.T) {
 		"url on another host":              func(in *Inputs) { in.RepoURL = "https://example.com/acme/sandbox.git" },
 		"url with credentials":             func(in *Inputs) { in.RepoURL = "https://x:y@bitbucket.org/acme/sandbox.git" },
 		"url of another repository":        func(in *Inputs) { in.RepoURL = "https://bitbucket.org/other/repo.git" },
+		// The path is the one git sends, escapes and all: a URL whose path
+		// decodes to this repository but is not spelled as this repository is
+		// a URL the run's own admission refuses, so accepting it here deploys
+		// a job that refuses every run (the review finding on this change).
+		"url with an escaped path":  func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme/sandb%6fx.git" },
+		"url with an escaped owner": func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acm%65/sandbox.git" },
+		// The path's punctuation is one leading and one trailing "/", the same
+		// trim the run's admission makes (gitprov.TrimRepoPath): a second slash
+		// is an empty segment, which the admission's canonicalization refuses —
+		// so accepting it here would write the URL as the job's remote and
+		// every run of that job would stop before any clone (the review finding
+		// on this change).
+		"url with an empty leading segment": func(in *Inputs) { in.RepoURL = "https://bitbucket.org//acme/sandbox.git" },
+		"url with a doubled trailing slash": func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme/sandbox.git//" },
+		"url with an empty inner segment":   func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme//sandbox.git" },
 		"role of another project": func(in *Inputs) {
 			in.Installation.RoleIDs.JobRunner = "projects/other-proj/roles/" + RoleJobRunner
 		},
@@ -1260,7 +1275,7 @@ const backendBlock = `  firebase_project: aurora-fp
 
 func backendEnv(env map[string]string) map[string]string {
 	got := map[string]string{}
-	for _, k := range []string{RTDBURLEnv, FirebaseAPIKeyEnv, BudgetGraceEnv} {
+	for _, k := range []string{RTDBURLEnv, FirebaseAPIKeyEnv, BudgetGraceEnv, runner.BudgetTokenEnv} {
 		if v, ok := env[k]; ok {
 			got[k] = v
 		}
@@ -1268,10 +1283,11 @@ func backendEnv(env map[string]string) map[string]string {
 	return got
 }
 
-// Every workflow job whose budget is not off gets the backend's address and
-// its web key (R10), and the grace when the config sets one. The signer and
-// the Firebase project's ID stay out: a job never mints.
-func TestInitRepoPassesRTDBEnv(t *testing.T) {
+// Every workflow job gets the backend's address and its web key (R10)
+// whenever the installation has them, whatever the mode (D11, plan task 1.4
+// step 1), and the grace when the config sets one and the mode is not off.
+// The signer and the Firebase project's ID stay out: a job never mints.
+func TestInitRepoPassesTheBackendToEveryJob(t *testing.T) {
 	for _, mode := range []string{"observe", "enforce"} {
 		rs, err := Repo(budgetInputs(t, "budget:\n  mode: "+mode+"\n  per_run_usd: 5\n"+backendBlock+"  unreachable_grace: 90s\n"))
 		if err != nil {
@@ -1303,9 +1319,77 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 	}
 }
 
-// With the budget off no job learns of the backend, whatever the config
-// holds: off never touches it.
-func TestJobEnvOmitsBackendWhenBudgetOff(t *testing.T) {
+// M2 of the PR #379 review: FUGARO_BUDGET_TOKEN says "the launch of this run
+// minted it a budget identity", which is a fact about one launch and nothing
+// a job is deployed with. It travels as an execution override
+// (backend.LaunchSpec.Env) and never through init --repo's deploy-time
+// environment; a job that carried it from the deploy would look to the
+// runner like a launch that had minted, whatever the launch did. Pinned here
+// because nothing else in this package reads the marker — a change that put
+// it into budgetEnv would otherwise pass the whole suite.
+func TestInitRepoNeverDeploysTheBudgetTokenMarker(t *testing.T) {
+	for _, mode := range []string{"off", "observe", "enforce"} {
+		rs, err := Repo(budgetInputs(t, "budget:\n  mode: "+mode+"\n  per_run_usd: 5\n"+backendBlock+"  unreachable_grace: 90s\n"))
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		if len(rs.Workflows) == 0 {
+			t.Fatal("no workflows")
+		}
+		envs := []map[string]string{}
+		for _, w := range rs.Workflows {
+			envs = append(envs, w.Env)
+		}
+		if rs.Check != nil {
+			envs = append(envs, rs.Check.Env)
+		}
+		for _, env := range envs {
+			if v, ok := env[runner.BudgetTokenEnv]; ok {
+				t.Errorf("mode %s: a job's deploy-time env carries %s=%q: the marker belongs to a launch, not to the deploy", mode, runner.BudgetTokenEnv, v)
+			}
+		}
+	}
+}
+
+// D11 (plan task 1.4 step 1, "the RTDB URL and API key reach every job"): a
+// job carries the database's address and the Firebase web key whenever the
+// installation has them, whatever the mode — the mode is policy now, and a
+// run reads its own policy with those two variables (the token exchange needs
+// the key, not only the URL). The mode itself stays the deploy-time mode:
+// it is the fallback for the absent-node case.
+func TestBudgetEnvWritesRTDBURLAndAPIKeyWhenFirebaseIsConfigured(t *testing.T) {
+	for _, mode := range []string{"off", "observe", "enforce"} {
+		rs, err := Repo(budgetInputs(t, "budget:\n  mode: "+mode+"\n  per_run_usd: 5\n"+backendBlock))
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		if len(rs.Workflows) == 0 {
+			t.Fatal("no workflows")
+		}
+		for _, w := range rs.Workflows {
+			if w.Env[RTDBURLEnv] != "https://aurora-fp-default-rtdb.firebaseio.com" ||
+				w.Env[FirebaseAPIKeyEnv] != "AIzaSyA0123456789abcdefghijklmnopqrstu" {
+				t.Errorf("mode %s: %s env = %v, want the backend's address and web key", mode, w.Name, backendEnv(w.Env))
+			}
+			if v, ok := w.Env[BudgetModeEnv]; ok != (mode != "off") || (ok && v != mode) {
+				t.Errorf("mode %s: %s has %s=%q: the mode stays conditional", mode, w.Name, BudgetModeEnv, v)
+			}
+			if _, ok := w.Env[BudgetGraceEnv]; ok {
+				t.Errorf("mode %s: %s has a grace nobody set", mode, w.Name)
+			}
+		}
+		// The check job calls no model and reads no policy: it gets none of
+		// it, whatever the mode.
+		if rs.Check != nil && len(backendEnv(rs.Check.Env)) != 0 {
+			t.Errorf("mode %s: the check job has %v", mode, backendEnv(rs.Check.Env))
+		}
+	}
+}
+
+// With the budget off the job still learns where the database is — a policy
+// may exist and a run must be able to read it — but its budget is off: no
+// mode, and nothing that would turn the shared caps on.
+func TestBudgetEnvKeepsModeOff(t *testing.T) {
 	for name, block := range map[string]string{
 		"mode off":   "budget:\n  mode: off\n" + backendBlock + "  unreachable_grace: 90s\n",
 		"empty mode": "budget:\n  per_run_usd: 5\n" + backendBlock,
@@ -1315,12 +1399,29 @@ func TestJobEnvOmitsBackendWhenBudgetOff(t *testing.T) {
 			t.Fatal(name, err)
 		}
 		for _, w := range rs.Workflows {
-			if got := backendEnv(w.Env); len(got) != 0 {
-				t.Errorf("%s: %s has %v with the budget off", name, w.Name, got)
+			if _, ok := w.Env[BudgetModeEnv]; ok {
+				t.Errorf("%s: %s carries a budget mode with the budget off: %v", name, w.Name, w.Env[BudgetModeEnv])
+			}
+			if _, ok := w.Env[BudgetGraceEnv]; ok {
+				t.Errorf("%s: %s carries a grace with the budget off", name, w.Name)
+			}
+			if w.Env[RTDBURLEnv] == "" || w.Env[FirebaseAPIKeyEnv] == "" {
+				t.Errorf("%s: %s = %v, want the backend's address and web key", name, w.Name, backendEnv(w.Env))
+			}
+			if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || s.On() {
+				t.Errorf("%s: %s: SpendFromEnv = %+v, %v; want the budget off", name, w.Name, s, err)
 			}
 		}
-		if rs.Check != nil && len(backendEnv(rs.Check.Env)) != 0 {
-			t.Errorf("%s: the check job has %v", name, backendEnv(rs.Check.Env))
+	}
+	// An installation with no Firebase configured writes neither variable:
+	// there is no backend to point a job at.
+	rs, err := Repo(budgetInputs(t, "budget:\n  mode: off\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		if got := backendEnv(w.Env); len(got) != 0 {
+			t.Errorf("%s has %v with no Firebase in the config", w.Name, got)
 		}
 	}
 }
@@ -1746,23 +1847,33 @@ func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// D2 (plan Task 2.1 step 3b): the sandbox's git credential is a reserved
+	// name, and the one reserved name the sweep does not take in -- a
+	// Bitbucket repository access token is issued for one repository and
+	// authenticates no other (owner ruling of 2026-10-15,
+	// config.PerRepositorySecret). With no project_secrets entry it has no
+	// project-wide candidate at all, and no other name the sandbox mounts is
+	// one, so the set is empty.
 	if len(before.ProjectSecretCandidates) != 0 {
 		t.Fatalf("ProjectSecretCandidates = %+v, want none with no project_secrets configured", before.ProjectSecretCandidates)
 	}
 	// bitbucket-token is the sandbox's git credential, mounted by every
 	// workflow (SecretMounts's unconditional first entry) -- allow-listing
-	// it project-wide here is the design's own worked example (§6).
+	// it project-wide here is the owner's explicit opt-in and the design's
+	// own worked example (§6), and it is the only thing that gives the name
+	// a project copy.
 	after, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
 	// (a) P2's golden property: the key SET (and every ID) is identical,
 	// unaffected by project_secrets existing at all.
 	if !maps.Equal(before.Secrets, after.Secrets) {
 		t.Fatalf("rs.Secrets changed:\nbefore: %+v\nafter:  %+v", before.Secrets, after.Secrets)
 	}
-	// (b) ProjectSecretCandidates gains EXACTLY the expected new entry.
-	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	// (b) The entry's own list is what decides the candidate, and it names
+	// this repository.
 	if !maps.Equal(after.ProjectSecretCandidates, want) {
 		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
 	}
