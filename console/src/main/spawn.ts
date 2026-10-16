@@ -393,9 +393,11 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
 /**
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
- * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0`,
- * `--by` is one of six words and a pull request is a number, so every legitimate
- * value is covered -- and whitespace, quotes, `$`, `;`, `|`, `&`, `<`, `>`,
+ * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
+ * `report`'s `12w`, `--by` is one of `report`'s seven words -- the schema is
+ * what closes that set, and this alphabet only has to be wide enough for it --
+ * and a pull request reaches this function as the digits its `IntVar` reads, so
+ * every legitimate value is covered -- and whitespace, quotes, `$`, `;`, `|`, `&`, `<`, `>`,
  * `(`, `)`, backticks, backslashes, `*`, `?` and every control character are
  * refused. Nothing a job wrote can be spelled in that alphabet into a shell
  * word, and with `shell: false` there is no shell to spell it for.
