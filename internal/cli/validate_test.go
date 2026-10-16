@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -949,6 +950,14 @@ func TestValidateNotesAnthropicKeyNeededOffline(t *testing.T) {
 // model, with allow_data_to written: D1b's safeguard as the owner writes it.
 // The switch itself is what a test adds or leaves out — an absent switch is
 // direct (D1b).
+//
+// model_prices prices the route's own ID, and the block is not valid without
+// it: a pin the switch routes names that ID, the embedded catalog
+// prices the canonical ID only, and a run halts on the unpriced route
+// ("`anthropic/claude-sonnet-5.5` has no price" — the runner's own
+// TestRoutedClaudeIsPricedFromTheRouteRowNotTheDirectRate). A test that wants
+// the unpriced state writes its own block: that is the false OK validate
+// printed until the routed pins were judged by the run's own checks.
 const routedProjectBlock = `providers:
   openrouter:
     kind: anthropic-compat
@@ -957,6 +966,8 @@ const routedProjectBlock = `providers:
     secret: openrouter-api-key
     models: ["anthropic/claude-sonnet-5.5"]
     allow_data_to: ["acme/sandbox"]
+model_prices:
+  anthropic/claude-sonnet-5.5: { input_per_m: 3, output_per_m: 15 }
 `
 
 // routedSwitchBlock is the switch that opt-in writes: the explicit list of
@@ -1001,7 +1012,16 @@ func TestValidateReportsAProjectConfigItCouldNotRead(t *testing.T) {
 	// The switch names a Claude model no provider entry claims, which is a
 	// refusal at load (localcfg's own CheckRouting): the config exists, and
 	// nothing can read it.
-	isolateProjects(t, t.TempDir())
+	//
+	// The config directory is deliberately deep: the loader's reason is printed
+	// first and the file last (unreadableProjectConfig), and the line is capped
+	// at pluginwire.MaxPrintable runes, so a path long enough to fill that cap
+	// is what proves the reason is the half that survives. The depth is written
+	// here rather than left to t.TempDir() because TMPDIR is not the test's to
+	// choose: the reviewed form of this test passed under /tmp and failed under
+	// macOS's own per-user TMPDIR, and a path that is long on every machine is
+	// what makes this one say the same thing wherever it runs.
+	isolateProjects(t, filepath.Join(t.TempDir(), strings.Repeat("deep-config-directory/", 8)))
 	projectRouting(t, routedSwitchBlock)
 	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	out, errOut, err := execute(t, "validate", path)
@@ -1011,8 +1031,13 @@ func TestValidateReportsAProjectConfigItCouldNotRead(t *testing.T) {
 	if !strings.Contains(out, "could not be read") {
 		t.Fatalf("a project config that could not be read is not reported:\n%s\n%s", out, errOut)
 	}
-	if !strings.Contains(out, "claude-sonnet-5-5") {
-		t.Errorf("the line does not carry the loader's own reason:\n%s", out)
+	// The reason leads, with the key and the model the loader named, and the
+	// file it refused is still there to be read at the end.
+	if !strings.Contains(out, "routing.claude.models[0]: claude-sonnet-5-5") {
+		t.Errorf("the line does not lead with the loader's own reason:\n%s", out)
+	}
+	if !strings.Contains(out, "aurora.yaml") {
+		t.Errorf("the line does not end with the file it could not read:\n%s", out)
 	}
 	if strings.Contains(errOut, "none selected") {
 		t.Errorf("a config that is there is reported as none selected:\n%s", errOut)
@@ -1611,6 +1636,172 @@ func TestValidateSaysARoutedPinHaltsUnderAnObservingBudget(t *testing.T) {
 	projectRouting(t, "budget: { mode: enforce, per_run_usd: 5 }\n"+routedProjectBlock+routedSwitchBlock)
 	if out, errOut, err := execute(t, "validate", path); err != nil {
 		t.Fatalf("validate refused the enforcing configuration a routed pin is for: %v\n%s%s", err, out, errOut)
+	}
+}
+
+// TestValidateRefusesARoutedPinTheRunCannotPrice pins the false OK the review
+// found on the routed-pin block. The block asked two of the run's checks of the
+// pins the switch produced — config.CheckProviderAuth and
+// config.CheckProviderGateway — and left out config.CheckProviderPolicy, whose
+// price rule is the one the pin then trips: applyRouting rewrites the pin to the
+// route's own ID, the embedded catalog prices the canonical ID only, and nothing
+// but the owner's model_prices prices "anthropic/claude-sonnet-5.5"
+// (internal/runner's own TestRoutedClaudeIsPricedFromTheRouteRowNotTheDirectRate).
+// So validate printed "claude-sonnet-5-5 -> openrouter, sent as
+// anthropic/claude-sonnet-5.5" and exited 0 while every run of the configuration
+// halted in checkProviderModels with "`anthropic/claude-sonnet-5.5` has no
+// price: add it under model_prices in the project config".
+//
+// The two cells are the two reaches a routed pin has: via: openrouter, whose
+// runs all take the route (a halt), and via: auto, whose reach hangs on the key
+// the job holds — the line names the defect there and the run that halts, which
+// is the sibling note rule for the same unread fact.
+func TestValidateRefusesARoutedPinTheRunCannotPrice(t *testing.T) {
+	const enforce = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	const claude = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	// routedProjectBlock's route with its model_prices row removed: the ID the
+	// pin is rewritten to is then priced by nothing.
+	unpriced := strings.Replace(routedProjectBlock, "model_prices:\n  anthropic/claude-sonnet-5.5: { input_per_m: 3, output_per_m: 15 }\n", "", 1)
+	if unpriced == routedProjectBlock {
+		t.Fatal("the model_prices row is not where this test removes it: routedProjectBlock moved")
+	}
+	const autoSwitch = "routing:\n  claude:\n    via: auto\n    models: [claude-sonnet-5-5]\n"
+	for _, tc := range []struct {
+		name, switchBlock, want string
+		halt                    bool
+	}{
+		{"via: openrouter", routedSwitchBlock, "`anthropic/claude-sonnet-5.5` has no price", true},
+		{"via: auto, whose reach is the job's key", autoSwitch, "via: auto is key-presence driven", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateProjects(t, t.TempDir())
+			projectRouting(t, enforce+unpriced+tc.switchBlock)
+			inCheckoutOf(t, "acme/sandbox")
+			out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
+			if !tc.halt {
+				if err != nil {
+					t.Fatalf("validate refused a state whose halt hangs on the job's key: %v\n%s%s", err, out, errOut)
+				}
+				if !strings.Contains(errOut, "has no price") || !strings.Contains(errOut, tc.want) {
+					t.Fatalf("the line does not name the price defect and the run that halts:\n%s%s", out, errOut)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError || !strings.Contains(out, tc.want) {
+				t.Fatalf("exit %d: want the run's own refusal %q\n%s%s", ExitCode(err), tc.want, out, errOut)
+			}
+			if !strings.Contains(out, "agent.models.coder") {
+				t.Fatalf("the refusal does not name the pin the switch rewrote:\n%s", out)
+			}
+			if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+				t.Fatalf("the resolution is not printed beside it:\n%s", errOut)
+			}
+		})
+	}
+}
+
+// TestValidateAgreesWithTheRunAboutTheRoutedPins is the other half of the matrix
+// TestValidateAgreesWithTheRunAboutTheSwitch holds: that one is the switch's own
+// list and the question "may the run resolve it at all", and this one is the
+// pins the switch produced, which the run judges with its own checks once
+// applyRouting has rewritten them. The expectation is computed from those checks
+// — config.CheckRouting over runner.ProvidersFor's table for the switch,
+// then config.CheckProviderPolicy, config.CheckProviderAuth,
+// config.CheckProviderGateway and (with the gateway on) config.CheckPins over
+// the agent routedAgent produces — rather than written down, so a cell that
+// drifts is a failure whichever side moved. validate asked two of the five, and
+// a route ID with no price is exactly what the missing one caught.
+//
+// The axes are the route's price (the owner's model_prices row, or none) and the
+// via, which is the difference between a halt and a note: via: auto's reach
+// hangs on the key the job holds, so a defect under it is a note naming both
+// runs. A variant or an alias needs no cell: a route's claim is judged by
+// config.CheckClaudeClaim and config.CheckModelPattern when the project config
+// loads, and the claim the resolver returns is the entry's own — a layer's
+// spelling of it never displaces it (measured, and the loader's refusal is what
+// validate prints when the entry's own claim is the variant).
+func TestValidateAgreesWithTheRunAboutTheRoutedPins(t *testing.T) {
+	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+	const mode = "enforce"
+	const claude = "agent:\n  auth: api-key\n  model: " + canonical + "\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	claims := map[string]config.ModelProvider{"openrouter": {
+		Kind:        config.ModelProviderKind,
+		Models:      []string{routed},
+		AllowDataTo: []string{"acme/sandbox"},
+	}}
+	agent := config.Agent{Auth: "api-key", Model: canonical, Models: config.ModelRoles{Background: "claude-haiku-4-5"}}
+	for _, price := range []string{"priced", "unpriced"} {
+		for _, via := range []string{config.RouteOpenRouter, config.RouteAuto} {
+			t.Run(price+"/"+via, func(t *testing.T) {
+				overrides := pricing.Overrides{}
+				project := "budget: { mode: enforce, per_run_usd: 5 }\n" + routedProjectBlock
+				if price == "unpriced" {
+					project = strings.Replace(project, "model_prices:\n  anthropic/claude-sonnet-5.5: { input_per_m: 3, output_per_m: 15 }\n", "", 1)
+				} else {
+					overrides[routed] = pricing.Rates{InputPerM: 3, OutputPerM: 15}
+				}
+				project += "routing:\n  claude:\n    via: " + via + "\n    models: [" + canonical + "]\n"
+				// The run's own steps, in the run's own order: the switch's list
+				// first (applyRouting refuses there before it looks at a pin),
+				// then the pins it rewrote.
+				prices, err := config.PriceTable(claims, overrides, nil, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				sw := &config.RoutingClaude{Via: via, Models: []string{canonical}}
+				gateway := runner.GatewayOn("api-key", mode)
+				// A run halts here only when the switch reaches it: every run of
+				// this configuration for openrouter, and the keyless one for auto.
+				always := runner.RoutingInertReason(sw, "api-key", gateway, false) == runner.RoutingActs &&
+					runner.RoutingInertReason(sw, "api-key", gateway, true) == runner.RoutingActs
+				keyless := !always && runner.RoutingInertReason(sw, "api-key", gateway, false) == runner.RoutingActs
+				if !always && !keyless {
+					t.Fatalf("the switch reaches no run here (%v/%v): this cell is not this rule's", always, keyless)
+				}
+				routes := runner.ProvidersFor(claims, "acme/sandbox")
+				halts := len(config.CheckRouting(&config.Routing{Claude: sw}, routes, "routing")) > 0
+				if !halts {
+					a, paths := routedAgent(agent, sw, routes)
+					ps := config.CheckProviderPolicy(a, nil, "acme/sandbox", routes, prices)
+					ps = append(ps, config.CheckProviderAuth(a, routes)...)
+					ps = append(ps, config.CheckProviderGateway(a, config.EffectiveBackground(a, routes), routes, mode)...)
+					if gateway {
+						ps = append(ps, config.CheckPins(a, prices)...)
+					}
+					for _, q := range ps {
+						if slices.Contains(paths, q.Path) {
+							halts = true
+						}
+					}
+				}
+
+				isolateProjects(t, t.TempDir())
+				projectRouting(t, project)
+				inCheckoutOf(t, "acme/sandbox")
+				out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
+				// The run halts in every state of this cell, so it is a problem
+				// where it halts every run, and a note where the run that halts
+				// is the keyless one (the via: auto rule).
+				wantExit := 0
+				if halts && always {
+					wantExit = ExitUserError
+				}
+				if ExitCode(err) != wantExit {
+					t.Fatalf("exit %d, want %d (the run halts = %v, always = %v):\n%s%s", ExitCode(err), wantExit, halts, always, out, errOut)
+				}
+				if halts {
+					// The defect is named either way, at the pin the switch rewrote.
+					if !strings.Contains(out+errOut, "agent.models.coder") {
+						t.Fatalf("the halt the run makes is not named at its pin:\n%s%s", out, errOut)
+					}
+					if !always && !strings.Contains(errOut, "via: auto is key-presence driven") {
+						t.Fatalf("the keyless note does not say which run halts:\n%s", errOut)
+					}
+				} else if strings.Contains(out, "has no price") {
+					t.Fatalf("validate refused a configuration the run prices:\n%s%s", out, errOut)
+				}
+			})
+		}
 	}
 }
 

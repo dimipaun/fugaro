@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
@@ -317,6 +318,61 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 	return out
 }
 
+// unreadableProjectConfig is the reason a project config that is there was
+// refused at load, with the file it refused at the end of the line.
+//
+// The loader spells its refusal "<file>: local config: <reason>", and validate
+// printed that string whole through oneLineCLI — pluginwire.Printable, 200
+// runes. The file's absolute path was most of it, so on a machine whose config
+// directory is deep the reason was what got cut ("routing.claude.models[0]:
+// claude-sonnet-5-… (truncated)"): measured on macOS's default per-user TMPDIR,
+// where the reviewed test failed and passed with TMPDIR=/tmp. The reason is the
+// half an operator cannot guess and the path is the half they can, and the
+// loader's own reasons are long — this one names the key, the model and the
+// fix — so the reason leads and keeps the line's room, and the place comes
+// last, shortened to its last elements. Cut either way, it is the place that is
+// cut.
+func unreadableProjectConfig(err error) string {
+	// The loader's own shape, and nothing else's: an error that does not carry
+	// it is printed as it is (nil or empty is not a state this is called in).
+	reason, path := err.Error(), ""
+	if p, rest, ok := strings.Cut(reason, ": "); ok {
+		if r, ok := strings.CutPrefix(rest, "local config: "); ok {
+			reason, path = r, p
+		}
+	}
+	if path == "" {
+		return pluginwire.Printable(reason)
+	}
+	where := " (in " + shortPath(path) + ")"
+	// truncLead is room for pluginwire's own "... (truncated)", which its cap
+	// adds to a reason long enough to be cut: leaving it here is what keeps the
+	// whole line — reason, marker and place — inside MaxPrintable, so the place
+	// is never the part a later cap takes.
+	const truncLead = len("... (truncated)")
+	return pluginwire.PrintableN(reason, pluginwire.MaxPrintable-len([]rune(where))-truncLead) + where
+}
+
+// shortPath is where a project config is, cut to its last elements: what names
+// the file and the directory it lives in (…/fugaro/projects/aurora.yaml). The
+// absolute prefix is what says nothing to an operator — on a test machine it is
+// a temporary directory — and it is the half of the line that may be spent,
+// since the reason leads.
+func shortPath(path string) string {
+	const elems, max = 3, 40
+	short := path
+	if parts := strings.Split(filepath.ToSlash(path), "/"); len(parts) > elems {
+		short = "…/" + strings.Join(parts[len(parts)-elems:], "/")
+	}
+	// The leading ellipsis is what keeps a tail from being read as a whole
+	// path, and counting it inside max is what keeps the result from being
+	// capped again by the caller's own PrintableN.
+	if r := []rune(short); len(r) > max {
+		short = "…" + string(r[len(r)-max+1:])
+	}
+	return short
+}
+
 // routingProblems are plan task 1b.3's two routing rules: the resolution the
 // switch licenses, printed when this command can read it, and the note a Claude
 // pin carries when a project routing Claude through a provider leaves it on the
@@ -614,21 +670,66 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			routedPaths[p.path] = true
 		}
 	}
-	// The pins the switch produces are the ones the run's own rules judge:
-	// applyRouting writes the route's ID into the pin, and internal/runner's
-	// checkProviderModels then asks config.CheckProviderAuth and
-	// config.CheckProviderGateway about exactly those pins — under an observing
-	// budget a routed pin is refused there as served by a provider that needs
-	// budget.mode enforce. validate printed the resolution and exited 0 for
-	// every one of those runs. The rules asked here are the runner's own, over
-	// the agent the switch produced.
+	// The pins the switch produces are the ones the run's own rules judge, and
+	// they are judged by the run's own checks: applyRouting writes the route's
+	// ID into the pin, and internal/runner's checkProviderModels then asks
+	// config.CheckProviderPolicy (the owner's data policy for provider models —
+	// the repository's claim on the entry, the variant and the alias rule, and
+	// whether the ID it now names has a price), config.CheckProviderAuth and
+	// config.CheckProviderGateway about exactly those pins, before CheckAllowed
+	// and — with the gateway on — config.CheckPins (budget's own price rule).
+	// validate asked two of them, so a routed Claude pin whose route's row has
+	// no price printed "-> openrouter, sent as anthropic/claude-sonnet-5.5" and
+	// exited 0 while every run of the configuration halted in checkProviderModels
+	// with "`anthropic/claude-sonnet-5.5` has no price": the pin now names the
+	// route's own ID, and the embedded catalog's Claude row prices the canonical
+	// ID only, so nothing but the owner's model_prices prices it (the runner's
+	// own TestRoutedClaudeIsPricedFromTheRouteRowNotTheDirectRate). The rules
+	// asked here are the runner's own, over the agent the switch produced, and
+	// its table: config.CheckAllowed is not repeated because the routed pin asks
+	// it the same question as the pin the file wrote — one canonical model, and
+	// config.CheckAllowed's inverse-map half admits exactly the route IDs this
+	// switch resolves — which budgetProblems has already judged.
 	if len(routedPaths) > 0 {
 		a, paths := routedAgent(cfg.Agent, sw, routes)
 		if len(paths) > 0 {
 			bg := config.EffectiveBackground(a, routes)
+			var allowed []string
+			if cfg.Budget != nil {
+				allowed = cfg.Budget.AllowedModels
+			}
+			// The table the run prices the routes with: lc.Providers' rows and
+			// the owner's model_prices, the same one providerProblems builds (a
+			// refused table is nil here, and providerProblems and budgetProblems
+			// have already said why it was refused).
+			prices, _, _ := priceTable(lc, budgetNow())
 			var ps []config.Problem
+			ps = append(ps, config.CheckProviderPolicy(a, allowed, repo, routes, prices)...)
 			ps = append(ps, config.CheckProviderAuth(a, routes)...)
 			ps = append(ps, config.CheckProviderGateway(a, bg, routes, mode)...)
+			if prices != nil && runner.GatewayOn(cfg.Agent.Auth, mode) {
+				// CheckPins is the runner's other price rule, and it runs only
+				// with the gateway on (checkBudget). A routed pin is the route's
+				// own ID and is claimed by the entry that resolved it, so
+				// CheckProviderPolicy has already asked it the same question —
+				// the price, the alias — in its own words: a pin refused there
+				// is not said twice, because the run prints one of the two
+				// (checkProviderModels returns before CheckPins) and two
+				// near-identical sentences for one defect is noise
+				// dedupeLines does not drop, its key being the message as well
+				// as the path. It runs anyway, because it is what the run runs,
+				// and a routed ID of a shape the first rule lets through is
+				// still this rule's.
+				refused := make(map[string]bool, len(ps))
+				for _, q := range ps {
+					refused[q.Path] = true
+				}
+				for _, q := range config.CheckPins(a, prices) {
+					if !refused[q.Path] {
+						ps = append(ps, q)
+					}
+				}
+			}
 			for _, q := range ps {
 				if !routedPaths[q.Path] {
 					// Only the pins the switch rewrote are this block's
@@ -1102,7 +1203,7 @@ func newValidateCmd() *cobra.Command {
 				// carries no problems of its own, so rf.Problems is empty and the
 				// list is built from config.Check on).
 				problems = append([]config.Problem{{Path: "project config",
-					Message: "could not be read: " + oneLineCLI(lcErr.Error())}}, problems...)
+					Message: "could not be read: " + unreadableProjectConfig(lcErr)}}, problems...)
 			}
 			warnings = append(layerWarnings, warnings...)
 			out := cmd.OutOrStdout()
