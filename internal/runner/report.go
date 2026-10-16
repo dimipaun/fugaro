@@ -132,11 +132,11 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 
 // artifactsSection is the report's Artifacts section (design §9) for a
 // mode: artifact run: what the render step did, the files the run uploaded
-// and the compute estimate the run's wall clock priced. The per-file table is
-// written from the record's own artifacts, so a record that carries none (a
-// release without the upload step, or a run that ended before it) says so
-// rather than printing a header over nothing. The probe's verdict is the
-// probe step's column and is not here yet (plan Task 5).
+// with the probe's verdict on each, and the compute estimate the run's wall
+// clock priced. The per-file table is written from the record's own
+// artifacts, so a record that carries none (a release without the upload
+// step, or a run that ended before it) says so rather than printing a header
+// over nothing.
 func artifactsSection(rec *runstore.Record) string {
 	var b strings.Builder
 	b.WriteString("#### Artifacts\n\n")
@@ -165,12 +165,29 @@ func artifactsSection(rec *runstore.Record) string {
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\n%d files, uploaded to this run's bucket under `%s`:\n\n", len(rec.Artifacts), runstore.ArtifactPrefix)
-	b.WriteString("| Artifact | Bytes | sha256 | Type |\n|---|---|---|---|\n")
+	b.WriteString("| Artifact | Bytes | sha256 | Type | Probe |\n|---|---|---|---|---|\n")
 	for _, a := range rec.Artifacts {
-		fmt.Fprintf(&b, "| %s | %d | `%s` | %s |\n", tableCode(a.Name), a.Bytes, shortSum(a.SHA256), tableText(a.ContentType))
+		fmt.Fprintf(&b, "| %s | %d | `%s` | %s | %s |\n", tableCode(a.Name), a.Bytes, shortSum(a.SHA256), tableText(a.ContentType), probeCell(a))
 	}
-	b.WriteString("\nEach row is what the run's own record says the object at that name holds: download it and hash it to check the bytes arrived as rendered.\n\n")
+	b.WriteString("\nEach row is what the run's own record says the object at that name holds: download it and hash it to check the bytes arrived as rendered. `ok` in the Probe column is the recipe's own `commands.probe` having exited zero on the whole set.\n\n")
 	return b.String()
+}
+
+// probeCell is the table's probe column: what the probe step said about this
+// artifact. "none" is the recipe's own answer when it asked for no probe —
+// the record carries {ran: false}, and the column says so rather than leaving
+// a reader to infer it from an empty cell. A recorded non-zero exit code is
+// printed as such rather than folded into "ok": the table must never claim a
+// check passed when the record says it did not.
+func probeCell(a runstore.ArtifactFile) string {
+	switch {
+	case a.Probe == nil || !a.Probe.Ran:
+		return "none"
+	case a.Probe.ExitCode == 0:
+		return "ok"
+	default:
+		return fmt.Sprintf("exit %d", a.Probe.ExitCode)
+	}
 }
 
 // shortSum is a sha256 as a report row shows it: the first twelve hex
