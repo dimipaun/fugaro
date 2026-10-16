@@ -128,6 +128,12 @@ func TestGoldenInstallationHasOneProjectJobPerTriple(t *testing.T) {
 	// The service-account count is the profiles' and the accounts', not a
 	// repository's: every project account in the plan belongs to exactly one
 	// job of the fixture, and there are no others.
+	//
+	// The ceiling this claim is about is Check 52 step 5 (U4): the owner's
+	// results of 2026-10-16 on the sandbox installation fugaro record 10
+	// service accounts in `fugaro-dev` and Cloud Quotas reporting
+	// ServiceAccountsPerProject as -1 (no fixed limit), so the headroom design
+	// §13 claims is there and this assertion stays as the plan wrote it.
 	projectSAs := map[string]bool{}
 	for _, rc := range p.ResourceChanges {
 		if rc.Type == "google_service_account" && strings.HasPrefix(rc.Address, "module.project[") {
