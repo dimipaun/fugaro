@@ -1122,6 +1122,13 @@ func TestStageArtifactsRefusesEscapes(t *testing.T) {
 		{strings.Repeat("a", 201), "200"},
 		{".hidden.mp4", "begins with a dot"},
 		{".hidden/a.png", "begins with a dot"},
+		// A backslash is a path separator on Windows and an ordinary
+		// character everywhere else, so a name carrying one is two different
+		// paths depending on the machine that reads it: it is refused on
+		// every platform, and the retriever inherits the rule.
+		{"a\\b.png", "backslash"},
+		{"frames\\..\\..\\x.png", "backslash"},
+		{"..\\x.png", "backslash"},
 	}
 	for _, c := range refused {
 		got, err := runner.SanitiseName(c.name)

@@ -818,6 +818,19 @@ func ArtifactName(name string) (clean, problem string) {
 	if i, what := firstControl(name); i >= 0 {
 		return "", fmt.Sprintf("the name %q holds %s at byte %d: a name is printed in the report and typed at a shell, and a control character is how a name reads as something other than what it is", name, what, i)
 	}
+	// A backslash is not a control character, and it is refused anyway: it is
+	// a path separator on Windows and an ordinary byte everywhere else, so a
+	// name carrying one is two different paths depending on the machine that
+	// reads it. path.Clean — which is what this rule cleans with, and what the
+	// uploader records — reads "frames\a.png" as ONE element, while
+	// filepath.Join (what `fugaro artifacts get` builds its destination with)
+	// reads it as two on Windows, where "frames\..\..\x.png" then leaves the
+	// destination root that the rest of this list exists to keep a name
+	// inside. Refusing it on every platform keeps the rule the same on all of
+	// them, which is the only way the uploader and the retriever can share it.
+	if i := strings.IndexByte(name, '\\'); i >= 0 {
+		return "", fmt.Sprintf("the name %q holds a backslash at byte %d: a backslash separates path elements on Windows and is a character elsewhere, so one name is two different paths", name, i)
+	}
 	if len(name) > maxArtifactNameBytes {
 		return "", fmt.Sprintf("the name is %d bytes, over the %d-byte cap", len(name), maxArtifactNameBytes)
 	}
@@ -844,7 +857,10 @@ func ArtifactName(name string) (clean, problem string) {
 // sizzle.mp4 from sizzle‮gnp.exe. Punctuation is the render's to choose
 // (design §9 binds the name's first character and nothing else), so a pipe or
 // a backtick is allowed here and escaped where it is rendered
-// (report.go's tableText and tableCode). NUL and the line breaks are the same
+// (report.go's tableText and tableCode) — with one punctuation exception that
+// is a path question and not a terminal one: a backslash is refused, in
+// ArtifactName above, on every platform, because it separates path elements
+// on Windows. NUL and the line breaks are the same
 // rule as the rest of this table rather than a case of their own.
 //
 // What is NOT in this table is as deliberate as what is. The zero-width

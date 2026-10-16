@@ -538,8 +538,17 @@ func TestArtifactsGetRefusesOverTheCapBeforeReadingTheBody(t *testing.T) {
 		{Name: "sizzle.mp4", Bytes: 4, SHA256: sha256Hex(body), ContentType: "video/mp4"},
 	}, map[string][]byte{"sizzle.mp4": body})
 
-	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id); err == nil {
+	_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+	if err == nil {
 		t.Fatal("an object larger than the recorded size was accepted")
+	}
+	// The refusal is the announced-size one, made against the RECORD's own
+	// count and not against the format's ceiling: the message says the cap
+	// that fired was 4. With the ceiling passed as the cap instead, the same
+	// object is read to the end and refused for its size afterwards — a
+	// different error, and the one this pins.
+	if !strings.Contains(err.Error(), "the cap is 4") {
+		t.Errorf("the refusal does not name the recorded size as the cap that fired: %v", err)
 	}
 	root := filepath.Join(dir, artifactRunDir(id))
 	if names := dirEntries(t, root); len(names) != 0 {
@@ -561,8 +570,16 @@ func TestArtifactsGetRefusesASizeOverTheFormatsCeiling(t *testing.T) {
 		{Name: "sizzle.mp4", Bytes: recipe.MaxOutputBytes + 1, SHA256: sha256Hex(body), ContentType: "video/mp4"},
 	}, map[string][]byte{"sizzle.mp4": body})
 
-	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id); err == nil {
+	_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+	if err == nil {
 		t.Fatal("a record claiming a size over the format's ceiling was accepted")
+	}
+	// It is refused FOR the ceiling, before the bucket is asked anything: a
+	// record this size would otherwise be refused later, for the size the
+	// object actually has, which is a different answer to a different
+	// question — and it is the answer a caller with the check removed gives.
+	if !strings.Contains(err.Error(), "ceiling") {
+		t.Errorf("the refusal does not name the format's ceiling: %v", err)
 	}
 	if names := dirEntries(t, filepath.Join(dir, artifactRunDir(id))); len(names) != 0 {
 		t.Errorf("an over-ceiling record wrote %q, want nothing", names)
@@ -647,6 +664,9 @@ func TestArtifactNameIsTheUploadersRule(t *testing.T) {
 	// Names the uploader refuses: the retriever refuses them too.
 	refused := []string{"", "../x.png", "/etc/passwd", "..", "a/..", ".git/hooks/pre-commit",
 		".envrc", "a\x00b.png", "a\tb.png", "a\nb.png", "a\x1b[31mb.png", "a‮b.png",
+		// A backslash separates path elements on Windows: refused by the one
+		// shared rule, so both sides refuse it.
+		"a\\b.png", "frames\\..\\..\\x.png",
 		strings.Repeat("a", 201)}
 	for _, name := range refused {
 		if _, problem := runner.ArtifactName(name); problem == "" {
@@ -1150,6 +1170,71 @@ func TestArtifactsGetEscapesTheDestinationItPrints(t *testing.T) {
 	}, map[string][]byte{bidi: body})
 	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, bidi); err == nil {
 		t.Error("get accepted a name carrying a bidi override")
+	}
+}
+
+// TestArtifactsGetRefusesASymlinkedOrNonDirectoryRoot: the destination root —
+// <run-id>-artifacts under --out, which is the PARENT the user names and never
+// the destination — is only usable when it is a real directory. A symlink
+// there is a path out of the directory the user asked for, and anything else
+// is not somewhere to write files into. Mutation caught: checking the root
+// with Stat (which follows the link), or not checking it at all.
+func TestArtifactsGetRefusesASymlinkedOrNonDirectoryRoot(t *testing.T) {
+	body := []byte("hello")
+	for _, tc := range []struct {
+		name string
+		// plant puts something at the root path before the run.
+		plant func(t *testing.T, root string) string
+	}{
+		{"a symlink to another directory", func(t *testing.T, root string) string {
+			outside := filepath.Join(t.TempDir(), "outside")
+			if err := os.MkdirAll(outside, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, root); err != nil {
+				t.Fatal(err)
+			}
+			return outside
+		}},
+		{"a regular file", func(t *testing.T, root string) string {
+			if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return root
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			const id = "20261016-090000-abcd"
+			seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+				{Name: "a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+			}, map[string][]byte{"a.png": body})
+			root := filepath.Join(dir, artifactRunDir(id))
+			planted := tc.plant(t, root)
+
+			_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("get with %s at the destination root = %v, want a user error", tc.name, err)
+			}
+			if fi, err := os.Lstat(planted); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+				t.Errorf("the existing entry at the root was replaced: %v, %v", fi, err)
+			}
+			if fi, err := os.Lstat(planted); err != nil || !fi.IsDir() {
+				// A regular file: the entry is still the file it was.
+				if got, err := os.ReadFile(planted); err != nil || string(got) != "not a directory" {
+					t.Errorf("the file at the root was changed: %q, %v", got, err)
+				}
+			} else if entries := dirEntries(t, planted); len(entries) != 0 {
+				t.Errorf("get wrote through the root: %v", entries)
+			}
+			// ... and the same with --force: the flag is about the file at
+			// the destination, not about what the root path means.
+			if _, _, err := execute(t, "artifacts", "get", "--force", appSlug+"/"+id); ExitCode(err) != ExitUserError {
+				t.Errorf("get --force with %s at the root = %v, want a user error", tc.name, err)
+			}
+		})
 	}
 }
 
