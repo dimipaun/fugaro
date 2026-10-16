@@ -1561,6 +1561,95 @@ func TestDoctorProjectSecretStoredPassesWithEitherCopy(t *testing.T) {
 	}
 }
 
+// apiKeyRig is a doctor rig inside a checkout of github.com/acme/app whose
+// config takes the api-key auth with lines (the agent and budget blocks to
+// splice in) and whose local config offers one provider serving deepseek/*.
+func apiKeyRig(t *testing.T, lines string) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	yaml := strings.Replace(cliMinimalYAML, "workflows:", lines+"workflows:", 1)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"+
+		"repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n")
+	// The two names this rig's runs really need, so the key under test is the
+	// only thing left: the git credential, and the provider's own key.
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("pem"))
+	putProjectSecret(t, r.sm, "aurora", "openrouter-api-key", []byte("provider-value"))
+	return r
+}
+
+// TestDoctorDoesNotRequireTheOptionalAnthropicKey: D2's sweep makes
+// anthropic-api-key project-wide-eligible for every repository (a reserved
+// name with no per-name list), and the project-secret-stored check then
+// demanded a stored value for it. The key is one a job can go without
+// (infra.OptionalSecret): a repository whose models all route through a
+// provider never needs one, and Readiness drops the mount and deploys rather
+// than gate it -- so doctor failed outright, "no run of a workflow mounting
+// one can start", for a repository whose runs are fine (code review, high).
+func TestDoctorDoesNotRequireTheOptionalAnthropicKey(t *testing.T) {
+	apiKeyRig(t, "agent: { auth: api-key, models: { coder: deepseek/coder, reviewer: deepseek/coder } }\n"+
+		"budget: { mode: enforce, per_run_usd: 20 }\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed a repository that needs no Anthropic key: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	for _, id := range []string{"project-secret-stored", "project-secret-optional"} {
+		if c, ok := doctorCheckByID(o.Checks, id); ok && !c.OK {
+			t.Fatalf("%s = %+v, want no check or an ok one: the job drops the key's mount and deploys without it", id, c)
+		}
+	}
+}
+
+// TestDoctorWarnsForTheOptionalAnthropicKeyWhenItIsNeeded: the key is needed
+// when a pin no provider serves goes direct to Anthropic, and when the budget
+// isn't enforcing every call goes there whatever the pins are
+// (config.AnthropicKeyNeeded) -- so a keyless repository's runs are refused
+// at agent start. Readiness says so as a note and never gates the deploy, so
+// doctor warns and does not fail.
+func TestDoctorWarnsForTheOptionalAnthropicKeyWhenItIsNeeded(t *testing.T) {
+	for _, tc := range []struct{ name, lines string }{
+		{"a pin no provider serves", "agent: { auth: api-key, models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 } }\n" +
+			"budget: { mode: enforce, per_run_usd: 20 }\n"},
+		{"nothing routes to a provider", "agent: { auth: api-key, models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 } }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorWarnsForTheOptionalAnthropicKey(t, tc.lines)
+		})
+	}
+}
+
+func doctorWarnsForTheOptionalAnthropicKey(t *testing.T, lines string) {
+	t.Helper()
+	apiKeyRig(t, lines)
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed on a warning: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-optional")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-optional = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "anthropic-api-key") {
+		t.Fatalf("problem doesn't name the key: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "secrets set anthropic-api-key") {
+		t.Fatalf("fix doesn't name the command: %q", c.Fix)
+	}
+	if stored, ok := doctorCheckByID(o.Checks, "project-secret-stored"); ok && !stored.OK {
+		t.Fatalf("project-secret-stored = %+v: the optional key is not the red gate", stored)
+	}
+}
+
 // TestDoctorFlagsStaleScope: the deployed job still mounts the repository's
 // own copy, and the copy Readiness resolves now is the project's (the
 // repository's lost its last version since the last apply). A warning: the

@@ -383,9 +383,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			// there is nothing to compute from.
 			if resolved != nil && resolved.Cfg != nil {
 				if facts, ok := doctorRepoSecretsOf(lc, resolved.Cfg, repo); ok {
-					if c := doctorProjectSecretStoredCheck(lc, facts, o.Secrets, projSecrets, projOK); c != nil {
-						o.Checks = append(o.Checks, *c)
-					}
+					o.Checks = append(o.Checks, doctorProjectSecretStoredChecks(facts, o.Secrets, projSecrets, projOK)...)
 					if c := doctorProjectSecretScopeCheck(ctx, lc, facts, o.Secrets, projSecrets); c != nil {
 						o.Checks = append(o.Checks, *c)
 					}
@@ -750,6 +748,12 @@ type doctorRepoSecrets struct {
 	logical    map[string]string // a secret ID either scope stores this name under -> logical name
 	repoIDs    map[string]string // logical -> the repository's own secret ID
 	jobs       map[string]string // workflow name -> its default-account job
+	// keyNeeded is whether this checkout's config needs the optional Anthropic
+	// key at all (needsAnthropicKey, the CLI's one rule for it). False is the
+	// provider-only repository: every call routes to a provider, and its job
+	// drops the key's mount rather than gate the deploy (Readiness), so no
+	// stored value is missing.
+	keyNeeded bool
 }
 
 // doctorRepoSecretsOf computes doctorRepoSecrets for repo from cfg (the
@@ -781,21 +785,42 @@ func doctorRepoSecretsOf(lc *localcfg.Config, cfg *config.Config, repo string) (
 			}
 		}
 	}
+	// Whether the optional key is needed at all is the checkout's own answer,
+	// not the local config's: needsAnthropicKey merges the owner's ceiling with
+	// this file and reads the routes the run would take, exactly as init's
+	// prompt, init --repo's missing list and validate's note do.
+	facts.keyNeeded = needsAnthropicKey(lc, cfg, repo)
 	return facts, true
 }
 
-// doctorProjectSecretStoredCheck is doctor's "project-secret-stored" check:
+// doctorProjectSecretStoredChecks are doctor's "project-secret-stored" pair:
 // every logical name this repository may use project-wide (facts.candidates:
-// the names its jobs mount that the owner's local config allow-lists it for)
-// must hold an enabled version somewhere -- its own container, or the
-// project's. Neither means no run of a workflow mounting it can start, which
-// is red, since only storing a value fixes it.
+// the names its jobs mount that the owner's local config allow-lists it for,
+// D2's sweep included) must hold an enabled version somewhere -- its own
+// container, or the project's. Neither means no run of a workflow mounting it
+// can start, which is red, since only storing a value fixes it.
+//
+// The optional Anthropic key is the one name that is not that, and the reason
+// this returns two checks: a job can go without it (infra.OptionalSecret), so
+// with no version anywhere Readiness drops its mount and deploys anyway, and
+// a repository whose models all route through a provider needs no key at all.
+// Requiring one there made doctor red for a repository whose runs are fine
+// (code review, high), so the key is named only when the config really needs
+// it (facts.keyNeeded) and then as a warning: the deploy is right, and a run
+// that calls Anthropic is refused until a key is stored -- what Readiness
+// says as its own note, and validate as its own.
 //
 // It reads metadata only (two listings doctor already has) and never a
 // value, and it adds no check at all for an installation that opted no
 // secret into project-wide storage: there is nothing it could say.
-func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) *doctorCheck {
-	names := slices.Sorted(maps.Keys(facts.candidates))
+func doctorProjectSecretStoredChecks(facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) []doctorCheck {
+	var names []string
+	for _, name := range slices.Sorted(maps.Keys(facts.candidates)) {
+		if infra.OptionalSecret(name) && !facts.keyNeeded {
+			continue
+		}
+		names = append(names, name)
+	}
 	if len(names) == 0 {
 		return nil
 	}
@@ -804,10 +829,10 @@ func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets
 		// Fail closed: an owner could not otherwise tell an installation
 		// that stores nothing from one whose secrets could not be read.
 		// A warning, since nothing here proves a value is missing.
-		return &doctorCheck{ID: "project-secret-stored", Severity: "warning",
+		return []doctorCheck{{ID: "project-secret-stored", Severity: "warning",
 			Problem: fmt.Sprintf("could not list the secrets %s may use project-wide (%s), so whether they have a stored value could not be checked",
 				printableRepo, strings.Join(printableNames(names), ", ")),
-			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(facts.repo) + ", and " + selfCommand() + " secrets ls --project-wide"}
+			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(facts.repo) + ", and " + selfCommand() + " secrets ls --project-wide"}}
 	}
 	have := projectSecretEnabledFromEntries(listed)
 	for name, enabled := range projectSecretEnabled(project) {
@@ -815,12 +840,11 @@ func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets
 			have[name] = true
 		}
 	}
-	var missing, cmds []string
+	var missing, cmds, optionalMissing, optionalCmds []string
 	for _, name := range names {
 		if have[name] {
 			continue
 		}
-		missing = append(missing, pluginwire.Printable(name))
 		// D2 (plan Task 2.1) made the project copy the default store for
 		// exactly these names, so the Fix leads with the bare command -- which
 		// stores the value where the default puts it, reaching exactly the
@@ -830,16 +854,35 @@ func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets
 		// wins over the project copy forever (§5, the footgun these checks
 		// exist to name), to a person whose repository may mount the shared
 		// one.
-		cmds = append(cmds, selfCommand()+" secrets set "+quoteWord(name),
-			selfCommand()+" secrets set "+quoteWord(name)+" --repo "+quoteWord(facts.repo))
+		set := selfCommand() + " secrets set " + quoteWord(name)
+		both := []string{set, set + " --repo " + quoteWord(facts.repo)}
+		if infra.OptionalSecret(name) {
+			optionalMissing = append(optionalMissing, pluginwire.Printable(name))
+			optionalCmds = append(optionalCmds, both...)
+			continue
+		}
+		missing = append(missing, pluginwire.Printable(name))
+		cmds = append(cmds, both...)
 	}
-	if len(missing) == 0 {
-		return &doctorCheck{ID: "project-secret-stored", OK: true}
+	var out []doctorCheck
+	switch {
+	case len(missing) > 0:
+		// A name a run mounts whatever the config says: red.
+		out = append(out, doctorCheck{ID: "project-secret-stored",
+			Problem: fmt.Sprintf("%s may use %s project-wide, and neither its own container nor the project's holds an enabled version: no run of a workflow mounting one can start",
+				printableRepo, strings.Join(missing, ", ")),
+			Fix: strings.Join(cmds, ", or ")})
+	case len(optionalMissing) == 0:
+		// Nothing this repository may use project-wide is missing.
+		out = append(out, doctorCheck{ID: "project-secret-stored", OK: true})
 	}
-	return &doctorCheck{ID: "project-secret-stored",
-		Problem: fmt.Sprintf("%s may use %s project-wide, and neither its own container nor the project's holds an enabled version: no run of a workflow mounting one can start",
-			printableRepo, strings.Join(missing, ", ")),
-		Fix: strings.Join(cmds, ", or ")}
+	if len(optionalMissing) > 0 {
+		out = append(out, doctorCheck{ID: "project-secret-optional", Severity: "warning",
+			Problem: fmt.Sprintf("%s may use %s project-wide, and neither its own container nor the project's holds an enabled version: the job deploys without it, and a run that calls Anthropic is refused until one is stored",
+				printableRepo, strings.Join(optionalMissing, ", ")),
+			Fix: strings.Join(optionalCmds, ", or ")})
+	}
+	return out
 }
 
 // projectSecretEnabledFromEntries is projectSecretEnabled over doctor's own
