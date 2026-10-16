@@ -213,6 +213,36 @@ func TestChecklistHasCheck38(t *testing.T) {
 		}
 	}
 
+	// The missing-record refusal is a hard stop and has to read like one: the
+	// old text ended "record that and continue" and then exited 1, and the
+	// section's own guard paragraph says that exit ends the shell. "Continue"
+	// there means carry on with the Restore in a new shell, and says so.
+	for _, want := range []string{"this stop ends the shell", "NEW shell"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's missing-record refusal does not say %q", want)
+		}
+	}
+	if strings.Contains(section, "record that and continue") {
+		t.Error("the Check 38 section's missing-record refusal still says to continue in the shell it just ended")
+	}
+
+	// Step 5's citations name the code that exists: the step is pre-existing,
+	// but it sits in the reviewed section and a wrong line number sends the
+	// owner to a line that says something else.
+	for _, want := range []string{"`CloneBlobless`, `internal/gitops/gitops.go:169`", "`gitTo`, `internal/gitops/gitops.go:231`"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's step 5 does not cite %q", want)
+		}
+	}
+	for _, row := range []struct{ banned, why string }{
+		{"gitops.go:152", "the old, wrong CloneBlobless line"},
+		{"gitops.go:214", "the old, wrong gitTo span"},
+	} {
+		if strings.Contains(section, row.banned) {
+			t.Errorf("the Check 38 section still cites %q (%s)", row.banned, row.why)
+		}
+	}
+
 	// The step 4 chain checks the variables it needs at the TOP, before its
 	// first push, and records the base commit before that push: ${BASE:?}
 	// used to appear only halfway down, so an unset BASE left the branch
