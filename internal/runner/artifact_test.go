@@ -355,6 +355,91 @@ func TestRenderCommandAndItsHashDivergeOnlyWhenRedactionFires(t *testing.T) {
 	}
 }
 
+// TestAPassingRendersOutputIsRedactedInTheLog is the leak a SUCCESSFUL step
+// has and a failing one does not. runRender streams the render's output
+// through agent.NewRedactor(tail, r.secretList()) and then logs every line of
+// the tail it kept — log.Info("render output", "line", l) — so a render that
+// exits 0 and echoes a workflow secret (D10: the render runs with the
+// workflow's own secret environment, the same as the agent) has exactly one
+// place its output goes, and the redactor is the only thing in front of it. A
+// failed render stores a redacted reason and a redacted report tail; a passing
+// one stores neither.
+//
+// Mutation (agent.NewRedactor(tail, nil), or logging the raw line instead of
+// the redacted tail's): the runner's log carries the secret and this test
+// fails. TestProbeOutputIsRedacted cannot see that mutation: it fails the
+// probe, and its reason and report are redacted again on the way out
+// (r.redact, agent.Redact), so the layered redaction hides a missing one.
+func TestAPassingRendersOutputIsRedactedInTheLog(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nprintf 'the fixture secret is %s\\n' \"$FIXTURE_FAILS_FILE\"\n"+
+			"mkdir -p out && printf 'sizzle' > out/sizzle.png\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	assertTheSecretIsNotPublished(t, h, logs.String(), "render")
+}
+
+// TestAPassingProbesOutputIsRedactedInTheLog is the same test for the probe,
+// which is the step with the sharper version of the leak: the probe's whole
+// job is to inspect what the render produced, so a probe that echoes its
+// environment — by accident, in a debug line — is the ordinary shape of a
+// repository command, and a passing probe's lines reach the runner's log
+// (log.Info("probe output", "line", l)) and nowhere else at all.
+//
+// Mutation (agent.NewRedactor(tail, nil) in runProbe): the log carries the
+// secret and this test fails.
+func TestAPassingProbesOutputIsRedactedInTheLog(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nprintf 'the fixture secret is %s\\n' \"$FIXTURE_FAILS_FILE\"\nexit 0\n")))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 1 || rec.Artifacts[0].Probe == nil || !rec.Artifacts[0].Probe.Ran || rec.Artifacts[0].Probe.ExitCode != 0 {
+		t.Fatalf("artifacts = %+v, want one passed probe", rec.Artifacts)
+	}
+	assertTheSecretIsNotPublished(t, h, logs.String(), "probe")
+}
+
+// assertTheSecretIsNotPublished checks the three places a PASSING step's own
+// output can reach: the runner's log, result.json and report.md. The log must
+// hold the step's line — otherwise a mutation that simply stops logging the
+// tail would pass this test by publishing nothing — and none of the three may
+// hold the workflow's secret.
+func assertTheSecretIsNotPublished(t *testing.T, h *harness, logs, step string) {
+	t.Helper()
+	if strings.Contains(logs, h.failsFile) {
+		t.Fatalf("the runner's log publishes the workflow's secret:\n%s", logs)
+	}
+	if !strings.Contains(logs, "[REDACTED]") {
+		t.Fatalf("the runner's log does not hold the %s step's own output at all:\n%s", step, logs)
+	}
+	for _, key := range []string{"result.json", "report.md"} {
+		body, err := h.store.ReadFile(context.Background(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), h.failsFile) {
+			t.Fatalf("%s publishes the workflow's secret:\n%s", key, body)
+		}
+	}
+}
+
 // TestBlankRenderCommandRefusesTheRun is Review Focus 1's fail-closed half: a
 // recipe whose render step has no commands.render is refused at bootstrap,
 // before the agent runs and before anything is written.
@@ -1406,6 +1491,171 @@ func TestAStagedFileReplacedBeforeTheUploadFailsTheRun(t *testing.T) {
 	}
 }
 
+// foldsCase reports whether dir's filesystem treats two names that differ only
+// in case as one: it writes the lower-case name and asks whether the upper-case
+// spelling resolves to the file that write created. macOS's APFS says yes, and
+// ext4 says no — which is what a test that needs two names differing only in
+// case has to know before it can run at all.
+func foldsCase(t *testing.T, dir string) bool {
+	t.Helper()
+	lower := filepath.Join(dir, "case-probe-lower")
+	if err := os.WriteFile(lower, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	upper := filepath.Join(dir, "CASE-PROBE-LOWER")
+	if _, err := os.Stat(upper); err != nil {
+		return false // a case-sensitive filesystem has no such file
+	}
+	a, err := os.Stat(lower)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.Stat(upper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return os.SameFile(a, b)
+}
+
+// TestAProbeThatRewritesAStagedFileFailsTheUpload is the same hash check from
+// the probe's side, and it is the one window the probe itself opens: the probe
+// runs AFTER the set is staged and hashed and BEFORE the upload (design §3),
+// with FUGARO_OUT_DIR naming the staging directory — so a probe is the one
+// repository command that is handed the staged bytes by name, and the bytes it
+// leaves there need not be the bytes the record describes. Task 4's upload
+// compares each staged file's hash with the one taken at staging time, and
+// that comparison is what must refuse this: the run ends failed with nothing
+// in the bucket, rather than uploading a file whose recorded sha256 is a lie
+// about what a reader downloads.
+//
+// Mutation (upload the staged file without comparing it with the hash taken at
+// staging time, or record that hash without checking the upload): the run
+// succeeds and the bucket holds bytes the record's sha256 does not describe,
+// so this test fails.
+func TestAProbeThatRewritesAStagedFileFailsTheUpload(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nprintf 'rewritten by the probe' > \"$FUGARO_OUT_DIR/sizzle.png\"\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run", rec)
+	}
+	if !strings.Contains(rec.Reason, "changed before the upload") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run left %v in the bucket", keys)
+	}
+}
+
+// TestAStagedPathThatIsASymlinkIsRefused is the staging copy's own
+// O_EXCL|O_NOFOLLOW, tested where a test can reach it: the staging directory
+// sits in a state directory the plan stage's agent can write (same user, same
+// container), so a link planted at a staged path — between the check that
+// sized the match and the copy that writes it, which is the window
+// artifactCheckedSeam stands in — must fail the create rather than choose what
+// the run writes through. The link here points at a file in the checkout; what
+// the test asserts is the property, not the errno: the run fails, nothing is
+// uploaded, and the target is untouched. (Removing both flags lets the copy
+// follow the link and write the render's bytes through it, and the run then
+// succeeds with the target rewritten.)
+//
+// writeArtifactNames carries the same two flags, behind the RemoveAll that
+// clears its path first — see TestTheProbesNamesFileIsNotWrittenThroughAPlantedLink.
+func TestAStagedPathThatIsASymlinkIsRefused(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	victim := filepath.Join(h.deps.WorkDir, "victim.txt")
+	runner.SetArtifactCheckedSeam(t, func() {
+		dir := filepath.Join(h.deps.StateDir, "artifacts")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Errorf("creating the staging directory: %v", err)
+			return
+		}
+		if err := os.WriteFile(victim, []byte("untouched"), 0o644); err != nil {
+			t.Errorf("writing the victim file: %v", err)
+			return
+		}
+		if err := os.Symlink(victim, filepath.Join(dir, "sizzle.png")); err != nil {
+			t.Errorf("planting the link: %v", err)
+		}
+	})
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run", rec)
+	}
+	// The assertion is the property, not the errno: the refusal may come from
+	// the copy's own create (EEXIST/ELOOP) or from the upload's Lstat seeing
+	// the link still there, and both are the run refusing a link. What must
+	// never happen is the third outcome — the copy following it.
+	if got := readText(t, victim); got != "untouched" {
+		t.Fatalf("the copy wrote through the planted link: the victim holds %q", got)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run left %v in the bucket", keys)
+	}
+}
+
+// TestTheProbesNamesFileIsNotWrittenThroughAPlantedLink is the same threat at
+// the probe's own file: FUGARO_ARTIFACTS_FILE names a path in the state
+// directory, which the plan stage's agent can write, so a link planted there
+// must not become the file the runner writes the staged names into — and must
+// not become what the probe reads either. writeArtifactNames clears the path
+// before it creates it (RemoveAll, then O_EXCL|O_NOFOLLOW), so the link is
+// removed and a fresh regular file takes its place; what this test asserts is
+// the property that matters: the probe reads the staged names, and the link's
+// target is exactly as the test left it.
+//
+// Mutation (create the names file with O_CREATE|O_TRUNC and no RemoveAll, so
+// the planted link is followed): the names are written into the victim and
+// this test fails. It does NOT see a mutation that drops only the two flags
+// while keeping the RemoveAll — the link is already gone by then — which is
+// why the same flags are pinned on the staging copy instead
+// (TestAStagedPathThatIsASymlinkIsRefused).
+func TestTheProbesNamesFileIsNotWrittenThroughAPlantedLink(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ncat \"$FUGARO_ARTIFACTS_FILE\" > probe-names.txt\n")))
+	victim := filepath.Join(h.deps.WorkDir, "victim.txt")
+	runner.SetArtifactStagedSeam(t, func() {
+		if err := os.WriteFile(victim, []byte("untouched"), 0o644); err != nil {
+			t.Errorf("writing the victim file: %v", err)
+			return
+		}
+		if err := os.Symlink(victim, filepath.Join(h.deps.StateDir, "artifact-names.txt")); err != nil {
+			t.Errorf("planting the link: %v", err)
+		}
+	})
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v, want a successful run", rec)
+	}
+	if got := readText(t, filepath.Join(h.deps.WorkDir, "probe-names.txt")); got != "sizzle.png\n" {
+		t.Fatalf("the probe read %q, want the staged names", got)
+	}
+	if got := readText(t, victim); got != "untouched" {
+		t.Fatalf("the runner wrote the names through the planted link: the victim holds %q", got)
+	}
+}
+
 // TestArtifactsAreUploadedInNameOrder: the set is uploaded, and recorded, in
 // name order — not in glob order, which is what filepath.Glob returns and
 // which puts every match of the first glob before every match of the second.
@@ -1448,7 +1698,17 @@ func TestArtifactsAreUploadedInNameOrder(t *testing.T) {
 // succeeds with two artifacts and this test fails; mutation (let the second
 // match overwrite the first): the record carries one artifact where the render
 // produced two.
+//
+// It is skipped where the filesystem folds case — macOS's APFS, the default
+// there — because the fixture cannot then hold the premise: the render's two
+// writes land on one file, so there is one match and no collision to refuse.
+// The skip is the fixture's, not the rule's: the rule is about what a
+// case-insensitive filesystem would make of two names, which is exactly why it
+// cannot be staged on one.
 func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T) {
+	if foldsCase(t, t.TempDir()) {
+		t.Skip("the temp filesystem folds case, so the render cannot produce both Sizzle.png and sizzle.png")
+	}
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
 		renderWrites(outFile{name: "Sizzle.png", body: "one"}, outFile{name: "sizzle.png", body: "two"}))

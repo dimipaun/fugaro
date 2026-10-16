@@ -657,7 +657,7 @@ func (r *run) runProbe(ctx context.Context, set artifactSet) (runstore.ProbeResu
 
 The probe runs through `procgroup.Run` with `Dir: s.RepoDir`, `Env: append(r.env, "FUGARO_OUT_DIR=…", "FUGARO_ARTIFACTS_FILE=…")` and `Grace: commandGrace` — the same call shape `verify.Run` uses (`internal/verify/verify.go:242-246`) — under `timeouts.verify`, since it is a check and not a render. Its output is captured as a redacted log tail (`logtail`, already imported by the gate) and quoted in the report when it fails.
 
-`outputs.probe: none` (or a blank `commands.probe`) means the probe is skipped and the record says `{ran: false}` (Review Focus 6's second half) — the design's §3 choice: the structural checks are still there, and the report says no probe ran.
+`outputs.probe: none` means the probe is skipped and the record says `{ran: false}` (Review Focus 6's second half) — the design's §3 choice: the structural checks are still there, and the report says no probe ran. **A blank `commands.probe` is not a skip.** `outputs.probe: probe` over a blank `commands.probe` is refused at launch — Task 1's `gateCommandProblems` refusal, which `fugaro validate` reports too — because an empty command through `sh -c` exits 0, so running it would record a check that never ran as a pass. Task 5's own `commands.probe is empty` arm is the fail-closed backup behind that gate, not a reachable launch: it is what a caller that skipped the gate gets, and the run ends `failed` with no artifacts rather than succeeding with `{ran: true, exit_code: 0}`. (The plan text originally folded the blank command into the skip; the gate makes the refusal the safer reading, and the two are now stated apart.)
 
 - [ ] **Step 1: Write the failing tests**
 
