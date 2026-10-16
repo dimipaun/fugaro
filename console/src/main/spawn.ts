@@ -84,6 +84,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
+import { StringDecoder } from 'node:string_decoder'
 import { dirname, join } from 'node:path'
 
 import { CONSOLE_OPERATIONS, isNeverReachable } from './ipc'
@@ -202,6 +203,28 @@ export const SHUTDOWN_GRACE_MS = 2000
  * is kept only to show the CLI's own sentence verbatim (design section 6.3), so
  * a bound here is a bound on a message, never on a document. */
 export const MAX_STDERR_BYTES = 4096
+
+/** READ_TIMEOUT_MS is the deadline of every one-shot read (`runToCompletion`).
+ * The CLI's slowest read is `doctor`, which runs a handful of local checks; a
+ * child still running after this is a child that is not going to answer, and
+ * it is stopped -- `SIGTERM`, then `SIGKILL` after `SHUTDOWN_GRACE_MS` -- rather
+ * than left to a screen that waits forever. */
+export const READ_TIMEOUT_MS = 90_000
+
+/** VERSION_TIMEOUT_MS is the version handshake's own, shorter deadline: the
+ * command prints one constant line. */
+export const VERSION_TIMEOUT_MS = 5000
+
+/** MAX_STDOUT_LENGTH bounds what a one-shot read may print, in UTF-16 code
+ * units. The largest document is `logs --json`; this is generously above it,
+ * and a child that prints more is stopped and refused rather than buffered
+ * until the app runs out of memory. */
+export const MAX_STDOUT_LENGTH = 32 * 1024 * 1024
+
+/** MAX_FEED_LINE_LENGTH bounds one line of the live feed. A watch document is
+ * a few kilobytes; a stream that writes this much without a newline is not
+ * writing documents, and its line is dropped and surfaced as a notice. */
+export const MAX_FEED_LINE_LENGTH = 4 * 1024 * 1024
 
 /** PRIVATE_DIR_MODE is the mode of the directory the app owns for a child that
  * has no checkout. See `privateWorkingDirectory`. */
@@ -785,6 +808,25 @@ export interface SpawnOptionsLike {
 /** ReadableLike is the slice of a child's stream this module reads. */
 export interface ReadableLike {
   on(event: 'data', listener: (chunk: Buffer | string) => void): unknown
+  /** Present on every real stream; optional so a test's fake need not have it.
+   * `readText` calls it, and decodes any `Buffer` that still arrives with a
+   * `StringDecoder`, so a UTF-8 character split across two chunks is one
+   * character either way. */
+  setEncoding?(encoding: BufferEncoding): unknown
+}
+
+/** readText subscribes to a child's stream as text. `chunk.toString()` on a
+ * `Buffer` that ends in the middle of a UTF-8 character turns both halves into
+ * U+FFFD; the stream's own `utf8` encoding, and the decoder for anything that
+ * arrives as bytes regardless, carry the partial character to the next chunk. */
+function readText(stream: ReadableLike | null, onText: (text: string) => void): void {
+  if (stream === null) return
+  stream.setEncoding?.('utf8')
+  const decoder = new StringDecoder('utf8')
+  stream.on('data', (chunk) => {
+    const text = typeof chunk === 'string' ? chunk : decoder.write(chunk)
+    if (text !== '') onText(text)
+  })
 }
 
 /** SpawnedChildLike is the slice of `ChildProcess` this module uses, as an
@@ -883,6 +925,13 @@ export function cliSentence(stderr: string): string | null {
  * streams. It is the one-shot read path (`budget show`, `report`, `runs ls`,
  * `diagnose`, `logs`, `secrets ls`, `accounts ls`, `doctor` and the version
  * handshake); the streaming path is `startSidecar` below.
+ *
+ * Every one of those reads has a deadline (`READ_TIMEOUT_MS` unless the caller
+ * gives one) and a stdout cap (`MAX_STDOUT_LENGTH`); stderr is bounded as
+ * before. A child that misses the deadline or outgrows the cap is stopped --
+ * `SIGTERM`, then `SIGKILL` after the grace period -- and the promise rejects
+ * with a sentence that says which, so no read can leave a screen waiting or a
+ * process running.
  */
 export function runToCompletion(
   plan: SpawnPlan,
@@ -890,20 +939,22 @@ export function runToCompletion(
     readonly spawner?: ChildSpawner
     readonly log?: SpawnLogWriter
     readonly maxStderrBytes?: number
-    /** `onChild` is how a caller that races this promise -- `probeVersion` and
-     * its timeout -- keeps the one handle it needs to stop the child. Without
-     * it, abandoning the race abandons the *process*: a child reparented to
-     * init when the app quits, with its stdout still draining into a buffer
-     * nothing will read. It is a callback rather than a returned handle so that
-     * every existing caller keeps a promise and nothing else. */
-    readonly onChild?: (child: SpawnedChildLike) => void
+    readonly maxStdoutLength?: number
+    readonly timeoutMs?: number
+    readonly timers?: Timers
+    readonly shutdownGraceMs?: number
   },
 ): Promise<RunResult> {
   const spawner = deps.spawner ?? nodeSpawner
   const limit = deps.maxStderrBytes ?? MAX_STDERR_BYTES
+  const stdoutLimit = deps.maxStdoutLength ?? MAX_STDOUT_LENGTH
+  const timeoutMs = deps.timeoutMs ?? READ_TIMEOUT_MS
+  const timers = deps.timers ?? NODE_TIMERS
+  const grace = deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS
   const binary = plan.argv[0]
   if (binary === undefined) refused('a spawn plan with no binary is not a plan')
   deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+  const what = plan.argv.slice(1).filter((word) => !word.startsWith('-')).slice(0, 2).join(' ')
 
   return new Promise<RunResult>((resolve, reject) => {
     let child: SpawnedChildLike
@@ -918,22 +969,69 @@ export function runToCompletion(
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
-    deps.onChild?.(child)
     let stdout = ''
     let stderr = ''
-    child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString()
+    let settled = false
+    let exited = false
+    let deadline: ReturnType<typeof setTimeout> | null = null
+
+    const clearDeadline = (): void => {
+      if (deadline !== null) {
+        timers.clearTimeout(deadline)
+        deadline = null
+      }
+    }
+    // Stopping first, rejecting second: the caller's rejection must mean "the
+    // child has been told to go", not "the child is still out there".
+    const abandon = (error: Error): void => {
+      if (settled) return
+      settled = true
+      clearDeadline()
+      if (!exited) {
+        child.kill('SIGTERM')
+        timers.setTimeout(() => {
+          if (!exited) child.kill('SIGKILL')
+        }, grace)
+      }
+      reject(error)
+    }
+
+    deadline = timers.setTimeout(() => {
+      deadline = null
+      abandon(new SpawnTimeout(`fugaro ${what} did not finish within ${Math.round(timeoutMs / 1000)}s`))
+    }, timeoutMs)
+
+    readText(child.stdout, (text) => {
+      if (settled) return
+      if (stdout.length + text.length > stdoutLimit) {
+        abandon(new Error(`fugaro ${what} printed more than ${stdoutLimit} characters`))
+        return
+      }
+      stdout += text
     })
-    child.stderr?.on('data', (chunk) => {
-      stderr = boundAppend(stderr, chunk.toString(), limit)
+    readText(child.stderr, (text) => {
+      stderr = boundAppend(stderr, text, limit)
     })
     child.on('error', (error) => {
+      if (settled) return
+      settled = true
+      clearDeadline()
       reject(error)
     })
     child.on('exit', (code, signal) => {
+      exited = true
+      if (settled) return
+      settled = true
+      clearDeadline()
       resolve({ code, signal, stdout, stderr })
     })
   })
+}
+
+/** SpawnTimeout is the rejection of a read that missed its deadline, as its
+ * own class so `probeVersion` can tell it from a spawn that failed outright. */
+export class SpawnTimeout extends Error {
+  override readonly name = 'SpawnTimeout'
 }
 
 function boundAppend(current: string, chunk: string, limit: number): string {
@@ -1020,37 +1118,21 @@ export async function probeVersion(
     readonly shutdownGraceMs?: number
   },
 ): Promise<{ readonly ok: true; readonly version: string } | { readonly ok: false; readonly reason: string }> {
-  const timeoutMs = deps.timeoutMs ?? 5000
-  const timers = deps.timers ?? NODE_TIMERS
-  const grace = deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS
-  // A probe that times out must stop its child, exactly as every other stop path
-  // in this module does: `SIGTERM`, then `SIGKILL` for the child that ignores it
-  // (section 10.12). Racing the run and walking away would leave a hung binary
-  // running -- reparented to init when the app quits -- with its stdout still
-  // draining into a promise nobody awaits. The reason a caller sees is unchanged:
-  // the binary did not answer in time, whatever stopping it then took.
-  let child: SpawnedChildLike | null = null
-  const result = await withTimeout(
-    runToCompletion(plan, {
+  // A probe that times out stops its child, exactly as every other stop path in
+  // this module does: `SIGTERM`, then `SIGKILL` for the child that ignores it
+  // (section 10.12). That is `runToCompletion`'s own deadline now, with the
+  // handshake's shorter budget; walking away from a hung binary would leave it
+  // running, reparented to init when the app quits.
+  let result: RunResult
+  try {
+    result = await runToCompletion(plan, {
       ...deps,
-      onChild: (started) => {
-        child = started
-        started.on('exit', () => {
-          child = null
-        })
-      },
-    }),
-    timeoutMs,
-    () => {
-      const running = child
-      if (running === null) return
-      running.kill('SIGTERM')
-      timers.setTimeout(() => {
-        if (child !== null) child.kill('SIGKILL')
-      }, grace)
-    },
-  )
-  if (result === null) return { ok: false, reason: 'the binary did not answer `version` in time' }
+      timeoutMs: deps.timeoutMs ?? VERSION_TIMEOUT_MS,
+    })
+  } catch (error) {
+    if (error instanceof SpawnTimeout) return { ok: false, reason: 'the binary did not answer `version` in time' }
+    throw error
+  }
   if (result.signal !== null) {
     return { ok: false, reason: `the binary was killed by ${result.signal} while reporting its version` }
   }
@@ -1061,23 +1143,6 @@ export async function probeVersion(
     }
   }
   return parseVersionLine(result.stdout)
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout?: () => void): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | null = null
-  const timeout = new Promise<null>((resolve) => {
-    timer = setTimeout(() => {
-      // Stopping first, resolving second: the caller's `null` must mean "the
-      // child has been told to go", not "the child is still out there".
-      onTimeout?.()
-      resolve(null)
-    }, ms)
-  })
-  try {
-    return await Promise.race([promise, timeout])
-  } finally {
-    if (timer !== null) clearTimeout(timer)
-  }
 }
 
 /** DecodedLine is the reader's rule, as a value: a document, a notice (a line
@@ -1262,6 +1327,7 @@ export function startSidecar(
     readonly log?: SpawnLogWriter
     readonly clock?: () => Date
     readonly shutdownGraceMs?: number
+    readonly maxLineLength?: number
   } = {},
 ): Sidecar {
   const spawner = deps.spawner ?? nodeSpawner
@@ -1269,6 +1335,7 @@ export function startSidecar(
   const clock = deps.clock ?? ((): Date => new Date())
   const grace = deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS
   const tracker = new FeedTracker()
+  const maxLine = deps.maxLineLength ?? MAX_FEED_LINE_LENGTH
 
   let stopped = false
   let spawns = 0
@@ -1276,6 +1343,9 @@ export function startSidecar(
   let child: SpawnedChildLike | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
   let buffer = ''
+  /** `discarding` is true while the rest of an over-long line is being dropped:
+   * everything up to its newline is thrown away, and reading resumes after. */
+  let discarding = false
   let stderr = ''
   let ended = false
   let settle: ((end: SidecarEnd) => void) | null = null
@@ -1298,9 +1368,29 @@ export function startSidecar(
     buffer += chunk
     for (;;) {
       const index = buffer.indexOf('\n')
-      if (index < 0) break
+      if (index < 0) {
+        // A stream with no newline would otherwise grow this buffer forever.
+        // The line is dropped once it passes the cap, said once as a notice,
+        // and the rest of it is dropped as it arrives.
+        if (buffer.length > maxLine) {
+          if (!discarding) {
+            events.onNotice({ text: `a feed line longer than ${maxLine} characters was dropped`, receivedAt: stamp() })
+          }
+          discarding = true
+          buffer = ''
+        }
+        break
+      }
       const line = buffer.slice(0, index)
       buffer = buffer.slice(index + 1)
+      if (discarding) {
+        discarding = false
+        continue
+      }
+      if (line.length > maxLine) {
+        events.onNotice({ text: `a feed line longer than ${maxLine} characters was dropped`, receivedAt: stamp() })
+        continue
+      }
       const decoded = decodeFeedLine(line)
       if (decoded.kind === 'document') {
         events.onFrame(tracker.push(decoded.document, stamp()))
@@ -1338,11 +1428,11 @@ export function startSidecar(
     }
     child = started
     stderr = ''
-    started.stdout?.on('data', (chunk) => {
-      consume(chunk.toString())
-    })
-    started.stderr?.on('data', (chunk) => {
-      stderr = boundAppend(stderr, chunk.toString(), MAX_STDERR_BYTES)
+    buffer = ''
+    discarding = false
+    readText(started.stdout, consume)
+    readText(started.stderr, (text) => {
+      stderr = boundAppend(stderr, text, MAX_STDERR_BYTES)
     })
     started.on('error', (error) => {
       finish({ reason: 'unstartable', code: null, signal: null, sentence: error.message, spawns })

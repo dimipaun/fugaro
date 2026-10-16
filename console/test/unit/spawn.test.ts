@@ -66,6 +66,7 @@ import {
   privateWorkingDirectory,
   probeVersion,
   resolveBinary,
+  runToCompletion,
   restartDecision,
   spawnCommandFor,
   startSidecar,
@@ -195,8 +196,8 @@ function manualTimers(): Timers & { fired(): readonly number[]; fire(): void; pe
 /** scriptedChild is a child process whose streams and exit the test drives, for
  * the supervisor tests that must not depend on a real signal's timing. */
 function scriptedChild(): SpawnedChildLike & {
-  emitStdout(text: string): void
-  emitStderr(text: string): void
+  emitStdout(text: string | Buffer): void
+  emitStderr(text: string | Buffer): void
   exit(code: number | null, signal: string | null): void
   readonly killed: readonly (NodeJS.Signals | undefined)[]
 } {
@@ -515,7 +516,6 @@ describe('the spawn table and the argv it builds', () => {
   it('builds argv as an array and hands the spawner `shell: false`', async () => {
     const spawner = recordingSpawner()
     const plan = planFor('budget.show', { repo: 'acme/widgets' }, safeContext({ binaryPath: '/opt/homebrew/bin/fugaro' }))
-    const { runToCompletion } = await import('../../src/main/spawn')
     void runToCompletion(plan, { spawner })
     expect(spawner.calls).toHaveLength(1)
     const call = spawner.calls[0]
@@ -1169,6 +1169,121 @@ describe('the supervisor', () => {
  * process, so a count read synchronously after a `subscribeLive` is a count of
  * the spawns that had landed, not of the spawns that happened.
  */
+describe('the one-shot read', () => {
+  const plan = (): SpawnPlan => planFor('budget.show', {}, safeContext())
+  const scriptedSpawner = (child: ReturnType<typeof scriptedChild>): ChildSpawner => () => child
+
+  it('stops a read that never finishes, and says so, instead of waiting forever', async () => {
+    // Only the version handshake had a deadline; a `budget show` whose child
+    // hung would leave a screen waiting and a process running until quit.
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers, timeoutMs: 30_000, shutdownGraceMs: 2000 })
+    expect(timers.pending()).toBe(1)
+    timers.fire()
+    await expect(read).rejects.toThrow(/did not finish within 30s/)
+    expect(child.killed).toEqual(['SIGTERM'])
+    // ...and a child that ignores SIGTERM gets SIGKILL after the grace period.
+    timers.fire()
+    expect(child.killed).toEqual(['SIGTERM', 'SIGKILL'])
+  })
+
+  it('gives every one-shot read a deadline by default', async () => {
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers })
+    expect(timers.pending()).toBe(1)
+    child.exit(0, null)
+    await expect(read).resolves.toMatchObject({ code: 0 })
+    // The deadline is cleared once the child has exited: nothing fires later.
+    expect(timers.pending()).toBe(0)
+  })
+
+  it('stops a read whose stdout outgrows the cap, rather than buffering it all', async () => {
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers, maxStdoutLength: 16 })
+    child.emitStdout('{"a":"0123456789')
+    child.emitStdout('0123456789"}\n')
+    await expect(read).rejects.toThrow(/more than 16 characters/)
+    expect(child.killed).toEqual(['SIGTERM'])
+  })
+
+  it('bounds stderr as well', async () => {
+    const child = scriptedChild()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers: manualTimers(), maxStderrBytes: 8 })
+    child.emitStderr('x'.repeat(100))
+    child.exit(1, null)
+    expect((await read).stderr.length).toBeLessThanOrEqual(8)
+  })
+
+  it('decodes a UTF-8 character split across two chunks as one character', async () => {
+    // `chunk.toString()` on each half of a split `€` (E2 82 AC) is two U+FFFD.
+    const child = scriptedChild()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers: manualTimers() })
+    const euro = Buffer.from('{"v":"€"}\n', 'utf8')
+    child.emitStdout(euro.subarray(0, 7))
+    child.emitStdout(euro.subarray(7))
+    child.emitStderr(Buffer.from('é', 'utf8').subarray(0, 1))
+    child.emitStderr(Buffer.from('é', 'utf8').subarray(1))
+    child.exit(0, null)
+    const result = await read
+    expect(result.stdout).toBe('{"v":"€"}\n')
+    expect(result.stderr).toBe('é')
+    expect(result.stdout).not.toContain('\uFFFD')
+  })
+})
+
+describe('the live reader’s bounds', () => {
+  const plan = (): SpawnPlan => planFor('live.watch', {}, safeContext())
+
+  function collect(): SidecarCollector {
+    const frames: unknown[] = []
+    const notices: string[] = []
+    return {
+      frames,
+      notices,
+      events: {
+        onFrame: (frame) => frames.push(frame.document),
+        onNotice: (notice) => notices.push(notice.text),
+        onRestart: () => undefined,
+        onEnded: () => undefined,
+      },
+    }
+  }
+
+  it('drops a line that outgrows the cap instead of buffering it forever', () => {
+    const child = scriptedChild()
+    const seen = collect()
+    startSidecar(plan(), seen.events, { spawner: () => child, timers: manualTimers(), maxLineLength: 32 })
+    // A stream with no newline at all used to grow the buffer without bound.
+    for (let index = 0; index < 100; index++) child.emitStdout('x'.repeat(10))
+    expect(seen.notices).toHaveLength(1)
+    expect(seen.notices[0]).toMatch(/longer than 32 characters/)
+    // The rest of that line is dropped too, and the next line is read normally.
+    child.emitStdout('tail of the long line\n{"day":"2026-01-01"}\n')
+    expect(seen.frames).toEqual([{ day: '2026-01-01' }])
+    expect(seen.notices).toHaveLength(1)
+  })
+
+  it('decodes a UTF-8 character split across two chunks in the feed', () => {
+    const child = scriptedChild()
+    const seen = collect()
+    startSidecar(plan(), seen.events, { spawner: () => child, timers: manualTimers() })
+    const line = Buffer.from('{"who":"José"}\n', 'utf8')
+    const split = line.indexOf(0xc3) + 1
+    child.emitStdout(line.subarray(0, split))
+    child.emitStdout(line.subarray(split))
+    expect(seen.frames).toEqual([{ who: 'José' }])
+  })
+})
+
+interface SidecarCollector {
+  readonly frames: unknown[]
+  readonly notices: string[]
+  readonly events: Parameters<typeof startSidecar>[1]
+}
+
 describe('the live subscription', () => {
   const WATCH_ONE = { lines: ['{"day":"2026-01-01"}'], hold: true }
   const WATCH_TWO = { lines: ['{"day":"2026-01-02"}'], hold: true }
