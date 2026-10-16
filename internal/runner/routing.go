@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -42,57 +43,30 @@ import (
 // would send the call to Anthropic and charge the direct Claude rate for a call
 // the owner routed elsewhere.
 //
-// via: auto is key-presence driven, as the design spells it: with an Anthropic
-// key in the job the direct route is taken (the pins are left alone), and with
-// none the provider route is taken. It never applies to a Vertex run, which
-// serves Claude under the project's own credential and carries no such key:
-// the pins stay Claude's own, with one line saying so (review finding on this
-// change). The line `fugaro validate` prints for the same switch is Task
-// 1b.3's.
+// Whether the switch reaches this run at all is RoutingInertReason, one
+// decision shared with the readers that have to say what a run does without
+// running one (`fugaro validate`, `fugaro doctor`): a second reading of the
+// ladder is how validate came to report a halt no run makes — the gateway-off
+// one, and then via: auto under a Vertex credential — and a resolution no run
+// takes.
 func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {
 		return nil // absent means direct (D1b)
 	}
-	if !r.gatewayOn() {
-		// Routing exists only with the gateway (design §6.2, D11; plan Task
-		// 1b.2 step 3): the gateway is what routes a call to a provider and
-		// prices it, and with it off nothing changes — stagePins returns nil
-		// and the run's pins reach the agent as --model, where a route's own
-		// ID is a model Anthropic does not serve. A budget-off run therefore
-		// keeps the direct spelling, and a switch it cannot resolve does not
-		// halt it either: the switch has nothing to act on.
-		return nil
+	auth := ""
+	if r.cfg != nil {
+		auth = r.cfg.Agent.Auth
 	}
 	block, sw := pp.Routing, pp.Routing.Claude
-	if sw.ViaValue() == config.RouteDirect {
-		return nil
-	}
-	if sw.ViaValue() == config.RouteAuto {
-		// auto routes only when the Claude call has nowhere else to go, and it
-		// asks that by the credential the run already has. A Vertex run has
-		// one — Vertex serves Claude, under the owner's own GCP project, and
-		// its jobs carry no Anthropic API key — so auto leaves its pins alone
-		// rather than reading the absent key as "no route but the provider"
-		// and sending the prompt to a third party the switch never chose for
-		// this credential. That is a skip, not a refusal: the same policy
-		// serves a project's api-key jobs too, and the owner wrote auto to
-		// follow the credential. via: openrouter still routes a Vertex run —
-		// and is refused downstream for the reason it always is, that a run
-		// does not mix credentials (config.CheckProviderAuth).
-		//
-		// Both skips come before CheckRouting for the reason the gateway-off
-		// one does: a switch this run has nothing to act on does not halt it
-		// either.
-		if r.cfg != nil && r.cfg.Agent.Auth == "vertex" {
+	why := RoutingInertReason(sw, auth, r.gatewayOn(), envLookup(r.d.Env, "ANTHROPIC_API_KEY") != "")
+	if why != RoutingActs {
+		if why == RoutingInertAutoVertex {
 			r.d.Log.Info("routing.claude: via auto does not route a Vertex run: Vertex serves Claude under this project's own credential, so the pins keep Claude's own IDs (a provider route needs agent.auth: api-key)",
 				"code", "routing_auto_vertex")
-			return nil
 		}
-		if envLookup(r.d.Env, "ANTHROPIC_API_KEY") != "" {
-			// A stored key is the direct path, and the pins stay as they are
-			// (D1b).
-			return nil
-		}
+		// Every skip lands here, before CheckRouting, for one reason: a switch
+		// this run has nothing to act on does not halt it either.
+		return nil
 	}
 	// The block is judged against the routes this run has, exactly as the
 	// config loader and the policy reader judge it: the run must not act on a
@@ -118,6 +92,99 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 		p.set(sent)
 	}
 	return nil
+}
+
+// GatewayOn reports whether a configuration routes its calls through the
+// gateway: the budget is on (observe or enforce; "" and off are off) and the
+// credential is a model API's — api-key or vertex, since an oauth run's own
+// token never goes through it. It is run.gatewayOn, the run's own predicate,
+// spelled for the readers that hold a mode and an auth rather than a run
+// (validate, doctor): the gateway is what decides whether the switch has
+// anything to act on at all (design §6.2, D11).
+func GatewayOn(auth, mode string) bool {
+	if auth != "api-key" && auth != "vertex" {
+		return false
+	}
+	return mode == policy.ModeObserve || mode == policy.ModeEnforce
+}
+
+// RoutingInert is why the project's routing switch reaches no run of a
+// configuration; the zero value, RoutingActs, means it does. applyRouting
+// branches on this answer — it is the one place a run applies the switch — and
+// a reader that has to say what a run does without running one (validate,
+// doctor) asks it rather than re-deriving the ladder.
+type RoutingInert string
+
+const (
+	// RoutingActs is no reason: the run applies the switch, so it reaches
+	// config.CheckRouting and the per-pin resolution below, and a switch it
+	// cannot carry out halts it.
+	RoutingActs RoutingInert = ""
+	// RoutingInertNoSwitch: nothing is published. An absent switch is D1b's
+	// default, which is direct.
+	RoutingInertNoSwitch RoutingInert = "no-switch"
+	// RoutingInertNoGateway: routing exists only with the gateway (design §6.2,
+	// D11; plan Task 1b.2 step 3). The gateway is what routes a call to a
+	// provider and prices it, and with it off nothing changes — stagePins
+	// returns nil and the run's pins reach the agent as --model, where a
+	// route's own ID is a model Anthropic does not serve. A budget-off run
+	// therefore keeps the direct spelling, and a switch it cannot resolve does
+	// not halt it either: the switch has nothing to act on.
+	RoutingInertNoGateway RoutingInert = "no-gateway"
+	// RoutingInertViaDirect: the switch is written with via: direct, which
+	// routes nothing — a legal spelling (D1b's default said out loud).
+	RoutingInertViaDirect RoutingInert = "via-direct"
+	// RoutingInertAutoVertex: via: auto routes only when the Claude call has
+	// nowhere else to go, and it asks that by the credential the run already
+	// has. A Vertex run has one — Vertex serves Claude under the owner's own
+	// GCP project, and its jobs carry no Anthropic API key — so auto leaves its
+	// pins alone rather than reading the absent key as "no route but the
+	// provider" and sending the prompt to a third party the switch never chose
+	// for this credential. That is a skip, not a refusal: the same policy
+	// serves a project's api-key jobs too, and the owner wrote auto to follow
+	// the credential. via: openrouter still routes a Vertex run — and is
+	// refused downstream for the reason it always is, that a run does not mix
+	// credentials (config.CheckProviderAuth).
+	RoutingInertAutoVertex RoutingInert = "auto-vertex"
+	// RoutingInertAutoKey: via: auto is key-presence driven, as the design
+	// spells it. With an Anthropic key stored in the job the direct route is
+	// taken and the pins are left alone (D1b); with none the provider route is
+	// taken.
+	RoutingInertAutoKey RoutingInert = "auto-key"
+)
+
+// RoutingInertReason is the run's own decision about the switch: whether it
+// acts, and which of the states above it is in. applyRouting returns on
+// RoutingInertReason != RoutingActs before it reaches config.CheckRouting or
+// rewrites a pin, and the readers that cannot run a run ask the same function,
+// so all of them answer one question one way.
+//
+// The facts it takes are the run's own: the credential, whether the gateway is
+// on (GatewayOn, and run.gatewayOn for a run), and whether the job has an
+// Anthropic API key stored. A reader that is not the run does not know the last
+// one — the key is a secret version in the cloud, and neither validate nor
+// doctor reads the job's environment — so it asks this twice, with the key
+// stored and without, and says which of the two states its answer is about
+// rather than picking one.
+func RoutingInertReason(sw *config.RoutingClaude, auth string, gatewayOn, anthropicKeyStored bool) RoutingInert {
+	if sw == nil {
+		return RoutingInertNoSwitch
+	}
+	if !gatewayOn {
+		return RoutingInertNoGateway
+	}
+	if sw.ViaValue() == config.RouteDirect {
+		return RoutingInertViaDirect
+	}
+	if sw.ViaValue() == config.RouteAuto {
+		if auth == "vertex" {
+			return RoutingInertAutoVertex
+		}
+		if anthropicKeyStored {
+			return RoutingInertAutoKey
+		}
+	}
+	return RoutingActs
 }
 
 // routingSwitch is the routing switch this run carries, or nil: the policy

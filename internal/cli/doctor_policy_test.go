@@ -613,6 +613,85 @@ func TestDoctorResolvesTheSwitchOverTheRoutesARunCarries(t *testing.T) {
 	}
 }
 
+// TestDoctorDoesNotPromiseAHaltTheSwitchNeverReaches is the review finding on
+// the unresolved line: it said "a run of this repository whose gateway is on
+// halts" for every switch, which is false of two states doctor had the via to
+// read — via: auto keeps the pins direct when the job has an Anthropic API key
+// stored, and it never routes a Vertex run at all. The line is now worded from
+// the runner's own decision about the switch (routingReachOf —
+// runner.RoutingInertReason, the function applyRouting branches on), which is
+// the same question internal/runner's TestAutoDoesNotRouteAVertexRun pins.
+//
+// doctor reads the policy and this machine's config, not the repository's
+// fugaro.yaml, so the credential and the stored key are not its to read: it
+// says which run halts, never that every one does.
+func TestDoctorDoesNotPromiseAHaltTheSwitchNeverReaches(t *testing.T) {
+	switchTo := func(via string) func(*projectpolicy.Policy) {
+		return func(p *projectpolicy.Policy) {
+			// The node's own block: projectpolicy holds a published switch to
+			// claiming provider entries (validRouting), so a node written with
+			// a via and no entry that serves the model is refused as a whole
+			// and the check never sees it. The routes a *run* resolves over are
+			// this machine's config's (rows below), which is the table this
+			// line is about.
+			p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+				Kind: "anthropic-compat", BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+				Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+				AllowDataTo: []string{"*"},
+			}}}
+			p.Routing = &config.Routing{Claude: &config.RoutingClaude{Via: via, Models: []string{"claude-sonnet-5-5"}}}
+		}
+	}
+	// The machine's route admits acme/other only, so a run of acme/app carries
+	// none: the state this line is about.
+	const routes = "  acme/app:\n    provider: github\n"
+	rows := func() string {
+		return doctorRunRoutes(`["acme/other"]`, routes)
+	}
+	// via: auto: the run with no Anthropic API key stored halts, the run with
+	// one keeps the pins direct, and a Vertex run is never routed by auto — the
+	// unconditional halt this line used to print is true of neither of the last
+	// two.
+	doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteAuto)), rows())
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("the unresolved state is not printed: %+v", res)
+	}
+	for _, want := range []string{"halts", "gateway is on", "allow_data_to", "Anthropic API key stored", "Vertex run never reaches it"} {
+		if !strings.Contains(res.Problem, want) {
+			t.Errorf("the auto line does not say %q: %+v", want, res)
+		}
+	}
+	if strings.Contains(res.Problem, "so a run of this repository whose gateway is on halts (the project's routing switch is not usable)") {
+		t.Errorf("the halt is asserted unconditionally for via: auto: %+v", res)
+	}
+	// via: openrouter is the contrast on the same fixture: every run that has a
+	// gateway reaches the switch there, and the line says so.
+	doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteOpenRouter)), rows())
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "whose gateway is on halts at it") {
+		t.Fatalf("an explicit switch's halt is not reported: %+v", res)
+	}
+	// And with this machine's budget off, no run of the repository reaches the
+	// switch at all: nothing halts here, which the line now says instead of
+	// asserting the halt the budget's own state rules out.
+	r, _ := doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteAuto)), rows())
+	off := strings.Replace(r.cfg, "mode: enforce, per_run_usd: 5", "mode: off", 1)
+	if off == r.cfg {
+		t.Fatal("the rig's budget line was not found to turn off")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(off), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
+		t.Fatalf("a switch the machine's budget never reaches is reported as a halt: %+v", res)
+	}
+	if strings.Contains(res.Problem, "whose gateway is on halts") {
+		t.Errorf("nothing halts under a budget that is off, and the line says one does: %+v", res)
+	}
+}
+
 // doctorRunRoutes is the machine's own side of a routing resolution: the
 // project config's providers block, whose allow_data_to is written with allow,
 // and the repositories the config names. It is what spec.go turns into

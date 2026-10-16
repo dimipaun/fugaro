@@ -1085,34 +1085,157 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 // A configuration whose runs have no gateway is not a failing one: the switch
 // is inert, the pins keep their Claude IDs, and the line is a note that says
 // so.
+//
+// The rule is the runner's own decision about the switch, not only the
+// gateway's, and the later round of that review is why: the state it reported a
+// certain halt in was read off gatewayOn alone, and applyRouting returns before
+// CheckRouting for two more states of its own — via: auto under a Vertex
+// credential (TestAutoDoesNotRouteAVertexRun), and via: auto with an Anthropic
+// API key stored in the job. The four states are one table here, and the
+// difference between them is why the switch reaches no run.
 func TestValidateDoesNotClaimAHaltWithoutAGateway(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	const observe = "budget: { mode: observe }\n"
+	// The switch that is skipped for a credential rather than for the budget:
+	// via: auto is the one via whose reach the credential decides.
+	const autoSwitch = "routing:\n  claude:\n    via: auto\n    models: [claude-sonnet-5-5]\n"
 	pin := func(auth string) string {
 		return "agent:\n  auth: " + auth + "\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	}
 	// routedProjectBlock admits acme/sandbox only and the switch names the
 	// model, so a run of acme/other carries no route for it: the state the rule
-	// is about, in each of the two ways a run has no gateway.
-	for _, tc := range []struct{ name, budget, auth string }{
-		{"the budget is off", "", "api-key"},
-		{"the credential is not a model API's", budget, "oauth"},
+	// is about, in each of the four ways a run of this configuration does not
+	// reach the switch. Two of them are the gateway's (D11) and two are via:
+	// auto's own — the Vertex credential, which auto never routes, and the
+	// key-presence question, whose answer is a secret version in the cloud and
+	// no line in this file. validate read the second as a certain halt and the
+	// third as a route it could print (review finding on this rule).
+	for _, tc := range []struct{ name, budget, auth, switchBlock, want string }{
+		{"the budget is off", "", "api-key", routedSwitchBlock, "no run of this configuration has a gateway"},
+		{"the credential is not a model API's", budget, "oauth", routedSwitchBlock, "no run of this configuration has a gateway"},
+		{"the credential is a Vertex one", observe, "vertex", autoSwitch, "via: auto does not route a Vertex run"},
+		{"via: auto under a model API's credential", budget, "api-key", autoSwitch, "key-presence driven"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateProjects(t, t.TempDir())
-			projectRouting(t, tc.budget+routedProjectBlock+routedSwitchBlock)
+			projectRouting(t, tc.budget+routedProjectBlock+tc.switchBlock)
 			inCheckoutOf(t, "acme/other")
 			path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", pin(tc.auth), 1))
 			out, errOut, err := execute(t, "validate", path)
 			if err != nil {
-				t.Fatalf("validate refused a configuration whose runs have no gateway: %v\n%s%s", err, out, errOut)
+				t.Fatalf("validate refused a configuration whose runs do not reach the switch: %v\n%s%s", err, out, errOut)
 			}
 			if strings.Contains(out, "the project's routing switch is not usable") {
-				t.Fatalf("the halt is asserted for a run that has no gateway:\n%s", out)
+				t.Fatalf("the halt is asserted for a run that does not reach the switch:\n%s", out)
 			}
-			if !strings.Contains(errOut, "routing.claude") || !strings.Contains(errOut, "gateway") {
-				t.Fatalf("want a note saying why the switch is inert here:\n%s", errOut)
+			if !strings.Contains(errOut, "routing.claude") || !strings.Contains(errOut, tc.want) {
+				t.Fatalf("want the note %q saying why the switch reaches no run here:\n%s", tc.want, errOut)
 			}
 		})
+	}
+}
+
+// TestValidateDoesNotPrintARouteNoVertexRunTakes is the other direction of the
+// same finding: the switch here *does* resolve — routedProjectBlock's entry
+// claims the model and admits this checkout — and the run is a Vertex one, so
+// auto leaves its pins at Claude's own IDs and the run takes no route at all.
+// validate printed `-> openrouter, sent as …` for it, which is a resolution no
+// run of that configuration takes: the credentials decide via: auto and this
+// command reads the file's credential, so there is nothing conditional left to
+// say here (internal/runner's own log line for the same skip says the pins keep
+// Claude's own IDs).
+func TestValidateDoesNotPrintARouteNoVertexRunTakes(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	// observe: an enforcing Vertex budget is refused on its own (agent.auth),
+	// and this test is about the switch, not about that refusal.
+	projectRouting(t, "budget: { mode: observe }\n"+routedProjectBlock+"routing:\n  claude:\n    via: auto\n    models: [claude-sonnet-5-5]\n")
+	inCheckoutOf(t, "acme/sandbox")
+	claude := "agent:\n  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("validate refused a Vertex run's configuration: %v\n%s%s", err, out, errOut)
+	}
+	if strings.Contains(out+errOut, "-> openrouter") {
+		t.Fatalf("validate printed a route no Vertex run takes (via: auto never routes one):\n%s%s", out, errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> direct") || !strings.Contains(errOut, "via: auto does not route a Vertex run") {
+		t.Fatalf("want the line to say the pins stay direct and why:\n%s", errOut)
+	}
+}
+
+// TestValidateSaysWhichRunTheJobKeyDecides is the key-presence half: via: auto
+// under an api-key credential routes when the job has no Anthropic API key
+// stored and keeps the pins direct when it has one, and whether one is stored
+// is a secret version in the cloud — no line in this file, and nothing this
+// command reads. So neither the resolution nor a halt may be printed as the
+// run's: the line names both runs, and it is a note rather than the problem the
+// rule used to raise for the keyless one alone.
+func TestValidateSaysWhichRunTheJobKeyDecides(t *testing.T) {
+	// The mode is enforcing so that the keyless run really does take the route
+	// (the provider gate below is the observe state's, and this test is about
+	// which run validate may speak for).
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, "budget: { mode: enforce, per_run_usd: 5 }\n"+routedProjectBlock+"routing:\n  claude:\n    via: auto\n    models: [claude-sonnet-5-5]\n")
+	inCheckoutOf(t, "acme/sandbox")
+	claude := "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("validate refused a configuration whose runs depend on a key this command cannot read: %v\n%s%s", err, out, errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5 with no Anthropic API key stored in the job, and -> direct with one") {
+		t.Fatalf("want the resolution to name both runs:\n%s", errOut)
+	}
+	// Under observe the keyless run halts at the provider gate (a routed pin
+	// needs budget.mode enforce), and the run with a key stored does not take
+	// the route at all: a halt that depends on the same unread fact is a note,
+	// never this command's user-error verdict.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, "budget: { mode: observe }\n"+routedProjectBlock+"routing:\n  claude:\n    via: auto\n    models: [claude-sonnet-5-5]\n")
+	out, errOut, err = execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("validate refused a configuration whose keyless runs would halt: %v\n%s%s", err, out, errOut)
+	}
+	if !strings.Contains(errOut, "needs budget.mode enforce") || !strings.Contains(errOut, "no Anthropic API key stored takes the switch's route and halts there") {
+		t.Fatalf("want a note naming the keyless run's halt at the provider gate:\n%s", errOut)
+	}
+}
+
+// TestValidateSaysARoutedPinHaltsUnderAnObservingBudget pins the review finding
+// on the resolution: validate read gatewayOn as "the run takes the route" and
+// printed the resolution for an observe-mode project, exiting 0, while a run of
+// it halts — applyRouting rewrites the pin to the route's own ID and
+// internal/runner's checkProviderModels then asks config.CheckProviderGateway
+// about exactly that pin, which refuses one outside enforce ("is served by a
+// provider, which needs budget.mode enforce: observe never refuses a call and a
+// provider's calls are real dollars"). The rule the run answers with is asked
+// here, over the agent the switch produces.
+func TestValidateSaysARoutedPinHaltsUnderAnObservingBudget(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	// The switch resolves here: the entry claims the model and admits this
+	// checkout, so the resolution line is printed — with the halt beside it.
+	projectRouting(t, "budget: { mode: observe }\n"+routedProjectBlock+routedSwitchBlock)
+	inCheckoutOf(t, "acme/sandbox")
+	claude := "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	out, errOut, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, want a user error: an observe-mode run of this configuration halts at its routed pin\n%s%s", ExitCode(err), out, errOut)
+	}
+	if !strings.Contains(out, "agent.models.coder") || !strings.Contains(out, "needs budget.mode enforce") {
+		t.Fatalf("want the halt named at the pin the switch rewrote, with the rule's own reason:\n%s", out)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Fatalf("the resolution is not printed beside it:\n%s", errOut)
+	}
+	// Under enforce the same configuration is what the switch is for: the
+	// refused pin is the observation mode's own rule and nothing else here
+	// fails.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, "budget: { mode: enforce, per_run_usd: 5 }\n"+routedProjectBlock+routedSwitchBlock)
+	if out, errOut, err := execute(t, "validate", path); err != nil {
+		t.Fatalf("validate refused the enforcing configuration a routed pin is for: %v\n%s%s", err, out, errOut)
 	}
 }
 

@@ -1748,13 +1748,33 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 			route, sent, ok := config.RoutingClaudeFor(c, m, providers)
 			switch {
 			case !ok:
-				// The halt is the gateway's (D11, design §6.2): a run whose
-				// budget is off, or whose credential is not a model API's,
-				// returns before it reads the switch. doctor reads the policy
-				// and this machine's config, not the repository's fugaro.yaml,
-				// so it cannot say whether the run this line is about has one —
-				// it says which run halts, not that every run does.
-				lines = append(lines, fmt.Sprintf("%s: %s -> unresolved: the switch names it and none of the routes a run of this repository carries claims it with allow_data_to written, so a run of this repository whose gateway is on halts (the project's routing switch is not usable) — check the entry's models list, and that its allow_data_to admits %s", repo, m, repo))
+				// Whether that halts a run is the runner's own decision
+				// (routingReachOf — runner.RoutingInertReason, the function
+				// applyRouting branches on), and it is not the same answer for
+				// every switch: a run whose gateway is off returns before it
+				// reads the switch, via: auto never routes a Vertex run, and
+				// with an Anthropic API key stored in the job auto keeps the
+				// pins direct. This line asserted the halt unconditionally,
+				// which was false of both of the last two.
+				//
+				// The reach is asked of an api-key credential and this
+				// machine's budget: doctor reads the policy and this machine's
+				// config, not the repository's fugaro.yaml, so the credential
+				// and the stored key are not its to read. api-key is the
+				// credential auto's key question is about, and Vertex answers
+				// the same for every other via — the sentence the auto state
+				// prints names that difference itself.
+				reach, _ := routingReachOf(c, "api-key", lc.BudgetMode())
+				base := fmt.Sprintf("%s: %s -> unresolved: the switch names it and none of the routes a run of this repository carries claims it with allow_data_to written", repo, m)
+				tail := fmt.Sprintf(" — check the entry's models list, and that its allow_data_to admits %s", repo)
+				switch reach {
+				case routingAlways:
+					lines = append(lines, base+"; a run of this repository whose gateway is on halts at it (the project's routing switch is not usable)"+tail)
+				case routingKeyless:
+					lines = append(lines, base+"; via: auto is key-presence driven, so a run of this repository whose gateway is on halts at it unless the job has an Anthropic API key stored, and a Vertex run never reaches it at all"+tail)
+				default:
+					lines = append(lines, base+", and under this machine's budget no run of this repository reaches the switch (budget.mode is "+lc.BudgetMode()+"), so the switch is inert here and nothing halts on this machine's own settings"+tail)
+				}
 			case route == config.RouteDirect:
 				lines = append(lines, fmt.Sprintf("%s: %s -> direct (via: %s)", repo, m, c.ViaValue()))
 			default:

@@ -329,10 +329,17 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // resolve from, and the line says "unresolved offline" — a resolution this
 // command did not resolve is never printed as if it had been (the resolver's
 // own contract, config.RoutingClaudeFor). A model the switch names and cannot
-// resolve is a problem where the run has a gateway — the run halts with "the
-// project's routing switch is not usable", never falling back to direct (D1b's
-// safeguard and the switch's own route) — and a note where it has none, since
-// routing is the gateway's (routingHaltsRun, D11, design §6.2).
+// resolve is a problem where every run of this configuration reaches the switch
+// — the run halts with "the project's routing switch is not usable", never
+// falling back to direct (D1b's safeguard and the switch's own route) — and a
+// note everywhere else: routing is the gateway's, via: auto never reaches a
+// Vertex run, and a stored Anthropic API key turns it back to the direct path
+// (routingReachOf, the runner's own decision; D11, design §6.2).
+//
+// A resolution is printed with what the run does with it, and the rules that
+// judge the pins the switch produced are the run's own as well: a routed pin
+// under an observing budget is refused by the gateway rule (the resolution is
+// the first half of a halt, not the whole of a valid configuration).
 //
 // The refusal is design §6.2's safeguard read from the offline side. A project
 // that routes Claude through a provider is a project with no Anthropic key to
@@ -398,13 +405,29 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		// never wrote the key at all.
 		ownProviders = lc.Providers
 	}
+	// What a run of this configuration does with the switch, asked once of the
+	// runner's own decision (routingReachOf) and used by every line below: the
+	// switch's reach is the same for each pin, and the pins differ only in
+	// whether a route carries them.
+	//
+	// The switch is the operator's project config: with none there is nothing
+	// to read (the unresolved-offline note below) and nothing to ask the
+	// runner's decision about.
+	var sw *config.RoutingClaude
+	if readable {
+		sw = claudeSwitchOf(lc.Routing)
+	}
+	reach, why := routingReachOf(sw, cfg.Agent.Auth, mode)
+	// The pins the switch rewrote, which are the ones the run's own rules judge
+	// once this loop is done. It stays empty wherever no run of this
+	// configuration takes the route.
+	routedPaths := map[string]bool{}
 	for _, p := range pins {
 		if !readable {
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
 				"%s unresolved offline: the switch is the operator's project config for %s and this command has none selected (design §11), so a resolution it cannot read is not printed as one; `fugaro doctor` reads the published policy and prints it", p.model, cfg.Project)})
 			continue
 		}
-		sw := claudeSwitchOf(lc.Routing)
 		route, sent, ok := config.RoutingClaudeFor(sw, p.model, routes)
 		switch {
 		case ok && route == config.RouteDirect:
@@ -445,58 +468,203 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		case !ok:
 			// The switch names this model and no route a run of this repository
 			// carries claims it. Whether that is a defect in the configuration
-			// depends on whether the run has a gateway at all: routing is the
-			// gateway's (design §6.2, D11), and a run with none returns before it
-			// reads the switch, so there the pins keep their Claude IDs and
-			// nothing halts. The halt this rule reported in every state is a halt
-			// only a run with a gateway makes, and the refusal beside it is gated
-			// on exactly that difference (claudeDirectRefusal) — the two halves of
-			// one function may not disagree about whether routing exists here.
+			// depends on whether a run reaches the switch at all, and that is
+			// the runner's own decision (routingReachOf): routing is the
+			// gateway's (design §6.2, D11), via: auto never reaches a Vertex
+			// run, and a stored Anthropic API key turns auto back to the direct
+			// path. A problem here is a claim about a run, so it is reported
+			// only where every run of this configuration reaches the switch —
+			// the other states are notes, because that halt is not this
+			// command's to promise. The refusal beside this case is gated on
+			// the same difference (claudeDirectRefusal): the two halves of one
+			// function may not disagree about whether routing reaches here.
 			msg := fmt.Sprintf("%s is named by routing.claude.models and does not resolve over the routes a run of %s carries: no single provider entry claims it with allow_data_to written, or the entry that claims it does not admit this repository, and a call the switch names has no direct fall-back (D1b, design §6.2)", p.model, repo)
 			fix := "fix the list, the claim, or the allow_data_to of the entry that claims it"
-			halts, noGateway := routingHaltsRun(cfg.Agent, mode)
-			if !halts {
-				notes = append(notes, config.Problem{Path: "routing.claude", Message: msg + fmt.Sprintf(". The switch is the gateway's and this configuration's runs have none (%s), so nothing halts here: the pins keep their Claude IDs and the switch is inert until the budget is on and the credential is a model API's. %s, before a run with a gateway meets the switch", noGateway, fix)})
-			} else if sw.ViaValue() == config.RouteAuto {
-				// via: auto keeps the pins direct when the job has an Anthropic
-				// key, so the halt is the keyless run's — the reading this file's
-				// own note gives that state.
-				problems = append(problems, config.Problem{Path: "routing.claude", Message: msg + ". A run of this repository that has no Anthropic API key stored halts with \"the project's routing switch is not usable\" (via: auto keeps the pins direct when one is stored); " + fix})
-			} else {
+			switch reach {
+			case routingAlways:
 				problems = append(problems, config.Problem{Path: "routing.claude", Message: msg + ". A run of this repository halts with \"the project's routing switch is not usable\"; " + fix})
+			case routingKeyless:
+				// The one fact that decides it is not this command's to read,
+				// so the sentence names both runs rather than picking one.
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: msg + ". via: auto is key-presence driven, so which run this halts is a fact this command does not read: a run of this repository with no Anthropic API key stored halts with \"the project's routing switch is not usable\", and one with a key stored keeps the pins direct; " + fix})
+			default:
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: msg + ". The switch reaches no run of this configuration (" + routingInertWhy(why, cfg.Agent.Auth, mode) + "), so nothing halts here and the pins keep their Claude IDs; " + fix})
 			}
 		default:
-			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> %s, sent as %s", p.model, route, sent)})
+			// The route the switch licenses, said with what a run of this
+			// configuration does with it: the reach is the runner's own
+			// decision, and where it depends on the job's stored Anthropic API
+			// key — a fact this command does not read — the line names both
+			// states instead of picking one. A resolution printed as the run's
+			// where no run takes it is the false confidence doctor's check
+			// stopped giving.
+			line := fmt.Sprintf("%s -> %s, sent as %s", p.model, route, sent)
+			switch {
+			case reach == routingKeyless:
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: line + " with no Anthropic API key stored in the job, and -> direct with one (via: auto is key-presence driven: D1b)"})
+			case why == runner.RoutingInertAutoVertex:
+				// via: auto's answer for a Vertex run is the direct route, and
+				// that is the switch's own reading of the credential rather
+				// than a fact about this run's budget: the line leads with what
+				// the run does and names the licence beside it, rather than
+				// printing as the run's a route no Vertex run takes (the false
+				// resolution doctor's own check stopped giving).
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (%s; the switch licenses %s, sent as %s, for a run that does take it)", p.model, routingInertWhy(why, cfg.Agent.Auth, mode), route, sent)})
+				continue
+			case reach == routingInert:
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: line + " (nothing takes it here: " + routingInertWhy(why, cfg.Agent.Auth, mode) + ", so the pins keep Claude's own IDs)"})
+				continue
+			default:
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: line})
+			}
+			routedPaths[p.path] = true
+		}
+	}
+	// The pins the switch produces are the ones the run's own rules judge:
+	// applyRouting writes the route's ID into the pin, and internal/runner's
+	// checkProviderModels then asks config.CheckProviderAuth and
+	// config.CheckProviderGateway about exactly those pins — under an observing
+	// budget a routed pin is refused there as served by a provider that needs
+	// budget.mode enforce. validate printed the resolution and exited 0 for
+	// every one of those runs. The rules asked here are the runner's own, over
+	// the agent the switch produced.
+	if len(routedPaths) > 0 {
+		a, paths := routedAgent(cfg.Agent, sw, routes)
+		if len(paths) > 0 {
+			bg := config.EffectiveBackground(a, routes)
+			var ps []config.Problem
+			ps = append(ps, config.CheckProviderAuth(a, routes)...)
+			ps = append(ps, config.CheckProviderGateway(a, bg, routes, mode)...)
+			for _, q := range ps {
+				if !routedPaths[q.Path] {
+					// Only the pins the switch rewrote are this block's
+					// business: a provider model the file pins itself is
+					// providerProblems'.
+					continue
+				}
+				if reach == routingAlways {
+					problems = append(problems, q)
+					continue
+				}
+				notes = append(notes, config.Problem{Path: q.Path, Message: fmt.Sprintf("%s (via: auto: a run of this repository with no Anthropic API key stored takes the switch's route and halts there, and one with a key stored keeps the pins direct and does not)", q.Message)})
+			}
 		}
 	}
 	return problems, notes
 }
 
-// routingHaltsRun reports whether a switch a run cannot resolve halts it, and
-// names what this configuration's runs are missing when it does not.
+// routingReach is what a run of this configuration does with the switch: the
+// three answers a reader that is not the run can give.
+type routingReach int
+
+const (
+	// routingInert: no run of this configuration reaches the switch. Its pins
+	// keep their Claude IDs and a switch it cannot resolve does not halt it.
+	routingInert routingReach = iota
+	// routingKeyless: via: auto, whose reach is key-presence driven — a run
+	// with no Anthropic API key stored takes the route, and one with a key
+	// stored keeps the pins direct (D1b). validate reads this file's credential
+	// and this machine's budget, never the job's environment, so it can say
+	// only that both runs exist.
+	routingKeyless
+	// routingAlways: every run of this configuration that has a gateway reaches
+	// the switch.
+	routingAlways
+)
+
+// routingReachOf asks the runner's own decision — runner.RoutingInertReason,
+// the function applyRouting branches on — instead of re-deriving the ladder
+// here. A second reading of "when does routing apply" is how validate came to
+// report a halt no run makes (first the gateway, then via: auto under a Vertex
+// credential) and a resolution no run takes.
 //
-// Routing exists only where the run has a gateway (design §6.2, D11), and the
-// gateway is internal/runner's gatewayOn: the budget is on (observe or enforce
-// — an unset mode is off, which is the reader's own answer too,
-// localcfg.BudgetMode) and the credential is a model API's, api-key or vertex
-// (an oauth run's own token never goes through the gateway). applyRouting
-// returns before it ever reads the switch when gatewayOn is false, and the
-// runner has a test for exactly that mutation
-// (TestRoutingDoesNothingWithTheGatewayOff), so a halt validate reports in a
-// state the run never reaches is a claim about a run nobody runs.
-func routingHaltsRun(a config.Agent, mode string) (halts bool, why string) {
-	var off []string
-	if mode != policy.ModeObserve && mode != policy.ModeEnforce {
-		m := mode
-		if m == "" {
-			m = policy.ModeOff
+// The one fact this command cannot read is whether the job has an Anthropic API
+// key stored: that is a secret version in the cloud, not a line in this file.
+// The question is therefore asked twice, with the key and without it, and the
+// state where the two answers differ — via: auto under api-key auth — is its
+// own answer rather than one of the two guessed at. A credential that is
+// neither api-key nor vertex (oauth, or nothing at all) is no gateway whichever
+// key the job holds, so it is inert either way.
+func routingReachOf(sw *config.RoutingClaude, auth, mode string) (routingReach, runner.RoutingInert) {
+	gateway := runner.GatewayOn(auth, mode)
+	why := runner.RoutingInertReason(sw, auth, gateway, false)
+	switch {
+	case runner.RoutingInertReason(sw, auth, gateway, true) == runner.RoutingActs:
+		// A run with a key stored reaches the switch too, so the key is not
+		// what this configuration's answer hangs on.
+		return routingAlways, why
+	case why == runner.RoutingActs:
+		return routingKeyless, why
+	default:
+		return routingInert, why
+	}
+}
+
+// routingInertWhy words the runner's own reason for a switch that reaches no
+// run of this configuration (runner.RoutingInert), for a caller that holds the
+// credential and the effective mode: the facts two of the reasons are about.
+// why must be a reason RoutingInertReason gave for a run that does not act —
+// the states routingKeyless covers have no single sentence and are worded where
+// they are used.
+func routingInertWhy(why runner.RoutingInert, auth, mode string) string {
+	m := mode
+	if m == "" {
+		m = policy.ModeOff
+	}
+	switch why {
+	case runner.RoutingInertNoGateway:
+		return "no run of this configuration has a gateway (agent.auth is " + auth + " and budget.mode is " + m + ": the gateway needs a model API's credential and an observing or enforcing budget)"
+	case runner.RoutingInertAutoVertex:
+		return "via: auto does not route a Vertex run (Vertex serves Claude under the project's own credential, and its jobs carry no Anthropic API key)"
+	case runner.RoutingInertNoSwitch:
+		return "no switch is published, which is D1b's default"
+	case runner.RoutingInertAutoKey:
+		return "via: auto keeps the pins direct when the job has an Anthropic API key stored (D1b)"
+	default:
+		return "the switch routes nothing itself (via: direct)"
+	}
+}
+
+// routedAgent is the agent internal/runner's applyRouting produces out of this
+// one: each pin the switch names and can resolve is rewritten through the field
+// its effective model came from (agent.model when no agent.models.<role> names
+// one), so an agent that names only agent.model keeps its coder pin there
+// rather than gaining an explicit one. The paths returned are the pins the
+// switch wrote, which are the ones the run's own rules then judge; the file's
+// other pins are providerProblems' business.
+func routedAgent(a config.Agent, sw *config.RoutingClaude, routes map[string]config.ModelProvider) (config.Agent, []string) {
+	if sw == nil {
+		return a, nil
+	}
+	var paths []string
+	slot := func(path string, get func() string, set func(string)) {
+		m := get()
+		if m == "" || !sw.Names(m) {
+			return // the list is the opt-in: an ID it does not name is untouched
 		}
-		off = append(off, "budget.mode is "+m)
+		route, sent, ok := config.RoutingClaudeFor(sw, m, routes)
+		if !ok || route == config.RouteDirect || sent == m {
+			return
+		}
+		set(sent)
+		paths = append(paths, path)
 	}
-	if a.Auth != "api-key" && a.Auth != "vertex" {
-		off = append(off, "agent.auth is "+a.Auth)
-	}
-	return len(off) == 0, strings.Join(off, " and ")
+	slot("agent.models.coder", func() string { return a.ModelFor(config.RoleCoder) }, func(m string) {
+		if a.Models.Coder == "" {
+			a.Model = m
+			return
+		}
+		a.Models.Coder = m
+	})
+	slot("agent.models.reviewer", func() string { return a.ModelFor(config.RoleReviewer) }, func(m string) {
+		if a.Models.Reviewer == "" {
+			a.Model = m
+			return
+		}
+		a.Models.Reviewer = m
+	})
+	slot("agent.models.background", func() string { return a.Models.Background }, func(m string) { a.Models.Background = m })
+	return a, paths
 }
 
 // claudeSwitchOf is the switch a routing block holds: nil for no block, nil
