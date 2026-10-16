@@ -11,7 +11,7 @@
 - **The design's decisions D21–D38 are unanswered.** Every row of §2's table has an empty answer column, and this plan is written so that a task's **first line names the decision it needs**. A task whose decision is unanswered is not "ready to pick up"; it is a question wearing a task's clothes.
 - **The v1 console plan's gate still stands and is unchanged.** Phases 0–5 of [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md) are approved as they are, and nothing here reopens, reorders or re-scopes them.
 - **This plan is a proposal for later phases.** It exists so the owner can see what the second spec would cost, in tasks, before deciding. The one thing that is genuinely cheap and independent — the planning skill (phase V2.8) — is cheap *because* it is independent, not because it is approved.
-- **The three writes in phase V2.5 move the fence.** D2 (strictly read-only v1) and D14 (read-only enforced by an exact-argument allow-list alone) are the console's whole safety argument. Each write is a separate answer and a separate PR, and none of them may be bundled with a read.
+- **Two of phase V2.5's three tasks move the fence, and the third writes nothing.** D2 (strictly read-only v1) and D14's accepted recommendation (read-only enforced by an exact-argument allow-list alone) are the console's whole safety argument. V2.5.1 (launching) and V2.5.2 (cancel and retry) each put a world-changing command in the spawn allow-list, which is the fence moving. V2.5.3 is the other case: it shows the operator a command, the operator runs it, and the app holds no path into the checkout (D30) — it is security-sensitive for what it must **not** do, not for a write it makes. Each of the three is a separate answer and a separate PR, and none of them may be bundled with a read.
 - **No agent-run step in this plan touches a secret, and none of them is a live action.** The sandbox installation is the only installation any of this runs against; **the `belong` installation is never touched** (`belong` holds `edgeappinc/edgeserver` and `edgeappinc/edgeweb`: no agent touches it, ever). Nothing here produces, stores, reads or transmits a credential.
 - **No file under `.github/workflows/` is added or edited by this plan.** If a phase ever needs one, it is staged under `docs/pending-workflows/` and applied by the owner, which is the rule the v1 console plan's phase 4 already follows for the signing workflow.
 
@@ -21,14 +21,14 @@ The second spec asks for six new things (design §1's findings F1–F33). Four o
 
 1. **the reads come first** (phase V2.1), because a view built on an absent field is the one mistake this kind of work reliably makes;
 2. **the graph comes before anything that draws it** (V2.2 before V2.3, V2.6), because "ready", "blocked" and "scheduled earlier than its dependency" are all functions of the graph and of nothing else;
-3. **the writes come last and separately** (V2.5), because each one moves the fence D2 and D14 put up, and because by then the reads they act on are shipped and testable;
+3. **the writes come last and separately** (V2.5), because V2.5.1 and V2.5.2 each move the fence D2 and D14 put up, and because by then the reads they act on are shipped and testable. The phase's third task, V2.5.3, is gated with them and lands last for the same reason, but it is read-only — it prints a command and the operator runs it (D30);
 4. **the skill is independent** (V2.8) and can land at any point, including before the console reads anything — its output is a file a person can read too.
 
 **Releases.** The console is its own artifact published from the CLI's own `vX.Y.Z` tag (design D11). **v2 adds no release and is not scheduled against one** (design D37): its first shippable version is whatever tag follows the release that carries the v1 console's phase 4. The release train this repository records is **R4 of [2026-10-14-project-centric.md](2026-10-14-project-centric.md)**: project-centric phase 0 on `main`, phases 1–6 on `next`, released together as **0.8.0**. The highest release in `docs/releases/` is `v0.7.5.md`.
 
 **Global constraints.** The v1 console plan's Global Constraints apply to every task here, verbatim and without restatement: no live action, no secret handled by an agent, the sandbox installation only, the `belong` installation never, no `.github/workflows/` edits, and the docs tests. Two more are v2's own:
 
-11. **A read may not become a write because it is convenient.** Every task below says which of the two it is, and the ones in phase V2.5 are the only writes.
+11. **A read may not become a write because it is convenient.** Every task below says which of the two it is; the only writes in this plan are V2.5.1 and V2.5.2.
 12. **Every cited symbol was checked against `origin/main`.** Where a task says "the field `x`", the field `x` exists at the commit the design cites; a task that finds it missing stops and says so rather than inventing it.
 
 ## 2. The check number: 60
@@ -92,7 +92,7 @@ A plan-side artifact written beside the plan it describes (design F6/F33 and D25
 *Independent merge:* yes.
 
 **V2.2.2 — the footprint. (needs D28)**
-The planner's expected footprint per task, in the shape D28 recommends: glob-shaped paths, advisory, and labelled as a prediction in the document itself. The matching used for display is this repository's own glob semantics (`internal/gitops`), not a second implementation.
+The planner's expected footprint per task, in the shape D28 recommends: glob-shaped paths, advisory, and labelled as a prediction in the document itself. The matching used for display is this repository's own glob semantics — **doublestar**, `github.com/bmatcuk/doublestar/v4`, as `internal/imagecheck` (`doublestar.Match` over the git tree), `internal/cache/key.go` (`doublestar.Glob`), `internal/config/validate.go` and `internal/verify/reports.go` (`doublestar.ValidatePattern`) already use it — not a second implementation. `internal/gitops` has no pattern matching and is not the reference here.
 *Files:* `internal/plan/`, `internal/cli/plan.go`, `docs/design/desktop-console-v2.md`.
 *Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Footprint' -count=1`.
 
@@ -118,11 +118,11 @@ Two recorded sets (V2.1.2) compared against each other and against the graph's f
 *Verification:* `GOFLAGS=-p=2 go test ./internal/plan ./internal/runview -run 'Overlap' -count=1` — with a disjoint pair, an overlapping pair, a footprint-only prediction, and a truncated record (which must **not** be reported as "no overlap").
 *Independent merge:* yes.
 
-### Phase V2.5 — the writes (each gated separately, each last)
+### Phase V2.5 — the world-changing tasks (two writes and one read-only affordance; each gated separately, each last)
 
 **V2.5.1 — launching, through the CLI. (needs D22 and D23) — SECURITY-SENSITIVE**
 The console spawns `fugaro run` (with `--task-file` for a task handed over as a file) behind the CLI's own confirmation and the CLI's own budget check, and shows `already-launched` (`internal/cli/run.go`'s `launchResult.status`) as a fact rather than an error. The claim stays the CLI's (`internal/runstore/launch.go`'s `Claim`, `ClaimKey`, `ClaimTTL`).
-*Why security-sensitive:* **this is the decision that moves the fence.** The v1 design's §5.1 **rule 6** ("The spawn allow-list is exact argv, not a command name") and D14's answer ("every identity may be an admin, and read-only is enforced by an allow-list alone") were written for a read-only app; a launch is the first entry in the allow-list that changes the world. The reviewer's questions are: what is the new argument vector, exactly; can any field of any document reach it; and what does the app do when the CLI refuses.
+*Why security-sensitive:* **this is the decision that moves the fence.** The v1 design's §5.1 **rule 6** ("The spawn allow-list is exact argv, not a command name") and D14's recommendation — *"Treat every identity as a possible admin, and give the read-only guarantee to the allow-list alone."*, which the owner **accepted as recommended** — were written for a read-only app; a launch is the first entry in the allow-list that changes the world. The reviewer's questions are: what is the new argument vector, exactly; can any field of any document reach it; and what does the app do when the CLI refuses.
 *Files:* `console/` (the spawn, the confirmation, the test), `docs/design/desktop-console.md` (a **new** decision row recording the fence's move — v1 is merged and is not edited), `docs/design/desktop-console-v2.md`.
 *Verification:* the console's own test command, plus a test that the argument vector is built from named fields and never from a document's free text, plus `GOFLAGS=-p=2 go test ./internal/cli -run 'ConsoleBoundary' -count=1`.
 *Independent merge:* yes, and it is the only task in the phase that may land before the others.
@@ -135,6 +135,7 @@ Spawns of `fugaro cancel RUN` and `fugaro run --retry RUN`, with the CLI's own c
 
 **V2.5.3 — the roadmap's "copy the change". (needs D30) — SECURITY-SENSITIVE**
 The console shows the exact command that would change a task's target version; the operator runs it; the CLI confirms. The console does **not** edit the plan file in the operator's checkout.
+*Why security-sensitive:* **this task does not move the fence** — it writes nothing and spawns nothing; only V2.5.1 does. It is marked because of what it must not do: the string it prints is built from document-derived data (the task's target version) and ends up pasted into a shell, so it has to be a command the operator can read and the app must hold **no path into the checkout** — the test it ships is the one that proves that, and the alternative D30 rejects (the console editing the plan file) is a write into the operator's working tree.
 *Files:* `console/`, `docs/design/desktop-console-v2.md`.
 *Verification:* the console's own test command, plus a test that the app holds no path into the checkout.
 *Independent merge:* yes.
@@ -147,7 +148,7 @@ The version lives in the graph document beside the task today (D29's recommendat
 *Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Version' -count=1`, plus the console's own test command.
 
 **V2.6.2 — the dependency-aware warning. (needs V2.2.1 and V2.6.1)**
-"Flags a task scheduled earlier than something it depends on, and offers to pull the dependency forward" — a pure function of the graph and the version column (design F24), computed where the graph is read. The "pull it forward" half is a **write** and is therefore V2.5.3's shape, not a new mechanism.
+"Flags a task scheduled earlier than something it depends on, and offers to pull the dependency forward" — a pure function of the graph and the version column (design F24), computed where the graph is read. The "pull it forward" half changes the operator's plan and is therefore V2.5.3's shape — the console prints the exact command and the operator runs it — not a new mechanism.
 *Files:* `internal/plan/`, `console/`, `console/docs/json-contract.md`.
 *Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Roadmap' -count=1`.
 
@@ -174,7 +175,7 @@ Derived from the watch feed by the console's own long-lived reader, **off by def
 **V2.8.1 — upgrade `parallelism`, and give it the format. (needs D36)**
 `plugin/skills/parallelism/SKILL.md` is the skill that owns fan-out (design F31), and at 47 lines and 3245 bytes it has room: the lint budgets in `plugin/skills_lint_test.go` are `maxSkillLines` 400 / `maxSkillBytes` 24576 for a `SKILL.md` and `maxReferenceLines` 300 / `maxReferenceBytes` 16384 for a reference file, with frontmatter rules (`name`, a `description` containing "use when", 40–1024 characters). The task adds the **output format** for the graph and the per-task footprint (V2.2.1's schema, V2.2.2's shape) to the skill, in the skill's own words, and adds one reference file if the SKILL.md budget gets tight.
 *Files:* `plugin/skills/parallelism/SKILL.md`, `plugin/skills/parallelism/reference/` (new file, only if needed), `docs/design/desktop-console-v2.md`.
-*Verification:* `GOFLAGS=-p=2 go test ./internal/cli -run 'Lint|DocsDesktopConsoleV2' -count=1` — the skill lint is what decides new-file-versus-inline, so the test is the verification and not a formality.
+*Verification:* the **skill lint**, which lives in its own package — `GOFLAGS=-p=2 go test ./plugin -run 'PluginSkillsLintClean|LintSizeBudget|LintByteBudget|LintChecksReferenceFiles' -count=1` (`plugin/skills_lint_test.go`, package `plugin_test`) — plus the docs tests that read `docs/design/*.md`, `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`. The skill lint is what decides new-file-versus-inline, so the test is the verification and not a formality; a `-run` pattern aimed at `./internal/cli` cannot reach it.
 *Independent merge:* yes, and it is the **cheapest useful task in this plan**: its output is a file a person can read, so it pays for itself before any console reads it.
 
 ## 4. The owner-run check: Check 60
@@ -205,9 +206,9 @@ The v1 plan groups its tasks so that each group is one reviewable pull request. 
 | **V-F** | V2.6.1, V2.6.2 | the version column and the dependency-aware warning |
 | **V-G** | V2.7.1, V2.7.2, V2.7.3 | the review inbox, cap alerts and notifications |
 | **V-H** | V2.8.1 | the planning skill |
-| **V-I** | V2.5.1, V2.5.2, V2.5.3 | **one PR each** — three writes, three reviews, three answers |
+| **V-I** | V2.5.1, V2.5.2, V2.5.3 | **one PR each** — two writes and one read-only affordance, three reviews, three answers |
 
-**V-H may land first and V-I last**, and neither ordering breaks anything: the skill's output is a file a person reads, and the writes act on reads that are already shipped by then.
+**V-H may land first and V-I last**, and neither ordering breaks anything: the skill's output is a file a person reads, and the two writes act on reads that are already shipped by then.
 
 ## 6. Cross-task dependencies
 
@@ -217,7 +218,7 @@ Stated so a reviewer can check the claim that each task is independently mergeab
 - **V2.2.1 → V2.2.2 → V2.2.3.** The footprint and the ranking are properties of the graph's nodes; the schema comes first.
 - **V2.2.3 → V2.3.1, V2.6.2.** "Ready", "blocked" and "scheduled earlier than its dependency" are computed where the graph is read (design F7, F24).
 - **V2.1.1 → nothing.** The installations document is a read with no dependents in this plan; the sidebar consumes it, and the sidebar is v1's phase 2 work.
-- **V2.5.\* → V2.0.1 and its own decision.** No write lands before the owner answers the decision that governs it, and no write is bundled with another.
+- **V2.5.\* → V2.0.1 and its own decision.** No world-changing task lands before the owner answers the decision that governs it, and none is bundled with another.
 - **V2.8.1 → nothing.** The skill writes a document; whether the console reads it is V2.2's business.
 - **Everything → the owner approval gate.** This is the dependency that matters, and it is the first one, not the last.
 
