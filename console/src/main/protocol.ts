@@ -289,21 +289,25 @@ function textResponse(status: number, reason: string): Response {
 /**
  * serveAppRequest is the protocol handler's whole body: decide, read, answer.
  *
- * A file that is not there is 404 and anything else that goes wrong while
- * reading is 500 -- neither is ever a partially drawn console, and neither
- * carries the request's own text. The e2e spec asserts against the real browser
- * what this returns here; the unit test asserts it directly, on the `Response`.
+ * A path that names no file is 404 -- and `EISDIR` counts as "no file", because
+ * a directory is not a resource this bundle serves: the request is answered
+ * with the same reason as a missing one rather than with a 500 that would say
+ * the console is broken. Any *other* failure to read is 500 with a fixed
+ * reason. Neither arm is ever a partially drawn console, and neither carries the
+ * request's own text. The e2e spec asserts against the real browser what this
+ * returns here; the unit test asserts it directly, on the `Response`.
  */
 export async function serveAppRequest(bundleRoot: string, rawUrl: string): Promise<Response> {
   const decision = resolveBundleRequest(bundleRoot, rawUrl)
   if (!decision.ok) return textResponse(decision.status, decision.reason)
 
-  let body: Uint8Array
   try {
-    // Copied into a fresh Uint8Array rather than handed over as the Buffer
-    // readFile returns: the copy is what keeps the body a plain ArrayBuffer-backed
-    // view for the Response constructor.
-    body = new Uint8Array(await readFile(decision.filePath))
+    // The bytes are copied into a fresh `Uint8Array` rather than handed over as
+    // the `Buffer` `readFile` returns: the copy is what makes the body a plain
+    // `ArrayBuffer`-backed view, which is what a `Response` takes. `tsc` is
+    // strict about that distinction, and it is right to be.
+    const bytes = new Uint8Array(await readFile(decision.filePath))
+    return new Response(bytes, { status: 200, headers: bundleHeaders(decision.mediaType) })
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') {
@@ -311,8 +315,6 @@ export async function serveAppRequest(bundleRoot: string, rawUrl: string): Promi
     }
     return textResponse(500, 'the bundle file could not be read')
   }
-
-  return new Response(body, { status: 200, headers: bundleHeaders(decision.mediaType) })
 }
 
 /**

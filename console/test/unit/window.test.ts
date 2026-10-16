@@ -122,10 +122,10 @@ type FakeWebContents = {
 
 /** fakeWebContents records the listeners `installWebContentsSecurity` adds. */
 function fakeWebContents(): FakeWebContents {
-  const listeners = new Map<string, (event: unknown, ...rest: unknown[]) => void>()
+  const listeners = new Map<string, (...args: unknown[]) => void>()
   let openHandler: (() => unknown) | null = null
   const contents = {
-    on(event: string, listener: (event: unknown, ...rest: unknown[]) => void) {
+    on(event: string, listener: (...args: unknown[]) => void) {
       listeners.set(event, listener)
     },
     setWindowOpenHandler(handler: () => unknown) {
@@ -461,15 +461,25 @@ describe('the app:// handler serves one root and refuses everything else', () =>
     await expect(response.text()).resolves.toContain('traversal')
   })
 
-  it('answers 500 rather than a document when the file cannot be read', async () => {
-    // A directory is inside the root and is not a file: `readFile` answers
-    // EISDIR, and the reader gets a reason rather than a half-drawn console.
+  it('treats a directory as a file that is not there, not as a broken console', async () => {
     // The root here is `src/`, because it is the one tree on this checkout with
-    // a directory in it; the read step is the same step either way.
+    // a directory in it; `readFile` answers EISDIR, and that is 404 rather than
+    // 500: a directory is not a resource this bundle serves.
     const srcRoot = fileURLToPath(new URL('../../src', import.meta.url))
     const response = await serveAppRequest(srcRoot, 'app://console/main/')
+    expect(response.status).toBe(404)
+    await expect(response.text()).resolves.toBe('no such file in the bundle\n')
+  })
+
+  it('answers 500 rather than a document when the read fails for another reason', async () => {
+    // A name longer than the filesystem allows reaches `readFile` and fails
+    // with ENAMETOOLONG, which is not one of the "there is no such file" codes:
+    // the reader gets the one-line reason and no document. (A mode-000 file
+    // would be the other way to provoke this, and it is not portable: a test run
+    // as root reads it happily.)
+    const response = await serveAppRequest(bundleRoot, `app://console/${'a'.repeat(5000)}.html`)
     expect(response.status).toBe(500)
-    await expect(response.text()).resolves.toContain('could not be read')
+    await expect(response.text()).resolves.toBe('the bundle file could not be read\n')
   })
 
   it('serves a media type by extension, and nothing else by guess', () => {
@@ -502,23 +512,29 @@ describe('the scheme is declared and wired, not assumed', () => {
   })
 
   it('handles every app:// request through the bundle, CSP header included', async () => {
-    let scheme: string | null = null
-    let handler: ((request: { url: string }) => Promise<Response>) | null = null
+    // The recorded scheme and handler live in an object rather than in two
+    // `let`s: TypeScript narrows a `let` to its initial value across a callback
+    // that assigns it, and the calls below would then be calls on `never`.
+    type Handler = (request: { url: string }) => Promise<Response>
+    const wiring: { scheme: string | null; handler: Handler | null } = {
+      scheme: null,
+      handler: null,
+    }
     const protocolModule = {
-      handle(name: string, given: (request: { url: string }) => Promise<Response>) {
-        scheme = name
-        handler = given
+      handle(name: string, given: Handler) {
+        wiring.scheme = name
+        wiring.handler = given
       },
     } as unknown as Protocol
 
     handleAppRequests(protocolModule, bundleRoot)
 
-    expect(scheme).toBe(APP_SCHEME)
-    const response = await handler?.({ url: APP_ENTRY_URL })
+    expect(wiring.scheme).toBe(APP_SCHEME)
+    const response = await wiring.handler?.({ url: APP_ENTRY_URL })
     expect(response?.status).toBe(200)
     expect(response?.headers.get(CSP_HEADER)).toBe(CONTENT_SECURITY_POLICY)
 
-    const refused = await handler?.({ url: 'app://evil.invalid/index.html' })
+    const refused = await wiring.handler?.({ url: 'app://evil.invalid/index.html' })
     expect(refused?.status).toBe(403)
   })
 })
