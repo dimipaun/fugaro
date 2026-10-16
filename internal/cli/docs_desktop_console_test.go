@@ -90,6 +90,57 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers is the plan's Task 5.0
+// red step: the owner's answers of 2026-10-15, pinned where the design records
+// them -- section 10's last column -- and the two lines that record what the
+// owner's answers of 2026-10-16 do to THIS design (nothing: D22, D34 and D21
+// belong to docs/design/desktop-console-v2.md's D21-D38, and no row of
+// section 10 moves). A ruling cannot be dropped from the column it was written
+// into, and the v2 answers cannot quietly start being restated here, without
+// failing a named test.
+func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+	for _, tc := range []struct {
+		what   string
+		quotes []string
+	}{
+		{"section 10's answer column", []string{
+			"| Owner's answer 2026-10-15 |",
+			"the other sixteen accepted as recommended",
+		}},
+		{"D1, the CLI sidecar behind FugaroSource and never option B", []string{
+			"**CLI sidecar (option A), behind the `FugaroSource` interface; direct RTDB/Firestore access with the operator's credentials (option B) never.**",
+		}},
+		{"D3, this repository, under console/", []string{
+			"**This repository, under `console/`.**",
+		}},
+		{"D4, the cask, the signing and the owner's hands", []string{
+			"**Direct download plus a Homebrew cask; signed, notarised and stapled.**",
+			"**tag-only**, behind `scripts/release-gate.sh` and a **protected GitHub environment**",
+			"**the owner holds the certificate and runs every signing step**",
+			"**The Mac App Store is out.**",
+		}},
+		{"D11, its own artifact from the CLI's vX.Y.Z tag", []string{
+			"**Its own artifact, published from the CLI's `vX.Y.Z` tag, with a declared supported CLI range.**",
+		}},
+		{"D13, answered as recommended with the pairing check", []string{
+			"**Accepted as recommended** — with the pairing check above recorded as part of the recommendation",
+		}},
+		{"the answers of 2026-10-16, recorded as the v2 design's and not this design's", []string{
+			"2026-10-16: the two answers to that spec's decisions",
+			"no answer of 2026-10-16 changes any row of §10",
+			"they do not reopen or amend anything below",
+		}},
+	} {
+		for _, want := range tc.quotes {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s no longer carries %s: it never says %q", path, tc.what, want)
+			}
+		}
+	}
+}
+
 // jsonTagNames collects every json key of the named types, recursing into the
 // structs, pointers and slices that recurse() admits so a nested shape's
 // fields are covered too. Types recurse() refuses (time.Time and the like) are
