@@ -92,7 +92,9 @@ func TestWatchPlainDropsMergedAndClosedPRs(t *testing.T) {
 	if got := ghWatchCalls(t, calls); len(got) != 3 {
 		t.Fatalf("calls = %v, want one per ready PR", got)
 	}
-	if want := "pr view 42 --repo acme/app --json state --jq .state"; !containsStr(ghWatchCalls(t, calls), want) {
+	// The repository gh is asked for carries its host: a bare owner/repo would
+	// be resolved against gh's default host, which GH_HOST sets.
+	if want := "pr view 42 --repo github.com/acme/app --json state --jq .state"; !containsStr(ghWatchCalls(t, calls), want) {
 		t.Fatalf("calls = %v, want %q among them", ghWatchCalls(t, calls), want)
 	}
 	if strings.Contains(plain, "PR state unavailable") {
@@ -257,7 +259,9 @@ func TestEmitLiveFramesApplyPRState(t *testing.T) {
 // has no other reason to print again — nothing changed in the database — so
 // watchStream's version comparison is the whole mechanism that turns an answer
 // into a frame there; without it the merged PR would sit in the frame for as
-// long as the stream ran. The screen's equivalent is the TUI test above.
+// long as the stream ran. The screen's equivalent is a test of another package:
+// watch.TestTUIPRStateDropsMergedReadyRow (internal/watch/prstate_test.go), which
+// proves the drawn frame loses the row for the same reason.
 func TestWatchStreamRedrawsWhenAPRStateAnswerLands(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")

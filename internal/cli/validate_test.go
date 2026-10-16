@@ -1015,13 +1015,17 @@ func TestValidateReportsAProjectConfigItCouldNotRead(t *testing.T) {
 	// nothing can read it.
 	//
 	// The config directory is deliberately deep: the loader's reason is printed
-	// first and the file last (unreadableProjectConfig), and the line is capped
-	// at pluginwire.MaxPrintable runes, so a path long enough to fill that cap
-	// is what proves the reason is the half that survives. The depth is written
-	// here rather than left to t.TempDir() because TMPDIR is not the test's to
-	// choose: the reviewed form of this test passed under /tmp and failed under
-	// macOS's own per-user TMPDIR, and a path that is long on every machine is
-	// what makes this one say the same thing wherever it runs.
+	// first and the file last (unreadableProjectConfig), so a long path is what
+	// exercises the order — the place is shortened to its last elements
+	// (shortPath) and still has to come out after the reason, whole. Nothing is
+	// capped any more (the reason is printed through pluginwire.PrintableN with
+	// its rune cap lifted, since a cap anywhere near the old 200 took the half
+	// the line exists for: TestValidateKeepsTheFixOfALongLoaderReason below is
+	// that finding). The depth is written here rather than left to t.TempDir()
+	// because TMPDIR is not the test's to choose: the reviewed form of this test
+	// passed under /tmp and failed under macOS's own per-user TMPDIR, and a path
+	// that is long on every machine is what makes this one say the same thing
+	// wherever it runs.
 	isolateProjects(t, filepath.Join(t.TempDir(), strings.Repeat("deep-config-directory/", 8)))
 	projectRouting(t, routedSwitchBlock)
 	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
@@ -1056,6 +1060,90 @@ func TestValidateReportsAProjectConfigItCouldNotRead(t *testing.T) {
 	}
 	if strings.Contains(out, "could not be read") {
 		t.Errorf("a machine with no project config reports one that could not be read:\n%s", out)
+	}
+}
+
+// TestValidateKeepsTheFixOfALongLoaderReason is the second half of that
+// finding, one layer down: the reason led and the place followed, but the
+// reason was padded into pluginwire.MaxPrintable, and the loader's own reasons
+// are longer than what is left of that cap once the place has its room — and
+// they end in the instruction. So the line named the key, the model and the
+// defect and then cut the fix off mid-word: "…whose allow_data_to is not
+// written: name the repositories whose code may b… (truncated)" for a switch
+// naming a model the entry claims as anthropic/claude-haiku-4.5, and "…name the
+// IDs this switch carries, one explici… (truncated)" for a switch whose models
+// list is empty. Both send the operator to a sentence they cannot read.
+//
+// Mutation that makes this fail: cap the reason into MaxPrintable (the previous
+// PrintableN(reason, MaxPrintable-len(where)-truncLead)), with a config
+// directory deep enough for the place to have its say — the shape the test
+// above uses, and long TMPDIRs, where the reviewed test's own failure was first
+// seen.
+func TestValidateKeepsTheFixOfALongLoaderReason(t *testing.T) {
+	const claude = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\nworkflows:"
+	const route = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["anthropic/claude-sonnet-5.5"]
+    allow_data_to: ["acme/app"]
+`
+	for _, tc := range []struct{ name, project, want string }{
+		{
+			// The entry claims anthropic/claude-haiku-4.5, which is not the
+			// canonical map's route ID for claude-haiku-4-5 (anthropic/
+			// claude-haiku-4.5 is a spelling the map does not carry).
+			name: "a switch naming an ID the entry claims its own way",
+			project: `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["anthropic/claude-haiku-4.5"]
+    allow_data_to: ["acme/app"]
+` + "routing:\n  claude:\n    via: openrouter\n    models: [claude-haiku-4-5]\n",
+			want: "with the route's ID measured",
+		},
+		{
+			name:    "a switch whose list is empty",
+			project: route + "routing:\n  claude:\n    via: openrouter\n    models: []\n",
+			want:    "one explicit Claude ID per entry",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A long TMPDIR and a deep config directory both: the place is the
+			// half that is cut, and this is the machine shape it was cut on.
+			isolateProjects(t, filepath.Join(t.TempDir(),
+				strings.Repeat("a-fairly-long-tempdir-name/", 4), strings.Repeat("deep-config-directory/", 8)))
+			projectRouting(t, tc.project)
+			out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d, want %d\n%s%s", ExitCode(err), ExitUserError, out, errOut)
+			}
+			line := ""
+			for _, l := range strings.Split(out, "\n") {
+				if strings.Contains(l, "could not be read") {
+					line = l
+				}
+			}
+			if line == "" {
+				t.Fatalf("the loader's refusal is not reported:\n%s%s", out, errOut)
+			}
+			if !strings.Contains(line, tc.want) {
+				t.Errorf("the reason's instruction is gone, so the operator cannot read the fix: %q", tc.want)
+			}
+			if strings.Contains(line, "(truncated)") {
+				t.Errorf("the line is still cut: %s", line)
+			}
+			// The place is still last, and still the one thing that is short:
+			// the operator can find the file the reason is about.
+			if !strings.HasSuffix(line, "aurora.yaml)") || !strings.Contains(line, "…/fugaro/projects/aurora.yaml") {
+				t.Errorf("the place is no longer the shortened tail of the line: %s", line)
+			}
+		})
 	}
 }
 
