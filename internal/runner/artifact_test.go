@@ -1471,6 +1471,87 @@ func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T) {
 	assertNothingUploaded(t, h)
 }
 
+// TestArtifactCollisionKeyIsTheOneFoldedName pins the key itself, because two
+// callers ask the "are these two names one file" question with it: the
+// uploader's duplicate table below and `fugaro artifacts get`'s
+// artifactSetConflict (internal/cli). A key that is not the same on both sides
+// is the drift this pairs with: a run stages a set its own retriever then
+// refuses wholesale.
+//
+// The unequal pairs are in the table for the same reason as the equal ones.
+// U+0130 (İ) is the rune that makes strings.ToLower the wrong key: ToLower maps
+// it to 'i', which strings.EqualFold does NOT equate with it, so a lower-cased
+// key collides two names that are two files, and refuses İ.png beside i.png.
+// Mutation caught: folding with strings.ToLower, or without the NFC pass.
+func TestArtifactCollisionKeyIsTheOneFoldedName(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		a, b  string
+		equal bool
+	}{
+		{"a name with itself", "sizzle.png", "sizzle.png", true},
+		{"case", "sizzle.png", "SIZZLE.PNG", true},
+		{"the Kelvin sign", "K.png", "K.png", true},
+		{"long s", "s.png", "ſ.png", true},
+		{"NFC and NFD, as macOS stores them", "café.png", "café.png", true},
+		{"NFC and NFD, the other way round", "café.png", "café.png", true},
+		{"U+0130 is not I", "I.png", "İ.png", false},
+		{"U+0130 is not i either", "İ.png", "i.png", false},
+		{"a different name", "sizzle.png", "sizzle2.png", false},
+		{"a different path", "clips/a.png", "a.png", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ka, kb := runner.ArtifactCollisionKey(tc.a), runner.ArtifactCollisionKey(tc.b)
+			if (ka == kb) != tc.equal {
+				t.Errorf("ArtifactCollisionKey(%q) = %q, ArtifactCollisionKey(%q) = %q: equal = %v, want %v",
+					tc.a, ka, tc.b, kb, ka == kb, tc.equal)
+			}
+		})
+	}
+}
+
+// TestArtifactNameCollisionOnAFoldedNameIsRefused: the collision the uploader
+// refuses has to be the retriever's, or a run stages a set its own download
+// refuses wholesale (`fugaro artifacts get RUN` says the record's names are
+// one file, in artifactSetConflict). The pair here is the one a lower-cased
+// key misses — "s" and the long s U+017F, which unicode.ToLower leaves alone
+// while strings.EqualFold folds them together — so a table keyed on
+// strings.ToLower stages both artifacts and `get` can never write the record
+// back.
+//
+// The filesystem has to keep the two names apart for the collision to be the
+// table's rather than the render's own write, and a case-folding,
+// normalization-insensitive one (APFS) does not; where it does not, the test
+// skips rather than assert something the filesystem decided.
+//
+// Mutation (key the collision map on strings.ToLower, or on the name as
+// written): the run succeeds with two artifacts and this test fails.
+func TestArtifactNameCollisionOnAFoldedNameIsRefused(t *testing.T) {
+	probe := t.TempDir()
+	for _, n := range []string{"s.png", "ſ.png"} {
+		if err := os.WriteFile(filepath.Join(probe, n), nil, 0o600); err != nil {
+			t.Skipf("this filesystem cannot hold both s.png and ſ.png: %v", err)
+		}
+	}
+	if ents, err := os.ReadDir(probe); err != nil || len(ents) != 2 {
+		t.Skipf("this filesystem stores s.png and ſ.png as one file (%d entries, %v)", len(ents), err)
+	}
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "s.png", body: "one"}, outFile{name: "ſ.png", body: "two"}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "same name") {
+		t.Fatalf("reason = %q, want the collision refusal", rec.Reason)
+	}
+	assertNothingUploaded(t, h)
+}
+
 // TestStageArtifactsRefusesADotNamedMatch is the paired rule: the retriever
 // refuses a dot-named entry, and filepath.Glob — unlike a shell — matches a
 // leading dot, so without the refusal out/*.png would upload and record a

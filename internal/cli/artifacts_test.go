@@ -1330,6 +1330,149 @@ func TestArtifactsGetCreatesNoDirectoriesWhileChecking(t *testing.T) {
 	}
 }
 
+// TestArtifactsGetRefusesADirectoryComponentThatIsNotADirectory: a name like
+// frames/a.png needs root/frames to be a directory, and the operator's own
+// file — or a dangling link, or a link to a file — sitting there means the
+// download cannot happen at all. That is a user error naming the path, exit 1,
+// like every other destination refusal in checkArtifactDest; left to the write
+// it surfaces from os.Lstat or MkdirAll as a bare "not a directory" and
+// reaches the user through remote(err) as exit 2, which tells a script to
+// retry and blames the infrastructure for a local condition. Mutation caught:
+// parentUnderRoot accepting any existing entry as its anchor (root/frames is
+// Lstat-ed as existing, EvalSymlinks resolves it inside root, the prefix check
+// passes, and the failure only appears later, unclassified).
+func TestArtifactsGetRefusesADirectoryComponentThatIsNotADirectory(t *testing.T) {
+	body := []byte("hello")
+	for _, tc := range []struct {
+		name  string
+		plant func(t *testing.T, dir, root string)
+	}{
+		{"a regular file", func(t *testing.T, dir, root string) {
+			if err := os.WriteFile(filepath.Join(root, "frames"), []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a symlink to nothing", func(t *testing.T, dir, root string) {
+			if err := os.Symlink(filepath.Join(dir, "gone"), filepath.Join(root, "frames")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a symlink to a file", func(t *testing.T, dir, root string) {
+			target := filepath.Join(dir, "a-file")
+			if err := os.WriteFile(target, []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(root, "frames")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			const id = "20261016-090000-abcd"
+			seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+				{Name: "frames/a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+			}, map[string][]byte{"frames/a.png": body})
+			root := filepath.Join(dir, artifactRunDir(id))
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.plant(t, dir, root)
+
+			_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+			if err == nil {
+				t.Fatalf("get wrote through %s at a directory the name needs", tc.name)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d: a destination this filesystem cannot hold is the operator's error, not a remote failure (%v)", code, ExitUserError, err)
+			}
+			if !strings.Contains(err.Error(), "frames") {
+				t.Errorf("the refusal does not name the entry in the way: %v", err)
+			}
+			if entries := dirEntries(t, root); len(entries) != 1 || entries[0] != "frames" {
+				t.Errorf("the destination root holds %v, want just the entry that was already there", entries)
+			}
+		})
+	}
+	// A real directory at that path is exactly what the name needs, so the
+	// download goes through it: the refusal must be about what is there, not
+	// about the name having a directory component at all.
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "frames/a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{"frames/a.png": body})
+	root := filepath.Join(dir, artifactRunDir(id))
+	if err := os.MkdirAll(filepath.Join(root, "frames"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id); err != nil {
+		t.Errorf("get refused an existing directory at a directory of the name: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "frames", "a.png")); err != nil || string(got) != string(body) {
+		t.Errorf("the artifact was not written through the existing directory: %q, %v", got, err)
+	}
+}
+
+// TestArtifactsWithRepoStillLooksTheRunUp: --repo answers "which repository
+// does this bare run ID belong to", not "does this run exist", so a mistyped
+// id with --repo is a missing run and never the "has no result.json: it never
+// finished" that only a run that really launched can be charged with — that
+// message sends an operator looking for a container that died. It is also the
+// cheap check: one object under the named repository rather than the search
+// across all of them that a bare ID without --repo needs. Mutation caught:
+// returning a store for anything shaped like a run ID when --repo is given.
+func TestArtifactsWithRepoStillLooksTheRunUp(t *testing.T) {
+	f := newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	// The run that is there still resolves, in both shapes of RUN, so this is
+	// not a blanket refusal of --repo.
+	for _, args := range [][]string{
+		{"artifacts", "ls", "--repo", "acme/app", id},
+		{"artifacts", "ls", "--repo", "acme/app", appSlug + "/" + id},
+	} {
+		if _, _, err := execute(t, args...); err != nil {
+			t.Errorf("%v = %v", args, err)
+		}
+	}
+	// A run ID nothing ever launched.
+	const gone = "20261016-090000-beef"
+	for _, args := range [][]string{
+		{"artifacts", "ls", "--repo", "acme/app", gone},
+		{"artifacts", "get", "--repo", "acme/app", gone},
+		{"artifacts", "ls", "--repo", "acme/app", appSlug + "/" + gone},
+	} {
+		_, _, err := execute(t, args...)
+		if code := ExitCode(err); code != ExitUserError {
+			t.Errorf("%v = %v, want a user error", args, err)
+		}
+		if err == nil || !strings.Contains(err.Error(), "no run") {
+			t.Errorf("%v does not report a missing run: %v", args, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "never finished") {
+			t.Errorf("%v charges a run that never launched with never finishing: %v", args, err)
+		}
+	}
+	// A run that did launch and never wrote a record is still that other
+	// thing: the lookup is what tells the two apart, not the message alone.
+	const id2 = "20261016-090000-cafe"
+	seedRun(t, f, id2, "", "someone@example.com", false)
+	_, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", id2)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "never finished") {
+		t.Errorf("ls of a launched run with no record = %v, want the never-finished refusal", err)
+	}
+}
+
 // TestArtifactsGetEscapesANameInItsRefusals: every name in a refusal is
 // untrusted text — the record's (a hostile sibling run of the same repository
 // can rewrite result.json) and the NAME the user typed alike — and the

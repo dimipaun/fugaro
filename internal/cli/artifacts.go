@@ -12,9 +12,6 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
-	"unicode"
-
-	"golang.org/x/text/unicode/norm"
 
 	"github.com/spf13/cobra"
 
@@ -174,9 +171,17 @@ func newArtifactsGetCmd() *cobra.Command {
 }
 
 // artifactsRun resolves RUN ([<repo-slug>/]<run-id>) and --repo to the store
-// of one run. Its --repo resolution follows runs ls: --repo names the
-// repository a bare run ID belongs to, and a RUN that already carries a slug
-// has to agree with it.
+// of one run. --repo names the repository a bare run ID belongs to, and a RUN
+// that already carries a slug has to agree with it.
+//
+// The run itself is looked up in the bucket either way. --repo answers "which
+// repository", not "does this run exist", so with it the lookup is one object
+// check under the named repository rather than a search across all of them
+// (locateRun: runstore.Locate). Doing without that check — an earlier version
+// returned a store for anything that was shaped like a run ID — reports a run
+// that was never launched as a run that recorded no artifacts: "it never
+// finished" about a run that never started, which sends an operator looking
+// for a container that died when they mistyped an id.
 func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string) (*runstore.Store, error) {
 	if repo == "" {
 		slug, id, err := locateRun(ctx, env, ref)
@@ -197,12 +202,18 @@ func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string) (*runsto
 		if refSlug != slug {
 			return nil, userErr("run %s is in %s, but --repo names %s", ref, refSlug, slug)
 		}
+		if _, _, err := locateRun(ctx, env, slug+"/"+id); err != nil {
+			return nil, err
+		}
 		return runstore.Open(env.bucket.Bucket, slug, id), nil
 	}
 	// The run ID's form is checked here because it becomes part of an object
 	// name (the same rule locateRun applies to a bare ID).
 	if _, err := runstore.RunTime(ref); err != nil {
 		return nil, userErr("%q is neither <repo-slug>/<run-id> nor a run ID", ref)
+	}
+	if _, _, err := locateRun(ctx, env, slug+"/"+ref); err != nil {
+		return nil, err
 	}
 	return runstore.Open(env.bucket.Bucket, slug, ref), nil
 }
@@ -481,19 +492,23 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 //   - two names a case-insensitive filesystem writes to one file. APFS and
 //     NTFS ignore case; macOS normalises as well, so "café.png" in its NFC
 //     form (U+00E9) and in its NFD form (e + U+0301) are one file there. The
-//     collision is decided by foldKey, which is EqualFold's equivalence plus
-//     NFC, and the answer is the set's: every name is filed under its key
-//     before any pair is reported, so the order the record lists them in
-//     cannot hide a pair, and no entry can evict another from the table.
+//     collision is decided by runner.ArtifactCollisionKey, the uploader's own
+//     key for the same question (one rule, two callers, as with
+//     runner.ArtifactName below), and the answer is the set's: every name is
+//     filed under its key before any pair is reported, so the order the
+//     record lists them in cannot hide a pair, and no entry can evict another
+//     from the table.
 //   - a name that is a directory of another ("a" and "a/b.png"). Only one of
 //     the two can exist: the first needs root/a to be a file and the second
-//     needs it to be a directory. Left to the download, the check phase's
-//     MkdirAll makes root/a a directory and the rename of "a" then fails as a
-//     remote error, which is not what a record's own contradiction is.
+//     needs it to be a directory. Left to the download, whichever is written
+//     first decides what root/a is and the other then fails — a rename onto a
+//     directory, or a write into a file — as a remote error, which is not
+//     what a record's own contradiction is. So the set is refused before
+//     anything is created (and the check phase creates nothing at all).
 func artifactSetConflict(files []runstore.ArtifactFile) string {
 	byKey := make(map[string]string, len(files))
 	for _, a := range files {
-		key := foldKey(a.Name)
+		key := runner.ArtifactCollisionKey(a.Name)
 		first, ok := byKey[key]
 		switch {
 		case !ok:
@@ -508,7 +523,7 @@ func artifactSetConflict(files []runstore.ArtifactFile) string {
 	// name is looked up, and the map above holds one name per key, so this is
 	// independent of the order the record lists its entries in.
 	for _, a := range files {
-		key := foldKey(a.Name)
+		key := runner.ArtifactCollisionKey(a.Name)
 		for i := strings.LastIndexByte(key, '/'); i > 0; i = strings.LastIndexByte(key[:i], '/') {
 			if ancestor, ok := byKey[key[:i]]; ok {
 				return fmt.Sprintf("%q and %q: the first names a file and the second a file inside a directory of that name, so one download would have to write a file where the other needs a directory", ancestor, a.Name)
@@ -516,53 +531,6 @@ func artifactSetConflict(files []runstore.ArtifactFile) string {
 		}
 	}
 	return ""
-}
-
-// foldKey is a name's canonical identity for the "these two names are one
-// file" question: NFC-normalised, and then every rune replaced by the smallest
-// rune in its simple case-folding orbit.
-//
-// Both halves are load-bearing, and neither is strings.ToLower:
-//
-//   - a lower-cased key is not EqualFold's equivalence. unicode.ToLower maps
-//     U+0130 (İ) to 'i', which strings.EqualFold does NOT equate with it, so a
-//     table keyed that way collides two names that are two files — and, with
-//     one name per key, an entry like that evicts the entry it collided with
-//     and hides the real pair behind it (a record listing "I.png", "İ.png",
-//     "i.png" has a genuine collision between the first and the last). It
-//     misses real collisions on the other side as well: ToLower(U+017F) is
-//     U+017F, and the long s folds with "s" and "S" (U+212A, the Kelvin sign,
-//     is the same shape for k and K). The orbit minimum gets both cases
-//     right, in the direction EqualFold decides ("K" for k, K and U+212A;
-//     "S" for s, S and U+017F; "İ" stays "İ").
-//   - normalization is not case folding at all: EqualFold("café.png",
-//     "café.png") is false for the NFC and NFD spellings, and macOS — where
-//     an operator runs this — treats them as one file.
-//
-// The key is only ever a map key: nothing prints it, and nothing writes a
-// path from it.
-func foldKey(name string) string {
-	folded := norm.NFC.String(name)
-	var b strings.Builder
-	b.Grow(len(folded))
-	for _, r := range folded {
-		b.WriteRune(foldRune(r))
-	}
-	return b.String()
-}
-
-// foldRune is the smallest rune in r's simple case-folding orbit — the orbit
-// unicode.SimpleFold cycles through, over which strings.EqualFold considers its
-// members equal. The minimum is what makes the orbit a single key: whichever
-// member a name is written with, the key is the same rune.
-func foldRune(r rune) rune {
-	min := r
-	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
-		if f < min {
-			min = f
-		}
-	}
-	return min
 }
 
 // artifactNameProblem is why name, read out of a run's result.json, may not
@@ -627,28 +595,32 @@ func prepareArtifactRoot(root string) error {
 
 // checkArtifactDest returns the path name is downloaded to, refusing a
 // destination that must not be written: an existing file without --force, a
-// symlink, anything that is not a regular file, and a name whose directories
-// resolve outside root (a symlinked directory planted under it is the same
-// escape as a name with a ".." in it). It creates the directories the name
-// needs, so every path it returns is inside root.
+// symlink, anything that is not a regular file, a directory the name needs
+// that is not a directory, and a name whose directories resolve outside root
+// (a symlinked directory planted under it is the same escape as a name with a
+// ".." in it).
 //
-// The parent is proved to be inside root BEFORE it is created: checking after
-// the MkdirAll would refuse the write with the outside directory already
-// made, and "writes only under the fresh root it created" has to hold for
-// directories too. Chesterton: a name like frames/sub/a.png whose frames/ is
-// a link out of root would otherwise create outside/sub/ and then be refused.
+// It creates nothing and it deletes nothing. The directories the name needs
+// are made by prepareArtifactDest, at the moment that file is about to be
+// written, and the two steps that have to be in that order — prove the parent
+// is inside root, create, prove it again — live there. Splitting it this way
+// is what keeps the check phase a read: a phase that creates directories
+// changes the filesystem it is checking, so a refusal on a later entry leaves
+// a half-made tree behind, and a record naming both "a" and "a/b.png" has its
+// contradiction resolved into a directory by the check for the second entry
+// rather than reported by artifactSetConflict before anything is made.
+//
+// "Writes only under the fresh root it created" still holds for directories,
+// which is why the proving happened before the creating rather than after:
+// Chesterton, a name like frames/sub/a.png whose frames/ is a link out of
+// root must not have outside/sub/ created and then be refused.
 func checkArtifactDest(root, name string, force bool) (string, error) {
 	dest := filepath.Join(root, filepath.FromSlash(name))
 	parent := filepath.Dir(dest)
 	if err := parentUnderRoot(root, parent); err != nil {
 		return "", err
 	}
-	// The parent is proved and NOT created: this is the check phase, which
-	// runs for every entry before the first byte is read, and a phase that
-	// creates directories changes the filesystem it is checking — a refusal
-	// on a later entry then leaves a half-made tree behind, and a record
-	// naming both "a" and "a/b.png" has its contradiction resolved into a
-	// directory by the check for the second entry rather than reported.
+	// The parent is proved and nothing is created (see the doc comment):
 	// prepareArtifactDest makes the directory when a file is about to be
 	// written into it.
 	fi, err := os.Lstat(dest)
@@ -715,6 +687,15 @@ func underArtifactRoot(root, dir string) error {
 // deepest directory of dir that is there and requires that one to be inside
 // root, so nothing is created outside root and a link in the middle of the
 // name is caught before the first directory is made rather than after.
+//
+// The anchor that IS there also has to be a directory (or a link to one): a
+// plain file at "frames" while the name is "frames/a.png" means nothing can be
+// written there at all, and it is the operator's own filesystem that says so.
+// Reported here it is a user error naming the path; left to the write, it
+// surfaces from os.Lstat or MkdirAll as a bare "not a directory" and reaches
+// the user through remote(err) — exit 2 for a local condition, telling a
+// script to retry and blaming the infrastructure for a name that cannot be
+// fetched into this directory.
 func parentUnderRoot(root, dir string) error {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -732,6 +713,24 @@ func parentUnderRoot(root, dir string) error {
 			break
 		}
 		dir = up
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		// The walk above stopped on something that existed a moment ago;
+		// whatever happened to it, there is no anchor to resolve.
+		return remote(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		// A link is resolved below and refused there if it leaves root; here
+		// it only has to lead to a directory. A dangling one, or one to a
+		// file, is not a place to make the artifact's directories in, and
+		// EvalSymlinks would otherwise report it as a remote failure.
+		if fi, err = os.Stat(dir); err != nil {
+			return userErr("%s is a link that does not resolve: the artifact's name needs a directory here, and this command will not write through a dangling link", oneLine(dir))
+		}
+	}
+	if !fi.IsDir() {
+		return userErr("%s is not a directory: the artifact's name needs a directory here, and this command will not replace what is there", oneLine(dir))
 	}
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {

@@ -15,6 +15,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/logtail"
@@ -411,9 +414,12 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 			len(kept), strings.Join(out.Globs, ", "), out.FileCount())
 	}
 	names := make([]string, len(kept))
-	// Keyed on the folded name: two names that differ only in case are one
-	// name on a filesystem that folds case, which is where `fugaro artifacts
-	// get` would have the second artifact overwrite the first.
+	// Keyed on ArtifactCollisionKey, the retriever's own key for "these two
+	// names are one file": two names that differ only in case, or in a
+	// normalization macOS applies, are one name where `fugaro artifacts get`
+	// writes them back, so the second artifact would be written over the
+	// first — and a set keyed more weakly than the retriever's is a set the
+	// run stages and no download of it can then hand back.
 	taken := make(map[string]string, len(kept))
 	for i, o := range kept {
 		rel, err := relativeName(r.d.WorkDir, root, o.match)
@@ -424,11 +430,11 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 		if err != nil {
 			return set, fmt.Errorf("the render's %s: %w", o.match, err)
 		}
-		if prev, dup := taken[strings.ToLower(name)]; dup {
-			return set, fmt.Errorf("two of the render's files clean to the same name %q: %s and %s (a name that differs only in case is the same name where the retriever writes it back)",
+		if prev, dup := taken[ArtifactCollisionKey(name)]; dup {
+			return set, fmt.Errorf("two of the render's files clean to the same name %q: %s and %s (a name that differs only in case, or in a Unicode normalization a filesystem may apply, is the same name where the retriever writes it back)",
 				name, prev, o.match)
 		}
-		taken[strings.ToLower(name)] = o.match
+		taken[ArtifactCollisionKey(name)] = o.match
 		names[i] = name
 	}
 	sizes := make([]int64, len(kept))
@@ -847,6 +853,62 @@ func ArtifactName(name string) (clean, problem string) {
 		return "", fmt.Sprintf("the name %q begins with a dot, which the retriever refuses: a file nobody can fetch back is not uploaded", clean)
 	}
 	return clean, ""
+}
+
+// ArtifactCollisionKey is the identity two artifact names share when one
+// filesystem would store them as one file: NFC-normalised, and then every rune
+// replaced by the smallest rune in its simple case-folding orbit.
+//
+// Both halves are load-bearing, and neither is strings.ToLower:
+//
+//   - a lower-cased key is not EqualFold's equivalence. unicode.ToLower maps
+//     U+0130 (İ) to 'i', which strings.EqualFold does NOT equate with it, so a
+//     key like that collides two names that are two files — and, with one name
+//     per key, an entry like that evicts the entry it collided with and hides
+//     the real pair behind it (a set listing "I.png", "İ.png", "i.png" has a
+//     genuine collision between the first and the last). It misses real
+//     collisions on the other side as well: ToLower(U+017F) is U+017F, and the
+//     long s folds with "s" and "S" (U+212A, the Kelvin sign, is the same
+//     shape for k and K). The orbit minimum gets both cases right, in the
+//     direction EqualFold decides ("K" for k, K and U+212A; "S" for s, S and
+//     U+017F; "İ" stays "İ").
+//   - normalization is not case folding at all: EqualFold("café.png",
+//     "café.png") is false for the NFC and NFD spellings, and macOS — where
+//     the retriever runs — treats them as one file.
+//
+// The uploader and the retriever ask the "are these two names one file"
+// question with this one function (sanitiseName's duplicate table and the
+// retriever's artifactSetConflict), the same "one rule, two callers" shape
+// ArtifactName has (design §9: "the upload path cannot produce what the
+// retrieval path refuses"). Keyed with a weaker rule — strings.ToLower was
+// one — the two drift, and a run that renders both K and U+212A, or a name in
+// both a mac's normalizations, stages cleanly while every download of the run
+// is then refused wholesale.
+//
+// The key is only ever a map key: nothing prints it, and nothing builds a
+// path from it.
+func ArtifactCollisionKey(name string) string {
+	folded := norm.NFC.String(name)
+	var b strings.Builder
+	b.Grow(len(folded))
+	for _, r := range folded {
+		b.WriteRune(foldRune(r))
+	}
+	return b.String()
+}
+
+// foldRune is the smallest rune in r's simple case-folding orbit — the orbit
+// unicode.SimpleFold cycles through, over which strings.EqualFold considers
+// its members equal. The minimum is what makes the orbit a single key:
+// whichever member a name is written with, the key is the same rune.
+func foldRune(r rune) rune {
+	min := r
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		if f < min {
+			min = f
+		}
+	}
+	return min
 }
 
 // firstControl returns the byte offset of the first character in name that
