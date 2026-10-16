@@ -2525,7 +2525,9 @@ func TestProbeFailureFailsTheRunAndUploadsNothing(t *testing.T) {
 // an environment variable instead of a file): FUGARO_ARTIFACTS_FILE's contents
 // are not the staged names and the addition assertion fails too; mutation
 // (pass an empty env, or r.env plus the git credential): the added-key set is
-// not exactly the two, or FIXTURE_FAILS_FILE is missing.
+// not exactly the two, or FIXTURE_FAILS_FILE is missing; mutation (assign
+// &probe itself to every row instead of a copy each): the two rows are one
+// object and this test fails on the aliasing assertion.
 func TestProbeEnvironmentNamesTheStagedSet(t *testing.T) {
 	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
@@ -2548,6 +2550,17 @@ func TestProbeEnvironmentNamesTheStagedSet(t *testing.T) {
 		if a.Probe == nil || !a.Probe.Ran || a.Probe.ExitCode != 0 || a.Probe.Warning != "" {
 			t.Errorf("%s carries %+v, want a passed probe", a.Name, a.Probe)
 		}
+	}
+	// One verdict each, not one verdict shared. Equal in value either way
+	// today, because nothing writes to a recorded verdict — which is exactly
+	// why the aliasing is worth pinning: the schema keeps a per-artifact
+	// warning field for the per-artifact nuance this release defers, and the
+	// first writer of one would otherwise change every row of the record and
+	// every cell of the report at once. The record asserted here is the
+	// runner's own, before result.json round-trips it through JSON, which
+	// would give each row its own object regardless.
+	if rec.Artifacts[0].Probe == rec.Artifacts[1].Probe {
+		t.Fatal("both artifacts share one verdict object: a per-artifact write would change every row")
 	}
 	dir := filepath.Join(h.deps.StateDir, "artifacts")
 	if got := readText(t, filepath.Join(h.deps.WorkDir, "probe-out-dir.txt")); got != dir {
@@ -2846,6 +2859,15 @@ func TestProbeIsCutAtTheFinalizeReserve(t *testing.T) {
 	if !strings.Contains(rec.Reason, "finalize reserve") {
 		t.Fatalf("the reason does not name the bound that ended the probe: %q", rec.Reason)
 	}
+	// Naming the STEP and not only the bound. The render's own reserve reason
+	// uses the same words ("... was cut at the run's finalize reserve"), and
+	// the budget here leaves the render only about eight seconds — so a slow
+	// startup could make the RENDER the step the reserve cuts and leave every
+	// other assertion in this test satisfied. This one cannot be satisfied
+	// that way: it pins the probe as the command the reason names.
+	if !strings.Contains(rec.Reason, "commands.probe was cut at the run's finalize reserve") {
+		t.Fatalf("the reason does not name the probe as the step the reserve cut: %q", rec.Reason)
+	}
 	if strings.Contains(rec.Reason, "timed out after 60s") {
 		t.Fatalf("the reason blames a timeout that never fired: %q", rec.Reason)
 	}
@@ -2987,15 +3009,29 @@ func TestProbeReasonQuotesTheProbesLastLine(t *testing.T) {
 // the run and uploads nothing (there is nothing to upload, and the record
 // claims no artifacts either way).
 //
+// The probe also exercises the interface it is handed: FUGARO_OUT_DIR must
+// name a directory that is really there, empty set included, or the design's
+// §8.4 case — the one case where the probe is what judges an empty set — is
+// exactly where a probe that cd's into it or lists it dies with a shell error
+// instead. So the script below refuses to report its own verdict unless the
+// directory exists (exit 3) and holds nothing (exit 4), and the reason the
+// record carries is the only one of the three the test accepts.
+//
 // Mutation (short-circuit the probe when the staged set is empty, skipping it
 // as if the recipe had asked for none): the run ends succeeded/artifacts with
 // no artifacts and a record that attests to nothing, and this test fails on
 // the status, on the reason and on the marker file the probe never wrote.
+// Mutation (drop the MkdirAll that creates the staging directory for the arms
+// that stage nothing): the probe's own check fails and the reason reads
+// "commands.probe exited 3: FUGARO_OUT_DIR is not a directory".
 func TestProbeOverAnEmptyStagedSetFailsTheRun(t *testing.T) {
 	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
 		mergeFiles(renderScript("#!/bin/sh\nmkdir -p out\n"),
-			probeScript("#!/bin/sh\ntouch \"$FUGARO_STATE_DIR/probe-ran.txt\"\necho 'the render produced nothing'\nexit 1\n")))
+			probeScript("#!/bin/sh\ntouch \"$FUGARO_STATE_DIR/probe-ran.txt\"\n"+
+				"[ -d \"$FUGARO_OUT_DIR\" ] || { echo 'FUGARO_OUT_DIR is not a directory'; exit 3; }\n"+
+				"if [ -n \"$(ls -A \"$FUGARO_OUT_DIR\")\" ]; then echo 'the staging directory is not empty'; exit 4; fi\n"+
+				"echo 'the render produced nothing'\nexit 1\n")))
 	rec, err := h.run(t)
 	if err != nil {
 		t.Fatal(err)
@@ -3012,8 +3048,12 @@ func TestProbeOverAnEmptyStagedSetFailsTheRun(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.deps.StateDir, "probe-ran.txt")); err != nil {
 		t.Fatalf("the probe did not run over the empty set: %v", err)
 	}
-	// The set it was handed was empty, and it was told so: FUGARO_OUT_DIR is
-	// the staging directory, which exists and holds nothing.
+	// The set it was handed was empty, and it was told so: the probe's own
+	// script (above) got past both checks — the directory exists, and it held
+	// nothing while the probe ran — since the reason is its exit 1 and not its
+	// exit 3 or 4. The staging directory is still empty afterwards, and
+	// stagedFiles cannot tell a missing directory from an empty one, which is
+	// why the check belongs in the probe.
 	if files := stagedFiles(t, h); len(files) != 0 {
 		t.Fatalf("the staging directory holds %v, want nothing", files)
 	}

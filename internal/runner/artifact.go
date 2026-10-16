@@ -349,7 +349,15 @@ func (r *run) collectArtifacts(ctx context.Context) error {
 		// same verdict — including {ran: false} for a recipe that asked for
 		// no probe, so "there is no probe" is in the record rather than
 		// inferred from a field that is not there (Review Focus 6).
-		files[i].Probe = &probe
+		//
+		// A copy each, not one pointer shared by every row. Nothing writes to
+		// a recorded verdict today, which is exactly why this is worth being
+		// exact about: the schema keeps a per-artifact warning field for the
+		// per-artifact nuance this release defers, and the first writer of one
+		// would otherwise silently change every row of the record and of the
+		// report with it.
+		p := probe
+		files[i].Probe = &p
 	}
 	// Left nil rather than set to an empty slice: the record writes no
 	// artifacts key at all when a run delivered none (runstore.Record), so
@@ -415,7 +423,11 @@ const probeGrace = 5 * time.Second
 //	                       one per name below, so "$FUGARO_OUT_DIR/$name" is
 //	                       always the staged file, whatever shape the recipe's
 //	                       globs have. It is the staging root and never the
-//	                       checkout's outputs root.
+//	                       checkout's outputs root. It EXISTS whenever a probe
+//	                       runs, empty set included — the directory is created
+//	                       here for the arms that staged nothing — so a probe
+//	                       may cd into it or list it; what it must not assume
+//	                       is that anything is in it.
 //	FUGARO_ARTIFACTS_FILE  the path of the file holding those names, one per
 //	                       line, in upload order — each the relative, sanitised
 //	                       name, which is also the object key's leaf under
@@ -462,6 +474,23 @@ func (r *run) runProbe(ctx context.Context, set artifactSet) (runstore.ProbeResu
 		// commands.probe — before the first step: an empty command through
 		// sh -c exits 0, which would record a check that never ran as a pass.
 		return skipped, "", errors.New("commands.probe is empty")
+	}
+	// FUGARO_OUT_DIR must name a directory that IS there, and only the path
+	// that stages a file creates it (stageArtifacts' own MkdirAll). The two
+	// arms that stage nothing — a render that matched no glob, and a set every
+	// match of which was refused — return after the RemoveAll above, so
+	// without this the design's §8.4 case (a render that produced nothing, the
+	// one case where the probe is what decides an empty set) would hand the
+	// probe a path that does not exist: a probe that cd's into it, or lists it,
+	// would die with a shell error instead of judging an empty directory. The
+	// documented interface says the directory holds exactly the files that
+	// will be uploaded, and the empty set is the case with none.
+	//
+	// Created here and not in collectArtifacts, so a run that asks for no
+	// probe still leaves no staging directory behind: the skipped arm above
+	// has already returned.
+	if err := os.MkdirAll(set.dir, 0o755); err != nil {
+		return skipped, "", fmt.Errorf("creating the staging directory %s for the probe: %w", set.dir, err)
 	}
 	namesPath, err := r.writeArtifactNames(set)
 	if err != nil {
