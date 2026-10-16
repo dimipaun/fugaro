@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1436,7 +1437,7 @@ func TestChecklistHasCheck50(t *testing.T) {
 	// project pinning, not merely a ${P:?...}.
 	chk50MustContain(t, section, "section", []string{
 		"P=fugaro-dev",
-		`[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$JOB" ] && [ -n "$C" ] && [ -n "$TASK" ] \`,
+		`[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$JOB" ] && [ -n "$C" ] && [ -n "$TASK" ] && [ -n "$TASK50" ] && [ -n "$START" ] \`,
 		// C is the operator's project config, and it is the block's and not
 		// step 1's: step 7 restores it in a later shell, where step 1's shell
 		// is gone.
@@ -1506,6 +1507,11 @@ func TestChecklistHasCheck50(t *testing.T) {
 	}{
 		{"### 1.", []string{
 			"**FACT:** the state as recorded",
+			// The records belong to one attempt, and the step says which two
+			// checks proved it: no record was left over from an earlier attempt
+			// (the block refuses on one), and the copy step 7 restores from is
+			// the operator's config as it stands.
+			"**FACT:** the block's own `date -r`-guarded refusal did **not** fire",
 		}},
 		{"### 2.", []string{
 			"**FACT:** the two refusals verbatim",
@@ -1522,7 +1528,10 @@ func TestChecklistHasCheck50(t *testing.T) {
 			"**FACT:** `cost.model_usd` and `cost.reported_usd`",
 		}},
 		{"### 5.", []string{
-			"**FACT:** both token counts side by side",
+			// ONE number, named first: the rest of the line is what it is read
+			// against, and a FACT that asks for four counts and two costs leaves
+			// the owner with no figure to report.
+			"**FACT:** the ONE number first",
 			"**FACT:** the two `cost.model_usd` figures",
 		}},
 		{"### 6.", []string{
@@ -1531,6 +1540,10 @@ func TestChecklistHasCheck50(t *testing.T) {
 		}},
 		{"### 7.", []string{
 			"**FACT:** the restore is complete",
+			// The records are removed only once the restore has succeeded, and
+			// the step says so: a record left behind is what the next run reads
+			// as its own.
+			"**FACT:** this attempt's records are gone",
 			"**FACT:** the sandbox still runs",
 		}},
 	}
@@ -1595,14 +1608,16 @@ func TestChecklistHasCheck50(t *testing.T) {
 		"no route's own ID has been measured for it",
 	})
 
-	// Every `fugaro run` carries the block's TASK and the sandbox's base
-	// branch: a launch with no task is refused before any gate, and the sandbox
-	// repository has no `main`.
+	// Every `fugaro run` carries one of the block's two tasks and the sandbox's
+	// base branch: a launch with no task is refused before any gate, and the
+	// sandbox repository has no `main`. Which task is not free either — the two
+	// runs step 5 compares carry the committing one, and the check's other runs
+	// carry the no-change one — which the step pins below hold.
 	var runs int
 	for _, line := range fugaroCommands(section) {
 		if strings.HasPrefix(line, "fugaro run ") {
 			runs++
-			if !strings.Contains(line, `"$TASK"`) {
+			if !strings.Contains(line, `"$TASK"`) && !strings.Contains(line, `"$TASK50"`) {
 				t.Errorf("the Check 50 section has a `fugaro run` with no task: %q — the launcher refuses a taskless launch before any policy gate, so this step never reaches what it is there to produce", line)
 			}
 			if !strings.Contains(line, "--ref master") {
@@ -1701,28 +1716,37 @@ func TestChecklistHasCheck50(t *testing.T) {
 	}
 	// Every `--delete` in the step's own blocks must sit inside the ONE arm
 	// that tests the recorded state: a plain line whose only guard is a
-	// trailing comment runs whatever the state was. A comment or a message that
-	// mentions the flag is not a command; anything else on a line with it is.
-	armRE := regexp.MustCompile(`^(no-policy|policy-no-routing|policy-routing)\)`)
-	for _, block := range chk49FencedBlocks(step7) {
-		lines := strings.Split(block, "\n")
-		for i, line := range lines {
-			if !strings.Contains(line, "--delete") {
-				continue
-			}
-			if t := strings.TrimSpace(line); strings.HasPrefix(t, "#") || strings.HasPrefix(t, "echo ") {
-				continue
-			}
-			arm := ""
-			for j := i - 1; j >= 0; j-- {
-				if m := armRE.FindStringSubmatch(strings.TrimSpace(lines[j])); m != nil {
-					arm = m[1]
-					break
-				}
-			}
-			if arm != "no-policy" {
-				t.Errorf("Check 50 step 7 runs %q and it is not inside the branch that tests the state step 1 recorded (it is in the %q arm, or in no arm at all): --delete may run only when step 1 recorded that no policy was published", strings.TrimSpace(line), arm)
-			}
+	// trailing comment runs whatever the state was, and a destructive command
+	// that has escaped its arm is the worst thing this check can ship.
+	for _, f := range chk50DeleteFindings(step7) {
+		t.Error(f)
+	}
+	// The scan's own teeth, checked as mutations of the real text: each of
+	// these is a way the destructive call has escaped its arm, and each must
+	// be reported. The third is why the rule is about QUOTES and not about the
+	// line's first word: `echo restoring; fugaro … --delete …` is a command
+	// line whose message merely starts with `echo`, and a "skip anything
+	// starting with echo" rule walked straight past it — as it did past the
+	// step's own `|| { echo "STOP: … --delete … not succeed" >&2; exit 1; }`
+	// failure handlers, which are why the flag inside a message is skipped at
+	// all.
+	for _, mut := range []struct{ name, old, new string }{
+		{"an unconditional --delete after the copy of the operator's config",
+			`cp "$C.before-50" "$C"`, "cp \"$C.before-50\" \"$C\"\nfugaro project policy publish --delete --project fugaro"},
+		{"an unconditional --delete after the case block",
+			"esac\n", "esac\nfugaro project policy publish --delete --project fugaro\n"},
+		{"an --delete on an echo-prefixed line before the case",
+			`case "$(cat "$STATE")" in`, "echo restoring; fugaro project policy publish --delete --yes --project fugaro\ncase \"$(cat \"$STATE\")\" in"},
+		{"an --delete inside the policy-no-routing arm",
+			"    if fugaro project policy publish --remove-routing --project fugaro; then",
+			"    fugaro project policy publish --delete --project fugaro\n    if fugaro project policy publish --remove-routing --project fugaro; then"},
+	} {
+		if !strings.Contains(step7, mut.old) {
+			t.Errorf("the mutation %q no longer applies to Check 50 step 7 (%q is not in it): the scan below is then untested against that escape", mut.name, mut.old)
+			continue
+		}
+		if f := chk50DeleteFindings(strings.Replace(step7, mut.old, mut.new, 1)); len(f) == 0 {
+			t.Errorf("the --delete scan does not report %s: the destructive command can leave its arm and the check still passes", mut.name)
 		}
 	}
 	// And the missing-record case stops the step instead of guessing: the test
@@ -1783,6 +1807,65 @@ func TestChecklistHasCheck50(t *testing.T) {
 	} {
 		if s := chk50Step(t, section, tc.step); !strings.Contains(s, "no `route` attribute") {
 			t.Errorf("Check 50 %s does not say the direct run's line carries no `route` attribute: the gateway emits that attribute only for a call that went to a provider, so the FACT names a field the direct run never prints", tc.marker)
+		}
+	}
+
+	// THE RECORDS BELONG TO ONE ATTEMPT, and the destructive arm is why. The
+	// scenario the pins below exist for: run the check while no policy is
+	// published, publish a real policy, run the check again — a `no-policy`
+	// word kept from the first attempt deletes the policy published since. So
+	// the guard writes a start marker, step 1 writes the records fresh and
+	// REFUSES when they are already there (naming them and the command to
+	// remove them), step 7 refuses to restore from a record older than the
+	// marker, and step 7 removes every record once the restore has succeeded.
+	chk50MustContain(t, section, "section", []string{
+		"START=/tmp/chk50-run-started-at",
+		`[ -e "$START" ] || : > "$START"`,
+		`[ -n "$START" ]`,
+	})
+	chk50MustContain(t, step1, "step 1", []string{
+		// A failed or unset command must stop the block, not write an empty
+		// record that step 7 would then branch on.
+		"set -u",
+		"left from an earlier attempt",
+		"rm -f ",
+		"jq -e .",
+		"/tmp/chk50-policy-before.json",
+		"/tmp/chk50-sandbox-yaml-before.txt",
+		`"$C.before-50"`,
+	})
+	chk50MustContain(t, step7, "step 7", []string{
+		"set -u",
+		"older than this attempt's start marker",
+		// The copy of the operator's config is what the republish arm reads:
+		// an unchecked `cp` leaves the check's own switch in place and the
+		// arm then republishes THAT under a message saying it is step 1's.
+		`cp "$C.before-50" "$C" ||`,
+		"records: removed",
+	})
+
+	// Step 5 records ONE number, and the task both runs carry is one that
+	// commits: a run whose agent commits nothing is recorded not-ready ("the
+	// agent made no commits"), and whether its reviewer stage makes a model
+	// call at all is UNVERIFIED — the baseline must not rest on it.
+	chk50MustContain(t, chk50Step(t, section, "### 5."), "step 5", []string{
+		"**The number this check records is ONE figure:**",
+		"the routed run's own `cache_read`",
+	})
+	chk50MustContain(t, section, "section", []string{
+		"TASK50=",
+		"UNVERIFIED",
+		"record this as *not produced*",
+	})
+	chk50MustContain(t, chk50Step(t, section, "### 4."), "step 4", []string{
+		"internal/runner/runner.go:2121",
+	})
+	for _, tc := range []struct{ step, marker string }{
+		{"### 4.", "step 4"},
+		{"### 6.", "step 6"},
+	} {
+		if s := chk50Step(t, section, tc.step); !strings.Contains(s, `fugaro run "$TASK50"`) {
+			t.Errorf("Check 50 %s does not run the comparison's task ($TASK50): the guard's no-change TASK leaves the agent with nothing to commit, and a run that commits nothing is not the run this check's number is read from", tc.marker)
 		}
 	}
 
@@ -1883,6 +1966,69 @@ func chk50Step(t *testing.T, section, marker string) string {
 		t.Fatalf("the Check 50 section's %q step is empty: %q must come after it", marker, chk50StepMarkers[i+1])
 	}
 	return section[from:to]
+}
+
+// chk50DeleteFindings reports every `--delete` in the Check 50 step 7 blocks
+// that a shell would run somewhere other than the one arm of the case that
+// tests the state step 1 recorded. Each item is a failure message; an empty
+// result means the destructive call is where it belongs. It is a function of
+// the text so the test can also run it over mutations of the real block.
+func chk50DeleteFindings(step7 string) []string {
+	var out []string
+	armRE := regexp.MustCompile(`^(no-policy|policy-no-routing|policy-routing)\)`)
+	for _, block := range chk49FencedBlocks(step7) {
+		lines := strings.Split(block, "\n")
+		for i, line := range lines {
+			// A `--delete` inside quotes is text in a message — the failure
+			// handlers below say `echo "STOP: --delete did not succeed …"`, and
+			// a `--yes` line is quoted in Check 49's prose — while an UNQUOTED
+			// one is an argument to something this block runs. Any line whose
+			// quotes are unclosed is held to the rule as well: a scanner that
+			// cannot read the line must not wave it through.
+			if !chk50Unquoted(line, "--delete") {
+				continue
+			}
+			arm := ""
+			for j := i - 1; j >= 0; j-- {
+				if m := armRE.FindStringSubmatch(strings.TrimSpace(lines[j])); m != nil {
+					arm = m[1]
+					break
+				}
+			}
+			if arm != "no-policy" {
+				out = append(out, fmt.Sprintf("Check 50 step 7 runs %q and it is not inside the branch that tests the state step 1 recorded (it is in the %q arm, or in no arm at all): --delete may run only when step 1 recorded that no policy was published", strings.TrimSpace(line), arm))
+			}
+		}
+	}
+	return out
+}
+
+// chk50Unquoted reports whether token occurs in line outside single and double
+// quotes, i.e. whether a shell would read it as an argument rather than as part
+// of a message. An odd number of quotes leaves the line "open" at its end, and
+// the token is then treated as unquoted — the strict reading.
+func chk50Unquoted(line, token string) bool {
+	// A whole-line comment is not a command either: the step's own block
+	// explains the arm rule in one.
+	if t := strings.TrimSpace(line); strings.HasPrefix(t, "#") {
+		return false
+	}
+	var inSingle, inDouble bool
+	for i := 0; i < len(line); {
+		switch c := line[i]; {
+		case c == '\\' && !inSingle && i+1 < len(line):
+			i += 2
+			continue
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case !inSingle && !inDouble && strings.HasPrefix(line[i:], token):
+			return true
+		}
+		i++
+	}
+	return false
 }
 
 // commandPart is the command half of a section line: everything before the
@@ -2005,6 +2151,10 @@ var chk50Citations = []chkCitation{
 	{"internal/gateway/log.go:15", "is the Anthropic upstream"},
 	{"internal/gateway/log.go:51-53", "attrs = append(attrs, \"route\", c.route)"},
 	{"internal/gateway/forward.go:554", "cl.route = rt.provider.Name"},
+	// Step 4: why the two compared runs carry a task that COMMITS — a run with
+	// nothing ahead of its base is failed with this message, so a no-change run
+	// is not the run step 5's number is read from.
+	{"internal/runner/runner.go:2121", "r.fail(\"the agent made no commits\")"},
 }
 
 // chk52Citations are the code citations the Check 52 section makes in full,
