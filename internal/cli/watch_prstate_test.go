@@ -259,7 +259,9 @@ func TestEmitLiveFramesApplyPRState(t *testing.T) {
 // has no other reason to print again — nothing changed in the database — so
 // watchStream's version comparison is the whole mechanism that turns an answer
 // into a frame there; without it the merged PR would sit in the frame for as
-// long as the stream ran. The screen's equivalent is the TUI test above.
+// long as the stream ran. The screen's equivalent is a test of another package:
+// watch.TestTUIPRStateDropsMergedReadyRow (internal/watch/prstate_test.go), which
+// proves the drawn frame loses the row for the same reason.
 func TestWatchStreamRedrawsWhenAPRStateAnswerLands(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")

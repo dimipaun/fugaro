@@ -1015,13 +1015,17 @@ func TestValidateReportsAProjectConfigItCouldNotRead(t *testing.T) {
 	// nothing can read it.
 	//
 	// The config directory is deliberately deep: the loader's reason is printed
-	// first and the file last (unreadableProjectConfig), and the line is capped
-	// at pluginwire.MaxPrintable runes, so a path long enough to fill that cap
-	// is what proves the reason is the half that survives. The depth is written
-	// here rather than left to t.TempDir() because TMPDIR is not the test's to
-	// choose: the reviewed form of this test passed under /tmp and failed under
-	// macOS's own per-user TMPDIR, and a path that is long on every machine is
-	// what makes this one say the same thing wherever it runs.
+	// first and the file last (unreadableProjectConfig), so a long path is what
+	// exercises the order — the place is shortened to its last elements
+	// (shortPath) and still has to come out after the reason, whole. Nothing is
+	// capped any more (the reason is printed through pluginwire.PrintableN with
+	// its rune cap lifted, since a cap anywhere near the old 200 took the half
+	// the line exists for: TestValidateKeepsTheFixOfALongLoaderReason below is
+	// that finding). The depth is written here rather than left to t.TempDir()
+	// because TMPDIR is not the test's to choose: the reviewed form of this test
+	// passed under /tmp and failed under macOS's own per-user TMPDIR, and a path
+	// that is long on every machine is what makes this one say the same thing
+	// wherever it runs.
 	isolateProjects(t, filepath.Join(t.TempDir(), strings.Repeat("deep-config-directory/", 8)))
 	projectRouting(t, routedSwitchBlock)
 	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
