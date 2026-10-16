@@ -1795,6 +1795,46 @@ func TestChecklistHasCheck50(t *testing.T) {
 		}
 	}
 
+	// TWO OF THE ARMS CAN BE REFUSED BY DESIGN, and a STOP that calls that an
+	// outage leaves the check's own switch published. This step restores the
+	// operator's config first and then asks the CLI to drop or republish the
+	// routing block: buildProjectPolicy refuses `--remove-routing` when that
+	// config writes a routing.claude switch of its own (`case !silent &&
+	// removeRouting`) and refuses a plain republish when the config names no
+	// Claude switch while the published node routes Claude
+	// (`nodeRoutesClaude(old)`). Either way the arm fails — and what is still
+	// published is the `routing.claude: via openrouter` step 3 published, which
+	// routes every Claude senior in the project through the provider at
+	// provider fees. So the step says what those two refusals are and what to
+	// do about them, in the prose the owner reads before running the block and
+	// in each arm's own failure message.
+	chk50MustContain(t, step7, "step 7", []string{
+		"internal/cli/project_cmd.go:483-484",
+		"internal/cli/project_cmd.go:476-481",
+		// What the refusal leaves behind, named as the money it costs.
+		"routes every Claude senior in this project through the provider at provider fees",
+		// And the remedy, not just a STOP.
+		"comment out",
+	})
+	if s := chk50Step(t, section, "### 7."); !strings.Contains(s, "disagree about the switch") {
+		t.Error("Check 50 step 7 does not say the config it puts back and the policy it restores can disagree about the switch: both refusals above are by design, and step 1 prints both halves while nothing has been changed yet, so the prose is where the owner can still avoid the arm")
+	}
+	// And the step's own record of the other half: the node's routing member,
+	// printed beside the config's `routing:` line, so the two can be compared
+	// before a step changes anything.
+	chk50MustContain(t, step1, "step 1", []string{"jq -c '.policy.routing'"})
+
+	// STEP 7'S FACT ASKS FOR TWO THINGS NO COMMAND IN IT PRODUCED: the job's
+	// environment names and the anthropic-api-key version's state. A FACT whose
+	// evidence the step never reads is a line the owner cannot paste back, so
+	// the step reads both (read-only, after the restore, before the records are
+	// removed).
+	chk50MustContain(t, step7, "step 7", []string{
+		`gcloud run jobs describe "${JOB:?}"`,
+		"gcloud secrets versions describe",
+		`grep -E '^state:'`,
+	})
+
 	// The `route` attribute is emitted only for a call that went to a provider
 	// (`cl.route = rt.provider.Name` inside `if rt.provider != nil`, and the
 	// log appends the attribute only when it is non-empty), so the DIRECT
@@ -2155,6 +2195,15 @@ var chk50Citations = []chkCitation{
 	// nothing ahead of its base is failed with this message, so a no-change run
 	// is not the run step 5's number is read from.
 	{"internal/runner/runner.go:2121", "r.fail(\"the agent made no commits\")"},
+	// Step 7's two by-design refusals: `--remove-routing` beside a config that
+	// writes the switch, and a republish from a config that names no Claude
+	// switch while the published node routes Claude. Either one fails the arm
+	// and leaves the check's own switch published, so the step names them where
+	// the arms run.
+	{"internal/cli/project_cmd.go:470", "func buildProjectPolicy"},
+	{"internal/cli/project_cmd.go:476-481", "nodeRoutesClaude(old)"},
+	{"internal/cli/project_cmd.go:483-484", "case !silent && removeRouting"},
+	{"internal/cli/project_policy_test.go:2092", "--remove-routing beside a config that writes the switch"},
 }
 
 // chk52Citations are the code citations the Check 52 section makes in full,

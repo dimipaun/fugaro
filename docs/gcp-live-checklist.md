@@ -2552,6 +2552,14 @@ case "$(cat /tmp/chk50-policy-state-before.txt)" in
      exit 1;;
 esac
 cat /tmp/chk50-policy-state-before.txt
+# THE OTHER HALF OF THE STATE, PRINTED BESIDE THE CONFIG'S OWN routing: LINE —
+# step 7 puts the policy back with the config, and the CLI refuses both of those
+# commands when the two DISAGREE about the switch (buildProjectPolicy,
+# internal/cli/project_cmd.go:470: --remove-routing beside a config that writes
+# the switch, a republish from a config that names none). Compare the two lines
+# here, where nothing has been changed yet and one command of your own fixes it;
+# in step 7 the check's own via: openrouter switch is what is published.
+jq -c '.policy.routing' /tmp/chk50-policy-before.json
 # The operator's config: the copy step 7 puts back. Checked, because step 7's
 # republish arm reads whatever is in $C, and an unchecked copy that failed would
 # leave the check's own switch there under a message saying it is step 1's.
@@ -2572,7 +2580,7 @@ gcloud run jobs describe "${JOB:?}" --region="${L:?}" --project="${P:?}" \
 gcloud secrets versions list anthropic-api-key --project="${P:?}"
 ```
 
-**FACT:** the state as recorded — `fugaro runs ls --all --project fugaro` shows **no run in flight** over the whole project; the sandbox `fugaro.yaml`'s pins, `agent.auth` and budget mode; the operator's config's `routing:` block verbatim, or that it has none; the published policy's routing member, or that no policy is published at all — and the word `/tmp/chk50-policy-state-before.txt` holds, which is what step 7 restores from; the job's environment **names**; and the `anthropic-api-key` version's **number** and state — never a value, and never the provider key. **FACT:** the block's own `date -r`-guarded refusal did **not** fire — no record from an earlier attempt was left in place — and its `cmp -s "$C" "$C.before-50"` line passed, so the copy step 7 restores from is the operator's config as it stands now.
+**FACT:** the state as recorded — `fugaro runs ls --all --project fugaro` shows **no run in flight** over the whole project; the sandbox `fugaro.yaml`'s pins, `agent.auth` and budget mode; the operator's config's `routing:` block verbatim, or that it has none; the published policy's routing member as `jq -c '.policy.routing'` prints it — `null` when there is none — beside the config's own `routing:` line above it, which is the pair step 7's two refusals are about — and the word `/tmp/chk50-policy-state-before.txt` holds, which is what step 7 restores from; the job's environment **names**; and the `anthropic-api-key` version's **number** and state — never a value, and never the provider key. **FACT:** the block's own `date -r`-guarded refusal did **not** fire — no record from an earlier attempt was left in place — and its `cmp -s "$C" "$C.before-50"` line passed, so the copy step 7 restores from is the operator's config as it stands now.
 
 ### 2. The refusal, unclaimed — and the safeguard that names the switch once Task 1b.3 ships
 
@@ -2651,6 +2659,8 @@ Put back, in this order: the operator's config **first** (the next command reads
 
 ⚠ **And the records this block branches on must be THIS attempt's, because one of the branches destroys.** The block runs with `set -u`, refuses when any record is **missing** or **older than this attempt's start marker** (`$START`, written by the guard block and kept by every re-run of it), checks the operator's config back into place before anything reads it, and removes every record once the restore has succeeded — so a record left by an earlier attempt can never be read as this one's, and the next run starts clean. Step 1 refuses to write while an earlier attempt's records are still there; this is the second net, and it is the one that catches a step-7 shell whose step 1 never ran. The two lines the FACT below needs from the files — the operator's config compared byte for byte, and the published policy compared with the recorded document — are therefore **printed by this block, before it removes them**, and a `STOP` in either place leaves the records in place for you to read.
 
+⚠ **And the two commands that put the routing block back are refused by design when the config and the policy disagree about the switch — read this before you run the block.** This step restores the operator's config **first** and *then* asks the CLI to drop the block or republish it, and `buildProjectPolicy` (`internal/cli/project_cmd.go:470`) refuses both of those when what it reads now and what it is restoring do not say the same thing: `--remove-routing` is refused while the config writes a `routing.claude` switch of its own (`case !silent && removeRouting`, `internal/cli/project_cmd.go:483-484`; pinned at `internal/cli/project_policy_test.go:2092`), and a plain republish is refused while the config names no Claude switch and the published node routes Claude (`nodeRoutesClaude(old)`, `internal/cli/project_cmd.go:476-481`) — *"one of the two has to go"*. The two states that reach an arm are therefore a **`policy-no-routing`** record with a config that writes `routing.claude` (the node has to lose the block, and only a config silent about the switch may drop it) and a **`policy-routing`** record with a config that names no Claude switch (the node's switch has to come back from somewhere). **Step 1 prints both halves** — the node's routing member, and the config's own `routing:` line — so compare them there, where one command of your own fixes it (`fugaro project policy publish` to publish the config's switch, or `--remove-routing` with the switch out of the config to drop the node's) and **nothing has been changed yet**. If an arm is refused anyway, what is still published is the switch **this check** published in step 3 — `routing.claude: via openrouter`, which **routes every Claude senior in this project through the provider at provider fees** — so do not leave the step sitting on its message: each arm says which refusal it is and the exact commands that finish the restore by hand.
+
 ```bash
 # set -u: an unset variable stops the block, and a failed line here never leaves
 # the restore half-done and reported as done.
@@ -2708,20 +2718,30 @@ case "$(cat "$STATE")" in
       exit 1
     fi;;
   policy-no-routing)
-    # a policy was published, without a switch: drop just the switch this check added
+    # a policy was published, without a switch: drop just the switch this check added.
+    # THIS ARM CAN BE REFUSED BY DESIGN, and that is not an outage: --remove-routing
+    # is refused when the config step 1's copy has just put back writes a
+    # routing.claude switch of its own (buildProjectPolicy, "case !silent &&
+    # removeRouting", internal/cli/project_cmd.go:483-484) — one of the two has
+    # to go — and the failure branch below says so and says how to finish.
     if fugaro project policy publish --remove-routing --project fugaro; then
       echo "policy: the switch dropped, the rest of the published policy left as step 1 found it"
     else
-      echo "STOP: --remove-routing did not succeed, so the switch this check published is still in the policy. Compare /tmp/chk50-policy-before.json with 'fugaro project show --json --project fugaro' and fix it by hand." >&2
+      echo "STOP: --remove-routing did not succeed, and the published policy is STILL the switch this check published in step 3 — routing.claude: via openrouter, which routes every Claude senior in this project through the provider at provider fees until it is dropped. The usual cause is the refusal by design, not an outage: this arm runs after the config was put back, and --remove-routing is refused while that config writes a routing.claude switch of its own (buildProjectPolicy, internal/cli/project_cmd.go:483-484: one of the two has to go). Read the command's own message, then finish the restore by hand: comment out (or remove) the routing: block in $C, run 'fugaro project policy publish --remove-routing --project fugaro', then put the config back with 'cp \"$C.before-50\" \"$C\"' and confirm with 'fugaro project show --json --project fugaro | jq .policy.routing' that the node carries no routing block. If it failed for another reason, compare the node with /tmp/chk50-policy-before.json and fix it by hand. This attempt's records are LEFT IN PLACE." >&2
       exit 1
     fi;;
   policy-routing)
     # a policy was published WITH a switch: republish the state step 1 recorded,
-    # from the operator's config this block has just put back
+    # from the operator's config this block has just put back. THIS ARM CAN BE
+    # REFUSED BY DESIGN TOO: a republish is refused while the config names no
+    # Claude switch and the published node routes Claude (buildProjectPolicy,
+    # "case silent && !removeRouting && nodeRoutesClaude(old)",
+    # internal/cli/project_cmd.go:476-481) — and the node carries the check's
+    # own switch here, so that refusal is what the failure branch explains.
     if fugaro project policy publish --project fugaro; then
       echo "policy: republished from the operator's config step 1 recorded"
     else
-      echo "STOP: the republish did not succeed, so the published policy is not the one step 1 recorded. Republish by hand so it matches /tmp/chk50-policy-before.json." >&2
+      echo "STOP: the republish did not succeed, and the published policy is STILL the switch this check published in step 3 — routing.claude: via openrouter, which routes every Claude senior in this project through the provider at provider fees until the recorded switch replaces it. The usual cause is the refusal by design, not an outage: the republish is refused while the config names no Claude switch and the published node routes Claude (buildProjectPolicy, internal/cli/project_cmd.go:476-481), and the node here carries the check's switch. Read the command's own message, then finish by hand: write the switch step 1 recorded — /tmp/chk50-policy-before.json, .policy.routing — into $C and publish again, and if step 1's record shows a switch your config cannot account for, decide which of the two is right before publishing anything. This attempt's records are LEFT IN PLACE." >&2
       exit 1
     fi;;
   *)
@@ -2754,6 +2774,16 @@ else
     && echo "policy: matches step 1's recorded document, member for member" \
     || { echo "STOP: the published policy is NOT the one step 1 recorded. This attempt's records are LEFT IN PLACE: diff /tmp/chk50-policy-before.json against /tmp/chk50-policy-after.json and put the policy back by hand." >&2; exit 1; }
 fi
+# THE REST OF THE FACT IS READ HERE, NOT ASSUMED: the two facts step 1 recorded
+# that nothing above re-reads — the job's environment names and the state of the
+# anthropic-api-key version this check disables and re-enables in steps 2 and 6.
+# Read-only, and before the records are removed, so a STOP here leaves them.
+gcloud run jobs describe "${JOB:?}" --region="${L:?}" --project="${P:?}" \
+  --format=json | jq -r '.spec.template.spec.template.spec.containers[0].env[].name' \
+  || { echo "STOP: the job's environment names could not be read (JOB=$JOB, region=$L, project=$P), so the FACT below cannot be pasted. This attempt's records are LEFT IN PLACE." >&2; exit 1; }
+gcloud secrets versions list anthropic-api-key --project="${P:?}"
+gcloud secrets versions describe "<the version step 1 recorded>" --secret=anthropic-api-key --project="${P:?}" | grep -E '^state:' \
+  || { echo "STOP: the anthropic-api-key version's state could not be read — name the version step 1 recorded (steps 2 and 6 disable and re-enable that same one, never another), then run this line again. This attempt's records are LEFT IN PLACE." >&2; exit 1; }
 fugaro run "$TASK" --repo edgeappinc/fugarosandbox --workflow <the sandbox's workflow> --ref master --project fugaro
 # THE ATTEMPT IS OVER, AND ONLY NOW: every record is removed, so the next run
 # cannot read this one's as its own — which is what the marker and step 1's
@@ -2768,7 +2798,7 @@ echo "records: removed — this attempt's records ($C.before-50 and the start ma
 
 Then decline any sandbox pull request this check opened and delete its branch (**never merge one**) — both `$TASK50` runs leave one, as step 4 says — revoke the provider key created for this check, and confirm the `anthropic-api-key` version step 1 recorded is enabled and that no probe version was left behind.
 
-**FACT:** the restore is complete — **which of the three branches ran**, the word `/tmp/chk50-policy-state-before.txt` it ran from, and **the branch's own printed line**, which each arm reaches only when its command succeeded (an arm that failed printed `STOP` and stopped the step instead); the two lines the block itself printed for the rest of it — `config: byte-for-byte the copy step 1 made`, and `policy: matches step 1's recorded document, member for member` or `policy: gone again, as step 1 recorded` — each of which is a comparison the block makes **before** it removes the records, so a `STOP` in either place means the restore is unverified and the records were left for you; `fugaro.yaml: unchanged since HEAD, as step 1 found it`; the job's environment names, the same list step 1 printed; and the `anthropic-api-key` version reading `state: ENABLED`. **FACT:** this attempt's records are gone — the block's own `records: removed` line, which is the last thing it prints, and without which a later run could read this one's state as its own. **FACT:** the sandbox still runs — with the switch removed, one ordinary sandbox task **launches and reaches its stages** (it is recorded **not ready**, `the agent made no commits`, because this run carries the no-change `$TASK`: that is the expected result here and not the failure) and `policy.sources` names the ceiling from the environment again. A launch refused before its stages, or no run at all, is the failure this FACT is for.
+**FACT:** the restore is complete — **which of the three branches ran**, the word `/tmp/chk50-policy-state-before.txt` it ran from, and **the branch's own printed line**, which each arm reaches only when its command succeeded (an arm that failed printed `STOP` and stopped the step instead); the two lines the block itself printed for the rest of it — `config: byte-for-byte the copy step 1 made`, and `policy: matches step 1's recorded document, member for member` or `policy: gone again, as step 1 recorded` — each of which is a comparison the block makes **before** it removes the records, so a `STOP` in either place means the restore is unverified and the records were left for you; `fugaro.yaml: unchanged since HEAD, as step 1 found it`; the job's environment **names**, as this step re-reads and prints them (the same list step 1 printed); and the **`state:`** line this step reads for the `anthropic-api-key` version, `state: ENABLED` (a version a probe left disabled is what step 6's re-enable — and this line — are for). **FACT:** this attempt's records are gone — the block's own `records: removed` line, which is the last thing it prints, and without which a later run could read this one's state as its own. **FACT:** the sandbox still runs — with the switch removed, one ordinary sandbox task **launches and reaches its stages** (it is recorded **not ready**, `the agent made no commits`, because this run carries the no-change `$TASK`: that is the expected result here and not the failure) and `policy.sources` names the ceiling from the environment again. A launch refused before its stages, or no run at all, is the failure this FACT is for.
 
 **Paste back:** every `FACT` line above, never a key and never a token. The provider key and the Anthropic key are never read, printed or recorded here, in whole or in part: the version number, the credit limit and the amounts are what this check records.
 
