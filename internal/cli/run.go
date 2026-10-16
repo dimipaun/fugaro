@@ -391,11 +391,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	if prior == nil {
-		// --attach, before the gates below and with the upload last of its
-		// own steps: its recipe refusal, its caps, D9's line, its image
-		// gate and the upload itself, all before createTask writes the
-		// task that names them (design §4, plan P7/P9). A launch with no
-		// --attach does nothing here at all.
+		// --attach, before the gates below: its recipe refusal, its caps,
+		// D9's line and its image gate (design §4, plan P7/P9). It uploads
+		// nothing here — attachUpload does that below, after the last gate
+		// that can still refuse this launch, so a refused launch leaves
+		// nothing in the bucket under a run id that never gets a task. A
+		// launch with no --attach does nothing here at all.
 		agentRecipe, kind, clone := "", "", false
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
@@ -404,7 +405,8 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				clone = w.Checkout == config.CheckoutClone
 			}
 		}
-		if err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn); err != nil {
+		caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
+		if err != nil {
 			return launchResult{}, err
 		}
 		// checkRecipeImage and checkImageSince judge a workflow's derived
@@ -486,6 +488,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := env.budgetPrecheck(ctx, slug, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+		}
+		// The upload, last of everything an --attach launch does and still
+		// before createTask: every refusal this launcher can make from what
+		// it already has has been made above, so a refused launch leaves no
+		// input object under a run id that never gets a task (design §4
+		// step 1, plan Review Focus 11), and the task written next names
+		// exactly the bytes that are in the bucket.
+		if err := attachUpload(ctx, env, spec, s.Prefix(), o.attach, caps); err != nil {
+			return launchResult{}, err
 		}
 	}
 	if o.retry == "" {

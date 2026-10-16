@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -76,21 +77,28 @@ func wantBootstrapError(t *testing.T, h *harness, steps []step, want ...string) 
 // contract (design §4 step 5): every input the task names comes down into
 // <workdir>/inputs/<name> through blobx.GetFile, which verifies the sha256
 // and the size the task claims and leaves nothing behind on a mismatch; the
-// render that follows is handed FUGARO_INPUTS_DIR; the record echoes the task's
-// own list, so a reader sees exactly what the run was given; and inputs/ is in
-// the checkout's own git exclude, so the plan stage's `git add -A` cannot
-// commit a screenshot into a branch.
+// render that follows is handed FUGARO_INPUTS_DIR, the variable the render is
+// told to read its files through (it names the absolute path, so a render does
+// not have to know where the checkout is); the record echoes the task's own
+// list, so a reader sees exactly what the run was given; and inputs/ is in the
+// checkout's own git exclude, so the plan stage's `git add -A` cannot commit a
+// screenshot into a branch.
 //
 // Mutation (skip downloadInputs in bootstrap): the render finds no inputs/ and
-// the run fails. Mutation (drop excludeInputsFromGit): the exclude file has no
-// `inputs/` line and this test fails. Mutation (record the object's own size
-// instead of the spec's list): rec.Inputs loses the second file.
+// the run fails. Mutation (drop the FUGARO_INPUTS_DIR assignment from the env
+// block): the render's own guard exits non-zero and this test fails. Mutation
+// (drop excludeInputsFromGit): the exclude file has no `inputs/` line and this
+// test fails. Mutation (record the object's own size instead of the spec's
+// list): rec.Inputs loses the second file.
 func TestInputsAreDownloadedHashedAndExcludedFromGit(t *testing.T) {
 	spec := artifactSpec(sizzleRenderOnlyYAML)
 	shot, shotBody := attachedInput("shot.png", "png-bytes")
 	notes, notesBody := attachedInput("notes.txt", "two\n")
 	spec.Inputs = []task.InputFile{shot, notes}
-	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript("#!/bin/sh\nmkdir -p out && cat inputs/shot.png inputs/notes.txt > out/seen.mp4\n"))
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript("#!/bin/sh\n"+
+		"mkdir -p out\n"+
+		"[ -n \"$FUGARO_INPUTS_DIR\" ] || { echo 'FUGARO_INPUTS_DIR is unset' >&2; exit 4; }\n"+
+		"cat \"$FUGARO_INPUTS_DIR/shot.png\" \"$FUGARO_INPUTS_DIR/notes.txt\" > out/seen.mp4\n"))
 	seedInputs(t, h, runInputKey(h, "shot.png"), shotBody)
 	seedInputs(t, h, runInputKey(h, "notes.txt"), notesBody)
 
@@ -311,5 +319,45 @@ func TestAnInputNameIsNeverCleanedIntoSomethingPlausible(t *testing.T) {
 				t.Fatalf("a refused name still produced %d file(s) under inputs/", len(entries))
 			}
 		})
+	}
+}
+
+// TestThePlanPromptNamesTheInputsDirectory is the prompt half of the same
+// contract: a plan stage on a run that HAS attachments is told where they are
+// and that FUGARO_INPUTS_DIR names the same directory, so it can read them
+// instead of guessing — and, since the prompt is the only place a plan stage
+// learns anything, telling it nothing is the failure mode this pins down.
+// artifact_test.go's planStage asserts the other side: a launch with no
+// attachments is told nothing about a directory that does not exist.
+//
+// Mutation (drop the `len(r.spec.Inputs) > 0` paragraph from
+// artifactPlanPrompt): the prompt never names the directory and this test
+// fails.
+func TestThePlanPromptNamesTheInputsDirectory(t *testing.T) {
+	spec := artifactSpec(sizzlePlanRenderYAML)
+	shot, body := attachedInput("shot.png", "png-bytes")
+	spec.Inputs = []task.InputFile{shot}
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	seedInputs(t, h, runInputKey(h, "shot.png"), body)
+
+	var prompt string
+	plan := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		prompt = req.Prompt
+		if err := os.MkdirAll(filepath.Join(req.Dir, ".fugaro"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(req.Dir, ".fugaro", "render-plan.json"), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{CostUSD: 0.25}, nil
+	}
+	if rec, err := h.run(t, plan); err != nil || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	dir := filepath.Join(h.deps.WorkDir, runstore.InputsDir)
+	for _, want := range []string{"FUGARO_INPUTS_DIR", dir, "1 file(s)"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the plan prompt does not name %q:\n%s", want, prompt)
+		}
 	}
 }

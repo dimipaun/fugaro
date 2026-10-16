@@ -165,21 +165,29 @@ func attachRefusesStoredRun(ctx context.Context, s *runstore.Store, runID string
 	return userErr("run ID %s already holds a task; --attach uploads into a run's own inputs/, so it never adopts an existing run — use a new run ID", runID)
 }
 
-// attachLaunch is everything an --attach launch does between the run id's
-// resolution and createTask's write: the recipe refusal, the caps, the D9
-// line, the image gate and the upload. Every refusal it can make happens
-// before the first byte leaves the machine, and its order is the design's
-// (§4 steps 2 to 4).
-func attachLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, prefix string, paths []string, kind string, clone bool, warn io.Writer) error {
+// attachLaunch is everything an --attach launch refuses BEFORE it uploads:
+// the recipe refusal, the caps, the D9 line and the image gate, in the
+// design's order (§4 steps 2 to 4). It returns the caps the files were judged
+// by, which attachUpload applies again as it writes them.
+//
+// It deliberately does not upload. The upload is attachUpload's, which
+// finishLaunch calls last, after every gate that can still refuse the launch
+// (checkMaxParallel, checkArtifactLaunch, budgetPrecheck) and before
+// createTask: a refusal the launcher can make from what it already has must
+// leave nothing in the bucket (design §4 step 1, plan Review Focus 11), and
+// an upload here would leave a run id that never gets a task holding files
+// nobody can see, read or clean up.
+func attachLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, prefix string, paths []string, kind string, clone bool, warn io.Writer) (config.Inputs, error) {
+	caps := config.Inputs{}
 	if len(paths) == 0 {
-		return nil
+		return caps, nil
 	}
 	if err := checkAttachRecipe(ctx, spec); err != nil {
-		return err
+		return caps, err
 	}
-	caps := attachCaps(ctx, spec)
+	caps = attachCaps(ctx, spec)
 	if _, err := attachPrepared(paths, caps); err != nil {
-		return err
+		return caps, err
 	}
 	// D9's line, printed once per launch and only here, where --attach
 	// carried a file. It is not a gate: the policy that already governs the
@@ -196,17 +204,27 @@ func attachLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.Sp
 	subject, knows := "--attach", "attached files"
 	if clone {
 		if err := checkCloneImageSince(env.lc, spec, artifactsSince, subject, knows, "", warn); err != nil {
-			return err
+			return caps, err
 		}
 	} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, subject, knows, "", warn); err != nil {
-		return err
+		return caps, err
+	}
+	return caps, nil
+}
+
+// attachUpload is the last thing an --attach launch does, and the only write
+// it makes before createTask's own: it uploads the files and fills in
+// spec.Inputs, so the task that is written next names exactly the bytes that
+// are in the bucket. finishLaunch calls it after every gate that can refuse
+// the launch, so a refused launch leaves no input object behind.
+func attachUpload(ctx context.Context, env *cloudEnv, spec *task.Spec, prefix string, paths []string, caps config.Inputs) error {
+	if len(paths) == 0 {
+		return nil
 	}
 	inputs, err := attachInputsFn(ctx, env.bucket, prefix, paths, caps)
 	if err != nil {
 		return err
 	}
-	// Only now, so the spec that reaches createTask carries the inputs
-	// exactly when their objects are in the bucket.
 	spec.Inputs = inputs
 	return nil
 }
@@ -234,6 +252,15 @@ func checkAttachRecipe(ctx context.Context, spec *task.Spec) error {
 	}
 	rcp := recipeForLaunch(ctx, checkoutConfig(ctx, spec.Repo), spec)
 	switch {
+	case rcp != nil && rcp.Mode == recipe.ModeArtifact:
+		// An artifact recipe the CLI resolved is exactly what --attach needs,
+		// whatever spec.Mode says: the arm above is keyed on the task's own
+		// mode, and design §8.2 lets a task carry none (the runner resolves
+		// the recipe from the task, the checkout or the catalog, and its own
+		// cross-check refuses a stamp that disagrees with the recipe). Keying
+		// this on rcp != nil alone would refuse an artifact recipe here with a
+		// message claiming it is not one.
+		return nil
 	case rcp != nil:
 		return userErr("--attach needs an artifact recipe; %s is mode: %s", rcp.Name, rcp.Mode)
 	case spec.Recipe != nil:
@@ -272,19 +299,28 @@ const attachDirectAnthropic = "Anthropic (direct)"
 // line built from it would tell an owner their screenshot stays local while
 // it is on its way to Anthropic. The set is the union of:
 //
-//   - each provider that claims one of the run's models (config.ProviderFor
-//     over Agent.PinnedModels) AND may receive this repository's data
-//     (config.ModelProvider.AllowsData), which is the same filter
-//     runner.ProvidersEnv applies when it builds the job's own
-//     FUGARO_MODEL_PROVIDERS — the launcher computes what the job will have,
-//     and nothing more; and
+//   - each provider that claims one of the run's models (config.ProviderFor)
+//     AND may receive this repository's data (config.ModelProvider.AllowsData),
+//     which is the same filter runner.ProvidersEnv applies when it builds the
+//     job's own FUGARO_MODEL_PROVIDERS — the launcher computes what the job
+//     will have, and nothing more; and
 //   - attachDirectAnthropic whenever any of those models is not claimed by
 //     one of those providers, which is config.NeedsAnthropicKey's own rule
 //     and is the case a default Claude workflow always takes.
 //
+// The three models are NeedsAnthropicKey's own three, in its own order
+// (coder, reviewer, EffectiveBackground) — NOT Agent.PinnedModels, whose
+// third entry is the raw Models.Background. Background is empty whenever the
+// config leaves it unset, and a run whose coder a provider claims never makes
+// an unset-background call to Anthropic at all: config.EffectiveBackground
+// substitutes the coder's own model there, so PinnedModels would print
+// "Anthropic (direct)" for a run that makes no Anthropic call. The set never
+// under-reports either way — an unclaimed model always sets direct — but the
+// one line D9 exists for must not name a destination the bytes cannot reach.
+//
 // The empty set therefore means "no Anthropic path and no claiming
-// provider". Agent.PinnedModels cannot actually produce it (three models,
-// and an unclaimed one is an Anthropic path); the branch is defensive, and
+// provider". With these three models it cannot actually arise (an unclaimed
+// one is an Anthropic path); the branch is defensive, and
 // attachProviderWarning says so with the local wording rather than claiming
 // the file stays on the machine.
 func attachProviders(lc *localcfg.Config, ag config.Agent, repo string) []string {
@@ -294,7 +330,8 @@ func attachProviders(lc *localcfg.Config, ag config.Agent, repo string) []string
 	}
 	claimed := map[string]bool{}
 	direct := false
-	for _, model := range ag.PinnedModels() {
+	models := []string{ag.ModelFor(config.RoleCoder), ag.ModelFor(config.RoleReviewer), config.EffectiveBackground(ag, providers)}
+	for _, model := range models {
 		name, p, ok := config.ProviderFor(providers, model)
 		if ok && p.AllowsData(repo) {
 			claimed[name] = true

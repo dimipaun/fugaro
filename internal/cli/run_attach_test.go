@@ -200,6 +200,36 @@ func TestAttachRefusesAnExistingRunIdBeforeUploading(t *testing.T) {
 	})
 }
 
+// TestARefusedLaunchLeavesNoInputsInTheBucket is the other half of the
+// freshness check's promise (design §4 step 1, plan Review Focus 11): a
+// refusal the launcher can make from what it already has "costs nothing and
+// leaves nothing in the bucket", so the upload is the LAST thing an --attach
+// launch does — after every gate that can still refuse it and before the
+// task that names the files. Here the budget's global kill switch refuses the
+// launch after the attach refusals and after the image gate have passed.
+//
+// Mutation (move the attachInputsFn call back above the gates, into
+// attachLaunch): the upload runs, the run id never gets a task, and the file
+// is left in the bucket under it — this test fails on the object.
+func TestARefusedLaunchLeavesNoInputsInTheBucket(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	projectRecipesFixture(t, f.cloudFixture, map[string]string{"sizzle": projectSizzle})
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release080)
+	f.db.Set("config/kill/global", map[string]any{"on": true})
+	id := "20261015-100000-abcd"
+	shot := attachShot(t, "shot.png", "png")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "sizzle", "--run-id", id, "--attach", shot, "Render the nightly bundle")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "kill switch") {
+		t.Fatalf("err = %v, want the budget's own refusal", err)
+	}
+	if hasObject(t, f.cloudFixture, inputKey(id, "shot.png")) {
+		t.Fatal("a refused launch left its attached file in the bucket under a run id that never got a task")
+	}
+	if hasObject(t, f.cloudFixture, taskKey(id)) {
+		t.Fatal("the refused launch wrote a task")
+	}
+}
+
 // TestAPlainLaunchStillAdoptsAByteIdenticalTask: the rule --attach does not
 // change. A launch carrying no attachments repeats its run id exactly as it
 // always has — a byte-identical stored task is adopted and the existing
@@ -372,6 +402,63 @@ func TestAttachRefusesARecipeTheRunnerChooses(t *testing.T) {
 	shot := attachShot(t, "shot.png", "png")
 	wantRefused(t, f, "leaves the recipe to the runner",
 		"run", "--repo", "acme/app", "--attach", shot, "Render the nightly bundle")
+}
+
+// TestAttachAllowsAnArtifactRecipeWithNoModeStamped: the recipe refusal's
+// allow arm is keyed on the RESOLVED recipe being mode: artifact, not on the
+// task carrying a mode. A task is allowed to carry none (design §8.2's empty
+// Mode), and the CLI's own chooseRecipe stamps it for the launches it
+// resolves — so keying the refusal on "a recipe resolved" alone would leave
+// the allow arm resting on that stamp, and would answer a genuinely artifact
+// recipe with "‑‑attach needs an artifact recipe; sizzle is mode: artifact".
+//
+// Mutation (drop `&& rcp.Mode == recipe.ModeArtifact`): this refusal fires and
+// the test fails.
+func TestAttachAllowsAnArtifactRecipeWithNoModeStamped(t *testing.T) {
+	t.Chdir(t.TempDir())
+	spec := &task.Spec{Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Ref: "main", Task: "Render the nightly bundle",
+		Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceCatalog), YAML: projectSizzle}}
+	if err := checkAttachRecipe(context.Background(), spec); err != nil {
+		t.Fatalf("checkAttachRecipe = %v, want an artifact recipe without a stamped mode allowed", err)
+	}
+}
+
+// TestAttachNamesTheBackgroundModelTheRunWillActuallyUse is the other half of
+// D9's rule: the third model the set judges is the one the run will really
+// send, config.EffectiveBackground — the coder's own model whenever a
+// provider claims the coder and no background model was pinned — never the
+// raw Models.Background, which is empty there. Judging the raw field would
+// print "Anthropic (direct)" for a run whose every call a provider serves,
+// telling the owner their screenshot goes to Anthropic when it does not.
+//
+// Mutation (iterate ag.PinnedModels() instead of NeedsAnthropicKey's own
+// three models): the empty background pin is read as a model no provider
+// claims, the direct route is added, and this test fails on it.
+func TestAttachNamesTheBackgroundModelTheRunWillActuallyUse(t *testing.T) {
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"acme-gw": {Models: []string{"coder-*", "reviewer-*"}},
+	}}
+	ag := config.Agent{Models: config.ModelRoles{Coder: "coder-1", Reviewer: "reviewer-1"}}
+	if got := config.EffectiveBackground(ag, lc.Providers); got != "coder-1" {
+		t.Fatalf("EffectiveBackground = %q, want the coder's model", got)
+	}
+	if config.NeedsAnthropicKey(ag, lc.Providers, "acme/app") {
+		t.Fatal("this configuration makes no Anthropic call; the test's premise moved")
+	}
+	got := attachProviders(lc, ag, "acme/app")
+	if strings.Join(got, ",") != "acme-gw" {
+		t.Fatalf("attachProviders = %v, want the claiming provider alone", got)
+	}
+	var buf bytes.Buffer
+	attachProviderWarning(&buf, got)
+	if strings.Contains(buf.String(), attachDirectAnthropic) {
+		t.Fatalf("the line names Anthropic for a run that makes no Anthropic call: %q", buf.String())
+	}
+	// A background model the owner pinned explicitly is judged as itself.
+	ag.Models.Background = "bg-1"
+	if got := attachProviders(lc, ag, "acme/app"); strings.Join(got, ",") != "acme-gw,"+attachDirectAnthropic {
+		t.Fatalf("attachProviders with a pinned background = %v, want the direct route too", got)
+	}
 }
 
 // TestAttachNamesTheProvidersThatMayReceiveTheFile is D9's set, computed: the
