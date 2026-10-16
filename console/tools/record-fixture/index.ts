@@ -42,10 +42,11 @@
 //
 // What it deliberately does not do: it does not read `~/.config/fugaro`
 // (`--config` is passed *through* to the CLI), it does not touch `belong`, it
-// holds no token, it does not print the child's documents (the operator's
-// terminal is theirs, but a scrollback is a leak this tool will not create; the
-// CLI's own stderr is redacted before it is echoed), and it writes exactly one
-// file: the fixture named by `--out`.
+// holds no token, **it prints neither the child's documents nor its stderr**
+// (the operator's terminal is theirs, but a scrollback is a leak this tool will
+// not create: the child's stderr is drained so a chatty CLI cannot block on a
+// full pipe, and then discarded without a byte of it being echoed), and it
+// writes exactly one file: the fixture named by `--out`.
 
 import { statSync, writeFileSync } from 'node:fs'
 import { homedir, hostname, userInfo } from 'node:os'
@@ -437,6 +438,18 @@ export function startRecording(deps: RecordingDeps): Recording {
   }
 
   child.stdout?.setEncoding?.('utf8')
+  // The child's stderr is *drained and discarded*, and both halves are on
+  // purpose. Drained, because `planFor` gives the child a pipe and a pipe
+  // nobody reads fills up (about 64 KB) and then blocks the child's write --
+  // a CLI that logs to stderr would stall the recording, and the recording
+  // would end with nothing written rather than with the fixture the operator
+  // asked for. Discarded, because the recorder's one output is the fixture: the
+  // operator's terminal is theirs, but a stderr line is raw CLI text and a
+  // scrollback is a leak this tool will not create. That is also why this is not
+  // routed through `decodeFeedLine`: a stderr line is not a feed frame, and
+  // turning it into a *notice* record would put the CLI's diagnostics in the
+  // fixture as though `watch --json` had written them.
+  child.stderr?.on('data', () => undefined)
   child.stdout?.on('data', (chunk: Buffer | string) => {
     if (settled) return
     partial += typeof chunk === 'string' ? chunk : chunk.toString('utf8')

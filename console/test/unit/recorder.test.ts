@@ -83,6 +83,12 @@ function redactor(): Redactor {
 class StubStream implements ReadableLike {
   readonly #handlers: ((chunk: Buffer | string) => void)[] = []
 
+  /** listeners is how many readers the recorder attached: an undrained pipe is
+   * the bug this count is here to catch. */
+  get listeners(): number {
+    return this.#handlers.length
+  }
+
   on(_event: 'data', listener: (chunk: Buffer | string) => void): unknown {
     this.#handlers.push(listener)
     return this
@@ -97,7 +103,7 @@ class StubStream implements ReadableLike {
  * decides whether it exits. */
 class StubChild implements SpawnedChildLike {
   readonly stdout: ReadableLike = new StubStream()
-  readonly stderr: ReadableLike | null = null
+  readonly stderr: ReadableLike = new StubStream()
   readonly signals: NodeJS.Signals[] = []
   readonly #exits: ((code: number | null, signal: string | null) => void)[] = []
   readonly #errors: ((error: Error) => void)[] = []
@@ -137,6 +143,12 @@ class StubChild implements SpawnedChildLike {
 
   write(text: string): void {
     ;(this.stdout as StubStream).write(text)
+  }
+
+  /** writeErr is the child talking on stderr, which the recorder drains rather
+   * than records. */
+  writeErr(text: string): void {
+    ;(this.stderr as StubStream).write(text)
   }
 }
 
@@ -465,6 +477,29 @@ describe('a recording in progress', () => {
       { at: '2026-10-15T12:00:00Z', notice: 'no budget backend: showing run records only' },
     ])
     expect(JSON.stringify(result.records)).not.toContain('fixture-sandbox')
+  })
+
+  it("drains the child's stderr, and never records a byte of it", async () => {
+    const { stub, timers, recording } = started()
+    stub.write('{"project":"fixture-sandbox","day":"2026-10-15"}\n')
+    // Drained: `planFor` gives the child a stderr pipe, and a pipe nobody reads
+    // fills up and blocks the child's write, so a CLI that logs would stall the
+    // recording. This is the assertion that fails if the drain is removed.
+    expect((stub.stderr as StubStream).listeners).toBe(1)
+    // And discarded: a stderr line is not a feed frame, so it is neither echoed
+    // nor turned into a *notice* record -- the fixture is stdout's alone, and
+    // whatever a CLI writes to stderr cannot reach the committed file.
+    stub.writeErr('warn: fixture-token at /home/fixture-operator/secrets.yaml\n')
+    timers.advanceTo(30_000)
+    timers.advanceTo(30_000 + SHUTDOWN_GRACE_MS)
+    const result = await recording.finished
+    expect(result.refusal).toBeNull()
+    expect(result.records).toEqual([
+      { at: '2026-10-15T12:00:00Z', document: { project: PROJECT_MARKER, day: '2026-10-15' } },
+    ])
+    const written = JSON.stringify(result.records)
+    expect(written).not.toContain('fixture-token')
+    expect(written).not.toContain('fixture-operator')
   })
 
   it('stops the child at the end of the duration: SIGTERM, then SIGKILL', async () => {

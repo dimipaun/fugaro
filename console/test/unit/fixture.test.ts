@@ -371,12 +371,26 @@ describe('the committed synthetic fixture', () => {
     expect(text).toContain(SYNTHETIC_NOTE)
   })
 
-  it('is the only file in test/fixtures, so a missing recording is visible', () => {
-    // The design's eight recordings are owner-run and do not exist yet. Until
-    // they do, this directory holds the synthetic one and nothing else: a
-    // recorded fixture appearing here without its case in `FIXTURE_CASES` would
-    // be a file nobody can name, and a reader should see the gap rather than a
-    // directory that looks complete.
-    expect(readdirSync(FIXTURE_DIRECTORY).sort()).toEqual(['synthetic.ndjson'])
+  it('holds exactly the synthetic fixture plus, at most, one file per recorded case', () => {
+    // The design's eight recordings are owner-run and do not exist yet, so this
+    // directory holds the synthetic one and nothing else *today*. But the
+    // owner's recordings land here next -- one file per case, named for the
+    // case (`normal.ndjson`, `silent-then-lost.ndjson`, ...) -- so this test
+    // must not be the thing that refuses them: an agent-written test that fails
+    // on the owner's own follow-up work is a test that would have to be edited
+    // before the plan's recordings could be committed. What it asserts instead
+    // is what may be here at all: every file is either the synthetic fixture or
+    // a case `FIXTURE_CASES` names. A stray file -- a hand-made copy, a
+    // recording under a name no case holds -- fails it by name.
+    const allowed = new Set(['synthetic.ndjson', ...FIXTURE_CASES.map((name) => `${name}.ndjson`)])
+    const present = readdirSync(FIXTURE_DIRECTORY)
+    expect(present.filter((name) => !allowed.has(name))).toEqual([])
+    expect(present).toContain('synthetic.ndjson')
+    // No assertion follows about the cases that are *missing*: the gap is
+    // visible rather than implied (the directory shows which cases have no
+    // file, and `console/README.md` names them and why), and a test that failed
+    // while the gap was open would fail on the owner's own recordings' arrival —
+    // an agent-written test that has to be deleted before the plan's follow-up
+    // work can land.
   })
 })
