@@ -157,11 +157,11 @@ func artifactsSection(rec *runstore.Record) string {
 		b.WriteString("- **Render:** none recorded: the run ended before its render step ran.\n")
 	}
 	if len(rec.Artifacts) == 0 {
-		if rec.Render != nil {
-			b.WriteString("\nThe render's files are uploaded by the run's own step; this record carries the render alone.\n\n")
-		} else {
-			b.WriteString("\n")
-		}
+		// Reported, not silent: a render that matched none of the recipe's
+		// globs is not an error by itself (design §8.4), so the record
+		// carries no artifacts and this line is where a reader learns that
+		// the run uploaded nothing rather than that the section is missing.
+		b.WriteString("\n**Files:** none recorded: the run uploaded no artifacts (the render matched none of the recipe's `outputs.globs`, or the run ended before its upload step).\n\n")
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\n%d files, uploaded to this run's bucket under `%s`:\n\n", len(rec.Artifacts), runstore.ArtifactPrefix)

@@ -1207,6 +1207,53 @@ func TestOutputsRefusesASetOverTheTotal(t *testing.T) {
 	assertNothingUploaded(t, h)
 }
 
+// TestAGlobThatMatchesNothingIsReportedNotFailed: a render that produces
+// nothing the recipe's globs select is not an error by itself — a render may
+// legitimately produce nothing — so the run still ends succeeded/artifacts,
+// uploads nothing, writes no artifacts key at all, and says so in its report
+// (design §8.4: "not an error by itself ... but it is reported"). Turning
+// "nothing" into a failure is the probe step's job, when the recipe's owner
+// asks for one.
+//
+// Mutation (fail the run when the globs match nothing): the status becomes
+// failed and this test fails; mutation (write an empty artifacts array): the
+// record gains a key an old reader never saw.
+func TestAGlobThatMatchesNothingIsReportedNotFailed(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p out && echo not-a-png > out/notes.txt\n"))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("artifacts = %+v", rec.Artifacts)
+	}
+	raw, err := h.store.ReadFile(context.Background(), "result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"artifacts":`) {
+		t.Fatalf("the record writes an artifacts key for a run that uploaded none: %s", raw)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run uploaded %v", keys)
+	}
+	if files := stagedFiles(t, h); len(files) != 0 {
+		t.Fatalf("the run staged %v", files)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "**Files:** none recorded") {
+		t.Fatalf("the report does not say the run uploaded nothing:\n%s", report)
+	}
+}
+
 // TestUploadArtifactsWritesUnderTheRunPrefix is the object-key claim: every
 // artifact lands at runs/<slug>/<run>/artifacts/<name>, the name is the
 // match's path relative to the deepest common root of the recipe's globs

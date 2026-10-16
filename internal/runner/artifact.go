@@ -299,7 +299,13 @@ func (r *run) collectArtifacts(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.rec.Artifacts = files
+	// Left nil rather than set to an empty slice: the record writes no
+	// artifacts key at all when a run delivered none (runstore.Record), so
+	// "this run uploaded nothing" and "this record predates the field" are
+	// the same bytes on disk.
+	if len(files) > 0 {
+		r.rec.Artifacts = files
+	}
 	return nil
 }
 
@@ -343,7 +349,14 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 		return set, err
 	}
 	if len(kept) == 0 {
-		return set, fmt.Errorf("commands.render produced no files matching %s: an artifact run with nothing to upload delivers nothing", strings.Join(out.Globs, ", "))
+		// Not an error by itself: a render may legitimately produce nothing
+		// (design §8.4), and the probe step is what turns "nothing" into a
+		// failure when the recipe's owner wants one. It is reported rather
+		// than silent — this line, and the report's own "no files" line,
+		// which the record's empty artifacts carries — and nothing is
+		// staged, so the run leaves the bucket exactly as it found it.
+		r.d.Log.Warn("commands.render matched none of the recipe's outputs.globs", "globs", strings.Join(out.Globs, ", "))
+		return set, nil
 	}
 	if len(kept) > out.FileCount() {
 		return set, fmt.Errorf("commands.render produced %d files matching %s, over outputs.max_files %d: narrow the globs or raise the cap",
@@ -409,6 +422,9 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 // against the staged copy's: the record never attests to bytes that are not
 // in the bucket.
 func (r *run) uploadArtifacts(ctx context.Context, set artifactSet) ([]runstore.ArtifactFile, error) {
+	if len(set.files) == 0 {
+		return nil, nil
+	}
 	files := make([]runstore.ArtifactFile, 0, len(set.files))
 	for _, f := range set.files {
 		size, sum, err := r.d.Store.PutFileFrom(ctx, runstore.ArtifactPrefix+f.name, f.path, f.contentType, f.sha256)
