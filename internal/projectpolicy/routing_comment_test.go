@@ -37,7 +37,12 @@ import (
 // change. The behaviour each corrected claim describes is pinned beside them —
 // an unknown member beside a written `claude` is ignored, a block naming no
 // `claude` switch is refused, an unknown `routing.claude.via` is refused — so a
-// change to either without the comment fails here.
+// change to either without the comment fails here. The claim that the run
+// applies the block is pinned where the application is, one package over:
+// internal/runner's routing tests (routing_internal_test.go,
+// routing_e2e_test.go) and internal/cli's
+// TestDocsProjectLayerSaysRoutingIsApplied, whose subject is the same sentence
+// in the operator's docs.
 func TestRoutingCommentsMatchTheCode(t *testing.T) {
 	src, err := os.ReadFile("policy.go")
 	if err != nil {
