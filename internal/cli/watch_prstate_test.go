@@ -1,0 +1,322 @@
+package cli
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fakeWatchGH writes an executable gh, first on PATH, whose body is script; it
+// returns the file every invocation appends its argv to, so a test can see
+// both what ran and that nothing ran at all.
+func fakeWatchGH(t *testing.T, script string) string {
+	t.Helper()
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + calls + "\n" + script
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return calls
+}
+
+func ghWatchCalls(t *testing.T, calls string) []string {
+	t.Helper()
+	b, err := os.ReadFile(calls)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) == 0 {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+}
+
+// readySection is the "Ready for your review" part of a plain frame, "" when
+// the frame has none.
+func readySection(frame string) string {
+	i := strings.Index(frame, "Ready for your review")
+	if i < 0 {
+		return ""
+	}
+	return frame[i:]
+}
+
+// The owner's request (2026-10-16): a merged or closed pull request leaves the
+// ready list, an open one stays, and the header's count is the filtered one.
+func TestWatchPlainDropsMergedAndClosedPRs(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	merged, closed, open := runID(10*time.Minute, "aa01"), runID(9*time.Minute, "aa02"), runID(8*time.Minute, "aa03")
+	for _, r := range []struct {
+		run string
+		n   int
+	}{{merged, 42}, {closed, 44}, {open, 43}} {
+		f.writeTask(t, appSlug, r.run, "")
+		f.writeFinishedResult(t, appSlug, r.run, "succeeded", "ready", r.n,
+			"https://github.com/acme/app/pull/"+itoa(r.n), 10*time.Minute)
+	}
+	calls := fakeWatchGH(t, "case \"$3\" in 42) echo MERGED ;; 44) echo CLOSED ;; *) echo OPEN ;; esac\n")
+
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, "Ready for your review (1)") {
+		t.Fatalf("want the count to reflect the filtered list:\n%s", plain)
+	}
+	section := readySection(plain)
+	if !strings.Contains(section, "https://github.com/acme/app/pull/43") {
+		t.Fatalf("the open PR must stay listed:\n%s", section)
+	}
+	for _, gone := range []string{"pull/42", "pull/44"} {
+		if strings.Contains(section, gone) {
+			t.Fatalf("%s is merged or closed and must not be listed:\n%s", gone, section)
+		}
+	}
+	if got := ghWatchCalls(t, calls); len(got) != 3 {
+		t.Fatalf("calls = %v, want one per ready PR", got)
+	}
+	if want := "pr view 42 --repo acme/app --json state --jq .state"; !containsStr(ghWatchCalls(t, calls), want) {
+		t.Fatalf("calls = %v, want %q among them", ghWatchCalls(t, calls), want)
+	}
+	if strings.Contains(plain, "PR state unavailable") {
+		t.Fatalf("no note belongs here:\n%s", plain)
+	}
+}
+
+// gh not installed: every ready row stays listed (today's behaviour), with one
+// note saying so — not one per row, and not one per frame.
+func TestWatchPlainWithoutGHKeepsRowsAndNotesOnce(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	for _, r := range []struct {
+		run string
+		n   int
+	}{{runID(10*time.Minute, "bb01"), 42}, {runID(9*time.Minute, "bb02"), 43}} {
+		f.writeTask(t, appSlug, r.run, "")
+		f.writeFinishedResult(t, appSlug, r.run, "succeeded", "ready", r.n,
+			"https://github.com/acme/app/pull/"+itoa(r.n), 10*time.Minute)
+	}
+	t.Setenv("PATH", t.TempDir()) // no gh at all, the developer's included
+
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, "Ready for your review (2)") {
+		t.Fatalf("both PRs must stay listed without gh:\n%s", plain)
+	}
+	if n := strings.Count(plain, "PR state unavailable: gh not found"); n != 1 {
+		t.Fatalf("want exactly one note, got %d:\n%s", n, plain)
+	}
+}
+
+// A gh that fails leaves the row listed, with one note, and never leaks what
+// gh printed.
+func TestWatchPlainWithFailingGHKeepsRows(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	run := runID(10*time.Minute, "cc01")
+	f.writeTask(t, appSlug, run, "")
+	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
+	fakeWatchGH(t, "echo 'gh: HTTP 403: API rate limit exceeded for user' >&2; exit 1\n")
+
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, "Ready for your review (1)") {
+		t.Fatalf("a failing gh must fail open:\n%s", plain)
+	}
+	if strings.Contains(plain, "rate limit") {
+		t.Fatalf("gh's own output must never be shown:\n%s", plain)
+	}
+	if n := strings.Count(plain, "PR state unavailable"); n != 1 {
+		t.Fatalf("want exactly one note, got %d:\n%s", n, plain)
+	}
+}
+
+// --no-pr-state runs nothing at all, and lists every ready PR: it is what an
+// offline operator (and every test that is not about PR state) uses.
+func TestWatchNoPRStateRunsNothing(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	run := runID(10*time.Minute, "dd01")
+	f.writeTask(t, appSlug, run, "")
+	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
+	calls := fakeWatchGH(t, "echo MERGED\n")
+
+	plain, _, err := execute(t, "watch", "--once", "--plain", "--no-pr-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, "Ready for your review (1)") {
+		t.Fatalf("--no-pr-state must list every ready PR:\n%s", plain)
+	}
+	if got := ghWatchCalls(t, calls); got != nil {
+		t.Fatalf("--no-pr-state ran gh: %v", got)
+	}
+}
+
+// Only a URL of exactly the GitHub pull request form is ever handed to gh. A
+// Bitbucket URL and a hostile one are listed and never executed; the fake gh
+// proves nothing ran.
+func TestWatchNeverExecutesGHForOtherURLs(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	for i, url := range []string{
+		"https://bitbucket.org/acme/app/pull-requests/7",
+		"https://github.com/a/b/pull/1;rm -rf x",
+		"https://github.com/a/b/pull/$(id)",
+		"https://github.com/a/../../b/pull/1",
+	} {
+		run := runID(time.Duration(10+i)*time.Minute, "ee0"+itoa(i))
+		f.writeTask(t, appSlug, run, "")
+		f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 7, url, 10*time.Minute)
+	}
+	calls := fakeWatchGH(t, "echo MERGED\n")
+
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, "Ready for your review (4)") {
+		t.Fatalf("every row must be listed:\n%s", plain)
+	}
+	if got := ghWatchCalls(t, calls); got != nil {
+		t.Fatalf("gh ran for a URL it must never see: %v", got)
+	}
+}
+
+// The --json feed is a contract a console reads (console/docs/json-contract.md
+// §2): the PR-state filter is a human-view filter and never touches it. The
+// document is identical with the filter on and off — a merged PR is still in
+// ready[] — and its key sets are pinned against a golden, so neither this
+// change nor a later one can add or drop a field by accident.
+func TestWatchJSONUnaffectedByPRState(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	run := runID(10*time.Minute, "ff01")
+	f.writeTask(t, appSlug, run, "")
+	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
+	calls := fakeWatchGH(t, "echo MERGED\n")
+
+	with, _, err := execute(t, "watch", "--once", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, _, err := execute(t, "watch", "--once", "--json", "--no-pr-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// --json is the machine view and consults nothing: the feed is the runs
+	// bucket's own record, so not one gh ran.
+	if got := ghWatchCalls(t, calls); got != nil {
+		t.Fatalf("--json ran gh: %v", got)
+	}
+
+	var a, b map[string]any
+	if err := json.Unmarshal([]byte(with), &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(without), &b); err != nil {
+		t.Fatal(err)
+	}
+	// The values move between two runs (ages, the clock), so the comparison is
+	// of the shape: every key, at every level, in both documents.
+	if sa, sb := shapeOf(a), shapeOf(b); sa != sb {
+		t.Fatalf("--json's shape differs with the PR-state filter on:\n%s\n\n%s\n\n%s", sa, sb, with)
+	}
+	ready, _ := a["ready"].([]any)
+	if len(ready) != 1 {
+		t.Fatalf("ready = %v, want the merged PR still in the feed", a["ready"])
+	}
+	first, _ := ready[0].(map[string]any)
+	if first["pr_url"] != "https://github.com/acme/app/pull/42" {
+		t.Fatalf("ready[0] = %v", first)
+	}
+
+	if got := keysOf(t, a); !reflect.DeepEqual(got, goldenKeys(t, "watch_json_keys.golden")) {
+		t.Fatalf("watch --json top-level keys = %v", got)
+	}
+	if got := keysOf(t, first); !reflect.DeepEqual(got, goldenKeys(t, "watch_json_ready_keys.golden")) {
+		t.Fatalf("watch --json ready[] keys = %v", got)
+	}
+}
+
+// shapeOf is a decoded document's structure without its values: every key at
+// every level, with the kind of value under it. Two documents with the same
+// shape carry the same fields, which is the thing the console's contract is
+// about.
+func shapeOf(v any) string {
+	switch t := v.(type) {
+	case map[string]any:
+		var parts []string
+		for k, sub := range t {
+			parts = append(parts, k+":"+shapeOf(sub))
+		}
+		slices.Sort(parts)
+		return "{" + strings.Join(parts, ",") + "}"
+	case []any:
+		if len(t) == 0 {
+			return "[]"
+		}
+		return "[" + shapeOf(t[0]) + "]"
+	case nil:
+		return "null"
+	default:
+		return strings.TrimPrefix(reflect.TypeOf(t).String(), "json.")
+	}
+}
+
+// keysOf is m's keys, sorted: the shape of a document, without its values.
+func keysOf(t *testing.T, m map[string]any) []string {
+	t.Helper()
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// goldenKeys reads testdata/<name>, one key per line.
+func goldenKeys(t *testing.T, name string) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("%v (create it: one JSON key per line, sorted)", err)
+	}
+	return strings.Fields(string(b))
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
+}
+
+func containsStr(hay []string, needle string) bool {
+	for _, h := range hay {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}

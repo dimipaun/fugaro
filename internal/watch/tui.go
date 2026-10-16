@@ -55,6 +55,11 @@ type TUIOptions struct {
 	// AckPath is the acknowledgements file (AckPath's default when ""); a
 	// bad or missing file is the empty set (LoadAcks never fails).
 	AckPath string
+	// PRState filters the ready list by what the operator's own gh says about
+	// each pull request (--no-pr-state leaves it nil). It is asked on every
+	// rebuild and answers from its cache, so the screen never waits for it;
+	// a new answer is picked up by the next tick (Version).
+	PRState *PRState
 
 	ASCII, NoColor bool
 	// Exec runs a confirmed kill or resume (Execute against the database).
@@ -115,6 +120,7 @@ type model struct {
 
 	view   View
 	dirty  bool
+	prSeen uint64 // the PRState version the last frame was drawn at
 	frame  string
 	notice string
 	pend   *pending
@@ -206,7 +212,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.wait()
 	case renderMsg:
-		if m.dirty {
+		// A PR-state answer lands off the render loop; the tick is what turns
+		// it into the next frame, so a merged PR leaves the list within one
+		// redraw period of the answer.
+		if m.dirty || (m.o.PRState != nil && m.o.PRState.Version() != m.prSeen) {
 			m.rebuild()
 		}
 		return m, m.tick()
@@ -261,6 +270,11 @@ func (m *model) rebuild() {
 		v = FilterRepo(v, m.o.RepoKey)
 	}
 	ready := ReadyRowsOf(v) // before the filter: a ready PR outlives --keep (design generic-tool §10.1)
+	// A pull request the operator's own gh reports merged or closed is not
+	// ready for review any more, whatever result.json said. The list is drawn
+	// from the cache as it is now; a lookup still running leaves the row
+	// listed (fail open) and the next tick redraws once it answers.
+	ready = m.o.PRState.Filter(ready)
 	v, _ = m.filter.Apply(v, m.acks.Has)
 	v = DropEmptyFinishedBlocks(v)
 	m.view = v
@@ -275,10 +289,12 @@ func (m *model) rebuild() {
 		Width: m.w, Height: m.h, Project: m.o.Project, ASCII: m.o.ASCII, Color: !m.o.NoColor,
 		Selected: m.cur, Expanded: m.expanded, Collapsed: m.collapsed, Scroll: m.scroll, Follow: m.follow, Help: m.help,
 		Footer: foot, Keys: m.o.Exec != nil, Repo: m.o.Repo, FilterAll: m.filter.All, Ready: ready,
+		PRNote: m.o.PRState.Note(),
 	})
 	m.scroll, m.follow = fr.Scroll, false
 	m.frame = fr.String()
 	m.dirty = false
+	m.prSeen = m.o.PRState.Version()
 }
 
 // ackSelected acknowledges the selected row's failure (key x), when it names
