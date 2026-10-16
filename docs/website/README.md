@@ -9,7 +9,7 @@ This directory is the documentation of a **second artifact**: a public site for 
 | Document | What it is |
 |---|---|
 | [spec.md](spec.md) | **The owner's text, verbatim** — committed byte for byte and alone, before anything that answers it. It is the source document for the other three, and it is not edited when they disagree with it. |
-| [reconciliation.md](reconciliation.md) | What the spec asks for, checked against `origin/main` at `76f6c59`. Sixty-three numbered findings classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol; a concept-to-repo table; twenty decision rows **D90–D109**; the five things the reconciliation **refuses** to accept from the spec; and six **UNVERIFIED** items. |
+| [reconciliation.md](reconciliation.md) | What the spec asks for, checked against `origin/main` at `76f6c59`. Sixty-three numbered findings classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol; a concept-to-repo table; twenty decision rows **D90–D109**; the **four** things the reconciliation refuses to accept from the spec and the **one right** the spec gives away; and six **UNVERIFIED** items. |
 | [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: four parts, twenty-four tasks, ten PR groups, and a **Parallel execution** section of twelve levels (L0–L11) with the critical path, plus §7.1, which states once what can start under which of the owner's answers. Every task carries the files it touches, its tests, its command, its dependencies, its commit and its **red step**; every part carries its reviewer tier. |
 | this file | The index, and the status line above. |
 
