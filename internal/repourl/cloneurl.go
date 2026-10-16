@@ -47,7 +47,17 @@ func CloneURL(provider, repo, given string) (string, error) {
 		if host == "" {
 			return "", fmt.Errorf("git provider %q is not bitbucket or github", provider)
 		}
-		return "https://" + host + "/" + repo + ".git", nil
+		// The repository is held to its canonical form here too, so the
+		// provider's usual URL always names a repository: without it a
+		// misspelt or empty repository would be turned into a URL that
+		// clones nothing ("https://github.com/.git"), which reads like the
+		// provider's own answer. It is only lower-cased and stripped of a
+		// trailing .git — the same spelling task.Slug keys everything else by.
+		canonical, err := task.CanonicalRepo(repo)
+		if err != nil {
+			return "", err
+		}
+		return "https://" + host + "/" + canonical + ".git", nil
 	}
 	u, err := url.Parse(given)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {

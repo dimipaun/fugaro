@@ -134,8 +134,10 @@ type Policy struct {
 	// the provider the job's name pins and this block (plan task 3.3 step 3,
 	// design §4.1(1)). The URL is validated on the node against the same rules
 	// the deployer applies (repourl.CloneURL), so an entry can never point a
-	// run at another repository or another provider's host.
-	CloneURLs map[string]string `json:"clone_urls,omitempty"`
+	// run at another repository or another provider's host. The member names
+	// are escaped for RTDB — a canonical name carries slashes — which is
+	// CloneURLs' own business and not a reader's.
+	CloneURLs CloneURLs `json:"clone_urls,omitempty"`
 
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
@@ -406,7 +408,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 // cache and its budget session name — the very thing the run's own remote
 // checks refuse when a launcher sets FUGARO_REMOTE, and the reason the node
 // is checked here rather than trusted.
-func validCloneURLs(urls map[string]string) error {
+func validCloneURLs(urls CloneURLs) error {
 	for _, key := range sortedStringKeys(urls) {
 		at := fmt.Sprintf("projectpolicy: clone_urls[%s]", key)
 		provider, repo, ok := strings.Cut(key, "/")

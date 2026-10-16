@@ -796,7 +796,7 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// The clone URLs a project job clones from (plan task 3.3 step 3): kept,
 	// because no command of this release writes one, and worth a line because a
 	// dropped entry changes where a repository's runs clone from. The URL is
-	// credential-free by the node's own validation (gitprov.CloneURL), so
+	// credential-free by the node's own validation (repourl.CloneURL), so
 	// printing it is not printing a secret.
 	for _, canonical := range slices.Sorted(maps.Keys(new.CloneURLs)) {
 		fmt.Fprintf(out, "  clone_urls %s kept: %s\n", canonical, new.CloneURLs[canonical])
@@ -1426,6 +1426,16 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	}
 	if p.Routing != nil {
 		fmt.Fprintf(out, "  routing: %s\n", routingText(p.Routing))
+	}
+	// One line per clone URL, under the canonical repository name the runner
+	// looks up (plan task 3.3 step 3). Like routing: this Fugaro reads the
+	// block and writes none, so an operator has to be able to see what the
+	// node carries — a node with an entry must not read like one without, and
+	// the entry is where that repository's runs clone from. The URL is
+	// credential-free by the node's own validation (repourl.CloneURL), so
+	// printing it is not printing a secret.
+	for _, canonical := range slices.Sorted(maps.Keys(p.CloneURLs)) {
+		fmt.Fprintf(out, "  clone_urls: %s → %s\n", canonical, p.CloneURLs[canonical])
 	}
 }
 

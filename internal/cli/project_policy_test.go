@@ -1939,3 +1939,55 @@ func TestProjectPolicyPublishDiffDoesNotPrintAModelPricesCount(t *testing.T) {
 		t.Errorf("the diff no longer names the override it has:\n%s", out)
 	}
 }
+
+// TestProjectPolicyPublishKeepsCloneURLs: the clone_urls block is data the
+// runner obeys (a project job's clone URL, plan task 3.3 step 3) and no command
+// of this release writes one, so a publish that built the node from its own type
+// would drop an operator's entry — and a dropped entry is silently a repository
+// that clones from its provider's usual host instead of the mirror the project
+// chose to route it through. The block is kept, the diff says so (with the URL,
+// which is credential-free by the node's own validation), and `policy show`
+// prints it, so a node with an entry does not read like one without.
+func TestProjectPolicyPublishKeepsCloneURLs(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The entry an operator (or a later release) put there: this project's own
+	// repository, on the provider's own host, under the escaped member name the
+	// node must use (projectpolicy's CloneURLs: RTDB refuses a key with a slash
+	// in it, and a canonical repository name has two).
+	const (
+		canonical = "github/acme/app"
+		member    = "github%2Facme%2Fapp"
+		url       = "https://github.com/acme/app.git"
+	)
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["clone_urls"] = map[string]any{member: url}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := f.db.Value(projectpolicy.PathShared())
+	if v, ok := nodeAt(got, "clone_urls", member); !ok || v != url {
+		t.Errorf("the publish dropped or changed the clone_urls block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	// The decoded policy the rest of this binary reads still carries it: the
+	// runner looks the entry up by canonical repository name.
+	pol := publishedPolicy(t, f)
+	if pol.CloneURL(canonical) != url {
+		t.Errorf("CloneURL(%q) = %q, want %q", canonical, pol.CloneURL(canonical), url)
+	}
+	if !strings.Contains(out, "clone_urls "+canonical+" kept: "+url) {
+		t.Errorf("the diff does not say the clone_urls entry is kept:\n%s", out)
+	}
+	shown, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(shown, canonical+" → "+url) {
+		t.Errorf("policy show does not print the clone_urls entry:\n%s", shown)
+	}
+}
