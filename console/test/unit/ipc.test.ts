@@ -25,7 +25,12 @@
 //     non-plain object, a path, a command, a flag name, a control character, an
 //     invisible format character, an unpaired surrogate, an oversize string, a
 //     wrong type or a URL that is not the validated external link fails the
-//     table entry that names it; a schema that refuses *everything* fails the
+//     table entry that names it; a kind shared between two commands whose flags
+//     are not one grammar fails the per-command window table, row by row, and
+//     the test that each command carries its own window kind -- the two
+//     `--since` flags are two grammars (`reportRange`, `parseSince`), and one
+//     shared kind was wrong in both directions at once; a schema that refuses
+//     *everything* fails the
 //     well-formed table, which is what keeps the refusal tables meaningful;
 //   - an unfrozen bridge, a bridge without the table's version, a `length > 1`
 //     method, or an `invoke`/`send`/`on` property fails the surface-shape tests;
@@ -676,7 +681,7 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'live.watch': {},
   'budget.show': { repo: 'acme/app' },
   'spend.report': { by: 'model', since: '7d', until: '2026-10-16', repo: 'acme/app' },
-  'runs.list': { repo: 'acme/app', since: '2026-10-16', mine: true, pr: 42, all: false },
+  'runs.list': { repo: 'acme/app', since: '7d', mine: true, pr: 42, all: false },
   'run.diagnose': { run: '20261016-121029-4a1b' },
   'run.logs': { run: '20261016-121029-4a1b' },
   'run.logLink': { run: '20261016-121029-4a1b' },
@@ -971,24 +976,67 @@ describe('the day and window arguments', () => {
     })
   }
 
-  const windows: readonly (readonly [string, boolean])[] = [
-    ['2026-10-16', true],
-    ['7d', true],
-    ['24h', true],
-    ['30m', true],
-    ['0', true],
-    ['7', false],
-    ['7w', false],
-    ['-7d', false],
-    ['7d ', false],
-    ['all', false],
+  // The two `--since` flags are two different grammars (`reportRange` vs
+  // `parseSince`), so there is a table per command and neither is written
+  // against the other's: a kind shared between them was wrong in both
+  // directions at once -- it refused `12w`, which `report`'s own help
+  // advertises, and it admitted `2026-10-16`, which `parseSince` has no branch
+  // for. Each row below is a value its own command's parser accepts or refuses.
+  const reportWindows: readonly (readonly [string, boolean, string])[] = [
+    ['2026-10-16', true, 'a UTC day, reportRange’s date branch'],
+    ['30d', true, 'report’s own default'],
+    ['12w', true, 'twelve weeks -- advertised in report’s own help'],
+    ['3660d', true, 'exactly reportMaxDays'],
+    ['522w', true, '3654 days, the last week inside reportMaxDays'],
+    ['3661d', false, 'one day past reportMaxDays'],
+    ['523w', false, '3661 days, past reportMaxDays'],
+    ['0d', false, 'reportRange refuses a count below 1'],
+    ['0', false, 'report --since has no “no bound”: 0 falls through to its date parser'],
+    ['24h', false, 'report takes days and weeks, not hours'],
+    ['90m', false, 'nor minutes'],
+    ['7', false, 'a bare number is not a day count'],
+    ['-7d', false, 'negative'],
+    ['7d ', false, 'a trailing space'],
+    ['all', false, 'a word'],
   ]
 
-  for (const [value, accepted] of windows) {
-    it(`${accepted ? 'accepts' : 'refuses'} the window ${JSON.stringify(value)}`, () => {
+  for (const [value, accepted, why] of reportWindows) {
+    it(`${accepted ? 'accepts' : 'refuses'} the report window ${JSON.stringify(value)} (${why})`, () => {
+      expect(validateArguments('spend.report', { since: value }).ok).toBe(accepted)
+    })
+  }
+
+  const runWindows: readonly (readonly [string, boolean, string])[] = [
+    ['0', true, 'parseSince’s own “no bound”'],
+    ['7d', true, 'its default, and the first form its help lists'],
+    ['36h', true, 'a Go duration in hours'],
+    ['90m', true, 'a Go duration in minutes'],
+    ['1d', true, 'one day'],
+    ['2026-10-16', false, 'parseSince has no date branch: a UTC day is not a runs window'],
+    ['12w', false, 'Go durations have no week unit'],
+    ['0d', false, 'parseSince refuses a day count below 1'],
+    ['0h', false, 'nor a duration of zero'],
+    ['7', false, 'a bare number is neither a form'],
+    ['7s', false, 'seconds are a Go duration the console does not carry'],
+    ['-7d', false, 'negative'],
+    ['7d ', false, 'a trailing space'],
+    ['all', false, 'a word'],
+  ]
+
+  for (const [value, accepted, why] of runWindows) {
+    it(`${accepted ? 'accepts' : 'refuses'} the runs window ${JSON.stringify(value)} (${why})`, () => {
       expect(validateArguments('runs.list', { since: value }).ok).toBe(accepted)
     })
   }
+
+  it('gives each command its own window kind, so neither can drift into the other', () => {
+    const kindsOf = (name: 'spend.report' | 'runs.list'): readonly string[] =>
+      CONSOLE_OPERATIONS.filter((operation) => operation.name === name)
+        .flatMap((operation) => operation.args.map((spec) => spec.kind))
+        .filter((kind) => kind === 'reportSince' || kind === 'runSince')
+    expect(kindsOf('spend.report')).toEqual(['reportSince'])
+    expect(kindsOf('runs.list')).toEqual(['runSince'])
+  })
 })
 
 describe('the closed sets', () => {

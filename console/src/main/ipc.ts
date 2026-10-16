@@ -104,19 +104,49 @@ export const MAX_RUN_ID_LENGTH = 64
 export const MAX_URL_LENGTH = 2048
 
 /**
+ * REPORT_MAX_DAYS is `report --since`'s own bound on a range -- the CLI's
+ * `reportMaxDays` (`internal/cli/report.go:40`), which exists because a query
+ * reads a document per repository per day. A window past it is a value `report`
+ * refuses, so the console refuses it here rather than forward it and let the
+ * CLI's error be the answer.
+ */
+export const REPORT_MAX_DAYS = 3660
+
+/** REPORT_MAX_WEEKS is that same bound in the other unit `report --since`
+ * accepts: 522 weeks is 3654 days, and 523 is 3661 -- one day past the bound. */
+export const REPORT_MAX_WEEKS = 522
+
+/**
  * ArgumentKind is the closed set of things an operation's argument may be. Every
- * kind is a value the CLI's own flags already accept in that position, and none
- * of them is a path, a command, a flag name or a free-form string: a payload
- * with nowhere to put a path is a payload that cannot name a file.
+ * kind is a value the CLI's own flags already accept *in that position*, and
+ * none of them is a path, a command, a flag name or a free-form string: a
+ * payload with nowhere to put a path is a payload that cannot name a file.
+ *
+ * "In that position" is why a kind is per command and not per flag name: two
+ * commands' `--since` are two grammars, and a kind shared between them would be
+ * wrong in both directions at once -- admitting a value one command rejects, and
+ * refusing one the other's own help advertises. Where a kind is *narrower* than
+ * its flag, it is narrower on purpose and says so; where it is not, it accepts
+ * exactly what the flag accepts. The test file carries a table per kind against
+ * the command that kind belongs to, so a kind that drifts from its flag fails a
+ * named test rather than a prose claim.
  *
  *   - `repository` -- `owner/name`, the canonical repository path the CLI's own
  *     `CanonicalRepo` produces (`internal/task/task.go`), lower-case ASCII;
  *   - `runId` -- a run id as `task.NewRunID` builds one,
  *     `YYYYMMDD-HHMMSS-xxxx`;
  *   - `day` -- a UTC calendar day, `YYYY-MM-DD`;
- *   - `since` -- `--since`'s own two forms: a UTC day, or `Nd`/`Nh`/`Nm`, or `0`
- *     for everything;
- *   - `reportDimension` -- `report --by`'s closed set of six words;
+ *   - `reportSince` -- `report --since`'s own forms: a UTC day, `Nd`, or `Nw`,
+ *     bounded by the same `reportMaxDays` the CLI bounds the range with
+ *     (`internal/cli/report.go:40`, `reportRange` at `report.go:93`). A window
+ *     in hours or minutes is *not* one of its forms, and neither is `0`;
+ *   - `runSince` -- `runs ls --since`'s own forms: `0` for no bound, `Nd`, or a
+ *     Go duration in hours or minutes (`36h`, `90m`), which is what its own help
+ *     advertises and what `parseSince` takes (`internal/cli/runs.go:496`). A
+ *     calendar day is *not* one of its forms: `parseSince` has no date branch.
+ *     It is the one kind narrower than its flag -- seconds and compound
+ *     durations (`7s`, `1h30m`) are refused, deliberately;
+ *   - `reportDimension` -- `report --by`'s closed set of seven words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
@@ -126,7 +156,8 @@ export type ArgumentKind =
   | 'repository'
   | 'runId'
   | 'day'
-  | 'since'
+  | 'reportSince'
+  | 'runSince'
   | 'reportDimension'
   | 'secretScope'
   | 'pullRequest'
@@ -261,13 +292,13 @@ export const CONSOLE_OPERATIONS = [
         key: 'by',
         kind: 'reportDimension',
         required: false,
-        why: '`--by` is the breakdown switch the Spend screen draws; its six words are closed.',
+        why: '`--by` is the breakdown switch the Spend screen draws; its seven words are closed.',
       },
       {
         key: 'since',
-        kind: 'since',
+        kind: 'reportSince',
         required: false,
-        why: '`--since` is the range picker, in the CLI’s own two forms.',
+        why: '`--since` is the range picker, in `report`’s own forms: a day, `30d` or `12w`.',
       },
       {
         key: 'until',
@@ -298,9 +329,9 @@ export const CONSOLE_OPERATIONS = [
       },
       {
         key: 'since',
-        kind: 'since',
+        kind: 'runSince',
         required: false,
-        why: 'the design allow-list admits `--since` on this command.',
+        why: 'the design allow-list admits `--since` on this command, in `runs ls`’s own forms: 7d, 36h, 90m or 0.',
       },
       {
         key: 'mine',
@@ -767,7 +798,13 @@ export function isNeverReachable(operation: {
 const REPOSITORY_RE = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/
 const RUN_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4,16}$/
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
-const SINCE_RE = /^(?:\d{1,4}[dhm]|0)$/
+// The two `--since` flags are two different grammars, and each one is written
+// as its own kind so neither can admit a value its own command refuses. `report`
+// takes days and weeks but not hours (`reportRange`, `internal/cli/report.go:93`
+// -- an `h` suffix falls through to the date parser there); `runs ls` takes days,
+// hours and minutes but no calendar day (`parseSince`, `internal/cli/runs.go:496`).
+const REPORT_SINCE_RE = /^(\d{1,4})([dw])$/
+const RUN_SINCE_RE = /^(\d{1,4})([dhm])$/
 const REPORT_DIMENSIONS: readonly string[] = Object.freeze([
   'day',
   'week',
@@ -913,11 +950,37 @@ function validateValue(
     case 'day':
       if (!isCalendarDay(value)) return refuse(`${spec.key} must be a UTC day as YYYY-MM-DD`)
       return { ok: true, value }
-    case 'since':
-      if (!isCalendarDay(value) && !SINCE_RE.test(value)) {
-        return refuse(`${spec.key} must be a UTC day or a window like 7d`)
+    case 'reportSince': {
+      // `report --since`: a UTC day, `30d`, or `12w`, and the window is bounded
+      // exactly where `reportRange` bounds it. `24h` and `0` are not forms this
+      // command has -- both fall through to its date parser and are refused.
+      if (isCalendarDay(value)) return { ok: true, value }
+      const window = REPORT_SINCE_RE.exec(value)
+      if (window === null) {
+        return refuse(`${spec.key} must be a UTC day, a number of days like 30d, or weeks like 12w`)
+      }
+      const weeks = window[2] === 'w'
+      const days = Number(window[1]) * (weeks ? 7 : 1)
+      if (days < 1 || days > REPORT_MAX_DAYS) {
+        return refuse(
+          `${spec.key} must be a window of at most ${REPORT_MAX_DAYS} days (${REPORT_MAX_WEEKS} weeks)`,
+        )
       }
       return { ok: true, value }
+    }
+    case 'runSince': {
+      // `runs ls --since`: `0` for no bound, `7d`, or a duration in hours or
+      // minutes (`36h`, `90m`) -- its own help's three examples. A calendar day
+      // is not one of them, and neither is a week. `parseSince` additionally
+      // takes seconds and compound durations (`7s`, `1h30m`); this kind does
+      // not, which is the one place it is narrower than its flag.
+      if (value === '0') return { ok: true, value }
+      const window = RUN_SINCE_RE.exec(value)
+      if (window === null || Number(window[1]) < 1) {
+        return refuse(`${spec.key} must be 0, a number of days like 7d, or hours or minutes like 36h or 90m`)
+      }
+      return { ok: true, value }
+    }
     case 'reportDimension':
       if (!REPORT_DIMENSIONS.includes(value)) return refuse(`${spec.key} must be one of ${REPORT_DIMENSIONS.join(', ')}`)
       return { ok: true, value }
@@ -944,10 +1007,13 @@ function kindLimit(kind: ArgumentKind): number {
       return MAX_RUN_ID_LENGTH
     case 'day':
       return 10
-    case 'since':
-      // A day is `2026-10-16`; a window is `7d`. The bound is the longer of the
-      // two, and the grammar decides which one a value is.
+    case 'reportSince':
+      // A day is `2026-10-16`; the longest window is `3660d`. The bound is the
+      // longer of the two, and the grammar decides which one a value is.
       return 10
+    case 'runSince':
+      // `9999d` / `36h` / `90m` -- four digits and a unit. `0` is shorter.
+      return 5
     case 'reportDimension':
       return 8
     case 'secretScope':

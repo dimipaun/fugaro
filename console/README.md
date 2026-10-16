@@ -339,6 +339,18 @@ state), no command (the verb is a constant in the table) and no URL beyond the
 one link, which is `validateExternalUrl` from `src/main/window.ts` — imported,
 not re-implemented, so the two cannot drift.
 
+**A kind belongs to a command, not to a flag name.** Two commands' `--since` are
+two grammars: `report --since` takes a UTC day, `30d` or `12w`, bounded by the
+CLI's own `reportMaxDays`, while `runs ls --since` takes `0`, `7d` or a Go
+duration in hours or minutes (`36h`, `90m`) and has no date branch at all. One
+kind shared between them was wrong in both directions at once — refusing `12w`,
+which `report`'s own help advertises, and admitting a calendar day that
+`parseSince` rejects — so each command has its own kind (`reportSince`,
+`runSince`), and `test/unit/ipc.test.ts` carries a table per command in which
+every row is a value that command's own parser accepts or refuses. Where a kind
+is narrower than its flag it says so in the kind's own doc comment (`runSince`
+does not carry `7s`, and no kind carries a path).
+
 `src/preload/index.ts` puts **one frozen, versioned object** on `window.fugaro`,
 one method per operation. It is deliberately a phone book and not a switch: the
 channel a method calls is a constant concatenated from that operation's name,
@@ -394,6 +406,7 @@ allow-list drives `budget kill`, or `--follow`, or any other row.
 | an operation with no preload method, or a preload method with no operation | the two-way surface test |
 | a method invoking anything but `channelForOperation(name)` | the channel-routing test |
 | a schema accepting an extra key, a prototype-pollution key, a path, a command, a control or format character, an oversize string or a wrong type | the table entry that names it |
+| one kind shared by two commands whose flags are not one grammar | the per-command window table, row by row, and "gives each command its own window kind" |
 | a schema that refuses *everything* (the way to pass every refusal test vacuously) | the well-formed-payload table, one row per operation |
 | an unfrozen bridge, a wrong version, a `length > 1` method, an `invoke`/`send`/`on` property | the surface-shape tests |
 | a second `invoke`, a computed `require`, an `eval`, a `child_process`, or a value import in the preload | the source scans |
