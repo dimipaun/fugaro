@@ -1,0 +1,1202 @@
+// The spawn contract, held to the design's section 3.4 rules and section 5.1's
+// allow-list (desktop-console plan Task 1.3, SECURITY-SENSITIVE).
+//
+// Every property here is one a mutation can break, and each names the test that
+// catches it:
+//
+//   - an argv built as a shell string, or a spawn with `shell: true`, fails
+//     "builds argv as an array and hands the spawner `shell: false`";
+//   - `--project` dropped from `watch` fails the table test named for `watch`;
+//     `--project` added to the `version` handshake fails the test named for
+//     `version`, which asserts the handshake's argv is exactly `["version"]`
+//     (both directions of the plan's red step, because one fails on launch and
+//     the other shows another installation's numbers);
+//   - a value from a document interpolated into argv fails the hostile-value
+//     table: `; rm -rf /`, `$(id)`, a backtick, a quote, a space and a leading
+//     dash are refused, for every declared argument of every row;
+//   - a child environment that inherits `process.env` wholesale, or that adds
+//     `GOOGLE_APPLICATION_CREDENTIALS`, fails "gives the child exactly
+//     `CHILD_ENV_KEYS`" and "does not pass the app's own credentials";
+//   - the child's `PATH` reduced to one directory fails "is the declared list
+//     and not one directory";
+//   - a spawn that leaves `cwd` unset, or that uses `/`, fails "spawns from the
+//     installation's checkout" and "spawns from the private directory";
+//   - `doctor --strict` fails "passes `--dir` and never `--strict`";
+//   - a candidate whose version cannot be read being skipped rather than
+//     refused fails "refuses a binary whose version cannot be read";
+//   - a non-JSON stdout line parsed rather than skipped fails the reader tests;
+//   - a dead child not restarted, or restarted after a refusal, fails the
+//     supervisor tests;
+//   - a second file in `src/` naming `node:child_process` fails "is the only
+//     file in src/ that spawns".
+//
+// The fake CLI of `stub.ts` is the only thing spawned: never the real `fugaro`,
+// never the network. The report file it appends to is the child's *own* account
+// of its argv, cwd and environment, which is what makes these tests about what a
+// real machine would see rather than about the console's self-consistency.
+
+import { mkdtempSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  CHILD_ENV_KEYS,
+  CHILD_PATH_PREFIXES,
+  SPAWN_COMMANDS,
+  WELL_KNOWN_BINARY_PREFIXES,
+  argvFor,
+  assertSpawnSurface,
+  binDirectories,
+  childEnvironment,
+  childPath,
+  cliSentence,
+  decodeFeedLine,
+  isSafeArgumentValue,
+  parseVersionLine,
+  planFor,
+  privateWorkingDirectory,
+  resolveBinary,
+  restartDecision,
+  spawnCommandFor,
+  startSidecar,
+  DEFAULT_BACKOFF,
+} from '../../src/main/spawn'
+import type {
+  ChildSpawner,
+  SpawnCommand,
+  SpawnPlan,
+  SpawnedChildLike,
+  SpawnOptionsLike,
+  Timers,
+} from '../../src/main/spawn'
+import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
+import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
+import { CliSource, createInstallationStore } from '../../src/source/cli'
+import { SourceRefusal } from '../../src/source/source'
+import { installStub } from './stub'
+
+const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
+const PROJECT = 'fugaro'
+
+/** freshDirectory is a temporary directory this test owns, one per call. */
+function freshDirectory(prefix = 'fugaro-console-test-'): string {
+  return mkdtempSync(join(tmpdir(), prefix))
+}
+
+/** safeContext is the main-process state a plan is built from in a test. */
+function safeContext(overrides: {
+  project?: string
+  configPath?: string
+  binaryPath?: string
+  directory?: string
+  appEnv?: Readonly<Record<string, string | undefined>>
+} = {}): Parameters<typeof planFor>[2] {
+  return {
+    target: { project: overrides.project ?? PROJECT, ...(overrides.configPath === undefined ? {} : { configPath: overrides.configPath }) },
+    binaryPath: overrides.binaryPath ?? '/opt/homebrew/bin/fugaro',
+    directory: overrides.directory ?? '/Users/owner/src/fugaro',
+    appEnv: overrides.appEnv ?? {},
+  }
+}
+
+/**
+ * recordingSpawner is a `spawn` that never starts anything: it answers with a
+ * child whose streams say nothing and whose exit is never emitted. It is for the
+ * assertions about *what was handed to the spawner* -- the argv, `shell`, the
+ * environment -- where a real process would only add noise.
+ */
+function recordingSpawner(): ChildSpawner & { readonly calls: readonly SpawnCall[] } {
+  const calls: SpawnCall[] = []
+  const spawner = ((command: string, args: readonly string[], options: SpawnOptionsLike) => {
+    calls.push({ command, args, options })
+    return fakeChild()
+  }) as ChildSpawner & { calls: SpawnCall[] }
+  Object.defineProperty(spawner, 'calls', { get: () => calls })
+  return spawner
+}
+
+interface SpawnCall {
+  readonly command: string
+  readonly args: readonly string[]
+  readonly options: SpawnOptionsLike
+}
+
+function fakeChild(): SpawnedChildLike {
+  return {
+    stdout: { on: () => undefined },
+    stderr: { on: () => undefined },
+    on: () => undefined,
+    kill: () => true,
+  }
+}
+
+/** manualTimers is the supervisor's clock, as a test drives it: nothing fires
+ * until the test says so, so a backoff is asserted rather than waited out. */
+function manualTimers(): Timers & { fired(): readonly number[]; fire(): void; pending(): number } {
+  const handles = new Map<number, { fn: () => void; ms: number }>()
+  const firedDelays: number[] = []
+  let next = 0
+  return {
+    setTimeout(fn: () => void, ms: number) {
+      next += 1
+      handles.set(next, { fn, ms })
+      return next as unknown as ReturnType<typeof setTimeout>
+    },
+    clearTimeout(handle: ReturnType<typeof setTimeout>) {
+      handles.delete(handle as unknown as number)
+    },
+    fired: () => firedDelays,
+    pending: () => handles.size,
+    fire() {
+      const entries = [...handles.entries()]
+      for (const [key, entry] of entries) {
+        handles.delete(key)
+        firedDelays.push(entry.ms)
+        entry.fn()
+      }
+    },
+  }
+}
+
+/** scriptedChild is a child process whose streams and exit the test drives, for
+ * the supervisor tests that must not depend on a real signal's timing. */
+function scriptedChild(): SpawnedChildLike & {
+  emitStdout(text: string): void
+  emitStderr(text: string): void
+  exit(code: number | null, signal: string | null): void
+  readonly killed: readonly (NodeJS.Signals | undefined)[]
+} {
+  const stdoutListeners: ((chunk: Buffer | string) => void)[] = []
+  const stderrListeners: ((chunk: Buffer | string) => void)[] = []
+  const exitListeners: ((code: number | null, signal: string | null) => void)[] = []
+  const errorListeners: ((error: Error) => void)[] = []
+  const killed: (NodeJS.Signals | undefined)[] = []
+  return {
+    stdout: { on: (_event, listener) => stdoutListeners.push(listener) },
+    stderr: { on: (_event, listener) => stderrListeners.push(listener) },
+    on(event: 'error' | 'exit', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
+      if (event === 'error') errorListeners.push(listener as (error: Error) => void)
+      else exitListeners.push(listener as (code: number | null, signal: string | null) => void)
+      return undefined
+    },
+    kill(signal?: NodeJS.Signals) {
+      killed.push(signal)
+      return true
+    },
+    emitStdout: (text) => {
+      for (const listener of stdoutListeners) listener(text)
+    },
+    emitStderr: (text) => {
+      for (const listener of stderrListeners) listener(text)
+    },
+    exit: (code, signal) => {
+      for (const listener of exitListeners) listener(code, signal)
+    },
+    killed,
+  }
+}
+
+async function waitFor(predicate: () => boolean, ms = 4000): Promise<void> {
+  const deadline = Date.now() + ms
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitFor timed out')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+describe('the spawn table and the argv it builds', () => {
+  it('has one row per command-bearing operation, and none for the link', () => {
+    expect(() => {
+      assertSpawnSurface(SPAWN_COMMANDS)
+    }).not.toThrow()
+    const names = SPAWN_COMMANDS.map((row) => row.operation)
+    expect(new Set(names).size).toBe(names.length)
+    expect(names).not.toContain('link.openExternal')
+  })
+
+  it('fixes the table the design allow-list fixes: eleven commands, nine with --project', () => {
+    expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
+      'watch --json',
+      'budget show --json',
+      'report --json',
+      'runs ls --json',
+      'diagnose --json',
+      'logs --json',
+      'logs --url',
+      'secrets ls --json',
+      'accounts ls --json',
+      'version',
+      'doctor --json',
+    ])
+    // The nine *commands* that take the flag (addCloudFlags, internal/cli/
+    // cloud.go:51) are nine rows plus one: `logs` has two rows, `--json` and
+    // `--url`, and neither of them may be the one that forgets --project.
+    const commandsWithProject = SPAWN_COMMANDS.filter((row) => row.takesProject).map((row) =>
+      row.words.filter((word) => !word.startsWith('--')).join(' '),
+    )
+    expect(new Set(commandsWithProject)).toEqual(
+      new Set(['watch', 'budget show', 'report', 'runs ls', 'diagnose', 'logs', 'secrets ls', 'accounts ls', 'doctor']),
+    )
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(10)
+  })
+
+  it.each(SPAWN_COMMANDS.map((row) => [row.operation, row] as const))(
+    '%s puts --project on its argv, from the chosen installation',
+    (_name, row: SpawnCommand) => {
+      const argv = argvFor(row.operation, {}, safeContext({ project: 'chosen' }))
+      if (row.takesProject) {
+        expect(argv).toContain('--project')
+        expect(argv[argv.indexOf('--project') + 1]).toBe('chosen')
+      } else {
+        expect(argv).not.toContain('--project')
+      }
+    },
+  )
+
+  it('runs the version handshake bare: `fugaro version` and nothing else', () => {
+    // Both halves of the plan's red step are this test and the one above: a
+    // console that appended --project here fails on launch with
+    // `unknown flag: --project` (newVersionCmd is cobra.NoArgs with no Flags),
+    // and a console that left it off watch shows another installation's numbers.
+    expect([...argvFor('cli.version', {}, safeContext())]).toEqual(['version'])
+    expect(spawnCommandFor('cli.version').takesProject).toBe(false)
+  })
+
+  it('carries --config when the installation is not the ambient one', () => {
+    const argv = argvFor('budget.show', {}, safeContext({ configPath: '/Users/owner/.config/fugaro/config.toml' }))
+    expect(argv).toContain('--config')
+    expect(argv[argv.indexOf('--config') + 1]).toBe('/Users/owner/.config/fugaro/config.toml')
+    // ...and the ambient one, when the installation does not declare a path.
+    expect(argvFor('budget.show', {}, safeContext())).not.toContain('--config')
+  })
+
+  it('emits one array element per value, in the operation’s own order', () => {
+    const argv = argvFor(
+      'runs.list',
+      { repo: 'acme/widgets', since: '3d', mine: true, pr: '412' },
+      safeContext({ project: 'chosen' }),
+    )
+    expect(argv).toEqual([
+      'runs',
+      'ls',
+      '--json',
+      '--repo',
+      'acme/widgets',
+      '--since',
+      '3d',
+      '--mine',
+      '--pr',
+      '412',
+      '--project',
+      'chosen',
+    ])
+  })
+
+  it('emits the secret scope as --project-wide and the repository as a value', () => {
+    expect(argvFor('secrets.inventory', { scope: 'project-wide' }, safeContext())).toContain('--project-wide')
+    const scoped = argvFor('secrets.inventory', { scope: 'repo', repo: 'acme/widgets' }, safeContext())
+    expect(scoped).toContain('--repo')
+    expect(scoped).not.toContain('--project-wide')
+  })
+
+  it('refuses an argument the operation does not declare, by name', () => {
+    expect(() => argvFor('live.watch', { nope: 'x' }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('runs.list', { pr: '412' }, safeContext())).toHaveLength(0)
+  })
+
+  it('refuses a value that is not a boolean or a string where the schema says so', () => {
+    expect(() => argvFor('runs.list', { mine: 'yes' }, safeContext())).toThrow(/not a boolean/)
+    expect(() => argvFor('runs.list', { repo: 7 }, safeContext())).toThrow(/not a string/)
+    expect(() => argvFor('secrets.inventory', { scope: 'everything' }, safeContext())).toThrow(/two scopes/)
+  })
+
+  it.each([
+    'a; rm -rf /',
+    '$(id)',
+    '`id`',
+    'a b',
+    'a"b',
+    "a'b",
+    'a|b',
+    'a&b',
+    'a>b',
+    'a$(b)',
+    'a\ttab',
+    'a\nnewline',
+    '-e',
+    '--json',
+    '',
+  ])('refuses %j as any declared value of any operation', (value) => {
+    for (const row of SPAWN_COMMANDS) {
+      for (const spec of row.args) {
+        if (spec.kind !== 'value') continue
+        expect(
+          () => argvFor(row.operation, { [spec.key]: value }, safeContext()),
+          `${row.operation} ${spec.key}`,
+        ).toThrow()
+      }
+    }
+    expect(isSafeArgumentValue(value)).toBe(false)
+  })
+
+  it('accepts the values the surface admits, so the refusal above is not vacuous', () => {
+    for (const value of ['acme/widgets', '20260101-120000-abcd', '2026-01-01', '3d', 'day', '412', 'project-wide']) {
+      expect(isSafeArgumentValue(value), value).toBe(true)
+    }
+  })
+
+  it('leaves no shell metacharacter in any argv it builds', () => {
+    // The mutation this catches is the plan's own: a command built as a template
+    // string (`fugaro watch --json --project ${project}` handed to a shell)
+    // would carry a space and a whole command in one element.
+    for (const row of SPAWN_COMMANDS) {
+      const argv = argvFor(row.operation, {}, safeContext())
+      for (const element of argv) {
+        expect(element, `${row.operation}: ${element}`).not.toMatch(/[\s;&|`$(){}<>"'\\]/)
+      }
+      expect(['sh', '/bin/sh', 'bash', 'zsh']).not.toContain(argv[0])
+    }
+  })
+
+  it('refuses a flag the console must never emit, through the never table', () => {
+    expect(() => argvFor('budget.show', {}, safeContext())).not.toThrow()
+    // `--strict` and `--follow` are rows of the never table, and the guard is
+    // inside argvFor so no row, argument or later edit can emit one.
+    const strict = planFor('environment.report', {}, safeContext())
+    expect(strict.argv).not.toContain('--strict')
+    expect(strict.argv).not.toContain('--follow')
+  })
+
+  it('refuses a subcommand outside the table before any process exists', () => {
+    const spawner = recordingSpawner()
+    expect(() => planFor('budget kill' as OperationName, {}, safeContext())).toThrow(/not a console operation/)
+    expect(() => spawnCommandFor('exec')).toThrow(/not a console operation/)
+    expect(spawner.calls).toHaveLength(0)
+  })
+
+  it('fails a table whose argv does not start with the operation’s command', () => {
+    const mutated = SPAWN_COMMANDS.map((row) =>
+      row.operation === 'run.diagnose' ? { ...row, words: ['budget', 'kill', '--json'] } : row,
+    )
+    expect(() => assertSpawnSurface(mutated)).toThrow(/does not start with diagnose/)
+  })
+
+  it('fails a table that drops a flag the surface fixes, or adds an argument it does not accept', () => {
+    expect(() =>
+      assertSpawnSurface(
+        SPAWN_COMMANDS.map((row) => (row.operation === 'budget.show' ? { ...row, words: ['budget', 'show'] } : row)),
+      ),
+    ).toThrow(/fixes --json/)
+    expect(() =>
+      assertSpawnSurface(
+        SPAWN_COMMANDS.map((row) =>
+          row.operation === 'live.watch'
+            ? { ...row, args: [...row.args, { key: 'json', flag: '--json', kind: 'value' as const }] }
+            : row,
+        ),
+      ),
+    ).toThrow(/the operation does not accept/)
+  })
+
+  it('fails a table with a command-bearing operation missing from it', () => {
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS.filter((row) => row.operation !== 'runs.list'))).toThrow(
+      /runs.list has no row/,
+    )
+  })
+
+  it('builds argv as an array and hands the spawner `shell: false`', async () => {
+    const spawner = recordingSpawner()
+    const plan = planFor('budget.show', { repo: 'acme/widgets' }, safeContext({ binaryPath: '/opt/homebrew/bin/fugaro' }))
+    const { runToCompletion } = await import('../../src/main/spawn')
+    void runToCompletion(plan, { spawner })
+    expect(spawner.calls).toHaveLength(1)
+    const call = spawner.calls[0]
+    expect(call?.command).toBe('/opt/homebrew/bin/fugaro')
+    expect(Array.isArray(call?.args)).toBe(true)
+    expect(call?.args).toEqual(['budget', 'show', '--json', '--repo', 'acme/widgets', '--project', PROJECT])
+    expect(call?.options.shell).toBe(false)
+    expect(call?.options.cwd).toBe('/Users/owner/src/fugaro')
+  })
+})
+
+describe('the child environment', () => {
+  const fullAppEnv = {
+    PATH: '/usr/local/bin:/usr/bin:/bin',
+    HOME: '/Users/owner',
+    TMPDIR: '/var/folders/xx',
+    LANG: 'en_US.UTF-8',
+    LC_ALL: 'en_US.UTF-8',
+    XDG_CONFIG_HOME: '/Users/owner/.config',
+    XDG_CACHE_HOME: '/Users/owner/.cache',
+    XDG_DATA_HOME: '/Users/owner/.local/share',
+    XDG_STATE_HOME: '/Users/owner/.local/state',
+    XDG_RUNTIME_DIR: '/run/user/501',
+    FUGARO_PROJECT: 'ambient-project',
+    FUGARO_CONFIG: '/Users/owner/.config/fugaro/config.toml',
+    GOOGLE_APPLICATION_CREDENTIALS: '/Users/owner/.config/gcloud/application_default_credentials.json',
+    ANTHROPIC_API_KEY: 'sk-ant-not-a-real-key',
+    AWS_SECRET_ACCESS_KEY: 'not-a-real-key',
+    AWS_PROFILE: 'prod',
+    GITHUB_TOKEN: 'not-a-real-token',
+    SSH_AUTH_SOCK: '/tmp/agent.sock',
+  }
+
+  it('gives the child exactly CHILD_ENV_KEYS and nothing else', () => {
+    const env = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/opt/homebrew/bin/fugaro',
+      appEnv: fullAppEnv,
+    })
+    expect(Object.keys(env).sort()).toEqual([...CHILD_ENV_KEYS].sort())
+  })
+
+  it('does not pass the app’s own credentials, profile or agent socket', () => {
+    const env = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/opt/homebrew/bin/fugaro',
+      appEnv: fullAppEnv,
+    })
+    for (const forbidden of [
+      'GOOGLE_APPLICATION_CREDENTIALS',
+      'ANTHROPIC_API_KEY',
+      'AWS_SECRET_ACCESS_KEY',
+      'AWS_PROFILE',
+      'GITHUB_TOKEN',
+      'SSH_AUTH_SOCK',
+      'FUGARO_CONFIG',
+    ]) {
+      expect(env[forbidden], forbidden).toBeUndefined()
+    }
+    // ...and FUGARO_PROJECT is the chosen installation's, not the ambient one:
+    // the ambient value is the string the app's own environment carried.
+    expect(env['FUGARO_PROJECT']).toBe(PROJECT)
+    expect(env['FUGARO_PROJECT']).not.toBe('ambient-project')
+  })
+
+  it('is frozen and prototypeless, so nothing can add a variable later', () => {
+    const env = childEnvironment({ target: { project: PROJECT }, binaryPath: '/usr/bin/fugaro', appEnv: {} })
+    expect(Object.isFrozen(env)).toBe(true)
+    expect(Object.getPrototypeOf(env)).toBeNull()
+  })
+
+  it('builds the child’s PATH from the binary’s directory and every well-known prefix', () => {
+    const env = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/opt/fugaro/bin/fugaro',
+      appEnv: fullAppEnv,
+    })
+    const entries = (env['PATH'] ?? '').split(':')
+    expect(entries).toEqual(['/opt/fugaro/bin', ...CHILD_PATH_PREFIXES])
+    expect(entries.length).toBeGreaterThan(1)
+    expect(entries[0]).toBe('/opt/fugaro/bin')
+    for (const prefix of ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']) {
+      expect(entries, prefix).toContain(prefix)
+    }
+  })
+
+  it('never lets the app’s own PATH reach the child', () => {
+    const env = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/usr/bin/fugaro',
+      appEnv: { PATH: '/opt/hostile/bin:/tmp/whatever' },
+    })
+    expect(env['PATH']).not.toContain('/opt/hostile')
+    expect(env['PATH']).not.toContain('/tmp/whatever')
+    // `/usr/bin` is both the binary's directory and a well-known prefix, and it
+    // appears once: a duplicated entry is a `PATH` that says nothing extra.
+    expect(childPath('/usr/bin/fugaro')).toBe(
+      ['/usr/bin', '/opt/homebrew/bin', '/usr/local/bin', '/bin', '/usr/sbin', '/sbin'].join(':'),
+    )
+  })
+
+  it('keeps HOME, TMPDIR, LANG and LC_ALL: the operator’s own tools, as their shell has them', () => {
+    const env = childEnvironment({ target: { project: PROJECT }, binaryPath: '/usr/bin/fugaro', appEnv: fullAppEnv })
+    expect(env['HOME']).toBe('/Users/owner')
+    expect(env['TMPDIR']).toBe('/var/folders/xx')
+    expect(env['LANG']).toBe('en_US.UTF-8')
+    expect(env['LC_ALL']).toBe('en_US.UTF-8')
+  })
+
+  it('omits a variable the app’s environment does not have, rather than inventing one', () => {
+    const env = childEnvironment({ target: { project: PROJECT }, binaryPath: '/usr/bin/fugaro', appEnv: { HOME: '/Users/owner' } })
+    expect(Object.keys(env).sort()).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH'])
+  })
+
+  it('reaches the child as its real environment, not just as a plan', async () => {
+    // The end-to-end half: the stub reports the keys of its own process.env, so
+    // a merge with process.env anywhere in the console would show up here.
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: { ...fullAppEnv, PATH: '/opt/hostile/bin' },
+    })
+    await source.environmentReport({})
+    const report = stub.reports().at(-1)
+    // `/bin/sh` -- the shim's own interpreter, not the console -- adds `PWD` to
+    // the environment it execs into. It is the one key allowed outside the fixed
+    // set here, and it is named rather than waved through: any other addition
+    // still fails this test.
+    expect(report?.envKeys).toEqual([...CHILD_ENV_KEYS, 'PWD'].sort())
+    expect(report?.env['FUGARO_CONFIG']).toBeUndefined()
+    expect(report?.env['GOOGLE_APPLICATION_CREDENTIALS']).toBeUndefined()
+    expect(report?.env['ANTHROPIC_API_KEY']).toBeUndefined()
+    expect(report?.project).toBe(PROJECT)
+    expect(report?.path).toBe(childPath(stub.binary))
+    expect(report?.path.startsWith(dirname(stub.binary))).toBe(true)
+  })
+})
+
+describe('the child’s working directory', () => {
+  it('spawns from the installation’s checkout when it has one', async () => {
+    const directory = freshDirectory()
+    const checkout = freshDirectory('fugaro-checkout-')
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      checkout,
+      appEnv: {},
+    })
+    await source.environmentReport({})
+    expect(stub.reports().at(-1)?.cwd).toBe(checkout)
+  })
+
+  it('spawns from a private directory the app owns when there is no checkout, and never /', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+    })
+    await source.environmentReport({})
+    const cwd = stub.reports().at(-1)?.cwd ?? ''
+    expect(cwd).not.toBe('/')
+    expect(cwd.startsWith(tmpdir())).toBe(true)
+    expect(statSync(cwd).isDirectory()).toBe(true)
+    expect(statSync(cwd).mode & 0o777).toBe(0o700)
+  })
+
+  it('passes `doctor --dir <that directory>` and never `--strict`', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    await source.environmentReport({})
+    const argv = stub.reports().at(-1)?.argv ?? []
+    expect(argv.slice(0, 2)).toEqual(['doctor', '--json'])
+    expect(argv).toContain('--dir')
+    expect(argv[argv.indexOf('--dir') + 1]).toBe(stub.reports().at(-1)?.cwd)
+    expect(argv).not.toContain('--strict')
+  })
+
+  it('gives every plan a cwd, so no spawn can inherit the app’s own', () => {
+    for (const row of SPAWN_COMMANDS) {
+      const plan = planFor(row.operation, {}, safeContext())
+      expect(plan.cwd, row.operation).not.toBe('')
+      expect(plan.cwd, row.operation).not.toBe('/')
+    }
+  })
+
+  it('creates the private directory with owner-only mode and reuses it', () => {
+    expect(privateWorkingDirectory()).toBe(privateWorkingDirectory())
+    expect(statSync(privateWorkingDirectory()).mode & 0o777).toBe(0o700)
+  })
+})
+
+describe('binary resolution', () => {
+  it('is the design’s order, and the order is the rule', () => {
+    expect([...WELL_KNOWN_BINARY_PREFIXES]).toEqual([
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '~/.local/bin',
+      '/usr/bin',
+    ])
+  })
+
+  it('resolves a configured path first, and reports where it came from', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' } } })
+    const resolution = await resolveBinary({
+      configuredPath: stub.binary,
+      appEnv: { PATH: '/usr/bin' },
+      directory: freshDirectory(),
+      target: { project: PROJECT },
+    })
+    expect(resolution.ok && resolution.path).toBe(stub.binary)
+    expect(resolution.ok && resolution.version).toBe('1.4.2')
+    expect(resolution.ok && resolution.source).toBe('configured')
+  })
+
+  it('walks the well-known prefixes in order, and only then the app’s PATH', async () => {
+    const base = freshDirectory()
+    const first = join(base, 'prefix-a', 'bin')
+    const second = join(base, 'prefix-b', 'bin')
+    const onPath = join(base, 'path-bin')
+    const options = {
+      appEnv: { PATH: onPath },
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [first, second],
+    }
+    installStub(join(onPath, '..'), {}) // an empty directory: no binary on PATH
+    installStub(second, { commands: { version: { stdout: '2.0.0\n' } } })
+    const secondOnly = await resolveBinary(options)
+    expect(secondOnly.ok && secondOnly.path).toBe(join(second, 'fugaro'))
+
+    installStub(first, { commands: { version: { stdout: '3.0.0\n' } } })
+    const both = await resolveBinary(options)
+    expect(both.ok && both.path).toBe(join(first, 'fugaro'))
+    expect(both.ok && both.version).toBe('3.0.0')
+  })
+
+  it('falls through the well-known prefixes to the app’s own PATH, as the last step', async () => {
+    const base = freshDirectory()
+    const onPath = join(base, 'path-bin')
+    const stub = installStub(onPath, { commands: { version: { stdout: '9.9.9\n' } } })
+    const resolution = await resolveBinary({
+      appEnv: { PATH: `${join(base, 'nowhere')}:${onPath}` },
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [join(base, 'prefix-a', 'bin')],
+    })
+    expect(resolution.ok && resolution.path).toBe(stub.binary)
+  })
+
+  it('resolves ~/.local/bin for the home directory it was given', async () => {
+    const home = freshDirectory('fugaro-home-')
+    const stub = installStub(join(home, '.local', 'bin'), { commands: { version: { stdout: '1.0.0\n' } } })
+    const resolution = await resolveBinary({
+      appEnv: {},
+      home,
+      directory: home,
+      target: { project: PROJECT },
+      // The well-known list is injected because this machine may have a `fugaro`
+      // in one of the earlier prefixes (`/usr/local/bin` here does); the prefix
+      // under test is the one with the tilde in it.
+      prefixes: ['~/.local/bin'],
+    })
+    expect(resolution.ok && resolution.path).toBe(stub.binary)
+  })
+
+  it('refuses a candidate whose version cannot be read, rather than skipping it', async () => {
+    const base = freshDirectory()
+    const first = join(base, 'prefix-a', 'bin')
+    const second = join(base, 'prefix-b', 'bin')
+    installStub(first, { commands: { version: { stdout: 'not a version at all\n' } } })
+    installStub(second, { commands: { version: { stdout: '2.0.0\n' } } })
+    const resolution = await resolveBinary({
+      appEnv: {},
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [first, second],
+    })
+    // The second candidate is a perfectly good binary, and falling through to it
+    // is exactly the failure this refuses: the console would silently read a
+    // different installation than the one at the configured path.
+    expect(resolution.ok).toBe(false)
+    expect(resolution.ok === false && resolution.path).toBe(join(first, 'fugaro'))
+    expect(resolution.ok === false && resolution.reason).toMatch(/not a version/)
+  })
+
+  it('refuses a binary that exits non-zero for `version`, with the CLI’s sentence', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: { version: { stderr: 'fugaro: this build cannot report a version\n', code: 1 } },
+    })
+    const resolution = await resolveBinary({
+      configuredPath: stub.binary,
+      appEnv: {},
+      directory,
+      target: { project: PROJECT },
+    })
+    expect(resolution.ok).toBe(false)
+    expect(resolution.ok === false && resolution.reason).toMatch(/this build cannot report a version/)
+  })
+
+  it('refuses when nothing is installed at all, and says where it looked', async () => {
+    const base = freshDirectory()
+    const resolution = await resolveBinary({
+      appEnv: { PATH: join(base, 'empty') },
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [join(base, 'prefix-a', 'bin')],
+    })
+    expect(resolution.ok).toBe(false)
+    expect(resolution.ok === false && resolution.path).toBeNull()
+    expect(resolution.ok === false && resolution.reason).toContain(join(base, 'prefix-a', 'bin', 'fugaro'))
+  })
+
+  it('never runs a directory named fugaro, or a file without an execute bit', async () => {
+    const base = freshDirectory()
+    const prefix = join(base, 'prefix', 'bin')
+    installStub(join(prefix, 'fugaro'), { commands: { version: { stdout: '1.0.0\n' } } })
+    const asDirectory = await resolveBinary({
+      appEnv: {},
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [prefix],
+    })
+    expect(asDirectory.ok).toBe(false)
+  })
+
+  it('parses the two version lines the CLI can print, and nothing else', () => {
+    expect(parseVersionLine('1.4.2\n')).toEqual({ ok: true, version: '1.4.2' })
+    expect(parseVersionLine('v0.8.0-rc.1\n')).toEqual({ ok: true, version: 'v0.8.0-rc.1' })
+    expect(parseVersionLine('dev\n')).toEqual({ ok: true, version: 'dev' })
+    expect(parseVersionLine('').ok).toBe(false)
+    expect(parseVersionLine('Usage:\n  fugaro [command]\n').ok).toBe(false)
+    expect(parseVersionLine('1.0.0\nextra\n').ok).toBe(false)
+  })
+
+  it('drops the CLI’s `fugaro: ` prefix and keeps its sentence verbatim', () => {
+    expect(cliSentence('fugaro: no such run\n')).toBe('no such run')
+    expect(cliSentence('')).toBeNull()
+    expect(cliSentence('\n')).toBeNull()
+    expect(cliSentence('panic: nil map\n')).toBe('panic: nil map')
+  })
+
+  it('refuses to build a source around a binary whose version cannot be read', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: 'nope\n' } } })
+    await expect(
+      CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} }),
+    ).rejects.toBeInstanceOf(SourceRefusal)
+  })
+})
+
+describe('the reader', () => {
+  it.each([
+    ['{"kind":"live","day":"2026-01-01"}', 'document'],
+    ['  {"kind":"live"}  ', 'document'],
+    ['{"kind":"live"}\r', 'document'],
+    ['no budget backend: showing run records only', 'notice'],
+    ['[]', 'notice'],
+    ['"a string"', 'notice'],
+    ['42', 'notice'],
+    ['null', 'notice'],
+    ['{"kind":"live"', 'notice'],
+    ['', 'empty'],
+    ['   ', 'empty'],
+  ])('decodes %j as %s', (line, kind) => {
+    expect(decodeFeedLine(line).kind).toBe(kind)
+  })
+
+  it('skips a degraded-mode sentence rather than failing the read', async () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const frames: string[] = []
+    const notices: string[] = []
+    startSidecar(plan, {
+      onFrame: (frame) => frames.push(JSON.stringify(frame.document)),
+      onNotice: (notice) => notices.push(notice.text),
+      onRestart: () => undefined,
+      onEnded: () => undefined,
+    }, { spawner: () => child, timers: manualTimers() })
+
+    child.emitStdout('no budget backend: showing run records only\n')
+    child.emitStdout('{"schema":1,"day":"2026-01-01"}\n')
+    expect(notices).toEqual(['no budget backend: showing run records only'])
+    expect(frames).toEqual(['{"schema":1,"day":"2026-01-01"}'])
+  })
+
+  it('joins a document split across two reads into one', () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const frames: unknown[] = []
+    startSidecar(plan, {
+      onFrame: (frame) => frames.push(frame.document),
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: () => undefined,
+    }, { spawner: () => child, timers: manualTimers() })
+    child.emitStdout('{"schema":1,')
+    expect(frames).toHaveLength(0)
+    child.emitStdout('"day":"2026-01-01"}\n')
+    expect(frames).toHaveLength(1)
+  })
+
+  it('stamps each document with the console’s clock and counts them', () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const frames: { sequence: number; receivedAt: string; day: string | null; rolled: boolean }[] = []
+    startSidecar(plan, {
+      onFrame: (frame) => frames.push(frame),
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: () => undefined,
+    }, {
+      spawner: () => child,
+      timers: manualTimers(),
+      clock: () => new Date('2026-01-02T00:00:01Z'),
+    })
+    child.emitStdout('{"day":"2026-01-02"}\n{"day":"2026-01-02"}\n')
+    expect(frames.map((frame) => frame.sequence)).toEqual([1, 2])
+    expect(frames[0]?.receivedAt).toBe('2026-01-02T00:00:01Z')
+  })
+
+  it('marks the UTC-midnight rollover as a gap, not as a zero', () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const frames: { day: string | null; rolled: boolean }[] = []
+    startSidecar(plan, {
+      onFrame: (frame) => frames.push(frame),
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: () => undefined,
+    }, { spawner: () => child, timers: manualTimers() })
+    child.emitStdout('{"day":"2026-01-01"}\n')
+    child.emitStdout('{"day":"2026-01-02"}\n')
+    expect(frames.map((frame) => ({ day: frame.day, rolled: frame.rolled }))).toEqual([
+      { day: '2026-01-01', rolled: false },
+      { day: '2026-01-02', rolled: true },
+    ])
+  })
+})
+
+describe('the supervisor', () => {
+  it('restarts a child that dies, with the CLI’s own backoff, and tells the UI', () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const timers = manualTimers()
+    const children = [scriptedChild(), scriptedChild()]
+    let index = 0
+    const frames: unknown[] = []
+    const restarts: { attempt: number; delayMs: number }[] = []
+    startSidecar(plan, {
+      onFrame: (frame) => frames.push(frame.document),
+      onNotice: () => undefined,
+      onRestart: (restart) => restarts.push({ attempt: restart.attempt, delayMs: restart.delayMs }),
+      onEnded: () => undefined,
+    }, {
+      spawner: () => {
+        const child = children[index]
+        index += 1
+        if (child === undefined) throw new Error('the supervisor spawned more children than the test scripted')
+        return child
+      },
+      timers,
+    })
+
+    children[0]?.emitStdout('{"day":"2026-01-01"}\n')
+    children[0]?.exit(0, null)
+    expect(restarts).toEqual([{ attempt: 1, delayMs: DEFAULT_BACKOFF.minMs }])
+    expect(timers.pending()).toBe(1)
+
+    timers.fire()
+    children[1]?.emitStdout('{"day":"2026-01-01"}\n')
+    expect(frames).toHaveLength(2)
+  })
+
+  it('doubles the backoff per attempt and stops at the maximum', () => {
+    const backoff = { minMs: 1000, maxMs: 30_000 }
+    const delay = (attempt: number): number => {
+      const decision = restartDecision({ code: 0, signal: null, stopped: false, attempt, backoff })
+      return decision.restart ? decision.delayMs : -1
+    }
+    expect([0, 1, 2, 3, 4, 5, 6, 7, 8].map(delay)).toEqual([
+      1000, 2000, 4000, 8000, 16_000, 30_000, 30_000, 30_000, 30_000,
+    ])
+  })
+
+  it('does not restart after a refusal, and keeps the CLI’s sentence', () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const restarts: unknown[] = []
+    const ends: { reason: string; sentence: string | null; spawns: number }[] = []
+    startSidecar(plan, {
+      onFrame: () => undefined,
+      onNotice: () => undefined,
+      onRestart: (restart) => restarts.push(restart),
+      onEnded: (end) => ends.push({ reason: end.reason, sentence: end.sentence, spawns: end.spawns }),
+    }, { spawner: () => child, timers: manualTimers() })
+
+    child.emitStderr('fugaro: this checkout belongs to project acme; --project says fugaro\n')
+    child.exit(1, null)
+    expect(restarts).toHaveLength(0)
+    expect(ends).toEqual([
+      { reason: 'refused', sentence: 'this checkout belongs to project acme; --project says fugaro', spawns: 1 },
+    ])
+  })
+
+  it('treats a signal as the ordinary end of a feed: it restarts', () => {
+    // Task 0.2 section 10.4: a closed stdout is a SIGPIPE on the next write, and
+    // os.ProcessState reports a signal and not an exit code. Reading that as a
+    // CLI error is the defect this test exists for.
+    const decision = restartDecision({ code: null, signal: 'SIGPIPE', stopped: false, attempt: 0, backoff: DEFAULT_BACKOFF })
+    expect(decision).toEqual({ restart: true, attempt: 1, delayMs: 1000 })
+    expect(restartDecision({ code: null, signal: 'SIGTERM', stopped: false, attempt: 2, backoff: DEFAULT_BACKOFF })).toEqual({
+      restart: true,
+      attempt: 3,
+      delayMs: 4000,
+    })
+  })
+
+  it('stops restarting once the console has stopped it', () => {
+    expect(restartDecision({ code: 0, signal: null, stopped: true, attempt: 0, backoff: DEFAULT_BACKOFF })).toEqual({
+      restart: false,
+      reason: 'stopped',
+    })
+  })
+
+  it('stops a long-lived child with SIGTERM and reports the stop', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, watch: { lines: ['{"day":"2026-01-01"}'], hold: true } },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const feed = source.subscribeLive({})
+    const first = await feed.current()
+    expect(first.day).toBe('2026-01-01')
+    let ended: { reason: string } | null = null
+    feed.onEnded((end) => {
+      ended = { reason: end.reason }
+    })
+    await feed.stop()
+    await waitFor(() => ended !== null)
+    expect(ended).toEqual({ reason: 'stopped' })
+    await source.close()
+  })
+
+  it('tells a screen why the feed ended when the CLI refuses', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        watch: { stderr: 'fugaro: no project selected\n', code: 1 },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const feed = source.subscribeLive({})
+    await expect(feed.current()).rejects.toThrow(/no project selected/)
+    await source.close()
+  })
+
+  it('answers current() with the frame it already has, without spawning again', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, watch: { lines: ['{"day":"2026-01-01"}'], hold: true } },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const feed = source.subscribeLive({})
+    await feed.current()
+    const spawnsBefore = stub.reports().filter((report) => report.argv[0] === 'watch').length
+    await feed.current()
+    expect(stub.reports().filter((report) => report.argv[0] === 'watch')).toHaveLength(spawnsBefore)
+    await source.close()
+  })
+
+  it('surfaces a degraded-mode sentence next to the document it accompanies', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        watch: {
+          lines: ['no budget backend: showing run records only', '{"day":"2026-01-01"}'],
+          hold: true,
+        },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const feed = source.subscribeLive({})
+    const snapshot = await feed.current()
+    expect(snapshot.notices.map((notice) => notice.text)).toEqual(['no budget backend: showing run records only'])
+    await source.close()
+  })
+})
+
+describe('the installation store', () => {
+  it('stores an installation whose checkout matches, after one doctor read', async () => {
+    const directory = freshDirectory()
+    const checkout = freshDirectory('fugaro-checkout-')
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{"checks":[]}\n' } } })
+    const store = createInstallationStore({ appEnv: {} })
+    await store.add({ project: PROJECT, binaryPath: stub.binary, checkout })
+    expect(store.list()).toEqual([{ project: PROJECT, binaryPath: stub.binary, checkout }])
+    const doctor = stub.reports().find((report) => report.argv[0] === 'doctor')
+    expect(doctor?.cwd).toBe(checkout)
+    expect(doctor?.argv).toEqual(['doctor', '--json', '--project', PROJECT, '--dir', checkout])
+  })
+
+  it('refuses to store a checkout that belongs to another project, showing the CLI’s sentence', async () => {
+    const directory = freshDirectory()
+    const checkout = freshDirectory('fugaro-checkout-')
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        doctor: {
+          stderr: 'fugaro: this checkout belongs to project acme; --project says fugaro\n',
+          code: 1,
+        },
+      },
+    })
+    const store = createInstallationStore({ appEnv: {} })
+    await expect(store.add({ project: PROJECT, binaryPath: stub.binary, checkout })).rejects.toThrow(
+      'this checkout belongs to project acme; --project says fugaro',
+    )
+    expect(store.list()).toEqual([])
+  })
+
+  it('refuses an installation with no project name before spawning anything', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' } } })
+    const store = createInstallationStore({ appEnv: {} })
+    await expect(store.add({ project: '', binaryPath: stub.binary })).rejects.toBeInstanceOf(SourceRefusal)
+    expect(stub.calls()).toBe(0)
+  })
+
+  it('never reads the checkout itself: the CLI is the reader', async () => {
+    // The stub's checkout directory is empty -- there is no fugaro.yaml in it --
+    // and the refusal above came from the stub's own sentence. Nothing in the
+    // console could have decided either way, which is rule 7 in one test.
+    const directory = freshDirectory()
+    const checkout = freshDirectory('fugaro-empty-checkout-')
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const store = createInstallationStore({ appEnv: {} })
+    await store.add({ project: PROJECT, binaryPath: stub.binary, checkout })
+    expect(store.list()).toHaveLength(1)
+    expect(readFileSync === undefined).toBe(false)
+  })
+})
+
+describe('the source as a whole', () => {
+  it('answers a refused read with the CLI’s own sentence', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        'runs ls': { stderr: 'fugaro: no runs matched --since 3d\n', code: 1 },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    await expect(source.listRuns({ since: '3d' })).rejects.toThrow('no runs matched --since 3d')
+  })
+
+  it('refuses a read that printed no document rather than drawing an empty screen', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, 'runs ls': { stdout: 'no runs\n' } },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    await expect(source.listRuns({})).rejects.toBeInstanceOf(SourceRefusal)
+  })
+
+  it('drops the `fugaro: ` prefix from the sentence a screen shows', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        'runs ls': { stderr: 'fugaro: no runs matched --since 3d\n', code: 1 },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const error = await source.listRuns({ since: '3d' }).catch((thrown: unknown) => thrown)
+    expect(error).toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).sentence).toBe('no runs matched --since 3d')
+  })
+
+  it('returns the version line and the one link as text, with no document in them', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        'logs --url': { stdout: 'https://console.cloud.google.com/logs/query;query=run\n' },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    expect((await source.version()).text).toBe('1.4.2')
+    const link = await source.runLogLink({ run: '20260101-120000-abcd' })
+    expect(link.text).toBe('https://console.cloud.google.com/logs/query;query=run')
+  })
+
+  it('never passes --url together with --json, which the CLI refuses', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, 'logs --url': { stdout: 'https://example.invalid\n' }, logs: { stdout: '{}\n' } },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    await source.runLogLink({ run: '20260101-120000-abcd' })
+    await source.readRunLogs({ run: '20260101-120000-abcd' })
+    for (const report of stub.reports().filter((entry) => entry.argv[0] === 'logs')) {
+      expect(report.argv.includes('--json') && report.argv.includes('--url')).toBe(false)
+    }
+  })
+
+  it('records every spawn it makes, including the version handshake', async () => {
+    const directory = freshDirectory()
+    const logPath = join(directory, 'spawn.jsonl')
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, 'budget show': { stdout: '{"budget":{}}\n' } },
+    })
+    const source = await CliSource.create({
+      target: { project: 'chosen' },
+      configuredBinaryPath: stub.binary,
+      appEnv: { FUGARO_CONSOLE_SPAWN_LOG: logPath },
+    })
+    await source.showBudget({})
+    const lines = readFileSync(logPath, 'utf8').split('\n').filter((line) => line !== '')
+    expect(lines).toHaveLength(2)
+    const first = JSON.parse(lines[0] ?? '{}') as { argv: string[]; project: string }
+    const second = JSON.parse(lines[1] ?? '{}') as { argv: string[] }
+    expect(first.argv).toEqual([stub.binary, 'version'])
+    expect(first.project).toBe('chosen')
+    expect(second.argv).toEqual([stub.binary, 'budget', 'show', '--json', '--project', 'chosen'])
+  })
+
+  it('hands the same spawn log to every spawn, and no log at all when the operator did not opt in', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+      spawnLog: disabledSpawnLog(),
+    })
+    await source.environmentReport({})
+    expect(disabledSpawnLog().enabled).toBe(false)
+    expect(createSpawnLog({}).enabled).toBe(false)
+  })
+})
+
+describe('the source scan', () => {
+  const codeOnly = (relative: string): string =>
+    readFileSync(join(SOURCE_ROOT, relative), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+
+  it('is the only file in src/ that spawns', () => {
+    const files = [
+      'main/ipc.ts',
+      'main/window.ts',
+      'main/protocol.ts',
+      'main/index.ts',
+      'main/spawnlog.ts',
+      'preload/index.ts',
+      'source/source.ts',
+      'source/cli.ts',
+    ]
+    for (const file of files) {
+      expect(codeOnly(file), file).not.toContain('node:child_process')
+    }
+    expect(codeOnly('main/spawn.ts')).toContain("from 'node:child_process'")
+    // ...and there is exactly one `spawn(` call site, with `shell: false` as a
+    // literal rather than a value a caller could set.
+    expect(codeOnly('main/spawn.ts').match(/spawn\(/g) ?? []).toHaveLength(1)
+    expect(codeOnly('main/spawn.ts')).toContain('shell: false')
+    // Every `shell:` in the file is `shell: false`: counted rather than
+    // regexed, because a negative lookahead here backtracks into passing.
+    const source = codeOnly('main/spawn.ts')
+    expect((source.match(/shell:/g) ?? []).length).toBe((source.match(/shell: false/g) ?? []).length)
+  })
+
+  it('has no shell string anywhere: no exec, no execSync, no shell', () => {
+    const source = codeOnly('main/spawn.ts')
+    expect(source).not.toMatch(/\bexecSync?\(/)
+    expect(source).not.toMatch(/shell:\s*true/)
+    expect(source).not.toMatch(/\/bin\/sh/)
+  })
+})
