@@ -529,18 +529,23 @@ func TestClaimedClaudeRouteKeepsEveryOtherRefusal(t *testing.T) {
 // usable", internal/runner/routing.go), and a pin carrying the entry's own
 // route ID is refused as a direct pin (internal/config/pins.go).
 //
-// The collision is asserted first, because it is the whole reason for the
-// refusal: if a later change gives the route result its own flag — the other
-// fix the review offered — this test should be rewritten rather than kept.
+// The collision is not asserted here, because the resolver no longer answers
+// one: a later change fixed it where the route is decided rather than where the
+// name is written (reservedRouteName, in RoutingClaudeFor and CheckRouting), so
+// this test pins what the three places that answer for the name do now — the
+// resolver failing closed first, because that is what makes a route of
+// RouteDirect unreachable even for a caller that never asked CheckRouting.
 func TestTheNameDirectIsRefused(t *testing.T) {
 	p := okProvider()
 	p.Models = []string{"anthropic/claude-sonnet-5.5"}
 	providers := map[string]ModelProvider{RouteDirect: p}
 	sw := &RoutingClaude{Via: RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}
-	route, sent, ok := RoutingClaudeFor(sw, "claude-sonnet-5-5", providers)
-	if !ok || route != RouteDirect || sent != "anthropic/claude-sonnet-5.5" {
-		t.Fatalf("RoutingClaudeFor(an entry named %q) = %q, %q, %v: the collision this name is refused for is gone, so the refusal (and this test) must be reconsidered",
-			RouteDirect, route, sent, ok)
+	if route, sent, ok := RoutingClaudeFor(sw, "claude-sonnet-5-5", providers); ok || route != "" || sent != "" {
+		t.Errorf("RoutingClaudeFor(an entry named %q) = %q, %q, %v: %q is the direct route to every caller, so the resolver must fail closed rather than answer a route no caller can tell from direct",
+			RouteDirect, route, sent, ok, RouteDirect)
+	}
+	if got := problemsText(CheckRouting(&Routing{Claude: sw}, providers, "routing")); !strings.Contains(got, "Rename the provider entry") {
+		t.Errorf("CheckRouting accepted a switch routed through an entry named %q: %s", RouteDirect, got)
 	}
 	ps := ValidateModelProviders(providers)
 	if len(ps) == 0 {
