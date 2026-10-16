@@ -1701,18 +1701,9 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
 	}
 	if gen > projectpolicy.RulesVersion {
-		// A marker above this binary's generation was written by a newer
-		// Fugaro. What follows from that is not that a policy is unreadable —
-		// the gate on both sides is the comparison with RulesVersion alone
-		// (projectpolicy.Read reads under any generation that is not below
-		// this one, and requirePolicyRules publishes under any of them too) —
-		// but that the rules governing this installation are ones this binary
-		// did not write, so it must not redeploy over them and cannot say what
-		// the newer rules do with a policy node (the review of this change:
-		// the message claimed a read failure that neither side has).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: fmt.Sprintf("%s records generation %d, and this Fugaro's rules are generation %d: the deployed rules are newer than this Fugaro, so they are rules this binary did not write and must not replace, and what they do with a published policy is not something this Fugaro can say — nothing here refuses one: a policy node is read and published whenever the marker is not below generation %d",
-				marker, gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion),
+			Problem: fmt.Sprintf("%s records generation %d, and this Fugaro's rules are generation %d: the deployed rules are newer than this Fugaro, which cannot read a project policy written under them",
+				marker, gen, projectpolicy.RulesVersion),
 			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro init --firebase' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
 				projectpolicy.RulesVersion)}}
 	}

@@ -8,41 +8,6 @@ import (
 // EnvVar is one NAME=value entry of a launch's own environment, parsed.
 type EnvVar struct{ Name, Value string }
 
-// JobEnvNames are the variables a job's own environment already sets, by name:
-// the run's own record (FUGARO_RUN, which Cloud Run carries as the launch
-// override this file judges and Batch writes as a job variable), where the
-// installation is and which backend it is on (FUGARO_BUCKET, FUGARO_BACKEND,
-// FUGARO_GCP_PROJECT, FUGARO_PROJECT, FUGARO_REGION — the five
-// internal/infra's platformEnv writes into every job and its PlatformEnv names,
-// which TestJobEnvNamesCoverPlatformEnv pins this list to), and the three a
-// backend adds for itself (Batch's own FUGARO_BATCH_JOB, the DOCKER_HOST of its
-// socket recipe, and the Vertex placement a Vertex Cloud Run job carries,
-// CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID).
-//
-// Both backends ask LaunchEnv with this list, so what a launcher must not put
-// in LaunchSpec.Env is one rule rather than a per-backend accident: Cloud Run
-// merges the override into the job's environment and Batch writes the map its
-// task starts with, so an entry naming a variable on this list would shadow the
-// value the run reads its own identity and placement from on either of them —
-// and the launcher's own walk of one backend could not see the other's. The
-// list is a superset of what either backend sets alone on purpose: a name the
-// platform owns is refused everywhere, so which backend a run happens to be on
-// is not what decides whether a launch may rewrite its identity (the review of
-// this change: Cloud Run reserved FUGARO_RUN alone, so an entry Batch refused
-// was silently accepted, and applied as an override, there).
-var JobEnvNames = []string{
-	"FUGARO_RUN",
-	"FUGARO_BUCKET",
-	"FUGARO_BACKEND",
-	"FUGARO_GCP_PROJECT",
-	"FUGARO_PROJECT",
-	"FUGARO_REGION",
-	"FUGARO_BATCH_JOB",
-	"DOCKER_HOST",
-	"CLOUD_ML_REGION",
-	"ANTHROPIC_VERTEX_PROJECT_ID",
-}
-
 // LaunchEnv parses LaunchSpec.Env — the variables a launcher adds for one
 // execution only — into entries, in the order they were given, and refuses
 // the two an entry must not be. Both backends build the run's environment
@@ -54,8 +19,7 @@ var JobEnvNames = []string{
 // that carries an entry into a map of its own (Batch's job variables) must
 // also name everything that map already holds in reserved, so the entry is
 // refused there rather than silently replacing the value the run reads its own
-// identity from; JobEnvNames is the set the names the platform itself owns are
-// shared through, so both backends refuse them rather than one.
+// identity from.
 //
 // The two refusals:
 //

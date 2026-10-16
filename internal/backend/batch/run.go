@@ -133,15 +133,9 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 	// (design §2.2). The map is what makes the identity entries above
 	// reserved: a later write to a map key is what a run would believe about
 	// itself, so an entry naming one of them is refused rather than applied
-	// (backend.LaunchEnv). It is asked with backend.JobEnvNames — the set
-	// Cloud Run asks with too, so a name the platform owns is refused on both
-	// rather than only where the launcher happened to look — and with this
-	// map's own keys besides, which is the belt to that set's braces: a
-	// variable this job starts setting later is refused here without a second
-	// edit in internal/backend. The merge is after the Docker block so
-	// DOCKER_HOST is one of them.
-	reserved := make([]string, 0, len(vars)+len(backend.JobEnvNames))
-	reserved = append(reserved, backend.JobEnvNames...)
+	// (backend.LaunchEnv, asked with every key this job already sets). The
+	// merge is after the Docker block so DOCKER_HOST is one of them.
+	reserved := make([]string, 0, len(vars))
 	for name := range vars {
 		reserved = append(reserved, name)
 	}

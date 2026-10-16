@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
-	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -2264,27 +2263,4 @@ func missingFrom(want, got []string) []string {
 		}
 	}
 	return out
-}
-
-// TestJobEnvNamesCoverPlatformEnv pins the set a launch's own environment is
-// refused against to the names this package writes into every job.
-//
-// PlatformEnv is the installation's identity as the deploy writes it; a job
-// carries it, so a launcher's own variable naming one of those would shadow it
-// — and the refusal happens in internal/backend, which cannot import this
-// package (this one imports backend). The two lists are therefore pinned here,
-// where both are readable: a name added to the job environment without being
-// added to backend.JobEnvNames would otherwise be silently overridable on
-// Cloud Run, whose launch override merges into the job's environment, while
-// Batch refused it (the review of this change).
-func TestJobEnvNamesCoverPlatformEnv(t *testing.T) {
-	if missing := missingFrom(PlatformEnv, backend.JobEnvNames); len(missing) > 0 {
-		t.Errorf("backend.JobEnvNames is missing %v, which this package writes into every job's environment: a launch env entry naming one of those would be refused on Batch and accepted — and merged over the job's own value — on Cloud Run", missing)
-	}
-	// The reverse is not an error: a name a backend sets for itself alone is
-	// reserved on both on purpose, so which backend a run is on does not decide
-	// whether its identity may be rewritten (backend.JobEnvNames says why).
-	if !slices.Contains(backend.JobEnvNames, "FUGARO_RUN") {
-		t.Error("backend.JobEnvNames does not name FUGARO_RUN, the run's own record: Cloud Run carries it in the launch override and Batch as a job variable, and the launcher must not set it on either")
-	}
 }
