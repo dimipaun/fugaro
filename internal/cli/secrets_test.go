@@ -225,6 +225,60 @@ func TestSecretsSetRefusesACheckoutWhoseOriginItCannotRead(t *testing.T) {
 	}
 }
 
+// TestSecretsSetProjectWideNeedsNoRepository: --project-wide names the
+// container the value goes to outright -- the project's own, which no
+// repository owns -- and it needs no repository at all, so the checkout is
+// consulted only when it decides something (the no-flag scope decision). A
+// person standing in a checkout whose origin is missing, or unreadable, keeps
+// the flag: the checkout's refusal was returned before the flag was looked at,
+// so `--project-wide` refused for a repository it never needed (the review
+// finding on this change). The bare command from the same checkout is still
+// refused, which is the write the refusal exists to stop, and it names both
+// spellings that would work.
+//
+// Mutation (verified, run and restored): drop the `!o.projectWide &&` from the
+// checkout consult: the --project-wide case below fails, refused for a
+// repository it never needed.
+func TestSecretsSetProjectWideNeedsNoRepository(t *testing.T) {
+	sm := secretsFixture(t)
+	// The shared copy a bare command from a nameless checkout would have
+	// overwritten, and an entry whose list excludes the checkout's repository.
+	shared := gcp.ProjectSecretID("aurora", config.BitbucketSecret)
+	sm.Seed(shared, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora", gcp.LabelSecret: config.BitbucketSecret}, []byte("shared-token-EXAMPLE"))
+	projectSecretFixture(t, "project_secrets:\n  "+config.BitbucketSecret+": { allow_data_to: [acme/other] }\n")
+	// A real checkout with no origin at all: a repository in hand that nothing
+	// here can name.
+	dir := t.TempDir()
+	testutil.IsolateGit(t)
+	testutil.Git(t, dir, "init", "-q")
+	t.Chdir(dir)
+	_, _, err := executeStdin(t, tokenValue, "secrets", "set", config.BitbucketSecret)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a bare set from a checkout with no origin = %v, want a refusal", err)
+	}
+	for _, want := range []string{"--repo", "--project-wide"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if got := string(sm.Latest(shared)); got != "shared-token-EXAMPLE" {
+		t.Errorf("the shared copy = %q: a nameless checkout overwrote it", got)
+	}
+	// The explicit flag stores the project's copy, which needs no repository:
+	// the checkout has none to give, and the flag does not want one.
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", config.AnthropicSecret, "--project-wide"); err != nil {
+		t.Fatalf("--project-wide from a checkout with no origin: %v", err)
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", config.AnthropicSecret))); got != tokenValue {
+		t.Errorf("the project copy of %s = %q, want the value just stored", config.AnthropicSecret, got)
+	}
+	// And --repo needs no origin either: the two explicit spellings are the
+	// ones the refusal above names, and both work from this checkout.
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", config.AnthropicSecret, "--repo", "acme/app"); err != nil {
+		t.Errorf("--repo from the same checkout: %v", err)
+	}
+}
+
 // TestSecretsSetWorkflowSecretMustBeDeclared: reserved names work from
 // anywhere; a workflow secret only when the checkout's fugaro.yaml declares
 // it, so a typo or a value typed as NAME is refused, unquoted.
