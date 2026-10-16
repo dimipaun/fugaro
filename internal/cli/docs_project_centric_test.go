@@ -2149,7 +2149,13 @@ var chk49Citations = []chkCitation{
 	{"internal/cli/init_firebase.go", "r.applyRoot(ctx, ft, fwd, \"firebase\""},
 	{"internal/cli/init_firebase.go", "already has the rules"},
 	{"internal/cli/init_firebase.go", "\"The Firebase project %s:\\n\""},
-	{"internal/infra/firebasedb.go", "changes the mode"},
+	// The FACT for this citation names the two `deployDatabase` act lines
+	// verbatim, so the anchors are those two acts — not `changes the mode`,
+	// the same function's third act, which is what an old drifted number
+	// (`firebasedb.go:222`) used to point at and which the sentence is not
+	// about.
+	{"internal/infra/firebasedb.go", "deploys the security rules"},
+	{"internal/infra/firebasedb.go", "records the rules generation"},
 	{"internal/cli/upgrade_cloud.go", "func jobConfigCopyNote"},
 	{"internal/cli/image_refresh_steps.go", "func (r *initRun) refreshCloneJobs"},
 	{"internal/cli/upgrade.go", "what fugaro update-skills does"},
