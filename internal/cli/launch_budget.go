@@ -38,6 +38,23 @@ import (
 // budgetBackendOn reports whether runs of the project use the budget
 // backend: its mode is not off and a database is configured. A backend with
 // no signer cannot launch anything: say so.
+//
+// The database is half of that on purpose, and this function is where the
+// decision belongs: a config with a mode (observe or enforce) and no
+// budget.rtdb_url launches, and the launch reads no policy and refuses nothing
+// on the mode alone. A mode-only refusal was written here once and removed
+// deliberately — the same owner decision internal/infra's readiness note
+// records in full, and the reason its drift note exists — because a mode is
+// not a policy: this CLI cannot see a policy without a database address, and
+// refusing on the mode alone would stop every launch of a project that has
+// published nothing, which is the shape a never-configured installation has
+// always had. What keeps that from being a hole is the run side, which is
+// fail-closed rather than optimistic: a run whose job carries a Firebase
+// backend, or a token marker, and cannot read the policy it is entitled to
+// refuses instead of falling back to the environment ceiling (internal/runner's
+// projectPolicy, R2-3). So a launch is held to a policy this side can see and
+// no stricter rule, and the deploy is what refuses the job that can see one and
+// cannot read it.
 func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return false, nil

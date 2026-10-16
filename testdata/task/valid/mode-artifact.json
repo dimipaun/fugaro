@@ -1,0 +1,1 @@
+{ "version": 1, "run_id": "20261015-120000-a1b2", "repo": "acme/app", "ref": "main", "task": "Render the sizzle reel", "mode": "artifact", "recipe": { "name": "sizzle", "source": "repo" } }

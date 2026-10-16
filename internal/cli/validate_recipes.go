@@ -107,11 +107,13 @@ func localRecipe(root string, cfg *config.Config) *recipe.Recipe {
 }
 
 // gateCheckProblems is `fugaro validate`'s check that the recipe the file
-// selects (localRecipe) never leaves a check step's gate silently doing
-// nothing: the same two refusals bootstrap's checkGateCommands makes at
-// launch (runner.RecipeGateProblems), checked against every workflow since
-// validate has no one run to pick a single workflow for. nil when the
-// recipe can't be read locally (a project recipe) or has no check step.
+// selects (localRecipe) fits the file's workflows: the same refusals
+// bootstrap's checkGateCommands makes at launch (runner.RecipeGateProblems)
+// — a check step whose commands.* key is empty, and, for a mode: artifact
+// recipe, its render and probe steps and the caps they declare against the
+// workflow's memory — checked against every workflow since validate has no
+// one run to pick a single workflow for. nil when the recipe can't be read
+// locally (a project recipe).
 func gateCheckProblems(root string, cfg *config.Config) []config.Problem {
 	rcp := localRecipe(root, cfg)
 	if rcp == nil {
@@ -119,8 +121,11 @@ func gateCheckProblems(root string, cfg *config.Config) []config.Problem {
 	}
 	var problems []config.Problem
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		for _, msg := range runner.RecipeGateProblems(rcp, cfg.Workflows[name].Commands) {
-			problems = append(problems, config.Problem{Path: "workflows." + name + ".commands", Message: "the " + msg})
+		// Each problem is reported at the key it is about: commands.render
+		// and commands.probe under workflows.<name>.commands, the caps that
+		// cannot fit under workflows.<name>.resources.memory.
+		for _, p := range runner.RecipeGateProblems(rcp, cfg.Workflows[name]) {
+			problems = append(problems, config.Problem{Path: "workflows." + name + "." + p.Field, Message: "the " + p.Message})
 		}
 	}
 	return problems

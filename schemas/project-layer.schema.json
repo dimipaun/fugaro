@@ -122,6 +122,8 @@
             "test": { "type": "string", "minLength": 1 },
             "lint": { "type": "string", "minLength": 1 },
             "fix": { "type": "string", "minLength": 1 },
+            "render": { "type": "string", "minLength": 1 },
+            "probe": { "type": "string", "minLength": 1 },
             "rerun_failed": {
               "type": "object",
               "additionalProperties": false,
@@ -155,7 +157,17 @@
             "total": { "$ref": "#/$defs/duration" },
             "stage": { "$ref": "#/$defs/duration" },
             "verify": { "$ref": "#/$defs/duration" },
+            "render": { "$ref": "#/$defs/duration" },
             "finalize_reserve": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_files": { "type": "integer", "minimum": 0, "maximum": 64 },
+            "max_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+            "max_total_bytes": { "type": "integer", "minimum": 0, "maximum": 4294967296 }
           }
         },
         "rebuild": {

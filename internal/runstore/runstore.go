@@ -217,6 +217,11 @@ type Record struct {
 	// Reviewed is set for a mode: review run (outcome reviewed): one entry
 	// per pull request it reviewed, in the task's review_prs order.
 	Reviewed []ReviewedPR `json:"reviewed,omitempty"`
+	// Render is set for a mode: artifact run (outcome artifacts, or a
+	// failed artifact run whose render ran): what commands.render did. A
+	// run refused before its render step (a blank command, a bad recipe)
+	// records none.
+	Render *RenderRecord `json:"render,omitempty"`
 }
 
 // ReviewedPR is one pull request a mode: review run reviewed (design

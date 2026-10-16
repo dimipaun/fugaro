@@ -378,6 +378,75 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 }
 
+// TestResultSchemaAcceptsAnArtifactRunRecord: a mode: artifact run's record
+// validates in both of its shapes — the success (outcome artifacts, stage
+// render, a render object) and the failed render (outcome none, timed_out
+// true) — and the schema rejects a render object that is not one (a
+// command_sha256 that is not a hash, an unknown tree), and an outcome or a
+// stage the artifact mode never writes.
+//
+// Mutation (drop "artifacts" from the outcome enum, or the render property,
+// in schemas/result.schema.json): this test fails, the schema refusing the
+// success record it marshals.
+func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
+	render := &runstore.RenderRecord{
+		Command: "sh render.sh", CommandSHA256: strings.Repeat("a", 64), Tree: "working",
+		ExitCode: 0, DurationS: 12.5, StartedAt: at.Format(time.RFC3339),
+	}
+	rec := runstore.Record{
+		Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusSucceeded, Stage: "render", Outcome: runstore.OutcomeArtifacts,
+		StartedAt: at, Render: render,
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a succeeded artifact run: %v\n%s", err, data)
+	}
+	timedOut := *render
+	timedOut.TimedOut, timedOut.ExitCode = true, -1
+	rec.Status, rec.Outcome, rec.Stage = runstore.StatusFailed, runstore.OutcomeNone, "render"
+	rec.Render = &timedOut
+	data, err = json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a timed-out artifact run: %v\n%s", err, data)
+	}
+	// The render object is closed and its hash is a hash: a hand-edited
+	// result.json cannot smuggle a free-form command_sha256 into the one
+	// field a reviewer is meant to be able to recompute.
+	for _, tc := range []struct{ name, old, new string }{
+		{"bad hash", strings.Repeat("a", 64), "not-a-hash"},
+		{"bad tree", `"tree":"working"`, `"tree":"head"`},
+		{"unknown key", `"exit_code":-1`, `"exit_code":-1,"extra":1`},
+	} {
+		raw := strings.Replace(string(data), tc.old, tc.new, 1)
+		if raw == string(data) {
+			t.Fatalf("%s: fixture lacks %s", tc.name, tc.old)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader([]byte(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, raw)
+		}
+	}
+}
+
 // TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
 // (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
 // hand-edited or corrupt result.json could carry) does not. config.
@@ -1096,6 +1165,127 @@ func TestProjectLayerSchemaCommandsLintFix(t *testing.T) {
 		if (err == nil) != c.ok {
 			t.Errorf("commands: %s: schema err = %v, want ok=%v", c.commands, err, c.ok)
 		}
+	}
+}
+
+// TestProjectLayerSchemaArtifactKeys keeps the profile schema's 0.8.0 keys
+// (commands.render, commands.probe, timeouts.render, inputs) in step with the
+// Go parser the way TestProjectLayerSchemaClaudeModels keeps claude_models:
+// each snippet must be accepted or refused by both. Without the properties a
+// profile carrying any of them was refused by the schema an editor validates
+// against while config.ParseProjectLayer accepted it (additionalProperties:
+// false), which is the gap that made the docs example carrying claude_models
+// fail before that property existed. The bounds are deliberately narrower
+// here too: the schema's minimum 0 / maximum ceilings are the ones
+// config.validateInputs applies (config.MaxInputFiles and friends), pinned
+// against the Go constants by TestInputCapCeilingsAgreeWithGo.
+func TestProjectLayerSchemaArtifactKeys(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	head := "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, entry := range []string{
+		"    commands: { render: make shots, probe: make check }\n",
+		"    commands: { render: make shots }\n",
+		"    commands: { shots: make shots }\n",
+		"    timeouts: { render: 30m }\n",
+		"    timeouts: { render: soon }\n",
+		"    inputs: { max_files: 4, max_bytes: 1048576, max_total_bytes: 4194304 }\n",
+		"    inputs: {}\n",
+		"    inputs: { max_files: 65 }\n",
+		"    inputs: { max_bytes: -1 }\n",
+		"    inputs: { max_total_bytes: 4294967297 }\n",
+		"    inputs: { globs: ['out/*.png'] }\n",
+	} {
+		text := head + entry
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: schema ok = %v, config.ParseProjectLayer problems = %v", entry, schemaOK, ps)
+		}
+	}
+}
+
+// TestInputCapCeilingsAgreeWithGo ties both schemas' inputs bounds to the Go
+// ceilings they mirror (config.MaxInputFiles, MaxInputBytes and
+// MaxInputTotalBytes, applied by validateInputs): the numbers are separate
+// copies in each schema, so a raised ceiling in Go would otherwise leave the
+// schema silently stricter — an editor refusing a cap fugaro accepts — with
+// no test to notice.
+func TestInputCapCeilingsAgreeWithGo(t *testing.T) {
+	for _, tc := range []struct{ file, root string }{
+		{"fugaro.schema.json", "workflow"},
+		{"project-layer.schema.json", "profile"},
+	} {
+		data, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		at := func(v any, path ...string) any {
+			for _, k := range path {
+				m, ok := v.(map[string]any)
+				if !ok {
+					t.Fatalf("%s: no %v", tc.file, path)
+				}
+				v = m[k]
+			}
+			return v
+		}
+		in := at(doc, "$defs", tc.root, "properties", "inputs", "properties")
+		for _, c := range []struct {
+			name string
+			want int64
+		}{
+			{"max_files", config.MaxInputFiles},
+			{"max_bytes", config.MaxInputBytes},
+			{"max_total_bytes", config.MaxInputTotalBytes},
+		} {
+			p, ok := in.(map[string]any)[c.name].(map[string]any)
+			if !ok {
+				t.Fatalf("%s: inputs.%s is not an object", tc.file, c.name)
+			}
+			if got, ok := p["maximum"].(float64); !ok || int64(got) != c.want {
+				t.Errorf("%s: inputs.%s maximum = %v, config has %d", tc.file, c.name, p["maximum"], c.want)
+			}
+			if got, ok := p["minimum"].(float64); !ok || got != 0 {
+				t.Errorf("%s: inputs.%s minimum = %v, want 0", tc.file, c.name, p["minimum"])
+			}
+		}
+	}
+}
+
+// TestRecipeSchemaArtifactStepsMatchGo pins the schema's step shapes for the
+// artifact steps against recipe.Parse for every mode: a plan or render step
+// is mode: artifact's own, so [render] under mode: implement (or with no mode
+// at all, which is implement) is refused by both. The steps oneOf has to
+// list artifactSteps for an artifact recipe to have a shape at all, and the
+// schema's own branch is what stops that alternative admitting the step in
+// the other two modes; testdata/recipe/invalid/render-implement.yaml pins the
+// same thing through the corpus instead, so it can never be relaxed to a
+// shape- fixture the schema test skips.
+func TestRecipeSchemaArtifactStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const outs = "outputs:\n  globs: [\"out/*.png\"]\n"
+	for _, tc := range []struct{ name, text string }{
+		{"implement names render", "version: 1\nname: a\nmode: implement\nsteps:\n  - render: {}\n"},
+		{"no mode names render", "version: 1\nname: a\nsteps:\n  - render: {}\n"},
+		{"no mode names plan then render", "version: 1\nname: a\nsteps:\n  - plan: {}\n  - render: {}\n"},
+		{"review names render", "version: 1\nname: a\nmode: review\nsteps:\n  - render: {}\n"},
+		{"artifact renders", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - render: {}\n"},
+		{"artifact plans then renders", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - plan: {}\n  - render: {}\n"},
+		{"artifact renders twice", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - render: {}\n  - render: {}\n"},
+		{"artifact without outputs", "version: 1\nname: a\nmode: artifact\nsteps:\n  - render: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
 	}
 }
 

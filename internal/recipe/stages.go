@@ -4,8 +4,16 @@ package recipe
 // and review rounds n (the knobs), implement included. Check steps are
 // runner commands with their own timeout, so they are not model stages and
 // do not count.
+//
+// ModeReview and ModeArtifact have neither loop: a mode: review recipe is one
+// senior review, and a mode: artifact recipe may begin with one plan stage
+// whose only job is to write a render plan (design artifact-runs.md §3, §6).
+// Its render step is a runner command with its own timeout -- the same rule
+// that keeps a check step out -- so one is the bound, and for a
+// render-only recipe (steps: [render]) the bound errs high rather than low,
+// which is the direction a ceiling may err in.
 func StageBound(r *Recipe, f, n int) int {
-	if r.Mode == ModeReview {
+	if r.Mode == ModeReview || r.Mode == ModeArtifact {
 		return 1
 	}
 	first, bounce, rounds := 0, false, n
