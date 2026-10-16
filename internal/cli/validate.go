@@ -1087,8 +1087,8 @@ func routedAgent(a config.Agent, sw *config.RoutingClaude, routes map[string]con
 	if sw == nil {
 		return a, nil
 	}
-	var paths []string
-	slot := func(path string, get func() string, set func(string)) {
+	file := a
+	slot := func(get func() string, set func(string)) {
 		m := get()
 		if m == "" || !sw.Names(m) {
 			return // the list is the opt-in: an ID it does not name is untouched
@@ -1098,24 +1098,54 @@ func routedAgent(a config.Agent, sw *config.RoutingClaude, routes map[string]con
 			return
 		}
 		set(sent)
-		paths = append(paths, path)
 	}
-	slot("agent.models.coder", func() string { return a.ModelFor(config.RoleCoder) }, func(m string) {
+	slot(func() string { return file.ModelFor(config.RoleCoder) }, func(m string) {
 		if a.Models.Coder == "" {
 			a.Model = m
 			return
 		}
 		a.Models.Coder = m
 	})
-	slot("agent.models.reviewer", func() string { return a.ModelFor(config.RoleReviewer) }, func(m string) {
+	slot(func() string { return file.ModelFor(config.RoleReviewer) }, func(m string) {
 		if a.Models.Reviewer == "" {
 			a.Model = m
 			return
 		}
 		a.Models.Reviewer = m
 	})
-	slot("agent.models.background", func() string { return a.Models.Background }, func(m string) { a.Models.Background = m })
-	return a, paths
+	slot(func() string { return file.Models.Background }, func(m string) { a.Models.Background = m })
+	return a, rewrittenPaths(file, a, routes)
+}
+
+// rewrittenPaths are the pin paths whose *effective* model the switch moved,
+// which is not the same set as the slots it assigned: every slot a file does
+// not write is answered by another key (config.Agent.ModelFor: a role with no
+// models.<role> is answered by agent.model), so rewriting one key moves every
+// pin that reads it — with only agent.model set, the route the coder's rewrite
+// writes there is the reviewer's model too, and the background derived from
+// that coder is the route's ID as well. Reported per slot instead, only the
+// coder was named and budgetProblems' skip of the pins the switch rewrote did
+// not cover the other two, so the run's own routing block and its budget block
+// each printed the same missing-price line for the reviewer.
+//
+// The comparison is of the effective pins a run has: the three PinnedModels
+// with the background a run derives for them (config.EffectiveBackground, what
+// budgetProblems' runPins does), taken before and after. Nothing else about the
+// agent is compared — the rewrite moves a pin and leaves the rest of the
+// configuration alone.
+func rewrittenPaths(file, routed config.Agent, routes map[string]config.ModelProvider) []string {
+	pins := func(a config.Agent) []string {
+		a.Models.Background = config.EffectiveBackground(a, routes)
+		return a.PinnedModels()
+	}
+	before, after := pins(file), pins(routed)
+	var paths []string
+	for i, path := range [...]string{"agent.models.coder", "agent.models.reviewer", "agent.models.background"} {
+		if before[i] != after[i] {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 // claudeSwitchOf is the switch a routing block holds: nil for no block, nil
