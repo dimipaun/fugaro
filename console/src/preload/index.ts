@@ -75,8 +75,28 @@ export const BRIDGE_VERSION = 1
  * method the renderer calls. Order is not meaningful -- the test compares sets
  * -- but it is kept in the table's order so a reader can diff the two files
  * line by line.
+ *
+ * The initializer is `as const` and carries **no type annotation**, and that is
+ * load-bearing rather than a style choice. An annotation of
+ * `readonly (readonly [string, string])[]` would make
+ * `typeof EXPOSED_OPERATIONS` *the annotation* rather than the literals below:
+ * `ExposedName` and `ExposedMethod` would then both be `string`, the mapped
+ * type under them would collapse into a string index signature, and a renderer
+ * could write `bridge.showBudgte(...)` and have `tsc --noEmit` accept it -- the
+ * compile-time half of rule 5 inert for exactly the code it exists for, with
+ * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
+ * same sets against the table and the object is built from that table anyway.
+ * `satisfies` checks each row's shape without widening anything, so a row that
+ * is not a name and a method is still a compile error, and the twelve names
+ * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
+ * `ConsoleBridge` below the closed things their comments say they are.
+ *
+ * `test/unit/ipc.test.ts` holds that from both sides: a source scan named for
+ * this declaration, and `assertClosedSurface`, whose `@ts-expect-error`
+ * directives stop being errors -- and so fail `npm run typecheck` -- if the
+ * literal types are ever widened back into `string`.
  */
-export const EXPOSED_OPERATIONS: readonly (readonly [string, string])[] = Object.freeze([
+export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
   ['budget.show', 'showBudget'],
   ['spend.report', 'runReport'],
@@ -89,19 +109,33 @@ export const EXPOSED_OPERATIONS: readonly (readonly [string, string])[] = Object
   ['cli.version', 'cliVersion'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
-])
+] as const) satisfies readonly (readonly [string, string])[]
 
-/** ExposedName is the closed union of the operation names this file exposes. */
+/**
+ * ExposedName is the closed union of the operation names this file exposes --
+ * twelve string literals, not `string`. It is the type of the `operations` list
+ * a screen switches on, so the closure is what lets a screen be exhaustive.
+ */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
 
 /** ExposedMethod is the closed union of the method names it exposes. */
 export type ExposedMethod = (typeof EXPOSED_OPERATIONS)[number][1]
+
+/** ConsoleMethod is the shape of every method on the bridge: one optional
+ * argument object, one reply that is never a rejection. */
+export type ConsoleMethod = (args?: Readonly<Record<string, unknown>>) => Promise<ConsoleReply>
 
 /**
  * ConsoleBridge is what the renderer sees. Every operation is a method that
  * takes one optional argument object and answers a `ConsoleReply` -- never a
  * rejection, so a screen has one shape to draw, and never a value the renderer
  * has to interpret: the data is the CLI's own document, already rendered.
+ *
+ * The mapped type is the *closed* surface rule 5 asks for only while
+ * `ExposedMethod` is a union of literals (see `EXPOSED_OPERATIONS` above): with
+ * the table widened, this becomes a string index signature, and every claim
+ * below -- including "no `invoke`" -- becomes an unchecked assertion a renderer
+ * can walk through at compile time.
  *
  * There is no `invoke`, no `send`, no `on` and no `channel` here, and their
  * absence is the design's rule 5. When the live feed needs documents to arrive
@@ -114,9 +148,7 @@ export type ConsoleBridge = {
   readonly version: number
   readonly operations: readonly ExposedName[]
 } & {
-  readonly [Method in ExposedMethod]: (
-    args?: Readonly<Record<string, unknown>>,
-  ) => Promise<ConsoleReply>
+  readonly [Method in ExposedMethod]: ConsoleMethod
 }
 
 /**
@@ -199,24 +231,29 @@ async function invokeOperation(
  * asks for `Object.isFrozen` explicitly, and the test asserts it on the returned
  * object.
  *
- * The `as` is the one cast in this file and it is why the test exists: the
- * object is complete by construction -- the loop writes one method per entry of
- * `EXPOSED_OPERATIONS`, whose method names are the type above -- but TypeScript
- * cannot see through the spread, so the assertion is what carries that knowledge
- * across. `test/unit/ipc.test.ts` then checks the claim at runtime, in both
- * directions, instead of trusting it.
+ * The returned object is not cast into `ConsoleBridge`: it is checked against
+ * it, like any other value, and that is the point of the accumulator's type. It
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twelve *named* properties,
+ * because `ExposedMethod` is a union of literals -- so spreading it gives the
+ * object literal those twelve properties as properties rather than as an index
+ * signature. (Before that type was literal, this line needed `as ConsoleBridge`
+ * to silence the compiler, which is what made the claim untested rather than
+ * checked.) The loop is what actually writes them, and a loop is a thing the
+ * compiler cannot count, so what closes *that* gap is `test/unit/ipc.test.ts`:
+ * it reads the frozen object back and compares its methods with the table's, in
+ * both directions.
  */
 export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
-  const methods: Record<string, (args?: unknown) => Promise<ConsoleReply>> = Object.create(null)
+  const methods: Record<ExposedMethod, ConsoleMethod> = Object.create(null)
   for (const [name, method] of EXPOSED_OPERATIONS) {
-    methods[method] = (args?: unknown) => invokeOperation(ipcRenderer, name, args)
+    methods[method] = (args) => invokeOperation(ipcRenderer, name, args)
   }
   const names: readonly ExposedName[] = Object.freeze(EXPOSED_OPERATIONS.map(([name]) => name))
   return Object.freeze({
     version: BRIDGE_VERSION,
     operations: names,
     ...methods,
-  }) as ConsoleBridge
+  })
 }
 
 /**

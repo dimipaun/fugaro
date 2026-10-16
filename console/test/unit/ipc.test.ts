@@ -17,7 +17,24 @@
 //   - `--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch`,
 //     `--plain`, `--poll`, `--ascii` or `--no-color` fixed by an operation
 //     fails the flag tests; `--url` together with `--json` fails the pairing
-//     test;
+//     test; and each of those flags has a test *named for it* that fails when
+//     its never-table row is renamed away, so a row cannot be deleted quietly;
+//   - an event from any frame but the console's own top frame -- a subframe, a
+//     document on another origin, `app://console.evil.test`, a port, `file://`,
+//     a frame that has gone away -- is refused, the handler never runs, and the
+//     refusal repeats nothing the sender wrote: removing the sender check, or
+//     any one of the three things it checks, fails the tests named for them;
+//   - a handler's own message that is a megabyte long, or that carries a
+//     control character or an absolute path, is bounded, flattened and redacted;
+//     removing any of the three fails the test named for it, and the test that
+//     an ordinary CLI sentence comes through verbatim is what keeps the three
+//     from eating the case design section 6.3 asks for;
+//   - removing `assertReachableSurface(CONSOLE_OPERATIONS)` from
+//     `registerConsoleHandlers`, or moving it after the channels are registered,
+//     fails "checks the surface before it registers anything"; dropping the
+//     allowed-flags half of that guard fails the test with a flag the never
+//     table does not list (`--mine`); and a payload wider than
+//     `MAX_PAYLOAD_WIDTH` fails the width test;
 //   - a preload method that is not on `CONSOLE_OPERATIONS`, or an operation
 //     with no method, fails the two-way surface test; a method that lands on a
 //     channel other than `channelForOperation(name)` fails the routing test;
@@ -25,7 +42,12 @@
 //     non-plain object, a path, a command, a flag name, a control character, an
 //     invisible format character, an unpaired surrogate, an oversize string, a
 //     wrong type or a URL that is not the validated external link fails the
-//     table entry that names it; a schema that refuses *everything* fails the
+//     table entry that names it; a kind shared between two commands whose flags
+//     are not one grammar fails the per-command window table, row by row, and
+//     the test that each command carries its own window kind -- the two
+//     `--since` flags are two grammars (`reportRange`, `parseSince`), and one
+//     shared kind was wrong in both directions at once; a schema that refuses
+//     *everything* fails the
 //     well-formed table, which is what keeps the refusal tables meaningful;
 //   - an unfrozen bridge, a bridge without the table's version, a `length > 1`
 //     method, or an `invoke`/`send`/`on` property fails the surface-shape tests;
@@ -56,20 +78,29 @@ import {
   IPC_CHANNEL_PREFIX,
   IPC_VERSION,
   MAX_ARGUMENT_KEYS,
+  MAX_PAYLOAD_WIDTH,
+  MAX_REPLY_REASON_LENGTH,
+  MAX_REPOSITORY_LENGTH,
+  MAX_URL_LENGTH,
   NEVER_REACHABLE,
+  SENDER_REFUSAL,
   assertReachableSurface,
   channelForOperation,
+  isConsoleSender,
+  isConsoleSenderUrl,
   isNeverReachable,
   registerConsoleHandlers,
   validateArguments,
 } from '../../src/main/ipc'
 import type {
+  ConsoleEventLike,
   ConsoleHandler,
   ConsoleHandlers,
   ConsoleOperation,
   ConsoleReply,
   OperationName,
 } from '../../src/main/ipc'
+import { APP_ENTRY_URL } from '../../src/main/protocol'
 import { SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor } from '../../src/main/spawn'
 import {
   BRIDGE_VERSION,
@@ -79,7 +110,12 @@ import {
   exposeConsoleBridge,
   hasRendererContext,
 } from '../../src/preload/index'
-import type { RendererLike } from '../../src/preload/index'
+import type {
+  ConsoleBridge,
+  ExposedMethod,
+  ExposedName,
+  RendererLike,
+} from '../../src/preload/index'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 
@@ -143,18 +179,35 @@ export function dynamicCodeOffences(
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as this task uses it: a
  * registry of the channels that were handled, so a test can read back which
- * channels exist and deliver a message to one. */
+ * channels exist and deliver a message to one. The listener's event is typed,
+ * because the surface's own type says it is: a fake that took `unknown` would
+ * let a registration ignore the event and still typecheck. */
 function recordingIpcMain() {
-  const listeners = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
+  const listeners = new Map<string, (event: ConsoleEventLike, ...args: unknown[]) => unknown>()
   const channels: string[] = []
   return {
     channels,
     listeners,
-    handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void {
+    handle(channel: string, listener: (event: ConsoleEventLike, ...args: unknown[]) => unknown): void {
       channels.push(channel)
       listeners.set(channel, listener)
     },
   }
+}
+
+/**
+ * consoleEvent is an IPC message as the console's own window produces one: the
+ * sending frame *is* the webContents' main frame, and its URL is the bundled
+ * document's own `APP_ENTRY_URL` -- imported from `src/main/protocol.ts` rather
+ * than spelled here, so a test cannot pass while the origin the gate checks and
+ * the origin the console serves have drifted apart.
+ *
+ * Every forged event below starts from this one and changes exactly the field it
+ * is about, which is what makes each of those tests a test of one check.
+ */
+function consoleEvent(): ConsoleEventLike {
+  const frame = { url: APP_ENTRY_URL }
+  return { senderFrame: frame, sender: { mainFrame: frame } }
 }
 
 /** fakeRenderer is Electron's `ipcRenderer`, as far as the preload uses it: one
@@ -206,7 +259,7 @@ function wiredConsole(overrides: Record<string, ConsoleHandler> = {}) {
       calls.push({ channel, args: args[0] })
       const listener = ipcMain.listeners.get(channel)
       if (listener === undefined) throw new Error(`nothing handles ${channel}`)
-      return listener({}, args[0])
+      return listener(consoleEvent(), args[0])
     },
   }
   return { bridge: createConsoleBridge(renderer), calls, handlers, ipcMain }
@@ -222,7 +275,87 @@ function asCallable(method: unknown): (args?: unknown) => Promise<ConsoleReply> 
 // The surface the preload exposes
 // ---------------------------------------------------------------------------
 
+/**
+ * assertClosedSurface is never called, and it is not a test: it is the
+ * compile-time half of rule 5's closed surface, and the thing that checks it is
+ * `npm run typecheck` (or the `tsc --noEmit` the review round runs), not vitest.
+ *
+ * The runtime tests below pin the twelve names and the twelve methods against
+ * `CONSOLE_OPERATIONS`, and that is exactly why the defect this function guards
+ * was silent: the object is built from the table, so no *extra* method can
+ * exist at runtime, and a *misspelled* one is not a runtime question at all --
+ * it is a line of a screen's code that the compiler is supposed to refuse.
+ *
+ * Every `@ts-expect-error` below is an error only while `EXPOSED_OPERATIONS`'s
+ * literals survive into `ExposedName`, `ExposedMethod` and `ConsoleBridge`. Give
+ * the table a type annotation and they all widen to `string`, each directive
+ * becomes unused, and `tsc` fails with "Unused '@ts-expect-error' directive" --
+ * a red `npm run typecheck` rather than a green test, which is the correct
+ * place for a claim about types.
+ */
+function assertClosedSurface(bridge: ConsoleBridge, method: ExposedMethod): void {
+  // The positive half, first: a real method, called the way a screen calls it,
+  // answering the one shape every method answers.
+  const reply: Promise<ConsoleReply> = bridge.listRuns({ repo: 'acme/app' })
+  void reply
+
+  // A misspelling is a compile error and not an `undefined` call inside a
+  // screen's render, which is what an index signature would have made it.
+  // @ts-expect-error `showBudgte` is not one of the twelve method names
+  void bridge.showBudgte
+  // @ts-expect-error there is no generic `invoke`: no method takes a channel
+  void bridge.invoke
+  // @ts-expect-error and no `send`, `on`, `emit` or `channel` either
+  void bridge.send
+
+  // The two unions are unions, in both halves of the table.
+  // @ts-expect-error `runs.listt` is not one of the twelve operation names
+  const notAName: ExposedName = 'runs.listt'
+  // @ts-expect-error `showBudgte` is not one of the twelve method names
+  const notAMethod: ExposedMethod = 'showBudgte'
+  void notAName
+  void notAMethod
+
+  // `operations` carries those names, so asking about anything else is refused
+  // -- and a screen can switch on one exhaustively, which is what the list is
+  // for.
+  // @ts-expect-error `run.list` is not a name the list could hold
+  void bridge.operations.includes('run.list')
+
+  // And the method names are literals, so a screen can switch on one.
+  switch (method) {
+    case 'subscribeLive':
+      break
+    // @ts-expect-error `subscribeLiv` is not one of the twelve method names
+    case 'subscribeLiv':
+      break
+  }
+}
+
 describe('the frozen surface the preload exposes', () => {
+  it('declares the table with literal types, so the unions under it are not `string`', () => {
+    const source = codeOnly('preload/index.ts')
+    const start = source.indexOf('export const EXPOSED_OPERATIONS')
+    const end = source.indexOf('export type ExposedName')
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    const declaration = source.slice(start, end)
+    // The rows must be `as const`, and the declaration must carry no type
+    // annotation: an annotation replaces the literals with itself, which is the
+    // one edit that makes `ExposedName`, `ExposedMethod` and the bridge's mapped
+    // type all `string` at once. The compiler is what checks the consequence
+    // (`assertClosedSurface` above); this is the scan that says so out loud in
+    // the suite a reader actually runs.
+    expect(declaration).toContain('as const')
+    expect(declaration.split('\n')[0]).not.toContain(':')
+    // `satisfies` is the second half and is not decoration either: measured on
+    // 2026-10-16, a row with a third element (`['live.watch', 'subscribeLive',
+    // 'extra']`) typechecks clean with the clause removed, because `[number][0]`
+    // and `[number][1]` are still the literals a screen wants -- the extra
+    // element is simply never looked at.
+    expect(declaration).toContain('satisfies')
+  })
+
   it('exposes one method per operation of the table, and no other method', () => {
     const bridge = createConsoleBridge(fakeRenderer())
     const methods = Object.entries(bridge)
@@ -681,6 +814,48 @@ describe('the never-reachable table', () => {
     ).toThrow(/run/)
   })
 
+  it('refuses a table with a flag the never table does not even list', () => {
+    // The other half of the flag check, and the one the row above does *not*
+    // reach: `--check-github-app` is refused because it is on the never table,
+    // so a `--mine` -- a flag no row names, and not one the surface may fix --
+    // is what pins the allow-list half of the check (`ALLOWED_OPERATION_FLAGS`).
+    const withMine: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'runs.list.mine',
+        method: 'listMine',
+        command: 'runs ls',
+        flags: ['--json', '--mine'],
+        summary: 'a read that fixes a flag the surface does not fix',
+        args: [],
+      },
+    ]
+    expect(() => assertReachableSurface(withMine)).toThrow(/--mine/)
+    expect(() => assertReachableSurface(withMine)).toThrow(/not a flag the surface may fix/)
+  })
+
+  // One test per flag row, named for the flag: the loop at the top of this
+  // describe iterates the table, so a row *deleted* from it takes its test with
+  // it and the suite stays green. These fail instead.
+  for (const flag of ['--follow', '--check-github-app', '--strict', '--csv', '--watch', '--plain', '--poll', '--ascii', '--no-color']) {
+    it(`carries a never-table row for ${flag}`, () => {
+      const row = NEVER_REACHABLE.find((candidate) => candidate.shape === 'flag' && candidate.value === flag)
+      expect(row, flag).toBeDefined()
+      expect(row?.why.length, flag).toBeGreaterThan(20)
+      expect(row?.where.length, flag).toBeGreaterThan(3)
+    })
+  }
+
+  for (const command of ['budget kill', 'budget history', 'secrets set', 'init', 'upgrade', 'exec']) {
+    it(`carries a never-table row for ${command}`, () => {
+      const row = NEVER_REACHABLE.find(
+        (candidate) => candidate.shape === 'command' && candidate.value === command,
+      )
+      expect(row, command).toBeDefined()
+      expect(row?.why.length, command).toBeGreaterThan(20)
+    })
+  }
+
   it('refuses a table with a flag that turns a read into something else', () => {
     expect(() =>
       assertReachableSurface([
@@ -817,6 +992,39 @@ describe('the argument schemas', () => {
       }
     })
   }
+
+  it('names the protection key it refused, rather than saying "unknown argument"', () => {
+    // The refusal for `__proto__` is the one a reader is most likely to see in a
+    // log and least likely to be able to guess: a payload with a prototype key
+    // is not a payload with an undeclared key, and the reason says which one it
+    // was. Removing the `PROTOTYPE_KEYS` branch would leave `constructor` and
+    // `prototype` refused by the "takes no ..." branch and this test failing.
+    for (const key of ['__proto__', 'constructor', 'prototype']) {
+      const payload = key === '__proto__' ? JSON.parse('{"__proto__":{"repo":"acme/app"}}') : { [key]: 'acme/app' }
+      const decision = validateArguments('runs.list', payload)
+      expect(decision.ok, key).toBe(false)
+      if (decision.ok) continue
+      expect(decision.reason, key).toBe(`${key} is never an argument`)
+    }
+  })
+
+  it('refuses a payload wider than the width bound, by name of the bound', () => {
+    const wide = { url: `https://github.com/${'a'.repeat(MAX_PAYLOAD_WIDTH)}` }
+    const decision = validateArguments('link.openExternal', wide)
+    expect(decision.ok).toBe(false)
+    expect(decision.ok === false && decision.reason).toMatch(
+      new RegExp(`at most ${MAX_PAYLOAD_WIDTH} characters`),
+    )
+  })
+
+  it('bounds the width above what the schema’s own per-kind bounds can add up to', () => {
+    // The relation, not the number: the width bound must not be able to refuse a
+    // payload that every per-kind bound would have accepted. The widest a legal
+    // payload can be is one `link` (the largest kind) plus the rest at the
+    // largest non-link bound, plus the keys' own names.
+    const widestLegal = MAX_URL_LENGTH + (MAX_ARGUMENT_KEYS - 1) * MAX_REPOSITORY_LENGTH
+    expect(MAX_PAYLOAD_WIDTH).toBeGreaterThan(widestLegal)
+  })
 
   it('refuses the count-bound payload for the reason that names the bound', () => {
     const payload = Object.fromEntries(
@@ -1016,57 +1224,84 @@ describe('the day and window arguments', () => {
     })
   }
 
-  // `runs ls --since` is `parseSince` (`internal/cli/runs.go:496`), and this
+  // The two `--since` flags are two different grammars (`reportRange` vs
+  // `parseSince`), so there is a table per command and neither is written
+  // against the other's: a kind shared between them was wrong in both
+  // directions at once -- it refused `12w`, which `report`'s own help
+  // advertises, and it admitted `2026-10-16`, which `parseSince` has no branch
+  // for. Each row below is a value its own command's parser accepts or refuses.
+  const reportWindows: readonly (readonly [string, boolean, string])[] = [
+    ['2026-10-16', true, 'a UTC day, reportRange’s date branch'],
+    ['30d', true, 'report’s own default'],
+    ['12w', true, 'twelve weeks -- advertised in report’s own help'],
+    ['3660d', true, 'exactly reportMaxDays'],
+    ['522w', true, '3654 days, the last week inside reportMaxDays'],
+    ['3661d', false, 'one day past reportMaxDays'],
+    ['523w', false, '3661 days, past reportMaxDays'],
+    ['0d', false, 'reportRange refuses a count below 1'],
+    ['0', false, 'report --since has no “no bound”: 0 falls through to its date parser'],
+    ['24h', false, 'report takes days and weeks, not hours'],
+    ['90m', false, 'nor minutes'],
+    ['7', false, 'a bare number is not a day count'],
+    ['-7d', false, 'negative'],
+    ['7d ', false, 'a trailing space'],
+    ['all', false, 'a word'],
+  ]
+
+  for (const [value, accepted, why] of reportWindows) {
+    it(`${accepted ? 'accepts' : 'refuses'} the report window ${JSON.stringify(value)} (${why})`, () => {
+      expect(validateArguments('spend.report', { since: value }).ok).toBe(accepted)
+    })
+  }
+
+  // `runs ls --since` is `parseSince` (`internal/cli/runs.go:496`) and this
   // table is read off it rather than invented: the CLI's own `TestParseSince`
   // cases (`7d`, `36h`, `90m`, `0` accepted; `""`, `d`, `-1d`, `7w` refused) are
   // all here, with the two forms the console used to accept and the CLI never
-  // did -- **a UTC calendar day** and **a zero window** -- on the refusing side.
-  // The accepted column is what the mirror must not lose: a duration the CLI
-  // takes and the console refuses is a read the operator cannot make.
-  const windows: readonly (readonly [string, boolean])[] = [
-    // the CLI's own four
-    ['7d', true],
-    ['36h', true],
-    ['90m', true],
-    ['0', true],
-    ['', false],
-    ['d', false],
-    ['-1d', false],
-    ['7w', false],
-    // the two the console used to accept: a date and a zero window
-    ['2026-10-16', false],
-    ['0d', false],
-    ['0h', false],
-    ['0m', false],
-    // the rest of `parseSince`'s `d` branch
-    ['1d', true],
-    ['+7d', true],
-    ['007d', true],
-    ['7D', false],
-    ['7dd', false],
-    ['7d5h', false],
-    ['1.5d', false],
-    // ...and the rest of its duration branch, which is Go's `ParseDuration`
-    ['1h30m', true],
-    ['1.5h', true],
-    ['300ms', true],
-    ['5s', true],
-    ['1us', true],
-    ['1µs', true],
-    ['+5h', true],
-    ['0s', false],
-    ['0h0m', false],
-    ['0.0s', false],
-    ['-5h', false],
-    ['h', false],
-    ['5', false],
-    ['1h 30m', false],
-    ['7d ', false],
-    ['all', false],
+  // did -- **a UTC calendar day** and **a zero window** -- on the refusing side,
+  // and the duration branch's own boundary (`1h30m`, `1.5h`, `300ms`, `+5h`)
+  // on the accepting one. A form the CLI takes and the console refuses is a
+  // read the operator cannot make, so the mirror may not be narrower either.
+  const runWindows: readonly (readonly [string, boolean, string])[] = [
+    ['0', true, 'parseSince’s own “no bound”'],
+    ['7d', true, 'its default, and the first form its help lists'],
+    ['36h', true, 'a Go duration in hours'],
+    ['90m', true, 'a Go duration in minutes'],
+    ['1d', true, 'one day'],
+    ['2026-10-16', false, 'parseSince has no date branch: a UTC day is not a runs window'],
+    ['12w', false, 'Go durations have no week unit'],
+    ['0d', false, 'parseSince refuses a day count below 1'],
+    ['0h', false, 'nor a duration of zero'],
+    ['0m', false, 'nor zero minutes'],
+    ['7', false, 'a bare number is neither a form'],
+    ['-7d', false, 'negative'],
+    ['7d ', false, 'a trailing space'],
+    ['all', false, 'a word'],
+    // the rest of its `d` branch
+    ['+7d', true, 'strconv.Atoi takes a leading plus'],
+    ['007d', true, 'and leading zeros'],
+    ['7D', false, 'the suffix is lower-case in parseSince'],
+    ['7dd', false, 'one unit'],
+    ['7d5h', false, 'the `d` suffix is tried first, so this is not a duration'],
+    ['1.5d', false, 'the day count is an integer'],
+    // ...and the rest of its duration branch, which is Go’s ParseDuration
+    ['1h30m', true, 'a compound duration'],
+    ['1.5h', true, 'a fractional one'],
+    ['300ms', true, 'milliseconds'],
+    ['5s', true, 'seconds'],
+    ['1us', true, 'microseconds, as `us`'],
+    ['1µs', true, 'and as U+00B5'],
+    ['+5h', true, 'a leading plus'],
+    ['0s', false, 'parseSince refuses a duration of zero however it is spelled'],
+    ['0h0m', false, 'including a compound zero'],
+    ['0.0s', false, 'and a fractional zero'],
+    ['-5h', false, 'negative'],
+    ['h', false, 'a unit with no number'],
+    ['1h 30m', false, 'a space is not part of the grammar'],
   ]
 
-  for (const [value, accepted] of windows) {
-    it(`${accepted ? 'accepts' : 'refuses'} the window ${JSON.stringify(value)}`, () => {
+  for (const [value, accepted, why] of runWindows) {
+    it(`${accepted ? 'accepts' : 'refuses'} the runs window ${JSON.stringify(value)} (${why})`, () => {
       expect(validateArguments('runs.list', { since: value }).ok).toBe(accepted)
     })
   }
@@ -1081,117 +1316,13 @@ describe('the day and window arguments', () => {
     expect(validateArguments('spend.report', { since: '36h' }).ok).toBe(false)
   })
 
-  // `report --since` is a *different* grammar, read off `reportRange`
-  // (`internal/cli/report.go`): a date, or days or weeks, at most `reportMaxDays`
-  // (3660). The runs table above is what the console used to apply here, which
-  // refused `2026-10-01` -- the form the CLI documents first -- and accepted
-  // `3h`, which `report` then refused with its own message.
-  const reportWindows: readonly (readonly [string, boolean])[] = [
-    ['2026-10-01', true],
-    ['30d', true],
-    ['12w', true],
-    ['3660d', true],
-    ['522w', true],
-    ['3h', false],
-    ['30m', false],
-    ['0', false],
-    ['7', false],
-    ['0d', false],
-    ['-7d', false],
-    ['2026-02-30', false],
-    ['3661d', false],
-    ['523w', false],
-    ['all', false],
-  ]
-
-  for (const [value, accepted] of reportWindows) {
-    it(`${accepted ? 'accepts' : 'refuses'} the report range ${JSON.stringify(value)}`, () => {
-      expect(validateArguments('spend.report', { since: value }).ok).toBe(accepted)
-    })
-  }
-})
-
-// ---------------------------------------------------------------------------
-// The boundary between the schema and the spawn table
-// ---------------------------------------------------------------------------
-
-/**
- * The two halves of Task 1.2 and Task 1.3 meet at one type: `validateArguments`
- * produces a `ValidatedArguments`, and `argvFor` consumes one. Each half was
- * tested against its own table and neither was tested against the other, which
- * is how `runs.list`'s `pr` came to be validated as a *number* and emitted as a
- * *string*: every PR-filtered run list refused with "runs.list's pr is not a
- * string", from the one path a real payload takes.
- *
- * So this section runs the real path -- `validateArguments` then `argvFor`, on
- * `WELL_FORMED` and on the shapes that only one of the two halves knows about.
- */
-describe('what the schema validates is what the spawn table accepts', () => {
-  const context = {
-    target: { project: 'fugaro' },
-    directory: '/Users/owner/src/fugaro',
-  }
-
-  it.each(CONSOLE_OPERATIONS.map((operation) => operation.name))(
-    'spawns %s from the payload validateArguments returns',
-    (name) => {
-      const decision = validateArguments(name, WELL_FORMED[name])
-      expect(decision.ok, `${name}: ${decision.ok ? '' : decision.reason}`).toBe(true)
-      if (!decision.ok) return
-      // The operation's own read, so this runs the pair a handler runs;
-      // `link.openExternal` is the one operation with no row, because it opens
-      // a window rather than spawning.
-      if (!SPAWN_COMMANDS.some((row) => row.operation === name)) return
-      expect(() => argvFor(name, decision.args, context), name).not.toThrow()
-    },
-  )
-
-  it('keeps the two kind vocabularies in agreement, argument by argument', () => {
-    // The check `assertSpawnSurface` makes, made here from the outside: every
-    // argument a row declares is emitted the one way its schema says it must
-    // be. A row that disagreed would be caught by the table load, and this
-    // names the argument rather than the table.
-    for (const row of SPAWN_COMMANDS) {
-      const operation = CONSOLE_OPERATIONS.find((candidate) => candidate.name === row.operation)
-      expect(operation, `${row.operation} has a row and no operation`).toBeDefined()
-      if (operation === undefined) continue
-      for (const spec of row.args) {
-        const argument = operation.args.find((candidate) => candidate.key === spec.key)
-        expect(argument, `${row.operation} ${spec.key}: the row declares an argument the schema does not`).toBeDefined()
-        if (argument === undefined) continue
-        expect(spec.kind, `${row.operation} ${spec.key}`).toBe(SPAWN_KIND_FOR[argument.kind])
-      }
-    }
-  })
-
-  it('spells the number the schema validates, not the string it once required', () => {
-    const decision = validateArguments('runs.list', { repo: 'acme/widgets', pr: 412 })
-    expect(decision.ok).toBe(true)
-    if (!decision.ok) return
-    expect(decision.args['pr']).toBe(412)
-    const argv = argvFor('runs.list', decision.args, context)
-    expect(argv).toContain('--pr')
-    expect(argv[argv.indexOf('--pr') + 1]).toBe('412')
-    // ...and the string form is not what the schema emits, so a spawn that
-    // received one would be a spawn that skipped the validator.
-    expect(validateArguments('runs.list', { repo: 'acme/widgets', pr: '412' }).ok).toBe(false)
-  })
-
-  it.each([
-    ['2026-10-01'],
-    ['30d'],
-    ['12w'],
-  ])('carries the report range %s through to argv unchanged', (since) => {
-    const decision = validateArguments('spend.report', { since })
-    expect(decision.ok).toBe(true)
-    if (!decision.ok) return
-    const argv = argvFor('spend.report', decision.args, context)
-    expect(argv[argv.indexOf('--since') + 1]).toBe(since)
-  })
-
-  it('refuses the report range the runs grammar admits before argv is built', () => {
-    expect(validateArguments('spend.report', { since: '3h' }).ok).toBe(false)
-    expect(validateArguments('runs.list', { since: '12w' }).ok).toBe(false)
+  it('gives each command its own window kind, so neither can drift into the other', () => {
+    const kindsOf = (name: 'spend.report' | 'runs.list'): readonly string[] =>
+      CONSOLE_OPERATIONS.filter((operation) => operation.name === name)
+        .flatMap((operation) => operation.args.map((spec) => spec.kind))
+        .filter((kind) => kind === 'reportSince' || kind === 'runSince')
+    expect(kindsOf('spend.report')).toEqual(['reportSince'])
+    expect(kindsOf('runs.list')).toEqual(['runSince'])
   })
 })
 
@@ -1314,8 +1445,7 @@ describe('the one URL-shaped argument', () => {
     expect(decision.ok).toBe(true)
     if (!decision.ok) return
     expect(decision.args['url']).toBe('https://github.com/acme/other')
-    expect(decision.args['url']).not.toBe(sent)
-    expect(typeof decision.args['url']).toBe('string')
+    expect(decision.args['url']).not.toBe(sent)    expect(typeof decision.args['url']).toBe('string')
   })
 
   it('is the only operation that takes a URL', () => {
@@ -1345,7 +1475,14 @@ describe('the schema as a whole', () => {
   })
 
   it('throws on an operation name that is not in the table', () => {
-    expect(() => validateArguments('budget.kill' as OperationName, {})).toThrow(/not a console operation/)
+    // A name no screen would ever add, so this test cannot be satisfied by the
+    // very mutation the rest of the file exists to catch: with `budget.kill` as
+    // the unknown name -- which is what this said first -- adding `budget.kill`
+    // to the table would have made *this* test pass and hidden the mutation
+    // behind it.
+    expect(() => validateArguments('nope.not.an.operation' as OperationName, {})).toThrow(
+      /not a console operation/,
+    )
   })
 })
 
@@ -1372,7 +1509,7 @@ describe('the registrar', () => {
     })
     const listener = ipcMain.listeners.get(channelForOperation('runs.list'))
     expect(listener).toBeDefined()
-    const reply = (await listener?.({}, { repo: '../../etc/passwd' })) as ConsoleReply
+    const reply = (await listener?.(consoleEvent(), { repo: '../../etc/passwd' })) as ConsoleReply
     expect(reply.ok).toBe(false)
     expect(reply.ok === false && reply.reason).toMatch(/repo/)
     expect(seen).toEqual([])
@@ -1387,7 +1524,7 @@ describe('the registrar', () => {
       },
     })
     const listener = ipcMain.listeners.get(channelForOperation('runs.list'))
-    const reply = await listener?.({}, { repo: 'acme/app', mine: true })
+    const reply = await listener?.(consoleEvent(), { repo: 'acme/app', mine: true })
     expect(reply).toEqual({ ok: true, data: { runs: [] } })
     expect(received).not.toBeUndefined()
     expect(Object.getPrototypeOf(received)).toBeNull()
@@ -1402,7 +1539,7 @@ describe('the registrar', () => {
       },
     })
     const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
-    const reply = await listener?.({}, {})
+    const reply = await listener?.(consoleEvent(), {})
     expect(reply).toEqual({ ok: false, reason: 'the CLI is not installed' })
   })
 
@@ -1413,9 +1550,90 @@ describe('the registrar', () => {
       },
     })
     const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
-    const reply = (await listener?.({}, {})) as ConsoleReply
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
     expect(reply.ok).toBe(false)
     expect(reply.ok === false && typeof reply.reason).toBe('string')
+  })
+
+  it('bounds a handler’s own message, whatever length it is', async () => {
+    // Design section 6.3 wants the CLI's own sentence; a CLI sentence is short,
+    // and a handler that threw with a megabyte in it must not be able to put a
+    // megabyte in the renderer through a reply the renderer is entitled to
+    // trust. This is the `answerReason` half of the bound, on the widest input
+    // a handler can produce.
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('x'.repeat(4 * 1024 * 1024))
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason.length).toBeLessThanOrEqual(MAX_REPLY_REASON_LENGTH)
+    expect(reply.reason.length).toBeGreaterThan(0)
+    expect(reply.reason.endsWith('…')).toBe(true)
+  })
+
+  it('takes an absolute path out of a handler’s message and leaves the rest', async () => {
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('open /home/user/.fugaro/secrets.yaml: permission denied')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).not.toContain('/home/user')
+    expect(reply.reason).not.toContain('secrets.yaml')
+    expect(reply.reason).toContain('open')
+    expect(reply.reason).toContain('permission denied')
+    expect(reply.reason).toContain('<path>')
+  })
+
+  it('keeps a refusal to one line and drops control characters', async () => {
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('the CLI said\n\u001b[31mno\u001b[0m\r\nand again')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/)
+    expect(reply.reason).toBe('the CLI said [31mno [0m and again')
+  })
+
+  it('leaves an ordinary refusal sentence exactly as the handler wrote it', async () => {
+    // The control for the three tests above: the bound must not touch a message
+    // of the shape the CLI actually produces, or design section 6.3's "the CLI's
+    // sentence, verbatim" would be quietly lost.
+    const sentence = '--since "x": use a date (YYYY-MM-DD), a number of days (30d) or weeks (12w), at most 3660 days'
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error(sentence)
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    expect(await listener?.(consoleEvent(), {})).toEqual({ ok: false, reason: sentence })
+  })
+
+  it('checks the surface before it registers anything', () => {
+    // The registration body, as written: `assertReachableSurface` on the *real*
+    // table, before the first `ipcMain.handle` call. `assertReachableSurface` is
+    // tested above with a mutated table, and this is what says registration
+    // consults it -- removing the call, or moving it after the handlers are on
+    // the channels, fails here.
+    const source = codeOnly('main/ipc.ts')
+    const start = source.indexOf('export function registerConsoleHandlers')
+    expect(start).toBeGreaterThan(-1)
+    const body = source.slice(start, source.indexOf('\n}', start))
+    const guard = body.indexOf('assertReachableSurface(CONSOLE_OPERATIONS)')
+    const firstHandle = body.indexOf('ipcMain.handle(')
+    expect(guard).toBeGreaterThan(-1)
+    expect(firstHandle).toBeGreaterThan(guard)
   })
 
   it('refuses to build a surface with a handler missing', () => {
@@ -1441,6 +1659,148 @@ describe('the registrar', () => {
     const reply = await asCallable(bridge.showBudget)({})
     expect(reply).toEqual({ ok: true, data: document })
     expect(reply.ok && reply.data).toBe(document)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The sender gate: a message from anywhere but the console's own top frame
+// ---------------------------------------------------------------------------
+
+/**
+ * FORGED_EVENTS is one event per way a message can arrive from somewhere other
+ * than the console's own top frame, each of them an event Electron really
+ * delivers: a subframe, a document on another origin (another window's
+ * webContents is that case -- what makes it not the console is its frame, not
+ * its id), a host that merely looks like the console's, and a frame or a
+ * webContents whose top frame has gone away. Each row changes exactly one field
+ * of `consoleEvent()`, which is what makes each of these tests a test of one
+ * check. Why the webContents *id* is not among the fields checked is in
+ * `isConsoleSender`'s own comment.
+ *
+ * The last three are about the event's *shape* rather than its contents, which
+ * is the half a type cannot enforce at runtime: what arrives on a channel is
+ * whatever the sender's process sent, so `isConsoleSender` checks the fields it
+ * reads instead of trusting the annotation.
+ */
+const FORGED_EVENTS: readonly (readonly [string, unknown])[] = [
+  [
+    'a subframe of the console’s own document',
+    { senderFrame: { url: APP_ENTRY_URL }, sender: { mainFrame: { url: APP_ENTRY_URL } } },
+  ],
+  [
+    'a document on another origin',
+    (() => {
+      const frame = { url: 'https://evil.test/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'a host that merely starts with the console’s own',
+    (() => {
+      const frame = { url: 'app://console.evil.test/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'a port on the console’s own host',
+    (() => {
+      const frame = { url: 'app://console:1234/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'credentials in front of the console’s own host',
+    (() => {
+      const frame = { url: 'app://user@console/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'a file:// document',
+    (() => {
+      const frame = { url: 'file:///work/repo/console/src/renderer/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'a webContents whose main frame is gone',
+    { senderFrame: { url: APP_ENTRY_URL }, sender: { mainFrame: null } },
+  ],
+  ['a frame that has gone away', { senderFrame: null, sender: { mainFrame: null } }],
+  ['no sending frame at all', { sender: { mainFrame: { url: APP_ENTRY_URL } } }],
+  ['no sender at all', { senderFrame: { url: APP_ENTRY_URL } }],
+  ['a null event', null],
+  ['an event that is not an object', 'fugaro:console/cli.version'],
+]
+
+describe('the sender gate', () => {
+  it('accepts the console’s own top frame and answers it', async () => {
+    const { ipcMain } = wiredConsole({ 'cli.version': () => ({ version: '1.2.3' }) })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    expect(await listener?.(consoleEvent(), {})).toEqual({ ok: true, data: { version: '1.2.3' } })
+  })
+
+  it('accepts the console’s own document behind a path, a query or a fragment', async () => {
+    // The frame URL is the document's URL and not the origin alone, so the check
+    // must be about the origin: a fragment is how a screen addresses its own
+    // views, and refusing it would be refusing the console's own window.
+    for (const url of ['app://console/index.html#spend', 'app://console/index.html?x=1']) {
+      const frame = { url }
+      expect(isConsoleSender({ senderFrame: frame, sender: { mainFrame: frame } }), url).toBe(true)
+    }
+  })
+
+  for (const [label, event] of FORGED_EVENTS) {
+    it(`refuses a message from ${label}`, async () => {
+      let reached = 0
+      const { ipcMain } = wiredConsole({
+        'runs.list': () => {
+          reached += 1
+          return {}
+        },
+      })
+      const listener = ipcMain.listeners.get(channelForOperation('runs.list'))
+      expect(listener).toBeDefined()
+      const reply = (await listener?.(event as ConsoleEventLike, { repo: 'acme/app' })) as ConsoleReply
+      expect(reply).toEqual({ ok: false, reason: SENDER_REFUSAL })
+      // The point of the gate: nothing downstream ran. A refused message is not
+      // validated, not dispatched and not answered with anything it wrote.
+      expect(reached, label).toBe(0)
+    })
+  }
+
+  it('never repeats what the sender wrote into the refusal', () => {
+    const forged = { senderFrame: { url: 'https://evil.test/secret' }, sender: { mainFrame: null } }
+    expect(isConsoleSender(forged)).toBe(false)
+    expect(SENDER_REFUSAL).not.toContain('evil.test')
+    expect(SENDER_REFUSAL).not.toContain('secret')
+    expect(SENDER_REFUSAL).not.toMatch(/https?:/)
+  })
+
+  it('reads the origin, and not a prefix of the string', () => {
+    // The rows of FORGED_EVENTS above are the behavioural half of this; this is
+    // the pure function's own table, including the spellings a string prefix
+    // test would let through.
+    const cases: readonly (readonly [unknown, boolean, string])[] = [
+      [APP_ENTRY_URL, true, 'the document the window loads'],
+      ['app://console/', true, 'the bare origin'],
+      ['app://console/index.html#spend', true, 'a fragment'],
+      ['APP://CONSOLE/index.html', true, 'Chromium lower-cases a standard scheme’s host'],
+      ['app://console.evil.test/index.html', false, 'a host that merely starts with the console’s'],
+      ['app://evil.test/console/index.html', false, 'the console’s name in the path of another host'],
+      ['app://console:1234/index.html', false, 'a port'],
+      ['app://user@console/index.html', false, 'credentials'],
+      ['https://console/', false, 'the right host on the wrong scheme'],
+      ['app://', false, 'no host at all'],
+      ['file:///work/repo/console/src/renderer/index.html', false, 'a file URL'],
+      ['', false, 'nothing'],
+      [null, false, 'not a string'],
+      [42, false, 'a number'],
+      [{ url: APP_ENTRY_URL }, false, 'an object that looks like a frame'],
+    ]
+    for (const [value, accepted, why] of cases) {
+      expect(isConsoleSenderUrl(value), `${JSON.stringify(value)} (${why})`).toBe(accepted)
+    }
   })
 })
 
