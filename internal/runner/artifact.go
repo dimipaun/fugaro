@@ -1147,7 +1147,11 @@ func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
 		seen[strings.ToLower(in.Name)] = in.Name
 	}
 	dir := filepath.Join(r.d.WorkDir, inputsDir)
-	if err := mkdirInputDir(dir); err != nil {
+	tracked, err := r.trackedInputs(ctx)
+	if err != nil {
+		return err
+	}
+	if err := prepareInputDir(dir, tracked); err != nil {
 		return err
 	}
 	for _, in := range r.spec.Inputs {
@@ -1183,31 +1187,50 @@ func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
 	return nil
 }
 
-// mkdirInputDir creates the checkout's inputs/ directory and refuses to write
-// through anything else. The checkout is the repository at the run's ref, and
-// the directory this run writes its attachments into must be the run's own:
+// trackedInputs names the paths the checkout commits under inputs/, so the
+// directory can be judged by what the repository owns rather than by what is
+// lying in it: a run leaves its own downloads there, and the run's own
+// exclusion of inputs/ in the git directory means bootstrap's `git clean -fd`
+// keeps them (it keeps ignored files), so a non-empty directory is the normal
+// state of a second run in one checkout — the local `fugaro exec --workdir`
+// shape — and only git can tell that file from one the repository committed.
+func (r *run) trackedInputs(ctx context.Context) ([]string, error) {
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		return nil, fmt.Errorf("reading the checkout to see whether it commits %s/: %w", inputsDir, err)
+	}
+	paths, err := repo.TrackedPaths(ctx, inputsDir)
+	if err != nil {
+		return nil, fmt.Errorf("listing the paths the checkout commits under %s/: %w", inputsDir, err)
+	}
+	return paths, nil
+}
+
+// prepareInputDir creates the checkout's inputs/ directory and refuses to
+// write through anything that is not the run's own. The checkout is the
+// repository at the run's ref, so:
 //
 //   - a `inputs` the checkout commits as a symbolic link — to an absolute
 //     path, to a sibling directory, anywhere — would be followed by every
 //     write below, so the attached bytes would land outside the checkout
 //     entirely and the name refusals above (which judge the NAME) would have
 //     had nothing to say about it. A link is refused rather than followed,
-//     the rule readRepoRecipe already reads a repository file by; and
-//   - a `inputs` the checkout commits as a DIRECTORY is refused too, which is
-//     the same hazard with no link in it: an attached file whose name is one
-//     of the committed files' would overwrite it in the checkout the run
-//     commits from, and the committed files would sit beside the run's inputs
-//     as though the task had attached them. Nothing here can tell a file the
-//     repository committed from a file the launcher attached to a LATER run
-//     in a reused checkout; the directory is the run's, and a repository that
+//     the rule readRepoRecipe already reads a repository file by;
+//   - a directory the checkout COMMITS under inputs/ is refused (tracked,
+//     git's own answer): an attached file whose name is one of the committed
+//     paths' would replace it in the checkout the run commits from, and the
+//     committed files would sit beside the run's inputs as though the task
+//     had attached them. The directory is the run's, and a repository that
 //     wants the name has to give it up (rename it, or drop the attachments
-//     from the launch).
-//
-// An empty directory is the one case taken: git does not commit directories,
-// so an `inputs/` with nothing in it cannot have come from the repository and
-// is the run's own (a local run reusing a working directory). It is used as
-// it is, which is what makes a second artifact run in one checkout work.
-func mkdirInputDir(dir string) error {
+//     from the launch); and
+//   - anything else in the directory is emptied out and the directory is
+//     reused. Nothing tracked is there, so it is not the repository's: it is
+//     what an earlier run of this same checkout left behind, and those are
+//     not this run's inputs — a file the bucket no longer names would sit in
+//     inputs/ looking exactly like one the task did attach. An empty
+//     directory (the first run in a fresh checkout, or a local run reusing a
+//     working directory) is likewise used as it is.
+func prepareInputDir(dir string, tracked []string) error {
 	st, err := os.Lstat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -1220,34 +1243,39 @@ func mkdirInputDir(dir string) error {
 	case !st.IsDir():
 		return fmt.Errorf("%s is %s, and this run's attached inputs are written inside it: a checkout cannot commit it as a link or a file", dir, st.Mode())
 	}
+	if len(tracked) > 0 {
+		return fmt.Errorf("the checkout commits %s under %s, and this run's attached inputs are written inside it: an attached file landing on one of those names would replace a file the repository committed, in the checkout the run goes on to commit from — rename those paths in the repository, or run without attachments",
+			strings.Join(inputDirNames(tracked), ", "), inputsDir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", dir, err)
 	}
-	if len(entries) > 0 {
-		return fmt.Errorf("the checkout already has %s, holding %s, and this run's attached inputs are written inside it: an attached file could overwrite a file the repository committed. Remove it from the repository, or run without attachments",
-			dir, strings.Join(inputDirEntries(entries), ", "))
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return fmt.Errorf("clearing %s: %w", filepath.Join(dir, e.Name()), err)
+		}
 	}
 	return nil
 }
 
-// inputDirEntries names up to three of the entries of a committed inputs/
-// directory for the refusal above, so the owner is told which directory is in
-// the way and what is in it.
-func inputDirEntries(entries []os.DirEntry) []string {
+// inputDirNames names up to three of the paths the checkout commits under
+// inputs/ for the refusal above, so the owner is told which paths are in the
+// way and a repository with hundreds of them does not produce a wall.
+func inputDirNames(paths []string) []string {
 	out := make([]string, 0, 4)
-	for _, e := range entries {
+	for _, p := range paths {
 		if len(out) == 3 {
-			return append(out, fmt.Sprintf("and %d more", len(entries)-3))
+			return append(out, fmt.Sprintf("and %d more", len(paths)-3))
 		}
-		out = append(out, e.Name())
+		out = append(out, p)
 	}
 	return out
 }
 
 // mkdirInputParents creates the directories a name with path elements needs
 // inside inputs/, one element at a time: os.MkdirAll would follow a symbolic
-// link a committed checkout put there, which is the same hole mkdirInputDir
+// link a committed checkout put there, which is the same hole prepareInputDir
 // closes one level up. The launcher never attaches anything but base names
 // (its duplicate-name rule depends on that), so a nested name arrives only in
 // a task written by hand — the spec this has to hold for.

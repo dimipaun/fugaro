@@ -535,6 +535,29 @@ func (r *Repo) ShowFile(ctx context.Context, rev, path string) ([]byte, error) {
 	return r.gitRaw(ctx, "show", "--no-textconv", rev+":"+path)
 }
 
+// TrackedPaths returns the paths the index holds under dir, relative to the
+// repository root (`git ls-files -- dir`), so a caller can ask "did the
+// repository put anything here?" — a question a walk of the working tree
+// cannot answer, because a file in that directory may be untracked or ignored
+// and so not the repository's at all. dir must be relative and clean; a
+// directory the index has nothing under returns no paths and no error.
+func (r *Repo) TrackedPaths(ctx context.Context, dir string) ([]string, error) {
+	if !cleanRelPath(dir) {
+		return nil, fmt.Errorf("refusing to list %q: the path must be relative and clean, without ..", dir)
+	}
+	out, err := r.gitRaw(ctx, "ls-files", "-z", "--", dir)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
 // BlobSize returns the size in bytes of the file at path in revision rev
 // (`git cat-file -s`), without reading it. path and rev are checked as
 // ShowFile checks them; a path the tree lacks is an error wrapping

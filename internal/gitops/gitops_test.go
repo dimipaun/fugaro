@@ -60,6 +60,44 @@ func TestCheckoutNewBranchKeepsIgnored(t *testing.T) {
 	}
 }
 
+// TestTrackedPathsAnswersForTheIndexNotEmptyTheDirectory: the question the
+// runner asks of a directory a run writes into is "did the repository put
+// anything here?", and the working tree cannot answer it — an untracked or
+// ignored file in that directory is not the repository's. Only the index
+// knows, and a directory the index has nothing under is not an error.
+//
+// Mutation (answer from the working tree instead, e.g. walk dir): stales.txt
+// and build/x.js come back as tracked, and this test fails on both.
+func TestTrackedPathsAnswersForTheIndexNotEmptyTheDirectory(t *testing.T) {
+	repo, _ := setup(t)
+	if got, err := repo.TrackedPaths(ctx, "inputs"); err != nil || len(got) != 0 {
+		t.Fatalf("TrackedPaths(inputs) = %v, %v, want none and no error", got, err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"inputs/committed.txt": "the repository's own\n",
+		"inputs/stales.txt":    "left by a run, never committed\n",
+		"build/x.js":           "ignored\n",
+		"inputs/sub/deep.txt":  "nested\n",
+	})
+	testutil.Git(t, repo.Dir, "add", "inputs/committed.txt", "inputs/sub/deep.txt")
+	testutil.Git(t, repo.Dir, "commit", "-qm", "inputs")
+	got, err := repo.TrackedPaths(ctx, "inputs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"inputs/committed.txt", "inputs/sub/deep.txt"}; len(got) != len(want) {
+		t.Fatalf("TrackedPaths(inputs) = %v, want %v", got, want)
+	}
+	for _, p := range got {
+		if !strings.HasPrefix(p, "inputs/") {
+			t.Errorf("TrackedPaths returned %q, want repository-root-relative paths", p)
+		}
+	}
+	if _, err := repo.TrackedPaths(ctx, "../etc"); err == nil {
+		t.Error("a path with .. was accepted")
+	}
+}
+
 // TestCheckoutDetachedKeepsIgnored: review mode's single-pull-request
 // checkout (design generic-tool §3.6, G12). It fetches by SHA alone (no
 // branch name, as a PR's commit may belong to another repository's fork)

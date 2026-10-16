@@ -519,7 +519,7 @@ func TestInputsNamedTwiceAreRefused(t *testing.T) {
 // readRepoRecipe reads a repository file.
 //
 // Mutation (restore the MkdirAll calls in downloadInputs, i.e. drop the
-// !st.IsDir() arm of mkdirInputDir / mkdirInputParents): the run succeeds and
+// !st.IsDir() arm of prepareInputDir / mkdirInputParents): the run succeeds and
 // the attached bytes are written through the link, outside the checkout, and
 // this test fails on the missing refusal and on the target's own contents.
 func TestAnInputsDirectoryTheCheckoutLinksElsewhereIsRefused(t *testing.T) {
@@ -557,12 +557,12 @@ func TestAnInputsDirectoryTheCheckoutLinksElsewhereIsRefused(t *testing.T) {
 		h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
 		link(t, h, filepath.Join(runstore.InputsDir, "sub"), target)
 		seedInputs(t, h, runInputKey(h, "sub/shot.png"), body)
-		// Two refusals apply and either is enough: the inputs/ directory is
-		// not the run's own because the checkout committed an entry in it,
-		// and the entry itself is a link the writes would follow. The first
-		// is the one that fires, and the point this arm exists for is the
-		// second half — nothing is written through the link either way.
-		wantBootstrapError(t, h, nil, "already has", "holding sub")
+		// Two refusals apply and either is enough: the checkout commits the
+		// entry, so inputs/ is not the run's own, and the entry itself is a
+		// link the writes would follow. The first is the one that fires, and
+		// the point this arm exists for is the second half — nothing is
+		// written through the link either way.
+		wantBootstrapError(t, h, nil, "the checkout commits", "inputs/sub")
 		if _, err := os.Stat(filepath.Join(target, "shot.png")); !os.IsNotExist(err) {
 			t.Errorf("the attached bytes were written through the link, outside the checkout (%v)", err)
 		}
@@ -576,12 +576,15 @@ func TestAnInputsDirectoryTheCheckoutLinksElsewhereIsRefused(t *testing.T) {
 // one overwrite it in the very checkout the run goes on to commit and push —
 // and the committed files would sit where the task's inputs are, as though the
 // launcher had attached them. The directory is the run's, and the repository
-// has to give up the name (or the launch drop its attachments).
+// has to give up the name (or the launch drop its attachments). What is
+// committed is git's own answer (`ls-files`), not "the directory is not
+// empty": see TestASecondRunReplacesTheInputsTheFirstOneLeft for the files a
+// run leaves in the same directory itself.
 //
-// Mutation (leave the existing directory as it is — return nil instead of
-// reading it): the run downloads into the committed directory, the committed
-// file is replaced by the attachment, and this test fails on the missing
-// refusal and on the file's own contents.
+// Mutation (drop the tracked-paths refusal — return nil instead of checking
+// len(tracked) > 0): the run downloads into the committed directory, the
+// committed file is replaced by the attachment, and this test fails on the
+// missing refusal and on the file's own contents.
 func TestACommittedInputsDirectoryIsRefused(t *testing.T) {
 	spec := artifactSpec(sizzleRenderOnlyYAML)
 	shot, body := attachedInput("shot.png", "png-bytes")
@@ -596,9 +599,52 @@ func TestACommittedInputsDirectoryIsRefused(t *testing.T) {
 		}
 	})
 	seedInputs(t, h, runInputKey(h, "shot.png"), body)
-	wantBootstrapError(t, h, nil, "already has", "holding shot.png")
+	wantBootstrapError(t, h, nil, "the checkout commits inputs/shot.png")
 	if got, err := os.ReadFile(filepath.Join(h.deps.WorkDir, runstore.InputsDir, "shot.png")); err == nil && string(got) == "png-bytes" {
 		t.Fatal("the attachment overwrote the file the repository committed")
+	}
+}
+
+// TestASecondRunReplacesTheInputsTheFirstOneLeft: the run downloads into
+// <checkout>/inputs and writes that path into <gitdir>/info/exclude, so
+// bootstrap's `git clean -fd` keeps what the run left there (it keeps ignored
+// files). The second run in the same checkout — the local `fugaro exec
+// --workdir` shape, and the previous round's refusal got this wrong — finds
+// the first run's own file exactly where it is about to write. Nothing in
+// that directory is tracked, so it is the run's, not the repository's: it is
+// emptied and reused. The stale file is the point of emptying it rather than
+// writing beside it: a file the bucket no longer names would otherwise sit in
+// inputs/ looking exactly like one the task did attach.
+//
+// Mutation (refuse any non-empty inputs/, the previous round's rule): the
+// first run succeeds, the second fails in bootstrap with "the checkout already
+// has .../inputs, holding shot.png", and this test fails on that error.
+func TestASecondRunReplacesTheInputsTheFirstOneLeft(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	shot, body := attachedInput("shot.png", "png-bytes")
+	spec.Inputs = []task.InputFile{shot}
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	seedInputs(t, h, runInputKey(h, "shot.png"), body)
+	if _, err := h.run(t); err != nil {
+		t.Fatalf("the first run failed: %v", err)
+	}
+	dir := filepath.Join(h.deps.WorkDir, runstore.InputsDir)
+	if _, err := os.Stat(filepath.Join(dir, "shot.png")); err != nil {
+		t.Fatalf("the first run left no input behind, so nothing is being reproduced (%v)", err)
+	}
+	// What a bucket that no longer names this file would leave in the
+	// directory: a stale download from one run earlier.
+	if err := os.WriteFile(filepath.Join(dir, "stale.png"), []byte("a file this task does not attach"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.run(t); err != nil {
+		t.Fatalf("the second run in the same checkout failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "shot.png")); err != nil {
+		t.Errorf("the second run's input is not in the checkout (%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "stale.png")); !os.IsNotExist(err) {
+		t.Errorf("a file the task does not attach is still in inputs/ (%v)", err)
 	}
 }
 
