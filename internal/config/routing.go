@@ -118,7 +118,7 @@ func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) [
 			// checked-in map does not pair with it: two spellings that look
 			// alike are two answers to where the call goes and what it costs,
 			// and the switch does not choose between them (Task 1b.2).
-			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by provider %s as %s, which is not the route's own ID for it in the canonical-to-route map (internal/pricing, ClaudeRoutes): %s", m, claims[0].name, claims[0].claim, unmappedOrPair(m))})
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by provider %s as %s, which is not the route's own ID for it in the canonical-to-route map (internal/pricing, read through RouteIDFor): %s", m, claims[0].name, claims[0].claim, unmappedOrPair(m))})
 		}
 	}
 	return ps

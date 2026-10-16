@@ -2,10 +2,15 @@ package config
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -76,47 +81,143 @@ func TestRoutingRefusesAClaimThatIsNotTheMapsPair(t *testing.T) {
 // so it is allowed from pins.go alone, while the question "which route?" stays
 // where it is.
 //
+// The call is resolved through the file's imports, not through the text
+// "pricing.": an aliased import (pr "github.com/dimipaun/fugaro/internal/pricing")
+// and a dot import are the same call, and the text search this test replaces
+// stayed green under both (the review finding on this change).
+//
 // Hand mutation this fails on: reading the map from a second package (the
 // runner's own stagePins, say) because it already knows the pins; or answering
 // "which route" from pins.go as well.
 func TestRoutingResolutionHasOneSite(t *testing.T) {
-	mapFile := filepath.Join("..", "pricing", "canonical.go")
-	resolver := filepath.Join("..", "config", "routing.go")
-	allowList := filepath.Join("..", "config", "pins.go")
-	// Which files may call each function, relative to this package's directory
-	// (internal/config). The route-answering pair is read by the map's own file
-	// and the resolver; CanonicalFor, which cannot answer one, is also read
+	const pricingPath = "github.com/dimipaun/fugaro/internal/pricing"
+	// Which functions each file may call, and why. The route-answering pair is
+	// the resolver's; CanonicalFor, which cannot answer a route, is also read
 	// where the allow-list is judged.
 	allowed := map[string]map[string]bool{
-		"RouteIDFor":     {mapFile: true, resolver: true},
-		"UnmappedReason": {mapFile: true, resolver: true},
-		"CanonicalFor":   {mapFile: true, resolver: true, allowList: true},
+		"RouteIDFor":     {"internal/config/routing.go": true},
+		"UnmappedReason": {"internal/config/routing.go": true},
+		"CanonicalFor":   {"internal/config/routing.go": true, "internal/config/pins.go": true},
 	}
-	callers := regexp.MustCompile(`pricing\.(RouteIDFor|CanonicalFor|UnmappedReason)\(`)
-	var found []string
-	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+	// The raw table is not a question a consumer asks, and it is unexported so
+	// that it cannot be: this is the reminder for the day someone exports it
+	// again, since a reader of the data can re-answer the question its own way.
+	raw := map[string]bool{"ClaudeRoutes": true, "ClaudeRoute": true}
+	found := map[string]bool{}
+	for _, f := range moduleGoFiles(t) {
+		for _, name := range pricingNames(f, pricingPath) {
+			switch {
+			case raw[name]:
+				found[f.path+" reads pricing."+name+" (the raw map)"] = true
+			case allowed[name] != nil && !allowed[name][f.path]:
+				found[f.path+" calls pricing."+name] = true
+			}
+		}
+	}
+	if len(found) != 0 {
+		t.Errorf("the canonical-to-route map is read where it should not be: %v — want internal/config/routing.go (the resolver) and the allow-list's inverse question in internal/config/pins.go", slices.Sorted(maps.Keys(found)))
+	}
+}
+
+// goSource is one non-test Go file of the module, parsed: the file's syntax
+// tree and the local names its imports are bound to, so a call is resolved by
+// the import it came from rather than by the text a caller happens to have
+// written it with.
+type goSource struct {
+	path    string // module-relative and cleaned: internal/config/routing.go
+	file    *ast.File
+	imports map[string]string // local name -> import path; "." for a dot import
+}
+
+// moduleGoFiles parses every non-test Go file of the module, in path order.
+// Test files are excluded: a test spells a route's ID out on purpose — that is
+// what makes an independent fixture independent — so a rule about where the
+// *code* writes a spelling must not judge them.
+func moduleGoFiles(t *testing.T) []goSource {
+	t.Helper()
+	root := filepath.Join("..", "..") // internal/config -> the module root
+	var out []goSource
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "testdata", "node_modules", "vendor":
+				return fs.SkipDir
+			}
 			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
 		}
 		src, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		clean := filepath.Clean(path)
-		for _, m := range callers.FindAllSubmatch(src, -1) {
-			if !allowed[string(m[1])][clean] {
-				found = append(found, fmt.Sprintf("%s calls pricing.%s", clean, m[1]))
-			}
+		f, err := parser.ParseFile(token.NewFileSet(), filepath.ToSlash(rel), src, 0)
+		if err != nil {
+			return fmt.Errorf("parsing %s: %w", rel, err)
 		}
+		out = append(out, goSource{path: filepath.ToSlash(rel), file: f, imports: importedNames(f)})
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walking the tree: %v", err)
+		t.Fatalf("walking the module: %v", err)
 	}
-	if len(found) != 0 {
-		t.Errorf("the canonical-to-route map is read where it should not be: %v — want internal/pricing/canonical.go (the data), internal/config/routing.go (the resolver), and the allow-list's inverse question in internal/config/pins.go", found)
+	if len(out) == 0 {
+		t.Fatal("no Go file was read: the walk is looking in the wrong place")
 	}
+	slices.SortFunc(out, func(a, b goSource) int { return strings.Compare(a.path, b.path) })
+	return out
+}
+
+// importedNames maps each local name in a file to the path it was imported
+// from. A renamed import is the same import under another name, and a dot
+// import is the same import spelled without a qualifier; "_" is dropped, since
+// nothing can be called through it.
+func importedNames(f *ast.File) map[string]string {
+	m := map[string]string{}
+	for _, is := range f.Imports {
+		path, err := strconv.Unquote(is.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := path[strings.LastIndex(path, "/")+1:]
+		if is.Name != nil {
+			name = is.Name.Name
+		}
+		if name == "_" {
+			continue
+		}
+		m[name] = path
+	}
+	return m
+}
+
+// pricingNames returns the names of the package at pkgPath that a file refers
+// to: pkg.Name for an import bound to whichever name, and a bare Name when the
+// file dot-imports it. The caller's allow-list is by file, so the *name* is
+// what is asked of it.
+func pricingNames(f goSource, pkgPath string) []string {
+	dot := f.imports["."] == pkgPath
+	seen := map[string]bool{}
+	ast.Inspect(f.file, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.SelectorExpr:
+			if id, ok := v.X.(*ast.Ident); ok && f.imports[id.Name] == pkgPath {
+				seen[v.Sel.Name] = true
+			}
+		case *ast.Ident:
+			if dot {
+				seen[v.Name] = true
+			}
+		}
+		return true
+	})
+	return slices.Sorted(maps.Keys(seen))
 }

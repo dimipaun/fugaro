@@ -13,8 +13,15 @@ package pricing
 // route's own ID or says why it does not. Nothing derives a spelling — not a
 // case fold, not a separator swap — because two spellings that "look like" one
 // model are two answers to where a call goes and what it costs.
+//
+// The table itself is unexported: the pairs are reachable only through the
+// three functions below, so a consumer cannot read the data and re-answer the
+// question its own way (the review finding on this change — a second derivation
+// is the failure this map exists to remove, and a package boundary is the one
+// check a second derivation cannot pass). TestRoutingResolutionHasOneSite and
+// TestRoutingHasOneResolver pin the same rule from the source side.
 
-// ClaudeRoute is one row of the map: the canonical Claude ID (the ID a pin
+// claudeRoute is one row of the map: the canonical Claude ID (the ID a pin
 // carries, claude-sonnet-5-5) and the route's own ID (what the route entry
 // claims and what is sent and charged on it, anthropic/claude-sonnet-5.5).
 //
@@ -22,7 +29,7 @@ package pricing
 // omission: it is the statement that this build has no measured route ID for
 // that model, so routing.claude.models may not name it (the switch refuses to
 // guess one), and it is what the refusal says.
-type ClaudeRoute struct {
+type claudeRoute struct {
 	Canonical string
 	RouteID   string
 	Unmapped  string
@@ -35,10 +42,12 @@ type ClaudeRoute struct {
 // has one, and a spelling invented here would be a route nobody measured.
 const noMeasuredRoute = "no route's own ID has been measured for it: this build knows the three the price catalog's D8 names (anthropic/claude-sonnet-5.5, anthropic/claude-opus-5.5, anthropic/claude-fable-5.1). The switch never guesses a route ID, so routing.claude.models may not name this model until a row for it is added here with the route's ID measured"
 
-// ClaudeRoutes is the map, in canonical-ID order. Every canonical Claude ID
-// this build prices has a row (TestCanonicalMapIsExhaustive), and every
-// canonical ID a shipped catalog row claims has one too.
-var ClaudeRoutes = []ClaudeRoute{
+// claudeRoutes is the map, in canonical-ID order, and it is not part of this
+// package's API: the pairs are readable through RouteIDFor and CanonicalFor
+// alone. Every canonical Claude ID this build prices has a row
+// (TestCanonicalMapIsExhaustive), and every canonical ID a shipped catalog row
+// claims has one too.
+var claudeRoutes = []claudeRoute{
 	{Canonical: "claude-fable-5-1", RouteID: "anthropic/claude-fable-5.1"},
 	{Canonical: "claude-haiku-4-5", Unmapped: noMeasuredRoute},
 	{Canonical: "claude-opus-5", Unmapped: noMeasuredRoute},
@@ -65,9 +74,10 @@ var ClaudeRoutes = []ClaudeRoute{
 //
 // RouteIDFor is called from internal/config's resolver (RoutingClaudeFor) and
 // nowhere else: one place answers where a Claude call goes
-// (TestRoutingResolutionHasOneSite).
+// (TestRoutingResolutionHasOneSite, which resolves the import rather than the
+// text, so an aliased import is the same call).
 func RouteIDFor(canonical, route string) (string, bool) {
-	for _, r := range ClaudeRoutes {
+	for _, r := range claudeRoutes {
 		if r.Canonical != canonical || r.RouteID == "" {
 			continue
 		}
@@ -90,7 +100,7 @@ func CanonicalFor(route string) (string, bool) {
 	if route == "" {
 		return "", false
 	}
-	for _, r := range ClaudeRoutes {
+	for _, r := range claudeRoutes {
 		if r.RouteID == route {
 			return r.Canonical, true
 		}
@@ -104,7 +114,7 @@ func CanonicalFor(route string) (string, bool) {
 // refusal can say what the map says instead of "no route", which reads as an
 // oversight rather than a decision.
 func UnmappedReason(canonical string) (string, bool) {
-	for _, r := range ClaudeRoutes {
+	for _, r := range claudeRoutes {
 		if r.Canonical == canonical {
 			return r.Unmapped, r.Unmapped != ""
 		}

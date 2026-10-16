@@ -29,9 +29,10 @@ import (
 // nobody sent.
 //
 // The resolution itself is config.RoutingClaudeFor, the one resolver, and the
-// ID it returns comes from the checked-in canonical map (pricing.ClaudeRoutes):
-// the run never derives a spelling, so a route entry that spells the model its
-// own way is refused rather than trusted.
+// ID it returns comes from the checked-in canonical map (internal/pricing's
+// claudeRoutes, unexported and reachable only through RouteIDFor): the run
+// never derives a spelling, so a route entry that spells the model its own way
+// is refused rather than trusted.
 //
 // A switch that names a pin which cannot be resolved — an ID with no map row,
 // no route entry claiming it, a route whose allow_data_to is not written, or two

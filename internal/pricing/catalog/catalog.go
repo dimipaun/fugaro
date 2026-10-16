@@ -252,11 +252,11 @@ type Entry struct {
 	// CanonicalID is the direct spelling of the same model — the Claude ID a
 	// pin carries and the price table keys (claude-sonnet-5-5) — beside the
 	// row's own key, which is the route's ID (anthropic/claude-sonnet-5.5).
-	// The canonical-to-route map is pricing.ClaudeRoutes, checked in and
-	// exhaustive; this field is the catalog's claim about the pair, and the
-	// map is the authority on it (design §6.2, plan Task 1b.2). Empty on a row
-	// whose key is not another spelling of a differently named model, which is
-	// every non-Claude row.
+	// The canonical-to-route map is internal/pricing's own (read through
+	// pricing.RouteIDFor), checked in and exhaustive; this field is the
+	// catalog's claim about the pair, and the map is the authority on it
+	// (design §6.2, plan Task 1b.2). Empty on a row whose key is not another
+	// spelling of a differently named model, which is every non-Claude row.
 	CanonicalID string `json:"canonical_id,omitempty"`
 	// All is every endpoint; ZDR is the ZDR-eligible subset. Each maps a
 	// dimension name (input_per_m, output_per_m, cache_read_per_m,

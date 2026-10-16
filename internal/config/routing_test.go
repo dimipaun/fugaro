@@ -1,10 +1,10 @@
 package config
 
 import (
-	"io/fs"
-	"os"
-	"path/filepath"
-	"regexp"
+	"go/ast"
+	"go/token"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -240,47 +240,116 @@ func TestRoutingRefusesAModelTwoRoutesClaim(t *testing.T) {
 	}
 }
 
-// TestRoutingHasOneResolver: the canonical ID and a route's own spelling of it
-// are compared in exactly one file. That comparison *is* the answer to where a
-// Claude call goes, so a second one is a second answer — the pins renderer, the
-// price lookup and validate are all supposed to ask RoutingClaudeFor, not to
-// re-derive the route (Task 1b.2/1b.3 say the same in the plan). The marker is
-// the pair the comparison needs: the vendor prefix stripped off a claim to get
-// the route's spelling (a CutPrefix with the "anthropic/" literal — not
-// pricing.IsAlias's HasPrefix predicate, which only judges the spelling).
+// TestRoutingHasOneResolver: the spelling that answers "which route does this
+// Claude model take?" — the "anthropic/" vendor prefix a route entry's claim
+// carries — is written in code in exactly four files, each of which uses it as
+// something other than a derivation, and *nowhere* is a route's ID built from
+// it. That derivation is the second answer to where a call goes: a spelling
+// assembled here would be sent and charged on a route the map never paired the
+// model with, and nothing would say so.
 //
-// This is a text search, and it is weaker than what Task 1b.2 must write: it says
-// that no *other* file derives a route today, not that the resolver answers. 1b.2
-// is where RoutingClaudeFor gets its real callers (stagePins, the price lookup,
-// the recorded serving_model/priced_as) and its real tests — the resolved route
-// asserted for an opted-in ID, an ID the switch does not name, a provider with no
-// allow_data_to written, and the fail-closed cases — and where this test's job
-// becomes the second half of that: that those callers all ask the one resolver
-// instead of comparing IDs themselves. Until then it is a tripwire, not a proof.
+// The files that may write it, and why each is not a derivation: the resolver
+// (which strips it off a claim to ask the map), the claim-shape judge in
+// providers.go (which only tests for it), the map's own data (its route IDs are
+// these literals), and the generator's detection of a Claude catalog row.
+//
+// This resolves each file's imports and reads string literals, where the text
+// search it replaces matched a regexp against the whole file: the search stayed
+// green for a route ID built from the literal elsewhere, and for the same code
+// reached through an aliased import (the review finding on this change).
+//
+// Hand mutations this fails on: writing `"anthropic/" + id` anywhere (a
+// concatenation of the prefix is a derivation, in an allowed file included);
+// and adding a fifth file that writes the prefix for a new reason.
 func TestRoutingHasOneResolver(t *testing.T) {
-	const resolver = "routing.go"
-	marker := regexp.MustCompile(`CutPrefix\([^)]*"anthropic/"`)
-	var found []string
-	err := filepath.WalkDir("../../internal", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if marker.Match(src) {
-			found = append(found, path)
-		}
-		return nil
-	})
+	const prefix = "anthropic/"
+	may := map[string]string{
+		"internal/config/routing.go":                  "the resolver: claudeRouteID strips the prefix off a route entry's claim, and the map's pair is the authority on what follows (routing.go, RoutingClaudeFor)",
+		"internal/config/providers.go":                "CheckClaudeClaim's shape judge: whether a claim is one explicit Claude ID",
+		"internal/pricing/canonical.go":               "the map's own data: the route IDs it holds are these literals, and they are read through RouteIDFor alone",
+		"internal/pricing/catalog/gencatalog/main.go": "the generator, detecting which catalog rows are Claude models",
+	}
+	var writers, builders []string
+	for _, f := range moduleGoFiles(t) {
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.BasicLit:
+				if literal(v) == prefix {
+					if _, ok := may[f.path]; !ok {
+						writers = append(writers, f.path)
+					}
+				}
+			case *ast.BinaryExpr:
+				if v.Op == token.ADD && (containsLiteral(v, prefix)) {
+					builders = append(builders, f.path+" concatenates it")
+				}
+			case *ast.AssignStmt:
+				if v.Tok == token.ADD_ASSIGN {
+					for _, r := range v.Rhs {
+						if containsLiteral(r, prefix) {
+							builders = append(builders, f.path+" appends it")
+						}
+					}
+				}
+			case *ast.CallExpr:
+				if buildsAString(f, v) && containsLiteral(v, prefix) {
+					builders = append(builders, f.path+" formats it")
+				}
+			}
+			return true
+		})
+	}
+	slices.Sort(writers)
+	slices.Sort(builders)
+	if len(writers) != 0 {
+		t.Errorf("%v write the %q vendor prefix a route's own ID is built from: the route's spelling is the map's data (internal/pricing/canonical.go), and a second place that writes it is a second answer to where a Claude call goes (Task 1b.2, TestRoutingResolutionHasOneSite)", slices.Compact(writers), prefix)
+	}
+	if len(builders) != 0 {
+		t.Errorf("%v the %q vendor prefix into a string: a route's own ID is read from the checked-in map (pricing.RouteIDFor) and never assembled — a derived spelling is a route nobody paired the model with", slices.Compact(builders), prefix)
+	}
+}
+
+// literal is a string literal's value, or "" for anything else.
+func literal(lit *ast.BasicLit) string {
+	if lit.Kind != token.STRING {
+		return ""
+	}
+	s, err := strconv.Unquote(lit.Value)
 	if err != nil {
-		t.Fatalf("walking internal/: %v", err)
+		return ""
 	}
-	if len(found) != 1 || filepath.Base(found[0]) != resolver {
-		t.Errorf("the canonical-to-route comparison lives in %v, want exactly internal/config/%s: the route is resolved in one place (RoutingClaudeFor), and a second site is a second answer to where a Claude call goes", found, resolver)
+	return s
+}
+
+// containsLiteral reports whether any basic string literal inside n is s.
+func containsLiteral(n ast.Node, s string) bool {
+	found := false
+	ast.Inspect(n, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && literal(lit) == s {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+// buildsAString reports whether call is a call that assembles a string from its
+// arguments — fmt.Sprintf and strings.Join — as opposed to a call that judges
+// one (HasPrefix, CutPrefix), which is not a derivation.
+func buildsAString(f goSource, call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
 	}
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch f.imports[id.Name] {
+	case "fmt":
+		return sel.Sel.Name == "Sprintf"
+	case "strings":
+		return sel.Sel.Name == "Join"
+	}
+	return false
 }
