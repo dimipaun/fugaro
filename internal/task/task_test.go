@@ -580,3 +580,88 @@ func TestSpecMode(t *testing.T) {
 		t.Fatalf("an empty mode is written: %s", data)
 	}
 }
+
+// TestSpecInputsValidate is the decoder's own arm for the attached-files list
+// (design artifact-runs.md §4, plan Task 6): the three fields are all
+// required and structural — a name, a size that cannot be negative, and a
+// sha256 in the one spelling the launcher writes. It is deliberately NOT the
+// name's shape: "..", an absolute path, a NUL and a duplicate are refused
+// where a name becomes a filesystem path (the launcher's attachPrepared, then
+// the runner's downloadInputs), because a decoder that refused them first
+// would make those checks unreachable. TestInputNameProblem below pins the
+// list they use.
+//
+// Mutation (drop the inputs loop from Validate): every case below parses and
+// this test fails.
+func TestSpecInputsValidate(t *testing.T) {
+	const head = `{"version":1,"run_id":"20261015-120000-a1b2","repo":"acme/app","ref":"main","task":"x","mode":"artifact"`
+	sha := strings.Repeat("a", 64)
+	for _, c := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"one input", `,"inputs":[{"name":"shot.png","bytes":1024,"sha256":"` + sha + `"}]`, ""},
+		{"none", `,"inputs":[]`, ""},
+		{"absent", ``, ""},
+		{"no name", `,"inputs":[{"bytes":1,"sha256":"` + sha + `"}]`, "name is required"},
+		// A name of nothing but whitespace is no name HERE, and it must be no
+		// name in InputNameProblem too (the case above): the launcher writes
+		// this task and the runner reads it back, so a name this refuses is a
+		// name the launcher must refuse before it uploads the file.
+		{"a whitespace-only name", `,"inputs":[{"name":"   ","bytes":1,"sha256":"` + sha + `"}]`, "name is required"},
+		{"negative bytes", `,"inputs":[{"name":"a.png","bytes":-1,"sha256":"` + sha + `"}]`, "negative"},
+		{"no sha256", `,"inputs":[{"name":"a.png","bytes":1}]`, `sha256 "" must be`},
+		{"short sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"abc"}]`, "sha256"},
+		{"upper-case sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"` + strings.Repeat("A", 64) + `"}]`, "sha256"},
+		{"a name that escapes", `,"inputs":[{"name":"../x.png","bytes":1,"sha256":"` + sha + `"}]`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Parse([]byte(head + c.body + `}`))
+			switch {
+			case c.want == "" && err != nil:
+				t.Fatalf("err = %v, want the spec accepted", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Fatalf("err = %v, want a refusal naming %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestInputNameProblem is the shape list the launcher and the runner share
+// (design §8.2): what a name may not be, as a filesystem path under inputs/.
+// The empty name and the length limit are here with the rest because this is
+// the one place the rule is written down; the decoder above refuses an absent
+// or empty name first, so the runner sees this list only for the shapes
+// Validate lets through.
+//
+// Mutation (drop a case from InputNameProblem): the corresponding entry below
+// reports "" and this test fails.
+func TestInputNameProblem(t *testing.T) {
+	for _, c := range []struct{ name, want string }{
+		{"shot.png", ""},
+		{"a/b/shot.png", ""},
+		{"inputs/shot.png", ""},
+		{"", "is empty"},
+		{"   ", "is only whitespace"},
+		{" \t ", "is only whitespace"},
+		// Whitespace AROUND a name is a name: the rule is for a string that
+		// holds nothing but whitespace, not for whitespace in one.
+		{" shot.png", ""},
+		{"shot .png", ""},
+		{strings.Repeat("a", MaxInputNameBytes), ""},
+		{strings.Repeat("a", MaxInputNameBytes+1), "is longer than 200 bytes"},
+		{"/etc/passwd", "is an absolute path"},
+		{"../escape.png", `has a ".." path element`},
+		{"a/../../b.png", `has a ".." path element`},
+		{"a/./b.png", `has a "." path element`},
+		{"a//b.png", "has an empty path element"},
+		{"trailing/", "has an empty path element"},
+		{"a\x00b.png", "holds a NUL or a newline"},
+		{"a\nb.png", "holds a NUL or a newline"},
+	} {
+		if got := InputNameProblem(c.name); got != c.want {
+			t.Errorf("InputNameProblem(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
