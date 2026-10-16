@@ -320,7 +320,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 		`jobs/${SANDBOX_JOB:?}:run`,
 		`OPERATION=$(jq -r '.name // empty' "${CHK52_TMP:?}/run-a.json")`,
 		`jq -r '.metadata.name // empty'`,
-		`internal/backend/gcp/run.go:118-129`,
+		`internal/backend/gcp/run.go`,
 		`"value":"plain-literal"`,
 		// A refusal is an answer, not a stop: (a) branches on the API's error
 		// so (b), (c), U3 and U4 still run, and nothing aborts on a missing
@@ -348,11 +348,13 @@ func TestChecklistHasCheck52(t *testing.T) {
 		"the failure of these executions' own tasks recorded as the expected outcome, not as the answer",
 	})
 
-	// The section's code citations, resolved against the tree at the line each
-	// one names: the response's Operation metadata is read by the backend at
-	// gcp/run.go:118-129, and a drift there is a reader sent to code that is
-	// not the field the step reads back.
+	// The section's code citations, resolved against the tree by the SYMBOL
+	// they name: the response's Operation metadata is read in
+	// internal/backend/gcp/run.go, and a section that pins a line instead is
+	// one merge away from sending a reader to code that is not the field the
+	// step reads back.
 	checkCitations(t, section, "Check 52 section", chk52Citations)
+	chkNoLineCites(t, section, "Check 52 section")
 	if strings.Contains(section, `jq -c '{status, code:`) {
 		t.Error("the Check 52 section prints the refusal's status from the response's top level, where it is null: the API's error body carries it inside .error")
 	}
@@ -979,7 +981,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// The runs' ref, and why it is master: the sandbox has no `main`, and
 		// --ref is not cross-checked against the remote at launch.
 		"Every `fugaro run` below passes `--ref master`, and it is `master` because the sandbox repository has no `main`",
-		"`internal/gitops/gitops.go:239`",
+		"`internal/gitops/gitops.go`",
 		`fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --json --project fugaro`,
 		`fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --project fugaro`,
 	})
@@ -1013,7 +1015,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 	chk49MustContain(t, section, "section", []string{
 		"Use `fugaro image refresh` for the image half, not `fugaro upgrade`",
 		"**rewrites the checkout's `.claude/settings.json`**",
-		"`internal/cli/upgrade.go:85-110` is that command's own `Long` text, one paragraph per step: `pin` at `:85-89`, `plugin` at `:90-94`, `cloud` at `:95-110`",
+		"`internal/cli/upgrade.go` is that command's own `Long` text, one paragraph per step: `pin`, `plugin`, `cloud`",
 		// Both places the pin step's file is compared: step 8's block and
 		// step 8's FACT. One without the other is a restore that checks the
 		// file and a FACT that does not claim it.
@@ -1053,10 +1055,9 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// on the operator's own checkout.
 	chk49MustContain(t, chk49Step(t, section, "### 3."), "step 3", []string{
 		"`init --repo` also offers the checkout's own `gcp_project:` line",
-		"internal/cli/init_repo_stage.go:163",
-		"internal/cli/init_fugaroyaml.go:243",
+		"`internal/cli/init_repo_stage.go` → `internal/cli/init_fugaroyaml.go`",
 		"Write this to <path>? [y/N]:",
-		"`internal/cli/init_fugaroyaml.go:220`",
+		"asks `Write this to <path>? [y/N]:` (`internal/cli/init_fugaroyaml.go`)",
 		"step 8 runs the same command and asks the same question a second time",
 	})
 
@@ -1075,12 +1076,13 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// :90-94 and `cloud` is :95-110. A range that stops at :88 describes
 		// one of the three steps and claims all three.
 		"internal/cli/upgrade.go:84-88",
-		// NOT listed here: `internal/cli/project_cmd.go:352`. It was the wrong
-		// number when it was added — :345 was the declaration then — but the
-		// merge with next moved the whole function down and :352 is now where
-		// `allowSourcesOf` is declared, which is what the section cites. A line
-		// number in this list is only true until the next merge; it is kept off
-		// so the test does not fail on a citation that is now correct.
+		// NOT listed here: `internal/cli/project_cmd.go:352` for
+		// `allowSourcesOf`. It was the wrong number when it was added, then the
+		// right one after the first merge with next moved the function down,
+		// and wrong again — :384 — after the second. The section cites no
+		// number for it now (chkNoLineCites holds that), so there is nothing
+		// here to keep off the list: the numbers are what moved, not the
+		// citation.
 		// The Firebase root's applyRoot at init_firebase.go:289 is what
 		// --plan-only never reaches: the run has already returned at :210-213
 		// on installRoot's plan-only stop (init.go:1285-1287). Citing :290 as
@@ -1123,9 +1125,9 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// root's applyRoot, which that run never reaches. The substantive claim
 	// (the act lines are the second command's) is unchanged and pinned above.
 	chk49MustContain(t, chk49Step(t, section, "### 2."), "step 2", []string{
-		"`internal/cli/init.go:1285-1287`, inside `installRoot` (declared at `:1171`)",
-		"`internal/cli/init_firebase.go:210-213` (`if err != nil || stop { return err }`)",
-		"`internal/cli/init_firebase.go:289`, the one whose stop this is **not**",
+		"`internal/cli/init.go`'s `installRoot`",
+		"`internal/cli/init_firebase.go`",
+		"the one whose stop this is **not**",
 	})
 
 	// Step 1's backup keeps the FIRST copy, and the guard paragraph names every
@@ -1192,17 +1194,19 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// repository's stored task.
 	chk49MustContain(t, section, "section", []string{
 		"**`FUGARO_RUN` is `<repo-slug>/<run-id>`, both halves required.**",
-		"`internal/runstore/runstore.go:416`",
+		"`internal/runstore/runstore.go`",
 		"--update-env-vars FUGARO_RUN=not-this-jobs-slug-000000000000/20261015-000000-dead",
 		"a run id that names no run anywhere",
 	})
 
 	// Every citation the section makes in full is resolved against the tree,
-	// at the line it names: a number that drifts with a later merge fails here
-	// instead of leaving the owner on unrelated code. The section's two
-	// abbreviated citations — `(:229)` for openCloud and `(:951)` for
-	// admissionCheck — are held by the phrase pins above.
+	// by the SYMBOL it names, and by nothing else: a line number drifts with
+	// the next merge and leaves the owner on unrelated code, which is what
+	// these citations did twice. The section's two abbreviated citations —
+	// `(:229)` for openCloud and `(:951)` for admissionCheck — are held by the
+	// phrase pins above.
 	checkCitations(t, section, "Check 49 section", chk49Citations)
+	chkNoLineCites(t, section, "Check 49 section")
 
 	// No step handles a secret value: the check reads the rules' bytes, the
 	// node's version and the job environment's key *presence*, never a value.
@@ -1809,8 +1813,7 @@ func TestChecklistHasCheck50(t *testing.T) {
 	// do about them, in the prose the owner reads before running the block and
 	// in each arm's own failure message.
 	chk50MustContain(t, step7, "step 7", []string{
-		"internal/cli/project_cmd.go:483-484",
-		"internal/cli/project_cmd.go:476-481",
+		"internal/cli/project_cmd.go",
 		// What the refusal leaves behind, named as the money it costs.
 		"routes every Claude senior in this project through the provider at provider fees",
 		// And the remedy, not just a STOP.
@@ -1898,7 +1901,7 @@ func TestChecklistHasCheck50(t *testing.T) {
 		"record this as *not produced*",
 	})
 	chk50MustContain(t, chk50Step(t, section, "### 4."), "step 4", []string{
-		"internal/runner/runner.go:2121",
+		"internal/runner/runner.go",
 	})
 	for _, tc := range []struct{ step, marker string }{
 		{"### 4.", "step 4"},
@@ -1950,10 +1953,11 @@ func TestChecklistHasCheck50(t *testing.T) {
 		"never a value",
 	})
 
-	// The section's code citations, resolved against the tree at the line each
-	// one names. Check 50 is the section this PR writes, so its citations are
-	// the ones a reader of this PR follows.
+	// The section's code citations, resolved against the tree by the SYMBOL
+	// each one names. Check 50 is the section this PR writes, so its citations
+	// are the ones a reader of this PR follows.
 	checkCitations(t, section, "Check 50 section", chk50Citations)
+	chkNoLineCites(t, section, "Check 50 section")
 
 	// The numbering ruling names the number, so a later plan does not take it —
 	// and says Task 1b.3's output is not in the binary, so the section below
@@ -2122,124 +2126,138 @@ func chk50MustContain(t *testing.T, got, part string, want []string) {
 }
 
 // chk49Citations are the code citations the Check 49 section makes in full.
-// Resolved against the tree by checkCitations: the merge with next moved several
-// of these files under the numbers the section carried, and a pin on the number
-// could not see it.
+// Resolved against the tree by checkCitations: every one is the PATH plus the
+// symbol the sentence names, with no line number, because a merge that moves
+// code under a number is what made these drift in the first place — twice.
 var chk49Citations = []chkCitation{
-	{"internal/runner/policy.go:215", "func (r *run) policyCeiling"},
-	{"internal/cli/project_cmd.go:218", "func requirePolicyRules"},
-	{"internal/cli/run.go:220", "taskText(cmd, o.tf, args, prSet)"},
-	{"internal/cli/run.go:473", "launchPolicyGates(ctx, env, slug, spec)"},
-	{"internal/cli/run.go:531", "pass the task as TEXT or with --task-file (- for stdin)"},
-	{"internal/cli/run.go:589-594", "ref = c.Git.BaseBranch"},
-	{"internal/gitops/gitops.go:239", "\"fetch\", \"--quiet\", \"origin\", ref"},
-	{"internal/runner/runner.go:1021", "CheckoutNewBranch(ctx, spec.Ref, branch)"},
-	{"internal/cli/cloud.go:54", "\"project\", \"\", \"the Fugaro project"},
-	{"internal/cli/doctor.go:1448", "\"project: %s (GCP %s, %s)\\n\""},
-	{"internal/localcfg/select.go:163", "this checkout belongs to project"},
-	{"internal/cli/init.go:1285-1287", "planOnly"},
-	{"internal/cli/init_firebase.go:210-213", "r.installRoot(ctx, c, t, wd, lc, spec)"},
-	{"internal/cli/init_firebase.go:289", "r.applyRoot(ctx, ft, fwd, \"firebase\""},
-	{"internal/cli/init_firebase.go:474", "already has the rules"},
-	{"internal/cli/init_firebase.go:477-480", "\"The Firebase project %s:\\n\""},
-	{"internal/infra/firebasedb.go:222", "changes the mode"},
-	{"internal/cli/upgrade_cloud.go:221", "func jobConfigCopyNote"},
-	{"internal/cli/image_refresh_steps.go:241", "func (r *initRun) refreshCloneJobs"},
-	{"internal/cli/upgrade.go:85-110", "what fugaro update-skills does"},
-	{"internal/cli/init_repo_stage.go:163", "s.anchor(ctx, env, s.e.r.o.planOnly)"},
-	{"internal/cli/init_fugaroyaml.go:220", "\"Write this to %s? [y/N]: \""},
-	{"internal/cli/init_fugaroyaml.go:243", "func (s *repositoryStage) anchor"},
-	{"internal/projectpolicy/match.go:17", "func Canonical(provider, repo string)"},
-	{"internal/cli/project_cmd.go:352", "func allowSourcesOf"},
-	{"internal/runstore/runstore.go:410-413", "runRefRE"},
-	{"internal/runstore/runstore.go:416", "func ParseRef"},
-	{"internal/cli/exec.go:60", "os.Getenv(\"FUGARO_RUN\")"},
-	{"internal/runner/runner.go:883", "r.d.Store.ReadTask(ctx)"},
-	{"internal/backend/gcp/names.go:383", "func BucketCondition"},
-	{"internal/runner/project.go:650", "The run stops before any lease exists"},
-	{"internal/infra/spec.go:753", "env[MaxRunUSDEnv]"},
+	{"internal/runner/policy.go", "func (r *run) policyCeiling"},
+	{"internal/cli/project_cmd.go", "func requirePolicyRules"},
+	{"internal/cli/run.go", "taskText(cmd, o.tf, args, prSet)"},
+	{"internal/cli/run.go", "launchPolicyGates(ctx, env, slug, spec)"},
+	{"internal/cli/run.go", "pass the task as TEXT or with --task-file (- for stdin)"},
+	{"internal/cli/run.go", "ref = c.Git.BaseBranch"},
+	{"internal/gitops/gitops.go", "\"fetch\", \"--quiet\", \"origin\", ref"},
+	{"internal/runner/runner.go", "CheckoutNewBranch(ctx, spec.Ref, branch)"},
+	{"internal/cli/cloud.go", "\"project\", \"\", \"the Fugaro project"},
+	{"internal/cli/doctor.go", "\"project: %s (GCP %s, %s)\\n\""},
+	{"internal/localcfg/select.go", "this checkout belongs to project"},
+	// installRoot's own plan-only return. The bare identifier `planOnly` is all
+	// over init.go, so the anchor is the line it prints: a token the file
+	// carries exactly once.
+	{"internal/cli/init.go", "--plan-only: nothing applied; the plan is"},
+	{"internal/cli/init_firebase.go", "r.installRoot(ctx, c, t, wd, lc, spec)"},
+	{"internal/cli/init_firebase.go", "r.applyRoot(ctx, ft, fwd, \"firebase\""},
+	{"internal/cli/init_firebase.go", "already has the rules"},
+	{"internal/cli/init_firebase.go", "\"The Firebase project %s:\\n\""},
+	{"internal/infra/firebasedb.go", "changes the mode"},
+	{"internal/cli/upgrade_cloud.go", "func jobConfigCopyNote"},
+	{"internal/cli/image_refresh_steps.go", "func (r *initRun) refreshCloneJobs"},
+	{"internal/cli/upgrade.go", "what fugaro update-skills does"},
+	{"internal/cli/init_repo_stage.go", "s.anchor(ctx, env, s.e.r.o.planOnly)"},
+	{"internal/cli/init_fugaroyaml.go", "\"Write this to %s? [y/N]: \""},
+	{"internal/cli/init_fugaroyaml.go", "func (s *repositoryStage) anchor"},
+	{"internal/projectpolicy/match.go", "func Canonical(provider, repo string)"},
+	{"internal/cli/project_cmd.go", "func allowSourcesOf"},
+	{"internal/runstore/runstore.go", "runRefRE"},
+	{"internal/runstore/runstore.go", "func ParseRef"},
+	{"internal/cli/exec.go", "os.Getenv(\"FUGARO_RUN\")"},
+	{"internal/runner/runner.go", "r.d.Store.ReadTask(ctx)"},
+	{"internal/backend/gcp/names.go", "func BucketCondition"},
+	{"internal/runner/project.go", "The run stops before any lease exists"},
+	{"internal/infra/spec.go", "env[MaxRunUSDEnv]"},
 }
 
 // chk50Citations are the code citations the Check 50 section makes in full,
 // resolved against the tree by checkCitations.
 var chk50Citations = []chkCitation{
-	{"internal/runner/routing.go:52", "func (r *run) applyRouting"},
-	{"internal/runner/routing.go:56-65", "r.gatewayOn()"},
-	{"internal/runner/routing.go:70-96", "config.RouteAuto"},
-	{"internal/config/routing.go:98-125", "func CheckRouting"},
-	{"internal/config/routing.go:237", "func RoutingClaudeFor"},
-	{"internal/config/config.go:417", "const MissingAnthropicKey"},
-	{"internal/config/config.go:590", "dec.KnownFields(true)"},
-	{"internal/pricing/overrides.go:15", "EnvName = \"FUGARO_MODEL_PRICES\""},
-	{"internal/infra/spec.go:765", "env[ModelPricesEnv]"},
-	{"internal/cli/cloud.go:54", "\"project\", \"\", \"the Fugaro project"},
-	{"internal/cli/doctor.go:1448", "\"project: %s (GCP %s, %s)\\n\""},
+	{"internal/runner/routing.go", "func (r *run) applyRouting"},
+	{"internal/runner/routing.go", "r.gatewayOn()"},
+	{"internal/runner/routing.go", "config.RouteAuto"},
+	{"internal/config/routing.go", "func CheckRouting"},
+	{"internal/config/routing.go", "func RoutingClaudeFor"},
+	{"internal/config/config.go", "const MissingAnthropicKey"},
+	{"internal/config/config.go", "dec.KnownFields(true)"},
+	{"internal/pricing/overrides.go", "EnvName = \"FUGARO_MODEL_PRICES\""},
+	{"internal/infra/spec.go", "env[ModelPricesEnv]"},
+	{"internal/cli/cloud.go", "\"project\", \"\", \"the Fugaro project"},
+	{"internal/cli/doctor.go", "\"project: %s (GCP %s, %s)\\n\""},
 	// Step 2's "the old note that names no switch": the message a binary
 	// without Task 1b.3 prints, and the reason the step records it instead of
 	// stopping on it.
-	{"internal/cli/validate.go:28", "const anthropicKeyNeeded"},
-	{"internal/cli/validate.go:37", "const anthropicKeyNoEnforce"},
-	{"internal/cli/validate.go:281", "msg := anthropicKeyNeeded"},
-	{"internal/cli/validate.go:444", "\"note: \"+n.String()"},
-	{"internal/cli/validate.go:274-280", "never a warning or a refusal"},
+	{"internal/cli/validate.go", "const anthropicKeyNeeded"},
+	{"internal/cli/validate.go", "const anthropicKeyNoEnforce"},
+	{"internal/cli/validate.go", "msg := anthropicKeyNeeded"},
+	{"internal/cli/validate.go", "\"note: \"+n.String()"},
+	{"internal/cli/validate.go", "never a warning or a refusal"},
 	// Step 7's `no-policy` arm: --delete without --yes asks for the typed
 	// confirmation (confirmTyped) and fails when stdin is not a terminal.
-	{"internal/cli/project_cmd.go:1089", "confirmRemoval(cmd, lc, o.yes"},
-	{"internal/cli/budget.go:182-200", "func confirmTyped"},
-	{"internal/cli/budget.go:192", "\"Type %s to confirm: \""},
+	{"internal/cli/project_cmd.go", "confirmRemoval(cmd, lc, o.yes"},
+	{"internal/cli/budget.go", "func confirmTyped"},
+	{"internal/cli/budget.go", "\"Type %s to confirm: \""},
 	// Steps 4 and 6: the `route` attribute exists only for a provider call.
-	{"internal/gateway/log.go:15", "is the Anthropic upstream"},
-	{"internal/gateway/log.go:51-53", "attrs = append(attrs, \"route\", c.route)"},
-	{"internal/gateway/forward.go:554", "cl.route = rt.provider.Name"},
+	{"internal/gateway/log.go", "is the Anthropic upstream"},
+	{"internal/gateway/log.go", "attrs = append(attrs, \"route\", c.route)"},
+	{"internal/gateway/forward.go", "cl.route = rt.provider.Name"},
 	// Step 4: why the two compared runs carry a task that COMMITS — a run with
 	// nothing ahead of its base is failed with this message, so a no-change run
 	// is not the run step 5's number is read from.
-	{"internal/runner/runner.go:2121", "r.fail(\"the agent made no commits\")"},
+	{"internal/runner/runner.go", "r.fail(\"the agent made no commits\")"},
 	// Step 7's two by-design refusals: `--remove-routing` beside a config that
 	// writes the switch, and a republish from a config that names no Claude
 	// switch while the published node routes Claude. Either one fails the arm
 	// and leaves the check's own switch published, so the step names them where
 	// the arms run.
-	{"internal/cli/project_cmd.go:470", "func buildProjectPolicy"},
-	{"internal/cli/project_cmd.go:476-481", "nodeRoutesClaude(old)"},
-	{"internal/cli/project_cmd.go:483-484", "case !silent && removeRouting"},
-	{"internal/cli/project_policy_test.go:2092", "--remove-routing beside a config that writes the switch"},
+	{"internal/cli/project_cmd.go", "func buildProjectPolicy"},
+	{"internal/cli/project_cmd.go", "nodeRoutesClaude(old)"},
+	{"internal/cli/project_cmd.go", "case !silent && removeRouting"},
+	{"internal/cli/project_policy_test.go", "--remove-routing beside a config that writes the switch"},
 }
 
 // chk52Citations are the code citations the Check 52 section makes in full,
 // resolved against the tree by checkCitations.
 var chk52Citations = []chkCitation{
-	{"internal/backend/gcp/run.go:118-129", "op.Metadata"},
-	{"internal/backend/gcp/run.go:82-95", "func (b *Backend) Launch"},
-	{"internal/backend/gcp/run.go:394-419", "func (b *Backend) toExecution"},
-	{"internal/cli/exec.go:60", "os.Getenv(\"FUGARO_RUN\")"},
-	{"internal/localcfg/select.go:163", "this checkout belongs to project"},
+	{"internal/backend/gcp/run.go", "op.Metadata"},
+	{"internal/backend/gcp/run.go", "func (b *Backend) Launch"},
+	{"internal/backend/gcp/run.go", "func (b *Backend) toExecution"},
+	{"internal/cli/exec.go", "os.Getenv(\"FUGARO_RUN\")"},
+	{"internal/localcfg/select.go", "this checkout belongs to project"},
 }
 
 // chkCitation is one code citation a checklist section makes: the text the
-// document carries, and a token that has to be on the line (or inside the
-// range) it names. The citations are the way an owner reads the code behind a
-// FACT, so a number that has drifted leaves them on unrelated code.
+// document carries, and a token — a symbol, a signature, a sentence — that has
+// to be in the file it names. The citations are the way an owner reads the code
+// behind a FACT, so a number that has drifted leaves them on unrelated code.
 //
-// A pin on the NUMBER cannot hold this: the same reading that produces a drift
-// produces the new number, and until someone makes that reading the pin keeps
-// passing while the sentence points somewhere else. Resolving the token against
-// the tree is what makes a drift fail.
+// The citation is preferred WITHOUT a line number: `internal/x/y.go` plus the
+// symbol the section names, which is the form a code move cannot break. A
+// number, or a range, is kept only where the section is about lines as such —
+// and then the token has to be inside it.
+//
+// A pin on the NUMBER cannot hold a drift: the same reading that produces the
+// number produces the next one, and until someone makes that reading the pin
+// keeps passing while the sentence points somewhere else. Resolving the token
+// against the tree is what makes a drift fail — and a symbol that stays put is
+// what keeps it from failing on every merge.
 type chkCitation struct{ cite, anchor string }
 
-// parseCitation reads "internal/x/y.go:123" or "internal/x/y.go:123-130".
-func parseCitation(cite string) (path string, first, last int, ok bool) {
+// parseCitation reads "internal/x/y.go" (the preferred form: resolve the
+// anchor anywhere in the file), "internal/x/y.go:123" or
+// "internal/x/y.go:123-130". numbered reports which form it read.
+func parseCitation(cite string) (path string, first, last int, numbered bool) {
 	i := strings.LastIndex(cite, ":")
 	if i < 0 {
-		return "", 0, 0, false
+		return cite, 0, 0, false
 	}
-	path, spec := cite[:i], cite[i+1:]
+	p, spec := cite[:i], cite[i+1:]
 	if j := strings.Index(spec, "-"); j >= 0 {
 		first, last = atoiOrZero(spec[:j]), atoiOrZero(spec[j+1:])
 	} else {
 		first, last = atoiOrZero(spec), atoiOrZero(spec)
 	}
-	return path, first, last, first > 0 && last >= first
+	if first <= 0 || last < first {
+		return cite, 0, 0, false
+	}
+	return p, first, last, true
 }
 
 func atoiOrZero(s string) int {
@@ -2254,38 +2272,133 @@ func atoiOrZero(s string) int {
 }
 
 // checkCitations resolves each citation against the tree, from internal/cli to
-// the repository root. Two failures it reports: the section no longer carries
-// the citation at all (the doc and this table have to move together), and the
-// citation is there but the token is not on the line it names (the number
-// drifted off the code the sentence is about).
+// the repository root, and PREFERS THE SYMBOL: a citation without a line number
+// is satisfied by the token being anywhere in the file, which is what survives
+// a merge that moves code. A citation that carries a number — or a range — has
+// to hold its token inside it, and when it does not, the failure says where the
+// token is now, so the next drift is one edit rather than a search.
+//
+// Two failures it reports: the section no longer carries the citation at all
+// (the doc and this table have to move together), and the citation is there but
+// the token is not where it says (the number drifted off the code the sentence
+// is about, or the symbol the sentence names is gone).
 func checkCitations(t *testing.T, section, part string, cites []chkCitation) {
 	t.Helper()
 	for _, c := range cites {
 		if !strings.Contains(section, c.cite) {
-			t.Errorf("the %s no longer carries the citation %q: if the code moved, fix the section and this table in the same commit — the table is what resolves the number against the tree", part, c.cite)
+			t.Errorf("the %s no longer carries the citation %q: if the code moved, fix the section and this table in the same commit — the table is what resolves the citation against the tree", part, c.cite)
 			continue
 		}
-		path, first, last, ok := parseCitation(c.cite)
-		if !ok {
-			t.Errorf("chkCitation(%q): not path:line or path:line-line", c.cite)
-			continue
-		}
+		path, first, last, numbered := parseCitation(c.cite)
 		data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(path)))
 		if err != nil {
 			t.Errorf("the %s cites %s, which cannot be read from here: %v", part, c.cite, err)
 			continue
 		}
 		lines := strings.Split(string(data), "\n")
+		if !numbered {
+			if !chkCitationIn(lines, c.anchor, 1, len(lines)) {
+				t.Errorf("the %s cites %s for %q, and no line of %s carries it: the symbol the sentence names is not in the file at all — fix the citation and this table in the same commit", part, c.cite, c.anchor, path)
+			}
+			continue
+		}
 		if last > len(lines) {
 			t.Errorf("the %s cites %s, and %s has %d lines: the citation is past the end of the file", part, c.cite, path, len(lines))
 			continue
 		}
-		found := false
-		for n := first; n <= last && !found; n++ {
-			found = strings.Contains(lines[n-1], c.anchor)
-		}
-		if !found {
-			t.Errorf("the %s cites %s for %q, and that is not in %s:%d-%d (which reads %q … %q): the citation points at code that is not what the sentence names", part, c.cite, c.anchor, path, first, last, strings.TrimSpace(lines[first-1]), strings.TrimSpace(lines[last-1]))
+		if !chkCitationIn(lines, c.anchor, first, last) {
+			t.Errorf("the %s cites %s for %q, and that is not in %s:%d-%d (which reads %q … %q): the citation points at code that is not what the sentence names%s",
+				part, c.cite, c.anchor, path, first, last, strings.TrimSpace(lines[first-1]), strings.TrimSpace(lines[last-1]), chkCitationMoved(lines, c.anchor, path))
 		}
 	}
+}
+
+// chkCitationIn reports whether the token is on a line of lines[first-1:last].
+func chkCitationIn(lines []string, anchor string, first, last int) bool {
+	for n := first; n <= last && n <= len(lines); n++ {
+		if strings.Contains(lines[n-1], anchor) {
+			return true
+		}
+	}
+	return false
+}
+
+// chkNoLineCites holds the rule the citation tables follow: a checklist section
+// cites code by PATH AND SYMBOL, never by `path.go:NNN`. A number is true only
+// until the next merge — the merge with next moved every one of the numbers
+// this test used to carry, twice — while the symbol the sentence names is what
+// the reader actually needs and what the tree keeps.
+//
+// A relative abbreviation inside a section (`(:229)`, `(:951)`) is not matched:
+// it has no path, and the phrase pins in each section are what hold those.
+func chkNoLineCites(t *testing.T, section, part string) {
+	t.Helper()
+	for _, m := range chkLineCiteFindings(section) {
+		t.Errorf("the %s cites %q: cite the file and the symbol the sentence names instead (`internal/x/y.go`, the function or constant), because a line number is one merge away from pointing at unrelated code", part, m)
+	}
+}
+
+// chkLineCiteFindings is the scan behind chkNoLineCites, as a plain function so
+// the mutation rows below can hold it to what it must catch.
+func chkLineCiteFindings(section string) []string {
+	return regexp.MustCompile("[A-Za-z0-9_][A-Za-z0-9_./-]*\\.go:[0-9]+").FindAllString(section, -1)
+}
+
+// TestChecklistHasCheck50CitationsPreferSymbols holds the citation rule to
+// itself, for all three sections that follow it (49, 50 and 52): the resolver
+// reads both forms, and the scan that keeps the sections on the symbol form
+// catches a line number however it is written and stays silent on the form the
+// sections now use. Without this, a scan that quietly matched nothing would
+// look exactly like three sections that follow the rule.
+func TestChecklistHasCheck50CitationsPreferSymbols(t *testing.T) {
+	type parseCase struct {
+		cite        string
+		path        string
+		first, last int
+		numbered    bool
+	}
+	for _, tc := range []parseCase{
+		{"internal/x/y.go", "internal/x/y.go", 0, 0, false},
+		{"internal/x/y.go:12", "internal/x/y.go", 12, 12, true},
+		{"internal/x/y.go:12-30", "internal/x/y.go", 12, 30, true},
+	} {
+		path, first, last, numbered := parseCitation(tc.cite)
+		if path != tc.path || first != tc.first || last != tc.last || numbered != tc.numbered {
+			t.Errorf("parseCitation(%q) = %q %d %d %v, want %q %d %d %v", tc.cite, path, first, last, numbered, tc.path, tc.first, tc.last, tc.numbered)
+		}
+	}
+	for _, tc := range []struct {
+		text string
+		want bool
+	}{
+		{"`internal/cli/project_cmd.go:470`", true},
+		{"internal/backend/gcp/run.go:118-129", true},
+		{"the refusal lives at internal/runner/runner.go:2121", true},
+		{"`internal/cli/project_cmd.go`", false},
+		{"`internal/runner/runner.go`, `r.fail(\"the agent made no commits\")`", false},
+		{"a bare `(:229)` abbreviation has no path and is not this scan's", false},
+	} {
+		if got := len(chkLineCiteFindings(tc.text)) > 0; got != tc.want {
+			t.Errorf("chkLineCiteFindings(%q) found a line citation = %v, want %v", tc.text, got, tc.want)
+		}
+	}
+	if !chkCitationIn([]string{"a", "func f()", "b"}, "func f()", 2, 2) || chkCitationIn([]string{"a", "func f()", "b"}, "func f()", 1, 1) {
+		t.Error("chkCitationIn does not hold an anchor to the range it is given: a numbered citation would pass wherever the token happened to be")
+	}
+}
+
+// chkCitationMoved is the tail of a failed numbered citation: where the token
+// is now, if it is anywhere in the file. The fix for a drift is to write the
+// citation the way the table prefers — the path and the symbol, no number.
+func chkCitationMoved(lines []string, anchor, path string) string {
+	var at []string
+	for i, l := range lines {
+		if strings.Contains(l, anchor) {
+			at = append(at, fmt.Sprintf("%d", i+1))
+		}
+	}
+	if len(at) == 0 {
+		return fmt.Sprintf("; no line of %s carries %q either, so the symbol is gone and the section needs a new one", path, anchor)
+	}
+	return fmt.Sprintf("; %s carries it at line(s) %s — cite %s with that symbol and no line number, which the next code move cannot break", path, strings.Join(at, ", "), path)
 }
