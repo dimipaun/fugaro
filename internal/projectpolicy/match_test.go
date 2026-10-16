@@ -231,11 +231,90 @@ func TestMatchSegmentIsLinear(t *testing.T) {
 		{"*", "", true},             // and against an empty name
 		{"*b", "ab", true},          // a star that must consume the prefix
 		{"*b", "ba", false},
+		// A "*" in s is an ordinary character, not a wildcard: admittedBy
+		// (internal/cli/project_cmd.go) reads a *pattern* being removed against
+		// the entries a removal leaves, so s is sometimes a pattern too. The
+		// wildcard case must therefore be tested before the literal one — with
+		// equality first, the pattern's "*" is consumed as a literal and lost,
+		// and both of these answered false.
+		{"*", "*b", true},
+		{"a*", "a*b", true},
+		{"a*b", "a*b", true},
+		{"*a", "*a", true},
+		{"a*", "a*bc", true},
+		{"a*", "ab*c", true},
 	} {
 		if got := matchSeg(tc.pattern, tc.name); got != tc.want {
 			t.Errorf("matchSeg(%q, %q) = %v, want %v", tc.pattern, tc.name, got, tc.want)
 		}
 	}
+}
+
+// refMatchSeg is a glob matcher written for its obviousness rather than for its
+// cost: "*" matches any run of characters (the empty run included) and every
+// other character is a literal, in the pattern and in the name alike.
+// matchSeg's table cases are the ones a reader thinks of; this is what settles
+// the ones nobody thought of.
+func refMatchSeg(pattern, s string) bool {
+	if pattern == "" {
+		return s == ""
+	}
+	if pattern[0] == '*' {
+		for k := 0; k <= len(s); k++ {
+			if refMatchSeg(pattern[1:], s[k:]) {
+				return true
+			}
+		}
+		return false
+	}
+	return s != "" && pattern[0] == s[0] && refMatchSeg(pattern[1:], s[1:])
+}
+
+// TestMatchSegAgreesWithAReferenceGlob: every pattern and every name over
+// {a, b, *} up to four characters — 121 of each, 14641 pairs — against a
+// reference matcher. The alphabet includes "*" on purpose: matchSeg's second
+// argument is a repository *or* a pattern (admittedBy reads a pattern being
+// removed against the entries a removal leaves), so a "*" in the name is an
+// ordinary character, and an implementation that tests literal equality before
+// the wildcard silently loses the pattern's own star on exactly those inputs —
+// 302 of the pairs below, which is the number this test printed the last time
+// the two cases were the other way round.
+func TestMatchSegAgreesWithAReferenceGlob(t *testing.T) {
+	var all []string
+	for n := 0; n <= 4; n++ {
+		all = append(all, stringsOfLength(n)...)
+	}
+	bad := 0
+	for _, pattern := range all {
+		for _, name := range all {
+			want := refMatchSeg(pattern, name)
+			if got := matchSeg(pattern, name); got != want {
+				bad++
+				if bad <= 10 {
+					t.Errorf("matchSeg(%q, %q) = %v, want %v", pattern, name, got, want)
+				}
+			}
+		}
+	}
+	if bad > 10 {
+		t.Errorf("%d pairs disagree with the reference glob, in all", bad)
+	}
+}
+
+// stringsOfLength is every string of length n over the alphabet {a, b, *},
+// the empty string included at n = 0: the exhaustive set the test above
+// compares against, rather than a sample of it.
+func stringsOfLength(n int) []string {
+	if n == 0 {
+		return []string{""}
+	}
+	var out []string
+	for _, s := range stringsOfLength(n - 1) {
+		for _, c := range []string{"a", "b", "*"} {
+			out = append(out, s+c)
+		}
+	}
+	return out
 }
 
 // TestValidPatternCapsWildcards: the matcher is linear now, so this is not
