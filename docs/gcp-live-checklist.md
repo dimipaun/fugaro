@@ -324,7 +324,7 @@ question the re-run answers, and those APIs switched back off **by hand**,
 outside that assertion (`gcloud services list --enabled --project=fugaro-dev`,
 the only way to see them).
 
-**Not run: 57b (all eight steps — including the two Task 6 added to it:
+**Not run: 57b (all nine steps — including the two Task 6 added to it:
 step 1 settles whether the compute module's new deny-all ingress rule on the
 run-class accounts leaves a run's VM able to report to the Batch agent, and
 step 7, the preload image *family*'s rebuild — which needs only the compute

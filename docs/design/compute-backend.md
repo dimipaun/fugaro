@@ -2083,7 +2083,7 @@ need the thing it gates cannot gate it, so this one is split:
   project (step 1 alone uses the *existing* Cloud Run backend, for the
   baseline the 120 s budget is measured against). It is the design's **go/no-go**, and the plan
   makes it Task 0 (§8.1): if it fails, nothing below it is built.
-- **57b — the post-build acceptance run.** Eight steps that only make sense once
+- **57b — the post-build acceptance run.** Nine steps that only make sense once
   `backend: cloud-batch` can be enabled, i.e. after the last task of §8.1 —
   except step 7, the preload family's rebuild, which needs only the compute
   root. They are the check's *acceptance* half, and the design's §4.4 `doctor`
@@ -2331,7 +2331,7 @@ resources**.
 
 ```bash
 # === Check 57: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
-# step (57a-0, 0b, 0c, 1..12, 57b-1..8, Restore). It is idempotent, and nothing
+# step (57a-0, 0b, 0c, 1..12, 57b-1..9, Restore). It is idempotent, and nothing
 # below the three hard stops runs unless all three pass. ===
 P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and never read from gcloud
 L=us-east5                   # the sandbox installation's region
@@ -3325,7 +3325,7 @@ named individually.
 
 ### 57b. The post-build acceptance run (after the enable task)
 
-These eight need `backend: cloud-batch` selectable, so they run **last**
+These nine need `backend: cloud-batch` selectable, so they run **last**
 (§8.1's task 9 is the enable task and task 10 is this section's second half) —
 except **step 7**, which needs only the compute root applied (Task 6's stage, or
 its own apply) and is worth running as soon as that is done, since the runs'
@@ -3460,7 +3460,7 @@ restore cannot find.
    just-scheduled job from being deleted for its queue wait. **FACT:** per
    state, whether a job-level event exists, the time it carries, and the
    `runDuration` read against the clock.
-8. **The largest `computeResource` that still schedules on `e2-standard-4`.**
+9. **The largest `computeResource` that still schedules on `e2-standard-4`.**
    The job a Fugaro run creates asks the task for a **share of the machine
    type**, not the whole of it: `taskSpec.computeResource` is half the type's
    vCPUs and a quarter of its memory (2000m/4096MiB on `e2-standard-4`), because

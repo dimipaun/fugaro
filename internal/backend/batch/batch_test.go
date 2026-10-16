@@ -1962,7 +1962,7 @@ func TestAFinishedBatchRunHasNoWindowToPrice(t *testing.T) {
 // a request for the whole type is a job that sits QUEUED, which is the failure
 // this leaves room against. The shares themselves are Check 57a's measured
 // request -- 2000m/4096MiB on e2-standard-4, half the vCPUs and a quarter of
-// the memory (§7.2) -- and Check 57b-8 is what measures whether they can be
+// the memory (§7.2) -- and Check 57b-9 is what measures whether they can be
 // raised.
 func TestTheTaskLeavesTheVMHeadroom(t *testing.T) {
 	for _, name := range KnownMachineTypes() {
