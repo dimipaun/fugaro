@@ -7,7 +7,7 @@
 | File | What it is |
 |---|---|
 | [spec.md](spec.md) | The owner's spec, **verbatim**, committed alone in its own first commit. Nothing in it was changed, and nothing in it is a statement about this repository. |
-| [reconciliation.md](reconciliation.md) | Findings **F1–F37** against the code (each classified **Wrong / Exists / Gap / Rule / Open**, each citing a file and a symbol, each stating its **consequence** for the design), then **decisions D110–D129** for the owner — every row with a recommendation, the alternative and its cost, and an **empty** "Owner's answer" column — then **Open for the owner**, then the **UNVERIFIED** table. |
+| [reconciliation.md](reconciliation.md) | Findings **F1–F37** against the code (each classified **Wrong / Exists / Gap / Rule / Open**, each citing a file and a symbol, each stating its **consequence** for the design), then **decisions D110–D129** (twenty-one rows, D113b among them) for the owner — every row with a recommendation, the alternative and its cost, and an **empty** "Owner's answer" column — then **Open for the owner**, then the **UNVERIFIED** table. |
 | [implementation-plan.md](implementation-plan.md) | The plan: ordered parts, each independently mergeable, each with its **verification**, the **files touched** and a **reviewer tier**, plus a **Parallel execution** section of levels and waves with the critical path. |
 
 **Every decision in `reconciliation.md` is unanswered, and no task in the plan may start before the owner answers the ones that gate it and then passes the plan's approval gate.** Answering a decision is not approving a task; the plan says so in its own gate.
@@ -23,7 +23,7 @@ The owner's allocation of 2026-10-16, applied rather than inferred:
 | **D39–D54, plus D54b** | the voice work ([voice.md](../design/voice.md)), all answered 2026-10-16 | answered |
 | **D55–D78** | managed projects ([managed-projects.md](../design/managed-projects.md)) | answered |
 | **D90–D109** | the website work | allocated, and not this work's to read or restate |
-| **D110–D129** | **this work** | **all twenty open — none is answered, and this work answers none of them itself** |
+| **D110–D129** | **this work** | **none is answered, and this work answers none of them itself.** The reconciliation carries **twenty-one rows**: the twenty allocated, plus **D113b** — a sub-number added the way this repository's own **D54b** was, because the writer of the outbox and the heartbeat had no row of its own and D130 is outside the allocation |
 | **Checks 62–63** | the console v2 pair | reserved |
 | **Checks 64–66** | the voice work | reserved; 64 is the one owner-run check that work writes |
 | **Checks 67–68** | managed projects | reserved |
