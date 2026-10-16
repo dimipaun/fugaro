@@ -726,6 +726,20 @@ func TestChecklistHasCheck49(t *testing.T) {
 		}
 	}
 
+	// Step 6(b)'s admissionCheck citation, and it has to be pinned as the
+	// PHRASE: the section spells the first number of that sentence out as
+	// `internal/runner/runner.go:863` and abbreviates the second to `(:922)`,
+	// so the full-path entry in the absent list below cannot catch it — the
+	// string `internal/runner/runner.go:862` occurs nowhere in the section.
+	// Verified by mutation: rewriting the citation back to `(:862)` leaves a
+	// full-path-only guard passing, and fails this one.
+	chk49MustContain(t, chk49Step(t, section, "**(b) The run's own.**"), "step 6(b)", []string{
+		"`admissionCheck` ever runs (`:922`)",
+	})
+	if strings.Contains(section, "`admissionCheck` ever runs (`:862`)") {
+		t.Error("the Check 49 section's step 6(b) cites :862 for admissionCheck: the merge with next moved the call to :922, and :862 is now `func (r *run) bootstrap(...)`")
+	}
+
 	// Step 6, both ways: no key of fugaro.yaml names a repository, so the
 	// un-enrolled state is made with the allow-list, and the refusal it
 	// produces is the launcher's; the run-side half is a direct launch.
@@ -893,6 +907,11 @@ func TestChecklistHasCheck49(t *testing.T) {
 	for _, want := range []string{
 		"git diff -- fugaro.yaml",
 		"git diff -- .claude/settings.json",
+		// The revert of the one edit the check can make to the sandbox's own
+		// file: step 3's answer to `init --repo`'s gcp_project: prompt is `n`,
+		// and this is what handles the run that did not give it.
+		"if ! git diff --quiet -- fugaro.yaml; then",
+		"git checkout -- fugaro.yaml",
 		"fugaro budget show --json --project fugaro",
 		"fugaro project show --json --project fugaro",
 	} {
@@ -900,6 +919,13 @@ func TestChecklistHasCheck49(t *testing.T) {
 			t.Errorf("step 8's restore block has no %q line of its own: the step's FACT prose writes the same string, so the substring pin above cannot see this line deleted", want)
 		}
 	}
+	// …and the revert is guarded by step 1's own record, not by the file being
+	// dirty: a checkout whose committed copy already carries gcp_project: is
+	// never written to, so an unrelated working-tree change in it belongs to the
+	// operator and must not be discarded here.
+	chk49MustContain(t, chk49Step(t, section, "### 8."), "step 8", []string{
+		"grep -q '^gcp_project:' /tmp/chk49-sandbox-yaml-before.txt",
+	})
 	// Read as a command line, not as a substring: the section SAYS it has no
 	// `fugaro budget set`, and that sentence is the point — it is running one
 	// that would write a node no step changed.
@@ -999,6 +1025,27 @@ func TestChecklistHasCheck49(t *testing.T) {
 		}
 	}
 
+	// Step 3 is not the job environment alone, and step 8's `git diff --
+	// fugaro.yaml` FACT rests on knowing that. `fugaro init --repo`'s
+	// repository stage ends by OFFERING the checkout's gcp_project: line —
+	// init_repo_stage.go:163, Apply's `s.anchor(ctx, env, s.e.r.o.planOnly)`,
+	// where the --plan-only run plans the same line and writes nothing (:143) —
+	// through the anchor at init_fugaroyaml.go:243, the [y/N] prompt at :220
+	// and the write at :230; --yes takes that prompt without asking. The check
+	// runs `init --repo` in that checkout TWICE (step 3 and step 8), so the
+	// section has to say which answer it wants and step 8 has to have a revert:
+	// without both, "this is a confirmation that it is unchanged" is a
+	// confirmation of an edit the check itself made, and the FACT above fails
+	// on the operator's own checkout.
+	chk49MustContain(t, chk49Step(t, section, "### 3."), "step 3", []string{
+		"`init --repo` also offers the checkout's own `gcp_project:` line",
+		"internal/cli/init_repo_stage.go:163",
+		"internal/cli/init_fugaroyaml.go:243",
+		"Write this to <path>? [y/N]:",
+		"`internal/cli/init_fugaroyaml.go:220`",
+		"step 8 runs the same command and asks the same question a second time",
+	})
+
 	// The citations the review found drifted. Asserted ABSENT rather than
 	// pinned present: a line number that moved under a legitimate change is
 	// not this test's to freeze, but a number that points at something else
@@ -1025,6 +1072,15 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// on installRoot's plan-only stop (init.go:1285-1287). Citing :290 as
 		// the stop points at code a --plan-only run cannot execute.
 		"internal/cli/init_firebase.go:290",
+		// Step 6(b)'s admissionCheck. :862 was the call when the section was
+		// written and :922 is where the merge with next left it — the file grew
+		// above it, and :862 is now `func (r *run) bootstrap(...)`, which is the
+		// reader the same sentence cites at :863. The two numbers came from one
+		// reading of the file and only one of them was updated. This entry
+		// catches the citation only if it is ever written out in full; the
+		// section abbreviates it, and the phrase pin above step 6 is what
+		// actually holds it.
+		"internal/runner/runner.go:862",
 	} {
 		if strings.Contains(section, dead) {
 			t.Errorf("the Check 49 section cites %q, which does not point at what it says on this tree", dead)

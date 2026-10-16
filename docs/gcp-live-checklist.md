@@ -2209,6 +2209,8 @@ fugaro init --repo . --project fugaro
 fugaro image refresh --project fugaro
 ```
 
+⚠ **`init --repo` also offers the checkout's own `gcp_project:` line, and this check answers `n`.** The repository stage is not the job environment alone: its `Apply` ends by offering the checkout's `gcp_project:` line — the trust anchor shared config is found from (`internal/cli/init_repo_stage.go:163` → `internal/cli/init_fugaroyaml.go:243`, `repositoryStage.anchor`; the `--plan-only` run above prints that line and writes nothing, `:143`). When the sandbox checkout's `fugaro.yaml` does not already carry it, the command prints a diff of the file and asks `Write this to <path>? [y/N]:` (`internal/cli/init_fugaroyaml.go:220`), and a `y` — or `--yes`, which writes without asking (`:218`) — leaves `gcp_project: fugaro-dev` in the checkout, uncommitted (`:230`, `writeFileAtomic`). **Answer `n`.** It is a real change to a committed file of the sandbox repository and not what this step is for (this step moves the job environment and the image), and it has a rollout rule of its own that this check does not run: every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on a release that knows the key before the line is merged, because older versions refuse it as unknown. It is also the one edit to that file this check can make at all, which is what step 8's confirmation is about. Step 1's `git show HEAD:fugaro.yaml | grep -E '^(project|gcp_project):'` is where you see whether the sandbox's committed copy carries the line; the copy this repository commits carries no `gcp_project:` (`deploy/sandbox/fugaro.yaml`), so expect the prompt. A run that never prompts — a pipe, `--json`, or `--non-interactive` without `--yes` — writes nothing and needs no answer; **step 8 runs the same command and asks the same question a second time.**
+
 ```bash
 # What the job carries now: the NAMES of its environment variables and the
 # LENGTH of each value. Never a value: FUGARO_FIREBASE_API_KEY is a
@@ -2289,7 +2291,7 @@ fugaro project repos add bitbucket/edgeappinc/fugarosandbox --project fugaro
 
 **`FUGARO_RUN` is `<repo-slug>/<run-id>`, both halves required.** The runner parses it with `runstore.ParseRef` (`internal/runstore/runstore.go:411`, `run %q must look like <repo-slug>/<run-id>`; the slug alphabet is `[a-z0-9-]` and the run id `^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`, `:405`) — the CLI's own `--run` flag documents it the same way (`internal/cli/exec.go:60`, read back at `:171`). The value above is deliberately **a slug that is not this job's and a run id that names no run anywhere**: the point of the override is the slug, and a value naming a run that exists — least of all one of `dimipaun/fugaro`'s — would be pointing the sandbox's job at another repository's stored task.
 
-**FACT:** the run's own refusal text verbatim, and **Record which layer refused**, because on a phase-1 job it is not this phase's binding (R2-10, deferrable). The override naming another slug fails at `ReadTask` (`internal/runner/runner.go:863`): the per-repository job's bucket condition (`internal/backend/gcp/names.go:383`, `BucketCondition`, over `runs/<this-slug>/`) denies another slug's `task.json`, so the run stops **before** `admissionCheck` ever runs (`:862`) — the step passes, but for the bucket condition's reason, not the binding's. So the FACT line names the refusal that appeared and, when it is the bucket's, says so. **FACT:** no lease was taken and no git token was minted — `fugaro budget show --project fugaro` shows no new run in flight and no reserve for that slug (the admission check runs before the lock and the budget session, so a run it refuses writes no lease), and there is no credential step for the FACT to find absent, because the run refuses before `openProvider` is ever reached. When the binding is the layer that refuses — on a project job, which is where Check 53's job lives — its sentence is `The run stops before any lease exists` (`internal/runner/project.go:461`), appended to the policy's own text. **The live test of the binding itself belongs to Check 53 step 6**, where the job is a project job with no per-slug bucket condition and the admission check is the only thing that can refuse; until then the binding is covered by Task 1.5's unit tests, which is why this step does not claim to prove it.
+**FACT:** the run's own refusal text verbatim, and **Record which layer refused**, because on a phase-1 job it is not this phase's binding (R2-10, deferrable). The override naming another slug fails at `ReadTask` (`internal/runner/runner.go:863`): the per-repository job's bucket condition (`internal/backend/gcp/names.go:383`, `BucketCondition`, over `runs/<this-slug>/`) denies another slug's `task.json`, so the run stops **before** `admissionCheck` ever runs (`:922`) — the step passes, but for the bucket condition's reason, not the binding's. So the FACT line names the refusal that appeared and, when it is the bucket's, says so. **FACT:** no lease was taken and no git token was minted — `fugaro budget show --project fugaro` shows no new run in flight and no reserve for that slug (the admission check runs before the lock and the budget session, so a run it refuses writes no lease), and there is no credential step for the FACT to find absent, because the run refuses before `openProvider` is ever reached. When the binding is the layer that refuses — on a project job, which is where Check 53's job lives — its sentence is `The run stops before any lease exists` (`internal/runner/project.go:461`), appended to the policy's own text. **The live test of the binding itself belongs to Check 53 step 6**, where the job is a project job with no per-slug bucket condition and the admission check is the only thing that can refuse; until then the binding is covered by Task 1.5's unit tests, which is why this step does not claim to prove it.
 
 ### 7. The CLI is advisory and says so
 
@@ -2312,9 +2314,28 @@ Re-run the block. Put the installation back to what step 1 recorded, and leave t
 cp "$C.before-49" "$C"
 # the job environment: back to step 1's, through the only path that writes it
 fugaro init --repo . --project fugaro
-# the sandbox's own file: this check makes no edit to it (step 6 says why it
-# cannot), so this is a confirmation that it is unchanged, not an undo
+# the sandbox's own file. This check makes no edit to it that it keeps: step 6
+# says why an un-enrollment cannot be made by editing it, and step 3 says why
+# the ONE edit `init --repo` offers — the checkout's gcp_project: line, behind
+# its own [y/N] prompt — is answered `n`. So this is a confirmation that it is
+# unchanged, and the revert below is only for the case where the prompt was
+# answered y (or the run used --yes): the line is a real change to a committed
+# file, not this check's, and the `init --repo` above asked the same question a
+# second time.
 git diff -- fugaro.yaml
+# The revert, only when there is something of the anchor's to revert: step 1
+# recorded the checkout's own project:/gcp_project: lines, and a HEAD without a
+# gcp_project: line is exactly the case the prompt appears in, so a diff in the
+# file there is the line the anchor wrote. A checkout whose committed copy
+# already carries the line was never written to — an edit with nothing to change
+# writes nothing — so an unrelated working-tree change in it is the operator's
+# and is left alone.
+if ! grep -q '^gcp_project:' /tmp/chk49-sandbox-yaml-before.txt; then
+  if ! git diff --quiet -- fugaro.yaml; then
+    git checkout -- fugaro.yaml
+    echo "fugaro.yaml: reverted — the gcp_project: line init --repo wrote is not this check's edit"
+  fi
+fi
 # `fugaro upgrade`'s pin step rewrites this one and never commits it; `fugaro
 # image refresh` leaves it alone, so if step 3 used refresh this is a
 # confirmation too
