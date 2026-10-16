@@ -799,6 +799,10 @@ func TestInputsOverTheFileCapFailTheRun(t *testing.T) // max_bytes: one spec ent
 func TestInputsOverTheTotalCapFailTheRun(t *testing.T) // max_total_bytes: the spec's entries sum over it although every one is under max_bytes — nothing written under inputs/
 func TestAnInputNameThatEscapesInputsIsRefused(t *testing.T) // Review Focus 3's list, on the spec's side: ../../.git/hooks/pre-commit, absolute, NUL, over-long
 func TestAnInputNameIsNeverCleanedIntoSomethingPlausible(t *testing.T) // refused and the run failed, not silently rewritten
+// round 4 and 5; in internal/runner/inputs_test.go, where the input tests are
+func TestACommittedInputsDirectoryIsRefused(t *testing.T) // a directory the CHECKOUT COMMITS under inputs/ is refused (git ls-files, not "not empty")
+func TestASecondRunReplacesTheInputsTheFirstOneLeft(t *testing.T) // a reused checkout: the run's own inputs/ is emptied and reused, never refused, and a stale file does not survive as an input
+func TestInputsDifferingOnlyInCaseAreRefused(t *testing.T) // the folded-name rule on the spec's side, the same rule Task 4's artifacts are keyed on
 ```
 Run: `go test ./internal/cli -run 'TestAttach' -count=1` and `go test ./internal/runner -run 'TestInputs|TestAnInput' -count=1`
 Expected: **FAIL**.

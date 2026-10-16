@@ -726,14 +726,23 @@ write:
    write one byte outside `inputs/`. **The name refusals include the case-fold
    rule** (round 4): a spec naming both `A.png` and `a.png` is refused, because
    both land in one directory where that is one name.
-   **And `inputs/` is not reused when the checkout already has one** (round 4):
-   the runner writes its files into a directory the repository must not have
-   committed, and a committed non-empty `inputs/` is refused by name rather than
-   merged into or written over — an attached file landing on top of a file the
-   repository committed is the repository's own content being replaced by an
-   attachment, silently, in the directory the run is told to read. (An empty
-   `inputs/` cannot be committed — git does not track empty directories — so a
-   local re-run that left one behind still works.)
+   **And what the checkout commits under `inputs/` is refused, while the run's
+   own leftovers are emptied and the directory reused** (round 4, corrected by
+   the review of round 4). The two halves are the same question asked of git
+   rather than of the directory: `git ls-files -- inputs` says what the
+   *repository* put there, and only the repository's own paths are a hazard —
+   an attached file landing on one of those names would replace committed
+   content, silently, in the checkout the run goes on to commit from. A
+   non-empty `inputs/` that git tracks nothing under is the run's own: the run
+   excludes `inputs/` in the git directory (§ step 5), so bootstrap's `git
+   clean -fd` keeps ignored files and a second artifact run in one checkout —
+   the local `fugaro exec --workdir` shape — finds exactly what the first run
+   downloaded. Refusing on "not empty" would fail that second run in bootstrap,
+   blaming the repository for a directory the run itself created, and it would
+   leave a stale file (one the bucket no longer names) sitting in `inputs/`
+   looking exactly like an attachment the task did name. So the directory is
+   emptied and reused when nothing under it is tracked, and refused by name when
+   something is.
 5. **`inputs/` is excluded from git** — the runner writes it into
    `.git/info/exclude` — because an artifact run must never commit a
    screenshot. The plan step's prompt names it, and the environment gains
