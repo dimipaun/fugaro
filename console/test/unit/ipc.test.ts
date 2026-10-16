@@ -109,7 +109,12 @@ import {
   exposeConsoleBridge,
   hasRendererContext,
 } from '../../src/preload/index'
-import type { RendererLike } from '../../src/preload/index'
+import type {
+  ConsoleBridge,
+  ExposedMethod,
+  ExposedName,
+  RendererLike,
+} from '../../src/preload/index'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 
@@ -225,7 +230,87 @@ function asCallable(method: unknown): (args?: unknown) => Promise<ConsoleReply> 
 // The surface the preload exposes
 // ---------------------------------------------------------------------------
 
+/**
+ * assertClosedSurface is never called, and it is not a test: it is the
+ * compile-time half of rule 5's closed surface, and the thing that checks it is
+ * `npm run typecheck` (or the `tsc --noEmit` the review round runs), not vitest.
+ *
+ * The runtime tests below pin the twelve names and the twelve methods against
+ * `CONSOLE_OPERATIONS`, and that is exactly why the defect this function guards
+ * was silent: the object is built from the table, so no *extra* method can
+ * exist at runtime, and a *misspelled* one is not a runtime question at all --
+ * it is a line of a screen's code that the compiler is supposed to refuse.
+ *
+ * Every `@ts-expect-error` below is an error only while `EXPOSED_OPERATIONS`'s
+ * literals survive into `ExposedName`, `ExposedMethod` and `ConsoleBridge`. Give
+ * the table a type annotation and they all widen to `string`, each directive
+ * becomes unused, and `tsc` fails with "Unused '@ts-expect-error' directive" --
+ * a red `npm run typecheck` rather than a green test, which is the correct
+ * place for a claim about types.
+ */
+function assertClosedSurface(bridge: ConsoleBridge, method: ExposedMethod): void {
+  // The positive half, first: a real method, called the way a screen calls it,
+  // answering the one shape every method answers.
+  const reply: Promise<ConsoleReply> = bridge.listRuns({ repo: 'acme/app' })
+  void reply
+
+  // A misspelling is a compile error and not an `undefined` call inside a
+  // screen's render, which is what an index signature would have made it.
+  // @ts-expect-error `showBudgte` is not one of the twelve method names
+  void bridge.showBudgte
+  // @ts-expect-error there is no generic `invoke`: no method takes a channel
+  void bridge.invoke
+  // @ts-expect-error and no `send`, `on`, `emit` or `channel` either
+  void bridge.send
+
+  // The two unions are unions, in both halves of the table.
+  // @ts-expect-error `runs.listt` is not one of the twelve operation names
+  const notAName: ExposedName = 'runs.listt'
+  // @ts-expect-error `showBudgte` is not one of the twelve method names
+  const notAMethod: ExposedMethod = 'showBudgte'
+  void notAName
+  void notAMethod
+
+  // `operations` carries those names, so asking about anything else is refused
+  // -- and a screen can switch on one exhaustively, which is what the list is
+  // for.
+  // @ts-expect-error `run.list` is not a name the list could hold
+  void bridge.operations.includes('run.list')
+
+  // And the method names are literals, so a screen can switch on one.
+  switch (method) {
+    case 'subscribeLive':
+      break
+    // @ts-expect-error `subscribeLiv` is not one of the twelve method names
+    case 'subscribeLiv':
+      break
+  }
+}
+
 describe('the frozen surface the preload exposes', () => {
+  it('declares the table with literal types, so the unions under it are not `string`', () => {
+    const source = codeOnly('preload/index.ts')
+    const start = source.indexOf('export const EXPOSED_OPERATIONS')
+    const end = source.indexOf('export type ExposedName')
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    const declaration = source.slice(start, end)
+    // The rows must be `as const`, and the declaration must carry no type
+    // annotation: an annotation replaces the literals with itself, which is the
+    // one edit that makes `ExposedName`, `ExposedMethod` and the bridge's mapped
+    // type all `string` at once. The compiler is what checks the consequence
+    // (`assertClosedSurface` above); this is the scan that says so out loud in
+    // the suite a reader actually runs.
+    expect(declaration).toContain('as const')
+    expect(declaration.split('\n')[0]).not.toContain(':')
+    // `satisfies` is the second half and is not decoration either: measured on
+    // 2026-10-16, a row with a third element (`['live.watch', 'subscribeLive',
+    // 'extra']`) typechecks clean with the clause removed, because `[number][0]`
+    // and `[number][1]` are still the literals a screen wants -- the extra
+    // element is simply never looked at.
+    expect(declaration).toContain('satisfies')
+  })
+
   it('exposes one method per operation of the table, and no other method', () => {
     const bridge = createConsoleBridge(fakeRenderer())
     const methods = Object.entries(bridge)

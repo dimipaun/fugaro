@@ -393,6 +393,23 @@ the argument object is forwarded untouched (there is one validating gate and it
 is in main), and the reply is checked for the promised envelope before a screen
 sees it.
 
+**The surface is closed twice, and the second half is the compiler's.** The
+table is declared `as const`, with **no type annotation**, so its twelve rows
+stay literal types: `ExposedName` and `ExposedMethod` are unions of twelve
+literals rather than `string`, `ConsoleBridge` is twelve *named* methods rather
+than a string index signature, and `bridge.showBudgte(...)` is a compile error
+instead of an `undefined` call somewhere inside a screen's render. Nothing at
+runtime can see this — the object is built *from* the table and the suite pins
+the same two sets against `CONSOLE_OPERATIONS`, which is exactly why an
+annotated table was silent. So the claim is held where it is decided:
+`test/unit/ipc.test.ts` carries `assertClosedSurface`, whose `@ts-expect-error`
+directives *become* `Unused '@ts-expect-error' directive` errors — a red
+`npm run typecheck` — the moment the table is widened again. Re-adding the
+annotation on 2026-10-16 produced eight errors. `satisfies readonly (readonly
+[string, string])[]` checks each row's shape without widening anything, and is
+load-bearing in its own right: with it removed, a row carrying a third element
+typechecks clean, because only `[number][0]` and `[number][1]` are ever read.
+
 ### Why the preload writes the surface out a second time
 
 The window runs `sandbox: true`, and in a sandboxed preload Electron replaces
@@ -451,6 +468,9 @@ allow-list drives `budget kill`, or `--follow`, or any other row.
 | the payload-width bound removed | "refuses a payload wider than the width bound" |
 | a schema that refuses *everything* (the way to pass every refusal test vacuously) | the well-formed-payload table, one row per operation |
 | an unfrozen bridge, a wrong version, a `length > 1` method, an `invoke`/`send`/`on` property | the surface-shape tests |
+| `EXPOSED_OPERATIONS` given a type annotation, which widens `ExposedName`, `ExposedMethod` and `ConsoleBridge` back to `string` | `tsc --noEmit`: eight errors — seven unused `@ts-expect-error` directives in `assertClosedSurface` and the bridge no longer matching `ConsoleBridge` — plus "declares the table with literal types" |
+| `as const`, or the `satisfies` clause, dropped from the table | the same directives, and the same source scan |
+| a row of the table given a third element (with `satisfies` removed to permit it) | nothing — which is why the `satisfies` clause is itself asserted by the scan |
 | a second `invoke`, a computed `require`, an `eval`, a `child_process`, or a value import in the preload | the source scans |
 
 The red step was run as the plan writes it: `budget kill` added to the
