@@ -601,7 +601,42 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 //     caller, and refusing the names that must not be handed to it — a
 //     `../` out of the artifacts root above all — is fugaro artifacts get's
 //     job (the same design's §9, the plan's Task 7).
+//
+// limit is an upper bound and not an equality, and the difference matters to
+// the caller that knows the object's exact size (a run record's byte count):
+// comparing what this returns with what the caller expected happens after the
+// rename, which is too late to do anything but delete the file this method
+// just placed — and with --force, deleting whatever was at that path before.
+// GetFileExactly is that caller's entry point, and it checks the size where
+// the hash is checked: on the temporary file, before the rename.
 func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64, strict bool) (size int64, sha string, err error) {
+	return b.getFile(ctx, key, path, sum, limit, -1, strict)
+}
+
+// GetFileExactly is GetFile for the caller that knows the object's exact size
+// as well as its hash — `fugaro artifacts get`, whose run record carries the
+// byte count it uploaded — and it is checked in the same place and at the same
+// time as the hash: inside, on the temporary file, BEFORE the rename. A size
+// the object does not have is ErrChanged with both numbers in the message, and
+// nothing is placed at path.
+//
+// That placement is the whole point of the method. GetFile's limit is an upper
+// bound, so a caller that compared the size afterwards would be comparing it
+// to a file that is already at its final path — and both ways out of that are
+// wrong: leaving it there breaks "nothing is written unless it is what was
+// asked for", and removing it removes whatever was at that path before the
+// rename. With --force that is the operator's own file, which this package
+// never wrote and must not delete.
+//
+// want is also the cap, so an object larger than the recorded size is
+// ErrTooLarge before its body is read, exactly as with GetFile's limit.
+func (b *Bucket) GetFileExactly(ctx context.Context, key, path, sum string, want int64, strict bool) (size int64, sha string, err error) {
+	return b.getFile(ctx, key, path, sum, want, want, strict)
+}
+
+// getFile is GetFile and GetFileExactly: exact < 0 means the caller knows only
+// an upper bound.
+func (b *Bucket) getFile(ctx context.Context, key, path, sum string, limit, exact int64, strict bool) (size int64, sha string, err error) {
 	r, err := b.NewReader(ctx, key, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound && !(strict && isForbidden(err)) {
 		return 0, "", ErrNotExist
@@ -645,6 +680,14 @@ func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64
 	if r.Size() >= 0 && n != r.Size() {
 		_ = tmp.Close()
 		return 0, "", fmt.Errorf("%s: %w (read %d bytes, the object's size said %d)", key, ErrChanged, n, r.Size())
+	}
+	// The exact size, if the caller has one, is checked here — on the
+	// temporary file, before the rename, beside the hash and for the same
+	// reason: a mismatch must leave the destination as it was, not remove
+	// what the rename put there.
+	if exact >= 0 && n != exact {
+		_ = tmp.Close()
+		return 0, "", fmt.Errorf("%s: %w (read %d bytes, the record says %d)", key, ErrChanged, n, exact)
 	}
 	if err := tmp.Close(); err != nil {
 		return 0, "", err

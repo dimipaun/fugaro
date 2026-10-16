@@ -1405,3 +1405,88 @@ func assertDirEmpty(t *testing.T, dir string) {
 		t.Fatalf("%s holds %v, want nothing", dir, names)
 	}
 }
+
+// TestGetFileExactlyEnforcesTheRecordedSize: GetFileExactly is for the caller
+// that knows the object's exact size — `fugaro artifacts get`, whose run
+// record carries the byte count it uploaded — and the size is then an
+// equality, not a ceiling. The distinction is what the caller's own
+// comparison could not make: an object LARGER than the record has to be
+// refused from the size the reader announces, before its body is fetched
+// (that is what "bounded by the recorded size" buys), while one that is
+// shorter, or the right length with other bytes, is refused on the temporary
+// file. The mutation caught: passing the caller's count as a ceiling instead
+// of as the equality, which reads the whole object and then reports a size
+// difference — or, in the caller, compares after the rename.
+func TestGetFileExactlyEnforcesTheRecordedSize(t *testing.T) {
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("z"), 100)
+	sum := sha256Hex(data)
+
+	// Larger than the record: refused from the announced size, with no read
+	// of the body at all.
+	d := &sizedDriver{data: data, size: int64(len(data))}
+	b := blobx.Wrap(blob.NewBucket(d))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp4")
+	_, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, sum, 4, true)
+	if !errors.Is(err, blobx.ErrTooLarge) {
+		t.Fatalf("GetFileExactly of a 100-byte object recorded as 4 bytes = %v, want ErrTooLarge", err)
+	}
+	if !strings.Contains(err.Error(), "4") || !strings.Contains(err.Error(), "100") {
+		t.Errorf("the refusal names neither the recorded size nor the object's: %v", err)
+	}
+	if d.reads != 0 {
+		t.Errorf("the body was read %d times: an object over the recorded size is refused before a byte of it is fetched", d.reads)
+	}
+	assertDirEmpty(t, dir)
+
+	// Shorter than the record, and the right length with another hash: both
+	// are refusals on the temporary file, before the rename.
+	for name, tc := range map[string]struct {
+		want int64
+		sum  string
+		wont error
+	}{
+		"an object shorter than the record": {200, sum, blobx.ErrChanged},
+		"the record's size, other bytes":    {100, sha256Hex([]byte("other bytes")), blobx.ErrMismatch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := blobx.Wrap(blob.NewBucket(&sizedDriver{data: data, size: int64(len(data))}))
+			dir := t.TempDir()
+			path := filepath.Join(dir, "a.mp4")
+			if _, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, tc.sum, tc.want, true); !errors.Is(err, tc.wont) {
+				t.Fatalf("GetFileExactly(record=%d, sum=%s) = %v, want %v", tc.want, tc.sum, err, tc.wont)
+			}
+			assertDirEmpty(t, dir)
+		})
+	}
+
+	// The record's own size and hash: the ordinary download, and the size is
+	// returned rather than merely checked.
+	n, got, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, sum, int64(len(data)), true)
+	if err != nil || n != int64(len(data)) || got != sum {
+		t.Fatalf("GetFileExactly of the exact object = %d, %q, %v", n, got, err)
+	}
+	if back, err := os.ReadFile(path); err != nil || !bytes.Equal(back, data) {
+		t.Fatalf("GetFileExactly wrote %q, %v", back, err)
+	}
+}
+
+// TestGetFileExactlyClassifiesForbiddenLikeGetFile: the new entry point
+// answers a 403 exactly as GetFile does, in both modes — a second read path
+// that classified differently would give `artifacts get` one answer and the
+// runner's input download another for the same refusal.
+func TestGetFileExactlyClassifiesForbiddenLikeGetFile(t *testing.T) {
+	ctx := context.Background()
+	b := forbiddenBucket(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp4")
+	if _, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, "", 1<<20, true); !errors.Is(err, blobx.ErrForbidden) {
+		t.Fatalf("strict GetFileExactly of a 403 = %v, want ErrForbidden", err)
+	}
+	assertDirEmpty(t, dir)
+	if _, _, err := b.GetFileExactly(ctx, "artifacts/a.mp4", path, "", 1<<20, false); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("non-strict GetFileExactly of a 403 = %v, want ErrNotExist", err)
+	}
+	assertDirEmpty(t, dir)
+}

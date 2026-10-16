@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -383,11 +384,49 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 			}
 		}
 		if len(chosen) != 1 {
-			return nil, userErr("run %s recorded no artifact named %s: fugaro artifacts ls %s lists what it did", s.Slug()+"/"+s.RunID(), name, s.Slug()+"/"+s.RunID())
+			return nil, userErr("run %s recorded no artifact named %q: fugaro artifacts ls %s lists what it did", s.Slug()+"/"+s.RunID(), name, s.Slug()+"/"+s.RunID())
 		}
 		files = chosen
-	} else if len(files) == 0 {
-		return nil, userErr("run %s recorded no artifacts", s.Slug()+"/"+s.RunID())
+	} else {
+		if len(files) == 0 {
+			return nil, userErr("run %s recorded no artifacts", s.Slug()+"/"+s.RunID())
+		}
+		// One name, one artifact: the record is untrusted text, and two
+		// entries for one name would be downloaded twice, to one path, with
+		// two success lines printed for one file. This is the retriever's
+		// half of the uploader's "no duplicate after normalisation" refusal
+		// (design §9.2).
+		//
+		// It is a case-folded comparison and not a set membership test,
+		// because the destination is a path on the operator's filesystem:
+		// on one that ignores case (APFS, NTFS) "A.png" and "a.png" are one
+		// file, and checkArtifactDest proves every destination before the
+		// first byte is read — so the second download would land on the
+		// first file's path without --force ever being consulted. A pair
+		// that only such a filesystem would confuse is refused here rather
+		// than left to the kernel.
+		//
+		// Naming one of them still works (`get RUN A.png`): the refusal is
+		// about writing two artifacts to one path, not about the record
+		// being unreadable, and a named fetch of a doubled name is refused
+		// above by the len(chosen) != 1 check.
+		exact := make(map[string]bool, len(files))
+		folded := make(map[string]string, len(files))
+		for _, a := range files {
+			if exact[a.Name] {
+				return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and two downloads of it would write the same file twice", s.Slug()+"/"+s.RunID(), a.Name)
+			}
+			exact[a.Name] = true
+			key := strings.ToLower(a.Name)
+			// The map is the cheap lookup; EqualFold is what decides, so the
+			// refusal is exactly the "these are the same file name" rule and
+			// not a lower-casing heuristic that could refuse two names a
+			// filesystem keeps apart.
+			if first, ok := folded[key]; ok && strings.EqualFold(first, a.Name) {
+				return nil, userErr("run %s recorded %q and %q, which differ only by case: on a filesystem that ignores case they are one file, and the second download would overwrite the first", s.Slug()+"/"+s.RunID(), first, a.Name)
+			}
+			folded[key] = a.Name
+		}
 	}
 	// The refusals below are the selected set's, whether it is the whole
 	// record or the one name the user asked for: a named artifact is checked
@@ -398,7 +437,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 	// destination exists or any byte is read.
 	for _, a := range files {
 		if problem := artifactNameProblem(a.Name); problem != "" {
-			return nil, userErr("run %s recorded an artifact named %s, which cannot be retrieved: %s", s.Slug()+"/"+s.RunID(), a.Name, problem)
+			return nil, userErr("run %s recorded an artifact named %q, which cannot be retrieved: %s", s.Slug()+"/"+s.RunID(), a.Name, problem)
 		}
 	}
 	for _, a := range files {
@@ -408,7 +447,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 			// entirely, and the bytes would then be bytes nothing attests
 			// to: the record's own hash is what makes the download
 			// checkable, so a record without one is refused.
-			return nil, userErr("run %s recorded %s without a sha256: there is nothing to verify the download against", s.Slug()+"/"+s.RunID(), a.Name)
+			return nil, userErr("run %s recorded %q without a sha256: there is nothing to verify the download against", s.Slug()+"/"+s.RunID(), a.Name)
 		case a.Bytes < 0:
 			// 0 is a size a run records — result.schema.json's "bytes" has
 			// {"minimum": 0}, and a render that writes an empty file matched
@@ -416,13 +455,13 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 			// artifact is downloaded like any other, with a cap of 0 bytes.
 			// A negative count is not a size, and there is then no cap to
 			// bound the download by at all.
-			return nil, userErr("run %s recorded %s as %d bytes: a negative count is not a size, and there is no size to bound the download by", s.Slug()+"/"+s.RunID(), a.Name, a.Bytes)
+			return nil, userErr("run %s recorded %q as %d bytes: a negative count is not a size, and there is no size to bound the download by", s.Slug()+"/"+s.RunID(), a.Name, a.Bytes)
 		case a.Bytes > recipe.MaxOutputBytes:
 			// The record's own byte count is the cap, and the cap itself has
 			// a ceiling: no runner can upload an artifact larger than the
 			// recipe format's per-artifact maximum, so a record that claims
 			// one is refused rather than believed (design §6, P6).
-			return nil, userErr("run %s recorded %s as %s, over the %s ceiling a recipe's outputs.max_bytes may not exceed: this is not an artifact any run could have delivered", s.Slug()+"/"+s.RunID(), a.Name, recipe.SizeText(a.Bytes), recipe.SizeText(recipe.MaxOutputBytes))
+			return nil, userErr("run %s recorded %q as %s, over the %s ceiling a recipe's outputs.max_bytes may not exceed: this is not an artifact any run could have delivered", s.Slug()+"/"+s.RunID(), a.Name, recipe.SizeText(a.Bytes), recipe.SizeText(recipe.MaxOutputBytes))
 		}
 	}
 	return files, nil
@@ -474,16 +513,16 @@ func prepareArtifactRoot(root string) error {
 	fi, err := os.Lstat(root)
 	switch {
 	case err == nil && fi.Mode()&os.ModeSymlink != 0:
-		return userErr("%s is a symlink: refusing to download into whatever it points at", root)
+		return userErr("%s is a symlink: refusing to download into whatever it points at", oneLine(root))
 	case err == nil && !fi.IsDir():
-		return userErr("%s is not a directory", root)
+		return userErr("%s is not a directory", oneLine(root))
 	case err == nil:
 		return nil
 	case !os.IsNotExist(err):
 		return remote(err)
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
-		return userErr("creating %s: %v", root, err)
+		return userErr("creating %s: %v", oneLine(root), err)
 	}
 	return nil
 }
@@ -507,7 +546,7 @@ func checkArtifactDest(root, name string, force bool) (string, error) {
 		return "", err
 	}
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", userErr("creating %s: %v", parent, err)
+		return "", userErr("creating %s: %v", oneLine(parent), err)
 	}
 	// Again, now that it exists: MkdirAll created nothing outside root (the
 	// check above resolved the deepest directory that was there and the rest
@@ -527,11 +566,11 @@ func checkArtifactDest(root, name string, force bool) (string, error) {
 		// component), but a link is not a file this command put there and
 		// --force is not a licence to change what the user's own path means:
 		// they can remove it.
-		return "", userErr("%s is a symlink: refusing to write through it (remove it first)", dest)
+		return "", userErr("%s is a symlink: refusing to write through it (remove it first)", oneLine(dest))
 	case !fi.Mode().IsRegular():
-		return "", userErr("%s is not a regular file: refusing to replace it", dest)
+		return "", userErr("%s is not a regular file: refusing to replace it", oneLine(dest))
 	case !force:
-		return "", userErr("%s already exists: pass --force to replace it", dest)
+		return "", userErr("%s already exists: pass --force to replace it", oneLine(dest))
 	}
 	return dest, nil
 }
@@ -548,7 +587,7 @@ func underArtifactRoot(root, dir string) error {
 		return remote(err)
 	}
 	if real != realRoot && !strings.HasPrefix(real, realRoot+string(filepath.Separator)) {
-		return userErr("the artifact's directory resolves to %s, outside the destination %s: the name reached it through a link", real, root)
+		return userErr("the artifact's directory resolves to %s, outside the destination %s: the name reached it through a link", oneLine(real), oneLine(root))
 	}
 	return nil
 }
@@ -581,7 +620,7 @@ func parentUnderRoot(root, dir string) error {
 		return remote(err)
 	}
 	if real != realRoot && !strings.HasPrefix(real, realRoot+string(filepath.Separator)) {
-		return userErr("the artifact's directory resolves to %s, outside the destination %s: the name reached it through a link", real, root)
+		return userErr("the artifact's directory resolves to %s, outside the destination %s: the name reached it through a link", oneLine(real), oneLine(root))
 	}
 	return nil
 }
@@ -612,33 +651,76 @@ func artifactObjectKey(prefix, name string) (string, error) {
 // objectAdmin, which includes storage.objects.list, so a 403 here is an
 // access problem and must not be reported as "no such artifact" (design §3).
 //
-// GetFile's limit is an upper bound and not an equality: an object smaller
-// than the recorded size copies to its own end, matches the hash when the
-// record's hash is that smaller object's, and would be written. The record
-// says the artifact is a.Bytes long, so that is checked here as well — the
-// record's own two fields have to agree with each other and with the bytes,
-// and two recorded fields that disagree are a reason to refuse rather than to
-// believe the hash (the record is untrusted text; design §9 "get verifies the
-// byte count and the sha256 against the record"). The file is removed again,
-// so the refusal leaves nothing at dest either.
+// The recorded byte count is verified inside blobx, not here: GetFileExactly
+// takes the record's own size as the size the object must have, checks it on
+// the temporary file beside the hash, and refuses before the rename. Checking
+// it here instead — which a first version did, on the size GetFile returned —
+// means comparing AFTER the rename, when both ways out are wrong: leaving the
+// file breaks "nothing is written", and removing it removes whatever was at
+// that path before, which with --force is the operator's own file.
+//
+// The record's own two fields therefore have to agree with each other and
+// with the bytes: two recorded fields that disagree are a reason to refuse
+// rather than to believe the hash (the record is untrusted text; design §9
+// "get verifies the byte count and the sha256 against the record").
 func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runstore.ArtifactFile, dest string, out io.Writer) error {
 	key, err := artifactObjectKey(s.Prefix(), a.Name)
 	if err != nil {
-		return userErr("run %s recorded an artifact named %s, which cannot be retrieved: %v", s.Slug()+"/"+s.RunID(), a.Name, err)
+		return userErr("run %s recorded an artifact named %q, which cannot be retrieved: %v", s.Slug()+"/"+s.RunID(), a.Name, err)
 	}
-	size, sum, err := env.bucket.GetFile(ctx, key, dest, a.SHA256, a.Bytes, true)
+	// A bounded read: a stalled object must not hang the command forever.
+	ctx, cancel := artifactReadContext(ctx, a.Bytes)
+	defer cancel()
+	size, sum, err := env.bucket.GetFileExactly(ctx, key, dest, a.SHA256, a.Bytes, true)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
-		return userErr("run %s/%s recorded %s, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s/%s shows the record's list", s.Slug(), s.RunID(), a.Name, s.Slug(), s.RunID())
+		return userErr("run %s/%s recorded %q, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s/%s shows the record's list", s.Slug(), s.RunID(), a.Name, s.Slug(), s.RunID())
 	case errors.Is(err, blobx.ErrForbidden):
 		return remote(fmt.Errorf("reading %s: %w (this account may not read the run's artifacts: objectViewer on the runs bucket is what an operator holds)", key, err))
+	case errors.Is(err, blobx.ErrMismatch), errors.Is(err, blobx.ErrChanged), errors.Is(err, blobx.ErrTooLarge):
+		// The bytes in the bucket are not the bytes the record describes: a
+		// different hash, a different size, or more of them than it recorded.
+		// Nothing was written — blobx verifies on its own temporary file,
+		// before the rename — and whatever was at the destination path is
+		// still there.
+		return userErr("run %s/%s recorded %q as %d bytes with sha256 %s, and the object in the runs bucket is not that: %v (nothing was written)", s.Slug(), s.RunID(), a.Name, a.Bytes, a.SHA256, err)
 	case err != nil:
 		return remote(err)
 	}
-	if size != a.Bytes {
-		_ = os.Remove(dest)
-		return userErr("run %s/%s recorded %s as %d bytes with the sha256 of a %d-byte object: the record's own size and hash disagree, so nothing is written", s.Slug(), s.RunID(), a.Name, a.Bytes, size)
-	}
-	fmt.Fprintf(out, "%s -> %s (%s, sha256 %s, %s recorded)\n", oneLine(a.Name), dest, byteSize(size), sum, oneLine(a.ContentType))
+	fmt.Fprintf(out, "%s -> %s (%s, sha256 %s, %s recorded)\n", oneLine(a.Name), oneLine(dest), byteSize(size), sum, oneLine(a.ContentType))
 	return nil
+}
+
+// artifactReadTimeout caps how long one artifact's download may take. It is
+// derived from the recorded size rather than fixed, because the sizes a
+// recipe may allow run to 2 GiB (recipe.MaxOutputBytes) and a flat minute
+// would refuse a large artifact on a slow link: a floor for the request
+// itself, plus an assumed 1 MiB/s, which the smallest recorded size and the
+// largest alike stay well above in practice. The point is not the exact
+// number — it is that a read which stops producing bytes (a stalled
+// connection, a wedged driver) ends the command with an error instead of
+// hanging it until the operator kills it.
+const (
+	artifactReadBaseTimeout = 5 * time.Minute
+	artifactReadBytesPerS   = 1 << 20
+	// The derived bonus is clamped: the size reaching here is a record's own
+	// byte count, and a timeout computed from untrusted text must not be
+	// able to overflow into a negative duration (no deadline at all) or into
+	// one no operator would wait out. MaxOutputBytes gives ~34 minutes, so
+	// the clamp costs nothing today; it is here so that a record cannot make
+	// the bound meaningless by being absurd.
+	artifactReadMaxTimeout = 2 * time.Hour
+)
+
+// artifactReadContext bounds one artifact's download.
+func artifactReadContext(ctx context.Context, size int64) (context.Context, context.CancelFunc) {
+	timeout := artifactReadBaseTimeout
+	if size > 0 {
+		bonus := time.Duration(size/artifactReadBytesPerS) * time.Second
+		if bonus < 0 || bonus > artifactReadMaxTimeout {
+			bonus = artifactReadMaxTimeout
+		}
+		timeout += bonus
+	}
+	return context.WithTimeout(ctx, timeout)
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -905,6 +906,305 @@ func TestArtifactsGetFetchesAnEmptyArtifact(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(alone, artifactRunDir(id), "sizzle.mp4")); err == nil {
 		t.Error("get NAME downloaded an artifact the user did not name")
+	}
+}
+
+// TestArtifactsGetNeverRemovesWhatItDidNotWrite: a refusal after the bytes
+// arrived must not touch the operator's own file at the destination. The
+// destination is replaced by a rename, so a size check that runs AFTER the
+// rename has to delete the file it just put there — and with --force it is
+// deleting whatever was at that path before, which this command never wrote
+// and has no business removing. Mutation caught: comparing the size (or the
+// hash) outside blobx, after the temp file was renamed over the destination.
+func TestArtifactsGetNeverRemovesWhatItDidNotWrite(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	mine := []byte("mine, and mine to keep")
+	// The record says 100 bytes with the hash of the 5-byte object: the hash
+	// matches and the size does not, so the bytes are verified and refused.
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: 100, SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+	dest := filepath.Join(dir, artifactRunDir(id), "sizzle.mp4")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, mine, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, force := range []bool{false, true} {
+		args := []string{"artifacts", "get", appSlug + "/" + id}
+		if force {
+			args = []string{"artifacts", "get", "--force", appSlug + "/" + id}
+		}
+		if _, _, err := execute(t, args...); err == nil {
+			t.Errorf("get (--force=%v) accepted a record whose size disagrees with the object", force)
+		}
+		got, err := os.ReadFile(dest)
+		if err != nil || string(got) != string(mine) {
+			t.Errorf("get (--force=%v) changed the operator's file at %s: %q, %v", force, dest, got, err)
+		}
+	}
+	// A hash mismatch is the same rule, and it is checked on its own: the
+	// operator's file is put back first, so a regression that only touches
+	// the hash path is not hidden by the size phase above.
+	if err := os.WriteFile(dest, mine, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex([]byte("other bytes")), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+	if _, _, err := execute(t, "artifacts", "get", "--force", appSlug+"/"+id); err == nil {
+		t.Error("get --force accepted a mismatching sha256")
+	}
+	if got, err := os.ReadFile(dest); err != nil || string(got) != string(mine) {
+		t.Errorf("a hash mismatch changed the operator's file at %s: %q, %v", dest, got, err)
+	}
+}
+
+// TestArtifactsGetRefusesDuplicateNames: a record that names one artifact
+// twice, or that names two artifacts differing only by case, is refused
+// before any download. This is the retriever's half of the uploader's "no
+// duplicate after normalisation" refusal (design §9.2): a second download of
+// the same name writes one path twice, and the case-folded pair does it on a
+// filesystem that ignores case (APFS, NTFS) — where checkArtifactDest has
+// already proved both destinations before the first byte is read, so the
+// second write lands on the first file's path with --force never consulted.
+// Mutations caught: dropping the duplicate check (two success lines for one
+// artifact), and checking exact names only.
+func TestArtifactsGetRefusesDuplicateNames(t *testing.T) {
+	body := []byte("one")
+	for _, tc := range []struct {
+		name  string
+		files []runstore.ArtifactFile
+		quote []string // every name the refusal must quote
+	}{
+		{
+			name: "the same name twice",
+			files: []runstore.ArtifactFile{
+				{Name: "frames/a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+				{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+				{Name: "frames/a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+			},
+			quote: []string{`"frames/a.png"`},
+		},
+		{
+			name: "names that differ only by case",
+			files: []runstore.ArtifactFile{
+				{Name: "A.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+				{Name: "a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+			},
+			quote: []string{`"A.png"`, `"a.png"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			const id = "20261016-090000-abcd"
+			bodies := map[string][]byte{}
+			for _, a := range tc.files {
+				bodies[a.Name] = body
+			}
+			seedArtifactRun(t, f, id, tc.files, bodies)
+			for _, force := range []bool{false, true} {
+				args := []string{"artifacts", "get", appSlug + "/" + id}
+				if force {
+					args = []string{"artifacts", "get", "--force", appSlug + "/" + id}
+				}
+				_, _, err := execute(t, args...)
+				if err == nil {
+					t.Fatalf("get (--force=%v) accepted a record that names one artifact twice", force)
+				}
+				if code := ExitCode(err); code != ExitUserError {
+					t.Errorf("get (--force=%v) exit code = %d, want %d (a bad record is the user's to read)", force, code, ExitUserError)
+				}
+				for _, q := range tc.quote {
+					if !strings.Contains(err.Error(), q) {
+						t.Errorf("get (--force=%v) refusal does not quote %s: %v", force, q, err)
+					}
+				}
+			}
+			if got := dirEntries(t, artifactRunDir(id)); len(got) != 0 {
+				t.Errorf("a duplicate-name record downloaded something: %v", got)
+			}
+		})
+	}
+}
+
+// TestArtifactsGetStillFetchesADuplicatedNameByName: the wholesale download
+// refuses a case-folded pair — the two would be one file on APFS — but the
+// user can still name one of them and get exactly that file, because the
+// refusal is about writing two artifacts to one path and not about the
+// record being unreadable.
+func TestArtifactsGetStillFetchesADuplicatedNameByName(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	upper, lower := []byte("UPPER"), []byte("lower")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "A.png", Bytes: int64(len(upper)), SHA256: sha256Hex(upper)},
+		{Name: "a.png", Bytes: int64(len(lower)), SHA256: sha256Hex(lower)},
+	}, map[string][]byte{"A.png": upper, "a.png": lower})
+	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, "A.png"); err != nil {
+		t.Fatalf("get of a named artifact whose record also carries a case-folded twin: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, artifactRunDir(id), "A.png"))
+	if err != nil || string(got) != string(upper) {
+		t.Errorf("the named artifact = %q, %v; want %q", got, err, upper)
+	}
+}
+
+// TestArtifactsGetEscapesANameInItsRefusals: every name in a refusal is
+// untrusted text — the record's (a hostile sibling run of the same repository
+// can rewrite result.json) and the NAME the user typed alike — and the
+// top-level error line keeps newlines, because some errors list several
+// problems. A name carrying a newline would otherwise print a line of its
+// own, and a line beginning "fugaro:" is indistinguishable from the tool's
+// own output on stderr. Mutation caught: interpolating a name with %s.
+func TestArtifactsGetEscapesANameInItsRefusals(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	hostile := "a.png\nfugaro: all good"
+	absent := "b.png\nfugaro: all good"
+	body := []byte("hello")
+	// A newline is refused by the uploader's own rule, so the record's entry
+	// is exactly the "cannot be retrieved" refusal — the message a hostile
+	// record aims at.
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: hostile, Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	for _, tc := range []struct {
+		what string
+		args []string
+	}{
+		{"the whole record", []string{"artifacts", "get", appSlug + "/" + id}},
+		{"a named entry of the record", []string{"artifacts", "get", appSlug + "/" + id, hostile}},
+		{"a NAME the record does not carry", []string{"artifacts", "get", appSlug + "/" + id, absent}},
+	} {
+		_, _, err := execute(t, tc.args...)
+		if err == nil {
+			t.Fatalf("get of %s was accepted, want a refusal", tc.what)
+		}
+		msg := ErrorText(err)
+		if strings.ContainsAny(msg, "\n\r") {
+			t.Errorf("the refusal about %s printed a line of its own:\n%q", tc.what, msg)
+		}
+		if !strings.Contains(msg, `\n`) {
+			t.Errorf("the refusal about %s does not escape the name's newline: %q", tc.what, msg)
+		}
+	}
+}
+
+// TestArtifactsGetEscapesTheDestinationItPrints: the destination is built from
+// a name the record carries, and the uploader's rule accepts the characters
+// safetext escapes as "spoofing" (a zero-width space, a bidi override) —
+// a variation selector in a filename is a legal name a run delivers, so
+// ArtifactName does not refuse the class. What must not happen is the operator
+// reading a line a bidi override draws for them: the bytes on disk are the name
+// as recorded, and the line printed is the escaped one, so the path shown is
+// the path that is really there.
+// Mutation caught: printing dest raw.
+func TestArtifactsGetEscapesTheDestinationItPrints(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	// A zero-width space and a right-to-left override: nothing a terminal
+	// should be trusted with, and both inside the uploader's own rule.
+	name := "a​b.png"
+	body := []byte("hello")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: name, Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "image/png"},
+	}, map[string][]byte{name: body})
+
+	out, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, name)
+	if err != nil {
+		t.Fatalf("get of a name the uploader accepts: %v", err)
+	}
+	if strings.ContainsRune(out, '​') {
+		t.Errorf("get printed the name's zero-width/bidi characters raw:\n%q", out)
+	}
+	if !strings.Contains(out, "a?b.png") {
+		t.Errorf("get does not print the escaped destination:\n%q", out)
+	}
+	// The file is where the record's name says it is: escaping is for the
+	// line, not for the path.
+	if _, err := os.Stat(filepath.Join(dir, artifactRunDir(id), name)); err != nil {
+		t.Errorf("the artifact is not at the name the record carries: %v", err)
+	}
+	// The bidi override is the same class of character and a stronger
+	// refusal: it never becomes a path at all.
+	bidi := "a‮b.png"
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: bidi, Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{bidi: body})
+	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, bidi); err == nil {
+		t.Error("get accepted a name carrying a bidi override")
+	}
+}
+
+// TestArtifactsReadIsBounded: a read that stops producing bytes has to end the
+// command, and the bound is derived from the recorded size and clamped, so a
+// record's own byte count — or a value a caller passes without one — cannot
+// make the deadline meaningless (a zero, a negative or an overflowed
+// duration is no deadline at all). Mutation caught: dropping the timeout, and
+// deriving it without a ceiling.
+func TestArtifactsReadIsBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int64
+	}{
+		{"an empty artifact", 0},
+		{"a negative size", -1},
+		{"a small artifact", 4 << 20},
+		{"the format's ceiling", recipe.MaxOutputBytes},
+		{"a size nothing in the format reaches", math.MaxInt64},
+	} {
+		ctx, cancel := artifactReadContext(context.Background(), tc.size)
+		dl, ok := ctx.Deadline()
+		cancel()
+		if !ok {
+			t.Fatalf("%s: no deadline on the read at all — a stalled object hangs the command", tc.name)
+		}
+		left := time.Until(dl)
+		if left <= 0 {
+			t.Errorf("%s: the read's deadline is already past (%s)", tc.name, left)
+		}
+		if ceiling := artifactReadBaseTimeout + artifactReadMaxTimeout; left > ceiling {
+			t.Errorf("%s: bound = %s, over the %s ceiling the derived bonus is clamped to", tc.name, left, ceiling)
+		}
+	}
+	// A larger artifact gets a longer bound: the point of deriving it from the
+	// size is that the ceiling-sized artifact is not refused on a slow link.
+	small, cancelSmall := artifactReadContext(context.Background(), 1<<20)
+	smallDL, _ := small.Deadline()
+	cancelSmall()
+	big, cancelBig := artifactReadContext(context.Background(), recipe.MaxOutputBytes)
+	bigDL, _ := big.Deadline()
+	cancelBig()
+	if !bigDL.After(smallDL) {
+		t.Errorf("a %s artifact is bounded by %s and a 1 MiB one by %s: the bound does not grow with the size", recipe.SizeText(recipe.MaxOutputBytes), time.Until(bigDL), time.Until(smallDL))
+	}
+	// The caller's own context still ends the read sooner, which is the
+	// property a derived timeout must not break (a signal, a --timeout).
+	parent, cancelParent := context.WithTimeout(context.Background(), time.Second)
+	defer cancelParent()
+	child, cancelChild := artifactReadContext(parent, recipe.MaxOutputBytes)
+	childDL, _ := child.Deadline()
+	cancelChild()
+	pDL, _ := parent.Deadline()
+	if !childDL.Equal(pDL) {
+		t.Errorf("the derived deadline %s replaced the caller's %s", time.Until(childDL), time.Until(pDL))
 	}
 }
 
