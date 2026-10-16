@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -214,6 +215,68 @@ func TestAutoDoesNotRouteAVertexRun(t *testing.T) {
 	}
 	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != "anthropic/claude-sonnet-5.5" {
 		t.Errorf("via: openrouter left the Vertex run's pin at %q, want the route's ID", got)
+	}
+}
+
+// TestAllowedAdmitsARouteIDTheSwitchDoesNotApply is the runner half of
+// internal/config/pins.go's `allowed`, and the review finding that rewrote its
+// comment: config.CheckAllowed judges a pin by the switch's *resolution* — the
+// same RoutingClaudeFor the run uses — and it is asked on every run, the
+// gateway's or not (checkBudget asks it before gatewayOn is consulted).
+// applyRouting, the switch's *application*, skips the states where the run has
+// nothing to route: the gateway off, via auto under a Vertex run, via auto with
+// an ANTHROPIC_API_KEY in the job. In those states a pin spelled as a route's
+// own ID is admitted by the allow-list and keeps the spelling the configuration
+// gave it — what admits it there is the operator's own claim on the route (the
+// entry's allow_data_to, D1b's safeguard) plus the canonical model on the list,
+// not the switch, which is what the comment on `allowed` now says instead of
+// "the run was going to route it anyway".
+//
+// One fixture, four states, so the difference between them is the switch's
+// application and nothing else: the reviewer's pin moves exactly where the
+// switch is applied.
+//
+// Hand mutation this fails on: dropping a skip from applyRouting (the
+// gateway-off one, then the auto/key one) — the reviewer's pin moves in a state
+// that routes nothing, and the test fails naming it, which is the whole reason
+// the check cannot promise that the run takes the route.
+func TestAllowedAdmitsARouteIDTheSwitchDoesNotApply(t *testing.T) {
+	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+	list := policy.Merge(policy.Layer{AllowedModels: []string{canonical}})
+	for _, tc := range []struct {
+		name, via string
+		prepare   func(*run)
+		wantPin   string
+	}{
+		{"the switch applies (via openrouter, the gateway on)", config.RouteOpenRouter, nil, routed},
+		{"the gateway is off (the budget is off)", config.RouteOpenRouter, func(r *run) { r.spend = Spend{Mode: "off"} }, canonical},
+		{"via auto in a Vertex run", config.RouteAuto, func(r *run) { r.cfg.Agent.Auth = "vertex" }, canonical},
+		{"via auto with an Anthropic key in the job", config.RouteAuto, func(r *run) {
+			r.d.Env = append(r.d.Env, "ANTHROPIC_API_KEY=not-a-real-key")
+		}, canonical},
+	} {
+		// The operator pinned the route's own ID for the coder — the claim the
+		// allow-list is asked about — and the model's own ID for the reviewer,
+		// which is the pin the switch moves. The background model is named too,
+		// so the allow-list's three questions are about two filled-in roles
+		// rather than about the empty one.
+		r := routedRun(t, &config.RoutingClaude{Via: tc.via, Models: []string{canonical}}, routed, canonical)
+		r.cfg.Agent.Models.Background = canonical
+		if tc.prepare != nil {
+			tc.prepare(r)
+		}
+		if ps := config.CheckAllowed(r.cfg.Agent, list, nil, r.routingSwitch(), r.modelProviders()); len(ps) > 0 {
+			t.Errorf("%s: CheckAllowed = %s, want the route-ID pin admitted", tc.name, problemsText(ps))
+		}
+		if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+			t.Fatalf("%s: applyRouting: %v", tc.name, err)
+		}
+		if got := r.cfg.Agent.ModelFor(config.RoleReviewer); got != tc.wantPin {
+			t.Errorf("%s: the reviewer pin = %q, want %q", tc.name, got, tc.wantPin)
+		}
+		if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != routed {
+			t.Errorf("%s: the coder pin = %q, want the operator's own spelling %q", tc.name, got, routed)
+		}
 	}
 }
 

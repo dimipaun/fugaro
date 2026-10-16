@@ -188,13 +188,34 @@ func CheckAllowed(a Agent, e policy.Effective, ceiling []string, rt *Routing, pr
 // the spelling is a route ID at all), the list must name the canonical ID the
 // pair gives (the model, which is what allowed_models is about), and rt must
 // route that canonical ID to exactly this ID — the same resolution the run
-// itself performs (RoutingClaudeFor, over the same routes), so the allow-list
-// can only admit a pin the run was going to route anyway. Without that half, any well-formed
-// anthropic/<id> a repository wrote for itself was admitted by its canonical ID
-// alone, which is the owner's allowed_models *and* the switch's explicit-list
-// opt-in (D1a) both bypassed by one spelling (review finding on this change).
-// An absent switch, a switch that does not name the model, and a route the map
-// does not pair all admit nothing.
+// itself performs (RoutingClaudeFor, over the same routes). Without that half,
+// any well-formed anthropic/<id> a repository wrote for itself was admitted by
+// its canonical ID alone, which is the owner's allowed_models *and* the
+// switch's explicit-list opt-in (D1a) both bypassed by one spelling (review
+// finding on this change). An absent switch, a switch that does not name the
+// model, and a route the map does not pair all admit nothing.
+//
+// What that admits, said exactly, because "the run was going to route it
+// anyway" is not the whole story (the later review finding on this change): the
+// question here is the switch's *resolution*, and the run's application of the
+// switch is a separate step that is skipped in states where the run has nothing
+// to act on — the gateway off, via auto under a Vertex run, via auto with an
+// ANTHROPIC_API_KEY in the job (internal/runner/routing.go's applyRouting). In
+// those states this rule still admits a route ID the switch resolves, and
+// applyRouting leaves every pin spelled as the configuration wrote it: what
+// admits the pin there is the operator's own claim on the route (the entry's
+// allow_data_to names this repository, D1b's safeguard) plus the canonical
+// model on the list, not the switch. So the rule answers "is this model
+// allowed?" and never promises the run takes the route; that promise is D1a's
+// explicit list, and it is applyRouting that keeps it.
+//
+// It is not made skip-aware on purpose: this same function is `fugaro
+// validate`'s offline verdict (internal/cli/validate.go), where there is no
+// credential and no budget mode to read, so a rule that turned on the run's own
+// state would report one answer for a policy the run then judged by another —
+// the divergence the one-resolver rule exists to prevent. The two halves are
+// tested together instead (internal/runner's
+// TestAllowedAdmitsARouteIDTheSwitchDoesNotApply).
 func allowed(e policy.Effective, model string, rt *Routing, providers map[string]ModelProvider) bool {
 	if e.Allows(model) {
 		return true
