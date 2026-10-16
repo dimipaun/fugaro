@@ -1091,7 +1091,6 @@ function validateValue(
         )
       }
       return { ok: true, value }
-    }
     case 'reportDimension':
       if (!REPORT_DIMENSIONS.includes(value)) return refuse(`${spec.key} must be one of ${REPORT_DIMENSIONS.join(', ')}`)
       return { ok: true, value }

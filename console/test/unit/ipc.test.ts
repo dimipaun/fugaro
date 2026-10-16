@@ -1445,7 +1445,8 @@ describe('the one URL-shaped argument', () => {
     expect(decision.ok).toBe(true)
     if (!decision.ok) return
     expect(decision.args['url']).toBe('https://github.com/acme/other')
-    expect(decision.args['url']).not.toBe(sent)    expect(typeof decision.args['url']).toBe('string')
+    expect(decision.args['url']).not.toBe(sent)
+    expect(typeof decision.args['url']).toBe('string')
   })
 
   it('is the only operation that takes a URL', () => {
