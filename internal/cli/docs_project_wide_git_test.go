@@ -166,11 +166,11 @@ func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
 		}},
 		{"../../docs/dogfooding.md", []string{
 			"Both are stored once for the project",
+			"being stored once is not the same as reaching every job",
 			"which `fugaro doctor` lists per name and warns about when it happens",
 		}},
 		{"../../plugin/skills/setup/SKILL.md", []string{
-			"Init's secrets prompts store project-wide unless `--repo` is passed",
-			"`secret-scope` line says which copy it resolves per name",
+			"`secret-scope` line says which copy it resolves for every name",
 		}},
 	}
 	for _, tc := range cases {
@@ -182,6 +182,55 @@ func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
 		for _, want := range tc.want {
 			if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
 				t.Errorf("%s does not say %q", tc.path, want)
+			}
+		}
+	}
+}
+
+// TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketNeverShares: the two
+// sentences the code review of this PR found wrong (item 1). `fugaro init
+// --repo`'s secrets stage has no --repo of its own to pass
+// (internal/cli/initsecrets.go, the prompt's own "press Ctrl-C here" text is
+// the way out), so a page that tells a reader to pass one at the prompt
+// describes a flag that does not exist; and `bitbucket-token` is a
+// PerRepositorySecret (internal/config/project_secrets.go), so the prompt
+// never offers it project-wide and the "a covered name is skipped" rule
+// needs that exception spelled out, not assumed.
+func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketNeverShares(t *testing.T) {
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{"../../plugin/skills/setup/SKILL.md", []string{
+			"Init's prompts (step 9) have no `--repo` to pass",
+			"`bitbucket-token` excepted (it is one repository's and never project-wide)",
+			"press Ctrl-C at the prompt and run the command it printed in your own terminal, then start init again",
+			"a covered name is not asked for",
+		}},
+		{"../../docs/multi-model.md", []string{
+			"the prompt has no `--repo` to pass",
+			"press Ctrl-C at it, run the command it printed (`fugaro secrets set <name> --repo <owner>/<name>`) in your own terminal, and start init again",
+			"`bitbucket-token` excepted",
+		}},
+	}
+	for _, tc := range cases {
+		data, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := strings.Join(strings.Fields(string(data)), " ")
+		for _, want := range tc.want {
+			if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q", tc.path, want)
+			}
+		}
+		// The wrong sentence, in the two spellings it had.
+		for _, wrong := range []string{
+			"store project-wide unless `--repo` is passed",
+			"stored project-wide unless you pass `--repo`",
+		} {
+			if strings.Contains(doc, wrong) {
+				t.Errorf("%s still tells a reader the init prompt takes `--repo`: %q", tc.path, wrong)
 			}
 		}
 	}

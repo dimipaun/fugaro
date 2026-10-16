@@ -78,6 +78,18 @@ With several workflows, confirm the names (`fugaro run --workflow` selects one).
 
 Its own topic, and only for a workflow that needs nothing a build gives it. `checkout: baked` builds a per-repository image with the repository baked in, rebuilt by the daily image check; `checkout: clone` runs the installation's own base image instead, so there is no image build and no daily check, and what the run pays at start-up is the blobless clone plus `mise install` (bounded at ten minutes). Leave the key out: the default is `baked`. Offer `checkout: clone` only when the workflow needs no system package and no Dockerfile and no service — nothing a build gives it, so none of `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts` and `dockerfile:`, the exact keys `fugaro validate` refuses under clone (a service is one of those in practice: it arrives through `image.apt` or `image.setup`; `docs/checkout.md`, "What `clone` refuses") — a plain Node, Go or Python workflow whose only requirement is what `mise.toml` declares. Say what clone trades away (the warm caches a build leaves behind: a private repository pays the clone and the tool install at every start-up), say that **it is the user's decision**, and let the user choose. **`checkout: clone` is not shipped yet**: the `cloneShipped` gate (`internal/cli/recipes_skew.go`) makes the two commands that deploy or move a job image refuse such a workflow — the deploy and the image refresh both stop before any cloud change — so say so and leave the key out until it ships; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md) is the full text.
 
+## What scope a secret's value goes to
+
+Init's own prompts (skill step 9) have no `--repo` to pass: a name this repository may mount project-wide is stored in the project's Secret Manager, and `bitbucket-token` never is — a repository access token serves one repository. A project-scope name's reach is its entry's `allow_data_to`, or the provider's for a provider key: say which repositories it reaches when you recommend one. A name the project's copy already covers is not asked for; a prompt that skips one is working as intended, not a missing value.
+
+For this repository's own copy instead, press Ctrl-C at the prompt and run the command it printed with `--repo <owner/name>`, then start init again. The user runs it in their own terminal window, not through the agent:
+
+```bash user-runs
+fugaro secrets set <name> --repo <owner/name>
+```
+
+A repository copy with an enabled version wins over the project's, so this is also how a covered name gets its own value; disabling that copy's versions falls back to the project's at the next init.
+
 ## Minimal file or full file?
 
 With a project layer and a fitting profile, the minimal file keeps the repository on the project's settings: a profile change reaches it without a pull request. A full file is for a repository whose build or image is its own. Never copy a profile's values into `fugaro.yaml`; that would stop it from following the profile.
