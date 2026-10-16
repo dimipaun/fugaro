@@ -137,6 +137,55 @@ func remoteOfAnotherKind(derived, remote string) string {
 	return ""
 }
 
+// repoNamedByRemote is the repository a git remote URL names, canonicalized
+// exactly as task.CanonicalRepo canonicalizes a task's own repository (ASCII
+// lower case, no ".git"). ok is false for a remote that names no repository
+// this check can compare: a local path, a bare host, a path with no name in it
+// (a bare "/"), and anything task.CanonicalRepo refuses. A remote path with
+// more than one "/" is *not* one of those: a task's own Repo may be a GitLab
+// subgroup ("group/sub/app", task's repoRE admits it), so the two are compared
+// like any other repository.
+//
+// It is the second half of the remote binding. remoteOfAnotherKind compares
+// the remote's *host kind* alone, which binds the provider and nothing else: a
+// job for slug(github, acme/app) whose FUGARO_REMOTE is
+// https://github.com/attacker/malware.git is on the derived kind's host and was
+// admitted, and the run then cloned and ran attacker/malware under acme/app's
+// slug — its locks, its cache, its budget session and the policy's allow_repos
+// admission all naming a repository whose work was not the work being run (the
+// review finding on this change). The launcher already refuses that URL
+// (internal/infra's repoURL compares the canonical owner/name, D1a's own rule),
+// so a run only meets it when the job's environment was edited after launch,
+// which is exactly what this check is for.
+//
+// A remote naming something other than owner/name keeps the behaviour it had
+// before this check existed — it is not refused here. The binding is meant to
+// refuse a remote that *provably* names another repository, not to extend the
+// launcher's URL rules to every remote a local run may use.
+func repoNamedByRemote(remote string) (string, bool) {
+	if remote == "" {
+		return "", false
+	}
+	var path string
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		path = u.Path
+	} else if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
+		// scp-like: git@github.com:owner/name.git (url.Parse reads this as a
+		// scheme-less opaque URL with no host).
+		if _, p, ok := strings.Cut(rest, ":"); ok {
+			path = p
+		}
+	}
+	if path == "" {
+		return "", false
+	}
+	c, err := task.CanonicalRepo(strings.Trim(path, "/"))
+	if err != nil {
+		return "", false
+	}
+	return c, true
+}
+
 // remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
 // its host alone, anything else as the URL without its userinfo. Deps.Remote is
 // a launcher's to set and a remote URL may carry a token in its userinfo; the
@@ -206,7 +255,8 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and the run's slug %s is the slug of %s under %s: the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 			envKind, GitProviderEnv, slug, repo, kind)
 	}
-	if remote := r.originURL(ctx); remoteOfAnotherKind(kind, remote) != "" {
+	remote := r.originURL(ctx)
+	if remoteOfAnotherKind(kind, remote) != "" {
 		// The remote is where the clone comes from, and it is the job's own
 		// environment (Deps.Remote, RemoteEnv) or the origin of a checkout
 		// already in the work directory — a launcher's to set, both of them.
@@ -218,6 +268,18 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		// which keys its locks, its cache and its budget — would not name it.
 		return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 			remoteDisplay(remote), remoteOfAnotherKind(kind, remote), slug, repo, kind, RemoteEnv)
+	}
+	if named, ok := repoNamedByRemote(remote); ok {
+		// The remote names a repository, and that repository must be this
+		// run's. Same owner and name on another host is another repository,
+		// and a different owner or name on the *same* host — the case the
+		// host-kind check above cannot see — is one too: the slug keys the
+		// run's locks, its cache and its budget session, and it names the
+		// repository this run's task does.
+		if want, err := task.CanonicalRepo(repo); err == nil && named != want {
+			return fmt.Errorf("the run would clone from %s, which is the repository %s, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
+				remoteDisplay(remote), named, slug, repo, kind, RemoteEnv)
+		}
 	}
 	if want, err := task.Slug(kind, repo); err != nil || want != slug {
 		// Implied by the derivation; re-checked so the two values the run

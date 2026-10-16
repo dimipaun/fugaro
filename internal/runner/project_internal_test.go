@@ -62,6 +62,39 @@ func TestRemoteOfAnotherKind(t *testing.T) {
 	}
 }
 
+// The owner/name half of the remote binding: the same repository written the
+// ways git writes it — .git or not, mixed case, an scp-like remote, a userinfo
+// — is one repository, and anything that names no owner/name is left to the
+// checks that were always there rather than refused here. A remote that names
+// a repository is what admissionCheck compares with the task's own.
+func TestRepoNamedByRemote(t *testing.T) {
+	for _, tc := range []struct {
+		remote, want string
+		ok           bool
+	}{
+		{"https://github.com/acme/app.git", "acme/app", true},
+		{"https://github.com/acme/app", "acme/app", true},
+		{"https://github.com/Acme/App.git", "acme/app", true},
+		{"git@github.com:acme/app.git", "acme/app", true},
+		{"ssh://git@github.com/acme/app.git", "acme/app", true},
+		{"https://x:token@github.com/acme/app.git", "acme/app", true},
+		{"https://github.com/attacker/malware.git", "attacker/malware", true},
+		// A GitLab subgroup path is what a task's own Repo may be (repoRE
+		// admits more than one "/"), so it is a name this check compares like
+		// any other rather than one it refuses.
+		{"https://gitlab.example.com/group/sub/app.git", "group/sub/app", true},
+		{"/tmp/fixture.git", "", false},
+		{"/srv/git/acme/app", "", false},
+		{"http://127.0.0.1:8080/", "", false},
+		{"", "", false},
+	} {
+		got, ok := repoNamedByRemote(tc.remote)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("repoNamedByRemote(%q) = (%q, %v), want (%q, %v)", tc.remote, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
 // A refusal quotes the remote, and a remote URL is where a launcher may have
 // put a token: the run never registers that one as a secret, so the display
 // form drops the userinfo instead of relying on redaction later.

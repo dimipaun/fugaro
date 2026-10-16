@@ -218,6 +218,28 @@ func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 	refusedAdmission(t, b, rec, err, "https://github.com/acme/app.git", "github", "bitbucket", "FUGARO_REMOTE", "before any git credential")
 }
 
+// A remote on the *derived* kind's host is still another repository when it
+// names another owner or name: the host-kind check cannot see this one, and
+// without the owner/name comparison the run cloned and ran attacker/malware
+// under acme/app's slug, with acme/app's locks, cache, budget session and
+// allow_repos admission naming work that was not the work being run. The
+// launcher refuses such a URL before it deploys anything, so a run meets this
+// only when the job's environment was edited after launch — the environment
+// may only tighten, never change which repository this run is for.
+func TestRunnerRefusesARemoteNamingAnotherRepository(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b.deps.Remote = "https://github.com/attacker/malware.git"
+	// Nothing here may reach github.com even if this check regresses: the same
+	// local rewrite TestRunnerRefusesARemoteOnAnotherProvidersHost uses.
+	gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "attacker/malware", "acme/app", "FUGARO_REMOTE", "before any git credential")
+}
+
 // The slug the run was launched for and the repository its task names must
 // agree: FUGARO_RUN is what keys the locks, the cache and the budget session,
 // and a job launched for one repository must not run another repository's
