@@ -2993,7 +2993,7 @@ gcloud storage buckets list --project="${P:?}" --format='value(name)'   # the ru
 
 ```bash
 # === Check 52: the step's variables. RE-RUN at the start of every step. ===
-SANDBOX_JOB=${SANDBOX_JOB:?the job name of the sandbox repository, from the run jobs list above}
+SANDBOX_JOB=${SANDBOX_JOB:?the sandbox repository job name, from the run jobs list above}
 SANDBOX_JOB_SA=${SANDBOX_JOB_SA:?the service account of that job, from the run jobs describe above}
 SANDBOX_BUCKET=${SANDBOX_BUCKET:?the runs bucket of the installation, the one the local config names}
 NUMBER=$(gcloud projects describe "${P:?}" --format='value(projectNumber)')   # IAM conditions name Secret Manager resources by project NUMBER, never by ID
