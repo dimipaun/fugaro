@@ -368,6 +368,27 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	if rerr != nil {
 		repo = "" // an unknown repository: no provider's allow_data_to can be said to cover it
 	}
+	// The routes a run of this checkout carries, which is the table the switch
+	// resolves over: the run's own (claimed — the operator's providers with the
+	// layer's claude_models claims), filtered by allow_data_to for this
+	// repository, exactly as runner.ProvidersEnv writes FUGARO_MODEL_PROVIDERS
+	// (runner.ProvidersFor, the same filter doctor's check reads). Resolving
+	// over the unfiltered table printed a route this run does not have — the
+	// run halts with "the project's routing switch is not usable" — which is
+	// the false confidence doctor's check stopped giving (runner.ProvidersFor's
+	// own doc: a resolution read over the unfiltered block is a route a run may
+	// not carry). With no origin there is no repository to filter by, so repo is
+	// "" and only the routes written for every repository survive — the reading
+	// the rest of this file already gives that state (providerProblems passes ""
+	// to CheckProviderPolicy for the same reason).
+	var routes, ownRoutes map[string]config.ModelProvider
+	if readable {
+		// Only a readable project config has an operator's table to filter;
+		// without one nothing is resolved at all (the note below), so there is
+		// no table to build.
+		routes = runner.ProvidersFor(claimed, repo)
+		ownRoutes = runner.ProvidersFor(lc.Providers, repo)
+	}
 	for _, p := range pins {
 		if !readable {
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
@@ -375,12 +396,15 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			continue
 		}
 		sw := claudeSwitchOf(lc.Routing)
-		route, sent, ok := config.RoutingClaudeFor(sw, p.model, claimed)
+		route, sent, ok := config.RoutingClaudeFor(sw, p.model, routes)
 		switch {
-		case !ok:
-			problems = append(problems, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
-				"%s is named by routing.claude.models and does not resolve: no single provider entry claims it with allow_data_to written, and a call the switch names has no direct fall-back (D1b, design §6.2). config.CheckRouting refuses that switch at load; fix the list or the claim", p.model)})
-		case route == config.RouteDirect:
+		case ok && route == config.RouteDirect:
+			// The direct route is the switch's own answer and no repository
+			// changes it (the resolver reads no table for a `via: direct`
+			// switch, and a model the switch does not name is direct anyway —
+			// D1b), so this case comes before the repository questions below
+			// and prints even from a checkout whose origin cannot be read.
+			//
 			// Two states resolve to direct and they are not the same sentence:
 			// the switch may name this model with via: direct — a legal
 			// spelling, and the one way to say "this ID stays direct" while
@@ -393,9 +417,25 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			} else {
 				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
 			}
-			if why := claudeDirectRefusal(cfg.Agent, p, claimed, lc.Providers, repo, mode); why != "" {
+			if why := claudeDirectRefusal(cfg.Agent, p, routes, ownRoutes, repo, mode); why != "" {
 				problems = append(problems, config.Problem{Path: p.path, Message: why})
 			}
+		case rerr != nil:
+			// Everything below is a question about the routes a run carries,
+			// and which routes a run carries is a question about the
+			// repository: a route written for a list of repositories may or may
+			// not be this one's. This checkout's origin does not answer it, so
+			// the line says unresolved rather than resolving for a repository
+			// nobody named (providerProblems passes "" to CheckProviderPolicy
+			// for the same reason).
+			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
+				"%s unresolved: the routes a run carries are the ones its repository may send code to (allow_data_to), and this checkout's origin could not be read (%v), so no repository can be said to carry the switch's route; run validate in the checkout, or from one whose origin names owner/name", p.model, rerr)})
+			if why := claudeDirectRefusal(cfg.Agent, p, routes, ownRoutes, repo, mode); why != "" {
+				problems = append(problems, config.Problem{Path: p.path, Message: why})
+			}
+		case !ok:
+			problems = append(problems, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
+				"%s is named by routing.claude.models and does not resolve over the routes a run of %s carries: no single provider entry claims it with allow_data_to written, or the entry that claims it does not admit this repository, and a call the switch names has no direct fall-back (D1b, design §6.2). A run of this repository halts with \"the project's routing switch is not usable\"; fix the list, the claim, or the allow_data_to of the entry that claims it", p.model, repo)})
 		default:
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> %s, sent as %s", p.model, route, sent)})
 		}
@@ -419,11 +459,15 @@ func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
 // routingProblems' second rule; the doc comment above has the reading of "no
 // Anthropic key" it rests on.
 //
-// The two provider tables it asks are two different questions: routes is the
-// table the run will have, which is what "does this run need the key" is about
-// (config.AnthropicKeyNeeded, the rule providerProblems' own note asks), and
-// own is the operator's own table, which is what "does this project route
-// Claude through a provider" is about.
+// The two provider tables it asks are two different questions, and both are
+// already the run's own: routes is the table the run will have, which is what
+// "does this run need the key" is about (config.AnthropicKeyNeeded, the rule
+// providerProblems' own note asks), and own is the operator's own table —
+// routingProblems filters both by this repository's allow_data_to before
+// handing them over, which is what "does this project route Claude *for this
+// repository*" is about: a route that claims the model but does not admit the
+// checkout being validated would halt the run if the switch named it, so
+// "write the switch" is not advice that run can take.
 func claudeDirectRefusal(a config.Agent, p claudePin, routes, own map[string]config.ModelProvider, repo, mode string) string {
 	if mode != policy.ModeEnforce {
 		// Without a gateway there is no routing at all: nothing is sent to a
@@ -437,8 +481,9 @@ func claudeDirectRefusal(a config.Agent, p claudePin, routes, own map[string]con
 		return ""
 	}
 	// Would the switch resolve this model if it named it? The one resolver
-	// answers it over the same routes, so this rule and the run's own
-	// resolution cannot disagree about whether a route is there.
+	// answers it over the routes this repository's run would have, so this rule
+	// and the run's own resolution cannot disagree about whether a route is
+	// there.
 	if _, _, ok := config.RoutingClaudeFor(&config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{p.model}}, p.model, own); !ok {
 		return ""
 	}

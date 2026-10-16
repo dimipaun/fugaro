@@ -987,10 +987,13 @@ func TestValidatePrintsUnresolvedOffline(t *testing.T) {
 	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5") || !strings.Contains(errOut, "unresolved offline") {
 		t.Fatalf("want a `routing.claude: ... unresolved offline` line:\n%s", errOut)
 	}
-	// The project config in hand: the same pin resolves, and the line is the
-	// resolution.
+	// The project config in hand — and a checkout the route admits, since the
+	// resolution is over the routes *this repository's* run carries
+	// (allow_data_to; routedProjectBlock names acme/sandbox): the same pin
+	// resolves, and the line is the resolution.
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, routedProjectBlock+routedSwitchBlock)
+	inCheckoutOf(t, "acme/sandbox")
 	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	_, errOut, err = execute(t, "validate", path)
 	if err != nil {
@@ -1001,6 +1004,64 @@ func TestValidatePrintsUnresolvedOffline(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
 		t.Fatalf("want the resolution line:\n%s", errOut)
+	}
+}
+
+// TestValidateResolvesOverTheRoutesThisCheckoutCarries pins the review finding
+// on validate.go: routingProblems resolved the switch over `claimed` — the
+// operator's providers with the layer's claude_models claims — and never
+// filtered it by allow_data_to, although it had the checkout's repository two
+// lines above. A run does filter it: internal/infra/spec.go writes
+// FUGARO_MODEL_PROVIDERS through runner.ProvidersEnv (runner.ProvidersFor) over
+// exactly the entries whose allow_data_to admits the repository being run, and
+// the run resolves the switch over that table (internal/runner/routing.go), so
+// for a checkout of a repository the only claiming entry does not admit,
+// validate printed `-> openrouter, sent as …` while the run halted with "the
+// project's routing switch is not usable" — the failure ProvidersFor's own doc
+// names, and the false confidence doctor's check stopped giving (finding 3).
+func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
+	const claude = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\nworkflows:"
+	pinned := func() string {
+		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	}
+	// routedProjectBlock admits acme/sandbox only, and this checkout is
+	// acme/other: the run carries no route, so validate may not print one, and
+	// the state is the halt the run halts with.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, routedProjectBlock+routedSwitchBlock)
+	inCheckoutOf(t, "acme/other")
+	out, errOut, err := execute(t, "validate", pinned())
+	if strings.Contains(out+errOut, "-> openrouter") {
+		t.Fatalf("validate printed a route this run does not carry:\n%s%s", out, errOut)
+	}
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "routing.claude") || !strings.Contains(out, "the project's routing switch is not usable") {
+		t.Fatalf("exit %d, out %q: want the halt named as a `routing.claude` problem", ExitCode(err), out)
+	}
+	// The checkout the route admits: the same file resolves, so the refusal
+	// above is about the repository and not about the switch.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, routedProjectBlock+routedSwitchBlock)
+	inCheckoutOf(t, "acme/sandbox")
+	_, errOut, err = execute(t, "validate", pinned())
+	if err != nil {
+		t.Fatalf("validate: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Fatalf("want the resolution line for the checkout the route admits:\n%s", errOut)
+	}
+	// A checkout whose origin cannot be read is a third state, not a resolution
+	// for a repository nobody named: which repositories a run carries the route
+	// for is the checkout's own answer (providerProblems passes "" to
+	// CheckProviderPolicy for the same reason), so the line says unresolved.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, routedProjectBlock+routedSwitchBlock)
+	t.Chdir(t.TempDir())
+	_, errOut, err = execute(t, "validate", pinned())
+	if err != nil {
+		t.Fatalf("validate: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 unresolved") || strings.Contains(errOut, "-> openrouter") {
+		t.Fatalf("want an unresolved line and no resolution:\n%s", errOut)
 	}
 }
 
@@ -1018,9 +1079,12 @@ func TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
 		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
 	}
 	// The route claims the model and its allow_data_to is written; the switch
-	// does not name it, so the call goes direct and needs a key nobody has.
+	// does not name it, so the call goes direct and needs a key nobody has. The
+	// checkout is the one the route admits: the refusal asks whether this
+	// repository's run has a route to take at all.
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, budget+routedProjectBlock)
+	inCheckoutOf(t, "acme/sandbox")
 	out, _, err := execute(t, "validate", pinned())
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "routing.claude: openrouter") {
 		t.Fatalf("exit %d, out %q: want a refusal naming `routing.claude: openrouter`", ExitCode(err), out)
