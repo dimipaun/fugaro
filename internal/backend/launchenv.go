@@ -19,6 +19,17 @@ type EnvVar struct{ Name, Value string }
 // environment the run reads its own identity and configuration from, so the
 // two backends must answer the same thing about it.
 //
+// These six are what both backends write, and that is the whole of the list on
+// purpose. Cloud Run's deploy writes more into a job's environment than its own
+// backend does — the budget and model-provider variables, the checkout and
+// remote URLs, the vertex project and region — and the seam cannot reserve a
+// name on one backend alone without becoming the asymmetry it exists to
+// prevent; those names are carried by both backends today, and on Cloud Run
+// the launcher's value is the one that wins. Reserving them is a question for
+// the deploy, which is the only side that knows the whole of a job's
+// environment (the launcher could read it back from the API, at the cost of a
+// run.jobs.get on every launch that carries an entry).
+//
 // The names are the platform's, and the packages that write them keep their
 // own constants (internal/infra's BucketEnv, BackendEnv, GCPProjectEnv,
 // ProjectEnv, RegionEnv; internal/backend's own FUGARO_RUN and
@@ -54,9 +65,11 @@ var JobIdentityEnv = []string{
 //     about itself. Both fields are one env on the platform, so which of the
 //     two values wins is the platform's to decide; a run whose FUGARO_RUN came
 //     from a launch override would be a run the launcher could not find again.
-//     JobIdentityEnv is refused for every backend here; reserved is the rest
+//     JobIdentityEnv is refused for every backend here. reserved is the rest
 //     of one backend's own map (Batch's job variables beyond the identity
-//     six, its DOCKER_HOST), which the other backend has no counterpart for.
+//     six, its DOCKER_HOST), which the other backend has no counterpart for;
+//     the names only one backend's deploy writes are not reserved at all, and
+//     with reason (JobIdentityEnv's doc).
 func LaunchEnv(spec LaunchSpec, reserved ...string) ([]EnvVar, error) {
 	if len(spec.Env) == 0 {
 		return nil, nil
