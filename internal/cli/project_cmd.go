@@ -194,17 +194,25 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err := checkPolicyBytes(body); err != nil {
 			return err
 		}
-		printPolicyDiff(out, old, pol, sources)
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
+			// The diff is printed after the write, not before it (the review
+			// finding on this change): it is a claim about the node as it now
+			// is, and a write that came back refused — the policy changed
+			// while this ran, or the credential may not write it — left the
+			// node exactly as it was, so a diff printed first would have the
+			// operator reading a change that did not happen.
+			printPolicyDiff(out, old, pol, sources)
 			fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
 			return nil
 		case errors.Is(err, rtdb.ErrPrecondition):
 			fmt.Fprintln(out, "changed by someone else meanwhile; reading it again")
 			continue
 		default:
-			return dbErr(lc, err, true)
+			// And because nothing was printed, the failure has to say what the
+			// operator is not seeing: the node is as it was.
+			return fmt.Errorf("%w; nothing was written: %s is as it was", dbErr(lc, err, true), projectpolicy.PathShared())
 		}
 	}
 	return remote(fmt.Errorf("the policy node kept changing under the write (%d attempts); nothing further was written; run it again", setAttempts))

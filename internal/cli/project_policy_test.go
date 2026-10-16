@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -220,6 +221,47 @@ func TestProjectPolicyPublishRetriesAnETagConflict(t *testing.T) {
 	}
 	if p.Budget.Mode != "enforce" || p.Budget.PerRunUSD != 5 {
 		t.Errorf("budget = %+v, want this machine's config (the publisher's own keys are the ones it owns)", p.Budget)
+	}
+}
+
+// policyWriteFails makes every write to the budget database fail at the
+// transport: a hard write failure, not the compare-and-set conflict a retry
+// handles. Reads pass through, so the publisher gets as far as its write.
+type policyWriteFails struct{ rt http.RoundTripper }
+
+func (c policyWriteFails) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method != http.MethodGet {
+		return nil, errors.New("connection reset by peer")
+	}
+	return c.rt.RoundTrip(r)
+}
+
+// TestProjectPolicyPublishPrintsNoDiffItDidNotWrite: the diff is a claim about
+// the node, so it goes out after the write that makes it true. On a write that
+// failed the operator reads the failure and "nothing was written", not a full
+// diff of a policy the node does not hold — a diff printed first reads as a
+// change that happened (the review finding on this change; `project repos
+// edit` prints its line after its write for the same reason,
+// TestProjectReposEditRefusesAConcurrentWriter).
+func TestProjectPolicyPublishPrintsNoDiffItDidNotWrite(t *testing.T) {
+	f := newProjectFixture(t, "")
+	budgetTransport = policyWriteFails{rt: http.DefaultTransport}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("a write the database refused was reported as a successful publish")
+	}
+	if !strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("err = %v, want it to say nothing was written", err)
+	}
+	for _, marker := range []string{"not published yet", "allow_repos", "set "} {
+		if strings.Contains(out, marker) {
+			t.Errorf("the failed publish printed %q:\n%s", marker, out)
+		}
+	}
+	if got := f.db.Value(projectpolicy.PathShared()); got != nil {
+		t.Errorf("%s = %v, want the node the failed write left alone (nothing)", projectpolicy.PathShared(), got)
 	}
 }
 
