@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -821,7 +822,9 @@ func TestAttachNamesTheBackgroundModelTheRunWillActuallyUse(t *testing.T) {
 	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
 		"acme-gw": {Models: []string{"coder-*", "reviewer-*"}},
 	}}
-	ag := config.Agent{Models: config.ModelRoles{Coder: "coder-1", Reviewer: "reviewer-1"}}
+	// api-key is the auth the direct route belongs to (TestAttachNamesThe-
+	// RouteTheAuthModeActuallyTakes covers the other two).
+	ag := config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: "coder-1", Reviewer: "reviewer-1"}}
 	if got := config.EffectiveBackground(ag, lc.Providers); got != "coder-1" {
 		t.Fatalf("EffectiveBackground = %q, want the coder's model", got)
 	}
@@ -858,7 +861,7 @@ func TestAttachNamesTheProvidersThatMayReceiveTheFile(t *testing.T) {
 		"acme-gw":  {Models: []string{"coder-*"}},
 		"other-gw": {Models: []string{"reviewer-*"}},
 	}}
-	ag := config.Agent{Models: config.ModelRoles{Coder: "coder-1", Reviewer: "reviewer-1", Background: "coder-2"}}
+	ag := config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: "coder-1", Reviewer: "reviewer-1", Background: "coder-2"}}
 	got := attachProviders(lc, ag, "acme/app")
 	if strings.Join(got, ",") != "acme-gw,other-gw" {
 		t.Fatalf("attachProviders = %v, want both claiming providers and no direct route", got)
@@ -877,6 +880,41 @@ func TestAttachNamesTheProvidersThatMayReceiveTheFile(t *testing.T) {
 	}}
 	if got := attachProviders(closed, ag, "acme/app"); strings.Join(got, ",") != attachDirectAnthropic {
 		t.Fatalf("attachProviders with a closed provider = %v, want only the direct route", got)
+	}
+}
+
+// TestAttachNamesTheRouteTheAuthModeActuallyTakes: the destination of a model
+// no provider claims is the run's OWN auth route, and agent.auth decides which
+// one it is (design §8 item 8): vertex — config.applyDefaults' default, so an
+// unset Agent.Auth too — sends Claude calls to Google Vertex AI, api-key to
+// Anthropic's own API, and oauth to Anthropic on a subscription's token. A
+// default-configuration launch therefore must not be told its screenshot goes
+// straight to Anthropic: the request, and the bytes in it, go to Google.
+//
+// Mutation (name the direct route regardless of auth, the way this file did
+// before this test): the vertex and unset cases print "Anthropic (direct)"
+// and fail.
+func TestAttachNamesTheRouteTheAuthModeActuallyTakes(t *testing.T) {
+	for _, tc := range []struct{ auth, want string }{
+		{"vertex", attachRouteVertex},
+		{"", attachRouteVertex}, // unset: applyDefaults writes vertex
+		{"api-key", attachDirectAnthropic},
+		{"oauth", attachRouteOAuth},
+	} {
+		ag := config.Agent{Auth: tc.auth}
+		if got := attachProviders(nil, ag, "acme/app"); strings.Join(got, ",") != tc.want {
+			t.Errorf("attachProviders(auth %q) = %v, want %q", tc.auth, got, tc.want)
+		}
+		var buf bytes.Buffer
+		attachProviderWarning(&buf, attachProviders(nil, ag, "acme/app"))
+		if !strings.Contains(buf.String(), tc.want) {
+			t.Errorf("the destination line for auth %q does not name %q:\n%s", tc.auth, tc.want, buf.String())
+		}
+	}
+	// The default route is not Anthropic, and saying so is the whole of this
+	// finding: a vertex launch must not name a destination its bytes miss.
+	if got := attachProviders(nil, config.Agent{Auth: "vertex"}, "acme/app"); slices.Contains(got, attachDirectAnthropic) {
+		t.Fatalf("a vertex launch names %s: %v", attachDirectAnthropic, got)
 	}
 }
 
@@ -900,22 +938,28 @@ func TestAttachProviderWarningIsSilentWithoutAttachments(t *testing.T) {
 	}
 }
 
-// TestAttachProviderWarningNamesAnthropicDirect is D9's round-3 correction,
-// end to end: a default Claude workflow with no providers configured at all
-// prints "Anthropic (direct)" — never a line telling the owner their
-// screenshot "routes nowhere" while it is on its way to Anthropic.
+// TestAttachProviderWarningNamesTheDefaultAuthRoute is D9 end to end, and it
+// names what a default configuration really does: a workflow with no
+// providers configured at all and no agent.auth of its own — applyDefaults
+// writes vertex — prints the Vertex route, never a line telling the owner
+// their screenshot "routes nowhere" and never one sending it "direct" to
+// Anthropic while the request goes to Google.
 //
-// Mutation (build the set from lc.Providers alone): the line names no
-// destination and this test fails on the missing provider.
-func TestAttachProviderWarningNamesAnthropicDirect(t *testing.T) {
+// Mutation (name the direct route whatever the auth says, or build the set
+// from lc.Providers alone): the line names no destination, or names the
+// wrong one, and this test fails on it.
+func TestAttachProviderWarningNamesTheDefaultAuthRoute(t *testing.T) {
 	f := artifactAttachFixture(t)
 	shot := attachShot(t, "shot.png", "png")
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--recipe", "sizzle", "--run-id", "20261015-100000-abcd", "--attach", shot, "Render the nightly bundle")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errOut, attachDirectAnthropic) {
-		t.Fatalf("the destination line does not name %s:\n%s", attachDirectAnthropic, errOut)
+	if !strings.Contains(errOut, attachRouteVertex) {
+		t.Fatalf("the destination line does not name %s:\n%s", attachRouteVertex, errOut)
+	}
+	if strings.Contains(errOut, attachDirectAnthropic) {
+		t.Fatalf("a default (vertex) launch named %s:\n%s", attachDirectAnthropic, errOut)
 	}
 	if strings.Contains(errOut, "route nowhere") {
 		t.Fatalf("a default Claude workflow was told its file goes nowhere:\n%s", errOut)

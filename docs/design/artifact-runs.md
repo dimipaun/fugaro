@@ -661,17 +661,17 @@ write:
    The checks all happen before the first `PutFile`, and a refusal names the
    number, the cap and the count.
    **One printed line names where the file may go (D9's whole mechanism, and the
-   round-3 review's correction).** With the caps checked, the launcher prints
-   **one** line — the destination set of §8 item 8, which is every allowed
-   provider that claims one of the run's models plus **`Anthropic (direct)`**
-   whenever a model is unclaimed — on the `warn` writer beside the other launch
-   notes. It is **not a gate**, it is printed once per launch and **only when
-   `--attach` carried a file**, and it never tells a default Claude workflow that
-   its screenshot "routes nowhere": `lc.Providers` holds only the non-Anthropic
-   backends (`internal/localcfg/localcfg.go:89-91`), so a set read from it alone
-   would be empty exactly for the owner's own workflows. The *local* wording is
-   for the case where nothing receives the bytes at all — no claiming provider
-   **and** no Anthropic path.
+   round-3 and round-4 reviews' corrections).** With the caps checked, the
+   launcher prints **one** line — the destination set of §8 item 8, which is
+   every allowed provider that claims one of the run's models plus the run's
+   **own auth route** whenever a model is unclaimed — on the `warn` writer beside
+   the other launch notes. It is **not a gate**, it is printed once per launch
+   and **only when `--attach` carried a file**, and it never tells a default
+   Claude workflow that its screenshot "routes nowhere": `lc.Providers` holds
+   only the non-Anthropic backends (`internal/localcfg/localcfg.go:89-91`), so a
+   set read from it alone would be empty exactly for the owner's own workflows.
+   The *local* wording is for the case where nothing receives the bytes at all —
+   no claiming provider **and** no auth route.
 
 3. **Upload each file to `runs/<slug>/<run>/inputs/<name>`**, hashing it as it
    goes, recording `{name, bytes, sha256}` in the task spec — the plan's
@@ -1199,10 +1199,16 @@ produced (out), and files an operator handed to a model-driven job (in).
    **not** `Agent.PinnedModels`, whose third entry is the raw
    `Models.Background`, empty unless the config sets it: a run whose coder a
    provider claims never makes an unset-background call to Anthropic at all,
-   so `PinnedModels` would name `Anthropic (direct)` for a run that makes no
-   Anthropic call); a model no such provider claims goes to
-   **Anthropic, direct** — the `oauth` path and the Anthropic-key path both do,
-   and `oauth` is never proxied (`docs/design/m9-budget-and-dashboard.md:8`). The
+   so `PinnedModels` would name a direct route for a run that makes no such
+   call); a model no such provider claims goes to the run's **own auth route**,
+   which `agent.auth` decides: `vertex` — Fugaro's default, written into every
+   config the launcher reads by `config.applyDefaults`
+   (`internal/config/defaults.go:48-50`) — is Claude on **Google Vertex AI**,
+   `api-key` is Anthropic's own API, and `oauth` is Anthropic on a subscription's
+   token, never proxied (`docs/design/m9-budget-and-dashboard.md:8`). Naming one
+   of the three for all three would tell the owner of a default configuration
+   that a screenshot goes straight to Anthropic while the call, and the bytes in
+   it, go to Google. The
    only providers a run can use at all are the ones that list the repository in
    `allow_data_to` (`config.ModelProvider.AllowsData`,
    `internal/config/providers.go:194`; the job's environment is built from
@@ -1210,16 +1216,23 @@ produced (out), and files an operator handed to a model-driven job (in).
    So the line is the union of:
 
    - **each allowed provider that claims one of the run's models**, by name; and
-   - **`Anthropic (direct)`**, whenever any of the run's models is *not* claimed
-     by one of those providers.
+   - **the run's own auth route**, whenever any of the run's models is *not*
+     claimed by one of those providers: `Google Vertex AI` under `agent.auth`
+     `vertex` (the default), `Anthropic (direct)` under `api-key`, and
+     `Anthropic (oauth token)` under `oauth`.
 
    **The correction the review asked for:** `lc.Providers` is documented as
    **"the non-Anthropic backends models may be routed to"**
    (`internal/localcfg/localcfg.go:89-91`), so a set built from it *alone* is
    **empty for a default Claude workflow** — and a line that read "routes
    nowhere" there would be telling an owner their screenshot stays local while it
-   is on its way to Anthropic. The line therefore never claims the file stays on
-   the machine unless **there is no Anthropic path and no claiming provider**.
+   is on its way to the model's route. The line therefore never claims the file
+   stays on the machine unless **there is no auth route and no claiming
+   provider**.
+   **The round-4 correction:** the route an unclaimed model takes is the run's
+   `agent.auth`, so naming "Anthropic (direct)" for it was wrong for the default
+   configuration — `applyDefaults` writes `vertex`, so those bytes go to Google
+   Vertex AI — and the line names the auth mode's own destination.
 
    **And the gate it is not:** `allow_data_to` answers "may this repository's
    content reach this provider?", and an attachment is *task text*, not

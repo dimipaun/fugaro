@@ -351,9 +351,40 @@ func attachCaps(ctx context.Context, spec *task.Spec) config.Inputs {
 	return config.Inputs{}
 }
 
-// attachDirectAnthropic is the name D9's line uses for the Anthropic route
-// itself: the destination of every model a provider does not claim.
-const attachDirectAnthropic = "Anthropic (direct)"
+// The names D9's line uses for the route a model no provider claims takes.
+// agent.auth decides which one it is: vertex sends the call to Google, the
+// other two to Anthropic, on its API or on a subscription's token.
+const (
+	attachRouteVertex = "Google Vertex AI"
+	// attachDirectAnthropic is Anthropic's own API, which agent.auth api-key
+	// calls with the run's stored key.
+	attachDirectAnthropic = "Anthropic (direct)"
+	// attachRouteOAuth is Anthropic reached with a Claude subscription's
+	// oauth token.
+	attachRouteOAuth = "Anthropic (oauth token)"
+)
+
+// attachRouteFor names the destination of a model no provider claims, which
+// is the run's own auth route and nothing else. agent.auth vertex — and ""
+// with it, since config.applyDefaults writes vertex into every config the
+// launcher reads and a launch made outside the checkout hands this function a
+// zero config.Agent — sends Claude calls to Google Vertex AI; api-key sends
+// them to Anthropic's own API; oauth to Anthropic on a subscription's token.
+// A single "Anthropic (direct)" for all three would tell the owner of a
+// default configuration that their screenshot goes straight to Anthropic when
+// the call, and the bytes in it, go to Google. config.Validate admits only
+// these three, so there is no fourth answer to give; the default arm answers
+// with the one applyDefaults writes.
+func attachRouteFor(auth string) string {
+	switch auth {
+	case "api-key":
+		return attachDirectAnthropic
+	case "oauth":
+		return attachRouteOAuth
+	default:
+		return attachRouteVertex
+	}
+}
 
 // attachProviders lists, sorted, every destination the attached bytes may
 // reach through the model (design §8 item 8), and it is NOT lc.Providers on
@@ -372,36 +403,46 @@ const attachDirectAnthropic = "Anthropic (direct)"
 //     provider that claims none of these three models is one this file's
 //     bytes cannot reach. The two sets are not the same set, and nothing here
 //     claims they are; and
-//   - attachDirectAnthropic whenever any of those models is not claimed by
-//     one of those providers, which is config.NeedsAnthropicKey's own rule
-//     and is the case a default Claude workflow always takes.
+//   - the run's own auth route (attachRouteFor) whenever any of those models
+//     is not claimed by one of those providers, which is
+//     config.NeedsAnthropicKey's own rule — a model no allowed provider
+//     claims goes direct — and is the case a default Claude workflow always
+//     takes. The route is named by ag.Auth, because "direct" is Vertex for a
+//     default configuration and Anthropic only under api-key or oauth: the
+//     models arrive at a destination the auth mode picks, and the line has to
+//     name the one the bytes reach (config.CheckProviderAuth's own reading of
+//     the three).
 //
 // The three models are NeedsAnthropicKey's own three, in its own order
 // (coder, reviewer, EffectiveBackground) — NOT Agent.PinnedModels, whose
 // third entry is the raw Models.Background. Background is empty whenever the
 // config leaves it unset, and a run whose coder a provider claims never makes
 // an unset-background call to Anthropic at all: config.EffectiveBackground
-// substitutes the coder's own model there, so PinnedModels would print
-// "Anthropic (direct)" for a run that makes no Anthropic call. The set never
-// under-reports either way — an unclaimed model always sets direct — and the
-// one line D9 exists for must not name a destination the bytes cannot reach.
+// substitutes the coder's own model there, so PinnedModels would print the
+// direct route for a run that makes no such call. The set never under-reports
+// either way — an unclaimed model always names the auth route — and the one
+// line D9 exists for must not name a destination the bytes cannot reach.
 //
 // One case does not get that right, and it is the launcher/checkout
 // approximation the rest of this file already makes: with no checkout of the
 // task's repository there are no agent models to read, and attachLaunch hands
 // this function a ZERO config.Agent (run_attach.go, attachLaunch), so all
-// three models are "" and the line names Anthropic (direct) even for a
-// repository whose every model a gateway serves. It over-reports in the safe
-// direction — it never claims the bytes stay on the machine, and an
-// unclaimable model is an Anthropic path in NeedsAnthropicKey's own rule —
-// but it can name a destination the bytes do not reach and leave out the one
-// they do. Reading the repository's agent config at the launch's ref is what
-// would fix it, which is the same base-file read this CLI cannot make
-// (checkArtifactLaunch's and recipeForLaunch's own caveat).
+// three models are "", the direct route is added — correctly, an unclaimable
+// model is a direct-path model in NeedsAnthropicKey's own rule — and that
+// route is then named vertex, the auth applyDefaults gives every config this
+// CLI reads. So a repository whose fugaro.yaml sets agent.auth api-key, and
+// whose every model a gateway serves, is told Vertex AI where the bytes do
+// reach Anthropic. It never claims the bytes stay on the machine, but it can
+// name a destination the bytes do not reach and leave out the one they do.
+// Reading the repository's agent config at the launch's ref is what would fix
+// it, which is the same base-file read this CLI cannot make
+// (checkArtifactLaunch's and recipeForLaunch's own caveat), and it is no
+// worse than the models half of the same approximation, which is silent
+// about a claiming provider for the same reason.
 //
-// The empty set therefore means "no Anthropic path and no claiming
+// The empty set therefore means "no direct path and no claiming
 // provider". With these three models it cannot actually arise (an unclaimed
-// one is an Anthropic path); the branch is defensive, and
+// one is a direct path); the branch is defensive, and
 // attachProviderWarning says so with the local wording rather than claiming
 // the file stays on the machine.
 func attachProviders(lc *localcfg.Config, ag config.Agent, repo string) []string {
@@ -422,7 +463,7 @@ func attachProviders(lc *localcfg.Config, ag config.Agent, repo string) []string
 	}
 	names := slices.Sorted(maps.Keys(claimed))
 	if direct {
-		names = append(names, attachDirectAnthropic)
+		names = append(names, attachRouteFor(ag.Auth))
 	}
 	return names
 }
@@ -436,11 +477,12 @@ func attachProviders(lc *localcfg.Config, ag config.Agent, repo string) []string
 // governs this, and no launch is refused over it.
 //
 // The local wording is for the empty set alone: nothing claiming the run's
-// models and no Anthropic path. It says the bytes stay on this machine
-// because in that case that is true, and it is the only case where it is.
+// models and no direct path — not even the run's own auth route, which every
+// unclaimed model takes. It says the bytes stay on this machine because in
+// that case that is true, and it is the only case where it is.
 func attachProviderWarning(warn io.Writer, providers []string) {
 	if len(providers) == 0 {
-		fmt.Fprintln(warn, "--attach: the attached files reach the model, and the workflow's models route nowhere: no provider claims them and no Anthropic route is configured, so the bytes stay on this machine.")
+		fmt.Fprintln(warn, "--attach: the attached files reach the model, and the workflow's models route nowhere: no provider claims them and the run's auth route is unset, so the bytes stay on this machine.")
 		return
 	}
 	fmt.Fprintf(warn, "--attach: the attached files reach the model, and so reach %s. Attaching a file is sending it there, under the same policy the workflow's own model calls already run under.\n",
