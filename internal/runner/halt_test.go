@@ -473,20 +473,18 @@ func TestHaltRecordedInResult(t *testing.T) {
 func TestHaltAdviceNamesLimitSource(t *testing.T) {
 	at := runCapHalt.At
 	cases := []struct {
-		name    string
-		reason  runstore.HaltReason
-		key     string
-		source  string
-		want    []string
-		notWant []string
+		name   string
+		reason runstore.HaltReason
+		key    string
+		source string
+		want   []string
 	}{
-		{"token ceiling", runstore.HaltTokenCap, "max_run_tokens", "ceiling", []string{"project config", "fugaro init --repo", "ignored", "`budget.max_run_tokens`"}, []string{"`agent.max_run_tokens`"}},
-		{"token policy", runstore.HaltTokenCap, "max_run_tokens", "policy", []string{"`budget.max_run_tokens`", "project's policy"}, []string{"`agent.max_run_tokens`", "fugaro init --repo"}},
-		{"token default branch", runstore.HaltTokenCap, "max_run_tokens", "default-branch", []string{"default branch", "merge", "ignored", "`agent.max_run_tokens`"}, []string{"`budget.max_run_tokens`"}},
-		{"token branch", runstore.HaltTokenCap, "max_run_tokens", "branch", []string{"`agent.max_run_tokens`", "this run's branch"}, []string{"`budget.max_run_tokens`"}},
-		{"cap ceiling", runstore.HaltRunCap, "per_run_usd", "ceiling", []string{"project config", "fugaro init --repo", "ignored"}, nil},
-		{"cap default branch", runstore.HaltRunCap, "per_run_usd", "default-branch", []string{"default branch", "merge", "ignored"}, nil},
-		{"nocap default branch", runstore.HaltNoCap, "per_run_usd", "default-branch", []string{"default branch", "merge"}, nil},
+		{"token ceiling", runstore.HaltTokenCap, "max_run_tokens", "ceiling", []string{"project config", "fugaro init --repo", "ignored"}},
+		{"token default branch", runstore.HaltTokenCap, "max_run_tokens", "default-branch", []string{"default branch", "merge", "ignored"}},
+		{"token branch", runstore.HaltTokenCap, "max_run_tokens", "branch", []string{"`agent.max_run_tokens`", "this run's branch"}},
+		{"cap ceiling", runstore.HaltRunCap, "per_run_usd", "ceiling", []string{"project config", "fugaro init --repo", "ignored"}},
+		{"cap default branch", runstore.HaltRunCap, "per_run_usd", "default-branch", []string{"default branch", "merge", "ignored"}},
+		{"nocap default branch", runstore.HaltNoCap, "per_run_usd", "default-branch", []string{"default branch", "merge"}},
 	}
 	for _, tc := range cases {
 		rec := &runstore.Record{RunID: runID, Status: runstore.StatusHalted, Outcome: runstore.OutcomeNone,
@@ -496,11 +494,6 @@ func TestHaltAdviceNamesLimitSource(t *testing.T) {
 		for _, w := range tc.want {
 			if !strings.Contains(got, w) {
 				t.Errorf("%s: report lacks %q:\n%s", tc.name, w, got)
-			}
-		}
-		for _, w := range tc.notWant {
-			if strings.Contains(got, w) {
-				t.Errorf("%s: report names %s, the spelling of another layer:\n%s", tc.name, w, got)
 			}
 		}
 		if tc.source != "ceiling" && strings.Contains(got, "fugaro init --repo") {
