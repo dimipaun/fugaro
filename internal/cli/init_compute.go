@@ -36,9 +36,10 @@ type computeStage struct {
 	// JSON result read the same either way.
 	changes *infra.PlanCounts
 	applied bool
-	// image is the preloaded boot image the root's outputs named, and want
-	// the name the pin derives: Verify compares them.
-	image, want string
+	// image is the preloaded boot image the root's outputs named: what the
+	// stage prints and what its result records. It is not something Verify
+	// can hold to anything of its own (see Verify).
+	image string
 	// t and spec are the compute root this stage is working on, kept
 	// between the plan, the apply and the outputs.
 	t    *tf.TF
@@ -60,15 +61,22 @@ func (s *computeStage) Left() initflow.Left {
 	return promptLeft(initflow.Compute, "type the project's name at the provisioning confirmation", "init", "--provision-batch")
 }
 
-// Verify re-reads what the apply read back: the preloaded boot image the root
-// names is the one the installation's pinned base image derives, so a state
-// that names something else is a stage that provisioned for a different pin.
-func (s *computeStage) Verify(context.Context) error {
-	if s.want == "" || s.image == "" || s.image == s.want {
-		return nil
-	}
-	return fmt.Errorf("the compute root reports the preloaded image %s, but the installation's pin builds %s: rerun with --provision-batch so the boot image matches the image the runs pull", s.image, s.want)
-}
+// Verify has nothing of its own to read back, and this is deliberately not a
+// comparison of the outputs against the derived name: the two are equal by
+// construction. The outputs are written by the apply that this stage ran,
+// from the tfvars it wrote, and the module derives the image's name from the
+// same pin's hash with the same expression Go does
+// (infra.PreloadedImage, held together by
+// TestPreloadedImageMatchesTheModule) -- so a check comparing them could
+// never fail, on any path, and an apply is never reached with a pin it did
+// not read (a moved pin changes the scheduler job's own body, preload.tf, so
+// terraform reports it as a change and applies it rather than reporting "No
+// changes"). What is NOT equal by construction is the preloaded IMAGE: a
+// script builds it out of band and no resource holds it, so terraform's
+// refresh covers none of it, and reading it back would take a Compute client
+// this package's Clients does not carry. That read is the owner's live check
+// (Check 57b) and `doctor`'s, which §8.1 task 8 gives the preload image.
+func (s *computeStage) Verify(context.Context) error { return nil }
 
 // Plan shows what the apply would do: the real plan, guarded, with nothing
 // applied and nothing confirmed.
@@ -161,7 +169,7 @@ func (s *computeStage) plan(ctx context.Context) (*tf.Plan, error) {
 }
 
 // readOutputs is what the stage reports: the names the apply created, and the
-// preloaded image's name, which Verify holds to the pin.
+// preloaded image's name the root's state carries.
 func (s *computeStage) readOutputs(ctx context.Context) error {
 	raw, err := s.t.Output(ctx)
 	if err != nil {
@@ -220,6 +228,7 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		BaseFamily:         "batch-cos-stable-official",
 		PreloadZone:        e.spec.Region + "-a",
 		PreloadSchedule:    "0 3 * * 1",
+		PreloadRefreshDays: infra.PreloadRefreshDaysDefault,
 		BuilderMachineType: "e2-medium",
 		BuildSubmitterRole: outs.RoleIDs.BuildSubmitter,
 	}
@@ -245,7 +254,7 @@ func (s *computeStage) prepare(ctx context.Context) error {
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
-	s.t, s.spec, s.want = t, spec, infra.PreloadedImage(spec.BaseImage)
+	s.t, s.spec = t, spec
 	return nil
 }
 
