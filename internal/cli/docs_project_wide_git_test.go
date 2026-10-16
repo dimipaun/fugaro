@@ -137,3 +137,52 @@ func TestSecurityMdStatesTheProjectScopeDefault(t *testing.T) {
 		t.Error("SECURITY.md does not say which names the default leaves alone")
 	}
 }
+
+// TestDocsStateTheProjectScopeDefaultWhereASecretIsStored (plan Task 2.3
+// step 3): D2 changed where `fugaro secrets set` puts a value, so every page
+// a person meets the command on has to say the default and what it changes —
+// the project layer (the scope table's "outside this table" paragraph), the
+// multi-model guide (which keys a job mounts, and when a re-run of init
+// --repo is what changes that), the dogfooding page (whose own installation
+// enrolls three repositories), and the setup skill, where the changed prompt
+// wording and doctor's own scope listing are what a person reads before
+// recommending a store. The sentences wrap in the files, so the assertions
+// are made against the whitespace-normalized text.
+func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{"../../docs/project-layer.md", []string{
+			"a secret name is stored **project-wide by default**",
+			"`fugaro secrets set NAME` with no flag writes the project's own container",
+			"`--repo` is what asks for one repository's own copy instead",
+			"warns when a repository copy shadows the project's",
+		}},
+		{"../../docs/multi-model.md", []string{
+			"One key for the whole project, and it is the default.",
+			"`--project-wide` is still accepted as a synonym",
+			"a project-scope copy created or deleted after a job's apply changes what that job mounts only on the next `fugaro init --repo`",
+		}},
+		{"../../docs/dogfooding.md", []string{
+			"Both are stored once for the project",
+			"which `fugaro doctor` lists per name and warns about when it happens",
+		}},
+		{"../../plugin/skills/setup/SKILL.md", []string{
+			"Init's secrets prompts store project-wide unless `--repo` is passed",
+			"`secret-scope` line says which copy it resolves per name",
+		}},
+	}
+	for _, tc := range cases {
+		data, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := strings.Join(strings.Fields(string(data)), " ")
+		for _, want := range tc.want {
+			if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q", tc.path, want)
+			}
+		}
+	}
+}
