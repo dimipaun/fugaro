@@ -944,11 +944,30 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// :90-94 and `cloud` is :95-110. A range that stops at :88 describes
 		// one of the three steps and claims all three.
 		"internal/cli/upgrade.go:84-88",
+		// allowSourcesOf is declared at :345 (doc comment from :332); :352 is
+		// a line inside the for loop, so a reader following the citation lands
+		// on a statement that has nothing to do with the seed's sources.
+		"internal/cli/project_cmd.go:352",
 	} {
 		if strings.Contains(section, dead) {
 			t.Errorf("the Check 49 section cites %q, which does not point at what it says on this tree", dead)
 		}
 	}
+
+	// Step 1's backup keeps the FIRST copy, and the guard paragraph names every
+	// variable the first hard stop asserts. The unguarded `cp` was the review's
+	// finding: steps are re-run block by block, so a second pass through step 1
+	// overwrote the pre-check file with whatever step 8 had just put back, and
+	// step 8's byte-for-byte FACT then compared the operator's config against
+	// itself. The paragraph said the stop asserts `P`, `L` and `TASK` and did
+	// not mention `C`, which is the variable whose emptiness does the damage.
+	chk49MustContain(t, chk49Step(t, section, "### 1."), "step 1", []string{
+		`[ -e "$C.before-49" ] || cp "$C" "$C.before-49"`,
+		"KEEP THE FIRST COPY",
+	})
+	chk49MustContain(t, section, "section", []string{
+		"`P` is exactly `fugaro-dev`, and `L`, `TASK` **and `C`** are non-empty",
+	})
 
 	// Every variable the section's commands read is set by the block that is
 	// re-run at the start of every step, or is a step's own (the map below).
