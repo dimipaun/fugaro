@@ -1639,6 +1639,16 @@ const routingCacheMarkersUnmeasured = "a routed Claude senior's cost is unmeasur
 // what keeps the sentence above from reading as a warning about nothing.
 const routingCacheMarkersNothingRouted = "no Claude ID is routed through a provider by this policy, so no call is charged at a route's rate: when the switch routes one, whether that route reports cache_read/cache_write tokens at all is unmeasured until Check 50 runs"
 
+// routingCacheMarkersUnread is the same check when the policy node itself could
+// not be read: no Firebase backend, an unreachable budget database, a marker or
+// a version this binary cannot read, a failed read. Every one of those paths
+// reaches doctorRoutingChecks with no node, and "no Claude ID is routed through
+// a provider by this policy" is a reading of a node nobody read — doctor said
+// the resolution was unresolved on the line beside it and then reported a
+// reading of the same node. It says which state this is instead, as
+// routing-resolution does.
+const routingCacheMarkersUnread = "the policy node was not read (see routing-resolution), so whether a Claude ID is routed through a provider — and so whether any call is charged at a route's rate — is unknown here: when one is, whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN)"
+
 // routingCacheMarkersUndetermined is the same check when the resolution above
 // could not be read at all: doctor cannot say a routed Claude's cost is
 // unmeasured (nothing may route) or that nothing is charged at a route's rate
@@ -1687,7 +1697,7 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 				Problem: "the routing resolution is unresolved: " + why,
 				Fix:     "fugaro project policy show prints the switch the published node holds, and `fugaro validate` prints this line from the operator's own config (offline)"},
 			{ID: "routing-cache-markers", Severity: "info",
-				Problem: routingCacheMarkersNothingRouted,
+				Problem: routingCacheMarkersUnread,
 				Fix:     "fugaro project policy publish writes the switch the owner's config holds; Check 50 measures what a routed Claude costs"},
 		}
 	}
@@ -1738,7 +1748,13 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 			route, sent, ok := config.RoutingClaudeFor(c, m, providers)
 			switch {
 			case !ok:
-				lines = append(lines, fmt.Sprintf("%s: %s -> unresolved: the switch names it and none of the routes a run of this repository carries claims it with allow_data_to written, so that run halts (the project's routing switch is not usable) — check the entry's models list, and that its allow_data_to admits %s", repo, m, repo))
+				// The halt is the gateway's (D11, design §6.2): a run whose
+				// budget is off, or whose credential is not a model API's,
+				// returns before it reads the switch. doctor reads the policy
+				// and this machine's config, not the repository's fugaro.yaml,
+				// so it cannot say whether the run this line is about has one —
+				// it says which run halts, not that every run does.
+				lines = append(lines, fmt.Sprintf("%s: %s -> unresolved: the switch names it and none of the routes a run of this repository carries claims it with allow_data_to written, so a run of this repository whose gateway is on halts (the project's routing switch is not usable) — check the entry's models list, and that its allow_data_to admits %s", repo, m, repo))
 			case route == config.RouteDirect:
 				lines = append(lines, fmt.Sprintf("%s: %s -> direct (via: %s)", repo, m, c.ViaValue()))
 			default:

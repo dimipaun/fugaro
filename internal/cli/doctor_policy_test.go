@@ -468,6 +468,19 @@ func TestDoctorRoutingCheckNamesTheLiveQuestion(t *testing.T) {
 	if !ok || c.Severity != "info" || !strings.Contains(c.Problem, "unresolved") {
 		t.Fatalf("no policy published: routing-resolution = %+v (present %v), want an info check saying unresolved", c, ok)
 	}
+	// The cost question beside it is in the same state, and it has to read as
+	// one: every path to this branch is a node doctor could not read (no
+	// backend, an unreachable database, a marker or version error, a read
+	// error), and "no Claude ID is routed through a provider by this policy" is
+	// a reading of a node nobody read — the second info line contradicting the
+	// first.
+	cm, ok = doctorChecksByID(t)["routing-cache-markers"]
+	if !ok || !strings.Contains(cm.Problem, "not read") {
+		t.Fatalf("an unread node: routing-cache-markers = %+v (present %v), want it to say the node was not read", cm, ok)
+	}
+	if strings.Contains(cm.Problem, "no Claude ID is routed") {
+		t.Errorf("doctor reports a reading of a node it did not read: %+v", cm)
+	}
 }
 
 // TestDoctorReportsAPolicyNodeEveryReaderRefuses is the review of this task's
@@ -573,7 +586,10 @@ func TestDoctorResolvesTheSwitchOverTheRoutesARunCarries(t *testing.T) {
 	if strings.Contains(res.Problem, "-> openrouter") {
 		t.Errorf("the check prints a resolution a run of this repository does not take: %+v", res)
 	}
-	for _, want := range []string{"halts", "allow_data_to"} {
+	// The halt is the gateway's (D11, design §6.2): doctor reads the policy,
+	// not a repository's file, so it cannot say whether the run this line is
+	// about has one — the line says what halts, not that every run does.
+	for _, want := range []string{"halts", "gateway is on", "allow_data_to"} {
 		if !strings.Contains(res.Problem, want) {
 			t.Errorf("the unresolved line does not say %q: %+v", want, res)
 		}

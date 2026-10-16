@@ -329,7 +329,10 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // resolve from, and the line says "unresolved offline" — a resolution this
 // command did not resolve is never printed as if it had been (the resolver's
 // own contract, config.RoutingClaudeFor). A model the switch names and cannot
-// resolve is a problem, not a silent fall-back to direct: D1b's safeguard.
+// resolve is a problem where the run has a gateway — the run halts with "the
+// project's routing switch is not usable", never falling back to direct (D1b's
+// safeguard and the switch's own route) — and a note where it has none, since
+// routing is the gateway's (routingHaltsRun, D11, design §6.2).
 //
 // The refusal is design §6.2's safeguard read from the offline side. A project
 // that routes Claude through a provider is a project with no Anthropic key to
@@ -440,13 +443,60 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 				problems = append(problems, config.Problem{Path: p.path, Message: why})
 			}
 		case !ok:
-			problems = append(problems, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
-				"%s is named by routing.claude.models and does not resolve over the routes a run of %s carries: no single provider entry claims it with allow_data_to written, or the entry that claims it does not admit this repository, and a call the switch names has no direct fall-back (D1b, design §6.2). A run of this repository halts with \"the project's routing switch is not usable\"; fix the list, the claim, or the allow_data_to of the entry that claims it", p.model, repo)})
+			// The switch names this model and no route a run of this repository
+			// carries claims it. Whether that is a defect in the configuration
+			// depends on whether the run has a gateway at all: routing is the
+			// gateway's (design §6.2, D11), and a run with none returns before it
+			// reads the switch, so there the pins keep their Claude IDs and
+			// nothing halts. The halt this rule reported in every state is a halt
+			// only a run with a gateway makes, and the refusal beside it is gated
+			// on exactly that difference (claudeDirectRefusal) — the two halves of
+			// one function may not disagree about whether routing exists here.
+			msg := fmt.Sprintf("%s is named by routing.claude.models and does not resolve over the routes a run of %s carries: no single provider entry claims it with allow_data_to written, or the entry that claims it does not admit this repository, and a call the switch names has no direct fall-back (D1b, design §6.2)", p.model, repo)
+			fix := "fix the list, the claim, or the allow_data_to of the entry that claims it"
+			halts, noGateway := routingHaltsRun(cfg.Agent, mode)
+			if !halts {
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: msg + fmt.Sprintf(". The switch is the gateway's and this configuration's runs have none (%s), so nothing halts here: the pins keep their Claude IDs and the switch is inert until the budget is on and the credential is a model API's. %s, before a run with a gateway meets the switch", noGateway, fix)})
+			} else if sw.ViaValue() == config.RouteAuto {
+				// via: auto keeps the pins direct when the job has an Anthropic
+				// key, so the halt is the keyless run's — the reading this file's
+				// own note gives that state.
+				problems = append(problems, config.Problem{Path: "routing.claude", Message: msg + ". A run of this repository that has no Anthropic API key stored halts with \"the project's routing switch is not usable\" (via: auto keeps the pins direct when one is stored); " + fix})
+			} else {
+				problems = append(problems, config.Problem{Path: "routing.claude", Message: msg + ". A run of this repository halts with \"the project's routing switch is not usable\"; " + fix})
+			}
 		default:
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> %s, sent as %s", p.model, route, sent)})
 		}
 	}
 	return problems, notes
+}
+
+// routingHaltsRun reports whether a switch a run cannot resolve halts it, and
+// names what this configuration's runs are missing when it does not.
+//
+// Routing exists only where the run has a gateway (design §6.2, D11), and the
+// gateway is internal/runner's gatewayOn: the budget is on (observe or enforce
+// — an unset mode is off, which is the reader's own answer too,
+// localcfg.BudgetMode) and the credential is a model API's, api-key or vertex
+// (an oauth run's own token never goes through the gateway). applyRouting
+// returns before it ever reads the switch when gatewayOn is false, and the
+// runner has a test for exactly that mutation
+// (TestRoutingDoesNothingWithTheGatewayOff), so a halt validate reports in a
+// state the run never reaches is a claim about a run nobody runs.
+func routingHaltsRun(a config.Agent, mode string) (halts bool, why string) {
+	var off []string
+	if mode != policy.ModeObserve && mode != policy.ModeEnforce {
+		m := mode
+		if m == "" {
+			m = policy.ModeOff
+		}
+		off = append(off, "budget.mode is "+m)
+	}
+	if a.Auth != "api-key" && a.Auth != "vertex" {
+		off = append(off, "agent.auth is "+a.Auth)
+	}
+	return len(off) == 0, strings.Join(off, " and ")
 }
 
 // claudeSwitchOf is the switch a routing block holds: nil for no block, nil

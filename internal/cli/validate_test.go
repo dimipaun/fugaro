@@ -1020,7 +1020,12 @@ func TestValidatePrintsUnresolvedOffline(t *testing.T) {
 // project's routing switch is not usable" — the failure ProvidersFor's own doc
 // names, and the false confidence doctor's check stopped giving (finding 3).
 func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
-	const claude = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\nworkflows:"
+	// The project config's budget is enforcing and the file's credential is a
+	// model API's, so a run of this repository has a gateway and the switch is
+	// something that acts on it: the halt the first case reports is one the run
+	// really makes (internal/runner's gatewayOn).
+	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	const claude = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	pinned := func() string {
 		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	}
@@ -1028,7 +1033,7 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 	// acme/other: the run carries no route, so validate may not print one, and
 	// the state is the halt the run halts with.
 	isolateProjects(t, t.TempDir())
-	projectRouting(t, routedProjectBlock+routedSwitchBlock)
+	projectRouting(t, budget+routedProjectBlock+routedSwitchBlock)
 	inCheckoutOf(t, "acme/other")
 	out, errOut, err := execute(t, "validate", pinned())
 	if strings.Contains(out+errOut, "-> openrouter") {
@@ -1040,7 +1045,7 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 	// The checkout the route admits: the same file resolves, so the refusal
 	// above is about the repository and not about the switch.
 	isolateProjects(t, t.TempDir())
-	projectRouting(t, routedProjectBlock+routedSwitchBlock)
+	projectRouting(t, budget+routedProjectBlock+routedSwitchBlock)
 	inCheckoutOf(t, "acme/sandbox")
 	_, errOut, err = execute(t, "validate", pinned())
 	if err != nil {
@@ -1054,7 +1059,7 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 	// for is the checkout's own answer (providerProblems passes "" to
 	// CheckProviderPolicy for the same reason), so the line says unresolved.
 	isolateProjects(t, t.TempDir())
-	projectRouting(t, routedProjectBlock+routedSwitchBlock)
+	projectRouting(t, budget+routedProjectBlock+routedSwitchBlock)
 	t.Chdir(t.TempDir())
 	_, errOut, err = execute(t, "validate", pinned())
 	if err != nil {
@@ -1062,6 +1067,52 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 unresolved") || strings.Contains(errOut, "-> openrouter") {
 		t.Fatalf("want an unresolved line and no resolution:\n%s", errOut)
+	}
+}
+
+// TestValidateDoesNotClaimAHaltWithoutAGateway pins the review finding on the
+// unresolved-switch rule: it printed a `routing.claude` problem — a user-error
+// exit — saying "A run of this repository halts with \"the project's routing
+// switch is not usable\"" in every state, while a run only reaches the switch
+// when its gateway is on. internal/runner's applyRouting returns before
+// CheckRouting when !gatewayOn() (the mutation
+// TestRoutingDoesNothingWithTheGatewayOff exists to catch), and gatewayOn is
+// the budget being on (observe or enforce) and the credential's being a model
+// API's (api-key or vertex). The sibling refusal in the same function is gated
+// on the mode, so the two halves of one function disagreed about whether
+// routing exists without a gateway (D11, design §6.2).
+//
+// A configuration whose runs have no gateway is not a failing one: the switch
+// is inert, the pins keep their Claude IDs, and the line is a note that says
+// so.
+func TestValidateDoesNotClaimAHaltWithoutAGateway(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	pin := func(auth string) string {
+		return "agent:\n  auth: " + auth + "\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	}
+	// routedProjectBlock admits acme/sandbox only and the switch names the
+	// model, so a run of acme/other carries no route for it: the state the rule
+	// is about, in each of the two ways a run has no gateway.
+	for _, tc := range []struct{ name, budget, auth string }{
+		{"the budget is off", "", "api-key"},
+		{"the credential is not a model API's", budget, "oauth"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateProjects(t, t.TempDir())
+			projectRouting(t, tc.budget+routedProjectBlock+routedSwitchBlock)
+			inCheckoutOf(t, "acme/other")
+			path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", pin(tc.auth), 1))
+			out, errOut, err := execute(t, "validate", path)
+			if err != nil {
+				t.Fatalf("validate refused a configuration whose runs have no gateway: %v\n%s%s", err, out, errOut)
+			}
+			if strings.Contains(out, "the project's routing switch is not usable") {
+				t.Fatalf("the halt is asserted for a run that has no gateway:\n%s", out)
+			}
+			if !strings.Contains(errOut, "routing.claude") || !strings.Contains(errOut, "gateway") {
+				t.Fatalf("want a note saying why the switch is inert here:\n%s", errOut)
+			}
+		})
 	}
 }
 
