@@ -1761,6 +1761,102 @@ func TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack(t *testing.T) {
 	}
 }
 
+// secretScopeRig is a doctor rig whose local config opts github-app-key into
+// project-wide storage for acme/app (projectSecretsRig) and whose checkout
+// carries a workflow secret of its own, so the scope listing has both a
+// project-eligible name and a repository-only one to show.
+func secretScopeRig(t *testing.T) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: db-password, env: DB_PASSWORD }] }\n"
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addLocalLines(t, r, projectSecretsConfig)
+	return r
+}
+
+// TestDoctorSecretScopeCheck: doctor lists each name this checkout's jobs
+// mount with the copy Fugaro resolves for it — the project's, or the
+// repository's own (plan Task 2.3 step 1) — as an info line, which never
+// fails doctor and names no value.
+func TestDoctorSecretScopeCheck(t *testing.T) {
+	r := secretScopeRig(t)
+	// The project's copy of the App key, and this repository's own copy of
+	// the workflow secret: one name each way, with two values that must never
+	// appear in doctor's output.
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+	slug := mustSlug("github", "acme/app")
+	r.sm.Seed(gcp.SecretID(slug, "db-password"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "db-password"}, []byte("repo-value"))
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "secret-scope")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("secret-scope = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, "project scope") {
+		t.Fatalf("secret-scope does not name the project-scope name: %q", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "db-password") || !strings.Contains(c.Problem, "repository copy") {
+		t.Fatalf("secret-scope does not name the repository copy: %q", c.Problem)
+	}
+	if checksFail([]doctorCheck{c}, true) {
+		t.Fatalf("the informational scope listing failed doctor under --strict: %+v", c)
+	}
+	for _, leak := range []string{"project-value", "repo-value"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("doctor printed a secret value %q:\n%s", leak, out)
+		}
+	}
+}
+
+// TestDoctorWarnsOnAShadowedProjectName: the same name is stored both
+// project-wide and in this repository's own container. A repository copy
+// with an enabled version wins over the project's forever (design
+// project-secrets.md §5, the footgun `fugaro secrets set` warns about at
+// store time), so the project's value never reaches this repository. A
+// warning, not red: the next fugaro init --repo cannot change it, and the
+// value the repository mounts is the one its own copy holds.
+func TestDoctorWarnsOnAShadowedProjectName(t *testing.T) {
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	r.sm.Seed(gcp.SecretID(slug, "github-app-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, []byte("repo-value"))
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "secret-scope-shadowed")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("secret-scope-shadowed = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, "wins") {
+		t.Fatalf("the warning doesn't name the shadowed name and the rule: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "secrets set github-app-key --repo acme/app") {
+		t.Fatalf("the fix doesn't name the command that stores the repository's own value: %q", c.Fix)
+	}
+	for _, leak := range []string{"project-value", "repo-value"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("doctor printed a secret value %q:\n%s", leak, out)
+		}
+	}
+}
+
 // extraAccessorRig is a doctor rig whose local config opts github-app-key
 // into project-wide storage for acme/app only, and records acme/old (which
 // is not allow-listed any more) with one workflow, so its job's service

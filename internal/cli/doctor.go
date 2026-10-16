@@ -983,6 +983,12 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 		Fix:     "run " + selfCommand() + " init --repo " + quoteWord(facts.repo) + " in your own terminal to reapply the repository, so the next run mounts the copy Fugaro resolves"}
 }
 
+// doctorSecretScopeChecks are doctor's "secret-scope" pair (plan Task 2.3
+// step 1): what this checkout's jobs mount, and from where.
+func doctorSecretScopeChecks(facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) []doctorCheck {
+	return nil
+}
+
 // doctorProjectSecretAccessorChecks is doctor's project-wide
 // "project-secret-extra-accessors" check (S3): for each project-wide
 // container, every live secretAccessor grant that belongs to one of the

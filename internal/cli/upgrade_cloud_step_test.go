@@ -181,6 +181,44 @@ func TestUpgradeNoteSaysTheEnvCopyIsInert(t *testing.T) {
 	}
 }
 
+// TestUpgradeNoteNamesTheMountCase (plan Task 2.3 step 2): after D2 a name
+// stored at project scope changes what a job mounts when the project's copy
+// is created or deleted, so the drift note must say that the mounts are
+// still a reason to re-run init --repo — the one thing the policy does not
+// carry — and that phase 3 moves the mounts to a shared profile.
+//
+// Mutation (verified, run and restored): make jobConfigCopyMountNote return
+// "": this test fails, finding no mount clause in the note.
+func TestUpgradeNoteNamesTheMountCase(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	db := gcpfake.NewRTDB(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+" }\n")
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"what a job mounts is still decided here",
+		"fugaro secrets set NAME",
+		"phase 3 gives the mounts to a shared profile",
+		"fugaro init --repo .",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the note lacks %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestUpgradeCloudNoNoteWhenJobConfigCopyMatches: the deployed job's copy
 // (here, no providers and no model_prices, which is also what this local
 // config produces) matches, so there is nothing to report.

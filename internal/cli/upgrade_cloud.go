@@ -285,11 +285,17 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	// are is the difference between a note the operator acts on and one they
 	// learn to ignore.
 	if p := jobConfigCopyPolicyNote(cctx, lc); p != "" {
-		return stale + p
+		return stale + p + jobConfigCopyMountNote()
 	}
 	return fmt.Sprintf("%s; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
-		stale, pluginwire.Printable(repo))
+		stale, pluginwire.Printable(repo)) + jobConfigCopyMountNote()
 }
+
+// jobConfigCopyMountNote is the drift note's mount clause (plan Task 2.3
+// step 2): after D2 a name stored at project scope changes what a job
+// mounts when the project's copy is created or deleted, and that is the
+// half of the job's configuration the policy does not carry.
+func jobConfigCopyMountNote() string { return "" }
 
 // jobConfigCopyPolicyNote is the drift note's policy clause: what a
 // published policy now governs, and what a job's environment still has to be
