@@ -10,7 +10,7 @@ This is a plan for a second artifact that does not exist yet, in a repository wh
 
 **The unusual order is deliberate: the facts come before the site.** Every page the spec asks for that is *about* the product is a rendering of something that already exists in this repository — the install instructions, `SECURITY.md`, `docs/releases/vX.Y.Z.md`, the command tree, the run records. Part 0 builds the machinery that turns each of those into a file, and a test that fails when the file and its source disagree. Part 1 builds a site that renders those files and nothing else. A site built the other way round — pages first, facts pasted in — is the failure mode F21 describes four times over: the copy most likely to be read is the copy least likely to be updated.
 
-**Two things this plan does not do.** It does not answer any decision row: §10 lists them, and the gate at §12 holds the whole plan behind the owner's answers. And it does not touch a single file under `.github/workflows/` — the deploy workflow is **staged** under `docs/pending-workflows/` for the owner to copy, which is the mechanism the repository already uses (F4, F62).
+**Two things this plan does not do.** It does not answer any decision row: §13 lists them, and the gate at §15 holds the whole plan behind the owner's answers. And it does not touch a single file under `.github/workflows/` — the deploy workflow is **staged** under `docs/pending-workflows/` for the owner to copy, which is the mechanism the repository already uses (F4, F62).
 
 ## 1. Part summary
 
@@ -31,11 +31,13 @@ This is a plan for a second artifact that does not exist yet, in a repository wh
 | **69b** | **Nothing phones home.** Loading the live page with the network panel open shows **no request to an origin outside the allowed-host list** — no font, no script, no embed, no pixel — and, if D93 chose analytics, exactly the one endpoint the decision names and nothing else. | Owner | W2.2 |
 | **69c** | **The published ranges are real.** The caps-and-costs page's figures are re-derived from the aggregation command over the same window and match, the sample sizes are printed, and the "not a promise" line is present. | Owner | W2.3 |
 
+**The "67 onward" collision, and the reading this plan applies.** The sentence all three documents quote hands the register **"managed projects 67 onward"**, and the managed-projects plan reads that as an open-ended block (`docs/plans/2026-10-16-managed-projects.md` §2, step 5: *"a block is held for the work it was given"*). Read that way, 69 is inside another line of work's block and is not free — so this plan applies the **bounded** reading, records it here rather than letting the number speak for itself, and bounds its own claim: "onward" is spent on the numbers a line of work actually takes and writes (managed projects took 67 **and** 68), a clause that reached every number above 67 would leave no later line of work able to take one at all, and **if any document on `origin/main` writes 69, or the owner reads the clause as open-ended, then 69 is managed projects' and the owner allocates** — W2.2 stops rather than renumbering (U6), and §15 carries the question as a gate item.
+
 **How 69 was chosen, in the order the register reads.** (1) Read `origin/main`'s register and take its highest written section — 58. (2) Read `docs/plans/2026-10-15-desktop-console-v2.md`'s allocation sentence (*"this one 62 and 63, voice 64–66, managed projects 67 onward"*) and the sibling plans' own check sections, which account for 59 through 68. (3) Take the next free number, 69. **A reserved number is never reused or renumbered**, so if another line of work claims 69 before Part 2 lands, **this plan follows the allocation and does not renumber**: the check task (W2.2) re-reads the register first and stops if 69 is taken, and the owner reallocates (U6). As in every precedent, **this plan does not write the row or the section**: W2.2 owns both, so one writer owns the number and a rebase cannot produce two.
 
 ## 3. Global Constraints
 
-1. **DOCS-ONLY until the owner answers §10.** The commit that adds this plan and the reconciliation touches **only** `docs/website/*`. No task in this plan starts before the gate at §12.
+1. **DOCS-ONLY until the owner answers §13.** The commit that adds this plan and the reconciliation touches **only** `docs/website/*`. No task in this plan starts before the gate at §15.
 2. **Nothing under `.github/workflows/` is ever created, edited or deleted by a run** (F4). A workflow change is authored under `docs/pending-workflows/` and copied in by the owner, and the staged file is removed in the same PR that copies it (the procedure `docs/pending-workflows/README.md` describes).
 3. **`GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` must pass** after every task, and `go test ./...` must pass after any task that adds or changes Go code (F10).
 4. **Tests are hermetic**: no real cloud, no network, no clock, no credential (F58). Every gate in this plan runs from the built artifact and the files in the tree; the live checks are the owner's, numbered 69 and up.
@@ -44,7 +46,7 @@ This is a plan for a second artifact that does not exist yet, in a repository wh
 7. **The site's own text is checked against `plugin/readme_test.go`'s retired-name walker**: files under `docs/` are read by `TestReadmeNamesNoRetiredSkill`, so no file this plan adds may name a retired skill (F7).
 8. **Nothing on the page loads from a third party** (F55, D106): fonts self-hosted, no CDN, no embed outside the allowed-host list, and the promise is enforced by a test over the built HTML's origins.
 9. **The site never links an unsigned or unreleased artifact** (F25): the downloads section renders from a data flag, and a test refuses to emit a link while the flag is false.
-10. **The aggregation reads one named installation, read-only, and emits no identifiers** (F32, D96): no repository name, run ID, branch, PR URL, task text, person or commit appears in its output, `belong` is never named by a task or a check and is never read by an agent, and the default target is the sandbox installation.
+10. **The aggregation reads one named installation, read-only, and emits no identifiers** (F32, D96): no repository name, run ID, branch, PR URL, task text, person or commit appears in its output, **`belong` and its repositories are named by no output, no check, no published figure and no test fixture this plan produces** — every red step and every test fixture uses a synthetic name, and the documents that record the rule name it only in order to state it — and `belong` is never read by an agent; the default target is the sandbox installation.
 11. **No number is published from a sample smaller than the minimum** (D97), and every published range carries its window, its sample size and the "not a promise" line.
 12. **Security claims are never paraphrased** (F41, D99): the security page is generated from `SECURITY.md`, byte for byte below the title, with its headings unchanged so the document's own cross-references keep pointing the right way.
 13. **The release train is not touched** (F5, F61, D109): no `website` check is added to `ci.yml` or `scripts/release-gate.sh`, and no CLI tag depends on the site.
@@ -145,7 +147,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 
 > **W0.1 → W0.2 → W1.1 → W1.3 → W1.4 → W1.11 → W2.1 → W2.2 → check 69a/69b → (W3.1, gated on the console's first release) → (W3.3, gated on the video)**
 
-Nine agent tasks plus two owner gates. **Everything else is a side branch and can land in any order**: W0.3 (the aggregation) is the largest single piece of work in the plan and is on no path to the site at all — it blocks only W2.3, the published figures, which is the one page that can wait. W0.4, W0.5 and W0.6 are three independent generators, and a reader benefits from each the day it merges. W1.5 through W1.10 are seven independent pages behind one shell.
+**Ten agent tasks plus three owner-run points** (the live check 69a/69b, the console's first release, and the video). **Everything else is a side branch and can land in any order**: W0.3 (the aggregation) is the largest single piece of work in the plan and is on no path to the site at all — it blocks only W2.3, the published figures, which is the one page that can wait. W0.4, W0.5 and W0.6 are three independent generators, and a reader benefits from each the day it merges. W1.5 through W1.10 are six independent pages behind one shell.
 
 **What the parallelism buys, stated honestly.** The plan's wall-clock is not the sum of its tasks: L0 and L1 are two agents, L4 is up to eight, and the only true serialization is the shell (W1.1 → W1.3) and the gates (W1.11, W2.1). The reason to cut it this way is not speed but **independence**: every level's PR is mergeable alone, and the owner's unanswered decisions (D90–D109) block exactly one thing — Part 2, which is why Parts 0 and 1 can start the day the gate opens even if the host, the domain and the palette are still open.
 
@@ -174,7 +176,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 **Files:** `website/data/site.yaml` (new), `internal/cli/docs_website_boundary_test.go` (new).
 
 **Steps.**
-1. Write `website/data/site.yaml` with the values the pages read and nobody hard-codes: `canonical_url` (a placeholder, per D92), `secondary_domain`, `analytics` (an object whose `enabled` is `false` until D93 is answered), `features: {console_downloads: false, video: false}` (D96, D107), `min_runs` (D97's N), and `allowed_hosts` (the origin list W1.11 enforces, seeded from the links the site actually makes: `github.com`, `raw.githubusercontent.com` and the site's own canonical origin).
+1. Write `website/data/site.yaml` with the values the pages read and nobody hard-codes: `canonical_url` (a placeholder, per D92), `secondary_domain`, `analytics` (an object whose `enabled` is `false` until D93 is answered), `features: {console_downloads: false, video: false}` (D95, D107), `min_runs` (D97's N), and `allowed_hosts` (the origin list W1.11 enforces, seeded from the links the site actually makes: `github.com`, `raw.githubusercontent.com` and the site's own canonical origin).
 2. Write `docs_website_boundary_test.go` asserting the three properties `TestConsoleIsOutsideTheGoModule` asserts for the console: no file under `website/` is imported by the Go module, `go.mod` names no dependency that exists only for the site, and no Go file embeds a file from `website/` — so the site stays a separate artifact whose only coupling to the module is a test.
 3. Add the flag test: while `features.console_downloads` is `false`, no file under `website/` may contain a `github.com/dimipaun/fugaro/releases/download/` URL — the mechanical form of "never link an unsigned or unreleased console" (F25, Global Constraint 9).
 4. Run the red step, then the suite.
@@ -204,14 +206,14 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 
 **Depends on:** nothing (its own lane; it is the one task in Part 0 that no other task waits on). **Commit:** `feat(stats): fugaro stats runs — an owner-run, read-only aggregation that emits no identifiers`
 
-**Red step.** Write the identifier test and the shape test first, against a stub that returns a group keyed by repository slug. `Expected: FAIL` — `stats output carries identifier "edgeappinc/edgeserver" in group key`.
+**Red step.** Write the identifier test and the shape test first, against a stub that returns a group keyed by repository slug. `Expected: FAIL` — `stats output carries identifier "acme/example" in group key`.
 
 ### Task W0.4: The CLI reference, generated from the command tree
 
 **Files:** `internal/clidoc/cliref.go` (new), `internal/clidoc/cliref_test.go` (new), `website/content/cli-reference.md` (generated), `internal/cli/docs_website_cliref_test.go` (new).
 
 **Steps.**
-1. Write the generator: walk `internal/cli`'s `NewRootCmd()` and emit one Markdown section per command (path, short description, long description, usage line, flags with their defaults and required-ness, and the subcommand list), **skipping hidden commands** (F38) and skipping the owner-only and internal commands whose `Use` strings already say so (`history`, `token`, and anything the tree marks hidden) — with the skip list **derived from the tree** rather than hand-written where the tree already records it.
+1. Write the generator: walk `internal/cli`'s `NewRootCmd()` and emit one Markdown section per command (path, short description, long description, usage line, flags with their defaults and required-ness, and the subcommand list), **skipping hidden commands** (F38) and skipping the internal commands that carry the forbidden marker — the hidden six are `history`, `git-credential`, `image`, `image record` and `exec` (`Hidden: true` in `internal/cli/history.go`, `gitcred.go`, `image.go`, `image_record.go` and `exec.go`; **there is no `token` command in the tree**) — with the skip list **derived from the tree** rather than hand-written where the tree already records it.
 2. Write the file with a header naming its source and the command that regenerates it: `<!-- generated by go run ./internal/clidoc; do not edit -->`.
 3. Write the two tests: **every** non-hidden command and flag reachable from `NewRootCmd()` appears in the file (the shape `TestDocsDesktopConsoleContractNamesEveryWatchField` uses), and the file names **no** hidden command and **no** flag that does not exist (the shape `TestDocsDesktopConsoleContractNamesNoInventedField` uses). A third test runs the generator into a buffer and asserts it equals the committed file, so a struct change cannot land without the reference changing.
 4. Run the red step, then the suite.
@@ -247,8 +249,8 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 **Files:** `website/content/changelog.json` (generated), `internal/cli/docs_website_changelog_test.go` (new), generator `internal/clidoc/changelog.go`.
 
 **Steps.**
-1. Generate a JSON array from `docs/releases/vX.Y.Z.md`: `{tag, date, version, highlights: [lines], for_operators: [lines]}` — the tag and date from the filename and the file's own first line, the bullets as written, and nothing invented. **`docs/releases/README.md` is not a release** and is skipped by name, not by pattern.
-2. Write the tests: the set of tags in the JSON equals the set of `v*.md` files in `docs/releases/` (so a release cannot land without the page following, and a page cannot list a release that is not there); the JSON is sorted newest first; every entry's `date` parses and is not in the future; and no entry carries a body sentence that is not in its file (the same no-invention rule as W0.5).
+1. Generate a JSON array from `docs/releases/vX.Y.Z.md`: `{tag, date, version, highlights: [lines], for_operators: [lines]}` — the **tag from the filename**, the **date from the tag's own commit** (`git log -1 --format=%cs <tag>`), the bullets as written, and nothing invented. **The release files carry neither a title nor a date** — `docs/releases/README.md` says "Plain Markdown, no title", and no date appears in any of the eleven files — so the date has to come from the repository's history. **`docs/releases/README.md` is not a release** and is skipped by name, not by pattern.
+2. Write the tests: the set of tags in the JSON equals the set of `v*.md` files in `docs/releases/` (so a release cannot land without the page following, and a page cannot list a release that is not there); the JSON is sorted newest first; every entry's `date` parses, is not in the future, and equals the commit date of the tag it names (`git log -1 --format=%cs` over the tag list, so the date's source is the repository's own history rather than a hand-kept file); and no entry carries a body sentence that is not in its file (the same no-invention rule as W0.5).
 3. Add the drift test the site's page will lean on: `README.md` still carries no changelog section, so the page remains the only index of those files (F44) — and if that ever changes, this test is where the duplicate is noticed.
 4. Run the red step, then the suite.
 
@@ -258,7 +260,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 
 **Depends on:** W0.2. **Commit:** `feat(website): generate the changelog from docs/releases, with a test that the sets match`
 
-**Red step.** Write the set-equality test first, with the JSON absent. `Expected: FAIL` — `changelog.json lists 0 releases, docs/releases/ holds 13`.
+**Red step.** Write the set-equality test first, with the JSON absent. `Expected: FAIL` — `changelog.json lists 0 releases, docs/releases/ holds 11`.
 
 ## 9. Part 1 — The site
 
@@ -321,25 +323,25 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 **Files:** `website/src/components/Hero.astro`, `Terminal.astro`, `ArchitectureDiagram.astro`, `website/src/pages/index.astro`, `how-it-works.astro` (new).
 
 **Steps.**
-1. The hero: the **tagline exactly as `README.md` writes it** (F48 — a test asserts the string is byte-identical to the README's first line, so the site and the README cannot drift), one sentence of what Fugaro is, the two install commands rendered **from `install.yaml`** (never typed into the component), and the video slot (W2.4) empty.
+1. The hero: the **tagline exactly as `README.md` writes it** (F48 — a test asserts the string is byte-identical to the line under `README.md`'s `# Fugaro` title, which is the README's own tagline line, so the site and the README cannot drift), one sentence of what Fugaro is, the two install commands rendered **from `install.yaml`** (never typed into the component), and the video slot (W2.4) empty.
 2. The animated terminal: a typing animation of a real `fugaro` invocation **taken from the CLI reference** (W0.4's file), in CSS/SVG or a small first-party island, with a byte budget (W1.11 enforces it), and a reduced-motion path that renders the finished frame.
-3. The architecture diagram: the five stages `README.md`'s `## How it works` describes — local dispatch, cloud job, cache, security boundary, PR or artifact collected back — as an SVG whose labels are the README's own words, animated on scroll with a reduced-motion path.
+3. The architecture diagram: **the spec's five stage names** — local dispatch, cloud job, cache, security boundary, PR or artifact collected back (`spec.md` §2) — as an SVG, with each stage's one-sentence caption **taken from the repository rather than written here**: `README.md`'s `## How it works` five steps ("Start", "Sync", "Loop", "Push and open the pull request", "Write caches back and exit") and its ASCII diagram are the sources, and the two names the README does not use ("security boundary", "PR or artifact collected back") are the page's map to those steps rather than quotations. Animated on scroll, with a reduced-motion path.
 4. Nothing on either page names an unshipped feature (F50): a test greps the built HTML for the four held-back claims (console download, WSL support, "~2 h", "ballpark ranges") and fails.
 
-**Tests:** tagline byte-identity against `README.md`; the install commands in the hero equal `install.yaml`'s; the built HTML names none of the four held-back claims; the terminal's animation has a reduced-motion end state.
+**Tests:** tagline byte-identity against the tagline line under `README.md`'s `# Fugaro` title; the diagram carries the spec's five names and no sixth; every caption on the diagram appears in `README.md`'s `## How it works` or in `docs/design/v1.md` (the two names the README does not use are asserted to be labels only, with no claim attributed to the README); the install commands in the hero equal `install.yaml`'s; the built HTML names none of the four held-back claims; the terminal's animation has a reduced-motion end state.
 
 **Command:** `cd website && npm run check`
 
 **Depends on:** W1.3. **Commit:** `feat(website): the hero, the terminal and the architecture diagram, from the repository's own words`
 
-**Red step.** Write the tagline test against a paraphrased tagline. `Expected: FAIL` — `hero tagline differs from README.md's first line`.
+**Red step.** Write the tagline test against a paraphrased tagline. `Expected: FAIL` — `hero tagline differs from the tagline line under README.md's "# Fugaro" title`.
 
 ### Task W1.5: Getting started, and the caps-and-costs guide
 
 **Files:** `website/src/pages/getting-started.astro`, `caps-and-costs.astro`, `website/src/components/CapsCosts.astro` (new), `website/content/costs.json` (published, from W0.3).
 
 **Steps.**
-1. Getting started renders `install.yaml` per platform, with the **plugin path** as a first-class step (F22), the cosign verification inline, and the platform list showing **macOS and Linux supported, Windows untested** with the WSL note D95 settles — the wording pinned by W0.1's test.
+1. Getting started renders `install.yaml` per platform, with the **plugin path** as a first-class step (F22), the cosign verification inline, and the platform list showing **macOS and Linux supported, Windows untested** with the WSL note D94 settles — the wording pinned by W0.1's test.
 2. The caps guide explains what the repository actually has: the project-global caps, the default repo caps, the per-repo caps, the per-run cap and max-reserve, the `observe`/`enforce` modes, the kill switches — each with the `fugaro budget` command that sets it (from W0.4's reference, so the flags cannot drift) — and what a cap *is* (a ceiling; `enforce` halts).
 3. The costs section renders `content/costs.json` (W0.3's output): percentiles per recipe, each figure with its window and sample size, groups below `min_runs` absent rather than approximated, and D97's **"not a promise"** line present as a rendered element (a test asserts it).
 4. The page carries **no figure the JSON does not carry** — a test that every number in the built page appears in `costs.json`, which is the mechanical form of "publish the measurement, not the anecdote" and the reason the "~2 h" sentence never appears here.
@@ -467,7 +469,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 1. Write the workflow **for the owner to copy into `.github/workflows/`**, following the procedure `docs/pending-workflows/README.md` describes (including the note that the staged file is removed in the same PR that copies it). It builds the site from `website/`, runs the site's own checks, and deploys to the host D91 chooses — with the host's deploy step written for **whichever of D91's answers the owner picks**, marked so that exactly one branch is active and the others are commented out with the reason.
 2. The credential rule (F14): the deploy token is a **GitHub Actions repository secret** named in the workflow and in the staged README, with a comment stating what it must never be — an installation's service account, a credential a Fugaro run holds, or a token with write access to anything but the site's own project. The workflow runs **no Fugaro run** and is not invoked by any Fugaro command.
 3. The trigger is the site's own: a path filter on `website/**` on pushes to `main`, plus `workflow_dispatch` — **no release trigger and no tag**, which is D109's decoupling made mechanical.
-4. Update `docs/pending-workflows/README.md`'s table with the new staged file and the copy procedure, and verify that the workflow's YAML parses (`actionlint` if present, otherwise a YAML parse test) — the file cannot be run, so parsing is the only hermetic check available.
+4. Update `docs/pending-workflows/README.md` — its staged-file list gains the site's workflow, and **its stale "One file is pending: `images.yml`" line is corrected in the same edit** (that file was copied in and removed in `6b57ba9`; the directory holds only the README today, F62) — and the copy procedure, and verify that the workflow's YAML parses (`actionlint` if present, otherwise a YAML parse test) — the file cannot be run, so parsing is the only hermetic check available.
 5. **Nothing under `.github/workflows/` is touched by this task** (Global Constraint 2). The copy is the owner's step, recorded in the staged README's checklist.
 
 **Tests:** the staged YAML parses; a test asserts no `.github/workflows/` file was added or modified by the task (a diff-scoped check, as the sibling plans use); the workflow names no credential other than through `secrets.`.
@@ -513,7 +515,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 
 **Depends on:** W0.3, W1.5, W2.2. **Commit:** `feat(website): publish the measured ranges, and check 69c that they are real`
 
-**Red step.** Write the "no repository name in costs.json" test with a slug in a group key. `Expected: FAIL` — `costs.json carries identifier "edgeweb"`.
+**Red step.** Write the "no repository name in costs.json" test with a slug in a group key. `Expected: FAIL` — `costs.json carries identifier "example-repo"`.
 
 ### Task W2.4: The video slot's empty state
 
@@ -538,7 +540,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 
 **Files:** `website/content/downloads.json` (`available: true` with per-OS assets), `website/src/pages/console.astro`, W0.2's link test (extended).
 
-**Steps.** Fill `downloads.json` from the console's own release artifacts, with per-OS entries and their **signature and notarisation status** (F24, D96); extend W0.2's test so that when `available` is true every URL points at a release asset of a **tag that exists** and is a **signed** artifact (the rule `docs/release.md` `## Verifying a release` states for the CLI, applied to the console); keep the read-only and no-telemetry sentences. **Depends on the console's first release — an owner decision to schedule.**
+**Steps.** Fill `downloads.json` from the console's own release artifacts, with per-OS entries and their **signature and notarisation status** (F24, D95); extend W0.2's test so that when `available` is true every URL points at a release asset of a **tag that exists** and is a **signed** artifact (the rule `docs/release.md` `## Verifying a release` states for the CLI, applied to the console); keep the read-only and no-telemetry sentences. **Depends on the console's first release — an owner decision to schedule.**
 
 **Tests:** every download URL resolves to an existing release tag; every asset is signed; the page still claims no more than D2/D4/D11 say.
 
@@ -581,7 +583,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 | W2.2 | W2.1 | The live checks follow the deploy |
 | W2.3 | W0.3, W1.5, W2.2 | The figures need the command, the page and the check number |
 | W2.4 | W1.3 | The slot lives in the hero |
-| W3.1 | the console's first release | D96, F23 |
+| W3.1 | the console's first release | D95, F23 |
 | W3.2 | D93's answer | The owner's decision |
 | W3.3 | the owner's video | The spec's own open item |
 
@@ -596,7 +598,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 | **D92** domain | W2.2 (the canonical URL stays a placeholder) | The site builds with a placeholder canonical URL; check 69a cannot pass. |
 | **D93** analytics | W3.2, and W1.3's script tag | The site ships with no analytics, which is the recommendation and a valid permanent answer. |
 | **D96** the aggregation's data policy | W0.3's shape, W2.3 | Without it, W0.3 is written to the strictest reading of Global Constraint 10 and W2.3 does not run; the caps page shows the "not enough runs" state. |
-| **D102** the tagline | W1.4's tagline test | The hero renders `README.md`'s first line, which is the tagline already. |
+| **D102** the tagline | W1.4's tagline test | The hero renders the line under `README.md`'s `# Fugaro` title, which is the tagline already. |
 | **D104** the palette | W1.2's default | The split palette (violet structure, orange cost) is the default; the owner's answer is a one-line change. |
 
 **Everything else in §4 is a finding with a stated resolution** (D94, D95, D97–D101, D103, D105–D109), and this plan implements the recommendation unless the owner overrides it. **The plan does not start before the gate below, and the gate is not a formality**: D90 alone changes every path in §5.
@@ -607,7 +609,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 2. **The sandbox installation may hold too few runs for any range** (U1). The command's "not enough runs" answer is a valid outcome and the page renders it.
 3. **Some sampled runs carry an estimated compute cost** (U2). The command reports the count; a range that would fold an estimate into a measurement is not published.
 4. **`CONTRIBUTING.md`'s `## What CI runs` is stale** (F11, F46). It is a root file, outside this PR's `docs/`-only scope; it wants its own one-line PR, and the site's community page is written to be correct either way.
-5. **`docs/release.md`, `README.md` and `.goreleaser.yaml`'s `release.header` remain three copies of the install text.** W0.1 pins the site against them, which is a fence around the fourth copy rather than a fix of the first three; collapsing them into one file is a separate, larger change (D94's alternative).
+5. **`docs/release.md`, `README.md`, `.goreleaser.yaml`'s `release.header` and `docs/design/v1.md` §12 remain four copies of the install text.** W0.1 pins the site against them, which is a fence around the fifth copy rather than a fix of the first four; collapsing them into one file is a separate, larger change (D94's alternative).
 6. **No `.claude/rules/` files and no `CLAUDE.md` exist in this repository** (F8). This plan's constraints live in §3 and in tests, which is what the repository uses instead.
 7. **No `CODEOWNERS` file exists** (F63), so this work routes no reviews and updates no routing file; the reviewer tiers in §1 are this plan's own.
 8. **The FAQ's comparison section is empty until the owner supplies sourced rows** (D103, F51). The section renders nothing rather than an unsourced claim.
@@ -622,4 +624,5 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 3. **Accepted the four refusals** in the reconciliation's §5: no console download link until the console is signed and released, no "~2 h" sentence until the aggregation produces it, no average published as a range, and no Windows support claim beyond what `.goreleaser.yaml` builds.
 4. **Accepted the two rules this plan cannot implement by itself**: that the deploy workflow is **staged** under `docs/pending-workflows/` for the owner to copy (no run may touch `.github/workflows/`), and that the site is **not** added to the release gate.
 5. **Accepted that check 69 (as 69a–69c) is the owner's to run**, and that W2.2 writes it into the register when Part 2 lands rather than this plan writing it now.
-6. **Named the reviewer for the SECURITY-SENSITIVE task** (W0.3, the aggregation) — a task whose whole value is that its output carries no identifier, and whose failure mode is silent.
+6. **Settled the register's "67 onward" clause for this work** — either confirming the bounded reading this plan applies (the clause is spent on the numbers managed projects took and wrote, 67 and 68, so 69 is this work's first) or reading it as open-ended and allocating the site's checks a number of its own. **The plan's Part 2 does not start until this is answered**: W2.2 re-reads the register, and if 69 is taken or written anywhere, it stops rather than renumbering (§2, U6).
+7. **Named the reviewer for the SECURITY-SENSITIVE task** (W0.3, the aggregation) — a task whose whole value is that its output carries no identifier, and whose failure mode is silent.
