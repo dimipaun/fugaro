@@ -1,5 +1,3 @@
-<!-- The owner's draft spec (Dimi Paun, October 2026), kept verbatim as the source of docs/design/managed-projects.md. Nothing below this line is Fugaro's; it is the owner's text, unedited, typos included. -->
-
 # Fugaro spec: autonomous cloud ops for managed projects
 
 Oct 15, 2026 · @Dimi
