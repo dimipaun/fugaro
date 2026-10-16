@@ -531,9 +531,13 @@ func (r *run) addBareRemoteSecret(field string) {
 // admissionCheck admits the repository this run was launched for, before any
 // git credential exists and before the clone (plan task 1.5): the run's slug
 // and its repository must agree, and the project's policy, when it has
-// published one, must have the repository on its allow-list. A run with no
-// Cloud Run execution is not checked: the binding exists because a job's
-// identity is what an admission rests on (R2-9).
+// published one, must have the repository on its allow-list. A local
+// invocation is not checked: the binding exists because a job's identity is
+// what an admission rests on (R2-9), and `fugaro exec --task-file` has none to
+// bind. Deps.Local is what says so, and it is the invocation's own answer, not
+// a missing marker: a process that carries no Cloud Run execution and is not
+// local either — one no backend claims, the shape an edited job environment
+// takes — is in the cloud and is checked.
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
 // provider is opened, so no git credential is requested and nothing has been
@@ -576,10 +580,24 @@ func (r *run) addBareRemoteSecret(field string) {
 // "empty means deny": an installation that has not published a policy admits
 // exactly what it always did.
 func (r *run) admissionCheck(ctx context.Context) error {
-	if r.d.Execution == "" {
-		// No Cloud Run execution: no job identity to bind to, so no binding
-		// (R2-9). fugaro exec --provider fake, a local run and the end-to-end
-		// tests keep the path they have always had.
+	if r.d.Local && r.d.Execution == "" {
+		// A local invocation is the one platform this binding does not apply
+		// to (R2-9): `fugaro exec --task-file`, the file-backed fake provider
+		// and the end-to-end tests keep the path they have always had. The
+		// skip needs *both* halves, and the second is what the first shape of
+		// this guard got wrong (the review finding on this change): reading
+		// the absence of a Cloud Run execution name as "local" exempted a
+		// process no backend claims — Local's zero value means the cloud
+		// (runner.go), and a job whose environment was edited after launch
+		// carries no execution name either — from everything below, the
+		// slug↔task binding, the remote's host and the policy's allow-list,
+		// with the git credential still scoped to whatever remote that
+		// environment named. A process the invocation did not name local does
+		// not reach here whatever its Execution says: the two are resolved
+		// together by the CLI (exec.go's execPlatform, Local only where no
+		// platform claims the process), so the pair Local = true with an
+		// execution name is a contradiction of the fixtures' making, and
+		// checking it is the fail-closed direction.
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)

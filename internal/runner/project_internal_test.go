@@ -1,10 +1,16 @@
 package runner
 
 import (
+	"context"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
 
+	"gocloud.dev/blob/memblob"
+
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -407,6 +413,54 @@ func TestProviderForSlugRefusesNoMatchAndAmbiguity(t *testing.T) {
 		jobProviderKinds = []string{"github", "github"}
 		if got, ok := providerForSlug(slug, "acme/app"); ok {
 			t.Fatalf("a slug two kinds produce was admitted as %q", got)
+		}
+	})
+}
+
+// The admission check's scope is the run's platform, not the presence of an
+// execution name: Deps.Local's zero value means the cloud (runner.go), so a
+// process whose environment carries no Cloud Run execution and no local
+// provenance is the one case a launcher can produce by editing a job — and it
+// is the case the check exists for, not an exemption from it. Reading the
+// absent execution as "local" let a process no backend claims skip the whole
+// binding: the slug↔repository agreement, the remote's host and the policy's
+// allow-list, with the git credential still handed to whatever remote the
+// environment named.
+func TestAdmissionCheckRefusesARunNoBackendClaims(t *testing.T) {
+	ctx := context.Background()
+	b := memblob.OpenBucket(nil)
+	defer b.Close()
+	slug, err := task.Slug("bitbucket", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := runstore.Open(b, slug, "20260926-221530-abcd")
+	newRun := func(d Deps) *run {
+		d.Store, d.Bucket = store, blobx.Wrap(b)
+		if d.Log == nil {
+			d.Log = slog.New(slog.DiscardHandler)
+		}
+		return &run{d: d, spec: &task.Spec{Version: 1, RunID: "20260926-221530-abcd", Repo: "acme/app", Ref: "main", Task: "Add a feature"}}
+	}
+
+	t.Run("in the cloud, no execution", func(t *testing.T) {
+		// Deps.Local unset: the cloud. Execution empty: the job environment
+		// cannot say which execution this is. The slug is another
+		// repository's, so the binding has something to refuse.
+		err := newRun(Deps{}).admissionCheck(ctx)
+		if err == nil {
+			t.Fatal("a run no backend claims passed the admission check")
+		}
+		if !strings.Contains(err.Error(), "not the slug of the repository") {
+			t.Fatalf("err = %v, want the slug/repository refusal", err)
+		}
+	})
+
+	t.Run("local", func(t *testing.T) {
+		// A local invocation is the one platform the binding does not apply
+		// to (R2-9): fugaro exec --task-file keeps the path it always had.
+		if err := newRun(Deps{Local: true}).admissionCheck(ctx); err != nil {
+			t.Fatalf("a local run was refused: %v", err)
 		}
 	})
 }
