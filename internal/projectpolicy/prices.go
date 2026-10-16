@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
+	"strconv"
+	"strings"
 )
 
 // Prices is the model_prices block of a policy: the owner's price overrides,
@@ -64,17 +68,26 @@ var (
 // is one field to it and the rate this run is priced by would depend on the
 // order the keys were written in. The long_context tier is held to the same
 // check, for the same reason.
+//
+// Unescaping is not one-to-one either, so two member names can unescape to one
+// model ID: a node written by hand may spell an ID both ways — the catalogue's
+// "anthropic/claude-sonnet-5.5" beside the escaped form this package writes,
+// "anthropic/claude-sonnet-5%2E5" — and one of the two prices would then be
+// kept, decided by map iteration order, which is to say a coin toss per read.
+// A block that does that is refused, naming both keys.
 func (ps *Prices) UnmarshalJSON(raw []byte) error {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return err
 	}
 	out := make(Prices, len(entries))
+	spellings := make(map[string][]string, len(entries))
 	for key, entry := range entries {
 		id, err := unescKey(key)
 		if err != nil {
 			return fmt.Errorf("%q: %w", key, err)
 		}
+		spellings[id] = append(spellings[id], key)
 		if err := checkPriceMemberNames(entry); err != nil {
 			return fmt.Errorf("%q: %w", id, err)
 		}
@@ -86,8 +99,31 @@ func (ps *Prices) UnmarshalJSON(raw []byte) error {
 		}
 		out[id] = price
 	}
+	if len(out) != len(entries) {
+		return fmt.Errorf("model_prices writes one model under two keys (%s): write each model once", priceCollisions(spellings))
+	}
 	*ps = out
 	return nil
+}
+
+// priceCollisions names every model ID that more than one member name
+// unescaped to, and the names themselves, in sorted order so the message is
+// the same for the same document however the decode iterated it.
+func priceCollisions(spellings map[string][]string) string {
+	var parts []string
+	for _, id := range slices.Sorted(maps.Keys(spellings)) {
+		keys := spellings[id]
+		if len(keys) < 2 {
+			continue
+		}
+		slices.Sort(keys)
+		quoted := make([]string, 0, len(keys))
+		for _, k := range keys {
+			quoted = append(quoted, strconv.Quote(k))
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", strconv.Quote(id), strings.Join(quoted, " and ")))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // checkPriceMemberNames applies checkMemberNames to one price entry and to its
