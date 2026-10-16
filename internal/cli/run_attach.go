@@ -295,7 +295,7 @@ func checkAttachRecipe(ctx context.Context, spec *task.Spec) error {
 		// resolving to it: no follow-up is ever an artifact run, and the
 		// runner refuses the pair as well — on the resolved recipe, which
 		// agrees with this stamp or is refused for disagreeing with it.
-		return userErr("--attach needs an artifact recipe, but a follow-up is never an artifact run: it continues a pull request, and the runner refuses any follow-up whose recipe is mode: artifact")
+		return userErr("--attach needs an artifact recipe, but a follow-up is never an artifact run: it continues a pull request, so no follow-up carries mode: artifact, and the runner refuses one that does")
 	case !spec.IsFollowUp() && rcp != nil && rcp.Mode == recipe.ModeArtifact:
 		// An artifact recipe the CLI resolved is exactly what --attach needs,
 		// whatever spec.Mode says: the first arm above is keyed on the task's
@@ -383,8 +383,21 @@ const attachDirectAnthropic = "Anthropic (direct)"
 // an unset-background call to Anthropic at all: config.EffectiveBackground
 // substitutes the coder's own model there, so PinnedModels would print
 // "Anthropic (direct)" for a run that makes no Anthropic call. The set never
-// under-reports either way — an unclaimed model always sets direct — but the
+// under-reports either way — an unclaimed model always sets direct — and the
 // one line D9 exists for must not name a destination the bytes cannot reach.
+//
+// One case does not get that right, and it is the launcher/checkout
+// approximation the rest of this file already makes: with no checkout of the
+// task's repository there are no agent models to read, and attachLaunch hands
+// this function a ZERO config.Agent (run_attach.go, attachLaunch), so all
+// three models are "" and the line names Anthropic (direct) even for a
+// repository whose every model a gateway serves. It over-reports in the safe
+// direction — it never claims the bytes stay on the machine, and an
+// unclaimable model is an Anthropic path in NeedsAnthropicKey's own rule —
+// but it can name a destination the bytes do not reach and leave out the one
+// they do. Reading the repository's agent config at the launch's ref is what
+// would fix it, which is the same base-file read this CLI cannot make
+// (checkArtifactLaunch's and recipeForLaunch's own caveat).
 //
 // The empty set therefore means "no Anthropic path and no claiming
 // provider". With these three models it cannot actually arise (an unclaimed

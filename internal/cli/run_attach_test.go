@@ -334,9 +334,12 @@ func TestAttachRefusesAWhitespaceOnlyNameBeforeUploading(t *testing.T) {
 // and the refusal names that one file's own size beside it — a set of many
 // small files is not what trips it, and the count is unaffected.
 //
-// Mutation (check the set's total against max_bytes instead of each file, or
-// drop the per-file check): the launch uploads and this test fails on the
-// missing refusal.
+// Mutation (drop the per-file check from attachPrepared): the launch uploads
+// and this test fails on the missing refusal. It is NOT pinned here by
+// "check the set's total against max_bytes instead of each file": the running
+// total crosses max_bytes at the big file, so that mutation refuses the same
+// file with the same sentence — the other side of it is
+// TestAttachAllowsASetWhoseTotalIsOverMaxBytes.
 func TestAttachRefusesAnOversizedFile(t *testing.T) {
 	f := artifactAttachFixture(t)
 	attachCheckout(t, "{ max_files: 8, max_bytes: 4, max_total_bytes: 100 }")
@@ -344,6 +347,32 @@ func TestAttachRefusesAnOversizedFile(t *testing.T) {
 	small := attachShot(t, "small.png", "xx")
 	wantRefused(t, f, "max_bytes", "run", "--repo", "acme/app", "--workflow", "web", "--recipe", "sizzle",
 		"--run-id", "20261015-100000-abcd", "--attach", small, "--attach", big, "Render the nightly bundle")
+}
+
+// TestAttachAllowsASetWhoseTotalIsOverMaxBytes: max_bytes is not a budget for
+// the set — workflows.inputs.max_total_bytes is — so three files of 3 bytes
+// each, 9 in all, pass a 4-byte per-file cap as long as the SET is under
+// max_total_bytes. Reading max_bytes as a running total would pass every
+// other test about it (each over-cap test has one file that crosses the cap
+// alone) while refusing the ordinary case the config key promises: "the most
+// ONE attached file may hold".
+//
+// Mutation (accumulate the total and compare that against max_bytes in
+// attachPrepared): the launch is refused and this test fails.
+func TestAttachAllowsASetWhoseTotalIsOverMaxBytes(t *testing.T) {
+	f := artifactAttachFixture(t)
+	attachCheckout(t, "{ max_files: 8, max_bytes: 4, max_total_bytes: 1024 }")
+	id := "20261015-100000-abcd"
+	args := []string{"run", "--repo", "acme/app", "--workflow", "web", "--recipe", "sizzle", "--run-id", id}
+	for i, name := range []string{"a.png", "b.png", "c.png"} {
+		args = append(args, "--attach", attachShot(t, name, strings.Repeat(string(rune('a'+i)), 3)))
+	}
+	if _, _, err := execute(t, append(args, "Render the nightly bundle")...); err != nil {
+		t.Fatalf("three files each under max_bytes were refused: %v", err)
+	}
+	if got := readSpec(t, f, id); len(got.Inputs) != 3 {
+		t.Fatalf("task inputs = %+v, want all three recorded", got.Inputs)
+	}
 }
 
 // TestAttachRefusesASetOverTheTotal: the cap a set of files each comfortably
@@ -598,10 +627,15 @@ func TestAttachRefusesANonArtifactRecipe(t *testing.T) {
 // its record — and the job image is release080, so the image gate cannot
 // refuse this launch first and stand in for the refusal under test.
 //
-// Mutation (drop the spec.IsFollowUp() arm of recipeForLaunch, or resolve
-// agent.recipe for a follow-up as for a first run): the launch is not refused
-// at all, a job starts, and this test fails on wantRefused's execution count
-// as well as on the missing sentence — with the file already in the bucket.
+// Mutation (drop the spec.IsFollowUp() arm of recipeForLaunch, so agent.recipe
+// is resolved for a follow-up as for a first run): the recipe becomes sizzle
+// — the fugaro.yaml artifact recipe — and the refusal moves to the arm above
+// this one ("a follow-up inherits the recipe it resolves…"), which is
+// mode-keyed rather than name-keyed: this test fails on the missing sentence
+// (nothing is uploaded either way, because that arm is a refusal too, not a
+// hole). The hole this test was written for was the arms not existing at all;
+// the counting assertions below are here for the regressions that would put
+// the upload back in front of them.
 func TestAttachOnAFollowUpResolvesTheRecipeTheRunnerWill(t *testing.T) {
 	f := newCloudFixture(t)
 	appRepoCheckout(t, map[string]string{
@@ -757,8 +791,12 @@ func TestAttachRefusesARecipeTheRunnerChooses(t *testing.T) {
 // the allow arm resting on that stamp, and would answer a genuinely artifact
 // recipe with "‑‑attach needs an artifact recipe; sizzle is mode: artifact".
 //
-// Mutation (drop `&& rcp.Mode == recipe.ModeArtifact`): this refusal fires and
-// the test fails.
+// Mutation (add `&& spec.Mode == recipe.ModeArtifact` to the allow arm, i.e.
+// let it rest on the stamp): the refusal below fires with exactly the message
+// named above and this test fails. Dropping `&& rcp.Mode ==
+// recipe.ModeArtifact` instead is NOT caught here — it widens the arm to
+// `rcp != nil`, which still allows this spec; TestAttachRefusesANonArtifactRecipe
+// is the test that dies under that one.
 func TestAttachAllowsAnArtifactRecipeWithNoModeStamped(t *testing.T) {
 	t.Chdir(t.TempDir())
 	spec := &task.Spec{Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Ref: "main", Task: "Render the nightly bundle",

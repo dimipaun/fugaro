@@ -249,8 +249,12 @@ func TestInputsOverTheCapFailTheRun(t *testing.T) {
 // size, and it is judged per entry — a set of small files is not what trips
 // it.
 //
-// Mutation (compare the set's total against max_bytes instead of each
-// entry): three small files pass and this test fails.
+// Mutation (drop the per-file check from checkInputCaps): big.png is accepted
+// and this test fails on the missing refusal. It is NOT pinned here by
+// "compare the set's total against max_bytes instead of each entry": the
+// running total crosses max_bytes at big.png, so that mutation refuses the
+// same file with the same sentence and this test still passes — which is why
+// TestInputsUnderTheFileCapPass covers it from the other side.
 func TestInputsOverTheFileCapFailTheRun(t *testing.T) {
 	spec := artifactSpec(sizzleRenderOnlyYAML)
 	big, bigBody := attachedInput("big.png", "12345")
@@ -444,6 +448,44 @@ func TestInputsExactlyAtTheCapsPass(t *testing.T) {
 		data, err := os.ReadFile(filepath.Join(h.deps.WorkDir, runstore.InputsDir, name))
 		if err != nil || string(data) != want {
 			t.Fatalf("input %s = %q, %v", name, data, err)
+		}
+	}
+}
+
+// TestInputsUnderTheFileCapPassEvenWhenTheirSumIsOverIt: max_bytes is not a
+// budget for the set. Three files of 3 bytes each are 9 in all, comfortably
+// over the 4-byte per-file cap as a SUM and under it as FILES, and the run
+// must proceed: the set's own bound is max_total_bytes, which this config
+// leaves loose. Without this, reading max_bytes as a running total passes
+// every other test in this file (the over-cap tests all have a file that
+// crosses the cap on its own) while refusing the ordinary case the docs
+// promise — "the most ONE attached file may hold".
+//
+// Mutation (accumulate the total and compare it against max_bytes in
+// checkInputCaps): the run is refused and this test fails.
+func TestInputsUnderTheFileCapPassEvenWhenTheirSumIsOverIt(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	names := []string{"a.png", "b.png", "c.png"}
+	bodies := map[string][]byte{}
+	for i, name := range names {
+		in, body := attachedInput(name, strings.Repeat(string(rune('a'+i)), 3))
+		spec.Inputs = append(spec.Inputs, in)
+		bodies[name] = body
+	}
+	h := newHarnessFiles(t, inputsCfg(t, "{ max_files: 8, max_bytes: 4, max_total_bytes: 1024 }"), spec, renderScript(sizzleScript))
+	for name, body := range bodies {
+		seedInputs(t, h, runInputKey(h, name), body)
+	}
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatalf("three files each under max_bytes were refused: %v", err)
+	}
+	if rec.Outcome != runstore.OutcomeArtifacts || len(rec.Inputs) != 3 {
+		t.Fatalf("rec = %+v, want the three inputs downloaded and the render run", rec)
+	}
+	for _, name := range names {
+		if _, err := os.Stat(filepath.Join(h.deps.WorkDir, runstore.InputsDir, name)); err != nil {
+			t.Fatalf("input %s was not written: %v", name, err)
 		}
 	}
 }

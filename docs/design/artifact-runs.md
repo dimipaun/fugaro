@@ -551,9 +551,9 @@ the context, then close the driver writer).
 
 **`fugaro run` gains `--attach PATH` (repeatable)**, and the launch order
 already supports it: the launcher mints the run id
-(`task.NewRunID`, `internal/cli/run.go:819`), writes `task.json`
-(`runstore.CreateTask`, `:1147`) and only then submits the execution
-(`backend.Launch`, `:1392`). `--attach` fills the gap between the mint and the
+(`task.NewRunID`, `internal/cli/run.go:887`), writes `task.json`
+(`runstore.CreateTask`, `:1329`) and only then submits the execution
+(`backend.Launch`, `:1574`). `--attach` fills the gap between the mint and the
 write:
 
 1. **Resolve the run id first**, and **establish that it is a new one before a
@@ -813,8 +813,8 @@ memory rule goes **there**, and `RecipeGateProblems` takes the whole
 - **the launch** refuses it in `finishLaunch`'s pre-write block, beside the
   recipe-image gate where the launcher already holds both the resolved recipe and
   the workflow from `checkoutConfig` (after the image gates and
-  `checkMaxParallel` at `internal/cli/run.go:430`, around `budgetPrecheck` at
-  `:434-438`, **before `createTask` writes anything** at `:440`);
+  `checkMaxParallel` at `internal/cli/run.go:477`, around `budgetPrecheck` at
+  `:488`, **before `createTask` writes anything** at `:503`);
 - **the runner's bootstrap** refuses it through `checkGateCommands` when the
   launcher could not resolve the recipe at all (the `runnerChooses` launch), so
   that case fails closed before any stage runs rather than only in `validate`.
@@ -1041,7 +1041,9 @@ produced (out), and files an operator handed to a model-driven job (in).
    whose `inputs[].name` is `../../.git/hooks/pre-commit` must be refused by
    the runner, not sanitised into something plausible: the runner applies the
    same list (no empty or whitespace-only name, no absolute path, no `..`
-   element, no NUL or newline, a length limit, no duplicate after cleaning) and
+   element, no NUL or newline, a length limit, no repeated name — the exact
+   name, not a cleaned one: the list REFUSES a `.` or empty path element
+   rather than normalising it away) and
    **fails the run** with the name quoted, rather than writing outside
    `inputs/`. It is one predicate in one place (`task.InputNameProblem`, with
    `task.InputNameBlank` for the emptiness half, which `Spec.Validate`'s
@@ -1553,7 +1555,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V14 | No signed URL and no `signBlob` grant anywhere; only `iam.serviceAccounts.signJwt` for the budget identity | grep over `internal/` and `cmd/`, `deploy/terraform/gcp/modules/firebase/iam.tf:23` |
 | V15 | `result.json`'s schema is `additionalProperties: false` and is validated **only by tests**, never at read time; readers use the Go struct | `schemas/result.schema.json`, `schemas/schemas_test.go:23`, `internal/runstore/runstore.go:532` |
 | V16 | `runs ls` and `diagnose` read named files, never enumerate the prefix | `internal/cli/runs.go:379-390`, `internal/cli/diagnose.go:158,177` |
-| V17 | The launcher mints the run id, writes `task.json`, then submits the execution — so `--attach` has a place to stand | `internal/cli/run.go:819,1147,1392`, `internal/runstore/runstore.go:502` |
+| V17 | The launcher mints the run id, writes `task.json`, then submits the execution — so `--attach` has a place to stand | `internal/cli/run.go:887,1329,1574`, `internal/runstore/runstore.go:509` |
 | V18 | The VM backend is a merged design (#375) with **Tasks 1–3 merged** (#380, #381, #389 — the price table included); `backend: cloud-batch` is refused by config validation, not by a flag; a VM run prices the machine type's quantities from its boot window | `internal/localcfg/localcfg.go:711-719`, `internal/backend/batch/prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`), `internal/backend/backend.go:103,147,174-205,285-289,292-296` (`MachineType`, `VMMinimumBilled`, `BilledWindow`, `WindowNote`, `Prices.Quantities`, `Prices.ComputeUSD` — it is `backend.Prices.ComputeUSD`, there is no `pricing.ComputeUSD`), read at `origin/main` b9d5c5d |
 | V19 | GPUs are out of scope in the VM design, by name | `docs/design/compute-backend.md:1485` (§6.3) |
 | V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:51-58`, `internal/cli/docs_checkout_test.go:123-132` |
