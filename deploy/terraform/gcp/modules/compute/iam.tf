@@ -20,7 +20,11 @@
 # the installation's history account.
 
 locals {
-  reaper_email  = "${var.names.reaper_account_id}@${var.project}.iam.gserviceaccount.com"
+  # The preload account's email, as the rebuild's Cloud Build spec and the
+  # Scheduler job's OAuth token take it. The reaper's own email has no reader:
+  # every binding on it names the account resource that creates it
+  # (google_service_account.reaper), which is also what orders the binding
+  # after the account — the propagation wait of §7.2.
   preload_email = "${var.names.preload_account_id}@${var.project}.iam.gserviceaccount.com"
   # The service agents that must be able to act as an account this module
   # creates: Cloud Build runs the preload build as the preload account, and
