@@ -1740,6 +1740,38 @@ func TestComputePreloadRebuildsAStaleImage(t *testing.T) {
 	}
 }
 
+// The run accounts are the only holders of a reader grant on the installation's
+// registry, and the preload's own pull is one of them: the builder VM boots as
+// a run-class account (preload.sh's --service-account) and the docker pull runs
+// in its startup script, so the preload ACCOUNT reads nothing from that
+// repository -- the build step's own image is Google's, from gcr.io. A grant to
+// it would be a binding with no reader: the project hands out a role whose
+// permissions nothing in the installation ever exercises.
+func TestComputeTheRegistryReaderHasOneHolder(t *testing.T) {
+	grants := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, "gcp/modules/compute/") {
+			return
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository_iam_member") {
+			grants++
+			if blk.name != "google_artifact_registry_repository_iam_member.run_registry_reader" {
+				t.Errorf("%s: %s grants a registry role in the compute module, and every reader grant there is the run accounts'", path, blk.name)
+				continue
+			}
+			if !hasAttr(blk.body, "for_each", "var.run_accounts") || !hasAttr(blk.body, "member", "each.value") {
+				t.Errorf("%s: %s must grant the reader role to each run account", path, blk.name)
+			}
+			if strings.Contains(blk.body, "google_service_account.preload") {
+				t.Errorf("%s: %s grants the reader role to the preload account, which pulls nothing from this repository", path, blk.name)
+			}
+		}
+	})
+	if grants != 1 {
+		t.Errorf("found %d registry grants in the compute module, want 1 (the run accounts' reader)", grants)
+	}
+}
+
 // The signer's own IAM is the launchers' and operators' minter grant on the
 // signer account, and nothing else: no role on the project names it, and no
 // other service account IAM resource grants on it.

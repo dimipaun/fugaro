@@ -63,6 +63,13 @@ resource "google_project_iam_member" "run_log_writer" {
 # on 2026-10-15 the installation's pin named the remote fugaro-ghcr, and a
 # grant aimed at fugaro-base would have left every agent unable to pull
 # (§7.2's setup findings).
+#
+# The holder is the run accounts and only the run accounts, and that is what
+# the preload's own pull uses: the builder VM boots as a run-class account
+# (preload.sh's --service-account=$RUN_ACCOUNT) and the docker pull runs in
+# its startup script, so the credential that reads this repository is the run
+# account's. The preload account pulls nothing from it -- the build step's own
+# image comes from gcr.io -- so a grant naming it would have no reader at all.
 resource "google_artifact_registry_repository_iam_member" "run_registry_reader" {
   for_each = var.run_accounts
 
@@ -285,27 +292,17 @@ resource "google_service_account_iam_member" "preload_run_account_user" {
 }
 
 # The installation's operators, who apply this root. Creating the Scheduler job
-# below — whose OAuth token is minted from the preload account — needs actAs on
-# that account (cloud.google.com/scheduler/docs/http-target-auth, checked
-# 2026-10-15), and it is the same grant the installation module makes on its own
-# scheduler account for the same reason (modules/installation/scheduler.tf). It
-# is actAs on this one account, never a role on the project: an operator who may
-# run a rebuild must not thereby be able to run code as every account in it.
+# of preload.tf — whose OAuth token is minted from the preload account — needs
+# actAs on that account (cloud.google.com/scheduler/docs/http-target-auth,
+# checked 2026-10-15), and it is the same grant the installation module makes on
+# its own scheduler account for the same reason
+# (modules/installation/scheduler.tf). It is actAs on this one account, never a
+# role on the project: an operator who may run a rebuild must not thereby be
+# able to run code as every account in it.
 resource "google_service_account_iam_member" "preload_operator" {
   for_each = var.operators
 
   service_account_id = google_service_account.preload.name
   role               = "roles/iam.serviceAccountUser"
   member             = each.value
-}
-
-# The reader grant the builder VM's own pull needs: the same repository the
-# run accounts read. One grant, not one per run account: the member is the
-# preload account's own.
-resource "google_artifact_registry_repository_iam_member" "preload_registry_reader" {
-  project    = var.project
-  location   = var.region
-  repository = var.registry_repository
-  role       = "roles/artifactregistry.reader"
-  member     = google_service_account.preload.member
 }
