@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -1660,6 +1663,19 @@ func TestNormalizeRepoArgs(t *testing.T) {
 			[]string{"--project", "secrets", "secrets", "ls", "--repo="}},
 		{"a one-letter flag's value spells secrets", []string{"-c", "secrets", "secrets", "set", "npm-token", "--repo=acme/app"},
 			[]string{"-c", "secrets", "secrets", "set", "npm-token", "--repo=acme/app"}},
+		// A bool flag before the verb takes no value of its own (pflag's
+		// NoOptDefVal), so it must not swallow the verb: read as taking one,
+		// the scan finds no subcommand and leaves the bare --repo unrewritten.
+		// (That argv still fails for a second reason upstream of this scan --
+		// cobra cannot route a flag written between `secrets` and its verb,
+		// because the parent declares no flags; see secretsBoolFlags. What is
+		// pinned here is the rewrite, which is the scan's own contract.) Both
+		// spellings of the bare form, with the bool on either side.
+		{"a bool flag before the verb", []string{"secrets", "--json", "set", "npm-token", "--repo"},
+			[]string{"secrets", "--json", "set", "npm-token", "--repo="}},
+		{"a bool flag before the verb, ls, and after --repo",
+			[]string{"secrets", "--project-wide", "ls", "--repo", "--json"},
+			[]string{"secrets", "--project-wide", "ls", "--repo=", "--json"}},
 		// The same token in a command that is not the secrets one: nothing is
 		// rewritten, because the command is the first positional and it is not
 		// "secrets".
@@ -1698,5 +1714,46 @@ func TestNormalizeRepoArgs(t *testing.T) {
 	// named "".
 	if got := NormalizeRepoArgs([]string{"secrets", "ls", "--repo"}); got[2] != "--repo=" {
 		t.Fatalf("the rewritten token is %q, not the --repo= form pflag reads as empty", got[2])
+	}
+}
+
+// TestSecretsBoolFlagsMatchTheFlags keeps secretsBoolFlags equal to the flags
+// the secrets commands declare with a NoOptDefVal. secretsVerb's scan decides
+// from that map whether a token after a long flag is the flag's value, and
+// pflag decides the same question from the flag's NoOptDefVal: a flag in one
+// and not the other is how the scan read "set" as --json's value in
+// `fugaro secrets --json set foo --repo`, found no verb, and handed pflag a
+// bare --repo (code review of this scan). --help is the one entry the commands
+// do not declare here: cobra adds it to every command at Execute time, with the
+// same NoOptDefVal.
+func TestSecretsBoolFlagsMatchTheFlags(t *testing.T) {
+	declared := map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.NoOptDefVal != "" {
+				declared["--"+f.Name] = true
+			}
+		})
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(newSecretsCmd())
+	if len(declared) == 0 {
+		t.Fatal("read no no-value flags out of the secrets commands: the walk saw nothing, so this check proves nothing")
+	}
+	for name := range declared {
+		if !secretsBoolFlags[name] {
+			t.Errorf("the secrets commands declare %s with a NoOptDefVal (it takes no value), and secretsVerb's scan does not know it: a token after it would be read as its value", name)
+		}
+	}
+	for name := range secretsBoolFlags {
+		if name == "--help" {
+			continue
+		}
+		if !declared[name] {
+			t.Errorf("secretsBoolFlags lists %s, which the secrets commands do not declare as a flag that takes no value", name)
+		}
 	}
 }

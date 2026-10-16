@@ -85,8 +85,8 @@ func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 // reads as "this checkout's origin".
 //
 // --repo takes an optional value, which pflag has no way to declare: the flag
-// is an ordinary string flag (no NoOptDefVal anywhere in this repository), so
-// cobra consumes the next token as its value whenever one is there. That is
+// itself is an ordinary string flag (no NoOptDefVal of its own), so cobra
+// consumes the next token as its value whenever one is there. That is
 // what makes `--repo acme/app` -- the form every script and the skills write --
 // work, and it is also why the BARE form cannot be left to pflag: a trailing
 // `--repo`, or one followed by another flag such as `--json`, would be read as
@@ -123,6 +123,35 @@ func NormalizeRepoArgs(args []string) []string {
 	return out
 }
 
+// secretsBoolFlags are the secrets commands' boolean flags, written as the
+// scan below spells them (with the leading "--"): pflag gives every one of them
+// a NoOptDefVal of "true", so none takes the token after it as a value, and a
+// scan that reads one as taking a value disagrees with cobra about which token
+// is the subcommand. The set is the command family's own — the flags
+// newSecretsCmd, newSecretsSetCmd and newSecretsLsCmd declare, plus the --help
+// cobra adds to each of them at Execute time — and it is exactly the set the
+// commands' FlagErrorFunc names (newSecretsCmd).
+//
+// TestSecretsBoolFlagsMatchTheFlags keeps this list equal to what the commands
+// declare, so a bool flag added later cannot quietly reopen the hole the code
+// review found here: read "--json" as taking the token after it and the scan
+// finds no verb, so a bare --repo behind it is never rewritten.
+//
+// It is not what makes `fugaro secrets --json set foo --repo` fail today, and
+// it does not by itself make that argv work. That argv has a second cause,
+// upstream of this scan: the `secrets` command declares no flags of its own
+// (only `set` and `ls` do, through secretsOptions.addFlags), so cobra's own
+// stripFlags — called on `secrets` while it looks for the subcommand — has no
+// --json to consult a NoOptDefVal on, reads "set" as --json's value, finds no
+// subcommand, and answers with the flag error. A flag written between `secrets`
+// and its verb is unroutable for that reason, whether or not --repo was
+// rewritten: `fugaro secrets --json set foo --repo=` fails the same way, and
+// so does `fugaro secrets --json ls`. Making the parent declare them is a
+// change to the command's surface, not to this scan, and is not made here.
+// What this map does is keep the scan's model of pflag true, which is the
+// invariant the doc above claims and the one a future flag addition breaks.
+var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "--help": true}
+
 // secretsVerb returns the index of the `set` or `ls` that follows the secrets
 // command, and whether there is one. The argv is scanned into its positional
 // arguments the way cobra's own command scan does it (stripFlags), because
@@ -138,9 +167,12 @@ func NormalizeRepoArgs(args []string) []string {
 //     and neither is what follows it;
 //   - a long flag with no "=value" ("--config", "--repo") consumes the next
 //     token as its value, if there is one, and so does a one-letter short flag
-//     ("-c"): pflag has no other reading for them, and this repository
-//     declares no NoOptDefVal anywhere (see the doc above: if one is ever
-//     added, this scan and pflag stop agreeing on that flag);
+//     ("-c"): pflag has no other reading for them;
+//   - a long flag in secretsBoolFlags ("--json", "--project-wide", "--help")
+//     consumes nothing: pflag gives it a NoOptDefVal, so the token after it is
+//     the next flag or positional and not its value, and cobra's own command
+//     scan asks the flag set the same question. TestSecretsBoolFlagsMatchTheFlags
+//     pins the list to the flags the commands declare;
 //   - a flag written with "=" ("--config=x", "-c=x") and a bundled short flag
 //     ("-qv") take no separate token;
 //   - anything left that is not "-" is a positional argument, in order.
@@ -156,6 +188,9 @@ func secretsVerb(args []string) (at int, ok bool) {
 		case a == "--":
 			return verbOf(args, positionals)
 		case strings.HasPrefix(a, "--") && !strings.Contains(a, "="):
+			if secretsBoolFlags[a] {
+				break // NoOptDefVal: no value of its own
+			}
 			i++ // its value, when the next token is one
 		case len(a) == 2 && a[0] == '-' && a != "--" && !strings.Contains(a, "="):
 			i++ // a one-letter short flag: same, its value
