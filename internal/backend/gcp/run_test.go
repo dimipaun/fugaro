@@ -102,26 +102,35 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 			t.Fatalf("a malformed launch env %q was sent to the API: %d requests, want the %d before it", bad, got, before)
 		}
 	}
-	// So is an entry naming one of the job's own identity variables. FUGARO_RUN
-	// this override sets itself; the others (FUGARO_PROJECT, FUGARO_BACKEND,
-	// the bucket, the GCP project and the region) the deploy wrote into the
-	// job's environment, and the API merges this override into it — the same
-	// silent replacement Batch refuses, whose job variables are the map the
-	// entry would be written into. An entry that named FUGARO_PROJECT was
-	// carried here and refused there: the two backends must answer the same
-	// thing about the same entry (backend.JobIdentityEnv).
-	for _, name := range backend.JobIdentityEnv {
-		before := len(fr.Requests())
-		spec.Env = []string{name + "=someone-elses"}
-		if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {
-			t.Fatalf("Launch overriding %s = %v, want a refusal (backend.ErrRejected)", name, err)
-		}
-		if got := len(fr.Requests()); got != before {
-			t.Fatalf("a launch env naming %s was sent to the API: %d requests, want the %d before it", name, got, before)
-		}
+	// So is an entry naming FUGARO_RUN: this override sets that variable
+	// itself, and the run reads which execution it is from it.
+	spec.Env = []string{"FUGARO_RUN=acme-app/someone-elses-run"}
+	if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch overriding FUGARO_RUN = %v, want a refusal", err)
 	}
 	if gotEnv["FUGARO_RUN"] != "acme-app/20260927-100000-abcd" {
 		t.Errorf("env = %v, want the run's own identity", gotEnv)
+	}
+	// And an entry naming any other variable the container's environment
+	// already holds: the installation's own five (backend.PlatformEnvNames —
+	// the bucket, the backend, the project name, the project ID and the
+	// region, which internal/infra's platformEnv writes into the deployed
+	// job) and the two Cloud Run fills in itself, which the codec reads back
+	// to say which job and execution this is (internal/backend's codec.go).
+	// The override is merged into that environment rather than replacing it,
+	// so each of these was applied over the value the run reads its own
+	// identity and configuration from — the reservation the seam documents,
+	// which Batch asks for the same list (backend.ReservedEnvNames) and this
+	// backend made for FUGARO_RUN alone (the review finding on this change).
+	for _, name := range append([]string{"CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION"}, backend.PlatformEnvNames...) {
+		before := len(fr.Requests())
+		spec.Env = []string{name + "=someone-elses-" + strings.ToLower(name)}
+		if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {
+			t.Errorf("Launch overriding %s = %v, want a refusal", name, err)
+		}
+		if got := len(fr.Requests()); got != before {
+			t.Errorf("a launch env naming %s was sent to the API: %d requests, want the %d before it", name, got, before)
+		}
 	}
 }
 

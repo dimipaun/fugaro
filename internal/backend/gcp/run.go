@@ -93,16 +93,28 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	}
 	job := b.JobPath(spec.Repo.Slug, spec.Workflow)
 	// The spec's own variables (the launcher's budget marker) go in the same
-	// override as FUGARO_RUN: the API merges these into the job's environment,
-	// where the deploy already wrote the job's own identity (FUGARO_PROJECT,
-	// FUGARO_BACKEND, the bucket and the region, internal/infra's platformEnv)
-	// — so an entry naming one of those would be what the run reads its own
-	// identity from, exactly as it would be on Batch, whose job variables are
-	// the map the entry would be written into. backend.LaunchEnv is where both
-	// backends read them and where backend.JobIdentityEnv is refused, so the
-	// two backends answer the same thing about the same entry; only the names
-	// beyond the identity six are a backend's own to add (Batch's DOCKER_HOST).
-	extra, err := backend.LaunchEnv(spec)
+	// override as FUGARO_RUN: the API merges these into the job's environment.
+	// backend.LaunchEnv is where both backends read them, so an entry this one
+	// refuses (a malformed one, or one naming a variable the environment
+	// already holds) is refused on Cloud Batch too.
+	//
+	// What the environment already holds is what is reserved: the
+	// installation's own configuration (backend.PlatformEnvNames, which
+	// internal/infra's platformEnv writes into the deployed job), the
+	// execution's own identity (CLOUD_RUN_JOB and CLOUD_RUN_EXECUTION, which
+	// Cloud Run fills in and the codec reads back to say which job and which
+	// execution this is — internal/backend's codec.go), and FUGARO_RUN, which
+	// this override sets below. An entry naming one of them is applied over
+	// the value the run believes about itself, which is what
+	// backend.ReservedEnvNames is: one list for both backends, so Batch
+	// refuses the same names rather than the keys of its own map alone (the
+	// review finding on this change: this backend reserved FUGARO_RUN alone,
+	// so a launcher entry naming FUGARO_BUCKET or FUGARO_REGION was applied
+	// here and refused there — and Batch's map holds no FUGARO_BUCKET at all,
+	// so the parity this comment claimed was not the reservation the two
+	// backends made).
+	reserved := backend.ReservedEnvNames("FUGARO_RUN", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION")
+	extra, err := backend.LaunchEnv(spec, reserved...)
 	if err != nil {
 		// Nothing has been sent, so this is a refusal and not an ambiguity:
 		// the launcher's ErrRejected branch drops its claim and the token it

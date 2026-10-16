@@ -97,16 +97,23 @@ func knownEnvName(t *testing.T, name string) bool {
 }
 
 // TestSecurityMdNarrowsTheUncomparedRemoteToWhatRemains: the launcher-
-// environment bullet said a remote naming another repository *on the same
+// environment bullet has been narrowed twice, and this pins the second
+// narrowing. It first said a remote naming another repository *on the same
 // host* "is not compared with the task at all until Task 3.3 computes the
-// clone URL from the task itself". That stopped being true when the check
-// landed (internal/runner's remoteOfAnotherRepository, asked by admissionCheck
-// before any git credential is requested, pinned by
-// TestRunnerRefusesARemoteOnAnotherRepositoryOfTheSameHost), so the sentence
-// overstated the residual risk — and, in the same breath, said nothing about
-// the corners that really are uncompared. What stays uncompared is the remote
-// no parser here can place: a host Fugaro does not recognise, and a path that
-// is not exactly one owner and one name.
+// clone URL from the task itself"; that stopped being true when the check
+// landed (internal/runner's admissionCheck, before any git credential is
+// requested). It then went on to place the host-and-path corners on the same
+// side of the line — a remote on a host Fugaro does not recognise, and one
+// whose path is not exactly one owner and one name, "not compared with the
+// task at all" — and that is stale too: at HEAD both are refused before any
+// git credential is requested, by remoteHost's unknown-host refusal
+// (TestRunnerRefusesARemoteOnAHostNoProviderOwns) and by repoNamedByRemote's
+// canonicalization refusal (TestRunnerRefusesARemoteWhosePathIsNotAnOwnerName),
+// and a nested repository path is compared with the task's own repository
+// rather than read as "no repository" (task.CanonicalRepo allows it, and
+// MatchRepo compares it). The remote that really is uncompared is the one the
+// comparison can read nothing from: one naming no host, and one naming a host
+// with no repository path.
 func TestSecurityMdNarrowsTheUncomparedRemoteToWhatRemains(t *testing.T) {
 	data, err := os.ReadFile("../../SECURITY.md")
 	if err != nil {
@@ -114,21 +121,96 @@ func TestSecurityMdNarrowsTheUncomparedRemoteToWhatRemains(t *testing.T) {
 	}
 	s := string(data)
 	for _, want := range []string{
-		"remoteOfAnotherRepository",
-		"a remote on a host Fugaro does not recognise",
-		"a self-hosted forge included",
-		"not exactly one owner and one name",
+		"admissionCheck",
+		"remoteHost",
+		"repoNamedByRemote",
+		"one on a host no provider kind owns",
+		"a self-hosted forge is refused",
+		"compared with the task's own repository segment by segment",
+		"one naming no host",
+		"one naming a host but no repository path",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)
 		}
 	}
 	for _, banned := range []string{
-		"names another repository *on the same host*, or any remote on a host Fugaro does not recognise, is not compared",
+		"remoteOfAnotherRepository",
+		"a remote on a host Fugaro does not recognise",
+		"not exactly one owner and one name",
+		"is not compared with the task at all until Task 3.3 computes the clone URL from the task itself is the rest",
 		"*on the same host*, or any remote",
 	} {
 		if strings.Contains(s, banned) {
-			t.Errorf("SECURITY.md still says %q: a remote naming another repository on that host is compared and refused", banned)
+			t.Errorf("SECURITY.md still says %q: the admission refuses it before any git credential is requested", banned)
 		}
+	}
+}
+
+// TestSecurityMdCrossReferencesPointTheRightWay: SECURITY.md sends a reader
+// from one limit to another by name — `see "Every launcher can write runs/"
+// above`, `see "What is not on by default" below` — and a reference that names
+// the wrong direction costs the reader the section it points at. One did: the
+// "Narrow git credentials" bullet said the project-scope default was "below"
+// while that section is at line 21, above line 39 and above every bullet that
+// cites it (the review finding on this change). Nothing checked the direction,
+// so this does: every `see "X" above|below` has to name a section heading or a
+// bold bullet that exists, on the side it says.
+//
+// The anchor forms are the two the file uses: a heading line whose text is the
+// name, and a bullet whose bold run *begins* with it (the bullets here are
+// "- **Name.** rest of the sentence" or "- **Name, and more.**"). A name with
+// no anchor at all fails too: the reference would send the reader nowhere.
+//
+// Mutation (verified, run and restored): write "below" back into the "Narrow
+// git credentials" bullet and this fails naming that reference.
+func TestSecurityMdCrossReferencesPointTheRightWay(t *testing.T) {
+	data, err := os.ReadFile("../../SECURITY.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	headingRE := regexp.MustCompile(`^#{2,4} (.+?)\s*$`)
+	bulletRE := regexp.MustCompile(`^- \*\*(.+?)\*\*`)
+	refRE := regexp.MustCompile(`see "([^"]+)" (above|below)`)
+	type anchor struct {
+		line int
+		name string
+	}
+	var anchors []anchor
+	for i, line := range lines {
+		if m := headingRE.FindStringSubmatch(line); m != nil {
+			anchors = append(anchors, anchor{i, m[1]})
+		}
+		if m := bulletRE.FindStringSubmatch(line); m != nil {
+			anchors = append(anchors, anchor{i, strings.TrimSuffix(m[1], ".")})
+		}
+	}
+	refs := 0
+	for i, line := range lines {
+		for _, m := range refRE.FindAllStringSubmatch(line, -1) {
+			name, dir := m[1], m[2]
+			at := -1
+			for _, a := range anchors {
+				if a.name == name || strings.HasPrefix(a.name, name) {
+					at = a.line
+					break
+				}
+			}
+			if at < 0 {
+				t.Errorf("SECURITY.md line %d points at %q, which is not a heading or a bold bullet in the file: a reference to nothing is not a direction problem but it is the same dead end", i+1, name)
+				continue
+			}
+			refs++
+			if dir == "above" && at > i {
+				t.Errorf("SECURITY.md line %d says %q is above it, and its anchor is line %d: the reference sends the reader the wrong way", i+1, name, at+1)
+			}
+			if dir == "below" && at < i {
+				t.Errorf("SECURITY.md line %d says %q is below it, and its anchor is line %d: the reference sends the reader the wrong way", i+1, name, at+1)
+			}
+		}
+	}
+	if refs < 5 {
+		t.Fatalf("read %d cross-references out of SECURITY.md: the file has moved, so this check saw nothing", refs)
 	}
 }

@@ -67,9 +67,10 @@ var (
 // quietly takes the list default — and the entry's model ID is in the message,
 // so a refusal names the model rather than only the field. The member *names*
 // are checked first (checkMemberNames, against priceMembers): the decoder
-// folds case, so "input_per_m" written twice, or "INPUT_PER_M" beside it,
-// is one field to it and the rate this run is priced by would depend on the
-// order the keys were written in. The long_context tier is held to the same
+// folds a member name (Unicode simple case folding, so "input_per_m" written
+// twice, "INPUT_PER_M" beside it and a "ſ" for the "s" in it are all one field
+// to it) and the rate this run is priced by would depend on the order the keys
+// were written in. The long_context tier is held to the same
 // check, for the same reason. The block's own keys are held to a rule of their
 // own: one model may be named once, whether it is repeated under one key or
 // written under two spellings of its ID (checkNoDuplicateNames, then the

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,28 +36,23 @@ func TestPlatformEnvNames(t *testing.T) {
 	}
 }
 
-// The job's own identity variables are one set in two spellings: the ones the
-// deploy writes into every job's environment (this package's consts, built
-// into ws.Env by platformEnv) and the ones backend.LaunchEnv refuses a launch
-// entry for (backend.JobIdentityEnv, the seam both backends build a run's
-// environment through). They have to be the same six, or a launcher's entry
-// naming one of them is refused on Batch — whose job variables are built from
-// this package's names — and silently merged into the job's own environment on
-// Cloud Run — the asymmetry a launcher's entry naming FUGARO_PROJECT could
-// exploit. FUGARO_RUN is the one the deploy does not write: the launcher's own
-// override sets it, per execution.
-func TestTheJobIdentityNamesAreTheSeams(t *testing.T) {
-	ws, err := Workflow(sandboxInputs(t, ""), "web")
+// The five names platformEnv writes into every job are the five the backends
+// reserve a launch override for (backend.PlatformEnvNames, which Cloud Run asks
+// backend.LaunchEnv for): the two lists are one fact, and a platform variable
+// added here without being added there is an environment a launcher's entry
+// silently rewrites — the value the run reads its own bucket, backend, project
+// and region from. Both directions are checked, because a name reserved that
+// nothing writes is the same claim made about the wrong fact.
+func TestPlatformEnvIsWhatTheBackendsReserve(t *testing.T) {
+	c, err := resolve(sandboxInputs(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range backend.JobIdentityEnv {
-		if name == "FUGARO_RUN" {
-			continue
-		}
-		if _, ok := ws.Env[name]; !ok {
-			t.Errorf("backend.JobIdentityEnv names %s, and the deploy writes no job variable by that name (the job's own are %v)", name, ws.Env)
-		}
+	got := slices.Sorted(maps.Keys(c.platformEnv()))
+	want := slices.Clone(backend.PlatformEnvNames)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("platformEnv writes %v, and the backends reserve %v: the two must be the same names", got, want)
 	}
 }
 

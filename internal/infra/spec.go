@@ -471,12 +471,23 @@ func repoURL(provider, repo, given string) (string, error) {
 		return "", userErr("the repository URL %s is not on %s's host", given, provider)
 	}
 	// The URL is where the build and the check clone from, so it must be
-	// this repository, not only this provider.
+	// this repository, not only this provider. EscapedPath, not Path: the
+	// run's own admission compares the path git will send, which is the
+	// escaped one (gitprov.SplitRemote returns EscapedPath for exactly this
+	// comparison), so a URL whose path decodes to this repository but is
+	// spelled otherwise — https://bitbucket.org/acme/sandb%6fx.git — would be
+	// accepted here and refuse every run of the job it deployed (the review
+	// finding on this change). The path's punctuation is trimmed by
+	// gitprov.TrimRepoPath, the same function the run's admission asks
+	// (internal/runner's remoteRepoPath): trimming every "/" here read
+	// https://bitbucket.org//acme/sandbox.git as this repository and wrote it
+	// as the job's remote, where the admission's one-per-side trim leaves the
+	// empty segment and refuses every run (the review finding on this change).
 	want, err := task.CanonicalRepo(repo)
 	if err != nil {
 		return "", userErr("%v", err)
 	}
-	if got, err := task.CanonicalRepo(strings.Trim(u.Path, "/")); err != nil || got != want {
+	if got, err := task.CanonicalRepo(gitprov.TrimRepoPath(u.EscapedPath())); err != nil || got != want {
 		return "", userErr("the repository URL %s is not %s", given, repo)
 	}
 	return given, nil
