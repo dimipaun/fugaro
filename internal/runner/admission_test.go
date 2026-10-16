@@ -642,3 +642,81 @@ func TestEmptyAllowListInAPublishedPolicyDeniesEverything(t *testing.T) {
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "github/acme/app", "empty", "admits no repository at all", "fugaro project repos add")
 }
+
+// The fail-open this PR closes, end to end: a remote written as a URL whose
+// authority yields no host this check will read names a host to git all the
+// same, and the first shape of the binding answered "this remote names no host"
+// — so both the host-kind half and the owner/name half were skipped while the
+// run went on to clone whatever the spelling named, under this repository's
+// slug and with its git credential scoped to that host. Every remote below
+// either names github.com/acme/app.git to libcurl (the empty authority: libcurl
+// reads its first path segment as the host) or is one libcurl refuses outright
+// ("Bad hostname" for a two-"@" authority, "Malformed input" for a scheme that
+// is not a scheme) — and a spelling git will not clone from is not one this
+// check may admit unread either.
+//
+// The guard rewrites every https:// prefix, not only github.com's: an empty
+// authority's URL does not literally start with "https://github.com/", so a
+// guard keyed on the provider's own host would let a regressed check reach the
+// forge for real.
+func TestRunnerRefusesARemoteWhoseURLNamesNoHostItCanRead(t *testing.T) {
+	for _, tc := range []struct{ name, remote, want string }{
+		{
+			"an empty authority, which libcurl reads the first path segment of as the host",
+			"https:///github.com/acme/app.git", "whose host this check cannot read",
+		},
+		{
+			"an empty authority naming an attacker's host, same reason",
+			"https:///evil.example/acme/app.git", "whose host this check cannot read",
+		},
+		{
+			"four slashes, which git refuses and this check will not admit unread",
+			"https:////github.com/acme/app.git", "whose host this check cannot read",
+		},
+		{
+			"a two-'@' authority, which libcurl refuses as a bad hostname",
+			"https://a@b@github.com/acme/app.git", "whose host this check cannot read",
+		},
+		{
+			"whitespace before the scheme, which libcurl refuses as malformed input",
+			" https://github.com/acme/app.git", "whose host this check cannot read",
+		},
+		{
+			"a NUL in the authority, which is a host no refusal may quote",
+			"https://github.com\x00/acme/app.git", "whose host this check cannot read",
+		},
+		{
+			"a file url, which names no host for a credential to go to",
+			"file:///tmp/acme/app.git", "whose host this check cannot read",
+		},
+		{
+			"a port, where the credential would be scoped to another endpoint",
+			"https://github.com:8443/acme/app.git", "whose authority names the port 8443",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			guardProviderHost(t, "https://")
+			t.Setenv("GIT_SSH_COMMAND", "false")
+			b.deps.Remote = tc.remote
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, tc.want, "FUGARO_REMOTE", "before any git credential")
+		})
+	}
+}
+
+// The other side of the same finding: ssh ends the userinfo at the LAST "@", so
+// "a@b@github.com:acme/app.git" is github.com acme/app to the git that clones
+// it. The first-"@" cut read the host as "b@github.com", which no provider owns
+// — a refusal of a remote git accepts, and a false one. The rewrite lands the
+// clone on the fixture's own remote, off the network.
+func TestRunnerAdmitsTheScpLikeRemoteWhoseUserinfoHoldsTwoAts(t *testing.T) {
+	const remote = "a@b@github.com:acme/app.git"
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	guardProviderHostTo(t, remote, "file://"+b.remote)
+	t.Setenv("GIT_SSH_COMMAND", "false")
+	b.deps.Remote = remote
+	if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v: ssh ends this remote's userinfo at the last '@', so it is github.com/acme/app.git and must be admitted", rec, err)
+	}
+}
