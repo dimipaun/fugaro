@@ -108,6 +108,16 @@ func TestParseSharedRefusals(t *testing.T) {
 		}, "claude_accounts"},
 		{"empty claude_accounts section", func(s string) string { return s + "claude_accounts: {}\n" }, "claude_accounts"},
 		{"update_check key", func(s string) string { return s + "update_check: false\n" }, "update_check"},
+		// project_secrets is operator-only for the same reason
+		// claude_accounts is: it is what makes a reserved secret mountable
+		// project-wide (allow_data_to), so a writer of the runs bucket must
+		// not be able to widen who mounts one by publishing a document
+		// (localcfg.Config.Shared nils it). Both spellings are refused: the
+		// key in the document, and the decoded value the commands read.
+		{"project_secrets section", func(s string) string {
+			return s + "project_secrets:\n    bitbucket-token:\n        allow_data_to: [belong/edgeweb]\n"
+		}, "project_secrets"},
+		{"empty project_secrets section", func(s string) string { return s + "project_secrets: {}\n" }, "project_secrets"},
 		{"firebase triple of another project", func(s string) string {
 			s = strings.Replace(s, "https://fugaro-belong-default-rtdb.firebaseio.com", "https://evil-proj-default-rtdb.firebaseio.com", 1)
 			s = strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)
