@@ -138,8 +138,10 @@ export type FixtureRecord =
 export interface FixtureMeta {
   /** `case` is which of `FIXTURE_CASES` this is, or `synthetic`. */
   readonly case: string
-  /** `project` is the project **as redacted**: `<project>` for a recording, and
-   * whatever invented name a synthetic fixture uses. */
+  /** `project` is the project **as redacted**: the marker `<project>`, for a
+   * recording and for a synthetic fixture alike -- the loader audits the header
+   * with the same rules as a document, so a `project` that is not the marker is
+   * a refusal whether or not an installation ever existed. */
   readonly project: string
   /** `synthetic` is true for a fixture no installation produced. A loader does
    * not treat it differently -- the audit is the same -- but a reader, and the
