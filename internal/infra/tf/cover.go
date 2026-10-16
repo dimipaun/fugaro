@@ -203,7 +203,7 @@ var RolePermissions = map[string][]string{
 		"compute.instances.stop", "compute.instances.delete", "compute.disks.create", "compute.subnetworks.use",
 		"compute.images.useReadOnly", "compute.zoneOperations.get", "compute.disks.useReadOnly", "compute.images.create",
 		"compute.images.setLabels", "compute.images.get", "compute.images.getFromFamily", "compute.images.list",
-		"compute.images.delete"},
+		"compute.images.delete", "compute.globalOperations.get"},
 }
 
 // knownCommands are the container command and args the modules set: none for

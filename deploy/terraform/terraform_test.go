@@ -1354,6 +1354,19 @@ func TestComputeReaperRoleIsExactlySix(t *testing.T) {
 // role, no compute.disks.delete (the boot disk is the instance's own and goes
 // with it), and nothing that could create a job or a second VM.
 //
+// The two *Operations.get permissions are the ones a list like this is easy to
+// get wrong, because nothing in the build's own names suggests them: a create
+// call is authorized by its own permission and then WAITS on an operation, and
+// polling that operation is checked against compute.zoneOperations.get (zonal:
+// the instance, its disk) or compute.globalOperations.get (global: images are
+// global resources, so images.create and images.delete both wait on a global
+// operation — cloud.google.com/compute/docs/reference/rest/v1/images/insert,
+// checked 2026-10-16). Missing the global one leaves images.create authorized
+// and the call still failing, which is every pass that makes a generation; the
+// sweep's delete fails the same way and is swallowed by its `|| true`, so a
+// stale generation would never be removed and C19's stale-image half would
+// never happen.
+//
 // setMetadata is the one permission here wider than the build's own use of it
 // -- it is also how SSH keys reach a VM -- and it is pinned as an exception
 // rather than forbidden, because the build has no version of itself without
@@ -1364,6 +1377,7 @@ func TestComputePreloadBuilderRoleAreExactlyTheBuild(t *testing.T) {
 	want := []string{
 		"compute.disks.create",
 		"compute.disks.useReadOnly",
+		"compute.globalOperations.get",
 		"compute.images.create",
 		"compute.images.delete",
 		"compute.images.get",

@@ -257,7 +257,21 @@ resource "google_project_iam_custom_role" "preload_builder" {
     "compute.subnetworks.use",
     "compute.images.useReadOnly",
     "compute.zoneOperations.get",
-    # Imaging the stopped VM, and the stale sweep that follows it.
+    # Imaging the stopped VM, and the stale sweep that follows it. Images are
+    # GLOBAL resources, so their operations are global ones: images.create and
+    # images.delete are authorized by their own permission, but the call then
+    # WAITS on projects/<project>/global/operations/<id> and polling it needs
+    # compute.globalOperations.get ("Operations can be global, regional or
+    # zonal. For global operations, use the globalOperations resource" —
+    # cloud.google.com/compute/docs/reference/rest/v1/images/insert, checked
+    # 2026-10-16). Without it the generation IS created and the call still
+    # exits non-zero, so `set -e` fails every build that makes one; the same
+    # missing permission makes step 8's delete fail, and its `|| true` swallows
+    # it, so the sweep would never happen. Every predefined role that can
+    # create an image carries this next to compute.images.create (for example
+    # roles/compute.storageAdmin, cloud.google.com/iam/docs/roles-permissions/
+    # compute, same date); the zone operation below is the same requirement for
+    # the zonal calls (the instance and its disk).
     "compute.disks.useReadOnly",
     "compute.images.create",
     "compute.images.setLabels",
@@ -265,6 +279,7 @@ resource "google_project_iam_custom_role" "preload_builder" {
     "compute.images.getFromFamily",
     "compute.images.list",
     "compute.images.delete",
+    "compute.globalOperations.get",
   ]
 }
 
