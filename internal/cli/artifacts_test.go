@@ -989,7 +989,7 @@ func TestArtifactsGetNeverRemovesWhatItDidNotWrite(t *testing.T) {
 // TestArtifactsGetRefusesDuplicateNames: a record that names one artifact
 // twice, or that names two artifacts differing only by case, is refused
 // before any download. This is the retriever's half of the uploader's "no
-// duplicate after normalisation" refusal (design §9.2): a second download of
+// duplicate after normalisation" refusal (design §8.2): a second download of
 // the same name writes one path twice, and the case-folded pair does it on a
 // filesystem that ignores case (APFS, NTFS) — where checkArtifactDest has
 // already proved both destinations before the first byte is read, so the
@@ -1077,6 +1077,75 @@ func TestArtifactsGetStillFetchesADuplicatedNameByName(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(dir, artifactRunDir(id), "A.png"))
 	if err != nil || string(got) != string(upper) {
 		t.Errorf("the named artifact = %q, %v; want %q", got, err, upper)
+	}
+}
+
+// TestArtifactsGetRefusesANamedFetchOfADoublyRecordedName: naming one of two
+// entries that share a name is refused for what it is — the record names that
+// artifact twice — and not reported as a name the run never recorded, which is
+// what a single len(chosen) != 1 check says. The message points at the record,
+// not at `artifacts ls` (which prints the name, twice), and nothing is
+// downloaded. Mutation caught: folding "no such name" and "recorded twice"
+// into one check.
+func TestArtifactsGetRefusesANamedFetchOfADoublyRecordedName(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	body := []byte("one")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+		{Name: "a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{"a.png": body})
+
+	_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, "a.png")
+	if err == nil {
+		t.Fatal("naming an artifact the record lists twice was accepted")
+	}
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("exit code = %d, want %d (a bad record is the user's to read)", code, ExitUserError)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "recorded no artifact named") {
+		t.Errorf("a doubly-recorded name is reported as a name the run never recorded: %v", err)
+	}
+	if !strings.Contains(msg, `"a.png"`) || !strings.Contains(msg, "twice") {
+		t.Errorf("the refusal does not quote the name and say it is recorded twice: %v", err)
+	}
+	if names := dirEntries(t, artifactRunDir(id)); len(names) != 0 {
+		t.Errorf("a named fetch of a doubly-recorded name wrote %q, want nothing", names)
+	}
+	// A name the record really does not carry still gets the missing-name
+	// message, pointing at the listing.
+	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, "b.png"); err == nil || !strings.Contains(err.Error(), "recorded no artifact named") {
+		t.Errorf("get of a name the record does not carry = %v, want the missing-name refusal", err)
+	}
+}
+
+// TestArtifactsLsEscapesAProbeWarningsTab: the probe's warning is text out of
+// the record, and it is interpolated into a tabwriter row — where a literal tab
+// opens a column of its own, which is why every other record-derived cell in
+// that table is table-escaped. Mutation caught: probeCell's result written into
+// the row without cellOneLine.
+func TestArtifactsLsEscapesAProbeWarningsTab(t *testing.T) {
+	f := newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "video/mp4",
+			Probe: &runstore.ProbeResult{Ran: true, ExitCode: 0, Warning: "the tab\there"}},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	out, _, err := execute(t, "artifacts", "ls", appSlug+"/"+id)
+	if err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	if strings.Contains(out, "\t") {
+		t.Errorf("ls printed a raw tab in a table row, opening a column of its own:\n%q", out)
+	}
+	if !strings.Contains(out, "exit 0 (the tab?here)") {
+		t.Errorf("the probe's warning is not printed table-escaped:\n%q", out)
 	}
 }
 

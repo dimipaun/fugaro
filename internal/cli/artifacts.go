@@ -255,7 +255,7 @@ func printArtifacts(w io.Writer, files []runstore.ArtifactFile, asJSON bool) err
 			name += " (cannot be retrieved: " + problem + ")"
 		}
 		total += max(0, a.Bytes)
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", cellOneLine(name), bytesCell(a.Bytes), shortSHA(a.SHA256), cellOneLine(oneLine(a.ContentType)), probeCell(a.Probe))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", cellOneLine(name), bytesCell(a.Bytes), shortSHA(a.SHA256), cellOneLine(oneLine(a.ContentType)), cellOneLine(probeCell(a.Probe)))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -383,8 +383,17 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 				chosen = append(chosen, a)
 			}
 		}
-		if len(chosen) != 1 {
+		// Two answers, because they are two different records: one that
+		// does not carry the name at all, and one that carries it twice —
+		// for which "recorded no artifact named X" would be a lie, since
+		// `fugaro artifacts ls` prints X. The second is the same refusal the
+		// wholesale download makes (below), reached by name: naming one of
+		// them does not say which entry's bytes to write.
+		switch {
+		case len(chosen) == 0:
 			return nil, userErr("run %s recorded no artifact named %q: fugaro artifacts ls %s lists what it did", s.Slug()+"/"+s.RunID(), name, s.Slug()+"/"+s.RunID())
+		case len(chosen) > 1:
+			return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and naming it does not say which entry's bytes to write (fugaro artifacts ls %s prints the record as it is)", s.Slug()+"/"+s.RunID(), name, s.Slug()+"/"+s.RunID())
 		}
 		files = chosen
 	} else {
@@ -395,7 +404,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 		// entries for one name would be downloaded twice, to one path, with
 		// two success lines printed for one file. This is the retriever's
 		// half of the uploader's "no duplicate after normalisation" refusal
-		// (design §9.2).
+		// (design §8.2).
 		//
 		// It is a case-folded comparison and not a set membership test,
 		// because the destination is a path on the operator's filesystem:
