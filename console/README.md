@@ -62,11 +62,16 @@ window (plan Task 1.1, below): `src/main/window.ts`, `src/main/protocol.ts`,
 two test files that try to leave it, and a third that holds the e2e harness's
 own premise (`test/unit/playwright.test.ts`); the IPC allow-list (plan Task 1.2,
 which this file's history carries without a section of its own):
-`src/main/ipc.ts`, `src/preload/index.ts`, and `test/unit/ipc.test.ts`; and the
-one child process (plan Task 1.3, the last section): `src/main/spawn.ts`,
+`src/main/ipc.ts`, `src/preload/index.ts`, and `test/unit/ipc.test.ts`; the
+one child process (plan Task 1.3): `src/main/spawn.ts`,
 `src/main/spawnlog.ts`, `src/source/source.ts`, `src/source/cli.ts`, and the
 three suites that hold them (`test/unit/{spawn,spawnlog,configread}.test.ts`)
-with the fake CLI they spawn (`test/unit/stub.ts`).
+with the fake CLI they spawn (`test/unit/stub.ts`); and the recorded fixtures
+(plan Task 1.4, the last section): `src/source/redact.ts`,
+`src/source/fixture.ts`, the recorder (`tools/record-fixture/index.ts`),
+the one committed fixture (`test/fixtures/synthetic.ndjson`, **synthetic**),
+the suite that invents it (`test/unit/synthetic.ts`), and the three suites that
+hold the three (`test/unit/{redact,fixture,recorder}.test.ts`).
 
 ## The toolchain, pinned (Task 1.0)
 
@@ -120,6 +125,7 @@ npm run build                                  # tsc -p tsconfig.build.json, src
 npm run test:e2e                               # playwright, test/e2e/*.spec.ts; builds first
 npm run test:e2e -- security                   # just the window's spec
 npm run typecheck                              # tsc --noEmit over src/, test/, tools/ and the root config files
+npm run record-fixture -- --help               # the recorder; OWNER-RUN, see "Recorded, redacted fixtures"
 ```
 
 `npm ci` — never `npm install` — is the install step in this file, in the plan's
@@ -623,7 +629,314 @@ run against the committed tree, and each made a named test red:
 - **Persistence.** The installation store is in memory for one run; see the note
   above on rule 10.
 - **The fixtures.** `FugaroSource`'s second implementation is Task 1.4's
-  recorder and replay, and it slots in behind the same interface.
+  recorder and replay, and it slots in behind the same interface — see the
+  section below. What landed there is the tool and one synthetic fixture; the
+  design's eight recordings are still the owner's to make.
 - **`version --json` and a schema version.** The CLI has neither (contract §4.3
   gaps 1 and 3), so the handshake is the one human line and the console refuses a
   binary whose line it cannot read rather than guessing.
+
+## Recorded, redacted fixtures, and the recorder (Task 1.4)
+
+**The tool is agent-written; the recordings are OWNER-RUN.** This is the
+distinction the whole section turns on, and it is a boundary rather than a
+division of labour: an agent may not run `fugaro watch` against a real
+installation, may not read `~/.config/fugaro`, may not handle a credential and
+may not touch `belong` (Global Constraints 2 and 6), so **no agent ran the
+recorder in this task, and no file under `test/fixtures/` was recorded.** What
+is agent-written is the recorder, the redactor, the fixture format, its loader
+and the replaying source; what is the owner's is the eight recordings design
+§9.1 asks for.
+
+Three files make up the data plane's second implementation, and they have three
+different jobs:
+
+| File | What it is |
+|---|---|
+| `src/source/redact.ts` | the redactor: what a recording may carry into this repository |
+| `src/source/fixture.ts` | the format, the loader that verifies it, and `FixtureSource`, the replay |
+| `tools/record-fixture/index.ts` | the recorder: one `fugaro watch --json` → one fixture file |
+
+### The owner's one command
+
+```
+npm run record-fixture -- --out test/fixtures/<name>.ndjson --project <project>
+```
+
+Run **by the owner**, from the sandbox checkout, with the **sandbox**
+installation selected — never `belong`. The eight recordings are the owner's to
+produce, and the plan attaches them to this task's pull request by hand or in a
+follow-up commit. `--project` is **required and never defaulted**: falling back
+to whatever the ambient selection happens to be is precisely how a recording of
+the wrong project gets made (design §3.4 rule 3), so its absence is a refusal
+that names the flag. The rest of the flags, and the refusals, are in
+`--help` / `USAGE`.
+
+The script is `tsc -p tsconfig.record-fixture.json && node
+.record-fixture/tools/record-fixture/index.js`: the tool is TypeScript like
+everything else here, and `.record-fixture/` is a build output directory that
+`.gitignore` names. The recorder spawns through the console's **own**
+`planFor('live.watch', …)`, so the argv, the child environment
+(`CHILD_ENV_KEYS`), the working directory and `shell: false` are the console's
+rules and not a second copy of them — a recording cannot be of a command the
+console would refuse to run. It records for a bounded time (`--duration`, 120 s
+by default), then stops the child the way the console does, `SIGTERM` and then
+`SIGKILL` after `SHUTDOWN_GRACE_MS`; a torn last line is dropped rather than
+recorded as garbage.
+
+### The eight recordings, and why seven of them are missing
+
+Design §9.1 asks for eight cases, one recording each, and `FIXTURE_CASES` in
+`src/source/fixture.ts` is that list in that order:
+
+`normal`, `silent-then-lost`, `kill-mid-feed`, `repo-at-cap`, `oauth-notional`,
+`absent-field`, `gap`, `hostile-title`.
+
+**None of the eight exists on this tree, and the reason is not effort.** Three
+of them cannot be produced without a live sandbox doing real work: a run that
+stops heartbeating and then goes `lost` needs a real stalled run, a kill switch
+flipping mid-feed needs a real `budget kill` against the sandbox, and a
+repository at its cap needs real spend to accumulate. The other five could be
+recorded from a sandbox checkout, and they are missing for the same reason:
+**the recorder is the owner's to run, full stop.** They land here as
+`test/fixtures/<case>.ndjson`, one file per name in `FIXTURE_CASES`, which is
+the only naming `fixture.test.ts` accepts beside `synthetic.ndjson` — a stray
+file fails a test by name, while the owner's recordings do not have to be
+preceded by an edit to the suite. Until they land,
+`test/fixtures/` holds one file, and it is labelled for what it is:
+
+```
+{"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/1","case":"synthetic",
+ "project":"<project>","synthetic":true,"records":6,"sha256":"9c5effc8…",
+ "note":"synthetic: invented documents put through the same redaction path as a recording; never recorded from any installation or cloud"}}
+```
+
+`synthetic` is deliberately **not** a member of `FIXTURE_CASES`: the eight are
+the recordings, and a reader who saw nine names would have to work out which one
+was real. The invented documents live in `test/unit/synthetic.ts`, not only in
+the committed file, and `fixture.test.ts` regenerates the fixture from them and
+asserts the committed bytes are exactly what comes out — **byte-identity, not a
+diff** — so a hand-edited fixture fails a named test even if its digest were
+recomputed by hand, and a reader can see which documents the file was made from
+without a decoder in their head. Those documents cover the axes a replay has to
+reproduce (a normal document, the next tick with the numbers moved, the degraded
+mode's sentence as a *notice*, a silent run, a 160-second gap with the run
+`lost`, and a run with fields the CLI omits), which is why one synthetic fixture
+is enough to make the harness exercisable while the real eight are missing —
+**and it is not a substitute for them.** No screen has ever claimed to be tested
+against real CLI output, and this section does not claim it either.
+
+### The redactor: deny-by-default, and fail-closed twice
+
+A recording is made on a real installation against a real project from a real
+checkout, so every document in it can carry the operator's world — their project
+name, their machine, their home directory, their repository names, their
+colleagues' addresses and branch names, and whatever a job wrote into a title.
+None of that belongs in a commit. `src/source/redact.ts` is what stands between
+a recording and `test/fixtures/`, and it is written to be told nothing:
+
+- **Every string is hostile until a rule has passed over it.** Two kinds of rule.
+  *Field classes*, where the key names what the value is (`repo`, `slug`,
+  `pr_url`, `requested_by`, `by`, …), and *pattern classes*, which apply to
+  **every** string whatever its key is: an address, a token, a URL, an absolute
+  path, a branch name, a repository path, and one of the installation's own
+  literals. A document with a key nobody anticipated still cannot carry an
+  address out of the room, and a test per class holds each one — a run title, a
+  requester address, a repository name in the field *and* in a sentence, a
+  branch name, a POSIX and a Windows path, a token by shape and by key, a URL
+  with userinfo, the installation's own literals, and an address under a key
+  nobody anticipated.
+- **Redaction is a marker, not a deletion, and the markers are a closed set**
+  (`<path>`, `<project>`, `<host>`, `<branch>`, `[redacted-token]`,
+  `[redacted-url]`, `redacted@example.invalid`, `[redacted]`). A marked value is
+  unambiguous on sight, so nothing in a fixture can be mistaken for real data,
+  and a value that is *already* marked is left alone — which is what makes the
+  whole function **idempotent**, asserted as `redact(redact(x)) == redact(x)`.
+  Two classes keep a per-value pseudonym instead of a fixed marker — a
+  repository (`r-1a2b3c4d/r-5e6f7a8b`) and a slug (`slug-1a2b3c4d`) — because a
+  fixture with several repositories is only worth having if the rows stay
+  distinguishable. A pseudonym is a SHA-256 of the value with a fixed, public
+  domain separator: one-way, so it reveals nothing, and stable, so the same
+  repository is the same pseudonym in every fixture.
+- **It fails closed, twice.** A line that is not a JSON object is refused rather
+  than passed through, and every document is **audited** after redaction: if any
+  class is still present after the rules have run — an address, a token, a URL, a
+  path, a branch, a repository path, a literal, or a reserved key whose value is
+  not a marker — the call throws. A bug in a rule is therefore a failed
+  recording, not a leaked fixture. The refusal names the class it refused on, so
+  a failed recording can be read rather than guessed at.
+- **It redacts identity, not hostility, and it does not invent data.** A
+  `<script>` in a title stays a `<script>`: the design wants a hostile-title
+  *recording*, and making text safe to *render* is the display layer's job (Task
+  2.0's `src/shared/sanitize.ts`), not the recorder's. Numbers, booleans, `null`
+  and an **empty string** pass through untouched — `pr_url: ""` is a run with no
+  pull request, not a URL to redact — because a fixture whose absent fields had
+  been turned into markers would be a fixture that lies about absence.
+
+**And the same audit runs on the way back in.** `loadFixture` audits every
+document and every notice it loads, so a fixture edited by hand after it was
+written is refused too, with `FixtureRefusal` naming the class.
+
+### The format, and what the loader refuses
+
+A fixture is NDJSON: one header line and one line per record. The header is the
+file's paperwork — the format version, **the redactor that made it**
+(`redactor: "fugaro-console-redact/1"`), whether it is synthetic, which case it
+is, the project *as redacted*, how many records follow, and **a SHA-256 of the
+body**. The records are what the console replays: an arrival stamp and either a
+document or a notice, which is exactly the pair `decodeFeedLine` produces from a
+child's stdout.
+
+`loadFixture` verifies **before** it returns anything, and refuses by name at
+each step: the header parses; the format version is one this build knows; the
+redaction marker names a redactor this build knows; the body's digest matches
+the header's; the record count matches the header's; every record is a
+well-formed envelope with a non-decreasing timestamp; and every document and
+notice passes the redaction audit. The redactor check is not decoration: **a
+digest alone proves only that the file is the one the recorder wrote — it says
+nothing about whether the recorder was the one in this repository**, so a
+fixture stamped by an older or unknown redactor is refused rather than trusted.
+
+`FixtureSource` then implements the whole `FugaroSource` interface over one
+fixture, so every screen and every later test can be driven with no child
+process, no network and no installation. **The live feed replays the recording's
+own clock**: ninety seconds between two records is ninety seconds in the stream,
+the documents go through the same `FeedTracker` a real child's frames go
+through, and the notices arrive on the same stream in the same place. A fixture
+that replayed its records back-to-back would answer the wrong question — the
+eight cases are *about* time, and "a gap in the recording is a gap in the
+replayed stream" is what makes Task 3.1's `stale` tests mean anything.
+
+### The recorder's refusals are the point
+
+Everything the recorder does before it spawns is a refusal rather than a
+guess, and this is what makes it a tool an agent cannot be talked into
+misusing. `parseRecorderArgs` refuses, by name: a missing `--project`; the
+project `belong`; **any `--out` outside a `fixtures/` directory or not ending
+`.ndjson`**; an existing fixture without `--force`; an unknown flag; and a
+`--duration` that is not a positive number. `OUT_OF_BOUNDS` also refuses a path
+carrying the fragment `.config/fugaro`, normalised for case and for Windows
+separators, so an invocation pointed at the operator's config stops before it
+spawns anything. And a recording that read **no document at all** is a refusal
+rather than an empty fixture: an empty file would look like a quiet installation
+rather than a failed run.
+
+The recorder never prints the child's documents, and it never echoes its
+stderr either — the operator's terminal is theirs, but a scrollback is a leak
+this tool will not create. The child's stderr is **drained and discarded**:
+drained, because `planFor` gives the child a pipe and a pipe nobody reads fills
+up and then blocks the child's write, which would stall a recording of a CLI
+that logs; discarded, because a stderr line is raw CLI text rather than a feed
+frame, and putting it in the fixture as a *notice* would make the fixture claim
+`watch --json` wrote something it did not. It writes exactly one file: the
+fixture `--out` names, and only after the text has gone back through the real
+`loadFixture`.
+
+### The properties are tests, and each one fails under a mutation
+
+| Mutation | What fails |
+|---|---|
+| a title passed through untouched | "redacts run titles: the words stay, the people and the places go" |
+| a fixture in `test/fixtures/` with a planted address | "refuses a fixture whose records carry what the redactor removes" |
+| `redactDocument` made non-idempotent | "redacting twice changes nothing" |
+| a frame that cannot be parsed passed through | "fails closed on a frame it cannot parse" |
+| the audit's throw turned into a return of the problems | "the audit accepts what redaction produces, and refuses what it does not" |
+| a repository pseudonym replaced by the value itself | "uses stable, one-way pseudonyms and never the value itself" |
+| the header's `sha256` left unchecked on load | "refuses a fixture whose hash does not verify" |
+| the header's `redactor` left unchecked on load | "refuses a fixture whose redaction marker this build does not know" |
+| a fixture edited after it was written to carry an address | "refuses a fixture whose records carry what the redactor removes" |
+| the replay firing records back-to-back instead of on their stamps | "replays the recording on the recording's own clock" |
+| the committed synthetic fixture hand-edited, digest and all | "is exactly what the redaction path writes from the documents in source" |
+| a stray file in `test/fixtures/` — a hand-made copy, a recording under a name no case holds | "holds exactly the synthetic fixture plus, at most, one file per recorded case" |
+| a `--project` defaulted to the ambient project, `belong` accepted, or an `--out` outside `fixtures/` | "refuses an invocation that would record the wrong thing" (one table, one row per refusal) |
+| an existing fixture overwritten without `--force` | "never overwrites a fixture without --force" |
+| the spawn built from a hand-written argv instead of `planFor` | "is the console's live.watch plan, --project and all" |
+| the child's environment inherited instead of built | "gives the child CHILD_ENV_KEYS and nothing else" |
+| the redaction refusal swallowed, so the recording continues | "refuses rather than records when the redactor will not vouch for a frame" |
+| the fixture written before it is verified | "verifies the whole fixture before a byte is written" |
+| the child's stderr left undrained | "drains the child's stderr, and never records a byte of it" |
+| `SIGKILL` never sent to a child that will not go | "stops the child at the end of the duration: SIGTERM, then SIGKILL" |
+| the child left running after a refusal | "reports a refusal, and the child is stopped rather than left running" |
+| an empty recording written as a quiet-looking fixture | "refuses an empty recording rather than writing a quiet-looking fixture" |
+
+The red step was run as the plan writes it, on this tree: the title-passthrough
+mutation and the planted-address fixture both failed the tests named above, and
+the two workflow mutations the plan says to run first (a `console` job renamed,
+and one carrying `paths: ['console/**']`) were run with them — see the
+`docs/pending-workflows/console-tests.yml` section below for those two.
+
+### What is deliberately not here (Task 1.4)
+
+- **The recordings.** Eight cases, owner-run, listed above and in
+  `FIXTURE_CASES`; one synthetic fixture stands in until they land.
+- **Any screen.** Nothing renders a fixture yet: `FixtureSource` is a
+  `FugaroSource` and no screen exists to consume one until Task 2.0.
+- **The wiring.** Nothing chooses a fixture, and nothing switches a running
+  console between the live source and a replay — that belongs with the Live
+  screen's task, beside the `handlersFor` wiring Task 1.3 left open.
+
+### Deviations from the plan's file list, said out loud
+
+Three additions and one move, each with its reason:
+
+- **`src/source/redact.ts`, not `tools/record-fixture/redact.ts`.** The plan puts
+  the recorder in `tools/`, and the recorder is the *writer* of a fixture — but
+  the rules are also the *reader*'s, because `loadFixture` audits every document
+  it loads with exactly these classes, and a fixture is only as safe as the rules
+  that made it. `src/source/fixture.ts` therefore has to import the module, and
+  `tsconfig.build.json` has `rootDir: "src"`: a file under `tools/` cannot be in
+  the app's build. The redactor lives next to the loader that depends on it, and
+  the recorder imports it from there. The plan's split is otherwise exactly as
+  written: recorder in `tools/`, format and loader in `src/`.
+- **`tsconfig.record-fixture.json`, `.gitignore`'s `.record-fixture/`, and
+  package.json's `record-fixture` script.** The plan's owner step is
+  `npm run record-fixture -- --out test/fixtures/<name>.ndjson`, and a command
+  that runs a TypeScript tool needs a build and a script to be that command.
+  The config is Node16 with `rootDir: "."` over `src/**` and `tools/**`, which
+  is what makes the tool's imports of `src/source/*` resolve as written at
+  runtime. `test/unit/pinning.test.ts` asserts the `test:unit` and `test:e2e`
+  scripts exactly and allows other scripts to exist, so this adds no exception
+  to a pin.
+- **`test/unit/synthetic.ts`** — the fixture suite's own module rather than a
+  helper inside `fixture.test.ts`, because it is also what the byte-identity
+  assertion of the committed file regenerates from.
+- **`test/unit/recorder.test.ts`** — the plan's file list names the redactor's
+  and the fixture's suites but not the recorder's. A recorder whose *refusals*
+  are untested is a recorder that can be talked into recording the wrong
+  project, and the refusals are most of what the file does before it spawns;
+  the suite holds every one of them, plus the spawn, the redaction of one line,
+  the header, a recording in progress and the whole tool end to end, against
+  stubs and never a real child.
+
+## `docs/pending-workflows/console-tests.yml`
+
+The console's own CI is **staged, not applied**, and Task 1.4 is the task that
+stages it — see `docs/pending-workflows/README.md` for the file itself and the
+one command that applies it. Two things about it belong here, because they are
+about this directory rather than about the workflow:
+
+- **The file is `console-tests.yml`, tests only, and it holds no secret of any
+  kind.** The signing, notarising and stapling workflow is Task 4.2's
+  **separate** `console-release.yml`, precisely so that a file which runs on
+  every pull request from any branch never sits next to the Apple material
+  (design §9.4).
+- **The job runs unconditionally, and that is what makes it gate-able.** It has
+  no `paths:` filter and no job-level `if:`, and its name is exactly `console`
+  — the string in `scripts/release-gate.sh`'s `names` list. The gate requires a
+  check named `console` on a tag's commit and, in its `identical_tree_checks`
+  fallback, the same names on the pull request head whose tree matches; **a check
+  that does not exist is not a success and neither is a skipped one**, so a
+  `console` job filtered to `console/**` would make the gate refuse **every**
+  release tag in this repository, including the ones that never touch the
+  console (design §9.4; plan Task 4.6). Two tests in
+  `internal/cli/docs_desktop_console_test.go` —
+  `TestConsoleTestsWorkflowIsStagedAndPinned` and `TestConsoleWorkflowJobIsGateable`
+  — assert the pins, the absence of any secret, the job's name and the absence
+  of a filter or a guard, and byte-identity with the copy under
+  `.github/workflows/` once the owner has applied it.
+
+**Tasks 1.0 to 1.4 merged with no console CI at all.** The copy-in is Task 1.5,
+and this paragraph is not a claim that it already happened: the pinned
+toolchain, the hardened window, the IPC allow-list, `FugaroSource` and the
+fixtures were written, reviewed and merged on the strength of a reviewer's
+machine, and no workflow ran a console test on any of their pull requests.
