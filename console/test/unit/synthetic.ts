@@ -52,6 +52,12 @@ export const SYNTHETIC_LITERALS: readonly string[] = Object.freeze([
   'fixture-operator',
 ])
 
+/** SYNTHETIC_PSEUDONYM_KEY keys the synthetic fixture's pseudonyms, so its
+ * bytes are reproducible and the byte-identity test can hold them. **It is
+ * public and it is only ever used here**: the names it keys are invented, and a
+ * recording's key is random, drawn by `createRedactor`, and never written. */
+export const SYNTHETIC_PSEUDONYM_KEY = 'synthetic-fixture-only-not-a-secret'
+
 const REPO = 'fixture-owner/fixture-repo'
 const SLUG = 'github-com-fixture-owner-fixture-repo'
 
@@ -242,7 +248,7 @@ export const SYNTHETIC_META: FixtureMeta = Object.freeze({
  * throws here rather than being written.
  */
 export function syntheticFixture(): string {
-  const redactor = createRedactor(SYNTHETIC_LITERALS)
+  const redactor = createRedactor(SYNTHETIC_LITERALS, { pseudonymKey: SYNTHETIC_PSEUDONYM_KEY })
   const records: FixtureRecord[] = SYNTHETIC_SOURCE.map((record) => {
     if ('notice' in record) return { at: record.at, notice: redactor.redactText(record.notice) }
     return { at: record.at, document: redactor.redactDocument(record.document) as JSONDoc }

@@ -46,15 +46,23 @@ import {
   assertRedacted,
   createRedactor,
   isMarker,
-  pseudonym,
-  redactRepository,
 } from '../../src/source/redact'
+
+/** TEST_KEY is a pseudonym key for this file only. A recording's key is random
+ * and never written; a fixed one here is what lets a test name the pseudonym it
+ * expects, and `redact-hardening.test.ts` pins that two recordings differ. */
+const TEST_KEY = 'redact-test-only-key'
 
 /** doc redacts a document with the literals given (none by default) and returns
  * it as an object a test can walk. */
 function doc(value: Record<string, unknown>, literals: readonly string[] = []): Record<string, unknown> {
-  return createRedactor(literals).redactDocument(value) as Record<string, unknown>
+  return createRedactor(literals, { pseudonymKey: TEST_KEY }).redactDocument(value) as Record<string, unknown>
 }
+
+/** keyed is a redactor under the same key, whose pseudonyms `doc` produces. */
+const keyed = createRedactor([], { pseudonymKey: TEST_KEY })
+const redactRepository = (value: string): string => keyed.redactRepository(value)
+const pseudonym = (prefix: 'r' | 'slug' | 'person', value: string): string => keyed.pseudonym(prefix, value)
 
 /** str and obj are the two reads a test needs out of the untyped result: the
  * redactor's whole output type is `unknown`, on purpose (it redacts a shape it
@@ -421,7 +429,7 @@ describe('the redactor', () => {
     expect(message).toContain('still holds a filesystem path')
   })
 
-  it('uses stable, one-way pseudonyms and never the value itself', () => {
+  it('uses pseudonyms that are stable within a recording, and never the value itself', () => {
     expect(pseudonym('r', 'dimipaun')).toBe(pseudonym('r', 'dimipaun'))
     expect(pseudonym('r', 'dimipaun')).not.toBe(pseudonym('slug', 'dimipaun'))
     expect(pseudonym('r', 'dimipaun')).not.toContain('dimipaun')
