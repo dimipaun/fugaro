@@ -221,10 +221,18 @@ func TestRoutingRefusesAModelTwoRoutesClaim(t *testing.T) {
 	}
 	switchOn := &Routing{Claude: &RoutingClaude{Via: RouteOpenRouter, Models: []string{canonicalClaude}}}
 	got := problemsText(CheckRouting(switchOn, claims, "routing"))
-	for _, want := range []string{"routing.claude.models", "two provider entries", "aaa-openrouter", "zzz-openrouter", "anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5-5"} {
+	// The count is the number of entries that claim it, not the word "two":
+	// three entries claiming one model is the same defect, and it names all
+	// three (the review finding on the hard-coded "two provider entries").
+	for _, want := range []string{"routing.claude.models", "claimed by 2 provider entries", "aaa-openrouter", "zzz-openrouter", "anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5-5"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("problems = %q, want %q", got, want)
 		}
+	}
+	claims["mmm-openrouter"] = ModelProvider{Kind: ModelProviderKind, BaseURL: "https://m.example/api", Auth: "bearer", Secret: "m-key", Models: []string{"anthropic/claude-sonnet-5.5"}, AllowDataTo: []string{"*"}}
+	got = problemsText(CheckRouting(switchOn, claims, "routing"))
+	if !strings.Contains(got, "claimed by 3 provider entries") || !strings.Contains(got, "mmm-openrouter") {
+		t.Errorf("three claims: problems = %q, want all three entries named with their count", got)
 	}
 	if route, sent, ok := RoutingClaudeFor(switchOn.Claude, canonicalClaude, claims); ok || route != "" || sent != "" {
 		t.Errorf("RoutingClaudeFor = (%q, %q, %v), want no resolution: an ambiguous claim must not resolve", route, sent, ok)

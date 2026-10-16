@@ -41,10 +41,13 @@ const allowRoutingSettingsEnv = "FUGARO_TEST_ALLOW_ROUTING_SETTINGS"
 // vertexRegionPrefix starts Claude Code's per-model Vertex region overrides.
 const vertexRegionPrefix = "VERTEX_REGION_"
 
-// gatewayOn reports whether the agent's calls go through the gateway: the
-// budget is on and the credential is a model API's (an oauth run never is).
+// gatewayOn reports whether the agent's calls go through the gateway. It is
+// GatewayOn — the same predicate for the readers that hold a mode and an auth
+// rather than a run — read off the run, and it is the only place that happens:
+// the routing switch's own question (RoutingInertReason) and the gateway's
+// rules all ask one function, so no reader can answer it differently.
 func (r *run) gatewayOn() bool {
-	return r.cfg != nil && r.spend.On() && (r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex")
+	return r.cfg != nil && GatewayOn(r.cfg.Agent.Auth, r.spend.Mode)
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.

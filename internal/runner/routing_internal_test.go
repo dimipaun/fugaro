@@ -218,6 +218,70 @@ func TestAutoDoesNotRouteAVertexRun(t *testing.T) {
 	}
 }
 
+// TestRoutingInertReasonIsTheLadderTheRunWalks is the review finding that made
+// the decision shared: `fugaro validate` and `fugaro doctor` report what a run
+// does with the switch — which runs it halts and which route they take — and
+// both re-derived that from the gateway alone, so validate claimed a halt no
+// Vertex run makes (auto never routes one) and one only a keyless run makes
+// (auto keeps the pins direct when the job has an ANTHROPIC_API_KEY), while
+// doctor claimed the halt for every run. applyRouting now branches on this one
+// function, and the readers ask it: one decision, four states, and the tests
+// above and beside this one pin the run's own end of it
+// (TestRoutingDoesNothingWithTheGatewayOff, TestAutoDoesNotRouteAVertexRun,
+// TestRoutingAutoFollowsTheAnthropicKey).
+//
+// Hand mutation this fails on: dropping the key-presence branch, which claims
+// the halt for the run that goes direct, or the Vertex one, which routes a
+// Vertex run's Claude prompts through a third party.
+func TestRoutingInertReasonIsTheLadderTheRunWalks(t *testing.T) {
+	const canonical = "claude-sonnet-5-5"
+	sw := func(via string) *config.RoutingClaude {
+		return &config.RoutingClaude{Via: via, Models: []string{canonical}}
+	}
+	for _, tc := range []struct {
+		name                        string
+		sw                          *config.RoutingClaude
+		auth                        string
+		gatewayOn, anthropicKeyStrd bool
+		want                        RoutingInert
+	}{
+		{"a switch, a gateway and a keyless api-key job", sw(config.RouteOpenRouter), "api-key", true, false, RoutingActs},
+		{"that job with a key stored", sw(config.RouteOpenRouter), "api-key", true, true, RoutingActs},
+		{"via: auto, keyless", sw(config.RouteAuto), "api-key", true, false, RoutingActs},
+		{"via: auto with a key stored", sw(config.RouteAuto), "api-key", true, true, RoutingInertAutoKey},
+		{"via: auto in a Vertex run", sw(config.RouteAuto), "vertex", true, false, RoutingInertAutoVertex},
+		{"via: direct", sw(config.RouteDirect), "api-key", true, false, RoutingInertViaDirect},
+		{"no gateway (the budget is off), whatever the via", sw(config.RouteAuto), "api-key", false, false, RoutingInertNoGateway},
+		{"no gateway (the credential is not a model API's)", sw(config.RouteOpenRouter), "oauth", false, false, RoutingInertNoGateway},
+		{"no switch at all", nil, "api-key", true, false, RoutingInertNoSwitch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RoutingInertReason(tc.sw, tc.auth, tc.gatewayOn, tc.anthropicKeyStrd); got != tc.want {
+				t.Errorf("RoutingInertReason(%v, %q, gateway %v, key %v) = %q, want %q", tc.sw, tc.auth, tc.gatewayOn, tc.anthropicKeyStrd, got, tc.want)
+			}
+		})
+	}
+	// GatewayOn is the other half of the same reading, and the run asks it
+	// through one function: the budget mode and the credential, nothing else.
+	for _, tc := range []struct {
+		auth, mode string
+		want       bool
+	}{
+		{"api-key", policy.ModeEnforce, true},
+		{"api-key", policy.ModeObserve, true},
+		{"vertex", policy.ModeObserve, true},
+		{"vertex", policy.ModeEnforce, true},
+		{"vertex", policy.ModeOff, false},
+		{"api-key", "", false},
+		{"oauth", policy.ModeEnforce, false},
+		{"", policy.ModeObserve, false},
+	} {
+		if got := GatewayOn(tc.auth, tc.mode); got != tc.want {
+			t.Errorf("GatewayOn(%q, %q) = %v, want %v", tc.auth, tc.mode, got, tc.want)
+		}
+	}
+}
+
 // TestAllowedAdmitsARouteIDTheSwitchDoesNotApply is the runner half of
 // internal/config/pins.go's `allowed`, and the review finding that rewrote its
 // comment: config.CheckAllowed judges a pin by the switch's *resolution* — the

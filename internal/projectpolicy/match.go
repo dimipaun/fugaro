@@ -2,8 +2,10 @@ package projectpolicy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -106,6 +108,15 @@ const (
 // pattern that cannot match a canonical repository is refused, so a typo fails
 // at publish time (the CLI, task 1.6) instead of silently un-enrolling a
 // repository; Decode applies the same check to a node it reads.
+//
+// The provider segment is held to config.Providers — the kinds a repository's
+// git.provider may be, and so the kinds a canonical repository can carry — and
+// not to task.ValidProvider, which accepts any lower-case word a slug could be
+// built from ("githubb"). A pattern it accepted but no repository could match
+// is precisely the silent un-enrollment the check exists to prevent, and this
+// function is what `fugaro project repos add` validates the entry with
+// (internal/cli's canonicalRepoArg), so a misspelt kind fails at publish time
+// rather than at the next launch of a repository nobody admitted.
 func ValidPattern(pattern string) error {
 	if pattern == "*" {
 		return nil
@@ -148,8 +159,8 @@ func ValidPattern(pattern string) error {
 			}
 			return fmt.Errorf("pattern %q: %q is not a repository character (names are lower-case; \"*\" is the wildcard)", pattern, string(c))
 		}
-		if i == 0 && s != "*" && !task.ValidProvider(s) {
-			return fmt.Errorf("pattern %q: %q is not a provider kind", pattern, s)
+		if i == 0 && s != "*" && !slices.Contains(config.Providers, s) {
+			return fmt.Errorf("pattern %q: %q is not a git provider kind (%s): a canonical repository is spelled with one of those (task.CanonicalRepo takes its kind from the repository's own git.provider), so this entry would enroll nothing", pattern, s, strings.Join(config.Providers, ", "))
 		}
 	}
 	if stars > maxPatternStars {
