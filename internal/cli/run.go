@@ -370,6 +370,18 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if err != nil {
 		return launchResult{}, err
 	}
+	// The other half of that check, and the last place --attach can still
+	// refuse a run that exists: launch.json (or result.json's execution)
+	// says this run id has launched while no task.json is there to read (a
+	// task deleted after the fact, a record backfilled without one). Every
+	// --attach step lives inside the prior == nil block below — the caps,
+	// the image gate, the upload itself — so a launch that found a prior
+	// would write a task naming no inputs while the files the owner named
+	// went nowhere, silently. No attachment is added to a run that already
+	// went: it started with the task it started with.
+	if prior != nil && len(o.attach) > 0 {
+		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", spec.RunID)
+	}
 	if prior == nil && reused {
 		if err := recheckFollowUp(ctx, env, slug, spec, warn); err != nil {
 			return launchResult{}, err

@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,7 +17,9 @@ import (
 	"time"
 
 	"gocloud.dev/blob"
+	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -542,7 +546,10 @@ func TestAttachNeedsAResolvableRepo(t *testing.T) {
 // image whose runner knows about them (P9) — a spec carrying inputs is
 // refused outright by an older runner, whose parser disallows unknown fields
 // — and the refusal is the one that names --attach, not the mode: artifact
-// one beside it, which would fire first if this gate ran after it.
+// one beside it, which would fire first if this gate ran after it. Nothing is
+// uploaded either: the gate is before the upload, so the refusal leaves no
+// object under the run id (the same assertion every other refusal test makes,
+// which this one was missing).
 //
 // Mutation (drop the --attach image gate from attachLaunch): the launch is
 // refused by the mode: artifact gate instead and this test fails on the
@@ -553,8 +560,247 @@ func TestAttachGatesOnTheImageThatKnowsInputs(t *testing.T) {
 	projectRecipesFixture(t, f, map[string]string{"sizzle": projectSizzle})
 	writeBuildRecord(t, f, appSlug, "web", release075)
 	shot := attachShot(t, "shot.png", "png")
+	n := guardAttach(t)
 	wantRefused(t, f, "--attach needs a job image whose runner knows attached files (fugaro "+artifactsSince+" or later)",
 		"run", "--repo", "acme/app", "--recipe", "sizzle", "--run-id", "20261015-100000-abcd", "--attach", shot, "Render the nightly bundle")
+	wantNoUpload(t, f, n)
+}
+
+// TestAttachRefusesARunThatAlreadyLaunched: the freshness check covers the run
+// id whose task.json is already stored, and this is the other half of the same
+// run: launch.json (or result.json's execution) says the run started while no
+// task.json is there to be read — a task deleted after the fact, a record
+// backfilled without one. The whole --attach block sits inside the prior ==
+// nil arm, so a launch that found a prior would write a task with no inputs
+// and the files the owner named would never go anywhere: refused here, before
+// the caps, before the gates and before the first byte.
+//
+// Mutation (drop the prior != nil refusal): the launch writes a task with no
+// inputs, reports the existing launch, and this test fails on the missing
+// refusal and on the task it left behind.
+func TestAttachRefusesARunThatAlreadyLaunched(t *testing.T) {
+	f := artifactAttachFixture(t)
+	id := "20261015-100000-abcd"
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	if err := runstore.Open(b, appSlug, id).WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	shot := attachShot(t, "shot.png", "png")
+	n := guardAttach(t)
+	// wantRefused is not used here: it asserts the fixture has no execution
+	// at all, and this test seeded the run's own (the launch it refuses).
+	_, _, err = execute(t, "run", "--repo", "acme/app", "--recipe", "sizzle",
+		"--run-id", id, "--attach", shot, "Render the nightly bundle")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "has already launched") {
+		t.Fatalf("err = %v, want exit 1 naming the launch that already happened", err)
+	}
+	if got := len(f.run.Executions()); got != 1 {
+		t.Fatalf("%d executions, want the seeded one alone", got)
+	}
+	wantNoUpload(t, f, n)
+	if hasObject(t, f, taskKey(id)) {
+		t.Fatal("the refused launch wrote a task for a run that had already launched")
+	}
+}
+
+// attachFifo makes a FIFO at path whose other end this test holds open,
+// read-write and never written to: a plain writer's open blocks until a
+// reader's, and a FIFO no writer has ever opened reads as an empty file (an
+// end of file, not a stream), so holding both ends is what gives a reader on
+// it a read that never returns.
+func attachFifo(t *testing.T, path string) {
+	t.Helper()
+	if out, err := exec.Command("mkfifo", path).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo %s: %v: %s", path, err, out)
+	}
+	w, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.Close() })
+}
+
+// swapPathWhenTheUploadReads replaces path the moment attachInputs' upload is
+// about to read the handle it judged, which is the window the single open
+// exists to close: the check and the copy are as close together as the code
+// can put them, and what the swap leaves at the path is what a second open
+// would find. make runs exactly once.
+func swapPathWhenTheUploadReads(t *testing.T, make func()) {
+	t.Helper()
+	old := attachStreamFn
+	swapped := false
+	attachStreamFn = func(b *blobx.Bucket, ctx context.Context, key string, f *os.File, st fs.FileInfo, ct string, ifNotExist bool) (int64, string, error) {
+		if !swapped {
+			swapped = true
+			make()
+		}
+		return old(b, ctx, key, f, st, ct, ifNotExist)
+	}
+	t.Cleanup(func() { attachStreamFn = old })
+}
+
+// TestAttachUploadsTheFileItJudgedNotWhatThePathNamesNow: the caps and the
+// mode are read a moment before the upload, and the path is not under this
+// launcher's control — anything the same user is running can put another file
+// there in between. What is judged and what is uploaded are therefore the same
+// OPEN file: attachInputs opens each path once, judges that handle's own
+// fstat, and streams that handle, so replacing the path with a FIFO that never
+// ends cannot make this launch stream a byte of it. The object that goes up is
+// the file --attach named, byte for byte, and the size recorded is that file's.
+//
+// Mutation (attachStreamFn streams the path again — blobx.PutFile by
+// f.Name(), the pre-fix shape, verified): the upload opens the FIFO the swap
+// left, blobx refuses it as a non-regular file, and this test fails with
+// "uploading input shot.png: ... (it is not a regular file)".
+func TestAttachUploadsTheFileItJudgedNotWhatThePathNamesNow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	shot := attachShot(t, "shot.png", "png-bytes")
+	swapPathWhenTheUploadReads(t, func() {
+		// A different file at the same path, and one that never ends: the
+		// inode the handle holds outlives the name.
+		if err := os.Remove(shot); err != nil {
+			t.Error(err)
+		}
+		attachFifo(t, shot)
+	})
+
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	defer b.Close()
+	inputs, err := attachInputs(ctx, b, "runs/"+appSlug+"/20261015-100000-abcd/", []string{shot}, config.Inputs{})
+	if err != nil {
+		t.Fatalf("attachInputs = %v, want the file the launcher judged uploaded", err)
+	}
+	sum := sha256.Sum256([]byte("png-bytes"))
+	want := task.InputFile{Name: "shot.png", Bytes: int64(len("png-bytes")), SHA256: hex.EncodeToString(sum[:])}
+	if len(inputs) != 1 || inputs[0] != want {
+		t.Fatalf("inputs = %+v, want %+v", inputs, want)
+	}
+	data, _, err := b.Read(ctx, inputKey("20261015-100000-abcd", "shot.png"))
+	if err != nil {
+		t.Fatalf("the input was not uploaded: %v", err)
+	}
+	if string(data) != "png-bytes" {
+		t.Fatalf("uploaded bytes = %q, want the file the launcher judged", data)
+	}
+}
+
+// TestAttachUploadsTheSizeItJudgedNotThePathsSizeNow is the same window with
+// only the SIZE changed, and it is the one no other layer catches: a file that
+// fitted under workflows.inputs.max_bytes when the launcher looked can be
+// replaced by one that does not, and blobx bounds what it streams by the size
+// of the file it opens — the larger one. Uploading it would put bytes the cap
+// refuses into the bucket and leave the runner to refuse them at bootstrap,
+// with the run's input objects already up under a run id that never gets a
+// task. What goes up is bounded by the judgement: the byte count and the
+// sha256 in the task are the file the launcher checked.
+//
+// Mutation (attachStreamFn streams the path again — blobx.PutFile by
+// f.Name(), verified): the replacement goes up whole, the recorded size is
+// 4096 and its sha256 the replacement's, and this test fails on both.
+func TestAttachUploadsTheSizeItJudgedNotThePathsSizeNow(t *testing.T) {
+	ctx := context.Background()
+	shot := attachShot(t, "shot.png", "png-bytes")
+	big := filepath.Join(t.TempDir(), "big.png")
+	if err := os.WriteFile(big, bytes.Repeat([]byte("x"), 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	caps := config.Inputs{MaxBytes: 16}
+	if err := attachPrepared([]string{shot}, caps); err != nil {
+		t.Fatalf("attachPrepared = %v, want the file that fits", err)
+	}
+	swapPathWhenTheUploadReads(t, func() {
+		if err := os.Rename(big, shot); err != nil {
+			t.Error(err)
+		}
+	})
+
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	defer b.Close()
+	inputs, err := attachInputs(ctx, b, "runs/"+appSlug+"/20261015-100000-abcd/", []string{shot}, caps)
+	if err != nil {
+		t.Fatalf("attachInputs = %v, want the judged file uploaded", err)
+	}
+	sum := sha256.Sum256([]byte("png-bytes"))
+	want := task.InputFile{Name: "shot.png", Bytes: int64(len("png-bytes")), SHA256: hex.EncodeToString(sum[:])}
+	if len(inputs) != 1 || inputs[0] != want {
+		t.Fatalf("inputs = %+v, want the judgement's size and hash %+v", inputs, want)
+	}
+}
+
+// TestAttachRefusesASymlinkedPath: --attach uploads the file the owner named,
+// and a link is not one: os.Stat would describe the target (its size, its
+// mode) while the name stored and downloaded is the LINK's, so the run would
+// hold a file whose recorded size is some other file's — and the bytes would
+// come from wherever the link pointed, which is not a path this launch named.
+// The check is an Lstat, so the refusal is made before the launch's gates and
+// before anything is opened, and blobx.OpenSource's O_NOFOLLOW is the second
+// line of defence for the upload itself (internal/blobx: the source a write
+// streams is never the file behind a link).
+//
+// Mutation (os.Stat in attachPrepared, attachJudge's symlink arm removed): the
+// link is described as a regular file of the target's size, the set is
+// accepted, the launch reaches the upload and this test fails — on the unit
+// assertion (the refusal is blobx's "too many levels of symbolic links", which
+// is not the sentence the launcher writes) and on the uploader having run at
+// all.
+func TestAttachRefusesASymlinkedPath(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.png")
+	if err := os.WriteFile(target, []byte("png-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	err := attachPrepared([]string{link}, config.Inputs{})
+	if err == nil || !strings.Contains(err.Error(), "is a symbolic link") {
+		t.Fatalf("attachPrepared of a symlink = %v, want a refusal naming the link", err)
+	}
+	if !strings.Contains(err.Error(), link) {
+		t.Fatalf("the refusal does not name the path the owner typed: %v", err)
+	}
+	f := artifactAttachFixture(t)
+	n := guardAttach(t)
+	wantRefused(t, f, "is a symbolic link", "run", "--repo", "acme/app", "--recipe", "sizzle",
+		"--run-id", "20261015-100000-abcd", "--attach", link, "Render the nightly bundle")
+	wantNoUpload(t, f, n)
+}
+
+// TestAttachRefusesNamesDifferingOnlyInCase is the launcher's half of Task
+// 4's case rule (the runner's artifact names key on the FOLDED name): the run
+// downloads its inputs into one directory, a local run writes them into the
+// checkout on the operator's own filesystem, and a name that differs only in
+// case is one name there — so the second file would replace the first while
+// the task named both. Refused before the first byte, naming both paths.
+//
+// Mutation (key the duplicate rule on the exact name alone): A.png and a.png
+// are two names, the set is accepted, both objects go up, and this test fails
+// on the refusal.
+func TestAttachRefusesNamesDifferingOnlyInCase(t *testing.T) {
+	a := attachShot(t, "A.png", "upper")
+	b := attachShot(t, "a.png", "lower")
+	err := attachPrepared([]string{a, b}, config.Inputs{})
+	if err == nil || !strings.Contains(err.Error(), "only in case") {
+		t.Fatalf("attachPrepared of a case-fold pair = %v, want a refusal naming the pair", err)
+	}
+	for _, p := range []string{a, b} {
+		if !strings.Contains(err.Error(), p) {
+			t.Fatalf("the refusal does not name %s: %v", p, err)
+		}
+	}
+	f := artifactAttachFixture(t)
+	n := guardAttach(t)
+	wantRefused(t, f, "only in case", "run", "--repo", "acme/app", "--recipe", "sizzle",
+		"--run-id", "20261015-100000-abcd", "--attach", a, "--attach", b, "Render the nightly bundle")
+	wantNoUpload(t, f, n)
 }
 
 // TestAttachRefusesADevice: --attach uploads FILES, and a path that is not a
@@ -575,7 +821,7 @@ func TestAttachRefusesADevice(t *testing.T) {
 	// the path happens, which is why the endless /dev/zero is safe to name
 	// here at all (and why the red step for this arm can be run without
 	// streaming a device into a bucket).
-	if _, err := attachPrepared([]string{"/dev/zero"}, config.Inputs{}); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+	if err := attachPrepared([]string{"/dev/zero"}, config.Inputs{}); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("attachPrepared(/dev/zero) = %v, want a refusal naming its mode", err)
 	}
 	f := artifactAttachFixture(t)

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"mime"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -24,12 +26,34 @@ import (
 // see when the upload happens relative to the task's own write.
 var attachInputsFn = attachInputs
 
+// attachStreamFn is the blobx write attachInputs makes, and it streams the
+// handle it is given. A test swaps it to replace the PATH in the instant
+// between the judgement and the copy — the race the single open exists to
+// close — and can then assert that what went up is the file the launcher
+// judged and not whatever the path names by then. It is a seam and not the
+// bare method because the mutation that matters here is streaming the PATH
+// again: the file's name is all a re-open needs.
+var attachStreamFn = func(b *blobx.Bucket, ctx context.Context, key string, f *os.File, st fs.FileInfo, ct string, ifNotExist bool) (int64, string, error) {
+	return b.PutFileOpened(ctx, key, f, st, ct, ifNotExist)
+}
+
 // attachInputs uploads each path to runs/<slug>/<run>/inputs/<name> and
 // returns the spec's Inputs (design artifact-runs.md §4 step 3). It runs
 // between the run id's mint and CreateTask (plan P7), checks the workflow's
-// caps before the first byte, and hashes as it uploads (blobx.PutFile), so
-// the sha256 it records is of the bytes that went up and not of a second
+// caps before the first byte, and hashes as it uploads (blobx.PutFileOpened),
+// so the sha256 it records is of the bytes that went up and not of a second
 // read of the file.
+//
+// It opens each path once, and everything it checks is checked on that same
+// handle: attachOpen's fstat is what the caps are judged by, and the handle it
+// returns is what PutFileOpened streams, bounded by exactly that size. A path
+// swapped between attachLaunch's own pre-check and this upload — for a FIFO,
+// for /dev/zero, or for a file larger than the cap — is therefore refused by
+// the check on the handle, or bounded by the size that check allowed, rather
+// than streamed into the bucket and left for the runner to refuse at
+// bootstrap with the bytes already up (blobx.PutFile's contract: what it
+// streams is the regular file it fstat'ed, at most one byte past the size the
+// caller judged).
 //
 // Every upload is create-only (ifNotExist): that is race hardening, not the
 // guarantee — the deterministic refusal is attachRefusesStoredRun's, made
@@ -38,44 +62,116 @@ var attachInputsFn = attachInputs
 // already there. blobx classifies gocloud's FailedPrecondition, on the
 // file:// driver as well as on GCS, as ErrExists.
 func attachInputs(ctx context.Context, b *blobx.Bucket, prefix string, paths []string, caps config.Inputs) ([]task.InputFile, error) {
-	prepared, err := attachPrepared(paths, caps)
+	opened, err := attachOpen(paths, caps)
 	if err != nil {
 		return nil, err
 	}
-	inputs := make([]task.InputFile, 0, len(prepared))
-	for _, p := range prepared {
-		ct := mime.TypeByExtension(filepath.Ext(p.path))
+	defer func() {
+		for _, o := range opened {
+			_ = o.f.Close()
+		}
+	}()
+	inputs := make([]task.InputFile, 0, len(opened))
+	for _, o := range opened {
+		ct := mime.TypeByExtension(filepath.Ext(o.name))
 		if ct == "" {
 			// A recorded hint, never trusted by any reader (design §8.1):
 			// an extension nobody knows is a file whose type is unknown.
 			ct = "application/octet-stream"
 		}
-		size, sum, err := b.PutFile(ctx, runstore.InputKey(prefix, p.name), p.path, ct, true)
+		size, sum, err := attachStreamFn(b, ctx, runstore.InputKey(prefix, o.name), o.f, o.st, ct, true)
 		if err != nil {
 			if errors.Is(err, blobx.ErrExists) {
-				return nil, userErr("input %s is already in run %s; --attach only ever uploads into a new run", p.name, strings.TrimSuffix(prefix, "/"))
+				return nil, userErr("input %s is already in run %s; --attach only ever uploads into a new run", o.name, strings.TrimSuffix(prefix, "/"))
 			}
-			return nil, remote(fmt.Errorf("uploading input %s: %w", p.name, err))
+			return nil, remote(fmt.Errorf("uploading input %s: %w", o.name, err))
 		}
-		inputs = append(inputs, task.InputFile{Name: p.name, Bytes: size, SHA256: sum})
+		inputs = append(inputs, task.InputFile{Name: o.name, Bytes: size, SHA256: sum})
 	}
 	return inputs, nil
 }
 
-// preparedInput is one attachment the caps allow: the path --attach named,
-// the name it will be stored and downloaded under, and its size on this
-// machine, read before the first byte leaves.
-type preparedInput struct {
+// openedInput is one attachment the caps allow, held open: the name it will be
+// stored and downloaded under, the fstat of the handle in f, and that handle —
+// the one attachInputs uploads from.
+type openedInput struct {
+	name string
+	st   fs.FileInfo
+	f    *os.File
+}
+
+// attachOpen opens every path --attach named ONCE and judges the caps on the
+// handle it opened, which is where the guarantee lives: attachPrepared's own
+// check runs earlier (attachLaunch), before the launch's image and budget
+// gates, and a path may be a different file by the time this call runs. What
+// is opened here is what is uploaded, and nothing is re-opened in between —
+// os.Stat asks about a path, this asks about the file, and only the second one
+// is the same file the bytes come from.
+//
+// blobx.OpenSource does the opening, so it is the launcher's own rule: without
+// following a final symlink (a link to /dev/zero is a stream that never ends)
+// and without blocking on a FIFO (a non-blocking fd is what makes an unbounded
+// read visible instead of a hang). A directory, a device, a socket and a FIFO
+// then fail attachJudge's regular-file rule on the handle's own mode. On any
+// refusal every handle opened so far is closed before the error is returned:
+// nothing is left open, and nothing has been read or written.
+func attachOpen(paths []string, caps config.Inputs) ([]openedInput, error) {
+	out := make([]openedInput, 0, len(paths))
+	closeHeld := func() {
+		for _, o := range out {
+			_ = o.f.Close()
+		}
+	}
+	for _, p := range paths {
+		f, err := blobx.OpenSource(p)
+		if err != nil {
+			closeHeld()
+			if errors.Is(err, syscall.ELOOP) {
+				return nil, userErr(attachSymlink, p)
+			}
+			return nil, userErr("--attach %s: %v", p, err)
+		}
+		st, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			closeHeld()
+			return nil, userErr("--attach %s: %v", p, err)
+		}
+		out = append(out, openedInput{name: filepath.Base(p), st: st, f: f})
+	}
+	cands := make([]attachCandidate, 0, len(out))
+	for i, o := range out {
+		cands = append(cands, attachCandidate{path: paths[i], name: o.name, size: o.st.Size(), mode: o.st.Mode()})
+	}
+	if err := attachJudge(cands, caps); err != nil {
+		closeHeld()
+		return nil, err
+	}
+	return out, nil
+}
+
+// attachSymlink refuses a symlinked attachment, and it is a format string for
+// the path: Lstat says the link, and blobx.OpenSource's O_NOFOLLOW fails the
+// open of one, so both producers reach the same sentence.
+const attachSymlink = "--attach %s is a symbolic link, and --attach uploads the file itself: the link would be stored under its own name and read from somewhere this launch never named, so point --attach at the file"
+
+// attachCandidate is one path --attach named, with what the filesystem said
+// about it: the name it is stored and downloaded under, its size, and its
+// mode. Two producers build these — attachPrepared from an Lstat, before the
+// launch's gates, and attachOpen from the fstat of the handle the upload will
+// read — and attachJudge is the one place the rules are applied to them.
+type attachCandidate struct {
 	path string
 	name string
 	size int64
+	mode fs.FileMode
 }
 
-// attachPrepared turns the paths --attach named into what will be uploaded,
-// or refuses the whole set. It is called twice on a launch that attaches
-// anything — once by attachLaunch, so the caps are judged before the launch's
-// image gate, and once by attachInputs, which is where the guarantee lives —
-// and it writes nothing either time.
+// attachJudge refuses a whole set --attach named, or returns nil: the name
+// rules (task.InputNameProblem, the one predicate the runner applies again),
+// the duplicate rules, the regular-file rule, and the three caps. It is the
+// only place these live, so the pre-check and the upload cannot disagree, and
+// it writes nothing and reads nothing.
 //
 // The three caps are independent and each one means one thing (design §4
 // step 2, P6): max_files counts PATHS, max_bytes bounds ONE FILE and
@@ -84,57 +180,95 @@ type preparedInput struct {
 // with the count and the total untouched. Every refusal names the number that
 // tripped, the cap it tripped and the count, and happens before the first
 // byte is written.
-func attachPrepared(paths []string, caps config.Inputs) ([]preparedInput, error) {
+func attachJudge(cands []attachCandidate, caps config.Inputs) error {
 	count := caps.MaxFileCount()
-	if len(paths) > count {
-		return nil, userErr("--attach: %d files, and workflows.inputs.max_files allows %d for one launch", len(paths), count)
+	if len(cands) > count {
+		return userErr("--attach: %d files, and workflows.inputs.max_files allows %d for one launch", len(cands), count)
 	}
 	perFile := caps.MaxFileBytes()
-	out := make([]preparedInput, 0, len(paths))
 	seen := map[string]string{}
+	// Keyed on the FOLDED name, as the runner's artifact names are (Task 4):
+	// two names differing only in case are one name where the runner writes
+	// them back, and a local run downloads into the checkout on the operator's
+	// own filesystem, which folds. A second upload would then have replaced
+	// the first file, and the task would name two inputs and hold one.
+	folded := map[string]string{}
 	var total int64
-	for _, p := range paths {
-		name := filepath.Base(p)
-		if problem := task.InputNameProblem(name); problem != "" {
-			return nil, userErr("--attach %s: its name %s", p, problem)
+	for _, c := range cands {
+		if problem := task.InputNameProblem(c.name); problem != "" {
+			return userErr("--attach %s: its name %s", c.path, problem)
 		}
-		if first, dup := seen[name]; dup {
+		if first, dup := seen[c.name]; dup {
 			// Refused rather than overwritten: two paths with one base name
 			// would be one object and one entry, and the second upload would
 			// be a create-only write against an object already up. Both
 			// PATHS are named, not the base name twice: the collision is
 			// between two directories holding one file name, so the two
 			// paths are the whole of what the owner has to tell apart.
-			return nil, userErr("--attach: %s and %s are both named %s; a run stores one object per name, so rename one of them or attach them from different directories", first, p, name)
+			return userErr("--attach: %s and %s are both named %s; a run stores one object per name, so rename one of them or attach them from different directories", first, c.path, c.name)
 		}
-		seen[name] = p
-		st, err := os.Stat(p)
+		if first, dup := folded[strings.ToLower(c.name)]; dup {
+			return userErr("--attach: %s is named %s and %s is named %s; the names differ only in case, and the runner writes the inputs into one directory, where that is one name — so rename one of them or attach them from different directories",
+				first, filepath.Base(first), c.path, c.name)
+		}
+		seen[c.name] = c.path
+		folded[strings.ToLower(c.name)] = c.path
 		switch {
-		case err != nil:
-			return nil, userErr("--attach %s: %v", p, err)
-		case st.IsDir():
-			return nil, userErr("--attach %s is a directory; attach files, one path each", p)
-		case !st.Mode().IsRegular():
-			// A device, a FIFO, a socket: os.Stat describes it, and the size
+		case c.mode&fs.ModeSymlink != 0:
+			// Refused, not followed: os.Stat would follow it and describe its
+			// target, so the size and the mode below would be the target's
+			// while the name stored is the link's — and the bytes uploaded
+			// come from wherever the link points, which is not the file this
+			// launch named. See attachSymlink.
+			return userErr(attachSymlink, c.path)
+		case c.mode.IsDir():
+			return userErr("--attach %s is a directory; attach files, one path each", c.path)
+		case !c.mode.IsRegular():
+			// A device, a FIFO, a socket: a stat describes it, and the size
 			// it reports (0 for /dev/zero, as for most of them) is a lie about
 			// what uploading it would read. Attaching one would stream an
 			// unbounded, non-file stream into the run's bucket and record the
 			// size the stat claimed, so it is refused here, before anything is
 			// read or written — the same rule the directory above follows, and
-			// the one blobx.PutFile's own stat cannot make for us: it never
-			// sees the path's mode until it has opened it.
-			return nil, userErr("--attach %s is %s, not a regular file; --attach uploads files, one path each", p, st.Mode())
+			// the same one blobx.PutFileOpened makes for itself on the handle
+			// it is given (the two are independent: this one names the mode to
+			// the owner, that one guarantees the copy).
+			return userErr("--attach %s is %s, not a regular file; --attach uploads files, one path each", c.path, c.mode)
 		}
-		if st.Size() > perFile {
-			return nil, userErr("--attach %s is %s, and workflows.inputs.max_bytes allows %s per file (of %d attached)", p, attachBytes(st.Size()), attachBytes(perFile), len(paths))
+		if c.size > perFile {
+			return userErr("--attach %s is %s, and workflows.inputs.max_bytes allows %s per file (of %d attached)", c.path, attachBytes(c.size), attachBytes(perFile), len(cands))
 		}
-		total += st.Size()
-		out = append(out, preparedInput{path: p, name: name, size: st.Size()})
+		total += c.size
 	}
 	if set := caps.MaxSetBytes(); total > set {
-		return nil, userErr("--attach: %d files totalling %s, and workflows.inputs.max_total_bytes allows %s for the set", len(paths), attachBytes(total), attachBytes(set))
+		return userErr("--attach: %d files totalling %s, and workflows.inputs.max_total_bytes allows %s for the set", len(cands), attachBytes(total), attachBytes(set))
 	}
-	return out, nil
+	return nil
+}
+
+// attachPrepared is attachJudge's early caller: it describes each path the
+// launch is about to attach with an os.Lstat and refuses the set if the rules
+// say so. It is called once by attachLaunch, so a set over the caps or holding
+// a directory is refused before the launch's image and budget gates, and it
+// writes and opens nothing — the handles, the fstat the upload is judged on
+// and the upload itself are attachOpen's and attachInputs' (the different
+// producers are why attachJudge takes candidates rather than paths).
+//
+// Lstat, not Stat: a symlink is refused here rather than described as its
+// target (attachJudge's symlink arm), and every other rule reads the same
+// either way. This check is advisory — a path can be a different file by the
+// time the upload opens it — and the upload's own judgement on the handle it
+// holds is what the guarantee rests on.
+func attachPrepared(paths []string, caps config.Inputs) error {
+	cands := make([]attachCandidate, 0, len(paths))
+	for _, p := range paths {
+		st, err := os.Lstat(p)
+		if err != nil {
+			return userErr("--attach %s: %v", p, err)
+		}
+		cands = append(cands, attachCandidate{path: p, name: filepath.Base(p), size: st.Size(), mode: st.Mode()})
+	}
+	return attachJudge(cands, caps)
 }
 
 // attachBytes spells a size the way the caps are written, so a refusal and
@@ -199,7 +333,7 @@ func attachLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.Sp
 		return caps, err
 	}
 	caps = attachCaps(ctx, spec)
-	if _, err := attachPrepared(paths, caps); err != nil {
+	if err := attachPrepared(paths, caps); err != nil {
 		return caps, err
 	}
 	// D9's line, printed once per launch and only here, where --attach
