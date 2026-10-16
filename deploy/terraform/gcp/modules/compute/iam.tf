@@ -62,8 +62,16 @@ locals {
   # agent that acts for Cloud Build, and granting actAs to it would hand a
   # build identity this module never uses the power to run as the preload
   # account (cloud.google.com/build/docs/cloud-build-service-account, checked
-  # 2026-10-16). The agent is created when the Cloud Build API is enabled,
-  # which apis.tf does, so it exists by the time this binding is applied.
+  # 2026-10-16). The agent is created when the Cloud Build API is enabled --
+  # and the file that enables it is modules/installation/apis.tf
+  # (cloudbuild.googleapis.com), NOT this module's apis.tf, which enables
+  # compute and batch only: the builds this backend's preload runs are the
+  # installation's, so an installation applied as the docs prescribe has the
+  # agent in place by the time this binding is applied. On the `--skip-apis`
+  # path (manage_apis = false on BOTH roots) NEITHER module enables it, so
+  # there is no agent for this binding to name and the scheduled rebuild has
+  # no principal to run as; that path is the operator's to satisfy. What GCP
+  # answers for a binding whose member does not exist is not asserted here.
   cloud_build_agent     = "serviceAccount:service-${var.project_number}@gcp-sa-cloudbuild.iam.gserviceaccount.com"
   cloud_scheduler_agent = "serviceAccount:service-${var.project_number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
   job_name_prefix       = "projects/${var.project}/locations/${var.region}/jobs/${var.names.job_prefix}"
