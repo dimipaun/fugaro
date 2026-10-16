@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // projectProfilesLCBlock is the local config block the project-job tests and
@@ -316,5 +317,71 @@ func TestInstallationWithoutProfilesWritesNoProjectJobs(t *testing.T) {
 	jobs, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions), "fugaro-runs-proj-1234", false)
 	if err != nil || jobs != nil {
 		t.Errorf("ProjectJobs = %v, %v; want none", jobs, err)
+	}
+}
+
+// projectAccountLCBlock is the local config block the recomputation test is
+// built with: the three shapes a profile's account axis has — a profile
+// mounting the reserved token (the default account), one mounting a named
+// account's token, and one mounting no Claude token at all (an api-key
+// profile, whose job's account segment is empty) — plus the containers they
+// mount.
+const projectAccountLCBlock = `claude_accounts:
+  acme-personal:
+    allow_data_to: ["acme/sandbox"]
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/sandbox] }
+profiles:
+  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [claude-oauth-token] }
+  personal: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] }
+  apikey: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h }
+`
+
+// The account axis is computed on two sides, from two different documents: the
+// deployer resolves it while it deploys, from the local config's
+// claude_accounts (projectJobSecrets, over a secret the installation stores
+// project-wide), and the runner recomputes it at run start from the published
+// policy's profile, which carries the secret names and nothing else
+// (config.ClaudeAccountOfSecrets, plan task 3.3 step 1). They must be one rule
+// (the function says so in its own comment): a job whose name the runner would
+// not recompute is a job every run of that profile halts on, because the run
+// cannot place the name it is in and adopts no identity from it.
+//
+// What is asserted is the deployed *name* — the key the runner matches its
+// CLOUD_RUN_JOB against — and not only the field beside it, because the name is
+// what a run has to reproduce.
+//
+// Mutation (run, restored): change either side's reading of the shape — drop
+// the "-<name>" suffix in ClaudeAccountOfSecrets, or resolve the account from
+// the profile's name in projectJobSecrets. This test says so here rather than
+// at a halt on every run of the profile.
+func TestProjectJobAccountIsWhatTheRunnerRecomputes(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+projectAccountLCBlock)
+	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		gcp.ProjectJobName("standard", "bitbucket", "default"):    "default",
+		gcp.ProjectJobName("personal", "github", "acme-personal"): "acme-personal",
+		gcp.ProjectJobName("apikey", "github", ""):                "",
+	}
+	if !slices.Equal(slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(want))) {
+		t.Fatalf("jobs = %v, want %v", slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(want)))
+	}
+	for name, account := range want {
+		j := jobs[name]
+		if j.Account != account {
+			t.Errorf("job %s runs as %q, want %q", name, j.Account, account)
+		}
+		// The runner's recomputation, from the profile's secret names alone.
+		got, _ := config.ClaudeAccountOfSecrets(lc.Profiles[j.Profile].Secrets)
+		if got != account {
+			t.Errorf("the profile %s (%v) recomputes to the account %q, and its job is named for %q: the run would not find the job it is in",
+				j.Profile, lc.Profiles[j.Profile].Secrets, got, account)
+		}
+		if recomputed := gcp.ProjectJobName(j.Profile, j.Provider, got); recomputed != name {
+			t.Errorf("the runner computes the job name %s for the profile %s, and the deployed one is %s", recomputed, j.Profile, name)
+		}
 	}
 }
