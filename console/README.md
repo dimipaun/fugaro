@@ -54,8 +54,9 @@ name. `testdata/` is read deliberately.
 What is here today: this file, the contract the console reads
 (`docs/json-contract.md`, pinned by plan Task 0.1), and the pinned toolchain
 (plan Task 1.0): `package.json`, `package-lock.json`, `tsconfig.json`,
-`playwright.config.ts`, `.npmrc`, `.gitignore`, and the two unit tests that hold
-the pinning rule and the lockfile.
+`playwright.config.ts`, `.npmrc`, `.gitignore`, and the three unit tests that
+hold the pinning rule, the lockfile, and the typecheck's coverage of the root
+config files (`test/unit/{pinning,lockfile,tsconfig}.test.ts`).
 
 ## The toolchain, pinned (Task 1.0)
 

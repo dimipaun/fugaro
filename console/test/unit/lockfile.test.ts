@@ -20,12 +20,13 @@
 //     version is the pinned version, and that entry carries a `resolved` URL and
 //     an `integrity` hash -- the two fields `npm ci` cannot work without;
 //  4. nothing in the tree floats: no locked entry has a range where a version
-//     belongs, and every entry -- the manifest's dependencies and all ~95
-//     transitive ones -- resolves from THIS registry host, with an integrity
-//     hash. The host is the half a hand-written lockfile cannot fake and the
-//     half an integrity hash alone does not cover: a substituted tarball at
-//     another host fails `npm ci`'s hash check, but a lockfile that simply
-//     points somewhere else is a supply-chain decision nobody reviewed.
+//     belongs, and every entry -- the names the manifest declares and every
+//     package that arrives through them, in whatever number the tree happens to
+//     have today -- resolves from THIS registry host, with an integrity hash.
+//     The host is the half a hand-written lockfile cannot fake and the half an
+//     integrity hash alone does not cover: a substituted tarball at another
+//     host fails `npm ci`'s hash check, but a lockfile that simply points
+//     somewhere else is a supply-chain decision nobody reviewed.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
