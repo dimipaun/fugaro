@@ -420,7 +420,7 @@ func TestDoctorRoutingCheckNamesTheLiveQuestion(t *testing.T) {
 		}}}
 		p.Routing = &config.Routing{Claude: &config.RoutingClaude{
 			Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}}
-	}), "")
+	}), doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n"))
 	checks := doctorChecksByID(t)
 	res, ok := checks["routing-resolution"]
 	if !ok || res.Severity != "info" {
@@ -440,7 +440,7 @@ func TestDoctorRoutingCheckNamesTheLiveQuestion(t *testing.T) {
 	}
 	// A node with no switch routes nothing: the check says that rather than
 	// printing a resolution for a switch that is not published.
-	doctorPolicyRig(t, doctorPolicy(nil), "")
+	doctorPolicyRig(t, doctorPolicy(nil), doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n"))
 	if c, ok := doctorChecksByID(t)["routing-resolution"]; !ok || !strings.Contains(c.Problem, "no routing switch is published") {
 		t.Fatalf("a policy with no switch: routing-resolution = %+v (present %v)", c, ok)
 	}
@@ -509,4 +509,83 @@ func TestDoctorReportsAPolicyNodeEveryReaderRefuses(t *testing.T) {
 	if c, ok := doctorChecksByID(t)["policy-unknown-keys"]; ok {
 		t.Errorf("a node with only known keys is refused: %+v", c)
 	}
+}
+
+// TestDoctorResolvesTheSwitchOverTheRoutesARunCarries is the review of this
+// task's routing-resolution check, and the state it was wrong about. A run
+// resolves the published switch over FUGARO_MODEL_PROVIDERS, which
+// internal/infra/spec.go writes from the *config's* providers filtered by
+// allow_data_to for the repository being run (runner.ProvidersFor). doctor
+// resolved over the node's whole providers block: for a repository that block
+// does not admit, doctor printed a resolved route while the run had no such
+// route at all and halted — "the project's routing switch is not usable" — in
+// the one command an operator runs to find out why a run stopped.
+//
+// The check now reads the same table a run reads, per repository this machine's
+// config names, and says unresolved where it cannot: a repository the entry
+// does not admit, and a machine that names no repository at all.
+func TestDoctorResolvesTheSwitchOverTheRoutesARunCarries(t *testing.T) {
+	switchToOpenrouter := func(p *projectpolicy.Policy) {
+		// The node claims the model for every repository; the machine's own
+		// config is what decides which routes a run of a repository has.
+		p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: "anthropic-compat", BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+			AllowDataTo: []string{"*"},
+		}}}
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{
+			Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}}
+	}
+	// The route a run of acme/app has.
+	doctorPolicyRig(t, doctorPolicy(switchToOpenrouter), doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n"))
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Fatalf("the resolution is not printed for the repository a run names: %+v", res)
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "unmeasured") {
+		t.Errorf("a routed repository leaves the cost question live: %+v", cm)
+	}
+	// The same switch, and the entry admits another repository: a run of
+	// acme/app carries no such route, so the resolution is unresolved here and
+	// the check says what that run does — it halts.
+	doctorPolicyRig(t, doctorPolicy(switchToOpenrouter), doctorRunRoutes(`["acme/other"]`, "  acme/app:\n    provider: github\n"))
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("a route the repository is not allow-listed for is printed as resolved: %+v", res)
+	}
+	if strings.Contains(res.Problem, "-> openrouter") {
+		t.Errorf("the check prints a resolution a run of this repository does not take: %+v", res)
+	}
+	for _, want := range []string{"halts", "allow_data_to"} {
+		if !strings.Contains(res.Problem, want) {
+			t.Errorf("the unresolved line does not say %q: %+v", want, res)
+		}
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "no Claude ID is routed") {
+		t.Errorf("nothing routes here, and the cost question is stated as live: %+v", cm)
+	}
+	// With no repository named there is no route table to resolve over: the
+	// check says unresolved and why, rather than resolving over the node's
+	// block — the whole finding — or over nothing at all.
+	doctorPolicyRig(t, doctorPolicy(switchToOpenrouter), doctorRunRoutes(`["acme/app"]`, ""))
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "unresolved") || !strings.Contains(res.Problem, "names no repository") {
+		t.Fatalf("a machine naming no repository resolves the switch anyway: %+v", res)
+	}
+	if strings.Contains(res.Problem, "-> openrouter") {
+		t.Errorf("a resolution was printed with no repository to resolve for: %+v", res)
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "undetermined") {
+		t.Errorf("the cost question is stated as answered here: %+v", cm)
+	}
+}
+
+// doctorRunRoutes is the machine's own side of a routing resolution: the
+// project config's providers block, whose allow_data_to is written with allow,
+// and the repositories the config names. It is what spec.go turns into
+// FUGARO_MODEL_PROVIDERS (the providers a run of one of those repositories
+// carries) and what this machine's doctor reads; the policy node's own
+// providers block is a separate thing, and the check must not resolve over it.
+func doctorRunRoutes(allow, repos string) string {
+	return "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"anthropic/claude-sonnet-5.5\"]\n    allow_data_to: " + allow + "\nrepos:\n" + repos
 }
