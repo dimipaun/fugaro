@@ -2993,9 +2993,9 @@ gcloud storage buckets list --project="${P:?}" --format='value(name)'   # the ru
 
 ```bash
 # === Check 52: the step's variables. RE-RUN at the start of every step. ===
-SANDBOX_JOB=${SANDBOX_JOB:?the sandbox repository's job name, from the run jobs list above}
-SANDBOX_JOB_SA=${SANDBOX_JOB_SA:?that job's service account, from the run jobs describe above}
-SANDBOX_BUCKET=${SANDBOX_BUCKET:?the installation's runs bucket, the one the local config names}
+SANDBOX_JOB=${SANDBOX_JOB:?the sandbox repository job name, from the run jobs list above}
+SANDBOX_JOB_SA=${SANDBOX_JOB_SA:?the service account of that job, from the run jobs describe above}
+SANDBOX_BUCKET=${SANDBOX_BUCKET:?the runs bucket of the installation, the one the local config names}
 NUMBER=$(gcloud projects describe "${P:?}" --format='value(projectNumber)')   # IAM conditions name Secret Manager resources by project NUMBER, never by ID
 PROBE_SA="fugaro-chk52-probe@${P:?}.iam.gserviceaccount.com"   # created below, deleted in Restore
 PROBE_IN=fugaro-probe-in          # INSIDE the condition's prefix; throwaway value, never a real secret
@@ -3109,7 +3109,7 @@ else
   else
     for i in $(seq 1 10); do
       EXEC=$(curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-        "https://run.googleapis.com/v2/${OPERATION:?the jobs.run operation's name}" | jq -r '.metadata.name // empty')
+        "https://run.googleapis.com/v2/${OPERATION:?the name of the jobs.run operation}" | jq -r '.metadata.name // empty')
       [ -n "$EXEC" ] && break
       sleep 3
     done
