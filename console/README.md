@@ -62,22 +62,29 @@ the pinning rule and the lockfile.
 **Electron is pinned to exactly `44.7.2`, and it is bumped on purpose**, with the
 toolchain task and the lockfile in the same commit — the same rule
 `internal/budget/rules/emulator/package.json` states for its own `firebase-tools`
-pin. Electron is not an ordinary dependency: its postinstall downloads a large
-prebuilt runtime, so the pin, the download and the checksum are hand-bumped and
-documented rather than floated (design section 5.2).
+pin. Electron is not an ordinary dependency: it pulls a large prebuilt runtime
+from its own download host rather than from npm, so the pin, the download and
+the checksum get the hand-bumped, documented treatment the repository already
+gives the Trivy digest and the Dockerfile frontend digest (design section 5.2).
 
-The rest of the pinned set, all exact, all in `devDependencies` — the app ships
-no runtime dependency at all, because the renderer bundles no framework and no
-charting library (design D9, and `test/unit/pinning.test.ts` asserts the
-`dependencies` section is empty):
+The rest of the pinned set, all exact. One of them is a runtime dependency and
+the rest are build and test tooling:
 
-| Package | Version | Why it is here |
-|---|---|---|
-| `electron` | `44.7.2` | the app's runtime, bumped on purpose |
-| `typescript` | `7.0.2` | `tsc --noEmit`; the type checker, not the build |
-| `vitest` | `5.0.5` | `npm run test:unit` |
-| `@playwright/test` | `1.64.1` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
-| `@types/node` | `22.20.5` | the Node the main process and the tests run on |
+| Package | Version | Where | Why it is here |
+|---|---|---|---|
+| `electron` | `44.7.2` | `devDependencies` | the app's runtime, bumped on purpose |
+| `typescript` | `7.0.2` | `devDependencies` | `tsc --noEmit`; the type checker, not the build |
+| `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
+| `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
+| `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
+| `electron-updater` | `6.8.9` | `dependencies` | the auto-update client (Task 4.4) — the one runtime dependency, pinned here because the plan puts its pin in this task: "the component that downloads and installs code" |
+
+`electron-updater` is the only entry in `dependencies`, and that is a decision
+rather than a symptom: the renderer bundles no framework runtime and no charting
+library (design D9), so nothing the renderer needs is a runtime dependency, and
+the pinning test asserts the `dependencies` set is exactly the one name above.
+`6.8.9` is the version npm's `latest` tag resolves to; `6.8.10` is published
+under a `v26` tag and is deliberately not taken here.
 
 `engines.node` is `>=22.12.0`, and it is read off the pinned tools rather than
 guessed: Electron 44.7.2 declares `>= 22.12.0` and Vitest 5.0.5 declares
@@ -98,10 +105,27 @@ npm run typecheck                              # tsc --noEmit over src/, test/, 
 `npm ci` — never `npm install` — is the install step in this file, in the plan's
 command and in the staged console workflow, because it installs exactly the
 lockfile and refuses when the lockfile and the manifest disagree.
-`--ignore-scripts` is passed on the command rather than set in `.npmrc` on
-purpose: Electron's binary download is the one lifecycle script this app is
-expected to need, and the packaging phase (Task 4.1) is where it is allowed,
-package by package.
+`--ignore-scripts` is passed on the command rather than set in `.npmrc` because
+npm has no per-package escape hatch: `ignore-scripts` in that file would turn
+off every lifecycle script of every command run here with no way to allow one
+package back, and design section 5.2 asks for the other shape — an allow-list of
+the packages whose postinstall is genuinely required, which is a decision made
+at each call site.
+
+**And what that costs, stated rather than left to be inferred: nothing at the
+install step, because Electron's runtime is not fetched by a lifecycle script
+here.** Electron is not an ordinary dependency — the pin, the download and the
+checksum are hand-bumped and documented rather than floated (design section
+5.2) — but with `--ignore-scripts` the download simply happens later: Electron
+44.7.2 fetches its runtime on the first `require('electron')` (its `index.js`
+spawns `install.js` when `path.txt` and `dist/` are missing, printing
+`Downloading Electron binary...`), which is what Playwright's `electron.launch`
+does in Task 1.1's e2e specs. Verified on this tree: `npm ci
+--ignore-scripts --no-audit --no-fund`, then `require('electron')`, downloads
+and resolves `node_modules/electron/dist/electron`. So the e2e path works with
+scripts ignored, the runtime arrives on the machine that runs the tests rather
+than on the machine that installs, and by packaging time (Task 4.1) it is
+already on disk.
 
 ### The pinning rule is a test, not a habit
 
@@ -112,7 +136,9 @@ of specifiers it must accept and refuse, so "package.json is clean" cannot pass
 on a checker that accepts everything. `test/unit/lockfile.test.ts` holds the
 other half: the lockfile exists, is `lockfileVersion` 3, declares exactly the
 names and specifiers `package.json` declares, locks each of them to its pinned
-version with a `resolved` URL and an `integrity` hash, and floats nothing.
+version with an `integrity` hash, and resolves **every** entry — the manifest's
+six names and all ~95 transitive packages, which are code that runs just the
+same — from `https://registry.npmjs.org/`, with nothing floating anywhere.
 `.npmrc`'s `save-exact=true` is the same rule enforced by the client, so a later
 `npm install <package>` writes an exact pin and not the first range a test would
 have to catch.

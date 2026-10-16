@@ -4,9 +4,15 @@
 //
 // The rule: every specifier in console/package.json is an EXACT version. No
 // "^", no "~", no "*", no "latest", no range, no tag, no "file:" — an exact
-// version and nothing else, in devDependencies as much as in dependencies
-// (there is deliberately no runtime `dependencies` section at all: the renderer
-// bundles no framework runtime and no charting library, design D9).
+// version and nothing else, in `dependencies` and `devDependencies` alike
+// (design section 5.2).
+//
+// The runtime `dependencies` section is one entry long and that entry is
+// asserted by name below: electron-updater, the main process's auto-update
+// client, whose pin Task 4.4 assigns to this task. It is not a renderer
+// dependency — design D9's "no framework runtime, no charting library" is about
+// what the renderer bundles — and the test says so rather than forbidding a
+// runtime dependency outright.
 //
 // The test is written in two halves on purpose. The first half is the checker
 // against a table of specifiers it must accept and specifiers it must refuse:
@@ -126,9 +132,33 @@ describe('console/package.json', () => {
     expect(pkg.scripts?.['test:e2e']).toBeTruthy()
   })
 
-  it('carries no runtime dependencies: the renderer bundles no framework (D9)', () => {
+  // The runtime dependency set, as an allow-list rather than a prohibition.
+  // Design D9 is a claim about the RENDERER -- it bundles no framework runtime
+  // and no charting library -- and section 5.2 applies the pinning rule to
+  // "dependencies and devDependencies alike", so a runtime dependency is
+  // allowed as long as it is exact and belongs to the main process. Exactly one
+  // does: the auto-update client, whose pin Task 4.4 assigns to this task
+  // ("The pinned electron-updater version is part of Task 1.0's exact pins,
+  // since it is the component that downloads and installs code"). Anything else
+  // arriving here -- above all a renderer framework or a charting library -- is
+  // a design change, so it has to be a deliberate edit to the list below.
+  const runtimeDependencyAllowList = ['electron-updater']
+
+  it('ships exactly the main process runtime dependencies it names', () => {
+    const runtime = Object.keys((pkg.dependencies ?? {}) as Record<string, string>).toSorted()
+    expect(
+      runtime,
+      `console/package.json's runtime dependencies are ${JSON.stringify(runtime)}. The list is ${JSON.stringify(runtimeDependencyAllowList)}: the renderer bundles no framework runtime and no charting library (design D9), so the only runtime dependency is the main process's update client. A new one is a deliberate edit here, with the case for it written down (plan Task 4.4 names electron-updater's pin as Task 1.0's).`,
+    ).toEqual(runtimeDependencyAllowList.toSorted())
+  })
+
+  it('pins electron-updater, the component that downloads and installs code', () => {
+    // Named separately from the list above, so the one dependency whose whole
+    // job is fetching and installing a new bundle cannot leave the pins by a
+    // quiet edit to the allow-list.
     const runtime = (pkg.dependencies ?? {}) as Record<string, string>
-    expect(Object.keys(runtime)).toEqual([])
+    expect(runtime['electron-updater']).toBeTruthy()
+    expect(pinViolation(runtime['electron-updater'] ?? '')).toBeNull()
   })
 
   // One test per section, each naming its own offender, so "a ^ was added to

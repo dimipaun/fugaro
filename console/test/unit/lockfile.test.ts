@@ -18,11 +18,14 @@
 //     what "in sync" means for the manifest side;
 //  3. every dependency the manifest declares resolves to a locked entry whose
 //     version is the pinned version, and that entry carries a `resolved` URL and
-//     an `integrity` hash: the proof that it came from a registry install and
-//     not from a hand-written file, and the two fields `npm ci` cannot work
-//     without;
+//     an `integrity` hash -- the two fields `npm ci` cannot work without;
 //  4. nothing in the tree floats: no locked entry has a range where a version
-//     belongs.
+//     belongs, and every entry -- the manifest's dependencies and all ~95
+//     transitive ones -- resolves from THIS registry host, with an integrity
+//     hash. The host is the half a hand-written lockfile cannot fake and the
+//     half an integrity hash alone does not cover: a substituted tarball at
+//     another host fails `npm ci`'s hash check, but a lockfile that simply
+//     points somewhere else is a supply-chain decision nobody reviewed.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -40,6 +43,12 @@ const dependencySections = [
 ] as const
 
 const exactVersionRE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+
+// registryPrefix is the one host every locked entry may resolve from, spelled
+// once so the two assertions that use it cannot drift apart. A mirror or a
+// private proxy would be a deliberate edit here, which is exactly the review
+// this file is asking for: the lockfile's host is a decision, not a detail.
+const registryPrefix = 'https://registry.npmjs.org/'
 
 type Manifest = Record<string, Record<string, string> | undefined>
 
@@ -118,10 +127,11 @@ describe('console/package-lock.json', () => {
     }
   })
 
-  it('locks every declared dependency to the pinned version, from a registry', () => {
-    // This is the half a hand-written lockfile cannot fake: a locked entry has
-    // to carry the resolved tarball URL and its integrity hash, and `npm ci`
-    // verifies the hash of every tarball it downloads against it.
+  it('locks every declared dependency to the pinned version, from the registry', () => {
+    // A locked entry has to carry the resolved tarball URL and its integrity
+    // hash, `npm ci` verifies the hash of every tarball it downloads against it,
+    // and the URL has to be this registry's -- the host check is the one below,
+    // asked here of the dependencies the manifest names.
     const problems: string[] = []
     for (const [name, specifier] of Object.entries(declaredDependencies)) {
       const entry = packages[`node_modules/${name}`]
@@ -132,8 +142,8 @@ describe('console/package-lock.json', () => {
       if (entry.version !== specifier) {
         problems.push(`${name}: locked at ${entry.version}, pinned at ${specifier}`)
       }
-      if (typeof entry.resolved !== 'string' || !entry.resolved.startsWith('https://')) {
-        problems.push(`${name}: no https:// resolved URL`)
+      if (typeof entry.resolved !== 'string' || !entry.resolved.startsWith(registryPrefix)) {
+        problems.push(`${name}: resolved ${JSON.stringify(entry.resolved)} is not from ${registryPrefix}`)
       }
       if (typeof entry.integrity !== 'string' || !/^sha(256|384|512)-/.test(entry.integrity)) {
         problems.push(`${name}: no integrity hash`)
@@ -142,7 +152,15 @@ describe('console/package-lock.json', () => {
     expect(problems, problems.join('\n')).toEqual([])
   })
 
-  it('has a resolved, non-floating tree and no range anywhere in it', () => {
+  it('has a resolved, non-floating tree, every entry from the registry', () => {
+    // The whole tree, not only the manifest's five names: ~95 transitive
+    // packages arrive through those five, and every one of them is code that
+    // runs. So each non-link entry is checked for an exact version, for an
+    // integrity hash, and for a `resolved` URL on this registry's host --
+    // `https://registry.npmjs.org/`, not merely `https://`. The host is what a
+    // committed lockfile is for: an entry pointing at another host is a
+    // supply-chain decision nobody reviewed, and one an integrity hash cannot
+    // catch, because the hash would simply be of the other host's tarball.
     const entries = Object.entries(packages).filter(([path]) => path !== '')
     expect(entries.length, 'the lockfile holds no packages: it is not this project’s').toBeGreaterThan(1)
     const problems: string[] = []
@@ -151,8 +169,11 @@ describe('console/package-lock.json', () => {
       if (typeof entry.version !== 'string' || !exactVersionRE.test(entry.version)) {
         problems.push(`${path}: version ${JSON.stringify(entry.version)} is not exact`)
       }
-      if (typeof entry.resolved !== 'string' || typeof entry.integrity !== 'string') {
-        problems.push(`${path}: no resolved URL and integrity hash`)
+      if (typeof entry.resolved !== 'string' || !entry.resolved.startsWith(registryPrefix)) {
+        problems.push(`${path}: resolved ${JSON.stringify(entry.resolved)} is not from ${registryPrefix}`)
+      }
+      if (typeof entry.integrity !== 'string' || !/^sha(256|384|512)-/.test(entry.integrity)) {
+        problems.push(`${path}: no integrity hash`)
       }
     }
     expect(problems, problems.join('\n')).toEqual([])
