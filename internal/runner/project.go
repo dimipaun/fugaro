@@ -268,7 +268,11 @@ func repoNamedByRemote(remote string) (string, bool, error) {
 
 // remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
 // its host alone, anything else as the URL without its userinfo, its query and
-// its fragment. Deps.Remote is a launcher's to set and a remote URL may carry a
+// its fragment — including a remote url.Parse reads as a plain path, with no
+// scheme and no host, which is the shape a hand-written remote takes
+// (token@host/repo.git: the "@" is still where git and curl end the userinfo,
+// whether or not there is a scheme in front of it). Deps.Remote is a launcher's
+// to set and a remote URL may carry a
 // credential in any of the three — https://user:token@host/repo.git,
 // https://host/repo.git?access_token=SECRET (the shape Bitbucket's forge URLs
 // use), and the same in a fragment — and what a refusal quotes should carry
@@ -300,9 +304,25 @@ func remoteDisplay(remote string) string {
 		return host
 	}
 	if err == nil {
-		u.User = nil
-		u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
-		return u.String()
+		// A string url.Parse read and found no host in, and that neither split
+		// branch answers for: a plain path as far as the parse is concerned,
+		// which is what a remote written without a scheme looks like
+		// (token@host/repo.git, or pw@host). u.String() returns such a string
+		// verbatim — u.User is nil, because the parse never saw an authority —
+		// so quoting it here is exactly the refusal this function exists to
+		// prevent. The "@" is where git and curl end the userinfo with or
+		// without a scheme, and what follows the first one is what may be
+		// quoted; the query and the fragment go with the userinfo, for the
+		// reason the URL branch drops them.
+		head, _, _ := strings.Cut(remote, "#")
+		head, _, _ = strings.Cut(head, "?")
+		if _, rest, ok := strings.Cut(head, "@"); ok {
+			if rest == "" {
+				return "the remote"
+			}
+			return rest
+		}
+		return head
 	}
 	return "the remote"
 }
@@ -376,6 +396,14 @@ func (r *run) addRemoteSecrets(remote string) {
 	if u.RawFragment != u.Fragment {
 		r.addRemoteSecretParams(u.Fragment)
 	}
+	// And the userinfo as the remote was written, because the parse above is
+	// lossy in exactly the place a credential sits: url.Parse decodes what it
+	// read, and u.User.String() re-encodes it — https://x-token-auth:t%6fk@host
+	// comes back as x-token-auth:tok — while git prints the URL it was handed,
+	// escapes and all. The decoded spelling alone leaves "t%6fk" in every line
+	// git writes about that remote (the review finding on this change); this
+	// path, the one an unparseable remote already took, is the raw spelling.
+	r.addRemoteSecretUserinfoRaw(remote)
 }
 
 // addRemoteSecretRaw reads the three places off a remote url.Parse refuses, as
@@ -396,9 +424,9 @@ func (r *run) addRemoteSecrets(remote string) {
 // path; a "name:value" userinfo registers the value and the pair, for the
 // reason the parsed path does.
 //
-// Only the spelling as written is registered here: this path exists because
-// url.Parse refused the string, so there is no decoded spelling to be had, and
-// the spelling git echoes back is the one the remote was written with.
+// Only the spelling as written is registered here: the parse that would have
+// given the decoded one is the one that failed, and the spelling git echoes
+// back is the one the remote was written with.
 func (r *run) addRemoteSecretRaw(remote string) {
 	head, frag, hasFrag := strings.Cut(remote, "#")
 	head, query, hasQuery := strings.Cut(head, "?")
@@ -408,6 +436,20 @@ func (r *run) addRemoteSecretRaw(remote string) {
 	if hasFrag {
 		r.addRemoteSecretParams(frag)
 	}
+	r.addRemoteSecretUserinfoRaw(head)
+}
+
+// addRemoteSecretUserinfoRaw registers the userinfo of remote as it was
+// written, for the paths that hold the string rather than a parse of it: the
+// one url.Parse refused, and the one it read but decoded (its u.User.String()
+// re-encodes what it read, so a password written with escapes comes back
+// spelled differently — addRemoteSecrets's own call says why that matters).
+// remote is the whole string here or the query- and fragment-less head of one;
+// cutting the two off is what keeps a token in a query from being read as a
+// password in front of an "@" that is not an authority's.
+func (r *run) addRemoteSecretUserinfoRaw(remote string) {
+	head, _, _ := strings.Cut(remote, "#")
+	head, _, _ = strings.Cut(head, "?")
 	authority := head
 	if i := strings.Index(authority, "//"); i >= 0 {
 		authority = authority[i+2:]

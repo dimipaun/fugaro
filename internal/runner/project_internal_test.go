@@ -274,6 +274,16 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		// cannot read is dropped like any other (u.Query() is what would
 		// report it, and addRemoteSecrets ignores that).
 		{"https://github.com/acme/app.git?access_token=%zz", "https://github.com/acme/app.git"},
+		// A remote with no scheme and no host as url.Parse reads it — a plain
+		// path — where the "@" is still where git and curl end the userinfo:
+		// a launcher that wrote a token in front of a host without a scheme
+		// (the shape a hand-written remote takes) must not have it quoted back
+		// in a refusal. The scp-like form's own userinfo is already gone (the
+		// branches above quote the host alone), and this is the one shape that
+		// fell through them.
+		{"tok@host/repo.git", "host/repo.git"},
+		{"glpat-secret@host/repo.git?access_token=ATBBsecret", "host/repo.git"},
+		{"glpat-secret@host", "host"},
 	} {
 		got := remoteDisplay(tc.in)
 		if got != tc.want {
@@ -315,6 +325,17 @@ func TestAddRemoteSecretsRegistersWhatARemoteCanCarryACredentialIn(t *testing.T)
 		{remote: "git@github.com:acme/app.git#glpat-secret", want: []string{"glpat-secret"}, absent: []string{"git"}},
 		{remote: "https://user:ghp_a/b@github.com/acme/app.git", want: []string{"ghp_a/b", "user:ghp_a/b"}, absent: []string{"user"}},
 		{remote: "https://user:pa%zz@github.com/acme/app.git", want: []string{"pa%zz"}},
+		// A password whose escapes url.Parse decodes happily: the parsed path
+		// registers the decoded spelling (Go re-encodes the userinfo it read),
+		// and git prints the URL it was handed, escapes and all, so the raw
+		// spelling is registered too — "%6f" is "o", and a redactor holding
+		// only "tok" would leave "t%6fk" in the line verbatim.
+		{remote: "https://x-token-auth:t%6fk@github.com/acme/app.git", want: []string{"tok", "t%6fk", "x-token-auth:tok", "x-token-auth:t%6fk"}, absent: []string{"x-token-auth"}},
+		// The same credential without a scheme: url.Parse reads the whole
+		// remote as a path, so the parsed path registers nothing at all and
+		// the userinfo is only there as written.
+		{remote: "tok@host/repo.git", want: []string{"tok"}, absent: []string{"host", "repo.git"}},
+		{remote: "x-token-auth:t%6fk@bitbucket.org/acme/app.git", want: []string{"t%6fk", "x-token-auth:t%6fk"}, absent: []string{"x-token-auth", "acme/app"}},
 		{remote: "https://git@github.com/acme/app.git", absent: []string{"git"}},
 		{remote: "https://x-access-token@bitbucket.org/acme/app.git", absent: []string{"x-access-token"}},
 		{remote: "git@github.com:acme/app.git", absent: []string{"git", "acme/app"}},
