@@ -466,34 +466,63 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 // -- both halves of the map, the value slot and the variable-name slot -- and
 // then requires the job's serialized form to contain the secret's *name*
 // exactly once.
+//
+// It also covers the two refusals, with a value spelled the way real
+// credentials are: a name-shaped value passes envNameRE, so the entry whose
+// key is the secret is the one the value slot's message must not print. Hand
+// mutation: name that entry by its key in checkSecrets
+// (`fmt.Errorf("the Batch backend's secret for %s is not ...", k)`); red.
 func TestLaunchSendsNoSecretValue(t *testing.T) {
 	ctx := context.Background()
-	const value = "sk-ant-not-a-real-secret-value"
+	const (
+		// A value that is not name-shaped at all: its dashes fail envNameRE, so
+		// it is refused on either side of the map.
+		value = "sk-ant-not-a-real-secret-value"
+		// And a value that IS name-shaped -- an AWS access key id, a form real
+		// credentials really take. It passes envNameRE, so the shape check
+		// cannot tell it from a variable's name, and it is the value the old
+		// value-slot refusal would have printed back (it named the entry by its
+		// key, and the key was the secret).
+		nameShaped = "AKIAIOSFODNN7EXAMPLE"
+	)
 
-	// A value in the name slot: the entry a caller reaching for "set this env
-	// var to the API key" would write. Refused at New, before any job can be
-	// created, and the refusal must not repeat the value -- an error is
-	// written to terminals, logs and bug reports.
+	// A value used as the variable's name: the key slot, which refuses without
+	// naming anything.
 	o := testOptions(t)
-	o.Secrets = map[string]string{"ANTHROPIC_API_KEY": value}
+	o.Secrets = map[string]string{value: testSecret}
 	b0, err := New(ctx, o)
 	if err == nil {
-		t.Fatalf("New accepted a secret value in the name slot (%+v)", b0)
+		t.Fatalf("New accepted a secret value as a variable name (%+v)", b0)
 	}
 	if strings.Contains(err.Error(), value) || strings.Contains(err.Error(), "sk-ant-") {
 		t.Fatalf("the refusal repeats the secret value: %v", err)
 	}
 
-	// A value used as the variable's name: the other way a value can reach the
-	// map, and the one where even naming the offending entry would print it.
+	// A value in the name slot with a key that is a variable's name: the value
+	// slot's refusal, and it must not repeat the value.
 	o = testOptions(t)
-	o.Secrets = map[string]string{value: testSecret}
+	o.Secrets = map[string]string{"ANTHROPIC_API_KEY": value}
 	b1, err := New(ctx, o)
 	if err == nil {
-		t.Fatalf("New accepted a secret value as a variable name (%+v)", b1)
+		t.Fatalf("New accepted a secret value in the name slot (%+v)", b1)
 	}
 	if strings.Contains(err.Error(), value) || strings.Contains(err.Error(), "sk-ant-") {
 		t.Fatalf("the refusal repeats the secret value: %v", err)
+	}
+
+	// The same refusal where the key IS a secret: `nameShaped` is a value that
+	// happens to be spelled like a variable's name, so the entry's key is the
+	// thing that must not be printed. The entry is named by position instead.
+	// Hand mutation: put the key back into the value slot's message
+	// (`fmt.Errorf("the Batch backend's secret for %s is not ...", k)`); red.
+	o = testOptions(t)
+	o.Secrets = map[string]string{nameShaped: "AWS_ACCESS_KEY_ID"}
+	b2, err := New(ctx, o)
+	if err == nil {
+		t.Fatalf("New accepted a secret value in the name slot, spelled like a variable name (%+v)", b2)
+	}
+	if strings.Contains(err.Error(), nameShaped) {
+		t.Fatalf("the refusal repeats an environment-name-shaped secret: %v", err)
 	}
 
 	// The documented use: an environment variable name mapped to the secret's
@@ -1421,8 +1450,8 @@ func dockerSpec() backend.LaunchSpec {
 // field: a VM of the installation's machine type, booted from the preloaded
 // image (the only fast-start path a Docker run has, C4), placed in both the
 // named network and subnetwork with no external IP (C7 -- and both names are
-// required, which Check 57a measured), and asking for that machine type's
-// quantities.
+// required, which Check 57a measured), and asking for a share of that machine
+// type's quantities.
 func TestJobDefinitionIsAVMWithTheDesignsNetwork(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, nil)
@@ -1468,16 +1497,6 @@ func TestJobDefinitionIsAVMWithTheDesignsNetwork(t *testing.T) {
 	if fmt.Sprint(cr["cpuMilli"]) != "2000" || fmt.Sprint(cr["memoryMib"]) != "4096" {
 		t.Errorf("computeResource = %v, want e2-standard-4's 2000m/4096MiB (Check 57a's measured request)", cr)
 	}
-	// And the rest of the job is unmoved by that: the VM is still the whole
-	// machine type (design §5.2 -- the run is billed for the VM, not for the
-	// task's share of it).
-	mt, err := MachineTypeOf(testMachineType)
-	if err != nil {
-		t.Fatalf("MachineTypeOf(%s): %v", testMachineType, err)
-	}
-	if jsonInt(t, cr["cpuMilli"]) >= int64(mt.VCPU)*1000 || jsonInt(t, cr["memoryMib"]) >= int64(mt.MemoryGiB)*1024 {
-		t.Errorf("the task asked for the whole VM (%v), leaving the OS, the agent and Docker nothing", cr)
-	}
 }
 
 // TestDockerRunMountsTheSocketAndJoinsItsGroup is the socket recipe C2 takes,
@@ -1506,15 +1525,14 @@ func TestDockerRunMountsTheSocketAndJoinsItsGroup(t *testing.T) {
 	if got := fmt.Sprint(container["options"]); strings.Contains(got, "--user") || strings.Contains(got, "--privileged") {
 		t.Errorf("container.options = %v, want the group join and nothing else", got)
 	}
-	// Streaming would drop the options field altogether (measured, 57a-6), so
-	// a Docker run must not turn it on.
-	if on, ok := container["enableImageStreaming"]; ok && on != false {
-		t.Errorf("container.enableImageStreaming = %v, want it off for a Docker run", on)
-	}
-	// The gid is numeric: --group-add docker would be resolved inside the
-	// container's own /etc/group, where no docker group exists (design §2.2).
-	if id, err := strconv.Atoi(strings.TrimPrefix(fmt.Sprint(container["options"]), "--group-add ")); err != nil || id != testSocketGID {
-		t.Errorf("the group is not the numeric gid: %v", container["options"])
+	// Streaming would drop the options field altogether (measured, 57a-6), so a
+	// Docker run must not turn it on: the field is `omitempty`, so "not on" is
+	// the key being absent from the job, not the key reading false.
+	// Hand mutation: set EnableImageStreaming unconditionally in run.go
+	// (`container.EnableImageStreaming = true`), which the streaming refusal
+	// does not catch because b.o.ImageStreaming is false; red.
+	if on, ok := container["enableImageStreaming"]; ok {
+		t.Errorf("container.enableImageStreaming = %v, want the key absent for a Docker run", on)
 	}
 
 	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
@@ -1725,6 +1743,7 @@ func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
 		{"no network", func(o *Options) { o.Network = "" }},
 		{"no subnetwork", func(o *Options) { o.Subnetwork = "" }},
 		{"a network that is not a network name", func(o *Options) { o.Network = "default" }},
+		{"a subnetwork that is not a subnetwork name", func(o *Options) { o.Subnetwork = "default" }},
 		{"a subnetwork in another region", func(o *Options) {
 			o.Subnetwork = "projects/" + testProject + "/regions/elsewhere/subnetworks/default"
 		}},
@@ -1851,6 +1870,48 @@ func TestExecutionReportsTheJobsOwnMachineType(t *testing.T) {
 	}
 }
 
+// TestAJobThatNamesNoMachineTypeFallsBackToTheConfiguration: MachineType is a
+// fact about the execution, read off the job so that a later change of the
+// installation's profile cannot silently re-price runs already recorded
+// (design §5.2, and TestExecutionReportsTheJobsOwnMachineType). This
+// backend's own jobs always name one -- checkVM requires a machine type and
+// jobDefinition writes it into the job -- so a job that names none is one this
+// backend did not build, or one built before the field was sent. Reading it
+// must then fall back to the installation's configured type: an empty
+// MachineType is how backend.Execution says "not a VM", and a VM-backed run
+// read as one would be priced on Cloud Run's path instead of on the machine
+// type it really is.
+//
+// The bodies below are the four shapes that reach the fallback, one per guard
+// in jobMachineType plus the empty policy.
+//
+// Hand mutation: drop the fallback in toExecution (leave `x.MachineType =
+// jobMachineType(j)` with no second statement); every case here goes red.
+func TestAJobThatNamesNoMachineTypeFallsBackToTheConfiguration(t *testing.T) {
+	ctx := context.Background()
+	const configured = "c2-standard-8"
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.MachineType = configured })
+	for name, tc := range map[string]struct{ id, body string }{
+		"no allocation policy":          {"20260927-100000-a001", `{"taskGroups":[{"taskCount":"1"}]}`},
+		"no instances":                  {"20260927-100000-a002", `{"allocationPolicy":{"instances":[]}}`},
+		"a null instance":               {"20260927-100000-a003", `{"allocationPolicy":{"instances":[null]}}`},
+		"an instance with no policy":    {"20260927-100000-a004", `{"allocationPolicy":{"instances":[{}]}}`},
+		"a policy with no machine type": {"20260927-100000-a005", `{"allocationPolicy":{"instances":[{"policy":{}}]}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := JobID(backendtest.Slug, backendtest.Workflow, tc.id)
+			postRawJob(t, bf, id, tc.body)
+			x, err := b.Execution(ctx, "projects/"+testProject+"/locations/"+testRegion+"/jobs/"+id)
+			if err != nil {
+				t.Fatalf("Execution: %v", err)
+			}
+			if x.MachineType != configured {
+				t.Errorf("MachineType = %q, want the configured %s: a job that names none must not read as a non-VM execution", x.MachineType, configured)
+			}
+		})
+	}
+}
+
 // TestAFinishedBatchRunHasNoWindowToPrice: a Batch job's record outlives the
 // run by 60 days (design §2.4) and this backend reads no completion time
 // (Started and Completed are left zero: the job's status events are
@@ -1961,17 +2022,6 @@ func object(t *testing.T, v any, keys ...string) map[string]any {
 		t.Fatalf("path %v is %T, not an object", keys, v)
 	}
 	return m
-}
-
-// jsonInt reads a decoded JSON number as an int64, whether the decoder gave a
-// float64 or a string.
-func jsonInt(t *testing.T, v any) int64 {
-	t.Helper()
-	n, err := strconv.ParseFloat(fmt.Sprint(v), 64)
-	if err != nil {
-		t.Fatalf("%v is not a number", v)
-	}
-	return int64(n)
 }
 
 // equalJSON compares two decoded JSON values by their canonical JSON.

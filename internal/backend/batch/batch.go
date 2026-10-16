@@ -337,25 +337,42 @@ var secretNameRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/
 // than at the create so that an installation misconfigured once is refused at
 // startup, not at the first run that asked for a secret.
 //
-// Neither refusal repeats what it refused. The value slot's refusal names the
-// variable it belongs to -- a key that passed envNameRE is a variable's name,
-// not a secret -- and the key slot's refusal names nothing, because a key that
-// failed envNameRE may well be a secret's value. An error string is written to
-// terminals, logs and issue reports; it is never a place to print a secret.
+// **What the check can and cannot tell apart.** The value slot has a shape to
+// check -- a Secret Manager resource name is not a secret's value -- but the
+// key slot does not: an environment variable name and a secret's value can be
+// spelled identically. `AKIAIOSFODNN7EXAMPLE` is an AWS access key id and a
+// legal environment variable name; so is a GitHub token. So a key that passes
+// envNameRE **may still be a secret's value**, and nothing here can say which
+// it is. What this function refuses is the two shapes it can recognise: a
+// value passed as a key in a name-shaped spelling is accepted, reaches the job
+// as a `secretVariables` entry, and sets a variable the workflow never asked
+// for -- which is why the map is built by the config plumbing from the
+// installation's own configuration (Task 8) and never from anything a workflow
+// or a run can write.
+//
+// **Neither refusal repeats what it refused.** The key slot's refusal names
+// nothing, because a key that failed envNameRE may be a secret's value. The
+// value slot's refusal names the entry **by position** and not by its key, for
+// the same reason: the key is only *usually* the variable's name, so a caller
+// who put a value there (Secrets{"AKIAIOSFODNN7EXAMPLE": "AWS_ACCESS_KEY_ID"})
+// would otherwise have that value printed back at them. An error string is
+// written to terminals, logs and issue reports; it is never a place to print a
+// secret.
 func checkSecrets(secrets map[string]string) error {
 	keys := make([]string, 0, len(secrets))
 	for k := range secrets {
 		keys = append(keys, k)
 	}
 	// Sorted, so an installation with two bad entries reports the same one
-	// every time (a map's order is not one).
+	// every time (a map's order is not one), and so an entry's position in the
+	// messages below is stable.
 	sort.Strings(keys)
-	for _, k := range keys {
+	for i, k := range keys {
 		if !envNameRE.MatchString(k) {
 			return errors.New(`an entry of the Batch backend's secrets has a key that is not an environment variable name: the map is variable name -> Secret Manager secret name, so each key is the variable's name ([A-Za-z_][A-Za-z0-9_]*). The refused key is not repeated here, because a secret's value is the one thing that must not be: if a value was passed as a key, this is where it stops, and this message is not the place to print it (design compute-backend.md §1.6, C10)`)
 		}
 		if !secretNameRE.MatchString(secrets[k]) {
-			return fmt.Errorf("the Batch backend's secret for %s is not a Secret Manager secret's resource name: it must be projects/<project>/secrets/<secret> or projects/<project>/secrets/<secret>/versions/<version>. The value is not repeated here, because a job carries names and never values (design compute-backend.md §1.6, C10): if a secret's value was passed as this entry's name, this is where it stops", k)
+			return fmt.Errorf("entry %d of %d in the Batch backend's secrets is not a Secret Manager secret's resource name: it must be projects/<project>/secrets/<secret> or projects/<project>/secrets/<secret>/versions/<version>. The entry is named by its position and not by its key, because a key is only usually the variable's name: if a secret's value was passed on either side of the map, this message must not print it. A job carries names and never values (design compute-backend.md §1.6, C10)", i+1, len(keys))
 		}
 	}
 	return nil
