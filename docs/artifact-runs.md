@@ -10,7 +10,7 @@ Every run so far ends in a pull request: the agent changes the checkout, the run
 
 - **No pull request, ever.** No branch is pushed, no PR is opened, updated or marked ready, and readiness is not a concept. `result.json`'s `outcome` is `artifacts` for a run that delivered a set and `none` for one that failed before it could.
 - **No git token in the agent's environment.** The runner still fetches the task's ref read-only, exactly as a review run's does; the agent itself gets no credential helper, no `FUGARO_GIT_TOKEN` and no `GH_TOKEN`.
-- **`implement`, `first_line`, `bounce` and `roles` are refused** in the recipe — there is no loop and no PR to loop around — and `outputs:` is legal only here (`artifacts:` on any other mode is refused outright).
+- **`implement`, `first_line`, `bounce` and `roles` are refused** in the recipe — there is no loop and no PR to loop around — and `outputs:` is legal only here (on any other mode the parser refuses it with `outputs: is only for mode: artifact`).
 - **The workflow's secrets stay.** A render is the same class of repository text as `commands.build` (it may have to reach a private source), so the render step runs with the run's own environment, secrets included. See [SECURITY.md](../SECURITY.md): that is deliberate, and it is why an artifact recipe must not be something an untrusted author can change.
 - **An artifact run is repository-bound.** The recipe and both of the commands the runner executes come from the repository's own `fugaro.yaml` at the task's ref — there is no repository-less artifact run yet (section 5).
 
