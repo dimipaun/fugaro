@@ -74,11 +74,34 @@ func TestExecTaskFileNeedsProvider(t *testing.T) {
 	}
 }
 
-// setCloudRunEnv sets the environment a Cloud Run execution of the
-// acme-app job sees.
-func setCloudRunEnv(t *testing.T, execution string) {
-	t.Setenv("CLOUD_RUN_EXECUTION", execution)
-	t.Setenv("CLOUD_RUN_JOB", "fugaro-acme-app-app")
+// fixtureWorkflow is the fixture repository's only workflow (its
+// fugaro.yaml), and the workflow a task the runner places in a job must name.
+const fixtureWorkflow = "app"
+
+// cloudRunJob is the name of the job the Cloud Run fixtures run in: the
+// per-repository job of the fixture repository and the fixture's workflow,
+// computed the way a run computes its own (gcp.JobName of task.Slug and
+// gcp.WorkflowVariant, plan task 3.3 step 1). It is computed rather than
+// spelled: a name that is neither a project job the policy computes nor this
+// run's own is a halt, so a hand-written one would stop a fixture before
+// whatever the test is about.
+func cloudRunJob(t *testing.T) string {
+	t.Helper()
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gcp.JobName(slug, gcp.WorkflowVariant(fixtureWorkflow, ""))
+}
+
+// setCloudRunEnv sets the environment a Cloud Run execution of the acme-app
+// job sees. suffix names this execution of it ("aaaaa", "bbbbb"), as Cloud Run
+// names an execution after its job.
+func setCloudRunEnv(t *testing.T, suffix string) {
+	t.Helper()
+	job := cloudRunJob(t)
+	t.Setenv("CLOUD_RUN_EXECUTION", job+"-"+suffix)
+	t.Setenv("CLOUD_RUN_JOB", job)
 	t.Setenv("FUGARO_GCP_PROJECT", "proj-1234")
 	t.Setenv("FUGARO_PROJECT", "aurora")
 	t.Setenv("FUGARO_REGION", "us-east5")
@@ -87,7 +110,7 @@ func setCloudRunEnv(t *testing.T, execution string) {
 }
 
 func TestExecIncompleteCloudRunEnvIsUserError(t *testing.T) {
-	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	setCloudRunEnv(t, "aaaaa")
 	t.Setenv("FUGARO_REGION", "")
 	dir := filepath.Join(t.TempDir(), "bucket")
 	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/20260926-221530-abcd")
@@ -101,7 +124,7 @@ func TestExecIncompleteCloudRunEnvIsUserError(t *testing.T) {
 
 func TestExecDuplicateExecutionExitsRemoteError(t *testing.T) {
 	const runID = "20260926-221530-abcd"
-	setCloudRunEnv(t, "fugaro-acme-app-app-bbbbb")
+	setCloudRunEnv(t, "bbbbb")
 	dir := t.TempDir()
 	b, err := fileblob.OpenBucket(dir, nil)
 	if err != nil {
@@ -110,11 +133,11 @@ func TestExecDuplicateExecutionExitsRemoteError(t *testing.T) {
 	defer b.Close()
 	ctx := context.Background()
 	store := runstore.Open(b, "acme-app", runID)
-	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
+	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Workflow: fixtureWorkflow, Ref: "main", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	first := &runstore.Record{Version: 1, RunID: runID, Repo: "acme/app", Status: runstore.StatusRunning, Stage: "implement",
-		Execution: "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-app/executions/fugaro-acme-app-app-aaaaa"}
+		Execution: "projects/proj-1234/locations/us-east5/jobs/" + cloudRunJob(t) + "/executions/" + cloudRunJob(t) + "-aaaaa"}
 	if err := store.WriteRecord(ctx, first); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +155,7 @@ func TestExecDuplicateExecutionExitsRemoteError(t *testing.T) {
 }
 
 func TestExecRejectsTaskFileOnCloudRun(t *testing.T) {
-	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	setCloudRunEnv(t, "aaaaa")
 	dir := filepath.Join(t.TempDir(), "bucket")
 	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--task-file", "-")
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--task-file is for local runs") {
@@ -161,7 +184,7 @@ func TestExecRefusesHTTP2Debug(t *testing.T) {
 // cloud.
 func TestExecPlatformResolution(t *testing.T) {
 	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	run := map[string]string{"CLOUD_RUN_EXECUTION": "fugaro-acme-app-app-aaaaa", "CLOUD_RUN_JOB": "fugaro-acme-app-app", "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_REGION": "us-east5"}
+	run := map[string]string{"CLOUD_RUN_EXECUTION": cloudRunJob(t) + "-aaaaa", "CLOUD_RUN_JOB": cloudRunJob(t), "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_REGION": "us-east5"}
 	for name, tc := range map[string]struct {
 		o       execOptions
 		env     map[string]string
@@ -396,7 +419,7 @@ func TestExecFakeProviderKnowsRepoAndRemote(t *testing.T) {
 // runner starts, so the old value is never read as a project name.
 func TestExecOldJobEnvSaysInitRepo(t *testing.T) {
 	const runID = "20260926-221530-abcd"
-	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	setCloudRunEnv(t, "aaaaa")
 	t.Setenv("FUGARO_GCP_PROJECT", "")
 	t.Setenv("FUGARO_PROJECT", "proj-1234")
 	dir := t.TempDir()
@@ -446,7 +469,7 @@ func TestExecOldJobEnvSaysInitRepo(t *testing.T) {
 
 func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
 	const runID = "20260926-221530-abcd"
-	setCloudRunEnv(t, "fugaro-acme-app-app-bbbbb")
+	setCloudRunEnv(t, "bbbbb")
 	t.Setenv("FUGARO_GCP_PROJECT", "")
 	dir := t.TempDir()
 	b, err := fileblob.OpenBucket(dir, nil)
@@ -457,7 +480,7 @@ func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
 	ctx := context.Background()
 	store := runstore.Open(b, "acme-app", runID)
 	first := &runstore.Record{Version: 1, RunID: runID, Repo: "acme/app", Status: runstore.StatusRunning, Stage: "implement",
-		Execution: "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-app/executions/fugaro-acme-app-app-aaaaa"}
+		Execution: "projects/proj-1234/locations/us-east5/jobs/" + cloudRunJob(t) + "/executions/" + cloudRunJob(t) + "-aaaaa"}
 	if err := store.WriteRecord(ctx, first); err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +496,7 @@ func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
 // A job with FUGARO_GCP_PROJECT but no project name fails the same way.
 func TestExecJobEnvWithoutProjectName(t *testing.T) {
 	const runID = "20260926-221530-abcd"
-	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	setCloudRunEnv(t, "aaaaa")
 	t.Setenv("FUGARO_PROJECT", "")
 	dir := t.TempDir()
 	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/"+runID)
@@ -487,7 +510,7 @@ func TestExecJobEnvWithoutProjectName(t *testing.T) {
 func TestExecPassesProject(t *testing.T) {
 	const runID = "20260926-221530-abcd"
 	testutil.IsolateGit(t)
-	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	setCloudRunEnv(t, "aaaaa")
 	files := testutil.FixtureFiles(t)
 	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "project: aurora", "project: borealis", 1)
 	remote := testutil.NewRemote(t, files)
@@ -499,7 +522,7 @@ func TestExecPassesProject(t *testing.T) {
 	defer b.Close()
 	ctx := context.Background()
 	store := runstore.Open(b, appSlug, runID)
-	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
+	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Workflow: fixtureWorkflow, Ref: "main", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", appSlug+"/"+runID, "--remote", remote,

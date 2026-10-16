@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -256,23 +257,30 @@ func remoteDisplay(remote string) string {
 }
 
 // admissionCheck admits the repository this run was launched for, before any
-// git credential exists and before the clone (plan task 1.5): the run's slug
-// and its repository must agree, and the project's policy, when it has
-// published one, must have the repository on its allow-list. A run with no
-// Cloud Run execution is not checked: the binding exists because a job's
-// identity is what an admission rests on (R2-9).
+// git credential exists and before the clone (plan tasks 1.5 and 3.3): the run
+// is placed in the job it is in, the run's slug and its repository must agree
+// under that job's provider, and the policy must admit the repository — for the
+// project, and on a project job for the profile the job's own name pins. A run
+// with no Cloud Run execution is not checked: the binding exists because a
+// job's identity is what an admission rests on (R2-9).
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
 // provider is opened, so no git credential exists yet and nothing has been
 // cloned; and before the lock and the budget session, so a run that is not
-// admitted writes no lease. Its refusals are the run's own: the slug it was
-// given must be the slug of the repository task.json names; the provider kind
-// and the remote — the two environment values a launcher can set that would
-// say otherwise — may disagree with it only by refusing; and, when the project
-// has published a policy, that repository must be on the policy's allow-list.
-// With no policy there is no allow-list, and the absent case is never read as
-// "empty means deny": an installation that has not published a policy admits
-// exactly what it always did.
+// admitted writes no lease. Its refusals are the run's own: the job it is in
+// must be one the policy computes or its own per-repository job; the slug it
+// was given must be the slug of the repository task.json names under that job's
+// provider; the provider kind in the environment — a launcher's to set — may
+// disagree with it only by refusing; and, when the project has published a
+// policy, that repository must be on the policy's allow-list, and on a project
+// job on the profile's own. With no policy there is no allow-list, and the
+// absent case is never read as "empty means deny": an installation that has not
+// published a policy admits exactly what it always did.
+//
+// The order is the plan's and it is the security property: the job identity
+// first, because everything below is keyed by what it says; then the slug; then
+// the environment; then the admission — all of it before openProvider and
+// before the budget session takes a lease.
 func (r *run) admissionCheck(ctx context.Context) error {
 	if r.d.Execution == "" {
 		// No Cloud Run execution: no job identity to bind to, so no binding
@@ -284,14 +292,33 @@ func (r *run) admissionCheck(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Which job this run is in, and with it the provider (and, on a project
+	// job, the profile and the account) it may act as. jobIdentity halts for a
+	// name the policy neither computes nor recognises as this run's own
+	// per-repository job, so a run that gets past this line has a job it can
+	// place (projectjob.go).
+	if _, _, _, err := r.jobIdentity(ctx); err != nil {
+		return err
+	}
+	job, project := r.projectJob()
 	slug, repo := r.d.Store.Slug(), r.spec.Repo
-	kind, ok := providerForSlug(slug, repo)
-	if !ok {
-		// Zero matches: FUGARO_RUN and the task disagree. Two matches cannot
-		// happen through a launcher (task.Slug separates the kinds), and are
-		// refused the same way rather than resolved to one.
-		return fmt.Errorf("the run was launched for the slug %s, and that is not the slug of the repository this run's task names (%s) under any provider kind (%s): the slug and the task must name one repository. Nothing bound the two together before this check — a per-repository job's bucket condition was what stood in for it — so the run stops before any git credential is requested or anything is cloned",
-			slug, repo, strings.Join(jobProviderKinds, ", "))
+	var kind string
+	if project {
+		// The provider is the one the job's name pins — the profile's, from the
+		// matched candidate — and never a value a launcher wrote (finding 4).
+		// FUGARO_GIT_PROVIDER is not consulted as a source: it is read below
+		// only to let it refuse.
+		kind = job.Provider
+	} else {
+		var ok bool
+		kind, ok = providerForSlug(slug, repo)
+		if !ok {
+			// Zero matches: FUGARO_RUN and the task disagree. Two matches cannot
+			// happen through a launcher (task.Slug separates the kinds), and are
+			// refused the same way rather than resolved to one.
+			return fmt.Errorf("the run was launched for the slug %s, and that is not the slug of the repository this run's task names (%s) under any provider kind (%s): the slug and the task must name one repository. Nothing bound the two together before this check — a per-repository job's bucket condition was what stood in for it — so the run stops before any git credential is requested or anything is cloned",
+				slug, repo, strings.Join(jobProviderKinds, ", "))
+		}
 	}
 	if envKind := r.d.ProviderKind; envKind != "" && envKind != kind {
 		// The flag (or FUGARO_GIT_PROVIDER) is an environment value a launcher
@@ -301,42 +328,67 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		// kind outside jobProviderKinds to except: the file-backed test
 		// provider is not one (internal/cli's providerOptions maps --provider
 		// fake to an empty kind), and a local run has no Cloud Run execution,
-		// so it never reaches this check at all — and it stops here.
+		// so it never reaches this check at all — and it stops here. On a
+		// project job this is also what keeps the variable from being read as a
+		// source at all: it can refuse, and it can change nothing else.
+		if project {
+			return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and this run is in the project job %s, which is the %s job of the profile %q: the provider of a project job is the one its own name pins, and the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
+				envKind, GitProviderEnv, gcp.ProjectJobName(job.Profile, job.Provider, job.Account), kind, job.Profile)
+		}
 		return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and the run's slug %s is the slug of %s under %s: the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 			envKind, GitProviderEnv, slug, repo, kind)
 	}
-	// The remote is where the clone comes from, and it is the job's own
-	// environment (Deps.Remote, RemoteEnv) or the origin of a checkout already
-	// in the work directory — a launcher's to set, both of them. The launcher
-	// refuses a repository URL that is not this repository before it deploys
-	// anything (internal/infra's repoURL, and the build's own CheckRepoURL), so
-	// a run meets these when the job's environment was edited after launch. The
-	// two questions are the kind's and the repository's: another provider's
-	// host is another repository — the same owner and name is the case worth
-	// naming — and so is another repository on the same provider's host, where
-	// the kind alone would agree. The run's slug keys its locks, its cache and
-	// its budget session, so it names neither.
-	remote := r.originURL(ctx)
-	if other := remoteOfAnotherKind(kind, remote); other != "" {
-		return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
-			remoteDisplay(remote), other, slug, repo, kind, RemoteEnv)
-	}
-	if other := remoteOfAnotherRepo(kind, repo, remote); other != "" {
-		// internal/infra's repoURL refuses this at deploy time — "it must be
-		// this repository, not only this provider" — and the run refuses it
-		// here for the same reason: it clones, caches, locks and accounts under
-		// its slug, and another repository's URL under that slug is another
-		// repository's work.
-		return fmt.Errorf("the run would clone from %s, which is the repository %s on %s's host, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and it must be this repository, not only this provider, so the run stops before any git credential is requested",
-			remoteDisplay(remote), other, kind, slug, repo, kind, RemoteEnv)
+	if !project {
+		// The remote is where the clone comes from, and on a per-repository job
+		// it is the job's own environment (Deps.Remote, RemoteEnv) or the origin
+		// of a checkout already in the work directory — a launcher's to set, both
+		// of them. The launcher refuses a repository URL that is not this
+		// repository before it deploys anything (internal/infra's repoURL, and
+		// the build's own CheckRepoURL), so a run meets these when the job's
+		// environment was edited after launch. The two questions are the kind's
+		// and the repository's: another provider's host is another repository —
+		// the same owner and name is the case worth naming — and so is another
+		// repository on the same provider's host, where the kind alone would
+		// agree. The run's slug keys its locks, its cache and its budget
+		// session, so it names neither.
+		//
+		// A project job never reaches this: its clone URL is computed from
+		// task.json and the policy (cloneURL, design §4.1(1)), so the job's
+		// environment carries nothing to compare — FUGARO_REMOTE stops being
+		// read on a project job (plan task 3.3 step 3), and a value a launcher
+		// wrote there can neither redirect the run nor halt it.
+		remote := r.originURL(ctx)
+		if other := remoteOfAnotherKind(kind, remote); other != "" {
+			return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
+				remoteDisplay(remote), other, slug, repo, kind, RemoteEnv)
+		}
+		if other := remoteOfAnotherRepo(kind, repo, remote); other != "" {
+			// internal/infra's repoURL refuses this at deploy time — "it must be
+			// this repository, not only this provider" — and the run refuses it
+			// here for the same reason: it clones, caches, locks and accounts under
+			// its slug, and another repository's URL under that slug is another
+			// repository's work.
+			return fmt.Errorf("the run would clone from %s, which is the repository %s on %s's host, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and it must be this repository, not only this provider, so the run stops before any git credential is requested",
+				remoteDisplay(remote), other, kind, slug, repo, kind, RemoteEnv)
+		}
 	}
 	if want, err := task.Slug(kind, repo); err != nil || want != slug {
-		// Implied by the derivation; re-checked so the two values the run
-		// actually uses (the slug under which it reads and writes the bucket,
-		// and the provider kind it opens) are the ones that were compared.
+		// The binding both paths keep (design §12a item 2, plan task 1.5 step 1
+		// and task 3.3 step 2): the slug under which the run reads and writes
+		// the bucket, takes its locks and opens its budget session must be the
+		// slug of the repository its task names under the provider it is about
+		// to open. On a per-repository job it is implied by the derivation
+		// above and re-checked so the values the run actually uses are the ones
+		// that were compared; on a project job it is the whole binding, since
+		// the provider comes from the job's name and nothing else ties the slug
+		// to the repository — the job serves every repository of its profile.
 		got := want
 		if err != nil {
 			got = err.Error()
+		}
+		if project {
+			return fmt.Errorf("the run was launched for the slug %s, and this run is in the project job %s, whose provider is %s: the slug must be the slug task.Slug(%s, %s) the task's repository computes (%s), because it keys the bucket paths, the locks, the cache and the budget session of this run. The run stops before any git credential is requested or any lease exists",
+				slug, gcp.ProjectJobName(job.Profile, job.Provider, job.Account), kind, kind, repo, got)
 		}
 		return fmt.Errorf("the run's slug %s is not the slug task.Slug(%s, %s) computes (%s): the run stops before any git credential is requested", slug, kind, repo, got)
 	}
@@ -344,11 +396,30 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		// No policy published here: the binding is the whole check (Task 1.3
 		// step 1's absent case). Reading this as an empty allow-list would
 		// refuse every run of every installation that has published nothing.
+		// A project job cannot be here — its candidates are the policy's — so
+		// this is the per-repository path's end.
 		return nil
 	}
 	canonical, err := projectpolicy.Canonical(kind, repo)
 	if err != nil {
 		return fmt.Errorf("the repository this run was launched for cannot be named in the project's allow-list: %w", err)
+	}
+	if project {
+		// The profile's admission (plan task 3.3 step 4, design §4.1): the
+		// repository must be admitted for the (profile, provider, account) this
+		// run is actually on, so a repository's own fugaro.yaml cannot widen its
+		// access by selecting a profile whose list is wider. One function words
+		// it (projectpolicy.AdmissionRefusal), and its project-list branch is
+		// the very sentence the launcher's advisory twin prints
+		// (projectpolicy.NotAdmitted), so the two cannot drift apart.
+		refusal, err := p.AdmissionRefusal(job.Profile, canonical)
+		if err != nil {
+			return fmt.Errorf("this run is in the project job %s: %w", gcp.ProjectJobName(job.Profile, job.Provider, job.Account), err)
+		}
+		if refusal != "" {
+			return fmt.Errorf("%s. The run stops before any lease exists", refusal)
+		}
+		return nil
 	}
 	if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
 		// The refusal itself is projectpolicy's, so the launcher's advisory

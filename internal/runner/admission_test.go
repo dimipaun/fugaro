@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -60,9 +61,17 @@ func admissionRunCfg(t *testing.T, kind, slugRepo, mode, capUSD, cfg, policy str
 	if slug == repoSlug && slugRepo != "acme/app" {
 		t.Fatalf("task.Slug(%q, %q) is the fixture's own slug; the test would check nothing", kind, slugRepo)
 	}
-	b.deps.Execution = "projects/aurora-fp/locations/europe-west1/jobs/fugaro/executions/" + runID
+	// A real per-repository job name, computed from the slug the run carries
+	// and the fixture's workflow — the same recomputation the run itself makes
+	// (gcp.JobName of the slug and gcp.WorkflowVariant of task.json's
+	// workflow, plan task 3.3 step 1). A hand-written job name is a name the
+	// run cannot place, and would halt these runs before the check they are
+	// about (TestJobIdentityRefusesANameItCannotPlace).
+	const workflow = "app"
+	b.deps.Execution = "projects/aurora-fp/locations/europe-west1/jobs/" +
+		gcp.JobName(slug, gcp.WorkflowVariant(workflow, "")) + "/executions/" + runID
 	store := runstore.Open(b.harness.bucket, slug, runID)
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature"}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: workflow, Task: "Add a feature"}
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

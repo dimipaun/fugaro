@@ -132,13 +132,21 @@ func (r *run) jobName() (string, error) {
 // cloud.go:271-300 documents for --run-id repeats, ls, logs, diagnose and
 // follow-up); then nothing.
 func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflow, token string) (jobTriple, bool, error) {
-	// RED STEP (plan task 3.3): the identity decision, unimplemented. Every
-	// name is read as a per-repository job, so the first run of the tests
-	// compiles and fails on behaviour rather than on undefined names
-	// (TestJobIdentityMatchesAComputedProjectJobName,
-	// TestJobIdentityIsNotAParser, TestJobIdentityRefusesAnUnknownProjectJob).
-	_, _, _, _, _, _ = job, p, found, slug, workflow, token
-	return jobTriple{}, false, nil
+	if found {
+		for _, c := range projectJobCandidates(p) {
+			if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
+				return c, true, nil
+			}
+		}
+	}
+	variant, err := legacyVariant(job, slug, workflow, token)
+	if err != nil {
+		return jobTriple{}, false, err
+	}
+	if job == gcp.JobName(slug, variant) {
+		return jobTriple{}, false, nil
+	}
+	return jobTriple{}, false, cannotPlaceJob(job, p, found, slug, workflow, variant)
 }
 
 // projectJobCandidates is every (profile, provider, account) the published
