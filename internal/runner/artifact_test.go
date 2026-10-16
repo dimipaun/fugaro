@@ -1,16 +1,26 @@
 package runner_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -941,4 +951,1415 @@ func TestCancelDuringTheRenderEndsTheRunCancelled(t *testing.T) {
 	if !strings.Contains(string(report), "**Outcome:** stopped — cancelled during render") {
 		t.Fatalf("the report does not carry the cancel that ended the run:\n%s", report)
 	}
+}
+
+// --- Task 4: the outputs — select, sanitise, cap, hash, upload, record ---
+
+// artifactRecipeYAML is a mode: artifact recipe whose outputs block is out,
+// verbatim: the name, cap and upload tests differ only in it.
+func artifactRecipeYAML(outputs string) string {
+	return "version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - render: {}\noutputs: " + outputs + "\n"
+}
+
+// outFile is one file a render script writes under out/: size bytes of
+// zeroes, or body when body is set (a small file whose bytes a test can
+// name).
+type outFile struct {
+	name string
+	size int
+	body string
+}
+
+// renderWrites is a render script writing files under out/, in the order
+// given, so each one is exactly the size the test asked for.
+func renderWrites(files ...outFile) map[string]string {
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n")
+	for _, f := range files {
+		fmt.Fprintf(&b, "mkdir -p \"$(dirname out/%s)\"\n", f.name)
+		if f.body != "" {
+			fmt.Fprintf(&b, "printf '%%s' '%s' > out/%s\n", f.body, f.name)
+			continue
+		}
+		fmt.Fprintf(&b, "head -c %d /dev/zero > out/%s\n", f.size, f.name)
+	}
+	return renderScript(b.String())
+}
+
+// bucketKeys is every object key in the harness's bucket, sorted. A test
+// asserts the key set rather than the slice the run returned, so an object
+// written outside the run's own prefix is caught too.
+func bucketKeys(t *testing.T, b *blob.Bucket) []string {
+	t.Helper()
+	var keys []string
+	iter := b.List(nil)
+	for {
+		obj, err := iter.Next(context.Background())
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, obj.Key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// artifactKeys is the names uploaded under the run's own artifacts/ prefix.
+func artifactKeys(t *testing.T, h *harness) []string {
+	t.Helper()
+	prefix := h.store.Prefix() + "artifacts/"
+	var out []string
+	for _, k := range bucketKeys(t, h.bucket) {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, strings.TrimPrefix(k, prefix))
+		}
+	}
+	return out
+}
+
+// artifactObjects is the run's artifacts as the bucket holds them, by name:
+// the objects under the run's artifacts/ prefix and their bytes. The run's own
+// account of itself — result.json, report.md, the render log — is not one of
+// them. A scan for bytes that must not have been uploaded is about the files,
+// and a refused run's record names the path it refused, which is the record
+// doing its job rather than a leak.
+func artifactObjects(t *testing.T, h *harness) map[string]string {
+	t.Helper()
+	prefix := h.store.Prefix() + "artifacts/"
+	out := map[string]string{}
+	for _, k := range bucketKeys(t, h.bucket) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		out[strings.TrimPrefix(k, prefix)] = string(objectBytes(t, h.bucket, k))
+	}
+	return out
+}
+
+// objectBytes reads one of the bucket's objects.
+func objectBytes(t *testing.T, b *blob.Bucket, key string) []byte {
+	t.Helper()
+	r, err := b.NewReader(context.Background(), key, nil)
+	if err != nil {
+		t.Fatalf("reading %s: %v", key, err)
+	}
+	defer r.Close()
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading %s: %v", key, err)
+	}
+	return data
+}
+
+// stagedFiles is what the run left in its staging directory, sorted: a
+// refusal must leave it empty (Review Focus 4).
+func stagedFiles(t *testing.T, h *harness) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(h.deps.StateDir, "artifacts"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	sort.Strings(out)
+	return out
+}
+
+// assertNothingUploaded is a refused set's whole claim: no object under the
+// run's artifacts/ prefix, and nothing staged either — a partial set fails
+// the test that calls this.
+func assertNothingUploaded(t *testing.T, h *harness) {
+	t.Helper()
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run uploaded %v", keys)
+	}
+	if files := stagedFiles(t, h); len(files) != 0 {
+		t.Fatalf("the run staged %v", files)
+	}
+}
+
+// TestStageArtifactsRefusesEscapes is Review Focus 3's table: every name a
+// render's match can produce that must not become an object key is refused
+// with a reason that names it — an escape out of the outputs root, an
+// absolute path, a NUL or a newline, an over-long name, a dot-named one (the
+// paired rule: the retriever refuses those, so uploading one would record an
+// artifact nobody can fetch back, design §9) — and the names that are fine
+// are cleaned rather than refused.
+//
+// Mutation (drop the `..` element check): "../../etc/passwd" is accepted and
+// this test fails; mutation (drop the dot rule): ".hidden.mp4" is accepted;
+// mutation (return the name uncleaned): "clips/./a.png" does not come back as
+// "clips/a.png"; mutation (compare the name's length in runes, or drop the
+// cap): the 201-byte name is accepted.
+func TestStageArtifactsRefusesEscapes(t *testing.T) {
+	refused := []struct{ name, want string }{
+		{"../../etc/passwd", "escapes the outputs root"},
+		{"/etc/passwd", "absolute"},
+		{"a/../../b", "escapes the outputs root"},
+		{"..", "escapes the outputs root"},
+		{"a/..", "names no file"},
+		{"", "is empty"},
+		{"a\x00b.png", "NUL"},
+		{"a\nb.png", "newline"},
+		// Every control character, not just the two that would break a line:
+		// the name is printed in the report and typed at a shell, and an
+		// escape sequence or a bidi override is a name that reads as something
+		// other than what it is (TestTheReportEscapesANameThatCouldBreakTheTable
+		// is the other half of this: punctuation stays, and is escaped).
+		{"a\tb.png", "tab"},
+		{"a\x1b[31mb.png", "control"},
+		{"a\x07b.png", "control"},
+		{"a\x7fb.png", "control"},
+		{"a‮b.png", "control"},
+		{strings.Repeat("a", 201), "200"},
+		{".hidden.mp4", "begins with a dot"},
+		{".hidden/a.png", "begins with a dot"},
+	}
+	for _, c := range refused {
+		got, err := runner.SanitiseName(c.name)
+		if err == nil {
+			t.Errorf("SanitiseName(%q) = %q, want a refusal", c.name, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("SanitiseName(%q): %v, want a reason naming %q", c.name, err, c.want)
+		}
+	}
+	accepted := []struct{ in, want string }{
+		{"sizzle.mp4", "sizzle.mp4"},
+		{"clips/a.png", "clips/a.png"},
+		{"sizzle.v2.mp4", "sizzle.v2.mp4"},
+		{"clips/./a.png", "clips/a.png"},
+		{strings.Repeat("a", 200), strings.Repeat("a", 200)},
+		// The dot rule is the name's first character and nothing else
+		// (design §9), so a dot inside a name and a file inside a dot-named
+		// directory below the outputs root are both names the retriever
+		// hands back, and both accepted here.
+		{"clips/.hidden.png", "clips/.hidden.png"},
+		{"clips/.hidden/a.png", "clips/.hidden/a.png"},
+		// Punctuation is the render's to choose; only control characters are
+		// refused for what they do to a terminal, and the report escapes these.
+		{"a|b`c.png", "a|b`c.png"},
+	}
+	for _, c := range accepted {
+		got, err := runner.SanitiseName(c.in)
+		if err != nil {
+			t.Errorf("SanitiseName(%q): %v, want %q", c.in, err, c.want)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("SanitiseName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestOutputsRefusesMoreFilesThanTheCap is Review Focus 4's count arm:
+// max_files counts entries, so a glob matching one file more than it allows
+// refuses the run, names the count, the cap and the globs, and leaves the
+// bucket and the staging directory untouched.
+//
+// Mutation (drop the count check): three files are staged and uploaded and
+// this test fails; mutation (stage before the caps are checked): the staging
+// directory is not empty when the refusal is returned.
+func TestOutputsRefusesMoreFilesThanTheCap(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], max_files: 2 }")),
+		renderWrites(outFile{name: "a.png", size: 8}, outFile{name: "b.png", size: 8}, outFile{name: "c.png", size: 8}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	for _, want := range []string{"3 files", "out/*.png", "outputs.max_files 2"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason %q does not name %q", rec.Reason, want)
+		}
+	}
+	assertNothingUploaded(t, h)
+}
+
+// TestOutputsRefusesAnOversizedArtifact is Review Focus 4's per-artifact
+// arm: max_bytes is ONE artifact's cap, so a single file over it refuses the
+// run even though the set as a whole is well under max_total_bytes.
+//
+// Mutation (compare the set's total against max_bytes instead of each file,
+// or drop the per-file check): the oversized file is uploaded and this test
+// fails.
+func TestOutputsRefusesAnOversizedArtifact(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], max_bytes: 4096, max_total_bytes: 1048576 }")),
+		renderWrites(outFile{name: "a.png", size: 64}, outFile{name: "big.png", size: 8192}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	for _, want := range []string{"big.png", "8192 bytes", "outputs.max_bytes 4096 bytes"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason %q does not name %q", rec.Reason, want)
+		}
+	}
+	assertNothingUploaded(t, h)
+}
+
+// TestOutputsRefusesASetOverTheTotal is Review Focus 4's set arm: a set whose
+// every member is comfortably under max_bytes can still be over
+// max_total_bytes, which is its own key and not max_bytes × max_files. The
+// refusal names the count, the total and both caps.
+//
+// Mutation (drop the set check, or derive max_total_bytes from max_bytes ×
+// max_files): the set is uploaded and this test fails.
+func TestOutputsRefusesASetOverTheTotal(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], max_bytes: 65536, max_total_bytes: 131072 }")),
+		renderWrites(outFile{name: "a.png", size: 60000}, outFile{name: "b.png", size: 60000}, outFile{name: "c.png", size: 60000}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	for _, want := range []string{"3 files", "180000 bytes", "outputs.max_total_bytes 131072 bytes", "outputs.max_bytes 65536 bytes"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason %q does not name %q", rec.Reason, want)
+		}
+	}
+	assertNothingUploaded(t, h)
+}
+
+// TestAGlobThatMatchesNothingIsReportedNotFailed: a render that produces
+// nothing the recipe's globs select is not an error by itself — a render may
+// legitimately produce nothing — so the run still ends succeeded/artifacts,
+// uploads nothing, writes no artifacts key at all, and says so in its report
+// (design §8.4: "not an error by itself ... but it is reported"). Turning
+// "nothing" into a failure is the probe step's job, when the recipe's owner
+// asks for one.
+//
+// Mutation (fail the run when the globs match nothing): the status becomes
+// failed and this test fails; mutation (write an empty artifacts array): the
+// record gains a key an old reader never saw.
+func TestAGlobThatMatchesNothingIsReportedNotFailed(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p out && echo not-a-png > out/notes.txt\n"))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("artifacts = %+v", rec.Artifacts)
+	}
+	raw, err := h.store.ReadFile(context.Background(), "result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"artifacts":`) {
+		t.Fatalf("the record writes an artifacts key for a run that uploaded none: %s", raw)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run uploaded %v", keys)
+	}
+	if files := stagedFiles(t, h); len(files) != 0 {
+		t.Fatalf("the run staged %v", files)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "**Files:** none recorded") {
+		t.Fatalf("the report does not say the run uploaded nothing:\n%s", report)
+	}
+}
+
+// TestUploadArtifactsWritesUnderTheRunPrefix is the object-key claim: every
+// artifact lands at runs/<slug>/<run>/artifacts/<name>, the name is the
+// match's path relative to the deepest common root of the recipe's globs
+// (here "out", so out/clips/a.png is "clips/a.png"), and nothing at all is
+// written outside the run's own prefix. Asserted from the bucket's key set,
+// never from the slice the run returned.
+//
+// Mutation (upload to the name rather than under the artifacts prefix, or
+// use the match's absolute path as the name): the key set is not this set and
+// this test fails; mutation (root the names at the checkout rather than at
+// the globs' common root): the names gain a ".." or an "out/" element.
+func TestUploadArtifactsWritesUnderTheRunPrefix(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png, out/clips/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}, outFile{name: "clips/a.png", body: "clip"}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	want := []string{"clips/a.png", "sizzle.png"}
+	got := artifactKeys(t, h)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the bucket holds %v, want %v", got, want)
+	}
+	prefix := h.store.Prefix()
+	for _, k := range bucketKeys(t, h.bucket) {
+		if !strings.HasPrefix(k, prefix) {
+			t.Errorf("the run wrote outside its own prefix: %s", k)
+		}
+	}
+	var names []string
+	for _, a := range rec.Artifacts {
+		names = append(names, a.Name)
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("the record names %v, want %v", names, want)
+	}
+	if a := rec.Artifacts[0]; a.Bytes != 4 || a.ContentType != "image/png" || len(a.SHA256) != 64 {
+		t.Fatalf("clips/a.png = %+v", a)
+	}
+	if a := rec.Artifacts[1]; a.Bytes != 6 || a.ContentType != "image/png" {
+		t.Fatalf("sizzle.png = %+v", a)
+	}
+}
+
+// TestArtifactHashMatchesTheUploadedBytes is Review Focus 5: the recorded
+// sha256 and size are of the bytes actually in the bucket, read back through
+// the harness rather than compared against the staging directory.
+//
+// Mutation (record the render's own path's hash, or the hash of the record's
+// name): the read-back hash does not match and this test fails.
+func TestArtifactHashMatchesTheUploadedBytes(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}, outFile{name: "b.png", size: 5000}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Artifacts) != 2 {
+		t.Fatalf("artifacts = %+v", rec.Artifacts)
+	}
+	for _, a := range rec.Artifacts {
+		data := objectBytes(t, h.bucket, h.store.Prefix()+"artifacts/"+a.Name)
+		sum := sha256.Sum256(data)
+		if int64(len(data)) != a.Bytes {
+			t.Errorf("%s: %d bytes in the bucket, the record says %d", a.Name, len(data), a.Bytes)
+		}
+		if hex.EncodeToString(sum[:]) != a.SHA256 {
+			t.Errorf("%s: the bucket's bytes hash to %s, the record says %s", a.Name, hex.EncodeToString(sum[:]), a.SHA256)
+		}
+	}
+	if got := string(objectBytes(t, h.bucket, h.store.Prefix()+"artifacts/sizzle.png")); got != "sizzle" {
+		t.Fatalf("sizzle.png = %q in the bucket", got)
+	}
+}
+
+// TestAStagedFileReplacedBeforeTheUploadFailsTheRun is Review Focus 5's other
+// half, and the reason the hash is taken in the staging directory: the bytes
+// uploaded are not necessarily the bytes that were hashed, because the plan
+// stage's agent is the same user in the same container. A staged file
+// replaced between the hash and the upload must fail the run, and must leave
+// nothing in the bucket for the hash to be a lie about.
+//
+// Mutation (upload without checking the staged hash, or record the staged
+// hash without comparing it): the run succeeds, the record's sha256 names
+// bytes that are not in the bucket, and this test fails.
+func TestAStagedFileReplacedBeforeTheUploadFailsTheRun(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	staged := filepath.Join(h.deps.StateDir, "artifacts", "sizzle.png")
+	runner.SetArtifactStagedSeam(t, func() {
+		if err := os.WriteFile(staged, []byte("swapped after the hash"), 0o644); err != nil {
+			t.Errorf("replacing the staged file: %v", err)
+		}
+	})
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "changed before the upload") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the run left %v in the bucket", keys)
+	}
+}
+
+// TestArtifactsAreUploadedInNameOrder: the set is uploaded, and recorded, in
+// name order — not in glob order, which is what filepath.Glob returns and
+// which puts every match of the first glob before every match of the second.
+//
+// Mutation (drop the sort): the record lists zz.png first and this test
+// fails.
+func TestArtifactsAreUploadedInNameOrder(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png, out/clips/*.png] }")),
+		renderWrites(outFile{name: "zz.png", size: 4}, outFile{name: "aa.png", size: 4}, outFile{name: "clips/mm.png", size: 4}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, a := range rec.Artifacts {
+		names = append(names, a.Name)
+	}
+	want := []string{"aa.png", "clips/mm.png", "zz.png"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("the record names %v, want %v", names, want)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the bucket holds %v, want %v", got, want)
+	}
+}
+
+// TestArtifactNameCollisionAfterCleaningIsRefused: two of the render's files
+// whose names collide are refused rather than deduplicated or overwritten — a
+// silently dropped artifact is a record that lies about what the render
+// produced. The two files here differ only in case, which is the collision
+// that survives everything else: two paths, two files, two sets of bytes, and
+// one name once a case-insensitive filesystem writes it back — where
+// `fugaro artifacts get` would have the second artifact overwrite the first.
+//
+// (Two globs that match the SAME file are not a collision: they are one
+// artifact, which TestOverlappingGlobsSelectOneFileOnce pins.)
+//
+// Mutation (key the collision map on the name as written, not folded): the run
+// succeeds with two artifacts and this test fails; mutation (let the second
+// match overwrite the first): the record carries one artifact where the render
+// produced two.
+func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "Sizzle.png", body: "one"}, outFile{name: "sizzle.png", body: "two"}))
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "same name") || !strings.Contains(rec.Reason, "Sizzle.png") || !strings.Contains(rec.Reason, "sizzle.png") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	assertNothingUploaded(t, h)
+}
+
+// TestStageArtifactsRefusesADotNamedMatch is the paired rule: the retriever
+// refuses a dot-named entry, and filepath.Glob — unlike a shell — matches a
+// leading dot, so without the refusal out/*.png would upload and record a
+// .hidden.png that can never be handed back. The whole run is refused, so the
+// record never claims an artifact nobody can fetch.
+//
+// Mutation (drop the dot rule from the sanitiser): .hidden.png is uploaded
+// and this test fails.
+func TestStageArtifactsRefusesADotNamedMatch(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}, outFile{name: ".hidden.png", body: "hidden"}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, ".hidden.png") || !strings.Contains(rec.Reason, "begins with a dot") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	assertNothingUploaded(t, h)
+}
+
+// TestASymlinkOutOfTheOutputsRootIsRefusedNotFollowed: a match that is a
+// symlink whose target is outside the outputs root is refused, not followed —
+// the bytes would then be a file the render never wrote — and the run
+// continues without it, with a warning that names the link. Asserted on the
+// bucket: the target's bytes are in no object, and the only artifact is the
+// file the render really wrote.
+//
+// Mutation (copy through the symlink): secret.txt's bytes are uploaded and
+// this test fails; mutation (fail the whole run): the record is failed and
+// the artifacts assertion fails.
+func TestASymlinkOutOfTheOutputsRootIsRefusedNotFollowed(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p out\necho secret > secret.txt\nprintf 'ok' > out/sizzle.png\nln -s ../secret.txt out/leak.png\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	for name, body := range artifactObjects(t, h) {
+		if strings.Contains(body, "secret") {
+			t.Fatalf("%s holds the symlink's target's bytes", name)
+		}
+	}
+	if !strings.Contains(logs.String(), "leak.png") {
+		t.Fatalf("the refusal is not in the log:\n%s", logs.String())
+	}
+}
+
+// runWithin runs the harness with a deadline of its own. Several tests below
+// are about a run that must NOT block — a FIFO or a device swapped in under
+// the staging step is exactly a run that never returns — and a test that hangs
+// reports "panic: test timed out" with no name attached to it, or blocks the
+// whole package behind go test's own timeout. This turns the same bug into a
+// named failure in seconds. The run itself still happens on its own goroutine,
+// so nothing in it may call t.Fatal (the seams report with t.Error).
+func runWithin(t *testing.T, h *harness, d time.Duration) (*runstore.Record, error) {
+	t.Helper()
+	type result struct {
+		rec *runstore.Record
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		rec, err := h.run(t)
+		done <- result{rec, err}
+	}()
+	select {
+	case r := <-done:
+		return r.rec, r.err
+	case <-time.After(d):
+		t.Fatalf("the run did not finish within %s: it blocked", d)
+		return nil, nil
+	}
+}
+
+// TestASymlinkedOutputsRootIsRefused: the outputs ROOT itself can be a link.
+// The render leaves a directory outside the checkout and points out/ at it, so
+// every match resolves to a file the repository does not hold. Refusing each
+// match as "reached through a symlinked directory" is not enough — the root
+// would then simply have moved outside the checkout, and the run would record
+// bytes from anywhere the render could write as the repository's own outputs.
+// The run is refused instead, before anything is staged, and the reason names
+// the root and where it resolves to.
+//
+// Mutation (drop the within-checkout test on the resolved root): the run
+// succeeds and uploads s.png from outside the checkout, and this test fails on
+// the status and on the bucket scan.
+func TestASymlinkedOutputsRootIsRefused(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p ../elsewhere\nprintf 'elsewhere' > ../elsewhere/s.png\nln -s ../elsewhere out\n"))
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "outputs root") || !strings.Contains(rec.Reason, "elsewhere") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	assertNothingUploaded(t, h)
+	for name, body := range artifactObjects(t, h) {
+		if strings.Contains(body, "elsewhere") {
+			t.Fatalf("%s holds bytes from outside the checkout", name)
+		}
+	}
+}
+
+// TestOverlappingGlobsSelectOneFileOnce: two globs that both match one file
+// are one artifact. The overlap is what a recipe naturally writes — out/* and
+// out/*.png side by side — and treating the second match as a name collision
+// refuses the whole run for a set the recipe asked for.
+//
+// Mutation (count every match, not every file): the run ends failed with "two
+// of the render's files clean to the same name" and this test fails.
+func TestOverlappingGlobsSelectOneFileOnce(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*, out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	if len(rec.Artifacts) != 1 {
+		t.Fatalf("artifacts = %+v", rec.Artifacts)
+	}
+}
+
+// TestAStagedFileSwappedForADeviceIsRefusedBeforeTheUpload: after the staging
+// step has hashed what it wrote, the staged file is replaced by a link to
+// /dev/zero. It is the same user and the same state directory, so this swap is
+// available to anything the render left running. An upload that opens the path
+// it is given and copies it to the end would read /dev/zero forever: no
+// object, no result.json, a killed container. The open is what refuses it, so
+// the run ends failed, with nothing in the bucket.
+//
+// The guard that fires here is the Lstat PutFileFrom makes on the path it was
+// given: the swap is a moment old, and a staged file that is not a regular file
+// is refused with blobx.ErrChanged before anything is opened. Behind it are the
+// upload's own open (O_NOFOLLOW) and the copy bounded by the size of the file
+// that open returned, which are what hold if the swap lands after the Lstat
+// instead of before it. Behind both is the staged-hash comparison in
+// PutFileFrom: even bytes read cleanly are refused if they are not the ones
+// this run hashed.
+//
+// Mutation (drop the Lstat together with the open's flags and the bound): the
+// run reads /dev/zero until the container is killed — the red run ends
+// `signal: killed` with no result.json; mutation (drop only the staged-hash
+// comparison): the record attests to bytes the render never wrote.
+func TestAStagedFileSwappedForADeviceIsRefusedBeforeTheUpload(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	runner.SetArtifactStagedSeam(t, func() {
+		p := filepath.Join(h.deps.StateDir, "artifacts", "sizzle.png")
+		if err := os.Remove(p); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Symlink("/dev/zero", p); err != nil {
+			t.Error(err)
+		}
+	})
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record attests to artifacts it did not upload: %+v", rec.Artifacts)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the failed run left %v in the bucket", keys)
+	}
+}
+
+// TestAMatchSwappedForADeviceBetweenTheCheckAndTheCopy is the check-then-use
+// window on the reading side, and the one the size guard has to close on its
+// own: the match is a real 6-byte file when it is measured against the caps,
+// and by the time it is copied it is a link to a device that never ends.
+// Nothing about the caps changes — the copy is simply not the file that was
+// measured. What refuses it is the open (O_NOFOLLOW) and, if that flag were
+// missing, the bounded copy: reading one byte past the size that was checked
+// is enough to know the file changed, so the guard n != want is the only thing
+// standing, and without it this run reads a device to the end.
+//
+// Mutation (open with os.Open and io.Copy it): this test times out.
+func TestAMatchSwappedForADeviceBetweenTheCheckAndTheCopy(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	runner.SetArtifactCheckedSeam(t, func() {
+		p := filepath.Join(h.deps.WorkDir, "out", "sizzle.png")
+		if err := os.Remove(p); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Symlink("/dev/zero", p); err != nil {
+			t.Error(err)
+		}
+	})
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	assertNothingUploaded(t, h)
+}
+
+// TestAMatchThatGrowsBetweenTheCheckAndTheCopyIsRefused: a file that is still
+// being written — a render that forked, a step that was never killed — passes
+// every cap when it is measured and is a different file a moment later. The
+// seam appends a megabyte, which is the case the old io.Copy to the end could
+// not tell from the small file it had just approved: the staged copy was the
+// megabyte, and the record's bytes and sha256 described it.
+//
+// What refuses it is the comparison against the checked size, and there are
+// three of them — the fstat on the opened file, the bound on the copy (one
+// byte past the size that was approved is enough to know), and the count the
+// copy ends with. Any one of them alone catches this append, which is why the
+// red step for this test is the honest mutation rather than a single line:
+// stage what the copy read instead of comparing it with the size that was
+// checked — drop the fstat's size comparison and the count — and the staged
+// copy is a megabyte no cap approved.
+//
+// (TestAMatchSwappedForADeviceBetweenTheCheckAndTheCopy is the same window
+// where the bound is not enough on its own, and is where the open is shown.)
+//
+// Mutation (record the bytes the copy read rather than checking them against
+// the size that was measured): the run succeeds with the megabyte uploaded,
+// and this test fails on the status and on the reason.
+func TestAMatchThatGrowsBetweenTheCheckAndTheCopyIsRefused(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	runner.SetArtifactCheckedSeam(t, func() {
+		p := filepath.Join(h.deps.WorkDir, "out", "sizzle.png")
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer f.Close()
+		if _, err := f.Write(bytes.Repeat([]byte("x"), 1<<20)); err != nil {
+			t.Error(err)
+		}
+	})
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "changed while it was copied") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	assertNothingUploaded(t, h)
+}
+
+// TestAnUploadThatFailsPartwayLeavesNothingInTheBucket: two artifacts, and
+// the second is unreadable by the time it is its turn. The first object is
+// already written, and a run that ends failed must not leave it there: the
+// record says this run uploaded no artifacts, the objects are create-only, and
+// a re-execution of the same run would fail on the key it left behind. What
+// this call wrote is deleted before the error is returned, and the failure is
+// in name order, so the first file is the one that has to go.
+//
+// The unreadable second file is a FIFO, which is also the other hazard: it is
+// the staged file that is not a regular file, and an upload that opens such a
+// path without O_NONBLOCK never returns. PutFileFrom's Lstat refuses it here;
+// the upload's own open is what would answer if the swap landed after that.
+//
+// Mutation (drop the cleanup): the bucket holds a.png and this test fails;
+// mutation (drop the Lstat and the open's O_NONBLOCK together): the upload of
+// b.png blocks on the open and the test fails on runWithin's deadline instead
+// of hanging the package.
+func TestAnUploadThatFailsPartwayLeavesNothingInTheBucket(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "a.png", body: "one"}, outFile{name: "b.png", body: "two"}))
+	runner.SetArtifactStagedSeam(t, func() {
+		p := filepath.Join(h.deps.StateDir, "artifacts", "b.png")
+		if err := os.Remove(p); err != nil {
+			t.Error(err)
+			return
+		}
+		if out, err := exec.Command("mkfifo", p).CombinedOutput(); err != nil {
+			t.Errorf("mkfifo %s: %v: %s", p, err, out)
+		}
+	})
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the failed run records %+v", rec.Artifacts)
+	}
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the failed run left %v in the bucket", keys)
+	}
+}
+
+// TestTheStagingDirectoryIsStagedIntoFromEmpty: the staging directory lives in
+// the state directory the plan stage's agent can write, so whatever it left
+// there is not this run's set. A file planted there must not be uploaded, and
+// must not be found beside the staged set either: the run stages into an empty
+// directory it made, every time.
+//
+// Mutation (stage without emptying the directory first): the planted file is
+// still there when the set is staged, and this test fails on the listing.
+func TestTheStagingDirectoryIsStagedIntoFromEmpty(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	if err := os.MkdirAll(filepath.Join(h.deps.StateDir, "artifacts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.deps.StateDir, "artifacts", "planted.png"), []byte("planted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	if got := stagedFiles(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the staging directory holds %v, want only sizzle.png", got)
+	}
+}
+
+// TestARefusedSetLeavesTheStagingDirectoryEmpty is the same promise for a set
+// that never gets as far as a copy: the render produced more files than the
+// recipe allows, so the run is refused, and the staging directory — which the
+// agent can write and a previous run of this state may have left something in
+// — is left empty rather than holding what was there before plus nothing.
+//
+// Mutation (stage without emptying the directory first): the planted file
+// survives the refusal and this test fails.
+func TestARefusedSetLeavesTheStagingDirectoryEmpty(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], max_files: 1 }")),
+		renderWrites(outFile{name: "a.png", body: "one"}, outFile{name: "b.png", body: "two"}))
+	if err := os.MkdirAll(filepath.Join(h.deps.StateDir, "artifacts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.deps.StateDir, "artifacts", "planted.png"), []byte("planted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "max_files") {
+		t.Fatalf("record = %+v", rec)
+	}
+	assertNothingUploaded(t, h)
+	if files := stagedFiles(t, h); len(files) != 0 {
+		t.Fatalf("the refused run left %v staged", files)
+	}
+}
+
+// TestASetThatFailsWhileItIsCopiedLeavesNoStagingDirectory: a copy that fails
+// partway must not leave the half-staged set behind — the next step of this
+// run, or a later one reusing the state, would find files that no record
+// describes. Two matches, and the second is swapped for a device between the
+// check and the copy: a.png has been copied and hashed by the time b.png is
+// refused, so it is a.png that the removal has to take back.
+//
+// Mutation (return without emptying the staging directory): a.png is still
+// there and this test fails on the listing.
+func TestASetThatFailsWhileItIsCopiedLeavesNoStagingDirectory(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "a.png", body: "one"}, outFile{name: "b.png", body: "two"}))
+	runner.SetArtifactCheckedSeam(t, func() {
+		p := filepath.Join(h.deps.WorkDir, "out", "b.png")
+		if err := os.Remove(p); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.Symlink("/dev/zero", p); err != nil {
+			t.Error(err)
+		}
+	})
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed {
+		t.Fatalf("record = %+v", rec)
+	}
+	if files := stagedFiles(t, h); len(files) != 0 {
+		t.Fatalf("the failed run left %v staged", files)
+	}
+}
+
+// TestAMatchUnderASymlinkedDirectoryIsRefusedNotFollowed is the half of the
+// symlink rule that a check on the match's own mode cannot see: out/evil is a
+// symlink to the checkout root, so out/evil/secret.png is a plain regular file
+// that only exists because the DIRECTORY on the way to it is a link. Nothing
+// about the match itself is remarkable, so the question has to be asked of the
+// whole path — resolve every element and compare what is left against the
+// resolved outputs root — or the run copies, uploads and records bytes from
+// outside the root as the render's own output, which is the one thing the rule
+// is for.
+//
+// Mutation (Lstat only the match's final component): secret.png is uploaded
+// under the name evil/secret.png and this test fails on the bucket's key set
+// and on the "secret" scan.
+func TestAMatchUnderASymlinkedDirectoryIsRefusedNotFollowed(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p out/real\nprintf 'ok' > out/real/sizzle.png\nprintf 'secret' > secret.png\nln -s .. out/evil\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"real/sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only real/sizzle.png", got)
+	}
+	for name, body := range artifactObjects(t, h) {
+		if strings.Contains(body, "secret") {
+			t.Fatalf("%s holds bytes reached through a symlinked directory", name)
+		}
+	}
+	if !strings.Contains(logs.String(), "out/evil/secret.png") {
+		t.Fatalf("the refusal is not in the log:\n%s", logs.String())
+	}
+}
+
+// TestASymlinkToADirectoryIsSkippedNotFatal pins what happens when a link's
+// target IS inside the outputs root: the resolved path passing the root check
+// is not the whole answer, because what it resolves TO still has to be a file
+// whose bytes can be copied. out/alias -> real is a directory, which the
+// plain-directory branch skips with a warning; keeping the resolved path
+// instead fails the copy with EISDIR and turns a skipped match into a failed
+// run. The record ends succeeded with the one file the render wrote, and the
+// warning names the link.
+//
+// Mutation (keep a resolved target without checking it is a regular file): the
+// run ends failed and this test fails on the status.
+func TestASymlinkToADirectoryIsSkippedNotFatal(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*] }")),
+		renderScript("#!/bin/sh\nmkdir -p out/real\nprintf 'ok' > out/sizzle.png\nln -s real out/alias\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	if !strings.Contains(logs.String(), "alias") {
+		t.Fatalf("the refusal is not in the log:\n%s", logs.String())
+	}
+}
+
+// TestASymlinkToAFifoIsRefusedNotOpened is the same check where the old
+// behaviour did not merely answer wrongly, it never answered: os.Open on a
+// FIFO blocks until a writer appears, and the staging copy takes no context, so
+// copying out/stream.png would hang the run until the job was killed and leave
+// no result.json at all. The mode comes from metadata, which never blocks, so
+// the link is skipped exactly like the plain FIFO beside it — and so is the
+// plain FIFO, which is where the same question is asked of a file that is not
+// a link at all.
+//
+// Three guards stand between this run and that hang, and the first one fires
+// here: outputProblem's resolved-target check refuses the link before it is a
+// copy (drop it alone and the run ends failed with "it is not a regular file",
+// on the copy's own fstat). Drop that check, the copy's fstat check and the
+// open's O_NONBLOCK together and the run blocks on the FIFO's open: this test
+// then fails on the deadline runWithin gives it — by name, in thirty seconds,
+// rather than as the package-wide "panic: test timed out after 10m" that says
+// nothing about which step hung.
+func TestASymlinkToAFifoIsRefusedNotOpened(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p out\nprintf 'ok' > out/sizzle.png\nmkfifo out/pipe\nln -s pipe out/stream.png\n"))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	if !strings.Contains(logs.String(), "stream.png") {
+		t.Fatalf("the refusal is not in the log:\n%s", logs.String())
+	}
+}
+
+// TestOneEmptyGlobAmongSeveralIsReported takes design §8.4's "it is reported"
+// at the glob rather than at the run: the recipe names two patterns and the
+// render produces one of them, so the run is not empty and the all-or-nothing
+// warning said nothing about the pattern that matched nothing — the typo a
+// reader most needs to see. The file still uploads and the run still succeeds;
+// only the log gains a line, and that line names the empty glob and no other.
+//
+// Mutation (warn only when every glob matched nothing): no line names
+// out/*.mp4 and this test fails.
+func TestOneEmptyGlobAmongSeveralIsReported(t *testing.T) {
+	var logs bytes.Buffer
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png, out/*.mp4] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := artifactKeys(t, h); !reflect.DeepEqual(got, []string{"sizzle.png"}) {
+		t.Fatalf("the bucket holds %v, want only sizzle.png", got)
+	}
+	var line string
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, "matched nothing") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("the empty glob is not reported:\n%s", logs.String())
+	}
+	if !strings.Contains(line, "out/*.mp4") {
+		t.Fatalf("the report does not name the empty glob: %s", line)
+	}
+	if strings.Contains(line, "out/*.png") {
+		t.Fatalf("the report names a glob that matched: %s", line)
+	}
+}
+
+// TestArtifactContentTypeIsTheExtensionThenTheSniff covers both branches of
+// the recorded type (design §8.1: recorded, never trusted): the name's
+// extension when it means something, and the file's own first bytes when it
+// does not — an extension-less name, a name whose extension the mime table
+// does not know, a body shorter than the 512-byte sniff buffer and one longer
+// than it (the head stops at the buffer, so a longer body is sniffed by its
+// first 512 bytes). Where the two disagree the extension wins, because the
+// record says what the artifact is called.
+//
+// The bytes the type is sniffed from are the ones the staging copy produces —
+// the table copies each body through CopyFileHashed and hands over what it
+// returns — which is the property that matters: the recorded type describes
+// the bytes this run staged, and no second open of the staged path exists to
+// be pointed at another file or at a FIFO.
+//
+// Mutation (sniff before the extension): the GIF called sizzle.png is recorded
+// as image/gif and this test fails; mutation (drop the sniff): every
+// extension-less case is recorded as ""; mutation (sniff the staged path again
+// after the copy): a link planted at the staged name is followed, which
+// TestTheStagedTypeIsNotSniffedFromTheStagedPath pins.
+func TestArtifactContentTypeIsTheExtensionThenTheSniff(t *testing.T) {
+	dir := t.TempDir()
+	gif := "GIF89a" + strings.Repeat("\x00", 32)
+	png := "\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 32)
+	cases := []struct{ name, body, want string }{
+		{"sizzle.png", gif, "image/png"},
+		{"sizzle", png, "image/png"},
+		{"sizzle", "sizzle", "text/plain; charset=utf-8"},
+		{"sizzle.fugaroart", strings.Repeat("a", 600), "text/plain; charset=utf-8"},
+		{"sizzle.fugaroart", strings.Repeat("a", 511) + "GIF89a", "text/plain; charset=utf-8"},
+	}
+	for i, c := range cases {
+		src := filepath.Join(dir, fmt.Sprintf("src%d", i))
+		if err := os.WriteFile(src, []byte(c.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(dir, fmt.Sprintf("staged%d", i))
+		_, _, head, err := runner.CopyFileHashed(src, dst, int64(len(c.body)))
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got, want := len(head), min(len(c.body), 512); got != want {
+			t.Fatalf("the head is %d bytes for a %d-byte body, want %d", got, len(c.body), want)
+		}
+		if got := runner.ArtifactContentType(c.name, head); got != c.want {
+			t.Errorf("ArtifactContentType(%q, %d bytes) = %q, want %q", c.name, len(c.body), got, c.want)
+		}
+	}
+}
+
+// TestAFifoAtTheStagedPathAfterTheCopyDoesNotBlockTheRun: the recorded type
+// is taken from the bytes the copy read, so the staged path is opened exactly
+// once — to create it — and never read back. That matters at the one window
+// this test can stand in: between the staged file existing and the record
+// describing it. A FIFO swapped in there and read back would block the open
+// forever (the staging step takes no context, so nothing the caller does can
+// interrupt it), and the run would hang until the container was killed and
+// write no result.json at all — the failure this file's other tests are about.
+//
+// The run ends failed instead, in the ordinary way: the upload's own Lstat
+// finds a staged file that is not a regular file and refuses it. It is the
+// deadline that turns the mutation into a failure rather than a hang.
+//
+// Mutation (read the staged file back to sniff it): the open of the FIFO
+// blocks — a link to a GIF in its place would answer for a file the run never
+// staged — and this test fails on its deadline instead of on the run's own
+// refusal.
+func TestAFifoAtTheStagedPathAfterTheCopyDoesNotBlockTheRun(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.fugaroart] }")),
+		renderWrites(outFile{name: "sizzle.fugaroart", body: "sizzle"}))
+	runner.SetArtifactCopiedSeam(t, func() {
+		p := filepath.Join(h.deps.StateDir, "artifacts", "sizzle.fugaroart")
+		if err := os.Remove(p); err != nil {
+			t.Error(err)
+			return
+		}
+		if out, err := exec.Command("mkfifo", p).CombinedOutput(); err != nil {
+			t.Errorf("mkfifo %s: %v: %s", p, err, out)
+		}
+	})
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "not a regular file") {
+		t.Fatalf("the run did not refuse the staged file it found: %q", rec.Reason)
+	}
+	// No artifact was uploaded. The FIFO the seam planted stays in the staging
+	// directory — the run failed at the upload, not while staging — so this is
+	// the bucket's own claim rather than assertNothingUploaded's.
+	if keys := artifactKeys(t, h); len(keys) != 0 {
+		t.Fatalf("the failed run left %v in the bucket", keys)
+	}
+}
+
+// TestTheStagedTypeIsAFunctionOfTheHead is the other side of that window: the
+// type takes the bytes the copy read and nothing else, so there is no path in
+// its signature for a later change to point at the staged file. Both hazards
+// at the staged path are planted here anyway — a link to a GIF answers
+// image/gif, and a writerless FIFO's open never returns — with an empty head
+// for the FIFO, which is the plausible excuse a fallback would use for
+// reaching for the path.
+//
+// Mutation (read the staged path when the head does not answer): the first
+// case's type is image/gif and the second blocks; this test fails on both.
+func TestTheStagedTypeIsAFunctionOfTheHead(t *testing.T) {
+	dir := t.TempDir()
+	const body = "sizzle"
+	src := filepath.Join(dir, "source")
+	if err := os.WriteFile(src, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(dir, "sizzle.fugaroart")
+	_, _, head, err := runner.CopyFileHashed(src, staged, int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gif := filepath.Join(dir, "other.gif")
+	if err := os.WriteFile(gif, []byte("GIF89a"+strings.Repeat("\x00", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(staged); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(gif, staged); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "staged.fifo")
+	if out, err := exec.Command("mkfifo", fifo).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo %s: %v: %s", fifo, err, out)
+	}
+	for i, tc := range []struct {
+		at   string
+		head []byte
+		want string
+	}{
+		{staged, head, "text/plain; charset=utf-8"},
+		{fifo, nil, "text/plain; charset=utf-8"},
+	} {
+		done := make(chan string, 1)
+		go func() { done <- runner.ArtifactContentType("sizzle.fugaroart", tc.head) }()
+		select {
+		case got := <-done:
+			if got != tc.want {
+				t.Fatalf("case %d: ArtifactContentType with %s at the staged path = %q, want %q", i, filepath.Base(tc.at), got, tc.want)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatalf("case %d: the type was read from %s: reading the staged path blocked", i, filepath.Base(tc.at))
+		}
+	}
+}
+
+// TestResultJSONCarriesRenderAndArtifacts: the stored record is the whole
+// account of an artifact run — the render step and the files it uploaded,
+// each with the name, size, hash and recorded content type — and carries no
+// probe key, which is the probe step's own field (Task 5).
+//
+// Mutation (write the record before the upload): the artifacts array is
+// empty and this test fails; mutation (record the probe as a false verdict
+// here): the probe key appears.
+func TestResultJSONCarriesRenderAndArtifacts(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	if _, err := h.run(t); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := h.store.ReadFile(context.Background(), "result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Render    map[string]any   `json:"render"`
+		Artifacts []map[string]any `json:"artifacts"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"command", "command_sha256", "tree", "exit_code", "duration_s", "started_at"} {
+		if _, ok := doc.Render[key]; !ok {
+			t.Errorf("the record's render has no %s: %v", key, doc.Render)
+		}
+	}
+	if len(doc.Artifacts) != 1 {
+		t.Fatalf("artifacts = %v", doc.Artifacts)
+	}
+	a := doc.Artifacts[0]
+	if a["name"] != "sizzle.png" || a["bytes"] != float64(6) || a["content_type"] != "image/png" {
+		t.Fatalf("artifact = %v", a)
+	}
+	if sum, _ := a["sha256"].(string); len(sum) != 64 {
+		t.Fatalf("artifact sha256 = %v", a["sha256"])
+	}
+	if _, ok := a["probe"]; ok {
+		t.Fatalf("the record carries a probe the probe step has not run: %v", a)
+	}
+	stored, err := h.store.ReadRecord(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Artifacts) != 1 || stored.Artifacts[0].Name != "sizzle.png" {
+		t.Fatalf("the typed record = %+v", stored.Artifacts)
+	}
+}
+
+// TestReportListsTheArtifacts: the report's per-file table — name, size, a
+// short sha256 and the recorded content type — is the upload step's own
+// types, so it appears exactly when the record carries artifacts (a record
+// without them prints no header over nothing, which Task 2's test pins).
+//
+// Mutation (drop the table): this test fails; mutation (print the full
+// sha256): the short-hash row assertion fails.
+func TestReportListsTheArtifacts(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderWrites(outFile{name: "sizzle.png", body: "sizzle"}))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Artifacts) != 1 {
+		t.Fatalf("artifacts = %+v", rec.Artifacts)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := fmt.Sprintf("| `sizzle.png` | 6 | `%s` | image/png |", rec.Artifacts[0].SHA256[:12])
+	if !strings.Contains(string(report), row) {
+		t.Fatalf("the report has no row %q:\n%s", row, report)
+	}
+	if !strings.Contains(string(report), "| Artifact | Bytes | sha256 | Type |") {
+		t.Fatalf("the report has no table header:\n%s", report)
+	}
+}
+
+// TestTheReportEscapesANameThatCouldBreakTheTable: the sanitiser refuses
+// control characters and keeps punctuation, so a name may hold a pipe or a
+// backtick, and both are the report's problem rather than the name's. A bare
+// pipe ends the cell — the row grows a column and every value after it moves —
+// and a backtick ends the code span around it, so what a reader sees is the
+// render's text where the run's account should be. The row is asserted by
+// shape: four columns, five separators, and the pipe escaped inside the name.
+//
+// Mutation (put the name into the cell unescaped): the row has six separators
+// and this test fails.
+func TestTheReportEscapesANameThatCouldBreakTheTable(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+		renderScript("#!/bin/sh\nmkdir -p out\nprintf 'sizzle' > 'out/a|b`c.png'\n"))
+	rec, err := runWithin(t, h, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row string
+	for _, l := range strings.Split(string(report), "\n") {
+		if strings.Contains(l, "c.png") {
+			row = l
+		}
+	}
+	if row == "" {
+		t.Fatalf("the report has no row for the artifact:\n%s", report)
+	}
+	if !strings.Contains(row, `\|`) || !strings.Contains(row, "c.png") {
+		t.Fatalf("the row does not carry the name, escaped: %s", row)
+	}
+	if cells := strings.Count(row, "|") - strings.Count(row, `\|`); cells != 5 {
+		t.Fatalf("the row has %d cell separators, want 5 (four columns): %s", cells, row)
+	}
+}
+
+// TestAnOverMemoryArtifactRecipeIsRefusedAtBootstrap is the runner's own arm
+// of Review Focus 12: the caps the recipe declares stage a copy beside the
+// render's originals, and on Cloud Run that filesystem is memory, so a set
+// that cannot fit resources.memory is a killed container with no result.json
+// rather than a clean failure. The launcher refuses it too (Task 1, through
+// gateCheckProblems and finishLaunch); this is the third arm, for a launch
+// whose recipe the launcher could not resolve, and it refuses before the
+// first step.
+//
+// Mutation (drop the outputsMemoryProblem call from RecipeGateProblems): the
+// run reaches the render, ends failed with artifacts or not, and this test
+// fails on the status and the reason.
+func TestAnOverMemoryArtifactRecipeIsRefusedAtBootstrap(t *testing.T) {
+	cfg := strings.Replace(renderCfg(t, "", ""), "    timeouts: {",
+		"    resources: { memory: 3Gi }\n    timeouts: {", 1)
+	if !strings.Contains(cfg, "memory: 3Gi") {
+		t.Fatal("the fixture has no workflow block to add resources.memory to")
+	}
+	h := newHarnessFiles(t, cfg, artifactSpec(sizzleRenderOnlyYAML), renderScript(sizzleScript))
+	pushes := countPushes(t, h)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	for _, want := range []string{"need 5 GiB of memory", "2 × 2 GiB of outputs", "resources.memory 3Gi"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason %q does not name %q", rec.Reason, want)
+		}
+	}
+	if n := len(h.agent.calls); n != 0 {
+		t.Fatalf("%d agent calls, want none", n)
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+	assertNothingUploaded(t, h)
 }
