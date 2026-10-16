@@ -223,6 +223,13 @@ type Record struct {
 	// run refused before its render step (a blank command, a bad recipe)
 	// records none.
 	Render *RenderRecord `json:"render,omitempty"`
+	// Inputs are the files the launcher attached to the run (fugaro run
+	// --attach, design artifact-runs.md §4 step 6): the task spec's own
+	// list, echoed onto the record once the runner downloaded and verified
+	// every one, so a reader can see exactly what the run was given — name,
+	// size and sha256. Absent for a run launched without an attachment, and
+	// in records from before this field existed.
+	Inputs []InputFile `json:"inputs,omitempty"`
 	// Artifacts is the files a mode: artifact run uploaded, in name order
 	// (design artifact-runs.md §3, §8): one entry per object under the
 	// run's artifacts/ prefix, each the account a reader verifies what it

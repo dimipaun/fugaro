@@ -317,6 +317,54 @@ func TestTaskSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaInputs: the attached-files list a launcher writes (design
+// artifact-runs.md §4, plan Task 6) is an array of closed {name, bytes,
+// sha256} objects, and an absent list stays absent. The name's own shape
+// (no ".." element, no NUL, a length limit) is deliberately not a schema
+// rule: the launcher and the runner are where a name becomes a path, and
+// they refuse it there (design §8.2).
+//
+// The ONE exception is emptiness, which the schema can express and which the
+// decoder refuses anyway (Spec.Validate's required-name check): minLength 1
+// does not catch a name of nothing but whitespace, so the pattern below asks
+// for at least one non-whitespace character — the same rule as
+// task.InputNameBlank, which the launcher applies before it uploads.
+//
+// Mutation (drop the inputs property from schemas/task.schema.json): the
+// valid instance below is rejected as an unknown key and this test fails.
+func TestTaskSchemaInputs(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261015-100000-abcd","repo":"acme/app","ref":"main","task":"x","mode":"artifact"`
+	ok := head + `,"inputs":[{"name":"shot.png","bytes":1024,"sha256":"` + strings.Repeat("a", 64) + `"}]` + `}`
+	if err := validate(ok); err != nil {
+		t.Fatalf("schema rejects a task carrying inputs: %v", err)
+	}
+	if err := validate(head + `}`); err != nil {
+		t.Fatalf("schema rejects a task carrying none: %v", err)
+	}
+	for _, tc := range []struct{ name, lit string }{
+		{"not an array", `,"inputs":{}`},
+		{"empty name", `,"inputs":[{"name":"","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"whitespace-only name", `,"inputs":[{"name":"   ","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"negative bytes", `,"inputs":[{"name":"a.png","bytes":-1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"short sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"abc"}]`},
+		{"upper-case sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"` + strings.Repeat("A", 64) + `"}]`},
+		{"unknown key", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `","content_type":"image/png"}]`},
+		{"missing sha256", `,"inputs":[{"name":"a.png","bytes":1}]`},
+	} {
+		if err := validate(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+}
+
 func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
@@ -406,6 +454,7 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Workflow: "app",
 		Status: runstore.StatusSucceeded, Stage: "render", Outcome: runstore.OutcomeArtifacts,
 		StartedAt: at, Render: render,
+		Inputs: []runstore.InputFile{{Name: "shot.png", Bytes: 2048, SHA256: strings.Repeat("b", 64)}},
 		Artifacts: []runstore.ArtifactFile{{Name: "sizzle.png", Bytes: 6, SHA256: strings.Repeat("b", 64),
 			ContentType: "image/png", Probe: &runstore.ProbeResult{Ran: true, ExitCode: 0}}},
 	}
@@ -463,6 +512,8 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		{"bad hash", strings.Repeat("a", 64), "not-a-hash"},
 		{"bad tree", `"tree":"working"`, `"tree":"head"`},
 		{"unknown key", `"exit_code":-1`, `"exit_code":-1,"extra":1`},
+		{"negative input size", `"bytes":2048`, `"bytes":-1`},
+		{"input without a hash", `"sha256":"` + strings.Repeat("b", 64) + `"`, `"sha256":"abc"`},
 		{"artifact without a name", `"name":"sizzle.png"`, `"nope":"sizzle.png"`},
 		{"artifact unknown key", `"bytes":6`, `"bytes":6,"extra":1`},
 		{"artifact bad content type", `"content_type":"image/png"`, `"content_type":7`},

@@ -728,14 +728,16 @@ func attachInputs(ctx context.Context, b *blobx.Bucket, prefix string, paths []s
 //     runner.ProvidersEnv applies when it builds the job's own
 //     FUGARO_MODEL_PROVIDERS (internal/runner/providers.go:29-51) — the
 //     launcher computes what the job will have, and nothing more; and
-//   - "Anthropic (direct)" whenever any of those models is not claimed by one
-//     of those providers, which is exactly config.NeedsAnthropicKey
+//   - the run's own auth route whenever any of those models is not claimed by
+//     one of those providers, which is exactly config.NeedsAnthropicKey
 //     (internal/config/providers.go:613-631) and is the case a default Claude
-//     workflow always takes.
+//     workflow always takes: agent.auth decides which destination that is —
+//     vertex (the default applyDefaults writes) is Google Vertex AI, api-key is
+//     Anthropic (direct), oauth is Anthropic (oauth token).
 //
-// The empty set therefore means "no Anthropic path and no claiming provider",
+// The empty set therefore means "no auth route and no claiming provider",
 // which the current Agent.PinnedModels cannot actually produce (three models,
-// and an unclaimed one is an Anthropic path) — the branch is defensive, and
+// and an unclaimed one takes the auth route) — the branch is defensive, and
 // the warning says so by printing the local wording rather than claiming the
 // file stays on the machine.
 func attachProviders(lc *localcfg.Config, ag config.Agent, repo string) []string
@@ -782,7 +784,8 @@ func TestAttachNeedsAResolvableRepo(t *testing.T) // the origin is enough (P7); 
 func TestAttachGatesOnTheImageThatKnowsInputs(t *testing.T)   // P9
 func TestAttachNamesTheProvidersThatMayReceiveTheFile(t *testing.T) // D9: the sentence, with both providers listed
 func TestAttachProviderWarningIsSilentWithoutAttachments(t *testing.T) // D9: a plain launch prints nothing
-func TestAttachProviderWarningNamesAnthropicDirect(t *testing.T)      // D9's round-3 correction: a default Claude workflow — lc.Providers empty — prints "Anthropic (direct)", never "routes nowhere"
+func TestAttachProviderWarningNamesTheDefaultAuthRoute(t *testing.T)  // D9, rounds 3 and 4: a default Claude workflow — lc.Providers empty, agent.auth vertex — prints the Vertex route, never "routes nowhere" and never "Anthropic (direct)"
+func TestAttachNamesTheRouteTheAuthModeActuallyTakes(t *testing.T)    // D9, round 4: vertex (and unset) name Google Vertex AI, api-key names Anthropic (direct), oauth names Anthropic (oauth token)
 func TestAttachProviderWarningSaysLocalOnlyWhenNothingRoutes(t *testing.T) // D9: the empty set (no claiming provider AND no Anthropic path) prints the local wording, not a blank name
 func TestAttachProviderWarningIsNotAGate(t *testing.T) // D9: the launch proceeds — the line is printed, never returned as an error
 ```
@@ -796,6 +799,10 @@ func TestInputsOverTheFileCapFailTheRun(t *testing.T) // max_bytes: one spec ent
 func TestInputsOverTheTotalCapFailTheRun(t *testing.T) // max_total_bytes: the spec's entries sum over it although every one is under max_bytes — nothing written under inputs/
 func TestAnInputNameThatEscapesInputsIsRefused(t *testing.T) // Review Focus 3's list, on the spec's side: ../../.git/hooks/pre-commit, absolute, NUL, over-long
 func TestAnInputNameIsNeverCleanedIntoSomethingPlausible(t *testing.T) // refused and the run failed, not silently rewritten
+// round 4 and 5; in internal/runner/inputs_test.go, where the input tests are
+func TestACommittedInputsDirectoryIsRefused(t *testing.T) // a directory the CHECKOUT COMMITS under inputs/ is refused (git ls-files, not "not empty")
+func TestASecondRunReplacesTheInputsTheFirstOneLeft(t *testing.T) // a reused checkout: the run's own inputs/ is emptied and reused, never refused, and a stale file does not survive as an input
+func TestInputsDifferingOnlyInCaseAreRefused(t *testing.T) // the folded-name rule on the spec's side, the same rule Task 4's artifacts are keyed on
 ```
 Run: `go test ./internal/cli -run 'TestAttach' -count=1` and `go test ./internal/runner -run 'TestInputs|TestAnInput' -count=1`
 Expected: **FAIL**.
