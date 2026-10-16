@@ -625,9 +625,10 @@ func commandLines(section string, verbs ...string) []string {
 // set widened to the API key, or the read reverted to a `--format` that prints
 // the whole env array; the "use fugaro image refresh, not fugaro upgrade"
 // paragraph deleted; the `github/dimipaun/fugaro` entry no longer named; the
-// "no other repository's run started" FACT deleted; and each of the six stale
+// "no other repository's run started" FACT deleted; and each of the stale
 // citations (doctor.go:748, cloud.go:53, runner.go:797, gcp/run.go:82-98,
-// upgrade_cloud.go:162, run.go:441) put back.
+// upgrade_cloud.go:162, run.go:441 — the last a number that belongs to no
+// citation at all, since launchPolicyGates is called at run.go:449) put back.
 func TestChecklistHasCheck49(t *testing.T) {
 	const path = "../../docs/gcp-live-checklist.md"
 	data, err := os.ReadFile(path)
@@ -852,6 +853,53 @@ func TestChecklistHasCheck49(t *testing.T) {
 		"fugaro project show --json --project fugaro",
 		"fugaro project policy publish --delete --project fugaro",
 	})
+	// …but a substring pin over the slice cannot SEE a deletion or a swap in
+	// the block itself, because step 8's own FACT prose repeats four of those
+	// strings verbatim. So the restore's first fenced block is read as its own
+	// lines — comments and blanks dropped, in the order the shell runs them —
+	// and the two commands the step's whole ordering argument rests on are
+	// checked by INDEX, not by presence. Deleting the two json-show lines, or
+	// swapping `fugaro init --repo` above the `cp`, both fail here.
+	restore := chk49FencedBlocks(chk49Step(t, section, "### 8."))[0]
+	var restoreLines []string
+	for _, l := range strings.Split(restore, "\n") {
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
+			restoreLines = append(restoreLines, l)
+		}
+	}
+	// chk49FencedBlocks keeps the fence's own info string ("bash") as the
+	// block's first line, and it is not a command.
+	if len(restoreLines) > 0 && !strings.ContainsAny(restoreLines[0], " \t") {
+		restoreLines = restoreLines[1:]
+	}
+	at := func(want string) int {
+		for i, l := range restoreLines {
+			if l == want {
+				return i
+			}
+		}
+		return -1
+	}
+	const (
+		restoreConfig = `cp "$C.before-49" "$C"`
+		writeEnv      = "fugaro init --repo . --project fugaro"
+	)
+	if i := at(restoreConfig); i != 0 {
+		t.Errorf("step 8's restore block has %q at command %d of its own block, want 0: the operator's config goes back before anything reads it, and the step's FACT prose repeats the string so only the block's own order can be checked", restoreConfig, i)
+	}
+	if i := at(writeEnv); i != 1 {
+		t.Errorf("step 8's restore block has %q at command %d, want 1 — immediately after the config restore: `init --repo` writes the job environment out of that file (`internal/infra/spec.go:747`), so running it first writes whatever the config says now into the job, which is the inversion the step calls out", writeEnv, i)
+	}
+	for _, want := range []string{
+		"git diff -- fugaro.yaml",
+		"git diff -- .claude/settings.json",
+		"fugaro budget show --json --project fugaro",
+		"fugaro project show --json --project fugaro",
+	} {
+		if at(want) < 0 {
+			t.Errorf("step 8's restore block has no %q line of its own: the step's FACT prose writes the same string, so the substring pin above cannot see this line deleted", want)
+		}
+	}
 	// Read as a command line, not as a substring: the section SAYS it has no
 	// `fugaro budget set`, and that sentence is the point — it is running one
 	// that would write a node no step changed.
@@ -881,7 +929,9 @@ func TestChecklistHasCheck49(t *testing.T) {
 
 	// Every `fugaro run` carries the block's TASK. A launch with no task is
 	// refused at run.go:220, before openCloud and long before the allow-list
-	// gate at :441, so a bare `fugaro run` in step 3, 5, 6(a), 7 or 8 never
+	// gate at run.go:449 (`launchPolicyGates`; :441 is a comment inside
+	// budgetPrecheck's block, which is the stale number the section is checked
+	// against below), so a bare `fugaro run` in step 3, 5, 6(a), 7 or 8 never
 	// reaches what the step is there to produce.
 	chk49MustContain(t, section, "section", []string{
 		"TASK='Do not change any file and do not open a pull request. Reply with the single word ok.'",
