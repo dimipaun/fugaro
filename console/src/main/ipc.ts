@@ -32,6 +32,17 @@
 // are rebuilt into a fresh null-prototype object holding only the declared keys,
 // so nothing a renderer sent is ever read back by prototype lookup.
 //
+// **The sender is checked before the arguments are, and that check is not
+// optional.** A message is not trustworthy because it arrived on the right
+// channel: any frame the application has loaded can invoke any registered
+// channel, so a channel name alone is not a capability. `isConsoleSender` is the
+// gate -- the sending frame must be the console's *own top frame*, on
+// `app://console`, and nothing else -- and a message that fails it is answered
+// with a fixed refusal that repeats nothing the sender wrote. This is the
+// Electron security checklist's item 17 ("validate the sender of all IPC
+// messages"); `src/main/protocol.ts` is where the origin is defined, and it is
+// imported rather than spelled again so the two cannot drift.
+//
 // What an operation may not take matters as much as what it may: **no path**
 // (the installation's directory and `doctor --dir` are main-process state, never
 // a renderer argument, so there is no argument in this table of kind "path"),
@@ -67,6 +78,7 @@
 //     before there is anything behind it. The wiring is one line in
 //     `src/main/window.ts` and belongs with the task that brings the handlers.
 
+import { APP_HOST, APP_SCHEME } from './protocol'
 import { validateExternalUrl } from './window'
 
 /**
@@ -90,6 +102,38 @@ export const IPC_CHANNEL_PREFIX = 'fugaro:console/'
 
 /** MAX_ARGUMENT_KEYS bounds how many keys a payload may even declare. */
 export const MAX_ARGUMENT_KEYS = 8
+
+/**
+ * MAX_PAYLOAD_WIDTH bounds what a whole payload may add up to: every key's name
+ * plus every scalar value's length. It is a second bound rather than the only
+ * one -- each kind has its own (`kindLimit`), and a payload that declares more
+ * than `MAX_ARGUMENT_KEYS` keys is refused before this -- and it exists because
+ * the per-key bounds are only read one key at a time: without it a payload could
+ * be eight arguments each just inside its own bound and still be far larger than
+ * any screen has a reason to send.
+ *
+ * It is set *above* the widest payload the schema's own bounds admit
+ * (`MAX_URL_LENGTH` plus seven `MAX_REPOSITORY_LENGTH`s, which no operation in
+ * the table can actually reach -- the widest operation has four arguments), so
+ * it cannot refuse something the per-kind bounds would have accepted. The test
+ * asserts that relation rather than the number.
+ *
+ * What it deliberately does not do is bound the *deserialisation*: Electron
+ * deserialises an `invoke`'s arguments before this module's listener is called,
+ * so a payload larger than this one has already been copied by the time it can
+ * be refused. The bound is on what this process then does with it.
+ */
+export const MAX_PAYLOAD_WIDTH = 4096
+
+/**
+ * MAX_REPLY_REASON_LENGTH bounds a refusal's text when it came from an error
+ * rather than from this file. Design section 6.3 wants the CLI's own sentence
+ * shown to the user, and a CLI sentence is short; a *hostile* one is not, and a
+ * handler that threw with a megabyte in `error.message` would put that megabyte
+ * in the renderer through a reply the renderer is entitled to trust. Nothing
+ * legitimate is anywhere near this bound.
+ */
+export const MAX_REPLY_REASON_LENGTH = 2048
 
 /** MAX_REPOSITORY_LENGTH bounds an `owner/name` argument in characters. It is
  * checked before the grammar runs, so a hostile payload cannot make a regular
@@ -1026,6 +1070,37 @@ function kindLimit(kind: ArgumentKind): number {
 }
 
 /**
+ * payloadWidth is how wide a payload is for `MAX_PAYLOAD_WIDTH`: every own key's
+ * name, plus every value's length. It is O(keys) and it never walks into a
+ * value:
+ *
+ *   - a string counts its own length;
+ *   - a number or a boolean counts a fixed eight characters, which is more than
+ *     either can need (a boolean is at most five, a safe integer at most twenty
+ *     digits) and keeps the cost independent of the value;
+ *   - anything else -- an array, a nested object, a function, a symbol -- counts
+ *     the same eight and is refused a moment later by its kind's own type check,
+ *     because every kind in the table takes a string, a number or a boolean and
+ *     nothing else. Reading an array's `length` would be O(1) as well, but a
+ *     nested *object* has no width that is not a traversal, so nothing is
+ *     counted for it and the type check is what refuses it.
+ *
+ * The bound this feeds is therefore a bound on the scalars a payload may carry
+ * and not on the memory the message occupies: Electron deserialises an `invoke`'s
+ * arguments before this listener is called, which is stated where the constant
+ * is declared rather than left to be discovered.
+ */
+function payloadWidth(payload: object, keys: readonly string[]): number {
+  let width = 0
+  for (const key of keys) {
+    width += key.length
+    const value: unknown = (payload as Record<string, unknown>)[key]
+    width += typeof value === 'string' ? value.length : 8
+  }
+  return width
+}
+
+/**
  * validateArguments is the main process's gate: the one place a renderer's
  * payload is looked at, and the only way a handler is reached. It answers with
  * the validated arguments -- a frozen, null-prototype object holding only the
@@ -1046,6 +1121,13 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
   const keys = Object.keys(supplied)
   if (keys.length > MAX_ARGUMENT_KEYS) {
     return refuse(`${operation.name} takes at most ${MAX_ARGUMENT_KEYS} arguments`)
+  }
+  // The width of the whole payload, before a single value is looked at: the
+  // per-kind bounds below are read one key at a time, so this is what keeps a
+  // payload of eight arguments each just inside its own bound from being eight
+  // times larger than anything a screen sends.
+  if (payloadWidth(supplied, keys) > MAX_PAYLOAD_WIDTH) {
+    return refuse(`${operation.name} takes a payload of at most ${MAX_PAYLOAD_WIDTH} characters`)
   }
 
   const specs = operation.args.filter((spec) => keys.includes(spec.key) || spec.required)
@@ -1104,22 +1186,194 @@ export type ConsoleHandler = (args: ValidatedArguments) => unknown | Promise<unk
  * "not implemented" in production. */
 export type ConsoleHandlers = { readonly [Name in OperationName]: ConsoleHandler }
 
+/**
+ * SENDER_REFUSAL is what a message from anywhere but the console's own top frame
+ * is answered with. It is one fixed sentence and it is not formatted with
+ * anything the sender supplied: a forged message does not get to write its URL,
+ * its frame's title or anything else into a reply that a screen might draw.
+ */
+export const SENDER_REFUSAL = 'the console refuses a message that did not come from its own window'
+
+/** SenderFrameLike is the slice of Electron's `WebFrameMain` the gate reads. */
+export interface SenderFrameLike {
+  /** `url` is the frame's current URL, which Electron reports as a string. */
+  readonly url?: unknown
+}
+
+/** SenderContentsLike is the slice of Electron's `WebContents` the gate reads:
+ * its top frame, which is what `senderFrame` must *be* rather than merely
+ * resemble. There is deliberately no `id` here; `isConsoleSender` explains why
+ * the webContents id is not part of this gate. */
+export interface SenderContentsLike {
+  readonly mainFrame?: SenderFrameLike | null
+}
+
+/**
+ * ConsoleEventLike is the slice of Electron's `IpcMainInvokeEvent` the gate
+ * reads. It is a structural type rather than the Electron one for the reason the
+ * rest of this file gives -- the unit test hands it forged events under plain
+ * Node -- and it is `unknown`-valued on purpose: what arrives here is not typed
+ * by anything this process controls, and every field is checked before it is
+ * used.
+ *
+ * `senderFrame` is `null` in Electron when the frame that sent the message has
+ * been destroyed or has navigated away, which is a case that must be *refused*
+ * rather than treated as "no sender information, carry on".
+ */
+export interface ConsoleEventLike {
+  readonly senderFrame?: SenderFrameLike | null
+  readonly sender?: SenderContentsLike | null
+}
+
+/**
+ * isConsoleSenderUrl reports whether a frame URL is on the console's own origin:
+ * the `app:` scheme, the one host `src/main/protocol.ts` serves, and no port and
+ * no credentials in front of it.
+ *
+ * The comparison is on the *origin*, by hand, and not on a prefix of the string
+ * or on `URL.origin`. A prefix test would admit `app://console.evil.test/`, and
+ * `URL.origin` is `"null"` under Node for a scheme it does not treat as special
+ * -- the console registers `app:` as standard in Electron and the WHATWG parser
+ * lower-cases a standard scheme's host, but this module is unit-tested under
+ * Node and a security check whose answer depends on which runtime asks is not a
+ * check. Lower-casing the host here gives the same answer on both, and it is the
+ * answer Chromium gives: `APP://CONSOLE/` is the same origin as `app://console/`.
+ *
+ * Anything after the authority -- a path, a query, a fragment -- is allowed:
+ * every frame this application serves on that origin came out of its own bundle,
+ * and `resolveBundleRequest` is what decides which paths exist.
+ */
+export function isConsoleSenderUrl(raw: unknown): boolean {
+  if (typeof raw !== 'string' || raw === '') return false
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  return (
+    url.protocol === `${APP_SCHEME}:` &&
+    url.hostname.toLowerCase() === APP_HOST &&
+    url.port === '' &&
+    url.username === '' &&
+    url.password === ''
+  )
+}
+
+/**
+ * isConsoleSender is the sender gate: it answers whether a message came from the
+ * console's own top frame, and it refuses everything else.
+ *
+ * Three things must hold, and each of them is a real message Electron will
+ * deliver:
+ *
+ *   - the event has a sending frame at all. `senderFrame` is null once that
+ *     frame is gone, and a null frame has no origin to check;
+ *   - `event.sender.mainFrame` *is* that frame. `ipcMain.handle` is registered
+ *     on the process, not on a window, so every frame of every document in the
+ *     application can reach it -- a subframe of a page the console did not
+ *     write would otherwise pass an origin test by sitting inside a frame that
+ *     did. Electron's own guidance is that an IPC handler must confirm the
+ *     sender is its own main frame, and this is that confirmation: identity, not
+ *     equality of URL strings;
+ *   - and the frame's URL is on the console's own origin (`isConsoleSenderUrl`).
+ *
+ * What this does *not* do is keep a list of allowed webContents ids, and the
+ * reason is that it would be state that can only go stale without adding a
+ * check: handlers are registered at startup, before any window exists, and macOS
+ * `activate` builds a new window afterwards, so a captured id is wrong by
+ * design. It would also decide nothing the frame identity above does not already
+ * decide. A frame is on `app://console` only if this process served it out of
+ * its own bundle, and `loadURL(APP_ENTRY_URL)` in `createConsoleWindow` is the
+ * only call that does that -- navigation away is denied, and the scheme is
+ * handled in-process -- so "the console's own top frame" and "the console's own
+ * window" are the same set, and every other frame is refused.
+ */
+export function isConsoleSender(event: ConsoleEventLike | null | undefined): boolean {
+  if (event === null || event === undefined) return false
+  const frame = event.senderFrame
+  if (frame === null || frame === undefined) return false
+  const sender = event.sender
+  if (sender === null || sender === undefined) return false
+  if (sender.mainFrame !== frame) return false
+  return isConsoleSenderUrl(frame.url)
+}
+
 /** IpcMainLike is the slice of Electron's `ipcMain` this module uses. It is an
  * argument rather than an import for the reason `src/main/window.ts` gives: the
  * unit test drives every decision here under plain Node, and a module that
- * imported Electron could not be tested there at all. */
+ * imported Electron could not be tested there at all.
+ *
+ * The listener's first parameter is typed, and that is part of the security
+ * property rather than a tidiness: an untyped event is one a later edit can
+ * ignore, and ignoring it is exactly how a handler ends up answering any frame
+ * in the application. */
 export interface IpcMainLike {
-  handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void
+  handle(
+    channel: string,
+    listener: (event: ConsoleEventLike, ...args: unknown[]) => unknown,
+  ): void
 }
 
-/** replyReason turns anything a handler threw into the refusal's text, bounded
+/**
+ * replyReason turns anything a handler threw into the refusal's text, bounded
  * and string-only. The message is the CLI's own when the handler passed one
  * through -- design section 6.3 says a refused read shows the CLI's sentence
  * verbatim -- and a generic one otherwise, so a thrown non-Error cannot put an
- * object on the wire. */
+ * object on the wire.
+ *
+ * "Bounded" is meant literally, and it is the three things `boundReason` does: a
+ * message is flattened to one line (a CLI sentence is one line; a message with
+ * newlines in it is either a stack or something written to look like the
+ * console's own output), its absolute paths are replaced (the CLI's refusals
+ * name flags and values, never the machine's directories, and a path in a
+ * refusal is a path a screen would print), and it is cut at
+ * `MAX_REPLY_REASON_LENGTH`. The CLI's own sentences are short enough that none
+ * of the three touches them; a hostile message hits all three.
+ */
 function replyReason(error: unknown): string {
-  if (error instanceof Error && error.message !== '') return error.message
+  if (error instanceof Error && error.message !== '') return boundReason(error.message)
   return 'the operation failed'
+}
+
+/**
+ * ABSOLUTE_PATH_RE matches an absolute path in a message: a POSIX one (`/etc`,
+ * `/home/me/x`), a home-relative one (`~/x`), or a Windows one with a drive
+ * letter or a UNC prefix. It is anchored on a separator that follows whitespace,
+ * a quote or the start of the string, so a flag like `--repo owner/name` keeps
+ * its slash, and it stops at the first character that cannot be part of a path
+ * in a sentence.
+ *
+ * A colon is deliberately *not* one of the anchoring characters: `https://x/y`
+ * is a URL and not a path, and replacing from its `//` would turn the message
+ * into `https:<path>`, which reads as a corrupted sentence rather than as a
+ * redaction. A drive letter is still matched, because the anchor in front of it
+ * is a space, a quote or the start of the message in every message that has one.
+ */
+const ABSOLUTE_PATH_RE = /(^|[\s'"(=,])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'")]*/g
+
+/** PATH_PLACEHOLDER is what an absolute path in a message becomes. It names
+ * *that* a path was there, which is what a reader needs, and not which one. */
+const PATH_PLACEHOLDER = '$1<path>'
+
+/**
+ * boundReason is the one place a handler-authored message is made safe to put in
+ * front of a user: control characters out, absolute paths out, one line, and a
+ * hard length. It never returns an empty string -- a refusal with no text is a
+ * screen with nothing to draw -- and it never echoes more of the message than
+ * the bound allows.
+ */
+function boundReason(message: string): string {
+  const flattened = message
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (flattened === '') return 'the operation failed'
+  const redacted = flattened.replace(ABSOLUTE_PATH_RE, PATH_PLACEHOLDER)
+  if (redacted.length <= MAX_REPLY_REASON_LENGTH) return redacted
+  // The cut is marked, so a reader can tell a truncated sentence from a whole
+  // one rather than wondering what the CLI meant to say.
+  return `${redacted.slice(0, MAX_REPLY_REASON_LENGTH - 1).trimEnd()}…`
 }
 
 /**
@@ -1178,8 +1432,13 @@ export function registerConsoleHandlers(ipcMain: IpcMainLike, handlers: ConsoleH
     if (typeof handler !== 'function') {
       throw new Error(`${operation.name} has no handler: the console registers the whole surface or none of it`)
     }
-    ipcMain.handle(channelForOperation(operation.name), (_event: unknown, raw: unknown) =>
-      dispatch(operation.name, handler, raw),
+    // The sender check comes first and is not negotiable: a message from any
+    // frame but the console's own top frame is answered with one fixed sentence
+    // and never reaches validation, the handler, or anything that would parse
+    // what it carried. `dispatch` is then the only path to a handler, and it is
+    // the only caller of `validateArguments`.
+    ipcMain.handle(channelForOperation(operation.name), (event: ConsoleEventLike, raw: unknown) =>
+      isConsoleSender(event) ? dispatch(operation.name, handler, raw) : { ok: false, reason: SENDER_REFUSAL },
     )
   }
 }

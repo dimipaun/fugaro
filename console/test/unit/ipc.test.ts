@@ -17,7 +17,24 @@
 //   - `--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch`,
 //     `--plain`, `--poll`, `--ascii` or `--no-color` fixed by an operation
 //     fails the flag tests; `--url` together with `--json` fails the pairing
-//     test;
+//     test; and each of those flags has a test *named for it* that fails when
+//     its never-table row is renamed away, so a row cannot be deleted quietly;
+//   - an event from any frame but the console's own top frame -- a subframe, a
+//     document on another origin, `app://console.evil.test`, a port, `file://`,
+//     a frame that has gone away -- is refused, the handler never runs, and the
+//     refusal repeats nothing the sender wrote: removing the sender check, or
+//     any one of the three things it checks, fails the tests named for them;
+//   - a handler's own message that is a megabyte long, or that carries a
+//     control character or an absolute path, is bounded, flattened and redacted;
+//     removing any of the three fails the test named for it, and the test that
+//     an ordinary CLI sentence comes through verbatim is what keeps the three
+//     from eating the case design section 6.3 asks for;
+//   - removing `assertReachableSurface(CONSOLE_OPERATIONS)` from
+//     `registerConsoleHandlers`, or moving it after the channels are registered,
+//     fails "checks the surface before it registers anything"; dropping the
+//     allowed-flags half of that guard fails the test with a flag the never
+//     table does not list (`--mine`); and a payload wider than
+//     `MAX_PAYLOAD_WIDTH` fails the width test;
 //   - a preload method that is not on `CONSOLE_OPERATIONS`, or an operation
 //     with no method, fails the two-way surface test; a method that lands on a
 //     channel other than `channelForOperation(name)` fails the routing test;
@@ -61,20 +78,29 @@ import {
   IPC_CHANNEL_PREFIX,
   IPC_VERSION,
   MAX_ARGUMENT_KEYS,
+  MAX_PAYLOAD_WIDTH,
+  MAX_REPLY_REASON_LENGTH,
+  MAX_REPOSITORY_LENGTH,
+  MAX_URL_LENGTH,
   NEVER_REACHABLE,
+  SENDER_REFUSAL,
   assertReachableSurface,
   channelForOperation,
+  isConsoleSender,
+  isConsoleSenderUrl,
   isNeverReachable,
   registerConsoleHandlers,
   validateArguments,
 } from '../../src/main/ipc'
 import type {
+  ConsoleEventLike,
   ConsoleHandler,
   ConsoleHandlers,
   ConsoleOperation,
   ConsoleReply,
   OperationName,
 } from '../../src/main/ipc'
+import { APP_ENTRY_URL } from '../../src/main/protocol'
 import {
   BRIDGE_VERSION,
   CONSOLE_BRIDGE_KEY,
@@ -103,18 +129,35 @@ function codeOnly(relative: string): string {
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as this task uses it: a
  * registry of the channels that were handled, so a test can read back which
- * channels exist and deliver a message to one. */
+ * channels exist and deliver a message to one. The listener's event is typed,
+ * because the surface's own type says it is: a fake that took `unknown` would
+ * let a registration ignore the event and still typecheck. */
 function recordingIpcMain() {
-  const listeners = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
+  const listeners = new Map<string, (event: ConsoleEventLike, ...args: unknown[]) => unknown>()
   const channels: string[] = []
   return {
     channels,
     listeners,
-    handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void {
+    handle(channel: string, listener: (event: ConsoleEventLike, ...args: unknown[]) => unknown): void {
       channels.push(channel)
       listeners.set(channel, listener)
     },
   }
+}
+
+/**
+ * consoleEvent is an IPC message as the console's own window produces one: the
+ * sending frame *is* the webContents' main frame, and its URL is the bundled
+ * document's own `APP_ENTRY_URL` -- imported from `src/main/protocol.ts` rather
+ * than spelled here, so a test cannot pass while the origin the gate checks and
+ * the origin the console serves have drifted apart.
+ *
+ * Every forged event below starts from this one and changes exactly the field it
+ * is about, which is what makes each of those tests a test of one check.
+ */
+function consoleEvent(): ConsoleEventLike {
+  const frame = { url: APP_ENTRY_URL }
+  return { senderFrame: frame, sender: { mainFrame: frame } }
 }
 
 /** fakeRenderer is Electron's `ipcRenderer`, as far as the preload uses it: one
@@ -166,7 +209,7 @@ function wiredConsole(overrides: Record<string, ConsoleHandler> = {}) {
       calls.push({ channel, args: args[0] })
       const listener = ipcMain.listeners.get(channel)
       if (listener === undefined) throw new Error(`nothing handles ${channel}`)
-      return listener({}, args[0])
+      return listener(consoleEvent(), args[0])
     },
   }
   return { bridge: createConsoleBridge(renderer), calls, handlers, ipcMain }
@@ -641,6 +684,48 @@ describe('the never-reachable table', () => {
     ).toThrow(/run/)
   })
 
+  it('refuses a table with a flag the never table does not even list', () => {
+    // The other half of the flag check, and the one the row above does *not*
+    // reach: `--check-github-app` is refused because it is on the never table,
+    // so a `--mine` -- a flag no row names, and not one the surface may fix --
+    // is what pins the allow-list half of the check (`ALLOWED_OPERATION_FLAGS`).
+    const withMine: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'runs.list.mine',
+        method: 'listMine',
+        command: 'runs ls',
+        flags: ['--json', '--mine'],
+        summary: 'a read that fixes a flag the surface does not fix',
+        args: [],
+      },
+    ]
+    expect(() => assertReachableSurface(withMine)).toThrow(/--mine/)
+    expect(() => assertReachableSurface(withMine)).toThrow(/not a flag the surface may fix/)
+  })
+
+  // One test per flag row, named for the flag: the loop at the top of this
+  // describe iterates the table, so a row *deleted* from it takes its test with
+  // it and the suite stays green. These fail instead.
+  for (const flag of ['--follow', '--check-github-app', '--strict', '--csv', '--watch', '--plain', '--poll', '--ascii', '--no-color']) {
+    it(`carries a never-table row for ${flag}`, () => {
+      const row = NEVER_REACHABLE.find((candidate) => candidate.shape === 'flag' && candidate.value === flag)
+      expect(row, flag).toBeDefined()
+      expect(row?.why.length, flag).toBeGreaterThan(20)
+      expect(row?.where.length, flag).toBeGreaterThan(3)
+    })
+  }
+
+  for (const command of ['budget kill', 'budget history', 'secrets set', 'init', 'upgrade', 'exec']) {
+    it(`carries a never-table row for ${command}`, () => {
+      const row = NEVER_REACHABLE.find(
+        (candidate) => candidate.shape === 'command' && candidate.value === command,
+      )
+      expect(row, command).toBeDefined()
+      expect(row?.why.length, command).toBeGreaterThan(20)
+    })
+  }
+
   it('refuses a table with a flag that turns a read into something else', () => {
     expect(() =>
       assertReachableSurface([
@@ -777,6 +862,39 @@ describe('the argument schemas', () => {
       }
     })
   }
+
+  it('names the protection key it refused, rather than saying "unknown argument"', () => {
+    // The refusal for `__proto__` is the one a reader is most likely to see in a
+    // log and least likely to be able to guess: a payload with a prototype key
+    // is not a payload with an undeclared key, and the reason says which one it
+    // was. Removing the `PROTOTYPE_KEYS` branch would leave `constructor` and
+    // `prototype` refused by the "takes no ..." branch and this test failing.
+    for (const key of ['__proto__', 'constructor', 'prototype']) {
+      const payload = key === '__proto__' ? JSON.parse('{"__proto__":{"repo":"acme/app"}}') : { [key]: 'acme/app' }
+      const decision = validateArguments('runs.list', payload)
+      expect(decision.ok, key).toBe(false)
+      if (decision.ok) continue
+      expect(decision.reason, key).toBe(`${key} is never an argument`)
+    }
+  })
+
+  it('refuses a payload wider than the width bound, by name of the bound', () => {
+    const wide = { url: `https://github.com/${'a'.repeat(MAX_PAYLOAD_WIDTH)}` }
+    const decision = validateArguments('link.openExternal', wide)
+    expect(decision.ok).toBe(false)
+    expect(decision.ok === false && decision.reason).toMatch(
+      new RegExp(`at most ${MAX_PAYLOAD_WIDTH} characters`),
+    )
+  })
+
+  it('bounds the width above what the schema’s own per-kind bounds can add up to', () => {
+    // The relation, not the number: the width bound must not be able to refuse a
+    // payload that every per-kind bound would have accepted. The widest a legal
+    // payload can be is one `link` (the largest kind) plus the rest at the
+    // largest non-link bound, plus the keys' own names.
+    const widestLegal = MAX_URL_LENGTH + (MAX_ARGUMENT_KEYS - 1) * MAX_REPOSITORY_LENGTH
+    expect(MAX_PAYLOAD_WIDTH).toBeGreaterThan(widestLegal)
+  })
 
   it('refuses the count-bound payload for the reason that names the bound', () => {
     const payload = Object.fromEntries(
@@ -1116,10 +1234,16 @@ describe('the one URL-shaped argument', () => {
   })
 
   it('hands the handler the parsed URL that was validated, not the string that was sent', () => {
-    const decision = validateArguments('link.openExternal', { url: 'https://github.com/acme/app?#f' })
+    // The URL has to be one the *parser* changes, or this test is vacuous: the
+    // first version of it used `https://github.com/acme/app?#f`, whose empty
+    // query and fragment survive parsing byte for byte, so it passed whatever
+    // the code did with `decision.url`. An upper-case host is normalised by the
+    // WHATWG parser (the host, and only the host, is lower-cased), so what the
+    // handler receives is provably not the string the renderer sent.
+    const decision = validateArguments('link.openExternal', { url: 'https://GITHUB.COM/acme/app' })
     expect(decision.ok).toBe(true)
     if (!decision.ok) return
-    expect(decision.args['url']).toBe('https://github.com/acme/app?#f')
+    expect(decision.args['url']).toBe('https://github.com/acme/app')
     expect(typeof decision.args['url']).toBe('string')
   })
 
@@ -1184,7 +1308,7 @@ describe('the registrar', () => {
     })
     const listener = ipcMain.listeners.get(channelForOperation('runs.list'))
     expect(listener).toBeDefined()
-    const reply = (await listener?.({}, { repo: '../../etc/passwd' })) as ConsoleReply
+    const reply = (await listener?.(consoleEvent(), { repo: '../../etc/passwd' })) as ConsoleReply
     expect(reply.ok).toBe(false)
     expect(reply.ok === false && reply.reason).toMatch(/repo/)
     expect(seen).toEqual([])
@@ -1199,7 +1323,7 @@ describe('the registrar', () => {
       },
     })
     const listener = ipcMain.listeners.get(channelForOperation('runs.list'))
-    const reply = await listener?.({}, { repo: 'acme/app', mine: true })
+    const reply = await listener?.(consoleEvent(), { repo: 'acme/app', mine: true })
     expect(reply).toEqual({ ok: true, data: { runs: [] } })
     expect(received).not.toBeUndefined()
     expect(Object.getPrototypeOf(received)).toBeNull()
@@ -1214,7 +1338,7 @@ describe('the registrar', () => {
       },
     })
     const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
-    const reply = await listener?.({}, {})
+    const reply = await listener?.(consoleEvent(), {})
     expect(reply).toEqual({ ok: false, reason: 'the CLI is not installed' })
   })
 
@@ -1225,9 +1349,90 @@ describe('the registrar', () => {
       },
     })
     const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
-    const reply = (await listener?.({}, {})) as ConsoleReply
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
     expect(reply.ok).toBe(false)
     expect(reply.ok === false && typeof reply.reason).toBe('string')
+  })
+
+  it('bounds a handler’s own message, whatever length it is', async () => {
+    // Design section 6.3 wants the CLI's own sentence; a CLI sentence is short,
+    // and a handler that threw with a megabyte in it must not be able to put a
+    // megabyte in the renderer through a reply the renderer is entitled to
+    // trust. This is the `answerReason` half of the bound, on the widest input
+    // a handler can produce.
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('x'.repeat(4 * 1024 * 1024))
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason.length).toBeLessThanOrEqual(MAX_REPLY_REASON_LENGTH)
+    expect(reply.reason.length).toBeGreaterThan(0)
+    expect(reply.reason.endsWith('…')).toBe(true)
+  })
+
+  it('takes an absolute path out of a handler’s message and leaves the rest', async () => {
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('open /home/user/.fugaro/secrets.yaml: permission denied')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).not.toContain('/home/user')
+    expect(reply.reason).not.toContain('secrets.yaml')
+    expect(reply.reason).toContain('open')
+    expect(reply.reason).toContain('permission denied')
+    expect(reply.reason).toContain('<path>')
+  })
+
+  it('keeps a refusal to one line and drops control characters', async () => {
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('the CLI said\n\u001b[31mno\u001b[0m\r\nand again')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/)
+    expect(reply.reason).toBe('the CLI said [31mno [0m and again')
+  })
+
+  it('leaves an ordinary refusal sentence exactly as the handler wrote it', async () => {
+    // The control for the three tests above: the bound must not touch a message
+    // of the shape the CLI actually produces, or design section 6.3's "the CLI's
+    // sentence, verbatim" would be quietly lost.
+    const sentence = '--since "x": use a date (YYYY-MM-DD), a number of days (30d) or weeks (12w), at most 3660 days'
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error(sentence)
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    expect(await listener?.(consoleEvent(), {})).toEqual({ ok: false, reason: sentence })
+  })
+
+  it('checks the surface before it registers anything', () => {
+    // The registration body, as written: `assertReachableSurface` on the *real*
+    // table, before the first `ipcMain.handle` call. `assertReachableSurface` is
+    // tested above with a mutated table, and this is what says registration
+    // consults it -- removing the call, or moving it after the handlers are on
+    // the channels, fails here.
+    const source = codeOnly('main/ipc.ts')
+    const start = source.indexOf('export function registerConsoleHandlers')
+    expect(start).toBeGreaterThan(-1)
+    const body = source.slice(start, source.indexOf('\n}', start))
+    const guard = body.indexOf('assertReachableSurface(CONSOLE_OPERATIONS)')
+    const firstHandle = body.indexOf('ipcMain.handle(')
+    expect(guard).toBeGreaterThan(-1)
+    expect(firstHandle).toBeGreaterThan(guard)
   })
 
   it('refuses to build a surface with a handler missing', () => {
@@ -1253,6 +1458,148 @@ describe('the registrar', () => {
     const reply = await asCallable(bridge.showBudget)({})
     expect(reply).toEqual({ ok: true, data: document })
     expect(reply.ok && reply.data).toBe(document)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The sender gate: a message from anywhere but the console's own top frame
+// ---------------------------------------------------------------------------
+
+/**
+ * FORGED_EVENTS is one event per way a message can arrive from somewhere other
+ * than the console's own top frame, each of them an event Electron really
+ * delivers: a subframe, a document on another origin (another window's
+ * webContents is that case -- what makes it not the console is its frame, not
+ * its id), a host that merely looks like the console's, and a frame or a
+ * webContents whose top frame has gone away. Each row changes exactly one field
+ * of `consoleEvent()`, which is what makes each of these tests a test of one
+ * check. Why the webContents *id* is not among the fields checked is in
+ * `isConsoleSender`'s own comment.
+ *
+ * The last three are about the event's *shape* rather than its contents, which
+ * is the half a type cannot enforce at runtime: what arrives on a channel is
+ * whatever the sender's process sent, so `isConsoleSender` checks the fields it
+ * reads instead of trusting the annotation.
+ */
+const FORGED_EVENTS: readonly (readonly [string, unknown])[] = [
+  [
+    'a subframe of the console’s own document',
+    { senderFrame: { url: APP_ENTRY_URL }, sender: { mainFrame: { url: APP_ENTRY_URL } } },
+  ],
+  [
+    'a document on another origin',
+    (() => {
+      const frame = { url: 'https://evil.test/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'a host that merely starts with the console’s own',
+    (() => {
+      const frame = { url: 'app://console.evil.test/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'a port on the console’s own host',
+    (() => {
+      const frame = { url: 'app://console:1234/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'credentials in front of the console’s own host',
+    (() => {
+      const frame = { url: 'app://user@console/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'a file:// document',
+    (() => {
+      const frame = { url: 'file:///work/repo/console/src/renderer/index.html' }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
+  [
+    'a webContents whose main frame is gone',
+    { senderFrame: { url: APP_ENTRY_URL }, sender: { mainFrame: null } },
+  ],
+  ['a frame that has gone away', { senderFrame: null, sender: { mainFrame: null } }],
+  ['no sending frame at all', { sender: { mainFrame: { url: APP_ENTRY_URL } } }],
+  ['no sender at all', { senderFrame: { url: APP_ENTRY_URL } }],
+  ['a null event', null],
+  ['an event that is not an object', 'fugaro:console/cli.version'],
+]
+
+describe('the sender gate', () => {
+  it('accepts the console’s own top frame and answers it', async () => {
+    const { ipcMain } = wiredConsole({ 'cli.version': () => ({ version: '1.2.3' }) })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    expect(await listener?.(consoleEvent(), {})).toEqual({ ok: true, data: { version: '1.2.3' } })
+  })
+
+  it('accepts the console’s own document behind a path, a query or a fragment', async () => {
+    // The frame URL is the document's URL and not the origin alone, so the check
+    // must be about the origin: a fragment is how a screen addresses its own
+    // views, and refusing it would be refusing the console's own window.
+    for (const url of ['app://console/index.html#spend', 'app://console/index.html?x=1']) {
+      const frame = { url }
+      expect(isConsoleSender({ senderFrame: frame, sender: { mainFrame: frame } }), url).toBe(true)
+    }
+  })
+
+  for (const [label, event] of FORGED_EVENTS) {
+    it(`refuses a message from ${label}`, async () => {
+      let reached = 0
+      const { ipcMain } = wiredConsole({
+        'runs.list': () => {
+          reached += 1
+          return {}
+        },
+      })
+      const listener = ipcMain.listeners.get(channelForOperation('runs.list'))
+      expect(listener).toBeDefined()
+      const reply = (await listener?.(event as ConsoleEventLike, { repo: 'acme/app' })) as ConsoleReply
+      expect(reply).toEqual({ ok: false, reason: SENDER_REFUSAL })
+      // The point of the gate: nothing downstream ran. A refused message is not
+      // validated, not dispatched and not answered with anything it wrote.
+      expect(reached, label).toBe(0)
+    })
+  }
+
+  it('never repeats what the sender wrote into the refusal', () => {
+    const forged = { senderFrame: { url: 'https://evil.test/secret' }, sender: { mainFrame: null } }
+    expect(isConsoleSender(forged)).toBe(false)
+    expect(SENDER_REFUSAL).not.toContain('evil.test')
+    expect(SENDER_REFUSAL).not.toContain('secret')
+    expect(SENDER_REFUSAL).not.toMatch(/https?:/)
+  })
+
+  it('reads the origin, and not a prefix of the string', () => {
+    // The rows of FORGED_EVENTS above are the behavioural half of this; this is
+    // the pure function's own table, including the spellings a string prefix
+    // test would let through.
+    const cases: readonly (readonly [unknown, boolean, string])[] = [
+      [APP_ENTRY_URL, true, 'the document the window loads'],
+      ['app://console/', true, 'the bare origin'],
+      ['app://console/index.html#spend', true, 'a fragment'],
+      ['APP://CONSOLE/index.html', true, 'Chromium lower-cases a standard scheme’s host'],
+      ['app://console.evil.test/index.html', false, 'a host that merely starts with the console’s'],
+      ['app://evil.test/console/index.html', false, 'the console’s name in the path of another host'],
+      ['app://console:1234/index.html', false, 'a port'],
+      ['app://user@console/index.html', false, 'credentials'],
+      ['https://console/', false, 'the right host on the wrong scheme'],
+      ['app://', false, 'no host at all'],
+      ['file:///work/repo/console/src/renderer/index.html', false, 'a file URL'],
+      ['', false, 'nothing'],
+      [null, false, 'not a string'],
+      [42, false, 'a number'],
+      [{ url: APP_ENTRY_URL }, false, 'an object that looks like a frame'],
+    ]
+    for (const [value, accepted, why] of cases) {
+      expect(isConsoleSenderUrl(value), `${JSON.stringify(value)} (${why})`).toBe(accepted)
+    }
   })
 })
 

@@ -351,6 +351,41 @@ every row is a value that command's own parser accepts or refuses. Where a kind
 is narrower than its flag it says so in the kind's own doc comment (`runSince`
 does not carry `7s`, and no kind carries a path).
 
+**The sender is checked before the arguments are, and the check is not
+optional.** A registered channel is reachable by any frame the application has
+loaded, so arriving on the right channel is not a capability. Every listener
+refuses a message unless three things hold — the event has a sending frame at
+all, that frame *is* `event.sender.mainFrame` (identity, not equality of URL
+strings: a subframe inside a document the console did not write would otherwise
+pass an origin test by living in a frame that did), and the frame's URL is on
+the console's own origin `app://console` — and it answers one fixed sentence
+that repeats nothing the sender wrote. This is the Electron security
+checklist's item 17, "validate the sender of all IPC messages". The origin is
+not spelled again here: `APP_SCHEME` and `APP_HOST` come from `src/main/protocol.ts`,
+and the test builds its accepted event from `APP_ENTRY_URL`, so the origin the
+gate checks and the origin the console serves cannot drift apart. The
+webContents *id* is deliberately not a separate check — handlers are registered
+before any window exists and macOS `activate` builds a new one afterwards, so a
+captured id is stale by design, and the frame identity already decides the same
+thing: a frame is on `app://console` only if this process served it out of its
+own bundle.
+
+**A refusal's text is bounded, and the reason is a hostile `error.message`.**
+Design §6.3 wants the CLI's own sentence shown verbatim, and a CLI sentence is
+short and dull; a handler that threw with four megabytes in it, or with a
+newline, an escape sequence or `/home/you/.fugaro/secrets.yaml` in it, would put
+all of that in a renderer that is entitled to treat a reply as the console's own
+words. `replyReason` therefore flattens a message to one line, drops control
+characters, replaces absolute paths (POSIX, `~/`, drive-letter and UNC) with
+`<path>`, and cuts at 2 KB with an ellipsis. The test that an ordinary CLI
+sentence comes through byte for byte is what keeps those three from eating the
+case the design asks for. The same shape applies to what the console *accepts*:
+after the argument-count bound, a payload's own width (every key plus every
+scalar value) is bounded at `MAX_PAYLOAD_WIDTH`, set deliberately above what the
+per-kind bounds can add up to, so it can only refuse what no screen would send.
+It cannot bound Electron's own deserialisation of the message, which happens
+before the listener runs; that limit is stated where the constant is declared.
+
 `src/preload/index.ts` puts **one frozen, versioned object** on `window.fugaro`,
 one method per operation. It is deliberately a phone book and not a switch: the
 channel a method calls is a constant concatenated from that operation's name,
@@ -407,6 +442,13 @@ allow-list drives `budget kill`, or `--follow`, or any other row.
 | a method invoking anything but `channelForOperation(name)` | the channel-routing test |
 | a schema accepting an extra key, a prototype-pollution key, a path, a command, a control or format character, an oversize string or a wrong type | the table entry that names it |
 | one kind shared by two commands whose flags are not one grammar | the per-command window table, row by row, and "gives each command its own window kind" |
+| the sender check removed, or any of its three checks (frame present, frame *is* the main frame, frame URL on the console's origin) | the "sender gate" tests: 12 failures for the check as a whole, and the row named for each individual check |
+| a handler's message left unbounded, or its control characters or absolute paths left in | "bounds a handler's own message", "keeps a refusal to one line", "takes an absolute path out of a handler's message" |
+| `assertReachableSurface(CONSOLE_OPERATIONS)` removed from registration, or moved after the channels are on | "checks the surface before it registers anything" |
+| the allowed-flags half of `assertReachableSurface` removed (a flag the never table does not even list) | "refuses a table with a flag the never table does not even list" |
+| a never-table *flag* row renamed away | "carries a never-table row for *flag*", one test per flag |
+| the `PROTOTYPE_KEYS` branch removed | "names the protection key it refused" |
+| the payload-width bound removed | "refuses a payload wider than the width bound" |
 | a schema that refuses *everything* (the way to pass every refusal test vacuously) | the well-formed-payload table, one row per operation |
 | an unfrozen bridge, a wrong version, a `length > 1` method, an `invoke`/`send`/`on` property | the surface-shape tests |
 | a second `invoke`, a computed `require`, an `eval`, a `child_process`, or a value import in the preload | the source scans |
