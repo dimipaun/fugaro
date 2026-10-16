@@ -363,12 +363,14 @@ func seedAllowRepos(ctx context.Context, lc *localcfg.Config) ([]string, map[str
 // strict is the writer's: an entry it cannot spell as a canonical name is
 // refused, because a seed that quietly leaves one out is a publish that
 // un-enrolls a repository which runs today, and the operator asked for that
-// list to be written. The readers (`allowSources`, for `project show` and
-// `project repos ls`) skip such an entry instead: they only label where an
+// list to be written. It holds for both sources of the seed — the operator's
+// own repos: map and the shared config's list, which ParseShared accepts with
+// a provider-less entry too. The readers (`allowSources`, for `project show`
+// and `project repos ls`) skip such an entry instead: they only label where an
 // allow-list entry came from, a `repos:` entry need not name a provider at all
 // (localcfg: the checkout's fugaro.yaml decides it), and a read-only command
-// must not abort on a config the tool accepts — the same reason repoBySlug and
-// the shared-config branch below skip these.
+// must not abort on a config the tool accepts — the same reason repoBySlug
+// skips these.
 func allowSourcesOf(ctx context.Context, lc *localcfg.Config, strict bool) (map[string]string, error) {
 	sources := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
@@ -395,10 +397,24 @@ func allowSourcesOf(ctx context.Context, lc *localcfg.Config, strict bool) (map[
 	for _, name := range slices.Sorted(maps.Keys(shared)) {
 		r := shared[name]
 		if r.Provider == "" {
-			continue // the shared config's own validation leaves these alone
+			// The same posture as the local loop above, for the same reason:
+			// the seed is what the writer writes, and an entry it cannot spell
+			// as a canonical name is a repository that drops out of the
+			// allow-list — here one this machine's own installation publishes,
+			// so it is not even in the local config the operator is editing.
+			// localcfg's validation leaves a provider-less repos entry alone
+			// (the checkout's fugaro.yaml decides it), so this is reachable
+			// through a document ParseShared accepts.
+			if strict {
+				return nil, userErr("the shared config's repos.%s names no git provider: the allow-list is canonical (provider/owner/name), so add provider: github or provider: bitbucket there (the document published to the project's runs bucket)", name)
+			}
+			continue // a reader only labels where an entry came from
 		}
 		c, err := projectpolicy.Canonical(r.Provider, name)
 		if err != nil {
+			if strict {
+				return nil, userErr("the shared config's repos.%s: %v", name, err)
+			}
 			continue
 		}
 		if _, ok := sources[c]; !ok {

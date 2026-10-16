@@ -541,6 +541,46 @@ func TestProjectShowReadsASharedConfigOfANonDefaultImageSource(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishRefusesASharedRepoItCannotSpell: the strict seed's
+// refusals are the writer's, and they are about the *seed*, not about which
+// config the entry came from. The shared config's list is the other half of
+// the seed, and a repository there that names no provider — or one whose name
+// projectpolicy.Canonical refuses — cannot be spelled as a canonical entry, so
+// the publish dropped it silently: the allow-list it wrote was missing a
+// repository of the shared config, which is exactly the un-enrollment the
+// local config's own refusal exists to prevent. Both loops refuse in the
+// strict posture now; a reader (`project show`, `project repos ls`) still
+// skips such an entry, because it only labels where an entry came from.
+//
+// Mutation (verified, run and restored): drop the strict refusal from the
+// shared-config loop in allowSourcesOf (the shipped behaviour): the publish
+// succeeds and the entry is gone from the allow-list.
+func TestProjectPolicyPublishRefusesASharedRepoItCannotSpell(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		repos string
+		want  string
+	}{
+		{"no provider", "    acme/third:\n        workflows:\n            - web\n", "names no git provider"},
+		{"a name Canonical refuses", "    acme/..:\n        provider: github\n        workflows:\n            - web\n", "acme/.."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			writeSharedConfig(t, f, tc.repos)
+			_, _, err := execute(t, "project", "policy", "publish")
+			if err == nil {
+				t.Fatalf("the publish seeded without the shared config's %s: allow_repos = %v", tc.name, nodeJSON(t, f, projectpolicy.PathShared()))
+			}
+			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "shared config") {
+				t.Errorf("the refusal does not name the shared config entry it cannot spell: %v", err)
+			}
+			if f.db.Value(projectpolicy.PathShared()) != nil {
+				t.Error("a node was written anyway")
+			}
+		})
+	}
+}
+
 // TestProjectPolicyPublishSeedIsOnlyTheOperatorsRepos: the seed is the
 // operator's repos: map plus the shared config's repository list, and nothing
 // else (P4).
