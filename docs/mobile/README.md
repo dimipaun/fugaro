@@ -27,10 +27,10 @@ The owner's allocation of 2026-10-16, applied rather than inferred:
 | **Checks 62–63** | the console v2 pair | reserved |
 | **Checks 64–66** | the voice work | reserved; 64 is the one owner-run check that work writes |
 | **Checks 67–68** | managed projects | reserved |
-| **Checks 69 onward** | the website work | allocated |
+| **Checks 69–79** | the website work | allocated (the allocation read "69 onward"; **80–89 is carved out of that range** for this work) |
 | **Checks 80–89** | **this work** | **reserved here, and no row or section is written by this pull request** |
 
-**A reserved number is never reused and never renumbered**, which is why this work takes **D110–D129** and **80–89** as allocated rather than deriving either from a grep of `main`. The two blocks do not overlap the website work's: the allocation gives the website **69 onward** and this work **80–89**, and this document neither renumbers nor narrows anything the website work holds.
+**A reserved number is never reused and never renumbered**, which is why this work takes **D110–D129** and **80–89** as allocated rather than deriving either from a grep of `main`. The two blocks do not overlap: the website work holds **69–79** and this work holds **80–89**, which is how the allocation reads once the mobile block is taken out of the "69 onward" it was given — and this document neither renumbers nor narrows anything the website work holds.
 
 ## What this work conflicts with, in one paragraph
 

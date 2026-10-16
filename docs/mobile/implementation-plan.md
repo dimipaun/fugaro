@@ -6,7 +6,7 @@
 
 **Spec.** [spec.md](spec.md) (the owner's spec, verbatim). **Reconciliation.** [reconciliation.md](reconciliation.md) — findings F1–F37, decisions D110–D129, open items. **Index.** [README.md](README.md).
 
-**Related.** [voice.md](../design/voice.md) · [2026-10-16-voice.md](../plans/2026-10-16-voice.md) · [desktop-console.md](../design/desktop-console.md) · [desktop-console-v2.md](../design/desktop-console-v2.md) · [managed-projects.md](../design/managed-projects.md) · [console/docs/json-contract.md](../console/docs/json-contract.md) · [gcp-live-checklist.md](../gcp-live-checklist.md)
+**Related.** [voice.md](../design/voice.md) · [2026-10-16-voice.md](../plans/2026-10-16-voice.md) · [desktop-console.md](../design/desktop-console.md) · [desktop-console-v2.md](../design/desktop-console-v2.md) · [managed-projects.md](../design/managed-projects.md) · [console/docs/json-contract.md](../../console/docs/json-contract.md) · [gcp-live-checklist.md](../gcp-live-checklist.md)
 
 ---
 
@@ -74,7 +74,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 3. **No ruling is reversed silently.** Any edit to [voice.md](../design/voice.md)'s D49 cell, to [desktop-console.md](../design/desktop-console.md), or to the console v2 pair is a **separate, owner-approved, docs-only change** (D129). If D110 is answered "no", this plan's phases 1, 3 and 4 are not built at all.
 4. **The app holds a Firebase Auth ID token in platform secure storage, and nothing else** (D111's recommendation; the owner's answer governs). Never a Fugaro or cloud admin credential, never an LLM key, never a service-account JSON, never a `fugaro` config file.
 5. **No direct database reads** (D112's recommendation; the owner's answer governs). The app's reads go through the CLI's documented feed.
-6. **The phone's only database write is its own inbox leaf** (F21). A rules change that would let a phone write any other path is not acceptable, and the emulator asserts the denial.
+6. **The phone's only database write is its own inbox messages** (F21) — one `.write` on the message node, in the subtree idiom the template already uses for `agents/$slug/$run`, with `.validate`-only children and `"$other"` denied. A rules change that would let a phone write any other path is not acceptable, and the emulator asserts the denial.
 7. **Every rules change is owner-deployed**, with the regenerated golden, the parity test, a `RulesVersion` bump and the emulator's denial cases, and with the deploy performed by the owner through `fugaro init --firebase` (F20, D113).
 8. **No agent edits `.github/workflows/`.** GitHub refuses Fugaro's push of workflow changes, so the CI job the shared package needs (P4.3) is **owner-made**, and this plan describes the change rather than making it.
 9. **Store credentials and signing keys are owner-run.** No agent runs `eas build`, `eas submit`, or touches a signing key or a store credential (D120).
@@ -334,9 +334,9 @@ P3.1 ──┬─► P3.2 ──► P3.3
 **Verification.** `go test ./internal/budget/rules/...` — `TestRulesGolden`, `TestGeneratedRulesParse` and `TestRulesParity` — and `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` for the document. **No emulator case here**; that is P2.2.
 **Reviewer tier.** **SECURITY-SENSITIVE — MANDATORY independent opus review.** This is the widest change in the plan: it is the only one that changes what the database permits.
 
-**What it adds.** One subtree, for the mailbox and the heartbeat. Its grants go through a **user claim** carried in the Firebase Auth token — a claim the rules *read*, not one they mint. Its shape follows the template's existing idiom: every field carries its own `.write`, values pass the existing validators, and a string is bounded.
+**What it adds.** One subtree, for the mailbox and the heartbeat. Its grants go through a **user claim** carried in the Firebase Auth token — a claim the rules *read*, not one they mint. Its shape follows the template's **subtree idiom**, which is the one `agents/$slug/$run` and `outcomes/$day/$slug/$run` already use (F21): **one `.write` on the message node**, whose predicate is the phone's own claim; `.validate`-only children, so the validators (`STR`, `AMOUNT`, `RBOK`) gate the values and a bound gates the body's length; and `"$other": { ".validate": false }` so an unknown field is refused rather than stored. **Not** the leaf idiom — the budget and lease families put a `.write` on each leaf, which is the wrong shape for a node written whole by one writer.
 
-**What it must not do.** Loosen any existing `.read` or `.write` (F11, F13). Grant a phone anything but its own inbox leaf (F21). Admit a signed-in user anywhere else (D14's argument, F8). Each of those is a review question and each has an emulator case in P2.2.
+**What it must not do.** Loosen any existing `.read` or `.write` (F11, F13). Grant a phone anything but its own inbox messages (F21). Admit a signed-in user anywhere else (D14's argument, F8). Each of those is a review question and each has an emulator case in P2.2.
 
 ### Task P2.2: The emulator's denial cases — SECURITY-SENSITIVE
 
@@ -389,7 +389,7 @@ P3.1 ──┬─► P3.2 ──► P3.3
 **Verification.** Tests: a completed job older than the keep window is hidden by default and shown when the toggle is on; a **failed** job is kept by the failed-keep rule; a queued job is shown; the per-job fields the spec names are rendered when present and marked `unavailable` when not; a PR link is opened **only** through P0.3's validator, and a link the validator refuses is rendered as text and not as a link.
 **Reviewer tier.** standard.
 
-**Two things this task must not do.** It must not claim the desktop's acknowledgement semantics — the ack file is local to the machine running the CLI and a phone cannot share it (F2). And it must not build a link at all until the feed carries a provider (`JSONRun` carries no PR field today; F27).
+**Two things this task must not do.** It must not claim the desktop's acknowledgement semantics — the ack file is local to the machine running the CLI and a phone cannot share it (F2). And it must not build a link at all until P0.3's validator exists with a non-empty host allow-list: the **finished** document carries `pr_url`/`pr_number` (`JSONFinished`), but **no shape carries a provider**, so the host is unknown and a `github.com` guess is wrong for a Bitbucket repository (F27, gaps 6 and 7). The **live** row has no PR field at all, so it has no link to build until gap 6 closes on the CLI side.
 
 ### Task P3.4: The audio interfaces and their fakes
 
@@ -527,7 +527,7 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 
 ## Open items, listed rather than fixed
 
-1. **`JSONRun` carries no PR field** (`internal/watch/json.go`), and the console design's §4.3 gap 7 records it. Until a shape carries a provider, the job list's PR link is a text field, and D124's answer governs what happens then. **This is a CLI-side gap this plan does not close.**
+1. **Two PR-link gaps, and they are not the same gap.** `JSONRun` (`internal/watch/json.go`) carries no PR field, so a **live** row has no URL at all (console §4.3 **gap 6**); `JSONFinished` **does** carry `pr_url` and `pr_number`, so a **finished** run has one. But **no shape carries a provider** (**gap 7**), so the URL cannot be validated against a host allow-list and the console builds **no link at all** — repository, number and URL as text. Until the allow-list exists (D124, P0.3) the app does the same, and the live half of the list cannot carry a link until gap 6 closes on the CLI side. **Neither gap is closed by this plan.**
 2. **The ack file is local** (`internal/watch/acks.go`'s `AckPath`). The phone cannot share the desktop's acknowledgements, so the app's "show all" toggle is over the unfiltered feed. Stated in F2 and in P3.3; **not solved**.
 3. **"Awaiting user input" has no producer** anywhere in the tree (F3, and Voice D48 reached the same conclusion). The digest cannot speak a state nothing produces.
 4. **The CI job is owner-made** (P4.3), because of a hard constraint on workflow files, not because the plan prefers it. Until it exists, the shared package's tests run **only where someone runs them**, and that is a real gap in this plan's coverage.
