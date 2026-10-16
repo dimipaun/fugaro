@@ -275,6 +275,19 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, true, fmt.Errorf("projectpolicy: the policy node is not a JSON object: %w", err)
 	}
+	// The names the document writes, duplicates included, before the map above
+	// has folded them away: a key written twice is read as the last of the two
+	// and this package looks every top-level key up by its exact spelling, so
+	// {"version":1,"budget":{...},"budget":null} is a node that carries no
+	// budget at all — the run would keep the ceiling its job environment was
+	// deployed with while the operator's node appears to set one.
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return nil, true, fmt.Errorf("projectpolicy: the policy node is not a JSON object: %w", err)
+	}
+	if err := checkTopLevelNames(names); err != nil {
+		return nil, true, err
+	}
 
 	var p Policy
 	for k := range doc {
@@ -496,6 +509,18 @@ func spelledMember(name string) string {
 // yet" would both be published as "every repository" — so it is refused here,
 // from the raw document.
 func validProviders(raw json.RawMessage, providers map[string]Provider) error {
+	// A provider named twice is one provider to this reader (the map keeps the
+	// last entry), and the entry it keeps is the whole of what that provider
+	// allows: a second `openrouter` written beside a first replaces its
+	// allow_data_to, its secret and its fee, so a node can widen an allow-list
+	// by repeating the block.
+	blockNames, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: providers: %w", err)
+	}
+	if err := checkNoDuplicateNames("providers", blockNames); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return fmt.Errorf("projectpolicy: providers: %w", err)
@@ -507,6 +532,18 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 			return err
 		}
 		if entry := entries[name]; entry != nil {
+			// The entry's own names, duplicates included, before the map below
+			// folds them away: encoding/json keeps the last of a repeated
+			// member, and the two members that fail open are exactly the ones a
+			// repeat can widen — a second allow_data_to is the allow-list this
+			// reader ends up with, and a second route_fee_pct is the fee.
+			members, err := objectMemberNames(entry)
+			if err != nil {
+				return fmt.Errorf("projectpolicy: providers.%s: %w", name, err)
+			}
+			if err := checkNoDuplicateNames("providers."+name, members); err != nil {
+				return fmt.Errorf("projectpolicy: %w", err)
+			}
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(entry, &fields); err == nil {
 				for _, member := range memberNames(fields) {
@@ -535,6 +572,19 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 				}
 				if data, ok := fields["allow_data_to"]; ok && isNull(data) {
 					return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
+				}
+				// route_fee_pct is the other member JSON spells a written key
+				// with no value under: it is a float64, and a null decodes into
+				// it as 0, which is no surcharge at all. A node that means to
+				// set a fee — or that a tool serialized an absent value into —
+				// would price every request on this route without the owner's
+				// surcharge, and nothing would say the value was not read.
+				// (No other member is silent this way: a null kind, base_url,
+				// auth, secret or models is refused by ValidateModelProviders
+				// just below, and a null require_zdr or price_policy is the
+				// default the key being absent gives.)
+				if fee, ok := fields["route_fee_pct"]; ok && isNull(fee) {
+					return fmt.Errorf("projectpolicy: providers.%s.route_fee_pct: a written null is read as 0, which is no surcharge at all — write the percentage this route adds to every charge, or remove the key entirely", name)
 				}
 			}
 		}
@@ -647,6 +697,57 @@ func checkMemberNames(prefix string, names, known []string) error {
 		for _, k := range known {
 			if lower == strings.ToLower(k) && n != k {
 				return fmt.Errorf("%s spells %s as %q: encoding/json matches a member name case-insensitively, so this Fugaro reads it as %s — write the member as %s documents it, or remove it", prefix, k, n, k, k)
+			}
+		}
+	}
+	return nil
+}
+
+// checkNoDuplicateNames refuses a block that names one of its keys twice, for
+// the blocks this package reads by looking a key up rather than by decoding
+// into a struct: the top level of the node, the providers block and the
+// model_prices block, whose keys are looked up (or unescaped and stored) by
+// their exact spelling. encoding/json keeps the last of a repeated key when it
+// builds the map, so the first one is a value the document wrote and this
+// reader drops — and where the key holds a whole block, what is dropped is the
+// block.
+//
+// It is checkMemberNames' duplicate half only, with no case rule: a map key is
+// matched exactly, so two keys that differ only in case are two keys here —
+// while inside a struct-typed entry they are one field, which is what that
+// function is for.
+func checkNoDuplicateNames(prefix string, names []string) error {
+	seen := map[string]bool{}
+	for _, n := range names {
+		if seen[n] {
+			return fmt.Errorf("%s names %q twice: encoding/json keeps the last one it reads, so which value this Fugaro reads would depend on the order the keys were written in — write the key once", prefix, n)
+		}
+		seen[n] = true
+	}
+	return nil
+}
+
+// checkTopLevelNames holds the node's own keys to what Decode reads: no key
+// twice (checkNoDuplicateNames), and no key that is a modelled top-level key
+// spelled in another case.
+//
+// The second rule is not checkMemberNames': Decode looks a top-level key up by
+// its exact spelling and never decodes the node into a struct, so "Budget"
+// beside "budget" is not folded onto one field — it is a second key that
+// nothing reads. The value under it is then absent as far as every reader here
+// is concerned, which is the same silence a duplicated key has, reached by a
+// spelling the operator would not expect to matter. Every other unknown key
+// stays tolerated and listed in Policy.UnknownKeys (P8): a misspelt `per_run_usdc`
+// is not a spelling of a key this Fugaro models, and a newer release's key is
+// not either.
+func checkTopLevelNames(names []string) error {
+	if err := checkNoDuplicateNames("the policy node", names); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	for _, n := range names {
+		for known := range knownTopLevelKeys {
+			if n != known && strings.EqualFold(n, known) {
+				return fmt.Errorf("projectpolicy: the policy node spells %s as %q: this Fugaro reads the key %s, and the value under %q is not read at all — write it as %s", known, n, known, n, known)
 			}
 		}
 	}
