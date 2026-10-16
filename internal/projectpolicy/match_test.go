@@ -203,19 +203,25 @@ func TestMatchRepoReadsAStarInTheSubject(t *testing.T) {
 }
 
 func TestValidPattern(t *testing.T) {
-	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*"} {
+	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*",
+		// A repository path may nest: Canonical admits "acme/group/app"
+		// (TestCanonical pins it), and MatchRepo compares segment against
+		// segment, so this entry admits exactly bitbucket/acme/group/app. It is
+		// not a longer spelling of "bitbucket/acme/group/*" — that is three
+		// segments and matches nothing of the four-segment canonical — which is
+		// why a cap of three was the wrong guard: it refused the entry that
+		// admits the repository and left the wildcard form as the only way to
+		// allow-list one (the review finding on this change).
+		"bitbucket/group/sub/app",
+		"bitbucket/acme/group/app",
+		"bitbucket/acme/group/*",
+	} {
 		if err := ValidPattern(ok); err != nil {
 			t.Errorf("ValidPattern(%q) = %v, want nil", ok, err)
 		}
 	}
 	for _, bad := range []string{"", "acme/*", "github", "github/acme", "GitHub/acme/app", "github/acme/app.git", "github/acme/a b", "github//app", "github/acme/",
-		"github/../app", "github/./app", "github/acme/..", "github/acme/.",
-		// A canonical repository is provider/owner/name, and MatchRepo
-		// compares segment against segment (a "*" never crosses a "/"), so a
-		// longer path can never match one: it is a typo that would silently
-		// admit nothing rather than the nested group it looks like (the
-		// review finding on this change).
-		"bitbucket/group/sub/app", "github/acme/app/extra"} {
+		"github/../app", "github/./app", "github/acme/..", "github/acme/."} {
 		if err := ValidPattern(bad); err == nil {
 			t.Errorf("ValidPattern(%q) = nil, want an error", bad)
 		}

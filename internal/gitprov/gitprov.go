@@ -415,6 +415,22 @@ func KindForURL(remote string) string {
 	return KindForHost(host)
 }
 
+// TrimRepoPath trims the punctuation a remote path carries for being part of a
+// URL off the path SplitRemote or SplitRemoteRaw returned: exactly one leading
+// and one trailing "/", never more. "https://github.com/acme/app.git/" is the
+// same remote as the path without the last "/", and the leading one is the
+// URL's own separator. Anything else is left exactly as written: an empty
+// segment (https://github.com//acme/app.git) is not punctuation, and it is
+// what the launcher's rule (internal/infra's repoURL) and the run's admission
+// (internal/runner's remoteRepoPath) both compare their repository against —
+// one function, so the two cannot read one remote two ways, which they did
+// (the review finding on this change): the launcher trimmed every leading and
+// trailing "/" and accepted a URL the admission's one-per-side trim refused,
+// deploying a job that refused every run.
+func TrimRepoPath(p string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
+}
+
 // SplitRepo splits "owner/name" into its two parts.
 func SplitRepo(repo string) (owner, name string, ok bool) {
 	owner, name, ok = strings.Cut(repo, "/")

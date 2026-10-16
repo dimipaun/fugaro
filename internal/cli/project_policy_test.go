@@ -1929,6 +1929,62 @@ func TestProjectReposEditTheWildcard(t *testing.T) {
 	}
 }
 
+// TestProjectReposEditANestedRepository: a repository path may nest —
+// task.CanonicalRepo admits "acme/group/app" and projectpolicy.Canonical pins
+// it as valid — so provider/owner/group/name is a repository an allow-list
+// holds, and both commands must read it as one. Reading the argument as
+// exactly three segments refused it ("write it as provider/owner/name"), which
+// with ValidPattern's own cap of three left the wildcard as the only way to
+// allow-list a nested repository — an entry that does admit a repository, so
+// the guard was refusing the operator's own repository rather than a typo (the
+// review finding on this change).
+//
+// Mutation (verified, run and restored): restore canonicalRepoArg's
+// `len(parts) != 3` — add fails with "is not a repository: write it as
+// provider/owner/name" and nothing is written.
+func TestProjectReposEditANestedRepository(t *testing.T) {
+	const nested = "github/acme/team/app"
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "project", "repos", "add", nested)
+	if err != nil {
+		t.Fatalf("repos add %s = %v", nested, err)
+	}
+	if !strings.Contains(out, "allow_repos: ") || !strings.Contains(out, nested) {
+		t.Errorf("the diff does not print the entry it wrote:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if !slices.Contains(allow, nested) {
+		t.Fatalf("the node holds %v, want %s among them", allow, nested)
+	}
+	// The entry is the one the run's admission asks about, and it admits this
+	// repository and not its siblings.
+	if !projectpolicy.AdmitRepo(allow, nested) {
+		t.Errorf("allow_repos = %v does not admit %s, the entry just written", allow, nested)
+	}
+	if projectpolicy.MatchRepo(nested, "github/acme/app") {
+		t.Errorf("the entry %s admits github/acme/app, which is another repository", nested)
+	}
+	// And the node stays readable: Decode applies ValidPattern to every entry
+	// it reads, so an entry this command can write but the decoder refuses
+	// would halt every run of the project. publishedPolicy decodes the node it
+	// reads back, and fails the test if it cannot.
+	allow = publishedPolicy(t, f).AllowRepos
+	if !slices.Contains(allow, nested) {
+		t.Errorf("the node read back holds %v, want %s among them", allow, nested)
+	}
+	// It comes off the same way.
+	typed(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", nested); err != nil {
+		t.Fatalf("repos rm %s = %v", nested, err)
+	}
+	if allow := publishedPolicy(t, f).AllowRepos; slices.Contains(allow, nested) {
+		t.Errorf("the node still holds %s: %v", nested, allow)
+	}
+}
+
 // TestProjectPolicyPublishDiffNamesProvidersAndRates: the diff is the only
 // place an operator reads what a publish replaces, so it prints every value
 // about money and data sharing field by field — a changed base_url, a widened

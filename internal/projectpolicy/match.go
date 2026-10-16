@@ -99,14 +99,6 @@ const (
 	// maxPatternLen bounds an allow_repos entry, so a pattern cannot be used to
 	// grow the policy node without limit.
 	maxPatternLen = 255
-	// maxPatternSegs is the number of segments an allow_repos entry may carry:
-	// a provider, an owner and a repository name, which is what Canonical
-	// writes and MatchRepo compares segment against segment. A longer path is
-	// not a nested group spelled out — a "*" never crosses a "/", so
-	// "bitbucket/group/sub/app" matches no canonical repository at all — it is
-	// an entry that silently admits nothing, which is the failure this
-	// function exists to prevent (the review finding on this change).
-	maxPatternSegs = 3
 )
 
 // ValidPattern checks one allow_repos entry: "*", or a provider-qualified path
@@ -128,9 +120,15 @@ func ValidPattern(pattern string) error {
 	if len(segs) < 3 {
 		return fmt.Errorf("pattern %q must name a provider, an owner and a repository (as in \"github/acme/app\" or \"github/acme/*\")", pattern)
 	}
-	if len(segs) > maxPatternSegs {
-		return fmt.Errorf("pattern %q has %d path segments; a provider, an owner and a repository name are %d, and MatchRepo compares them segment against segment, so a longer pattern admits no repository at all", pattern, len(segs), maxPatternSegs)
-	}
+	// There is deliberately no cap on the segment count above that floor: a
+	// repository path may nest (task.CanonicalRepo admits "acme/group/app", and
+	// this package's TestCanonical pins Canonical("bitbucket", "acme/group/app")
+	// as valid), and MatchRepo compares segment against segment, so
+	// "bitbucket/acme/group/app" admits exactly that repository. A cap of three
+	// refused an entry that does admit one, and Decode applies this function to
+	// a node the run reads: a published entry of that shape would have become
+	// unreadable and halted every run of the project (the review finding on
+	// this change).
 	stars := 0
 	for i, s := range segs {
 		if s == "" {

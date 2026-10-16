@@ -1960,9 +1960,11 @@ func admittedBy(allow []string, arg string) (bool, string) {
 // canonicalRepoArg is the operator's argument as a canonical allow-list
 // entry. A bare owner/name takes its provider from this machine's config
 // (repos: is keyed by owner/name); anything else must already be canonical,
-// which is what the allow-list matches. Upper-case letters are folded — ASCII
-// only, and a concrete name goes through projectpolicy.Canonical — so the
-// entry written is one the runner's own canonical form could have produced.
+// which is what the allow-list matches, at whatever depth the repository path
+// has (a nested group is a repository path like any other). Upper-case letters
+// are folded — ASCII only, and a concrete name goes through
+// projectpolicy.Canonical — so the entry written is one the runner's own
+// canonical form could have produced.
 func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	if arg == "*" {
 		// The allow-list's own entry for every repository — the design's
@@ -1985,10 +1987,19 @@ func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 		}
 		parts = []string{r.Provider, parts[0], parts[1]}
 	}
-	if len(parts) != 3 {
+	if len(parts) < 3 {
 		return "", userErr("%q is not a repository: write it as provider/owner/name (github/acme/app), or as owner/name for a repository this machine's config lists", arg)
 	}
-	provider, repo := asciiLower(parts[0]), asciiLower(parts[1])+"/"+asciiLower(parts[2])
+	// Everything after the provider is the repository path, whatever its depth:
+	// a repository may nest (task.CanonicalRepo admits "acme/group/app", and
+	// projectpolicy's own Canonical pins it as valid), so
+	// bitbucket/acme/group/app is the argument that allow-lists it — the form
+	// ValidPattern refuses to cap and MatchRepo matches segment against segment
+	// (the review finding on this change). Reading the path as exactly two
+	// segments refused it with "write it as provider/owner/name", the same way
+	// the cap did, and left the wildcard form as the only way to allow-list a
+	// nested repository.
+	provider, repo := asciiLower(parts[0]), asciiLower(strings.Join(parts[1:], "/"))
 	canonical := provider + "/" + repo
 	if !strings.Contains(canonical, "*") {
 		// A concrete repository goes through projectpolicy.Canonical, the one

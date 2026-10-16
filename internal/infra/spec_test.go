@@ -687,6 +687,15 @@ func TestSpecRefuses(t *testing.T) {
 		// a job that refuses every run (the review finding on this change).
 		"url with an escaped path":  func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme/sandb%6fx.git" },
 		"url with an escaped owner": func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acm%65/sandbox.git" },
+		// The path's punctuation is one leading and one trailing "/", the same
+		// trim the run's admission makes (gitprov.TrimRepoPath): a second slash
+		// is an empty segment, which the admission's canonicalization refuses —
+		// so accepting it here would write the URL as the job's remote and
+		// every run of that job would stop before any clone (the review finding
+		// on this change).
+		"url with an empty leading segment": func(in *Inputs) { in.RepoURL = "https://bitbucket.org//acme/sandbox.git" },
+		"url with a doubled trailing slash": func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme/sandbox.git//" },
+		"url with an empty inner segment":   func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme//sandbox.git" },
 		"role of another project": func(in *Inputs) {
 			in.Installation.RoleIDs.JobRunner = "projects/other-proj/roles/" + RoleJobRunner
 		},

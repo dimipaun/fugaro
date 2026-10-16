@@ -269,8 +269,11 @@ func remoteRepoPath(remote string) (string, bool) {
 	// without the last one. Anything else is left exactly as written, so an
 	// empty segment ("github.com//acme/app") reaches the refusal below instead
 	// of being normalized away — normalizing is what a reader of the URL would
-	// do and git may not.
-	p = strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
+	// do and git may not. The trim is gitprov.TrimRepoPath, which the
+	// launcher's rule for a repository URL asks too (internal/infra's repoURL):
+	// one function, or the launcher accepts a URL the run then refuses (the
+	// review finding on this change).
+	p = gitprov.TrimRepoPath(p)
 	if p == "" {
 		return "", false
 	}
