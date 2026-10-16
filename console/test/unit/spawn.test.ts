@@ -82,6 +82,28 @@ import { installStub } from './stub'
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
 
+/**
+ * COMMANDS_TAKING_PROJECT and COMMANDS_WITHOUT_PROJECT are the plan's own list,
+ * hard-coded: the nine commands `addCloudFlags` gives `--project` to
+ * (`internal/cli/cloud.go:51`, called from each of those constructors), the two
+ * log operations that share the `logs` command, and the one command that takes
+ * no flag at all. `newVersionCmd` (`internal/cli/root.go`) is `cobra.NoArgs`
+ * with no `Flags()`, so the handshake is exactly `["version"]`.
+ */
+const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
+  'live.watch',
+  'budget.show',
+  'spend.report',
+  'runs.list',
+  'run.diagnose',
+  'run.logs',
+  'run.logLink',
+  'secrets.inventory',
+  'accounts.inventory',
+  'environment.report',
+]
+const COMMANDS_WITHOUT_PROJECT: readonly OperationName[] = ['cli.version']
+
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
   return mkdtempSync(join(tmpdir(), prefix))
@@ -242,16 +264,24 @@ describe('the spawn table and the argv it builds', () => {
       new Set(['watch', 'budget show', 'report', 'runs ls', 'diagnose', 'logs', 'secrets ls', 'accounts ls', 'doctor']),
     )
     expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(10)
+    // ...and the table's own flags agree with the list the tests above use.
+    for (const row of SPAWN_COMMANDS) {
+      expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
+    }
   })
 
   it.each(SPAWN_COMMANDS.map((row) => [row.operation, row] as const))(
     '%s puts --project on its argv, from the chosen installation',
     (_name, row: SpawnCommand) => {
       const argv = argvFor(row.operation, {}, safeContext({ project: 'chosen' }))
-      if (row.takesProject) {
+      // The expectation is written out here rather than read from the row: a
+      // test that asks the table what it contains cannot catch the table
+      // changing, and "does `watch` carry --project" is the whole question.
+      if (COMMANDS_TAKING_PROJECT.includes(row.operation)) {
         expect(argv).toContain('--project')
         expect(argv[argv.indexOf('--project') + 1]).toBe('chosen')
       } else {
+        expect(COMMANDS_WITHOUT_PROJECT).toContain(row.operation)
         expect(argv).not.toContain('--project')
       }
     },
@@ -1191,6 +1221,17 @@ describe('the source scan', () => {
     // regexed, because a negative lookahead here backtracks into passing.
     const source = codeOnly('main/spawn.ts')
     expect((source.match(/shell:/g) ?? []).length).toBe((source.match(/shell: false/g) ?? []).length)
+  })
+
+  it('hands the real spawner `shell: false`, as a literal, and never `true`', () => {
+    // The mutation this catches is `shell: true` on `nodeSpawner` itself: the
+    // recording-spawner tests above assert what the *caller* passes, and this
+    // asserts what the real spawner does with it. Counted rather than regexed --
+    // a negative lookahead after `\s*` backtracks into passing.
+    const source = codeOnly('main/spawn.ts')
+    expect((source.match(/shell:/g) ?? []).length).toBeGreaterThan(1)
+    expect((source.match(/shell: false/g) ?? []).length).toBe((source.match(/shell:/g) ?? []).length)
+    expect(source).toContain('export const nodeSpawner: ChildSpawner')
   })
 
   it('has no shell string anywhere: no exec, no execSync, no shell', () => {

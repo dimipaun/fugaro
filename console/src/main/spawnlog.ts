@@ -186,14 +186,16 @@ export function createSpawnLog(
     }
   }
 
-  const writeLine = (line: string): void => {
+  const writeLine = (line: string): boolean => {
     const open = ensureOpen()
-    if (open === null) return
+    if (open === null) return false
     try {
       fs.write(open, line + '\n')
+      return true
     } catch (error) {
       failure = `the spawn log at ${path} could not be written: ${describe(error)}`
       stopped = true
+      return false
     }
   }
 
@@ -215,11 +217,15 @@ export function createSpawnLog(
         stopped = true
         return
       }
+      // `records` counts the lines that were *written*: a session whose log
+      // cannot be opened must not believe it has recorded a thousand spawns and
+      // then stop trying. A count that ran ahead of the file is the one way the
+      // bound could hide a spawn the audit needed to see.
       // Exactly four keys, in the schema's order: JSON.stringify keeps the
       // insertion order of string keys, so the line a `jq` or a `grep` reads is
       // the line this object is. `argv` is copied so a caller cannot mutate an
       // array the log already recorded.
-      writeLine(
+      const wrote = writeLine(
         JSON.stringify({
           ts: rfc3339Seconds(now()),
           argv: [...spawn.argv],
@@ -227,7 +233,7 @@ export function createSpawnLog(
           project: spawn.project,
         } satisfies SpawnLogEntry),
       )
-      records += 1
+      if (wrote) records += 1
     },
     close(): void {
       if (fd === null) return

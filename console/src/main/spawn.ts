@@ -576,13 +576,18 @@ export function binDirectories(options: {
   readonly configuredPath?: string | undefined
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly home?: string
+  /** `prefixes` replaces `WELL_KNOWN_BINARY_PREFIXES` for a test that cannot
+   * create `/opt/homebrew/bin`. It is the *list* that is injectable, never the
+   * order: the loop below walks whatever list it is given front to back, and
+   * `test/unit/spawn.test.ts` asserts the real list separately. */
+  readonly prefixes?: readonly string[] | undefined
 }): readonly string[] {
   const home = options.home ?? homedir()
   const candidates: string[] = []
   if (options.configuredPath !== undefined && options.configuredPath !== '') {
     candidates.push(options.configuredPath)
   }
-  for (const prefix of WELL_KNOWN_BINARY_PREFIXES) {
+  for (const prefix of options.prefixes ?? WELL_KNOWN_BINARY_PREFIXES) {
     const base = prefix.startsWith('~') ? join(home, prefix.slice(2)) : prefix
     candidates.push(join(base, FUGARO_BINARY_NAME))
   }
@@ -886,6 +891,7 @@ export async function resolveBinary(options: {
   readonly configuredPath?: string | undefined
   readonly appEnv: Readonly<Record<string, string | undefined>>
   readonly home?: string
+  readonly prefixes?: readonly string[] | undefined
   readonly directory: string
   readonly target: SpawnTarget
   readonly spawner?: ChildSpawner
@@ -896,6 +902,7 @@ export async function resolveBinary(options: {
     configuredPath: options.configuredPath,
     appEnv: options.appEnv,
     ...(options.home === undefined ? {} : { home: options.home }),
+    ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
   })
   for (const candidate of candidates) {
     if (!isExecutableFile(candidate)) continue
