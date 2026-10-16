@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/procgroup"
 )
 
 // The "Ready for your review" list holds what the runs bucket last recorded:
@@ -35,7 +37,12 @@ import (
 //     today and a merged PR drops off on the next refresh;
 //   - everything that is not a clean state word fails OPEN. gh missing, not
 //     logged in, rate-limited, failing or timing out leaves the PR listed,
-//     which is exactly today's behaviour. At most one note says why, once.
+//     which is exactly today's behaviour. At most one note says why, once, and
+//     it names a fixed reason — never a word of what gh printed;
+//   - the note describes the lookups failing NOW: it is dropped as soon as
+//     they all answer, and a URL that keeps failing is backed off (PRStateRetry
+//     doubling to PRStateRetryMax), so a broken gh costs a handful of processes
+//     an hour rather than one a minute per pull request.
 
 const (
 	// PRStateTimeout bounds one `gh` call.
@@ -47,15 +54,30 @@ const (
 	// the URL is asked about again. It exists so a broken gh is not spawned
 	// on every frame.
 	PRStateRetry = time.Minute
+	// PRStateRetryMax caps the backoff: a URL that keeps failing is asked
+	// about every PRStateRetry, then twice that, and so on, but never less
+	// often than this — a gh that starts working again (a token restored, a
+	// rate limit expiring) is noticed within PRStateRetryMax, and a gh that
+	// stays broken costs one process per PRStateRetryMax per URL however long
+	// the screen stays open.
+	PRStateRetryMax = 8 * time.Minute
 	// PRStateConcurrency bounds how many gh processes run at once.
 	PRStateConcurrency = 4
+	// ghKillGrace is how long gh has to exit after the context ends, before
+	// it is killed outright. It only ever matters for a gh that ignores
+	// SIGTERM; the group it leaves behind is killed either way.
+	ghKillGrace = 500 * time.Millisecond
 )
 
-// The two reasons a note can carry. Neither holds anything gh printed: the
-// note is safe to draw verbatim.
+// The reasons a note can carry. None of them holds anything gh printed: a note
+// is one of these fixed sentences, and is safe to draw verbatim.
 var (
 	errGHNotFound = errors.New("gh not found")
 	errGHNoAnswer = errors.New("gh could not tell the pull request's state")
+	// These two say why, without quoting gh: the exit text is read only to
+	// recognise the complaint, never to carry it further (classify).
+	errGHRateLimited = errors.New("gh is rate limited")
+	errGHNotLoggedIn = errors.New("gh is not logged in")
 )
 
 // ghPRURL matches exactly a GitHub pull request URL. Anchored at both ends
@@ -112,6 +134,9 @@ func (s prStateKind) gone() bool { return s == prMerged || s == prClosed }
 type prAnswer struct {
 	state prStateKind
 	at    time.Time
+	// fails counts the consecutive lookups that did not answer: it is what the
+	// backoff is computed from, and it resets the moment one answers.
+	fails int
 }
 
 // PRState is the cache of gh's answers, one per pull request URL.
@@ -120,15 +145,21 @@ type PRState struct {
 	timeout  time.Duration
 	openTTL  time.Duration
 	retry    time.Duration
+	retryMax time.Duration
 	now      func() time.Time
 	lookPath func(string) (string, error)
 	getenv   func(string) string
 
-	mu      sync.Mutex
-	seen    map[string]prAnswer
-	busy    map[string]bool
+	mu   sync.Mutex
+	seen map[string]prAnswer
+	busy map[string]bool
+	// fail is why the lookups that have not answered did not: one entry per
+	// URL whose last lookup failed and which is still on the list. The note is
+	// computed from it, so a failure that stops failing takes its note away
+	// with it. An entry is dropped when that URL answers, and when it leaves
+	// the list of ready rows.
+	fail    map[string]error
 	noGH    bool // gh is not installed: stop asking, for the life of the process
-	note    string
 	version uint64
 	wg      sync.WaitGroup
 	sem     chan struct{}
@@ -142,6 +173,7 @@ type PRStateOptions struct {
 	Timeout     time.Duration // PRStateTimeout
 	OpenTTL     time.Duration // PRStateOpenTTL
 	Retry       time.Duration // PRStateRetry
+	RetryMax    time.Duration // PRStateRetryMax
 	Concurrency int           // PRStateConcurrency
 	// Now, LookPath and Getenv replace the clock, exec.LookPath and os.Getenv
 	// (tests).
@@ -154,8 +186,9 @@ type PRStateOptions struct {
 func NewPRState(o PRStateOptions) *PRState {
 	p := &PRState{
 		disabled: o.Disabled, timeout: o.Timeout, openTTL: o.OpenTTL, retry: o.Retry,
-		now: o.Now, lookPath: o.LookPath, getenv: o.Getenv,
-		seen: map[string]prAnswer{}, busy: map[string]bool{},
+		retryMax: o.RetryMax,
+		now:      o.Now, lookPath: o.LookPath, getenv: o.Getenv,
+		seen: map[string]prAnswer{}, busy: map[string]bool{}, fail: map[string]error{},
 	}
 	if p.timeout <= 0 {
 		p.timeout = PRStateTimeout
@@ -165,6 +198,9 @@ func NewPRState(o PRStateOptions) *PRState {
 	}
 	if p.retry <= 0 {
 		p.retry = PRStateRetry
+	}
+	if p.retryMax < p.retry {
+		p.retryMax = max(PRStateRetryMax, p.retry)
 	}
 	if p.now == nil {
 		p.now = func() time.Time { return time.Now().UTC() }
@@ -195,16 +231,25 @@ func (p *PRState) Filter(rows []ReadyRow) []ReadyRow {
 	now := p.now()
 	var out []ReadyRow
 	var todo []prRef
+	var listed map[string]bool // the URLs this frame holds, when a failure may be stale
 	p.mu.Lock()
 	if p.noGH {
+		// gh will not appear while this process lives: nothing is attempted and
+		// the note stands.
 		p.mu.Unlock()
 		return rows
+	}
+	if len(p.fail) > 0 {
+		listed = make(map[string]bool, len(p.fail))
 	}
 	for _, row := range rows {
 		ref, ok := parseGHPRURL(row.Run.PRURL)
 		if !ok {
 			out = append(out, row)
 			continue
+		}
+		if listed != nil {
+			listed[ref.url] = true
 		}
 		a, ok := p.seen[ref.url]
 		if ok && a.state.gone() {
@@ -216,6 +261,13 @@ func (p *PRState) Filter(rows []ReadyRow) []ReadyRow {
 		}
 		out = append(out, row)
 	}
+	// The note is about the rows on the screen: a URL that has left the list
+	// stopped failing as far as anyone can see, so its complaint goes with it.
+	for u := range p.fail {
+		if !listed[u] {
+			delete(p.fail, u)
+		}
+	}
 	p.mu.Unlock()
 	for _, ref := range todo {
 		p.start(ref)
@@ -224,8 +276,9 @@ func (p *PRState) Filter(rows []ReadyRow) []ReadyRow {
 }
 
 // ttl is how long an answer is kept: forever for a merged or closed one, the
-// short TTL for an open one, and Retry for a failure, so a broken gh is not
-// spawned once per frame.
+// short TTL for an open one, and a growing, capped backoff for a failure, so a
+// broken gh is not spawned once per frame — nor once per minute per pull
+// request for as long as the screen stays open.
 func (p *PRState) ttl(a prAnswer) time.Duration {
 	switch a.state {
 	case prMerged, prClosed:
@@ -233,18 +286,52 @@ func (p *PRState) ttl(a prAnswer) time.Duration {
 	case prOpen:
 		return p.openTTL
 	}
-	return p.retry
+	d := p.retry
+	for i := 1; i < a.fails; i++ {
+		if d >= p.retryMax/2 {
+			return p.retryMax
+		}
+		d *= 2
+	}
+	return min(d, p.retryMax)
 }
 
-// Note is the one-line reason PR states could not be read, "" when none
-// happened. It is set once, never per URL, and never holds gh's own output.
+// Note is the one-line reason the ready list's PR states cannot be read, ""
+// when none is missing. It describes the lookups failing NOW — it goes away as
+// soon as they all answer — says one thing for the whole list rather than one
+// per URL, and holds a fixed sentence of ours, never gh's own output.
 func (p *PRState) Note() string {
 	if p == nil {
 		return ""
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.note
+	return p.noteLocked()
+}
+
+// noteLocked derives the note from the failures in hand. The order is by how
+// much the operator can do about it: a missing gh first, then the two
+// complaints gh names itself, then the catch-all.
+func (p *PRState) noteLocked() string {
+	if len(p.fail) == 0 {
+		return ""
+	}
+	for _, err := range []error{errGHNotFound, errGHRateLimited, errGHNotLoggedIn} {
+		if p.anyFailedWith(err) {
+			return "PR state unavailable: " + err.Error()
+		}
+	}
+	return "PR state unavailable: " + errGHNoAnswer.Error()
+}
+
+// anyFailedWith is true when some URL's last lookup failed with err.
+func (p *PRState) anyFailedWith(err error) bool {
+	for _, e := range p.fail {
+		if errors.Is(e, err) {
+			return true
+		}
+	}
+	return false
 }
 
 // Version counts answers landed; a caller redrawing on a timer compares it to
@@ -306,31 +393,51 @@ func (p *PRState) look(ref prRef) {
 			// so once.
 			p.noGH = true
 		}
-		if p.note == "" {
-			p.note = "PR state unavailable: " + err.Error()
+		fails := 1
+		if prev, ok := p.seen[ref.url]; ok && prev.state == prUnknown {
+			fails = prev.fails + 1
 		}
-		p.seen[ref.url] = prAnswer{state: prUnknown, at: p.now()}
+		// This URL is failing now; Note is derived from this map, so the note
+		// appears when a lookup fails and disappears when none is failing.
+		p.fail[ref.url] = err
+		p.seen[ref.url] = prAnswer{state: prUnknown, at: p.now(), fails: fails}
 		return
 	}
+	delete(p.fail, ref.url)
 	p.seen[ref.url] = prAnswer{state: state, at: p.now()}
 }
 
 // ask runs `gh pr view <n> --repo <owner>/<repo> --json state --jq .state`.
 // There is no shell and no interpolation: the number and the repository are
 // separate argv elements, and only ever come from a URL that matched ghPRURL.
+//
+// gh runs the way every other command this tool spawns does (internal
+// procgroup): in a process group of its own, with pipes of our own, and a
+// deadline that is enforced on the whole group. That matters because killing
+// gh alone is not enough — a gh that starts a credential helper or a pager,
+// or that leaves any child behind holding the pipe, would keep a plain
+// exec.Cmd.Output blocked long past its context.
 func (p *PRState) ask(ctx context.Context, ref prRef) (prStateKind, error) {
 	bin, err := p.lookPath("gh")
 	if err != nil {
 		return prUnknown, errGHNotFound
 	}
-	cmd := exec.CommandContext(ctx, bin, "pr", "view", strconv.Itoa(ref.number),
-		"--repo", ref.owner+"/"+ref.repo, "--json", "state", "--jq", ".state")
-	cmd.Env = ghEnv(p.getenv)
-	out, err := cmd.Output()
-	if err != nil {
-		return prUnknown, errGHNoAnswer
+	// Both streams are capped: gh's stdout is read for one word, and its
+	// stderr is read only to recognise the complaint (classify). Neither is
+	// ever kept, logged or drawn.
+	var out, complaint boundedBuffer
+	code, err := procgroup.Run(ctx, procgroup.Cmd{
+		Name: bin,
+		Args: []string{"pr", "view", strconv.Itoa(ref.number),
+			"--repo", ref.owner + "/" + ref.repo, "--json", "state", "--jq", ".state"},
+		Env:    ghEnv(p.getenv),
+		Stdout: &out, Stderr: &complaint,
+		Grace: ghKillGrace,
+	})
+	if err != nil || code != 0 {
+		return prUnknown, classify(complaint.String())
 	}
-	switch strings.ToUpper(strings.TrimSpace(string(out))) {
+	switch strings.ToUpper(strings.TrimSpace(out.String())) {
 	case "OPEN":
 		return prOpen, nil
 	case "MERGED":
@@ -341,18 +448,63 @@ func (p *PRState) ask(ctx context.Context, ref prRef) (prStateKind, error) {
 	return prUnknown, errGHNoAnswer
 }
 
+// classify turns what gh complained about into one of our own fixed sentences,
+// so the note can say more than "it did not work" without ever carrying a word
+// gh printed. gh's text is matched here and dropped here.
+func classify(complaint string) error {
+	s := strings.ToLower(complaint)
+	switch {
+	case strings.Contains(s, "rate limit"):
+		return errGHRateLimited
+	case strings.Contains(s, "authentication"), strings.Contains(s, "not logged in"),
+		strings.Contains(s, "gh auth login"), strings.Contains(s, "bad credentials"):
+		return errGHNotLoggedIn
+	}
+	return errGHNoAnswer
+}
+
+// boundedBuffer keeps the first boundedMax bytes written to it and counts, but
+// drops, the rest: a runaway gh cannot grow this process's memory, and a write
+// never fails, so the child is never left blocked on a full pipe.
+type boundedBuffer struct {
+	buf []byte
+}
+
+const boundedMax = 4096
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if room := boundedMax - len(b.buf); room > 0 {
+		b.buf = append(b.buf, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string { return string(b.buf) }
+
 // ghEnvKeep is the whole environment a gh of ours may inherit: what it needs
-// to find its configuration and its token, and the proxy variables, on the
+// to find its configuration and its credentials — the two tokens, the
+// configuration directory (GH_CONFIG_DIR, else XDG_CONFIG_HOME), the host (so
+// a gh set up for an enterprise host is the same gh the operator uses) and the
+// certificate store, since a gh that cannot verify the server cannot answer —
+// plus the terminal it may want to draw in, and the proxy variables, on the
 // off chance that the network only works through one. Nothing else of the
 // operator's (or the run's) environment reaches it.
+//
+// Variables are forwarded, never read: no value here is inspected, compared or
+// logged. They are named in ghEnvKeep in the order gh is given them.
 var ghEnvKeep = []string{
 	"PATH", "HOME", "GH_TOKEN", "GITHUB_TOKEN",
+	"GH_CONFIG_DIR", "XDG_CONFIG_HOME", "GH_HOST", "GH_ENTERPRISE_TOKEN",
+	"SSL_CERT_FILE", "TERM",
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
 	"http_proxy", "https_proxy", "no_proxy",
 }
 
+// ghEnv builds gh's environment. The result is never nil: a nil Env means
+// "inherit everything" to both exec and procgroup, which is the one thing this
+// function exists to prevent.
 func ghEnv(getenv func(string) string) []string {
-	var env []string
+	env := make([]string, 0, len(ghEnvKeep))
 	for _, k := range ghEnvKeep {
 		if v := getenv(k); v != "" {
 			env = append(env, k+"="+v)

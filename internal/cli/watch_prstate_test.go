@@ -125,15 +125,15 @@ func TestWatchPlainWithoutGHKeepsRowsAndNotesOnce(t *testing.T) {
 	}
 }
 
-// A gh that fails leaves the row listed, with one note, and never leaks what
-// gh printed.
+// A gh that fails leaves the row listed, with one note that names the reason
+// in words of ours, and never leaks what gh printed.
 func TestWatchPlainWithFailingGHKeepsRows(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
 	run := runID(10*time.Minute, "cc01")
 	f.writeTask(t, appSlug, run, "")
 	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
-	fakeWatchGH(t, "echo 'gh: HTTP 403: API rate limit exceeded for user' >&2; exit 1\n")
+	fakeWatchGH(t, "echo 'gh: HTTP 403: API rate limit exceeded for user ID 12345' >&2; exit 1\n")
 
 	plain, _, err := execute(t, "watch", "--once", "--plain")
 	if err != nil {
@@ -142,8 +142,14 @@ func TestWatchPlainWithFailingGHKeepsRows(t *testing.T) {
 	if !strings.Contains(plain, "Ready for your review (1)") {
 		t.Fatalf("a failing gh must fail open:\n%s", plain)
 	}
-	if strings.Contains(plain, "rate limit") {
-		t.Fatalf("gh's own output must never be shown:\n%s", plain)
+	if want := "PR state unavailable: gh is rate limited"; !strings.Contains(plain, want) {
+		t.Fatalf("want the note %q:\n%s", want, plain)
+	}
+	// The reason is a sentence of ours; not a word gh printed reaches the frame.
+	for _, leaked := range []string{"HTTP 403", "12345"} {
+		if strings.Contains(plain, leaked) {
+			t.Fatalf("gh's own output (%q) must never be shown:\n%s", leaked, plain)
+		}
 	}
 	if n := strings.Count(plain, "PR state unavailable"); n != 1 {
 		t.Fatalf("want exactly one note, got %d:\n%s", n, plain)

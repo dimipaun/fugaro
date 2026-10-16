@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -57,14 +58,15 @@ func urls(rows []ReadyRow) []string {
 }
 
 // ghStates answers by pull request number: 1 merged, 2 closed, 3 open, 4 a
-// failure, 5 a state word that is not one of the three, 6 slow.
+// failure, 5 a state word that is not one of the three. Every one of them
+// answers at once: a test that is about the ANSWER must never also be about
+// how long it took.
 const ghStates = `case "$3" in
   1) echo MERGED ;;
   2) echo CLOSED ;;
   3) echo OPEN ;;
   4) echo "gh: could not resolve to a PullRequest" >&2; exit 1 ;;
   5) echo DRAFT ;;
-  6) sleep 1; echo OPEN ;;
   *) echo OPEN ;;
 esac
 `
@@ -97,21 +99,25 @@ func TestPRStateDropsMergedAndClosedKeepsOpen(t *testing.T) {
 	}
 }
 
-// Everything that is not a clean answer fails open: a failing gh, a state word
-// gh never prints, and a gh that does not answer in time all leave the row
-// listed. The note says so once, and never carries gh's output.
+// Everything that is not a clean answer fails open: a failing gh and a state
+// word gh never prints both leave the row listed. The note says so once, and
+// never carries gh's output.
+//
+// The timeout is the generous production one: every row here answers at once,
+// and a freshly written /bin/sh script can take a good fraction of a second to
+// start on a loaded machine — a short timeout would make this test about the
+// machine, not about the answer. The timing case has its own test below.
 func TestPRStateKeepsRowsWhenGHDisagrees(t *testing.T) {
 	calls := fakeGH(t, ghStates)
-	p := NewPRState(PRStateOptions{Timeout: 150 * time.Millisecond})
+	p := NewPRState(PRStateOptions{Timeout: PRStateTimeout})
 	rows := []ReadyRow{
 		readyRow("https://github.com/acme/app/pull/4", 4),
 		readyRow("https://github.com/acme/app/pull/5", 5),
-		readyRow("https://github.com/acme/app/pull/6", 6),
 	}
 	p.Filter(rows)
-	p.Settle(5 * time.Second)
-	if got := p.Filter(rows); len(got) != 3 {
-		t.Fatalf("kept %d rows, want all three", len(got))
+	p.Settle(30 * time.Second)
+	if got := p.Filter(rows); len(got) != 2 {
+		t.Fatalf("kept %d rows, want both", len(got))
 	}
 	if p.Note() != "PR state unavailable: "+errGHNoAnswer.Error() {
 		t.Fatalf("note = %q", p.Note())
@@ -119,8 +125,64 @@ func TestPRStateKeepsRowsWhenGHDisagrees(t *testing.T) {
 	if strings.Contains(p.Note(), "resolve to a PullRequest") {
 		t.Fatalf("the note must not carry gh's output: %q", p.Note())
 	}
-	if n := len(ghCalls(t, calls)); n != 3 {
+	if n := len(ghCalls(t, calls)); n != 2 {
 		t.Fatalf("calls = %d, want one per row", n)
+	}
+}
+
+// A gh that does not answer in time fails open like every other bad answer,
+// and the lookup comes back when the timeout says so, not when gh feels like
+// it: the row stays listed, the note says the state could not be read, and the
+// whole thing lasts about the timeout — this fake gh would take 30s.
+func TestPRStateGHThatHangsLeavesTheRowListed(t *testing.T) {
+	calls := fakeGH(t, "sleep 30; echo OPEN\n")
+	timeout := time.Second
+	p := NewPRState(PRStateOptions{Timeout: timeout})
+	rows := []ReadyRow{readyRow("https://github.com/acme/app/pull/7", 7)}
+	p.Filter(rows)
+	start := time.Now()
+	p.Settle(20 * time.Second)
+	elapsed := time.Since(start)
+	if got := p.Filter(rows); len(got) != 1 {
+		t.Fatalf("kept %d rows, want the timed-out one listed", len(got))
+	}
+	if want := "PR state unavailable: " + errGHNoAnswer.Error(); p.Note() != want {
+		t.Fatalf("note = %q, want %q", p.Note(), want)
+	}
+	if elapsed > timeout+2*time.Second {
+		t.Fatalf("the lookup took %s, want it bounded by its %s timeout", elapsed, timeout)
+	}
+	if n := len(ghCalls(t, calls)); n != 1 {
+		t.Fatalf("calls = %d, want one", n)
+	}
+}
+
+// gh that leaves a child holding the pipe behind it must not hold the lookup:
+// killing gh alone is not enough, since cmd.Output then waits for the pipe to
+// close, and the child here keeps it open for 30s. The whole group goes, so the
+// answer arrives at once and the state it printed is the state recorded.
+func TestPRStateGHLeavingAChildBehindAnswers(t *testing.T) {
+	calls := fakeGH(t, "sleep 30 &\necho OPEN\n")
+	timeout := time.Second
+	p := NewPRState(PRStateOptions{Timeout: timeout})
+	rows := []ReadyRow{readyRow("https://github.com/acme/app/pull/8", 8)}
+	p.Filter(rows)
+	start := time.Now()
+	p.Settle(25 * time.Second)
+	elapsed := time.Since(start)
+	if got := p.Filter(rows); len(got) != 1 {
+		t.Fatalf("kept %d rows, want the open one listed", len(got))
+	}
+	// An OPEN answer landed, which is why there is nothing to say: a lookup
+	// that had failed or timed out would carry a note.
+	if p.Note() != "" {
+		t.Fatalf("note = %q, want none: gh answered OPEN at once", p.Note())
+	}
+	if elapsed > timeout+2*time.Second {
+		t.Fatalf("the lookup took %s: a child of gh held the pipe open past the timeout", elapsed)
+	}
+	if n := len(ghCalls(t, calls)); n != 1 {
+		t.Fatalf("calls = %d, want one", n)
 	}
 }
 
@@ -220,24 +282,88 @@ func TestPRStateCachesAnswers(t *testing.T) {
 }
 
 // A failed answer is retried, but not on every frame: a broken gh must not be
-// spawned once per redraw.
+// spawned once per redraw. Each further failure doubles the wait, up to the cap,
+// so a gh that stays broken costs a handful of processes an hour per URL rather
+// than one a minute, and one that starts working is still noticed within the cap.
 func TestPRStateRetriesAFailureSlowly(t *testing.T) {
 	calls := fakeGH(t, ghStates)
 	now := time.Unix(1_700_000_000, 0)
-	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, Retry: time.Minute})
+	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, Retry: time.Minute, RetryMax: 4 * time.Minute})
 	rows := []ReadyRow{readyRow("https://github.com/acme/app/pull/4", 4)}
-	for i := 0; i < 5; i++ {
+	want := 0
+	// fail asks and checks that the number of gh processes so far is want.
+	fail := func(what string) {
+		t.Helper()
+		want++
 		p.Filter(rows)
-		p.Settle(5 * time.Second)
+		p.Settle(30 * time.Second)
+		if n := len(ghCalls(t, calls)); n != want {
+			t.Fatalf("calls = %d after %s, want %d", n, what, want)
+		}
 	}
-	if n := len(ghCalls(t, calls)); n != 1 {
-		t.Fatalf("calls = %d, want one inside the retry window", n)
+	// quiet checks that nothing ran: the URL is inside its retry window.
+	quiet := func(what string) {
+		t.Helper()
+		p.Filter(rows)
+		p.Settle(30 * time.Second)
+		if n := len(ghCalls(t, calls)); n != want {
+			t.Fatalf("calls = %d after %s, want none more than %d", n, what, want)
+		}
+	}
+	fail("the first frame")
+	for i := 0; i < 4; i++ {
+		quiet("a frame inside the first window")
+	}
+	now = now.Add(time.Minute + time.Second)
+	fail("the first window has passed")
+	// The wait doubles with each failure: a minute after the second failure is
+	// inside its two-minute window, and one second past it is not.
+	now = now.Add(time.Minute)
+	quiet("half of the doubled window")
+	now = now.Add(time.Minute + time.Second)
+	fail("the doubled window has passed")
+	// Then it doubles to the four-minute cap, and stays there: three minutes
+	// in nothing runs, four minutes in it does, however long the screen stays
+	// open.
+	for i := 0; i < 3; i++ {
+		now = now.Add(4*time.Minute - time.Second)
+		quiet("just inside the capped window")
+		now = now.Add(2 * time.Second)
+		fail("the capped window has passed")
+	}
+}
+
+// A gh that comes back clears the note: it describes the lookups failing now,
+// not a failure that happened once and was fixed a minute later.
+func TestPRStateNoteClearsWhenGHAgreesAgain(t *testing.T) {
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + calls + "\n" +
+		"if [ -f " + dir + "/broken ]; then echo 'gh: could not resolve' >&2; exit 1; fi\necho OPEN\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	now := time.Unix(1_700_000_000, 0)
+	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, Retry: time.Minute})
+	rows := []ReadyRow{readyRow("https://github.com/acme/app/pull/1", 1)}
+	p.Filter(rows)
+	p.Settle(30 * time.Second)
+	if want := "PR state unavailable: " + errGHNoAnswer.Error(); p.Note() != want {
+		t.Fatalf("note = %q, want %q", p.Note(), want)
+	}
+	if err := os.Remove(filepath.Join(dir, "broken")); err != nil {
+		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Minute)
 	p.Filter(rows)
-	p.Settle(5 * time.Second)
-	if n := len(ghCalls(t, calls)); n != 2 {
-		t.Fatalf("calls = %d, want a retry after the window", n)
+	p.Settle(30 * time.Second)
+	if p.Note() != "" {
+		t.Fatalf("note = %q, want none: gh answered on the retry", p.Note())
 	}
 }
 
@@ -414,23 +540,57 @@ func TestParseGHPRURL(t *testing.T) {
 	}
 }
 
-// The environment gh inherits is exactly the list in ghEnvKeep: nothing of the
-// run's, nothing of the operator's beyond PATH, HOME, a token and a proxy.
+// The environment gh inherits is exactly the list in ghEnvKeep: what it needs
+// to find its configuration, its credentials and its network, and nothing of
+// the run's, the agent's or the operator's beyond that.
 func TestGhEnvIsMinimal(t *testing.T) {
 	env := map[string]string{
 		"PATH": "/bin", "HOME": "/home/x", "GH_TOKEN": "t", "GITHUB_TOKEN": "g",
+		"GH_CONFIG_DIR": "/home/x/.config/gh", "XDG_CONFIG_HOME": "/home/x/.config",
+		"GH_HOST": "github.example.com", "GH_ENTERPRISE_TOKEN": "e",
+		"SSL_CERT_FILE": "/etc/ssl/certs/ca.pem", "TERM": "xterm-256color",
 		"HTTPS_PROXY": "http://p", "no_proxy": "localhost",
 		"ANTHROPIC_API_KEY": "secret", "FUGARO_GIT_TOKEN": "secret", "CLAUDECODE": "1",
 		"PS1": "x", "LD_PRELOAD": "/tmp/evil.so", "GIT_CONFIG_COUNT": "2",
 	}
 	got := ghEnv(func(k string) string { return env[k] })
-	want := []string{"PATH=/bin", "HOME=/home/x", "GH_TOKEN=t", "GITHUB_TOKEN=g", "HTTPS_PROXY=http://p", "no_proxy=localhost"}
+	want := []string{
+		"PATH=/bin", "HOME=/home/x", "GH_TOKEN=t", "GITHUB_TOKEN=g",
+		"GH_CONFIG_DIR=/home/x/.config/gh", "XDG_CONFIG_HOME=/home/x/.config",
+		"GH_HOST=github.example.com", "GH_ENTERPRISE_TOKEN=e",
+		"SSL_CERT_FILE=/etc/ssl/certs/ca.pem", "TERM=xterm-256color",
+		"HTTPS_PROXY=http://p", "no_proxy=localhost",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("env = %v, want %v", got, want)
 	}
 	for _, e := range got {
 		if strings.Contains(e, "secret") || strings.HasPrefix(e, "LD_PRELOAD=") {
 			t.Fatalf("gh inherited %q", e)
+		}
+	}
+	// A gh of ours never inherits the whole environment, however little is set:
+	// a nil Env means just that to both exec and procgroup.
+	if got := ghEnv(func(string) string { return "" }); got == nil || len(got) != 0 {
+		t.Fatalf("env = %#v, want an empty, non-nil one", got)
+	}
+}
+
+// gh's own complaint is read only to name the reason, never to carry it: the
+// note is one of our fixed sentences.
+func TestClassifyNamesTheReasonWithoutQuotingGH(t *testing.T) {
+	for _, tc := range []struct {
+		complaint string
+		want      error
+	}{
+		{"gh: HTTP 403: API rate limit exceeded for user ID 1", errGHRateLimited},
+		{"gh: To get started with GitHub CLI, please run: gh auth login", errGHNotLoggedIn},
+		{"gh: authentication required", errGHNotLoggedIn},
+		{"gh: could not resolve to a PullRequest with the number 42", errGHNoAnswer},
+		{"", errGHNoAnswer},
+	} {
+		if got := classify(tc.complaint); !errors.Is(got, tc.want) {
+			t.Errorf("classify(%q) = %v, want %v", tc.complaint, got, tc.want)
 		}
 	}
 }
