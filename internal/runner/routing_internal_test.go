@@ -1,6 +1,9 @@
 package runner
 
 import (
+	"bytes"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +29,9 @@ func routedRun(t *testing.T, sw *config.RoutingClaude, coder, reviewer string) *
 		// placeholder is not a credential, and gatewayRoutes refuses to build a
 		// route without one.
 		d: Deps{
+			// A sink, so a run that logs during the switch (the Vertex/auto skip)
+			// does not reach a nil logger.
+			Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Env: []string{config.ProviderKeyEnv("openrouter-api-key") + "=" + routedProviderKey},
 			Providers: map[string]config.ModelProvider{
 				"openrouter": {
@@ -161,6 +167,53 @@ func TestRoutingDoesNothingWithTheGatewayOff(t *testing.T) {
 	}
 	if pins := r.stagePins("implement"); pins != nil {
 		t.Errorf("stagePins = %+v with the gateway off, want none", pins)
+	}
+}
+
+// TestAutoDoesNotRouteAVertexRun (review finding on this change): via: auto
+// asks whether the run has a Claude credential of its own, and a Vertex run
+// has one — Vertex serves Claude under the project's own GCP project, and its
+// jobs carry no Anthropic API key, so the key-presence question would answer
+// "no key, route it" about a run that has a route already. The switch is
+// skipped, with one line saying so, and the pins keep Claude's own IDs.
+//
+// via: openrouter is not skipped: it names the route outright, and a Vertex run
+// that carries it is refused downstream by config.CheckProviderAuth ("a run
+// does not mix credentials") rather than quietly routed.
+//
+// Hand mutation this fails on: treating auto as openrouter for every credential
+// (the resolver's own answer, before the caller that knows the credential
+// prefers the direct path), which routes a Vertex run's Claude prompts to a
+// third party the operator never chose for it.
+func TestAutoDoesNotRouteAVertexRun(t *testing.T) {
+	const canonical = "claude-sonnet-5-5"
+	sw := &config.RoutingClaude{Via: config.RouteAuto, Models: []string{canonical}}
+	r := routedRun(t, sw, canonical, canonical)
+	r.cfg.Agent.Auth = "vertex"
+	var logs bytes.Buffer
+	r.d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Fatalf("the auto switch halted a Vertex run: %v", err)
+	}
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != canonical {
+		t.Errorf("the Vertex run's coder pin = %q, want %q: auto never routes a Vertex run", got, canonical)
+	}
+	if pins := r.stagePins("implement"); pins["CLAUDE_CODE_SUBAGENT_MODEL"] != canonical {
+		t.Errorf("pins = %+v, want the direct spelling", pins)
+	}
+	if !strings.Contains(logs.String(), "routing_auto_vertex") {
+		t.Errorf("the skip is silent: the run's log does not carry it:\n%s", logs.String())
+	}
+	// The contrast, on the same fixture: openrouter is carried out, so the skip
+	// is about auto and not about Vertex.
+	via := &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{canonical}}
+	r = routedRun(t, via, canonical, canonical)
+	r.cfg.Agent.Auth = "vertex"
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Fatalf("an explicit openrouter switch halted a Vertex run: %v", err)
+	}
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != "anthropic/claude-sonnet-5.5" {
+		t.Errorf("via: openrouter left the Vertex run's pin at %q, want the route's ID", got)
 	}
 }
 

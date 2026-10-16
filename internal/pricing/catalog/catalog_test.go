@@ -155,6 +155,16 @@ func TestLoadRejectsMalformedFile(t *testing.T) {
 			models["anthropic/claude-sonnet-5.5"] = clone
 			return marshal(t, d)
 		}, "both claim canonical_id"},
+		// The value is the *direct* spelling and never another route's ID: a
+		// canonical_id with a vendor prefix pairs the model with a second
+		// route, which is exactly the second answer to where a call goes and
+		// what it costs that the map exists to remove (review finding on this
+		// change).
+		{"a canonical_id that is a route ID", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["canonical_id"] = "anthropic/claude-opus-5.5"
+			return marshal(t, d)
+		}, "is a route ID, not the canonical one"},
 		{"trailing data", func(t *testing.T) []byte {
 			return append(marshal(t, valid(t)), []byte("{}")...)
 		}, "trailing data"},
