@@ -20,7 +20,8 @@ const GitProviderEnv = "FUGARO_GIT_PROVIDER"
 
 // checkProject refuses a job whose repository belongs to another Fugaro
 // project than the job does (design §2.5). It runs before the lock, so a
-// refusal changes nothing remote. cfg is the configuration the run uses:
+// refusal takes no lease and writes nothing remote but the run's own record
+// (bootstrap's deferred handler). cfg is the configuration the run uses:
 // a first run's is the ref's, a follow-up's the base branch's.
 //
 // A first run reads project: leniently (a file that doesn't parse still
@@ -138,10 +139,15 @@ func remoteOfAnotherKind(derived, remote string) string {
 }
 
 // remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
-// its host alone, anything else as the URL without its userinfo. Deps.Remote is
-// a launcher's to set and a remote URL may carry a token in its userinfo; the
-// run never registers that one as a secret, so it is dropped here rather than
-// redacted later.
+// its host alone, anything else as the URL without its userinfo, its query and
+// its fragment. Deps.Remote is a launcher's to set and a remote URL may carry a
+// credential in any of the three — https://user:token@host/repo.git,
+// https://host/repo.git?access_token=SECRET (the shape Bitbucket's forge URLs
+// use), and the same in a fragment — and what a refusal quotes should carry
+// none of them. The run registers what it can recognise with its redactor as
+// well (addRemoteSecrets), so that git's own messages about a remote it could
+// not reach are redacted too, but the display drops them rather than relying
+// on that.
 func remoteDisplay(remote string) string {
 	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
 		if host, _, ok := strings.Cut(rest, ":"); ok {
@@ -153,7 +159,187 @@ func remoteDisplay(remote string) string {
 		return "the remote"
 	}
 	u.User = nil
+	u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
 	return u.String()
+}
+
+// remoteSecretParams are the query parameters a git remote URL carries a
+// credential in, by the convention of the forges that write them that way:
+// Bitbucket's ?access_token=, GitLab's ?private_token=, and the names a
+// hand-written remote reaches for.
+var remoteSecretParams = map[string]bool{
+	"access_token": true, "private_token": true, "token": true, "auth": true,
+	"key": true, "password": true, "client_secret": true, "x-token-auth": true,
+}
+
+// remoteAnonymousUsers are the usernames a remote URL puts in front of a
+// credential, or in front of nothing at all: a bare git@ says nothing, and
+// x-access-token (GitHub) and x-token-auth (Bitbucket) are the names those
+// forges expect with the token as the password. None of them is a secret, and
+// registering one would redact it out of every line the run publishes.
+var remoteAnonymousUsers = map[string]bool{
+	"git": true, "oauth2": true, "x-access-token": true, "x-token-auth": true,
+	"token": true, "user": true,
+}
+
+// addRemoteSecrets registers with the run's redactor every credential a remote
+// URL can carry: its userinfo — the password, and the username when there is
+// none, because https://<token>@host/repo.git is a shape the forges accept —
+// the value of any credential-named parameter in its query and in its
+// fragment, and a query or fragment that is a bare token with no name in front
+// of it (addBareRemoteSecret, whose doc has the argument and the one limit).
+// Those three are the places remoteDisplay drops for the refusals
+// this package writes, and this is the other half: what the run can recognise,
+// it redacts wherever it appears, including git's own "unable to access ..."
+// lines, which quote the URL it was given verbatim (the fragment with them —
+// git is handed https://host/repo.git#access_token=SECRET and prints it).
+//
+// A remote url.Parse refuses is read off the string as written instead
+// (addRemoteSecretRaw): the parse is how this function finds the three places,
+// not a condition on registering them, and the shapes it refuses are exactly
+// the ones a forge-shaped credential hides in — an scp-like remote with a
+// query (git@github.com:acme/app.git?access_token=SECRET), a password holding a
+// "/" (https://user:tok/en@host/repo.git) or an escape url.Parse will not
+// decode (https://user:pa%zz@host/repo.git). Returning there would leave the
+// credential in no list at all while git is still handed the URL verbatim,
+// which is the one outcome this function's doc rules out.
+func (r *run) addRemoteSecrets(remote string) {
+	u, err := url.Parse(remote)
+	if err != nil {
+		r.addRemoteSecretRaw(remote)
+		return
+	}
+	if u.User != nil {
+		if pw, ok := u.User.Password(); ok {
+			r.addSecret(pw)
+			// The pair, as a URL writes it: that is how git echoes it back.
+			r.addSecret(u.User.String())
+		} else if name := u.User.Username(); name != "" && !remoteAnonymousUsers[strings.ToLower(name)] {
+			r.addSecret(name)
+			// And the spelling the URL was written with: git echoes the URL it
+			// was given, escapes and all, so https://ghp%40x@host/repo.git
+			// comes back exactly like that and a redactor holding only the
+			// decoded username would miss it — the reason
+			// addRemoteSecretParams registers both spellings too.
+			r.addSecret(u.User.String())
+		}
+	}
+	r.addRemoteSecretParams(u.RawQuery)
+	// A fragment carries no query of its own to Go: it is one opaque string
+	// here, so the same parameter parsing is applied to it, and to both
+	// spellings of it, because either can be the one git echoes back.
+	r.addRemoteSecretParams(u.RawFragment)
+	if u.RawFragment != u.Fragment {
+		r.addRemoteSecretParams(u.Fragment)
+	}
+}
+
+// addRemoteSecretRaw reads the three places off a remote url.Parse refuses, as
+// the string was written: the fragment, the query, and the userinfo ahead of
+// the first "@". The cuts are the ones a URL is written with — "?" opens the
+// query, "#" the fragment — and both parts are handed to the same parameter
+// parsing the parsed path uses, so a credential-named parameter and a bare
+// token are registered the same way either way.
+//
+// The userinfo is everything in front of the first "@" of the authority, with
+// the "//" of a scheme cut off when there is one; a remote with no "@" has no
+// userinfo to register. An unparseable remote may hold an "@" in its path as
+// well (https://host/acme@app.git), and that part is registered too: the
+// parse that would have told the two apart is the one that failed, and
+// registering a substring that was never a credential costs a redaction while
+// missing one costs the credential. An scp-like remote's "git@" is the
+// anonymous user every forge writes, and is skipped as it is on the parsed
+// path; a "name:value" userinfo registers the value and the pair, for the
+// reason the parsed path does.
+//
+// Only the spelling as written is registered here: this path exists because
+// url.Parse refused the string, so there is no decoded spelling to be had, and
+// the spelling git echoes back is the one the remote was written with.
+func (r *run) addRemoteSecretRaw(remote string) {
+	head, frag, hasFrag := strings.Cut(remote, "#")
+	head, query, hasQuery := strings.Cut(head, "?")
+	if hasQuery {
+		r.addRemoteSecretParams(query)
+	}
+	if hasFrag {
+		r.addRemoteSecretParams(frag)
+	}
+	authority := head
+	if i := strings.Index(authority, "//"); i >= 0 {
+		authority = authority[i+2:]
+	}
+	at := strings.Index(authority, "@")
+	if at < 0 {
+		return
+	}
+	userinfo := authority[:at]
+	if _, pw, ok := strings.Cut(userinfo, ":"); ok {
+		r.addSecret(pw)
+		r.addSecret(userinfo)
+		return
+	}
+	if userinfo != "" && !remoteAnonymousUsers[strings.ToLower(userinfo)] {
+		r.addSecret(userinfo)
+	}
+}
+
+// addRemoteSecretParams registers the value of every parameter in raw — a
+// query or a fragment — whose name is one a forge writes a credential under,
+// in both spellings: the raw one and the percent-decoded one. Git echoes the
+// URL it was given, escapes and all (?access_token=S%20ECRET comes back
+// spelled exactly like that), so registering only the decoded value would
+// leave that echo unredacted; registering both costs one extra value in the
+// redactor and covers a remote written either way.
+//
+// A field with no name in front of it — a bare token, ?glpat-secret or
+// #glpat-secret — has no name to be recognised by, so the whole field is
+// registered (addBareRemoteSecret). A fragment carries no meaning for git and
+// a query little more: git copies both into the URL it requests and echoes the
+// URL verbatim when it cannot reach it, so nothing a remote states that way is
+// worth leaving unredacted, and remoteDisplay's own test already takes
+// #glpat-secret for a credential.
+func (r *run) addRemoteSecretParams(raw string) {
+	for _, field := range strings.Split(raw, "&") {
+		k, v, ok := strings.Cut(field, "=")
+		if !ok {
+			r.addBareRemoteSecret(field)
+			continue
+		}
+		if v == "" {
+			continue
+		}
+		name := k
+		if decoded, err := url.QueryUnescape(k); err == nil {
+			name = decoded
+		}
+		if !remoteSecretParams[strings.ToLower(name)] {
+			continue
+		}
+		r.addSecret(v)
+		if decoded, err := url.QueryUnescape(v); err == nil && decoded != v {
+			r.addSecret(decoded)
+		}
+	}
+}
+
+// addBareRemoteSecret registers field — one &-separated part of a query or a
+// fragment with no "name=" in it — as a credential, in both spellings, for the
+// reason addRemoteSecretParams gives: there is no name to recognise it by, so
+// what is left is the value itself, and git echoes it back in the URL it was
+// given. minSecretLen is the floor, the same one addMountedSecrets applies:
+// below it a field is registered nowhere, because redacting three characters
+// out of everything the run writes costs more than the token they could be.
+// The floor is not a judgement about shape — a four-character bare fragment is
+// registered, and that is the cost of not being able to recognise one — only
+// about how much a mis-registration would take with it.
+func (r *run) addBareRemoteSecret(field string) {
+	if len(field) < minSecretLen {
+		return
+	}
+	r.addSecret(field)
+	if decoded, err := url.QueryUnescape(field); err == nil && decoded != field && len(decoded) >= minSecretLen {
+		r.addSecret(decoded)
+	}
 }
 
 // admissionCheck admits the repository this run was launched for, before any
@@ -164,9 +350,38 @@ func remoteDisplay(remote string) string {
 // identity is what an admission rests on (R2-9).
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
-// provider is opened, so no git credential exists yet and nothing has been
+// provider is opened, so no git credential is requested and nothing has been
 // cloned; and before the lock and the budget session, so a run that is not
-// admitted writes no lease. Its refusals are the run's own: the slug it was
+// admitted writes no lease, no outcome and no spend. The claim is the one
+// write that precedes it — it is what makes this execution the run's owner,
+// and a duplicate is turned away there, before any of this is read — so the
+// trace a refusal leaves is its own run record, carrying the refusal, and
+// nothing else anywhere.
+//
+// The claim stays above this check, and that order is a ruling, not an
+// accident (the owner delegated it to the analysis below, which this follows):
+//
+//   - The claim is create-only. It can never overwrite another execution's
+//     record — a second execution is refused by the store, not allowed to
+//     replace what is there — so claiming before admitting takes nothing away
+//     from any run and leaves a refused one exactly one trace, its own record.
+//   - A run that is not admitted takes no lock, no lease, no ledger entry and
+//     no outcome either way: the refusal is before all four, whichever side of
+//     the claim it lands on.
+//   - An admitted repository gains no hole from the claim. The claim is not
+//     what admits a run — this check is — so moving it below changes nothing
+//     about what may clone, push or spend, only about what a refusal looks
+//     like afterwards.
+//
+// What the other order would break is the shipped duplicate contract: two
+// executions of one run are told apart at the claim, and an execution that
+// another one owns has no record of its own to be refused into. Swapping the
+// two put the admission refusal in front of the duplicate check, and
+// TestRunnerTellsADuplicateApartBeforeAdmission (with internal/cli's
+// TestExecDuplicateExecutionExitsRemoteError as the end-to-end half) is what
+// failed on it.
+//
+// Its refusals are the run's own: the slug it was
 // given must be the slug of the repository task.json names; the provider kind
 // and the remote — the two environment values a launcher can set that would
 // say otherwise — may disagree with it only by refusing; and, when the project

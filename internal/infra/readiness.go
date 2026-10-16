@@ -129,7 +129,19 @@ func dropMount(ws WorkflowSpec, logical string) {
 //   - The daily check's schedule stays paused until every workflow it
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
-func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (RepoSpec, []Missing, error) {
+//
+// planOnly is fugaro init --repo's --plan-only, and it exempts the refusals
+// that exist to stop a *change* rather than to describe a state: this function
+// returns one, for an existing job this apply would deploy without the backend
+// a published policy is read through (D11). A plan is read-only, so it may be
+// shown whatever the apply would refuse — the same exemption init.go's
+// planRepo applies to refuseClonesNotShipped and the --retire/--plan-only
+// pair, and the reason is the same: an operator who cannot see the plan cannot
+// fix what the refusal is about. What plan-only does not do is hide the
+// problem: the gate above still reports MissingFirebase for that job, so the
+// plan prints the job as one that cannot be deployed until the backend is
+// configured.
+func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, planOnly bool) (RepoSpec, []Missing, error) {
 	out := cloneRepoSpec(spec)
 	tg := target{project: spec.GCPProject, number: ex.ProjectNumber}
 	// A secret a repository's own Terraform module once created can stop
@@ -252,7 +264,14 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		// — silently, because it cannot tell "no policy" from "no way to read
 		// one". So once a policy has been published this gates the job;
 		// before that it is a note, because an installation that has not
-		// adopted the model is not blocked.
+		// adopted the model is not blocked — and the gate is exact about
+		// which "once" it means: PolicyExists is read through this machine's
+		// own config (internal/cli's policyReadOnce, over budget.rtdb_url), so
+		// a config that names no database address cannot see a policy at all
+		// and this gate never fires for it, whatever the project holds. That
+		// is the gap the note below states in full; the owner accepted it, and
+		// what the gate does refuse is the config that can see the policy and
+		// would deploy a job unable to read it.
 		//
 		// The note is for the installation that wants the shared budget and
 		// has no backend to hold it: one whose jobs carry a mode that is not
@@ -271,7 +290,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 					projectpolicy.PathShared(), RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)})
 			} else if ws.Env[BudgetModeEnv] != "" {
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-					"this job's budget is on (%s=%s) but it carries neither %s nor %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Nothing is blocked until a policy exists; once one does, this job stops being deployable until it can read it",
+					"this job's budget is on (%s=%s) but it carries neither %s nor %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Which of the two the local config is missing decides what happens next, and the gate above is exact about it: a config that names budget.rtdb_url sees a published policy, so the day the project publishes one this job stops being deployable until it can read it; a config that names no database address sees none, whatever the project has published — that same config is what the gate reads the node through — so nothing refuses this deploy and the job goes out unable to read a policy that may well exist. That gap is the owner's, accepted on purpose. A launch is held to what the launcher's own config can see and no stricter rule: it refuses a policy it can see and cannot honour, never a budget mode on its own",
 					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
 			} else if ex.JobsFirebase[name] {
 				// The job has the backend today and this apply would take it
@@ -298,7 +317,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		// the refusal is the apply's: deploying it without the backend takes
 		// the published policy away from every run of the repository, and
 		// the operator learns at the next launch instead of here.
-		if exists && ex.PolicyExists && !carriesFirebase(ws) {
+		if !planOnly && exists && ex.PolicyExists && !carriesFirebase(ws) {
 			return RepoSpec{}, nil, userErr("the project has published a policy (%s), and this init --repo would deploy workflow %s's job without %s or %s in its environment: the job exists already, so it stays deployed and the policy it is bound by would stop being readable by every run of %s. Set the project's Firebase backend (fugaro init --firebase <firebase-project-id>) and run fugaro init --repo again",
 				projectpolicy.PathShared(), name, RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)
 		}

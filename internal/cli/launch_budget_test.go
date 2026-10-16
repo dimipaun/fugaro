@@ -151,6 +151,93 @@ func TestRetryMintsFresh(t *testing.T) {
 	}
 }
 
+// A config that names a budget mode and no database is not refused for that
+// alone (the review of this PR reconciled the launcher with internal/infra's
+// readiness rule, "nothing is blocked until a policy exists"): the mode is the
+// operator's claim about the budget, never a policy, and an installation whose
+// config names no database has no policy this launcher can see however its mode
+// is spelled. What refuses a launch is a policy the launcher *can* see and
+// cannot honour — an allow-list that does not admit the repository
+// (TestRunRefusesBeforeLaunch), a published node it cannot read
+// (TestLaunchRefusesADeniedPolicyRead) — and at deploy time the readiness gate
+// is what blocks a project-centric installation whose jobs carry no backend.
+//
+// So this launch goes ahead, with no token and with no database call at all:
+// the same shape a never-configured or mode-off installation has always had.
+//
+// Both orders are pinned because they are different code: without
+// --no-budget-check the budget pre-check runs first (and skips, having no
+// database to check either), with it the policy gate is the only thing left.
+// Each order gets its own fixture: the launch now succeeds, so a second one on
+// the same run id would be refused as an already-launched run and would pin
+// nothing.
+func TestModeOnWithoutADatabaseLaunchesAsBefore(t *testing.T) {
+	for _, mode := range []string{"observe", "enforce"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, tc := range []struct {
+				name string
+				args []string
+			}{
+				{"as launched", nil},
+				{"--no-budget-check", []string{"--no-budget-check"}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					f := newCloudFixture(t)
+					f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5 }\n")
+					var env map[string]string
+					f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
+					args := append([]string{"run", "--repo", "acme/app", "--run-id", budgetRun}, tc.args...)
+					_, errOut, err := execute(t, append(args, "Add a feature")...)
+					if err != nil {
+						t.Fatalf("err = %v (%s), want a launch: a mode that is on is not a policy, and with no database there is no policy to read", err, errOut)
+					}
+					if n := len(f.run.Executions()); n != 1 {
+						t.Errorf("%d executions were created, want 1", n)
+					}
+					if !storedTask(t, f) {
+						t.Error("the launch stored no task")
+					}
+					if tok := readToken(t, f, budgetRun); tok != "" {
+						t.Error("a launch with no database to read a policy from minted a budget token")
+					}
+					// And the job carries no backend, which is the same
+					// shape a never-configured installation deploys: no
+					// address to read a policy from, so no mode to claim
+					// either. A project that then publishes a policy is
+					// what internal/infra's readiness gate stops the next
+					// deploy for.
+					for _, k := range []string{runner.RTDBURLEnv, runner.BudgetTokenEnv, "FUGARO_BUDGET_MODE"} {
+						if v, ok := env[k]; ok {
+							t.Errorf("the job's environment carries %s=%q with no database to read a policy from", k, v)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// The mint decision, at the line the original finding cites (budgetMintOn's
+// early return): with no database there is no policy this CLI can see, whatever
+// the mode says, so the answer is "no token needed" rather than a refusal. That
+// reading is what makes the mode-off installation and the never-configured one
+// the same path — and it is sound because the side that can see a policy, the
+// launcher's own gate and internal/infra's readiness gate, is what refuses.
+func TestMintIsNotNeededWithoutADatabaseWhateverTheMode(t *testing.T) {
+	for _, cfg := range []string{
+		"budget: { mode: observe, per_run_usd: 5 }\n",
+		"budget: { mode: enforce, per_run_usd: 5 }\n",
+		"",
+	} {
+		f := newCloudFixture(t)
+		f.appendConfig(t, cfg)
+		env := memEnv(t, f)
+		if on, err := env.budgetMintOn(context.Background()); on || err != nil {
+			t.Fatalf("budgetMintOn with %q = (%v, %v), want a skip: no database, so no policy this CLI could see", cfg, on, err)
+		}
+	}
+}
+
 // newOffModeBudget is the launch fixture with the budget mode off in the
 // operator's config and the budget block spelled as given, so that what makes
 // a launch mint (or refuse to) is the only thing that varies.
@@ -646,7 +733,11 @@ func TestBudgetOffSkipsEverything(t *testing.T) {
 	for name, cfg := range map[string]string{
 		"off, backend configured": "budget: { mode: off, rtdb_url: URL, token_signer: " + testSigner + " }\n",
 		"no budget block":         "",
-		"observe, no backend":     "budget: { mode: observe, per_run_usd: 5 }\n",
+		// A mode that is not off with no database is the same skip: nothing is
+		// blocked until a policy exists, and this config has none the launcher
+		// could see (TestModeOnWithoutADatabaseLaunchesAsBefore is the launch
+		// half of it, with the pre-checks in the way).
+		"observe, no backend": "budget: { mode: observe, per_run_usd: 5 }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			iam := gcpfake.NewIAMCredentials(t)

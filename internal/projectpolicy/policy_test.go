@@ -36,9 +36,13 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	// not know (P8): unknown keys at the TOP LEVEL are ignored. Version gates
 	// a newer policy; the budget block is strict
 	// (TestDecodeRefusesABudgetWhoseKeysAllMiss), and so is a providers entry
-	// and routing (TestDecodeRefusesAMisspeltProviderKey,
-	// TestDecodeValidatesRouting) — see the package doc for why the shape of
-	// a known block is not the same case as a key this binary cannot name.
+	// (TestDecodeRefusesAMisspeltProviderKey). `routing` is neither: a member
+	// this Fugaro does not model is ignored beside a written `claude`, the way
+	// an unknown top-level key is, but a block that names no `claude` switch is
+	// refused (validRoutingMembers, TestRoutingCommentsMatchTheCode), and the
+	// switch's own values are checked (TestDecodeRefusesAnUnknownVia) — see the
+	// package doc for why the shape of a known block is not the same case as a
+	// key this binary cannot name.
 	p, found, err := Decode([]byte(`{
 		"version": 1,
 		"budget": {"mode": "observe"},
@@ -179,6 +183,37 @@ func TestDecodeRefusesABudgetWhoseKeysAllMiss(t *testing.T) {
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want an error on an existing node", name, raw, p, found, err)
 		}
+	}
+}
+
+// The strict decode above refuses a budget key no field answers to, and passes
+// one that answers to a field in another case: encoding/json matches a member
+// name case-insensitively, so {"mode": "enforce", "MODE": "off"} decodes to
+// Mode "off" with no error at all — the last key the document writes wins —
+// and {"mode": "enforce", "mode": "observe"} is the same document order
+// deciding the same way. The block is enforced, not advisory (validBudget), and
+// internal/config refuses the same spelling in fugaro.yaml, so the names are
+// held to the documented ones here too.
+func TestDecodeRefusesCaseFoldedBudgetMembers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"a case-folded mode beside the real one": `{"version": 1, "budget": {"mode": "enforce", "MODE": "off"}}`,
+		"mode written twice":                     `{"version": 1, "budget": {"mode": "enforce", "mode": "observe"}}`,
+		"a case-folded allowed_models":           `{"version": 1, "budget": {"mode": "enforce", "ALLOWED_MODELS": ["claude-sonnet-5"]}}`,
+		"a case-folded per_run_usd":              `{"version": 1, "budget": {"mode": "enforce", "PER_RUN_USD": 5}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "budget") {
+			t.Errorf("%s: err = %v, want it to name the block", name, err)
+		}
+	}
+	// The documented spelling is read as before, values and all.
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"]}}`))
+	if err != nil || !found || p == nil || p.Budget.Mode != "enforce" || p.Budget.PerRunUSD != 12.5 {
+		t.Fatalf("a correctly spelled budget was refused: (%v, %v, %v)", p, found, err)
 	}
 }
 
