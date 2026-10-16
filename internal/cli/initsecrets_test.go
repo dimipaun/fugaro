@@ -546,14 +546,22 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 	if err != nil || len(res.Left) != 1 {
 		t.Fatalf("%v, left %v", err, res.Left)
 	}
-	cmds := strings.Join(res.Left[0].Commands, "\n")
-	for _, want := range []string{
+	// The whole list, not a piece of it: the default's pair, then
+	// acme-personal's, with nothing for the name that already has a stored
+	// version and nothing for the one this repository is not allowed.
+	// strings.Contains over the joined lines would pass for a command that
+	// only *begins* with the wanted text — a different name suffix, another
+	// --repo, another flag — which is the shape this test exists to pin.
+	wantCmds := []string{
+		"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE",
+		"claude setup-token",
 		"fugaro secrets set claude-oauth-token --repo acme/app",
+		"claude setup-token",
 		"fugaro secrets set claude-oauth-token-acme-personal",
-	} {
-		if !strings.Contains(cmds, want) {
-			t.Errorf("missing %q in %q", want, cmds)
-		}
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(wantCmds) {
+		t.Errorf("commands %q, want %q", got, wantCmds)
 	}
 	if strings.Contains(cmds, "acme-overflow") {
 		t.Errorf("a stored name was asked for again: %q", cmds)
@@ -1017,19 +1025,21 @@ func TestInitSecretsStillPromptsWhenNothingStoredAnywhere(t *testing.T) {
 	if got := stateOf(res, initflow.Secrets); got != initflow.NeedsYou {
 		t.Fatalf("state = %q, want needs-you (the values are the user's to type)", got)
 	}
-	cmds := ""
-	for _, l := range res.Left {
-		cmds += strings.Join(l.Commands, "\n") + "\n"
-	}
 	// The fix line carries the scope the default stores to (D2): both names
 	// are allow-listed in project_secrets here, so neither line names --repo.
-	for _, want := range []string{
+	// Every command is compared whole: `strings.Contains` on the joined lines
+	// passes for a line that merely begins with the wanted text, and the
+	// exact form is the thing under test — the command a user pastes.
+	var got []string
+	for _, l := range res.Left {
+		got = append(got, l.Commands...)
+	}
+	if wantCmds := []string{
 		"fugaro secrets set bitbucket-token",
+		"claude setup-token",
 		"fugaro secrets set claude-oauth-token",
-	} {
-		if !strings.Contains(cmds, want) {
-			t.Errorf("missing %q in %q", want, cmds)
-		}
+	}; fmt.Sprint(got) != fmt.Sprint(wantCmds) {
+		t.Errorf("commands %q, want %q (no --repo: neither name has repository scope here)", got, wantCmds)
 	}
 	if r.store.setCalls() != 0 {
 		t.Fatal("a value was stored with none to store from")

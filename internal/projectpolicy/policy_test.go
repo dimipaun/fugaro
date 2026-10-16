@@ -104,6 +104,112 @@ func TestDecodeRefusesAMisspeltProviderKey(t *testing.T) {
 	}
 }
 
+// TestDecodeRefusesAProviderNamedOrSpelledTwice: a providers entry is read
+// into a map — the block keyed by provider name, the entry keyed by member —
+// and encoding/json keeps the last of a repeated key, so a document that names
+// one twice is read as its second half, silently. Both of the members that
+// fail open are here: a second allow_data_to replaces the first (so a node can
+// widen an allow-list by repeating the key), and a second route_fee_pct
+// replaces the fee. The block's own keys are held to it too: a provider named
+// twice is one provider to every reader here, and the entry kept is the whole
+// of what it allows.
+func TestDecodeRefusesAProviderNamedOrSpelledTwice(t *testing.T) {
+	entry := `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]`
+	for _, tc := range []struct{ name, raw string }{
+		{"allow_data_to twice, the second widened", string(providerPolicy(entry + `, "allow_data_to": ["acme/app"], "allow_data_to": ["*"]}`))},
+		{"route_fee_pct twice, the second dropped", string(providerPolicy(entry + `, "route_fee_pct": 3, "route_fee_pct": 0}`))},
+		{"the same member twice spelled in two cases", string(providerPolicy(entry + `, "allow_data_to": ["acme/app"], "ALLOW_DATA_TO": ["*"]}`))},
+		{"the provider named twice", `{"version": 1, "providers": {"openrouter": ` + entry + `, "allow_data_to": ["acme/app"]}, "openrouter": ` + entry + `, "allow_data_to": ["*"]}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(tc.raw))
+			if err == nil || p != nil {
+				t.Fatalf("Decode(%s) = (%v, %v), want a refusal: a repeated key is read as the last of the two, whichever value the document meant", tc.raw, p, err)
+			}
+			if !found {
+				t.Error("the node exists and cannot be used, so found must be true (fail closed)")
+			}
+		})
+	}
+	// The other side: the same document with each key written once decodes,
+	// and it decodes to the narrower list — the refusal above is about the
+	// repeat, not about the values.
+	p, found, err := Decode(providerPolicy(entry + `, "allow_data_to": ["acme/app"], "route_fee_pct": 3}`))
+	if err != nil || !found {
+		t.Fatalf("the entry written once was refused: %v", err)
+	}
+	if got := p.Providers["openrouter"]; got.AllowsData("other/repo") || got.RouteFeePct != 3 {
+		t.Errorf("the entry written once = %+v, want acme/app and a fee of 3", got)
+	}
+}
+
+// TestDecodeRefusesANullRouteFeePct: route_fee_pct is a float64, and a written
+// null decodes into it as 0 — no surcharge at all. The key is there, so the
+// operator (or a tool that serialized an absent value explicitly) meant to set
+// a fee; a misspelling of the same name is refused one key over, and letting
+// the null through would price every request on that route without the
+// surcharge while the node says otherwise. A null require_zdr or price_policy
+// is the same zero value the absent key gives, so neither is refused.
+func TestDecodeRefusesANullRouteFeePct(t *testing.T) {
+	entry := `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]`
+	p, found, err := Decode(providerPolicy(entry + `, "route_fee_pct": null}`))
+	if err == nil || p != nil {
+		t.Fatalf("Decode(%s) = (%v, %v), want a refusal", entry, p, err)
+	}
+	if !found {
+		t.Error("found must be true: the node exists and cannot be used")
+	}
+	if !strings.Contains(err.Error(), "route_fee_pct") {
+		t.Errorf("the refusal does not name the field it is about: %v", err)
+	}
+	// A fee of 0 written as 0 is not the same document and is not refused: the
+	// refusal is for the null, which says nothing about what was meant.
+	if _, _, err := Decode(providerPolicy(entry + `, "route_fee_pct": 0}`)); err != nil {
+		t.Errorf("an explicit 0 was refused: %v", err)
+	}
+	// And the members whose null IS their default keep it.
+	if _, _, err := Decode(providerPolicy(entry + `, "require_zdr": null, "price_policy": null}`)); err != nil {
+		t.Errorf("a null require_zdr or price_policy was refused: %v", err)
+	}
+}
+
+// TestDecodeRefusesADuplicatedTopLevelKey: Decode reads the node's keys out of
+// a map, and encoding/json keeps the last of a repeated one. The hazard is not
+// the value that wins but the block that loses: {"budget": {...}, "budget":
+// null} is a node whose budget is empty, so the run keeps the ceiling its job
+// environment was deployed with while the operator's node appears to carry one
+// — with no diagnostic anywhere, because the node reads as valid. A modelled
+// key spelled in another case is the same silence one step over: nothing reads
+// "Budget", so the block under it is not read either, and the key is not
+// listed in UnknownKeys as a misspelling of this Fugaro's own name is
+// (TestDecodeIgnoresUnknownKeys holds the other half: a key this Fugaro does
+// not model at all is still tolerated).
+func TestDecodeRefusesADuplicatedTopLevelKey(t *testing.T) {
+	for _, tc := range []struct{ name, raw string }{
+		{"budget twice, the second null", `{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 50}, "budget": null}`},
+		{"budget twice, the second narrower", `{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 50}, "budget": {"mode": "observe"}}`},
+		{"providers twice", `{"version": 1, "providers": {}, "providers": null}`},
+		{"a modelled key in another case", `{"version": 1, "Budget": {"mode": "enforce"}}`},
+		{"version twice", `{"version": 1, "version": 1}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(tc.raw))
+			if err == nil || p != nil {
+				t.Fatalf("Decode(%s) = (%v, %v), want a refusal: the second key is read and the first is dropped, whatever it held", tc.raw, p, err)
+			}
+			if !found {
+				t.Error("found must be true: the node exists and cannot be used")
+			}
+		})
+	}
+	// The document with each key written once, in the same order, decodes: the
+	// refusal is the repeat, not the shape.
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 50}}`))
+	if err != nil || !found || p.Budget.PerRunUSD != 50 {
+		t.Fatalf("Decode = (%+v, %v, %v), want the budget it names", p, found, err)
+	}
+}
+
 func TestDecodeRefusesBadVersion(t *testing.T) {
 	for name, raw := range map[string]string{
 		"no version":     `{"budget": {"mode": "observe"}}`,

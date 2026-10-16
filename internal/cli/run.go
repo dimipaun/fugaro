@@ -428,7 +428,31 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				}
 			}
 		}
+		if spec.Mode == recipe.ModeArtifact {
+			// The mode: artifact gate: a task carrying mode is refused
+			// outright by a runner older than artifactsSince (task.Parse
+			// decodes with DisallowUnknownFields), so the launch must not
+			// reach such a job at all. Judged from the deployed job's build
+			// record exactly as the project layer's and the named token's
+			// gates above are, and for an artifact recipe launched with
+			// nothing attached just as much as for one launched with
+			// --attach.
+			if clone {
+				if err := checkCloneImageSince(env.lc, spec, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
+				return launchResult{}, err
+			}
+		}
 		if err := checkMaxParallel(ctx, env); err != nil {
+			return launchResult{}, err
+		}
+		// The artifact gate: locally computable (a recipe's caps against
+		// the workflow's memory, a render or probe step against the
+		// commands they need), so it runs before the budget read below and
+		// before createTask writes anything at all.
+		if err := checkArtifactLaunch(ctx, spec); err != nil {
 			return launchResult{}, err
 		}
 		if !skipBudget {
@@ -521,6 +545,11 @@ func taskText(cmd *cobra.Command, file string, args []string, optional bool) (st
 type attemptPlan struct {
 	repo, slug, workflow, ref, me, account, totalOverride string
 	recipe                                                *task.Recipe
+	// mode is the resolved recipe's mode when the runner cannot read it
+	// from the task alone (mode: artifact today): buildAttemptSpec writes it
+	// into the spec, and it is empty for implement and review, so those
+	// specs stay byte-identical to what the previous release wrote.
+	mode string
 }
 
 // resolveAttemptPlan resolves everything a new run's spec needs except its
@@ -580,11 +609,11 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	rcp, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn, forAttempts)
+	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn, forAttempts)
 	if err != nil {
 		return nil, err
 	}
-	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, me: me, account: account, totalOverride: totalOverride, recipe: rcp}, nil
+	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode}, nil
 }
 
 // buildAttemptSpec stamps a fresh run id (or o.runID, when given) onto plan,
@@ -598,7 +627,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 			return "", nil, err
 		}
 	}
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -909,7 +938,7 @@ func claudeAccountAllowed(env *cloudEnv, repo, name string, co *config.Config) e
 // forAttempts gives a mode: review refusal that fits runAttempts's caller
 // (--attempts refuses --pr, so the plain launch's "add --pr" advice would be
 // wrong there).
-func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer, forAttempts bool) (*task.Recipe, error) {
+func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer, forAttempts bool) (*task.Recipe, string, error) {
 	name, explicit := flag, flag != ""
 	var cfg *config.Config
 	if c := checkout(); c != nil {
@@ -923,20 +952,43 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	}
 	rr, err := resolveRecipe(ctx, env, root, name, time.Now(), false)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if rr.Recipe.Mode == recipe.ModeReview {
 		if forAttempts {
-			return nil, userErr("recipe %s is mode: review, which only reviews pull requests; --attempts launches a fresh batch and cannot use it (review one with fugaro run --recipe %s --pr N instead)", rr.Name, rr.Name)
+			return nil, "", userErr("recipe %s is mode: review, which only reviews pull requests; --attempts launches a fresh batch and cannot use it (review one with fugaro run --recipe %s --pr N instead)", rr.Name, rr.Name)
 		}
-		return nil, userErr("recipe %s is mode: review, which only reviews pull requests; launch it with --recipe %s --pr N (1 to 4 times)", rr.Name, rr.Name)
+		return nil, "", userErr("recipe %s is mode: review, which only reviews pull requests; launch it with --recipe %s --pr N (1 to 4 times)", rr.Name, rr.Name)
+	}
+	// A mode: artifact launch carries its mode in the task, and the runner
+	// selects the run's shape from that field before it resolves the recipe
+	// itself. So the launcher may only write it when it is sure of the
+	// recipe the run will get: resolveRecipe has paths where what it
+	// returned is NOT that recipe (a project layer this launcher may not
+	// read, a stale cached project recipe standing in for an unreachable
+	// bucket), and on those the mode would stay empty for a recipe that is
+	// mode: artifact, the spec would be indistinguishable from an implement
+	// one, and the image gate below would not fire: a silent pull request
+	// where the owner asked for a file. The conservative direction is the
+	// right one; the owner reruns when the layer is reachable.
+	if rr.Recipe.Mode == recipe.ModeArtifact {
+		if rr.Note != "" {
+			return nil, "", userErr("recipe %s is mode: artifact, but %s; the launch is refused rather than run without the recipe's mode in its task (retry when the layer is reachable)", rr.Name, rr.Note)
+		}
+		if forAttempts {
+			return nil, "", userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name)
+		}
 	}
 	printRecipeNote(warn, rr, explicit)
 	// An explicit --recipe default overrides agent.recipe, which applies when
 	// the checkout sets it, or when there is no checkout and the runner reads
 	// it at the ref: then the default is carried in the task.
 	override := flag == recipe.DefaultName && (cfg == nil || cfg.Agent.Recipe != "")
-	return rr.taskRecipeEmbedding(override), nil
+	mode := ""
+	if rr.Recipe.Mode == recipe.ModeArtifact {
+		mode = recipe.ModeArtifact
+	}
+	return rr.taskRecipeEmbedding(override), mode, nil
 }
 
 // printRecipeNote prints rr's note when the user chose the recipe by name
@@ -951,6 +1003,73 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 		return
 	}
 	io.WriteString(warn, noteLine(rr.Note))
+}
+
+// checkArtifactLaunch refuses a mode: artifact launch whose caps cannot fit
+// the workflow's memory, or whose render or probe step names a command the
+// workflow leaves empty: the launch's arm of runner.RecipeGateProblems
+// (design artifact-runs.md §5.2, Review Focus 12), called before createTask
+// writes anything, so an over-memory artifact launch leaves no task and no
+// execution behind. A launch whose recipe or workflow the launcher cannot
+// resolve locally is judged by the runner's own bootstrap instead
+// (checkGateCommands), which reports the same list.
+func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
+	cfg := checkoutConfig(ctx, spec.Repo)
+	if cfg == nil {
+		return nil
+	}
+	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
+	if err != nil {
+		return nil
+	}
+	rcp := recipeForLaunch(ctx, cfg, spec)
+	if rcp == nil || rcp.Mode != recipe.ModeArtifact {
+		return nil
+	}
+	var msgs []string
+	for _, p := range runner.RecipeGateProblems(rcp, wf) {
+		msgs = append(msgs, fmt.Sprintf("workflows.%s.%s: the %s", name, p.Field, p.Message))
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	return userErr("recipe %s: %s", rcp.Name, strings.Join(msgs, "; "))
+}
+
+// recipeForLaunch is the recipe this launch will run, parsed: the task's own
+// (the text the launcher embedded for a project or catalog recipe, else the
+// repository file a repo-sourced one names, read from this checkout), or,
+// for a task that names none, the one this checkout's config selects
+// (localRecipe, exactly as `fugaro validate` resolves it). nil when the
+// launcher cannot read or parse it here: the runner resolves the same
+// recipe at the task's ref and refuses it there.
+func recipeForLaunch(ctx context.Context, cfg *config.Config, spec *task.Spec) *recipe.Recipe {
+	root := checkoutRoot(ctx, spec.Repo)
+	if spec.Recipe == nil {
+		if cfg == nil {
+			return nil
+		}
+		return localRecipe(root, cfg)
+	}
+	data := []byte(spec.Recipe.YAML)
+	if len(data) == 0 {
+		// A repository recipe: task.json carries its name alone (the
+		// runner reads the file at the task's ref), so the launcher reads
+		// the same file from its own checkout of the repository.
+		if root == "" {
+			return nil
+		}
+		var found bool
+		var err error
+		if data, found, err = recipe.ReadRepoFile(root, spec.Recipe.Name); err != nil || !found {
+			return nil
+		}
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil
+	}
+	return rcp
 }
 
 // runnerChooses reports whether the runner, not this CLI, decides spec's
@@ -988,8 +1107,12 @@ func launchRecipeOf(spec *task.Spec, chooses bool) *launchRecipe {
 }
 
 // OverrideCap is the longest total time a run may ask for with
-// --total-timeout: a runaway value is more likely a typo than a plan.
-const OverrideCap = 24 * time.Hour
+// --total-timeout: a runaway value is more likely a typo than a plan. It is
+// the flag's own name for backend.MaxRunTime, which is where the bound is
+// defined -- it is a fact about what a run may ask for rather than a CLI
+// policy, and the reaper's deadlines have to account for it too
+// (internal/backend cannot import this package).
+const OverrideCap = backend.MaxRunTime
 
 // parseTotalTimeout checks the parts of --total-timeout that need no
 // checkout: the runner and the platform bound what is left.

@@ -156,7 +156,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// And no command anywhere in the section is a git command: the check reads
 	// and writes no repository, so the whole credential-helper machinery
 	// (K1) is gone with the probe it protected.
-	for _, line := range chk52ProbeCommands(section) {
+	for _, line := range sectionCommands(section) {
 		// The guard's own origin assertion is the one git command left, and it
 		// is one of the three hard stops: it reads the sandbox checkout's
 		// remote, not a repository this check would touch.
@@ -299,7 +299,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// never a racy --limit=1 listing; and the container override carries args
 	// or clearArgs, never both. The checks are over the section's command
 	// lines, since the prose says why those spellings are wrong.
-	for _, line := range chk52ProbeCommands(section) {
+	for _, line := range sectionCommands(section) {
 		switch {
 		case strings.Contains(line, "--overrides"):
 			t.Errorf("the Check 52 section has a command using `gcloud run jobs execute --overrides`, which does not exist: %q", line)
@@ -448,7 +448,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// command interpolates an unguarded `${VAR}`: an empty variable there is
 	// an empty argument gcloud resolves from its ambient configuration.
 	unguarded := regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
-	for _, line := range chk52ProbeCommands(section) {
+	for _, line := range sectionCommands(section) {
 		if strings.HasPrefix(line, "gcloud ") &&
 			!strings.Contains(line, `--project="${P:?}"`) &&
 			!strings.Contains(line, `"${P:?}"`) &&
@@ -464,7 +464,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// must be scanned like any other command: a collector that looked only at a
 	// line's first word would let that one drop its --project unnoticed.
 	var sawKeywordCommand bool
-	for _, line := range chk52ProbeCommands(section) {
+	for _, line := range sectionCommands(section) {
 		if strings.HasPrefix(line, "gcloud secrets versions access") {
 			sawKeywordCommand = true
 		}
@@ -492,12 +492,12 @@ func chk52MustContain(t *testing.T, got, part string, want []string) {
 	}
 }
 
-// chk52StripCommandPrefix removes the shell keywords and operators a command can be
+// stripCommandPrefix removes the shell keywords and operators a command can be
 // introduced by, so that `if gcloud …; then` and `… && gcloud …` are read as
 // gcloud commands: U3's inside read is an `if gcloud secrets versions access
 // …`, and a check that only looked at a line's first word would let that one
 // drop its --project or interpolate an unguarded variable unnoticed.
-func chk52StripCommandPrefix(line string) string {
+func stripCommandPrefix(line string) string {
 	for {
 		trimmed := line
 		for _, p := range []string{"if ", "elif ", "then ", "else ", "do ", "! ", "&& ", "|| ", "; ", "| "} {
@@ -513,12 +513,29 @@ func chk52StripCommandPrefix(line string) string {
 	}
 }
 
-// chk52ProbeCommands returns the section's `gcloud`, `curl` and `git` invocations
+// sectionCommands returns the section's `gcloud`, `curl` and `git` invocations
 // as logical lines: backslash continuations are joined, leading shell keywords
 // are stripped, and only lines that then start with one of those verbs count
 // (so a command inside prose, a comment or a `$(…)` is not read as a command of
 // its own).
-func chk52ProbeCommands(section string) []string {
+func sectionCommands(section string) []string {
+	return commandLines(section, "gcloud ", "curl ", "git ")
+}
+
+// fugaroCommands returns the section's `fugaro` invocations, read the same way
+// sectionCommands reads the cloud ones. Check 49 is a Fugaro check — its steps
+// are mostly `fugaro` commands — so its rule that every one of them names the
+// installation has to be checked over them and not over the gcloud commands
+// alone.
+func fugaroCommands(section string) []string {
+	return commandLines(section, "fugaro ")
+}
+
+// commandLines is sectionCommands and fugaroCommands' shared reader: the
+// section's logical lines that begin with one of verbs, once backslash
+// continuations are joined and the shell keywords a command can be introduced
+// by are stripped.
+func commandLines(section string, verbs ...string) []string {
 	var joined []string
 	var buf string
 	for _, raw := range strings.Split(section, "\n") {
@@ -533,8 +550,8 @@ func chk52ProbeCommands(section string) []string {
 	joined = append(joined, buf)
 	var out []string
 	for _, line := range joined {
-		line = chk52StripCommandPrefix(strings.TrimSpace(line))
-		for _, verb := range []string{"gcloud ", "curl ", "git "} {
+		line = stripCommandPrefix(strings.TrimSpace(line))
+		for _, verb := range verbs {
 			if strings.HasPrefix(line, verb) {
 				out = append(out, line)
 				break
@@ -542,4 +559,732 @@ func chk52ProbeCommands(section string) []string {
 		}
 	}
 	return out
+}
+
+// TestChecklistHasCheck49: docs/gcp-live-checklist.md must carry the phase 1
+// owner-run check (design project-centric.md §5; plan
+// 2026-10-14-project-centric.md Task 1.7) as one owner-run, not-yet-run,
+// installation-`fugaro`-only check numbered 49 — with its row in the check
+// list and Check 43's guard block (the three hard stops and the project
+// pinning) inside its section, so a reader cannot mistake it for something CI
+// covers and no step of it can run against a project other than fugaro-dev.
+//
+// The owner runs this document against the live installation, so the
+// assertions are per-line facts the section must state — a stop it can take, a
+// flag a command must carry, a FACT it records, a step of its Restore — and
+// each of the hand mutations the review named fails one of them rather than
+// passing on the heading alone. Three of them are corrections the code forces
+// on the plan's own wording, and each is asserted both ways:
+//
+//   - the plan names `fugaro upgrade --cloud`, which does not exist (there is
+//     no --cloud flag; `cloud` is one of upgrade's steps), so the section must
+//     name the real command;
+//   - finding 15: only `fugaro init --repo` writes a job's environment, so the
+//     runner rollout is two steps and not one;
+//   - step 6 cannot point "the sandbox's fugaro.yaml at a repository": no key
+//     of fugaro.yaml names a repository (internal/config/config.go), so the
+//     un-enrolled state is made with the allow-list itself.
+//
+// Phase 3 ships in 0.9.0 (the owner's ruling of 2026-10-15), so the section
+// must not depend on any phase 3 code; the one thing it may say about the
+// binding's live proof is that it belongs to Check 53 step 6, which is a
+// pointer to a later check and not a dependency on it.
+//
+// The review of #421 found four things a first pass at this section got wrong
+// against the code, and each is now a fact the test holds the section to:
+//
+//   - a `fugaro run` with no task is refused at internal/cli/run.go:220, before
+//     openCloud and long before the allow-list gate, so steps 3, 5, 6(a), 7
+//     and 8 would never have produced the FACTs they claim — every one of them
+//     carries the setup block's `TASK`, and every `fugaro run` line is checked
+//     for it;
+//   - a published budget.per_run_usd is the WHOLE project's ceiling and this
+//     installation also runs the live dimipaun/fugaro dogfood, so the section
+//     must confirm nothing is in flight, publish the number the job's
+//     environment already carries, and record that the seeded allow-list still
+//     admits github/dimipaun/fugaro;
+//   - the Restore must put the operator's project config back BEFORE
+//     `fugaro init --repo` reads the job environment out of it, must not run
+//     `fugaro budget set` (no step changes the caps node), and must check the
+//     .claude/settings.json `fugaro upgrade`'s pin step rewrites;
+//   - the step 3 environment read prints NAMES and value LENGTHS, and values
+//     only for the three variables that are not credentials — the review found
+//     the first pass printing FUGARO_FIREBASE_API_KEY's value.
+//
+// Each step's FACT lines are pinned INDIVIDUALLY rather than counted: a total
+// count passes when one step's line is deleted and another's is added, which
+// is one of the hand mutations below.
+//
+// Hand mutations, run and restored against this tree, each of which this test
+// fails on: step 5's first FACT line deleted, or any of steps 1-4's turned
+// into "Note:"; step 1's "no run in flight" FACT deleted, or a FACT line put
+// before step 1; the `TASK=` line blanked in the setup block, or a `fugaro
+// run` line losing its `"$TASK"`; `FUGARO_RUN` put back to a bare slug with no
+// run id; `fugaro budget set --global --per-run` put back into the Restore;
+// either `git diff -- .claude/settings.json` dropped; the step 3 `printable`
+// set widened to the API key, or the read reverted to a `--format` that prints
+// the whole env array; the "use fugaro image refresh, not fugaro upgrade"
+// paragraph deleted; the `github/dimipaun/fugaro` entry no longer named; the
+// "no other repository's run started" FACT deleted; and each of the stale
+// citations (doctor.go:748, cloud.go:53, runner.go:797, gcp/run.go:82-98,
+// upgrade_cloud.go:162, run.go:441 — the last a number that belongs to no
+// citation at all, since launchPolicyGates is called at run.go:449) put back.
+func TestChecklistHasCheck49(t *testing.T) {
+	const path = "../../docs/gcp-live-checklist.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	const heading = "## Check 49: policy as data, end to end (installation fugaro only, never belong; run by you; NOT RUN)"
+	section := docSection(t, path, doc, heading)
+	body := section
+	if i := strings.Index(body, "\n"); i != -1 {
+		body = body[i+1:]
+	}
+	chk49MustContain(t, body, "body", []string{
+		"**Never `belong`**",
+		"you run every command",
+		"no agent runs any step of it",
+		"no step of this check types, prints or records a secret value or a key value",
+		// The phase the check belongs to, and the release it ships in: the
+		// owner ruled on 2026-10-15 that phases 3 to 6 ship in 0.9.0, so
+		// nothing here may depend on phase 3 code.
+		"0.9.0",
+	})
+
+	// Its row in the check list (the summary table), not only the section.
+	var row string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 49 |") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Error("the check list has no `| 49 |` row")
+	} else {
+		chk49MustContain(t, row, "row", []string{
+			"USER-RUN, NOT RUN",
+			"never `belong`",
+			"See \"Check 49\" below",
+			"sandbox repository only",
+		})
+	}
+
+	// Check 43's guard block inside the section — the three hard stops and
+	// the project pinning, not merely a ${P:?...}.
+	chk49MustContain(t, section, "section", []string{
+		"P=fugaro-dev",
+		`[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$TASK" ] && [ -n "$C" ] \`,
+		// C is the operator's project config, and it is the block's and not
+		// step 1's: step 8 restores it in a later shell, and a step-8 shell
+		// that never ran step 1 would expand `cp "$C.before-49" "$C"` to
+		// `cp ".before-49" ""` and put nothing back.
+		"C=$HOME/.config/fugaro/projects/fugaro.yaml",
+		`|| { echo "Check 49 stopped: re-run the whole setup block`,
+		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+		`|| { echo "Check 49 stopped: this is not the fugaro-dev installation" >&2; exit 1; }`,
+		`git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$'`,
+		`|| { echo "Check 49 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }`,
+		// The block is re-run at the start of every step, and pasted into a
+		// file: an interactive zsh does not honour its `#` comments.
+		"RE-RUN THIS WHOLE BLOCK at the start of every",
+		"Paste the block into a file, not straight into an interactive zsh",
+	})
+
+	// The order the design fixes (design §5): the rules go first, then the
+	// runner, and only then the policy — publishing before the rules are
+	// deployed is a policy the runs it bounds cannot read.
+	chk49MustContain(t, section, "section", []string{
+		"### 2. The rules deploy",
+		"### 3. The runner rollout, and the two halves it actually needs (finding 15)",
+		"### 4. Publish",
+		"rules deploy",
+		"runner rollout",
+		"`policy publish`",
+		"Publishing refuses without the rules marker",
+		"config/limits/policyRules",
+	})
+
+	// Finding 15, both ways: the rollout is two owner steps, `fugaro init
+	// --repo` is the only one that writes a job's environment, and the
+	// command the plan named does not exist.
+	chk49MustContain(t, section, "section", []string{
+		"finding 15",
+		"the only path that writes a job's environment is `fugaro init --repo`",
+		"`fugaro upgrade`",
+		"`fugaro image refresh`",
+		"fugaro init --repo . --project fugaro",
+	})
+	for _, dead := range []string{
+		"fugaro upgrade --cloud", // no such flag: `cloud` is one of upgrade's steps
+		"fugaro upgrade --project fugaro --cloud",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 49 section names a command that does not exist (%q): `fugaro upgrade` has no --cloud flag, and `cloud` is one of its steps", dead)
+		}
+	}
+
+	// Step 6(b)'s admissionCheck citation, and it has to be pinned as the
+	// PHRASE: the section spells the first number of that sentence out as
+	// `internal/runner/runner.go:863` and abbreviates the second to `(:922)`,
+	// so the full-path entry in the absent list below cannot catch it — the
+	// string `internal/runner/runner.go:862` occurs nowhere in the section.
+	// Verified by mutation: rewriting the citation back to `(:862)` leaves a
+	// full-path-only guard passing, and fails this one.
+	chk49MustContain(t, chk49Step(t, section, "**(b) The run's own.**"), "step 6(b)", []string{
+		"`admissionCheck` ever runs (`:922`)",
+	})
+	if strings.Contains(section, "`admissionCheck` ever runs (`:862`)") {
+		t.Error("the Check 49 section's step 6(b) cites :862 for admissionCheck: the merge with next moved the call to :922, and :862 is now `func (r *run) bootstrap(...)`")
+	}
+
+	// Step 6, both ways: no key of fugaro.yaml names a repository, so the
+	// un-enrolled state is made with the allow-list, and the refusal it
+	// produces is the launcher's; the run-side half is a direct launch.
+	chk49MustContain(t, section, "section", []string{
+		"has no key that names a repository",
+		"fugaro project repos rm bitbucket/edgeappinc/fugarosandbox --project fugaro",
+		"The launch stops before any execution exists",
+		"FUGARO_RUN",
+		"The run stops before any lease exists",
+		"Record which layer refused",
+		"Check 53 step 6",
+		"live test of the binding itself belongs to Check 53 step 6",
+	})
+	if strings.Contains(section, "Point the sandbox's `fugaro.yaml` at a repository") {
+		t.Error("the Check 49 section still points fugaro.yaml at a repository: no key of fugaro.yaml names one, so that edit cannot change which repository a run is for")
+	}
+	// The `credential` line the plan asked for does not exist: the run refuses
+	// before the provider is opened, so there is no credential line to be
+	// absent. The section says so rather than asserting a line nobody emits.
+	if strings.Contains(section, "the absence of a `credential` line") {
+		t.Error("the Check 49 section still asserts the absence of a `credential` line: no step of the run emits one, because the refusal is before the provider is opened")
+	}
+
+	// Every step asserts its own outcome, and each step's FACT lines are
+	// pinned INDIVIDUALLY, by a phrase that occurs in that step and nowhere
+	// else in the section. A total count is not enough: with only
+	// `strings.Count(section, "**FACT:**") >= 8`, deleting step 5's line and
+	// adding one to step 1 passes, and turning every FACT of steps 1 to 4
+	// into "Note:" passes too. Each want below is one step's own FACT text,
+	// so either mutation fails the step it happened in.
+	chk49Facts := []struct {
+		step string
+		want []string
+	}{
+		{"### 1.", []string{
+			"**FACT:** the state as recorded — `fugaro runs ls --all --project fugaro` shows **no run in flight**",
+		}},
+		{"### 2.", []string{
+			// The two act lines are the SECOND command's, not the --plan-only
+			// one's: --plan-only with --firebase stops after the installation
+			// root and never reaches deployDatabase, so a FACT the owner reads
+			// off the plan-only line above it is a FACT the owner cannot
+			// produce. The stop is installRoot's plan-only return
+			// (init.go:1285-1287), taken at init_firebase.go:210-213 — NOT the
+			// Firebase root's applyRoot at :289, which the run never reaches.
+			"**FACT:** the two act lines printed by the **second** command",
+			"**FACT:** the read-back —",
+		}},
+		{"### 3.", []string{
+			"**FACT:** the job's environment carries `FUGARO_RTDB_URL`",
+			"**FACT:** one ordinary sandbox run with the policy still unpublished",
+		}},
+		{"### 4.", []string{
+			"**FACT:** the printed diff verbatim",
+			"**FACT:** the seeded allow-list names `bitbucket/edgeappinc/fugarosandbox`",
+			"**FACT:** the node's `version`",
+			"**FACT:** the `budget.per_run_usd` line of the printed diff",
+		}},
+		{"### 5.", []string{
+			"**FACT:** the run's own record —",
+			"**FACT:** no other repository's run started",
+			"**FACT:** the run's own per-call charge",
+		}},
+		{"**(a) The launcher's.**", []string{
+			"**FACT:** the launcher's refusal verbatim",
+		}},
+		{"**(b) The run's own.**", []string{
+			"**FACT:** the run's own refusal text verbatim",
+			"**FACT:** no lease was taken and no git token was minted",
+		}},
+		{"### 7.", []string{
+			"**FACT:** the launcher's refusal, and the two documents read side by side",
+			"**FACT:** neither document claims the launch-side check cannot be bypassed",
+		}},
+		{"### 8.", []string{
+			"**FACT:** the restore is complete —",
+			"**FACT:** the sandbox still runs",
+		}},
+	}
+	total := 0
+	for _, tc := range chk49Facts {
+		step := chk49Step(t, section, tc.step)
+		if n := strings.Count(step, "**FACT:**"); n != len(tc.want) {
+			t.Errorf("the Check 49 section's %s step carries %d FACT lines, want exactly the %d pinned below: a step's own FACT lines are what the owner pastes back for it", tc.step, n, len(tc.want))
+		}
+		total += len(tc.want)
+		for _, w := range tc.want {
+			if !strings.Contains(step, w) {
+				t.Errorf("the Check 49 section's %s step is missing its FACT line %q", tc.step, w)
+			}
+		}
+	}
+	if n := strings.Count(section, "**FACT:**"); n != total {
+		t.Errorf("the Check 49 section carries %d FACT lines and the per-step pins above account for %d: every FACT line belongs to a step, and an unpinned one is a line nothing guards", n, total)
+	}
+	// No "**FACT:**" may sit outside the steps the pins walk: the section's
+	// steps must partition it, or a FACT in the body above step 1 would be
+	// counted by neither loop.
+	if head := section[:strings.Index(section, "### 1.")]; strings.Contains(head, "**FACT:**") {
+		t.Error("the Check 49 section has a FACT line before its first step, which no per-step pin above reaches")
+	}
+
+	// The Restore returns the installation to its recorded state, and the
+	// published policy has a command to leave with, not an outline. It does
+	// NOT write the caps node: nothing in the check changes it, so a
+	// `fugaro budget set` there would write a node the check never touched.
+	chk49MustContain(t, section, "section", []string{
+		"### 8. Restore",
+		"the sandbox still runs",
+	})
+	// The Restore's own COMMANDS, read in step 8's slice and not over the
+	// whole section: the section's prose also writes `cp "$C.before-49" "$C"`
+	// (the setup block's comment explains why C is the block's), and the FACT
+	// names `cmp "$C.before-49" "$C"` — so a section-wide Contains passes with
+	// the restore's own first line deleted, which is the line the whole
+	// ordering argument rests on.
+	chk49MustContain(t, chk49Step(t, section, "### 8."), "step 8", []string{
+		// The order, and the file it puts back first.
+		"the operator's project config: back first, because the next line reads it",
+		`cp "$C.before-49" "$C"`,
+		"fugaro init --repo . --project fugaro",
+		"git diff -- fugaro.yaml",
+		"git diff -- .claude/settings.json",
+		"fugaro budget show --json --project fugaro",
+		"fugaro project show --json --project fugaro",
+		"fugaro project policy publish --delete --project fugaro",
+	})
+	// …but a substring pin over the slice cannot SEE a deletion or a swap in
+	// the block itself, because step 8's own FACT prose repeats four of those
+	// strings verbatim. So the restore's first fenced block is read as its own
+	// lines — comments and blanks dropped, in the order the shell runs them —
+	// and the two commands the step's whole ordering argument rests on are
+	// checked by INDEX, not by presence. Deleting the two json-show lines, or
+	// swapping `fugaro init --repo` above the `cp`, both fail here.
+	restore := chk49FencedBlocks(chk49Step(t, section, "### 8."))[0]
+	var restoreLines []string
+	for _, l := range strings.Split(restore, "\n") {
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
+			restoreLines = append(restoreLines, l)
+		}
+	}
+	// chk49FencedBlocks keeps the fence's own info string ("bash") as the
+	// block's first line, and it is not a command.
+	if len(restoreLines) > 0 && !strings.ContainsAny(restoreLines[0], " \t") {
+		restoreLines = restoreLines[1:]
+	}
+	at := func(want string) int {
+		for i, l := range restoreLines {
+			if l == want {
+				return i
+			}
+		}
+		return -1
+	}
+	const (
+		restoreConfig = `cp "$C.before-49" "$C"`
+		writeEnv      = "fugaro init --repo . --project fugaro"
+	)
+	if i := at(restoreConfig); i != 0 {
+		t.Errorf("step 8's restore block has %q at command %d of its own block, want 0: the operator's config goes back before anything reads it, and the step's FACT prose repeats the string so only the block's own order can be checked", restoreConfig, i)
+	}
+	if i := at(writeEnv); i != 1 {
+		t.Errorf("step 8's restore block has %q at command %d, want 1 — immediately after the config restore: `init --repo` writes the job environment out of that file (`internal/infra/spec.go:753`), so running it first writes whatever the config says now into the job, which is the inversion the step calls out", writeEnv, i)
+	}
+	for _, want := range []string{
+		"git diff -- fugaro.yaml",
+		"git diff -- .claude/settings.json",
+		// The revert of the one edit the check can make to the sandbox's own
+		// file: step 3's answer to `init --repo`'s gcp_project: prompt is `n`,
+		// and this is what handles the run that did not give it.
+		"if ! git diff --quiet -- fugaro.yaml; then",
+		"git checkout -- fugaro.yaml",
+		"fugaro budget show --json --project fugaro",
+		"fugaro project show --json --project fugaro",
+	} {
+		if at(want) < 0 {
+			t.Errorf("step 8's restore block has no %q line of its own: the step's FACT prose writes the same string, so the substring pin above cannot see this line deleted", want)
+		}
+	}
+	// …and the revert is guarded by step 1's own record, not by the file being
+	// dirty: a checkout whose committed copy already carries gcp_project: is
+	// never written to, so an unrelated working-tree change in it belongs to the
+	// operator and must not be discarded here.
+	chk49MustContain(t, chk49Step(t, section, "### 8."), "step 8", []string{
+		"grep -q '^gcp_project:' /tmp/chk49-sandbox-yaml-before.txt",
+	})
+	// Read as a command line, not as a substring: the section SAYS it has no
+	// `fugaro budget set`, and that sentence is the point — it is running one
+	// that would write a node no step changed.
+	for _, line := range fugaroCommands(section) {
+		if strings.HasPrefix(line, "fugaro budget set") {
+			t.Errorf("the Check 49 section runs %q: no step of this check changes the caps node, so that write restores a value the check only recorded", line)
+		}
+	}
+	chk49MustContain(t, section, "section", []string{
+		"There is no `fugaro budget set` in this restore, and that is deliberate",
+	})
+
+	// The project-wide ceiling: the installation also runs the live
+	// dimipaun/fugaro dogfood, and the published per_run_usd is the whole
+	// project's, so the check must say so, confirm nothing is in flight, and
+	// publish the number the job environment already carries.
+	chk49MustContain(t, section, "section", []string{
+		"dimipaun/fugaro` dogfood pipeline",
+		"a published `budget.per_run_usd` is the **whole project's** per-run ceiling",
+		"no step below ever lowers it",
+		"fugaro runs ls --all --project fugaro",
+		"**FACT:** the state as recorded — `fugaro runs ls --all --project fugaro` shows **no run in flight**",
+		"and it still names the dogfood's own repository, `github/dimipaun/fugaro`",
+		"fugaro project repos add github/dimipaun/fugaro --project fugaro",
+		"**FACT:** no other repository's run started",
+	})
+
+	// Every `fugaro run` carries the block's TASK. A launch with no task is
+	// refused at run.go:220, before openCloud and long before the allow-list
+	// gate at run.go:449 (`launchPolicyGates`; :441 is a comment inside
+	// budgetPrecheck's block, which is the stale number the section is checked
+	// against below), so a bare `fugaro run` in step 3, 5, 6(a), 7 or 8 never
+	// reaches what the step is there to produce.
+	chk49MustContain(t, section, "section", []string{
+		"TASK='Do not change any file and do not open a pull request. Reply with the single word ok.'",
+		"Every `fugaro run` below carries a task, and it has to",
+		// The runs' ref, and why it is master: the sandbox has no `main`, and
+		// --ref is not cross-checked against the remote at launch.
+		"Every `fugaro run` below passes `--ref master`, and it is `master` because the sandbox repository has no `main`",
+		"`internal/gitops/gitops.go:239`",
+		`fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --json --project fugaro`,
+		`fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --project fugaro`,
+	})
+	// Every run names the sandbox's base branch, and it is `master`: the
+	// sandbox repository has no `main` (deploy/sandbox/fugaro.yaml), and --ref
+	// is carried into the job verbatim (run.go:817-823) and fetched by the
+	// runner (gitops.go:239), so a run pointed at a branch that does not exist
+	// halts on the fetch. Checked as a property of every `fugaro run` line
+	// rather than as `--ref main` asserted absent, so any other wrong branch is
+	// caught too.
+	var runs int
+	for _, line := range fugaroCommands(section) {
+		if strings.HasPrefix(line, "fugaro run ") {
+			runs++
+			if !strings.Contains(line, `"$TASK"`) {
+				t.Errorf("the Check 49 section has a `fugaro run` with no task: %q — the launcher refuses a taskless launch before the allow-list gate, so this step never reaches its own refusal", line)
+			}
+			if !strings.Contains(line, "--ref master") {
+				t.Errorf("the Check 49 section has a `fugaro run` that does not pass `--ref master`: %q — the sandbox's base branch is master, --ref is not checked against the remote at launch, and the runner's fetch of a branch that does not exist fails the run", line)
+			}
+		}
+	}
+	if runs < 5 {
+		t.Errorf("the Check 49 section has %d `fugaro run` lines, want at least 5 (steps 3, 5, 6(a), 7 and 8), so the TASK and --ref rules above are checked over all of them", runs)
+	}
+
+	// `fugaro image refresh` is the image half, not `fugaro upgrade`: upgrade
+	// also rewrites the checkout's .claude/settings.json and installs the
+	// plugin in Claude Code at user scope, and the check must say so rather
+	// than sending the owner through two writes it then has to undo.
+	chk49MustContain(t, section, "section", []string{
+		"Use `fugaro image refresh` for the image half, not `fugaro upgrade`",
+		"**rewrites the checkout's `.claude/settings.json`**",
+		"`internal/cli/upgrade.go:85-110` is that command's own `Long` text, one paragraph per step: `pin` at `:85-89`, `plugin` at `:90-94`, `cloud` at `:95-110`",
+		// Both places the pin step's file is compared: step 8's block and
+		// step 8's FACT. One without the other is a restore that checks the
+		// file and a FACT that does not claim it.
+		"git diff -- .claude/settings.json\ncmp -s /tmp/chk49-claude-settings-before.json .claude/settings.json",
+		"`git diff -- .claude/settings.json` is empty with the plugin pin where step 3 found it",
+	})
+
+	// The step 3 read prints the environment's NAMES and value LENGTHS, and
+	// the values only of the three that are not credentials. The set is
+	// pinned exactly, so adding FUGARO_FIREBASE_API_KEY to it — the review's
+	// finding: a --format that printed the env array printed the key — fails
+	// here. The old read is asserted absent for the same reason.
+	chk49MustContain(t, section, "section", []string{
+		`printable = {"FUGARO_RTDB_URL", "FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD"}`,
+		"# LENGTH of each value. Never a value: FUGARO_FIREBASE_API_KEY is a",
+	})
+	for _, dead := range []string{
+		"spec.template.spec.template.spec.containers[0].env)' | tr ','",
+		"FUGARO_FIREBASE_API_KEY\", \"FUGARO_MAX_RUN_USD",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 49 section's step 3 read prints the job environment's values (%q): FUGARO_FIREBASE_API_KEY is a credential and the read prints names and lengths only", dead)
+		}
+	}
+
+	// Step 3 is not the job environment alone, and step 8's `git diff --
+	// fugaro.yaml` FACT rests on knowing that. `fugaro init --repo`'s
+	// repository stage ends by OFFERING the checkout's gcp_project: line —
+	// init_repo_stage.go:163, Apply's `s.anchor(ctx, env, s.e.r.o.planOnly)`,
+	// where the --plan-only run plans the same line and writes nothing (:143) —
+	// through the anchor at init_fugaroyaml.go:243, the [y/N] prompt at :220
+	// and the write at :230; --yes takes that prompt without asking. The check
+	// runs `init --repo` in that checkout TWICE (step 3 and step 8), so the
+	// section has to say which answer it wants and step 8 has to have a revert:
+	// without both, "this is a confirmation that it is unchanged" is a
+	// confirmation of an edit the check itself made, and the FACT above fails
+	// on the operator's own checkout.
+	chk49MustContain(t, chk49Step(t, section, "### 3."), "step 3", []string{
+		"`init --repo` also offers the checkout's own `gcp_project:` line",
+		"internal/cli/init_repo_stage.go:163",
+		"internal/cli/init_fugaroyaml.go:243",
+		"Write this to <path>? [y/N]:",
+		"`internal/cli/init_fugaroyaml.go:220`",
+		"step 8 runs the same command and asks the same question a second time",
+	})
+
+	// The citations the review found drifted. Asserted ABSENT rather than
+	// pinned present: a line number that moved under a legitimate change is
+	// not this test's to freeze, but a number that points at something else
+	// today is a citation a reader cannot follow, which is what these were.
+	for _, dead := range []string{
+		"internal/cli/doctor.go:748",
+		"internal/cli/cloud.go:53",
+		"internal/runner/runner.go:797",
+		"internal/backend/gcp/run.go:82-98",
+		"internal/cli/upgrade_cloud.go:162",
+		"internal/cli/run.go:441",
+		// upgrade's Long text: :84 is blank, `pin` is :85-89, `plugin` is
+		// :90-94 and `cloud` is :95-110. A range that stops at :88 describes
+		// one of the three steps and claims all three.
+		"internal/cli/upgrade.go:84-88",
+		// NOT listed here: `internal/cli/project_cmd.go:352`. It was the wrong
+		// number when it was added — :345 was the declaration then — but the
+		// merge with next moved the whole function down and :352 is now where
+		// `allowSourcesOf` is declared, which is what the section cites. A line
+		// number in this list is only true until the next merge; it is kept off
+		// so the test does not fail on a citation that is now correct.
+		// The Firebase root's applyRoot at init_firebase.go:289 is what
+		// --plan-only never reaches: the run has already returned at :210-213
+		// on installRoot's plan-only stop (init.go:1285-1287). Citing :290 as
+		// the stop points at code a --plan-only run cannot execute.
+		"internal/cli/init_firebase.go:290",
+		// Step 6(b)'s admissionCheck. :862 was the call when the section was
+		// written and :922 is where the merge with next left it — the file grew
+		// above it, and :862 is now `func (r *run) bootstrap(...)`, which is the
+		// reader the same sentence cites at :863. The two numbers came from one
+		// reading of the file and only one of them was updated. This entry
+		// catches the citation only if it is ever written out in full; the
+		// section abbreviates it, and the phrase pin above step 6 is what
+		// actually holds it.
+		"internal/runner/runner.go:862",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 49 section cites %q, which does not point at what it says on this tree", dead)
+		}
+	}
+
+	// Step 2's plan-only claim, pinned present as well as its wrong citation
+	// asserted absent: what stops a `--plan-only` run is installRoot's own
+	// plan-only return, taken at init_firebase.go:210-213 — not the Firebase
+	// root's applyRoot, which that run never reaches. The substantive claim
+	// (the act lines are the second command's) is unchanged and pinned above.
+	chk49MustContain(t, chk49Step(t, section, "### 2."), "step 2", []string{
+		"`internal/cli/init.go:1285-1287`, inside `installRoot` (declared at `:1171`)",
+		"`internal/cli/init_firebase.go:210-213` (`if err != nil || stop { return err }`)",
+		"`internal/cli/init_firebase.go:289`, the one whose stop this is **not**",
+	})
+
+	// Step 1's backup keeps the FIRST copy, and the guard paragraph names every
+	// variable the first hard stop asserts. The unguarded `cp` was the review's
+	// finding: steps are re-run block by block, so a second pass through step 1
+	// overwrote the pre-check file with whatever step 8 had just put back, and
+	// step 8's byte-for-byte FACT then compared the operator's config against
+	// itself. The paragraph said the stop asserts `P`, `L` and `TASK` and did
+	// not mention `C`, which is the variable whose emptiness does the damage.
+	chk49MustContain(t, chk49Step(t, section, "### 1."), "step 1", []string{
+		`[ -e "$C.before-49" ] || cp "$C" "$C.before-49"`,
+		"KEEP THE FIRST COPY",
+	})
+	chk49MustContain(t, section, "section", []string{
+		"`P` is exactly `fugaro-dev`, and `L`, `TASK` **and `C`** are non-empty",
+	})
+
+	// Every variable the section's commands read is set by the block that is
+	// re-run at the start of every step, or is a step's own (the map below).
+	// The review found the first pass breaking exactly this: step 1 assigned
+	// `C` and step 8 — a later shell, where step 1's shell is gone — used it,
+	// so `cp "$C.before-49" "$C"` expanded to `cp ".before-49" ""`, the
+	// operator's config was never put back, and the `fugaro init --repo` that
+	// follows read the job environment out of a file that was still edited.
+	block := chk49FencedBlocks(section)[0]
+	assigned := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_]*)=`).FindAllStringSubmatch(block, -1) {
+		assigned[m[1]] = true
+	}
+	for _, name := range []string{"P", "L", "JOB", "C", "TASK"} {
+		if !assigned[name] {
+			t.Errorf("the Check 49 setup block does not set %s, and every step below runs in a shell that has only what the block sets: a step that reads it reads an empty string", name)
+		}
+	}
+	stepLocal := map[string]bool{
+		"RUN": true, // step 5's, from the launch's own output
+	}
+	// The shell's own, which no block has to set: $HOME is the operator's
+	// and is the same in every shell of the check.
+	shellOwn := map[string]bool{"HOME": true}
+	// Every command line in the section, not only the ones that act on a
+	// project: the review's own break was in a `cp`, which no verb list
+	// collects. Comment lines are skipped — they are prose, and `${VAR:?}`
+	// in a comment is a sentence about the convention, not a read.
+	ref := regexp.MustCompile(`\$\{?([A-Z][A-Z0-9_]*)`)
+	for _, b := range chk49FencedBlocks(section) {
+		for _, line := range strings.Split(b, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			for _, m := range ref.FindAllStringSubmatch(line, -1) {
+				if assigned[m[1]] || stepLocal[m[1]] || shellOwn[m[1]] {
+					continue
+				}
+				t.Errorf("the Check 49 section reads $%s in %q, and neither the setup block that every step re-runs nor a step's own assignment sets it: in the shell that runs this line it is empty", m[1], line)
+			}
+		}
+	}
+
+	// FUGARO_RUN is `<repo-slug>/<run-id>`, parsed by runstore.ParseRef, and
+	// the override must name a run that does not exist — never one of
+	// dimipaun/fugaro's, which would point the sandbox's job at another
+	// repository's stored task.
+	chk49MustContain(t, section, "section", []string{
+		"**`FUGARO_RUN` is `<repo-slug>/<run-id>`, both halves required.**",
+		"`internal/runstore/runstore.go:411`",
+		"--update-env-vars FUGARO_RUN=not-this-jobs-slug-000000000000/20261015-000000-dead",
+		"a run id that names no run anywhere",
+	})
+
+	// No step handles a secret value: the check reads the rules' bytes, the
+	// node's version and the job environment's key *presence*, never a value.
+	chk49MustContain(t, section, "section", []string{
+		"never its value",
+	})
+	for _, dead := range []string{
+		"gcloud secrets versions access", "--data-file", "gcloud secrets create",
+		"print-access-token", "FUGARO_FIREBASE_API_KEY=", "ANTHROPIC_API_KEY=",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 49 section handles a secret value (%q): this check never reads, prints or records one", dead)
+		}
+	}
+
+	// The closing paragraph, which is what the owner reads last.
+	chk49MustContain(t, section, "section", []string{
+		"**Paste back:** every FACT line above, never a secret value and never a key value.",
+		"Never run this against `belong`.",
+	})
+
+	// Every command that acts on a project names it, and no gcloud/fugaro
+	// command interpolates an unguarded `${VAR}`: an empty variable there is
+	// an empty argument gcloud resolves from its ambient configuration.
+	unguarded := regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
+	for _, line := range sectionCommands(section) {
+		if strings.HasPrefix(line, "gcloud ") &&
+			!strings.Contains(line, `--project="${P:?}"`) &&
+			!strings.Contains(line, `"${P:?}"`) &&
+			!strings.Contains(line, `projects/${P:?}`) {
+			t.Errorf("the Check 49 section has a gcloud command that does not name the project: %q", line)
+		}
+		if m := unguarded.FindString(line); m != "" {
+			t.Errorf("the Check 49 section has an unguarded %s in a command: %q", m, line)
+		}
+	}
+	// `fugaro doctor --project fugaro` is the guard's own cross-check; every
+	// other fugaro command acts on the installation and must name it too.
+	var sawDoctor bool
+	for _, line := range fugaroCommands(section) {
+		if strings.HasPrefix(line, "fugaro doctor --project fugaro") {
+			sawDoctor = true
+			continue
+		}
+		if !strings.Contains(line, "--project fugaro") {
+			t.Errorf("the Check 49 section has a fugaro command that does not name the installation: %q", line)
+		}
+		if m := unguarded.FindString(line); m != "" {
+			t.Errorf("the Check 49 section has an unguarded %s in a fugaro command: %q", m, line)
+		}
+	}
+	if !sawDoctor {
+		t.Error("the Check 49 section's guard block is not read as a command, so nothing checks that it pins the installation")
+	}
+}
+
+// chk49FencedBlocks returns the Check 49 section's fenced code blocks, in
+// order. The first is the setup block every step re-runs, which is the one
+// whose assignments a step in a later shell can rely on.
+func chk49FencedBlocks(section string) []string {
+	parts := strings.Split(section, "```")
+	var out []string
+	for i := 1; i < len(parts); i += 2 {
+		out = append(out, parts[i])
+	}
+	return out
+}
+
+// chk49StepMarkers is the Check 49 section's steps in the order they appear,
+// `### 6.` included for the boundary it draws and not pinned itself: step 6's
+// own FACT lines belong to its two halves, which are what the section asserts
+// separately, and its introductory paragraph asserts none.
+var chk49StepMarkers = []string{
+	"### 1.", "### 2.", "### 3.", "### 4.", "### 5.", "### 6.",
+	"**(a) The launcher's.**", "**(b) The run's own.**", "### 7.", "### 8.",
+	"**Paste back:**",
+}
+
+// chk49Step returns one step of the Check 49 section: from its marker to the
+// next step's, so a FACT line is attributed to the step that carries it rather
+// than to the section as a whole. A marker that is missing, or out of order,
+// fails the test: the pins below are only as good as the slicing.
+func chk49Step(t *testing.T, section, marker string) string {
+	t.Helper()
+	i := -1
+	for k, m := range chk49StepMarkers {
+		if m == marker {
+			i = k
+			break
+		}
+	}
+	if i < 0 {
+		t.Fatalf("chk49Step(%q): not one of the Check 49 section's step markers", marker)
+	}
+	from := strings.Index(section, marker)
+	if from < 0 {
+		t.Fatalf("the Check 49 section has no %q step", marker)
+	}
+	to := len(section)
+	for _, next := range chk49StepMarkers[i+1:] {
+		if j := strings.Index(section[from+len(marker):], next); j >= 0 {
+			to = from + len(marker) + j
+			break
+		}
+	}
+	if to <= from {
+		t.Fatalf("the Check 49 section's %q step is empty: %q must come after it", marker, chk49StepMarkers[i+1])
+	}
+	return section[from:to]
+}
+
+// chk49MustContain fails the test for each want that is not in got, naming the
+// part of the section (its body, its table row, the whole section) that should
+// hold it.
+func chk49MustContain(t *testing.T, got, part string, want []string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("the Check 49 section's %s is missing %q", part, w)
+		}
+	}
 }

@@ -542,3 +542,41 @@ func TestRecipeValidate(t *testing.T) {
 		t.Fatalf("old spec: %+v, %v", s, err)
 	}
 }
+
+// TestSpecMode covers Spec.Mode (artifact-runs plan Task 2): the launcher
+// writes the resolved recipe's mode, "artifact" today, and nothing at all
+// for implement or review, so every existing spec stays byte-identical to
+// what the previous release wrote. A value that is not a recipe mode is
+// refused at parse, before the runner could select a run shape from a mode
+// nothing implements.
+//
+// Mutation (drop the mode switch from Validate): "sizzle" parses and this
+// test fails.
+func TestSpecMode(t *testing.T) {
+	for _, mode := range []string{"", "implement", "review", "artifact"} {
+		in := `{"version":1,"run_id":"20261015-120000-a1b2","repo":"acme/app","ref":"main","task":"x","mode":"` + mode + `"}`
+		spec, err := Parse([]byte(in))
+		if err != nil {
+			t.Errorf("mode %q: %v", mode, err)
+			continue
+		}
+		if spec.Mode != mode {
+			t.Errorf("mode %q parsed as %q", mode, spec.Mode)
+		}
+	}
+	for _, mode := range []string{"sizzle", "ARTIFACT", "impl", " artifacts", "artifact "} {
+		in := `{"version":1,"run_id":"20261015-120000-a1b2","repo":"acme/app","ref":"main","task":"x","mode":"` + mode + `"}`
+		if _, err := Parse([]byte(in)); err == nil || !strings.Contains(err.Error(), "mode") {
+			t.Errorf("mode %q: err = %v, want a refusal naming the mode", mode, err)
+		}
+	}
+	// The empty mode is omitted, not written as "": an implement or review
+	// spec is unchanged on the wire.
+	data, err := json.Marshal(&Spec{Version: 1, RunID: "20261015-120000-a1b2", Repo: "acme/app", Ref: "main", Task: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"mode"`) {
+		t.Fatalf("an empty mode is written: %s", data)
+	}
+}

@@ -84,6 +84,8 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.commands.test", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.lint", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.fix", In: InProfile | InRepo},
+	{Key: "workflows.*.commands.render", In: InProfile | InRepo},
+	{Key: "workflows.*.commands.probe", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.rerun_failed", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.reports", In: InProfile | InRepo},
 	{Key: "workflows.*.cache", In: InProfile | InRepo},
@@ -93,12 +95,16 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.timeouts.total", In: InProfile | InRepo | InOverride},
 	{Key: "workflows.*.timeouts.stage", In: InProfile | InRepo},
 	{Key: "workflows.*.timeouts.verify", In: InProfile | InRepo},
+	{Key: "workflows.*.timeouts.render", In: InProfile | InRepo},
 	{Key: "workflows.*.timeouts.finalize_reserve", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.check", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.max_age", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.lockfiles", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.base", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.paths", In: InProfile | InRepo},
+	{Key: "workflows.*.inputs.max_files", In: InProfile | InRepo},
+	{Key: "workflows.*.inputs.max_bytes", In: InProfile | InRepo},
+	{Key: "workflows.*.inputs.max_total_bytes", In: InProfile | InRepo},
 	{Key: "followup.trusted", In: InRepo, Why: whyFollowup},
 	{Key: "followup.allow_public", In: InRepo, Why: whyFollowup},
 }
@@ -120,12 +126,18 @@ var Scopes = []ScopeRow{
 // for a repository's own reviewed fugaro.yaml, the same as image.setup; a
 // profile published from the bucket must gate it the same way.
 //
+// commands.render and commands.probe are here for the same reason
+// commands.build is: an artifact recipe's render and probe steps run the
+// workflow's own text as shell in the job (design artifact-runs.md §3), so
+// a profile that sets either must be gated like any other command.
+//
 // workflows.*.image.skip_build_scripts going from true to false (or being
 // dropped) turns the dependency install/build scripts back on in the image
 // build; going from false to true is reported too (the owner's ruling: a
 // direction being safer is not a reason to leave it ungated).
 var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
+	"workflows.*.commands.render", "workflows.*.commands.probe",
 	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
 	"workflows.*.image.skip_build_scripts",
 }

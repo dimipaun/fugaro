@@ -74,6 +74,11 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 		b.WriteString("**Outcome:** ready for review\n\n")
 	case runstore.OutcomeNone:
 		fmt.Fprintf(&b, "**Outcome:** stopped — %s\n\n", rec.Reason)
+	case runstore.OutcomeArtifacts:
+		// Without this arm an artifact run falls into the default below and
+		// reads as a draft pull request with an empty reason, which is the
+		// one thing it is not: it opens no pull request at all.
+		b.WriteString("**Outcome:** artifacts — the deliverable is in this run's bucket, no pull request\n\n")
 	default:
 		fmt.Fprintf(&b, "**Outcome:** draft — %s\n\n", rec.Reason)
 	}
@@ -87,6 +92,9 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 			fmt.Fprintf(&b, "| %s | %s |\n", s.Name, d)
 		}
 		b.WriteString("\n")
+	}
+	if rec.Outcome == runstore.OutcomeArtifacts {
+		b.WriteString(artifactsSection(rec))
 	}
 	if len(rec.Reviews) > 0 {
 		parts := make([]string, 0, len(rec.Reviews))
@@ -120,6 +128,41 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	fmt.Fprintf(&b, "Transcripts and verify records: `%s` in the runs bucket.\n", location)
 	b.WriteString("\n" + gitprov.ReportMarker(rec.RunID) + "\n")
 	return b.String()
+}
+
+// artifactsSection is the report's Artifacts section (design §9) for a
+// mode: artifact run: what the render step did, and the compute estimate the
+// run's wall clock priced. The per-file table — name, size, short sha256,
+// recorded content type and the probe's verdict — is deliberately not here:
+// it renders the upload step's and the probe step's own types, so a release
+// without them says the record carries none rather than printing a header
+// over nothing.
+func artifactsSection(rec *runstore.Record) string {
+	var b strings.Builder
+	b.WriteString("#### Artifacts\n\n")
+	if r := rec.Render; r != nil {
+		exit := fmt.Sprintf("exit %d", r.ExitCode)
+		if r.TimedOut {
+			exit += ", timed out"
+		}
+		fmt.Fprintf(&b, "- **Render:** `%s` in the %s tree, %s, %s\n", r.Command, r.Tree, exit, secsText(r.DurationS))
+		fmt.Fprintf(&b, "- **Command sha256:** `%s`\n", r.CommandSHA256)
+		if c := rec.Cost; c != nil && c.ComputeEstimated {
+			// The figure is priced from the run's wall clock (updateCost), so
+			// it is never attributed to the render's seconds: a short render
+			// on a long run would otherwise read as its own price.
+			fmt.Fprintf(&b, "- **Compute:** $%.4f estimated from the run's wall clock, of which the render is %s\n", c.ComputeUSD, secsText(r.DurationS))
+		}
+		b.WriteString("\nThe render's files are uploaded by the run's own step; this record carries the render alone.\n\n")
+		return b.String()
+	}
+	b.WriteString("- **Render:** none recorded: the run ended before its render step ran.\n\n")
+	return b.String()
+}
+
+// secsText is a recorded duration in seconds for a report line.
+func secsText(s float64) string {
+	return time.Duration(s * float64(time.Second)).Round(time.Second).String()
 }
 
 func testsLine(rec *runstore.Record) string {

@@ -1,0 +1,14 @@
+version: 1
+name: artifact
+mode: artifact
+description: Renders a file set and uploads it
+use_when: The deliverable is a file, not a pull request
+outputs:
+  globs: ["out/*.mp4", "out/*.png"]
+  max_files: 4
+  max_bytes: 1048576
+  max_total_bytes: 4194304
+  probe: probe
+steps:
+  - plan: {}
+  - render: {}

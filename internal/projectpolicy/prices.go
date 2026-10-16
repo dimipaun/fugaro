@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // Prices is the model_prices block of a policy: the owner's price overrides,
@@ -63,18 +64,48 @@ var (
 // folds case, so "input_per_m" written twice, or "INPUT_PER_M" beside it,
 // is one field to it and the rate this run is priced by would depend on the
 // order the keys were written in. The long_context tier is held to the same
-// check, for the same reason.
+// check, for the same reason. The block's own keys are held to a rule of their
+// own: one model may be named once, whether it is repeated under one key or
+// written under two spellings of its ID (checkNoDuplicateNames, then the
+// unescaped IDs), because a model priced twice is priced by whichever of the
+// two members the read happened to see last.
 func (ps *Prices) UnmarshalJSON(raw []byte) error {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return err
 	}
+	// The block's own key names, as the document writes them: the map above
+	// keeps the last of a repeated key, and one model can also be written
+	// under two *different* keys — the escaped spelling this package writes
+	// and the literal model ID a person writes by hand both unescape to the
+	// same ID. Either way only one of the two prices can survive, so which one
+	// this run is billed by (and the ceiling it is compared against) would
+	// depend on the order the keys were read in, and one of them was written
+	// by someone who meant it.
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return err
+	}
+	if err := checkNoDuplicateNames("model_prices", names); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys) // a stable order, so the refusal below names the same pair every time
 	out := make(Prices, len(entries))
-	for key, entry := range entries {
+	spelled := make(map[string]string, len(entries)) // model ID -> the key it was written under
+	for _, key := range keys {
+		entry := entries[key]
 		id, err := unescKey(key)
 		if err != nil {
 			return fmt.Errorf("%q: %w", key, err)
 		}
+		if first, dup := spelled[id]; dup {
+			return fmt.Errorf("%q and %q are both the model ID %q, and a model may be named once: the price this run is billed by would otherwise depend on the order the block's keys are in", first, key, id)
+		}
+		spelled[id] = key
 		if err := checkPriceMemberNames(entry); err != nil {
 			return fmt.Errorf("%q: %w", id, err)
 		}

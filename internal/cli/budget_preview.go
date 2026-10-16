@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -69,6 +73,18 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"with today's remaining daily caps. It is a ceiling, not a forecast: a run\n" +
 			"is bounded by the smaller of budget.per_run_usd and the recipe's most\n" +
 			"stages times the repository's agent.max_budget_usd.\n\n" +
+			"That figure is the model ceiling and nothing else: a run also bills for\n" +
+			"the machine it asked for, and no budget key bounds compute at all --\n" +
+			"the run's own timeout is the cap.\n" +
+			"So for every workflow the checkout defines the preview also prints a\n" +
+			"compute ceiling -- the workflow's own resources over its own\n" +
+			"timeouts.total, at this installation's compute prices -- and says out\n" +
+			"loud that it is NOT CAPPED, because for a run whose expensive half is a\n" +
+			"render on a big machine the model ceiling is not the worst case. The\n" +
+			"basis is timeouts.total and not a render step's own timeout: a render\n" +
+			"that overruns still burns the run's clock to the deadline. Without a\n" +
+			"price table for the installation's region the line names what is\n" +
+			"missing and prints no dollar figure, rather than $0.00.\n\n" +
 			"When the repository's recorded runs of the last 30 days are at least 5,\n" +
 			"the preview also prints, clearly labelled typical:, what one run of the\n" +
 			"recipe usually costs: the mean recorded cost of each stage kind (on the\n" +
@@ -128,6 +144,74 @@ func previewKnobsOf(cfg *config.Config) previewKnobs {
 	}
 	return previewKnobs{first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds,
 		maxStageUSD: cfg.Agent.MaxBudgetUSD, from: "checkout"}
+}
+
+// previewCompute is one workflow's compute ceiling: what a run of it can bill
+// for the machine it asked for over the run's own clock. The model caps count
+// model dollars and nothing else, so no cap covers this figure at all -- which
+// is what D4 decides and what the printed line says out loud (design
+// artifact-runs.md §6).
+type previewCompute struct {
+	Workflow string `json:"workflow"`
+	VCPU     int    `json:"vcpu"`
+	// Memory is the workflow's resources.memory as written, and GiB is it in
+	// GiB (0 when it is not a memory size, which Unpriced then names).
+	Memory string  `json:"memory"`
+	GiB    float64 `json:"memory_gib"`
+	// TotalS is the basis: timeouts.total in seconds, and deliberately not
+	// timeouts.render. The line is the worst case a run can bill, and a
+	// render that overruns its own step still burns the run's clock until
+	// the deadline.
+	TotalS float64 `json:"total_s"`
+	// USD is that worst case at this installation's compute prices; null
+	// when the workflow could not be priced, and then Unpriced says why and
+	// the line prints no dollar figure rather than a wrong one.
+	USD      *float64 `json:"usd"`
+	Source   string   `json:"price_source,omitempty"`
+	Unpriced string   `json:"unpriced,omitempty"`
+}
+
+// previewComputeCeilings is the compute ceiling of every workflow the
+// checkout defines, in name order: the resources and the clock are the
+// workflow's own, so a repository with several of them gets one line each,
+// and a repository with none (no checkout here) gets none.
+//
+// The arithmetic is Prices.ComputeUSD over the workflow's own resources --
+// what the runner's own estimate calls (internal/runner/cost.go:63) -- and
+// deliberately not Prices.Quantities: that method answers a machine type's
+// quantities for a table that bills one (internal/backend/backend.go:285-289),
+// and this table is Cloud Run's, which bills whatever the workflow asked for.
+// p is the price book every other compute figure in this CLI is priced with
+// (cloudEnv.prices at the installation's region), so the preview's number and
+// a run's recorded cost.compute_usd come from the same table.
+func previewComputeCeilings(cfg *config.Config, p backend.Prices, region string) []previewCompute {
+	out := []previewCompute{}
+	if cfg == nil {
+		return out
+	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		w := cfg.Workflows[name]
+		c := previewCompute{Workflow: name, VCPU: w.Resources.CPU, Memory: w.Resources.Memory,
+			TotalS: w.Timeouts.Total.Duration.Seconds()}
+		gib, err := backend.MemoryGiB(w.Resources.Memory)
+		if err != nil {
+			c.Unpriced = fmt.Sprintf("resources.memory %q is not a memory size", oneLine(w.Resources.Memory))
+			out = append(out, c)
+			continue
+		}
+		c.GiB = gib
+		switch {
+		case w.Timeouts.Total.Duration <= 0:
+			c.Unpriced = "timeouts.total is not set, so the run has no clock to price"
+		case p.VCPUSecondUSD <= 0 || p.GiBSecondUSD <= 0:
+			c.Unpriced = "no compute price table for region " + oneLine(region)
+		default:
+			usd := p.ComputeUSD(float64(w.Resources.CPU), gib, w.Timeouts.Total.Duration)
+			c.USD, c.Source = &usd, p.Source
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // previewHeadroom is what one scope has left under its daily cap today.
@@ -234,6 +318,11 @@ type previewDoc struct {
 		RepoUSD   *float64 `json:"repo_usd"`
 		GlobalUSD *float64 `json:"global_usd"`
 	} `json:"headroom"`
+	// ComputeCeiling is what a run of each workflow can bill for its machine
+	// over its own clock, which no cap covers (design artifact-runs.md §6,
+	// D4). It is empty when there is no checkout here, since the figures are
+	// the workflow's.
+	ComputeCeiling []previewCompute `json:"compute_ceiling"`
 	// Typical is what a run of the recipe typically costs, from the cost
 	// the repository's recorded runs gave each stage; null when the window
 	// holds fewer than previewMinRuns of them.
@@ -316,6 +405,11 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	if rr.Note != "" {
 		doc.Notes = append(doc.Notes, rr.Note)
 	}
+	// The ceiling's other half: the machine. No cap covers compute (D4), so
+	// the preview prices the worst case a run of each workflow can bill at
+	// the installation's own compute prices, beside the model ceiling rather
+	// than inside it.
+	doc.ComputeCeiling = previewComputeCeilings(cfg, env.prices(nil)(nil), lc.Region)
 	if knobs.maxStageUSD > 0 {
 		v := knobs.maxStageUSD
 		doc.PerStageCapUSD = &v
@@ -717,6 +811,9 @@ func printPreview(cmd *cobra.Command, d *previewDoc) {
 	if len(d.PerRunCapSource) > 0 {
 		fmt.Fprintf(w, "per-run caps found: %s; the smallest counts\n", oneLine(strings.Join(d.PerRunCapSource, ", ")))
 	}
+	for _, c := range d.ComputeCeiling {
+		printComputeCeiling(w, c)
+	}
 	fmt.Fprintf(w, "headroom left today: repository %s, project %s\n",
 		usdFixedPtr(d.Headroom.RepoUSD), usdFixedPtr(d.Headroom.GlobalUSD))
 	switch d.Verdict {
@@ -731,6 +828,35 @@ func printPreview(cmd *cobra.Command, d *previewDoc) {
 		fmt.Fprintf(w, "typical: %s a run (%d stages, from %d runs of the last 30 days)\n",
 			usdFixed(t.USD), t.Stages, t.Runs)
 	}
+}
+
+// printComputeCeiling prints one workflow's compute ceiling: the figure, and
+// the two things that bound it. The words NOT CAPPED are the line's point and
+// not decoration -- they are D4 said out loud, because the model ceiling above
+// it is the one an owner reads as "the worst case", and for a run whose
+// expensive half is a render it is not.
+//
+// The line states the ruling but cites nothing for it. SECURITY.md does not
+// carry the paragraph yet -- artifact-runs.md Task 9 writes it -- and a
+// pointer to a document that does not make the claim sends a reader to a
+// page that contradicts them by silence. The pointer can come back with the
+// paragraph.
+func printComputeCeiling(w io.Writer, c previewCompute) {
+	mem := c.Memory
+	if c.GiB > 0 {
+		mem = fmt.Sprintf("%g GiB", c.GiB)
+	}
+	fig := "not priced: " + c.Unpriced
+	if c.USD != nil {
+		fig = usdFixed(*c.USD) + " at this installation's compute prices"
+	}
+	fmt.Fprintf(w, "compute ceiling (workflow %s): %d vCPU x %s x %s = %s — NOT CAPPED\n",
+		oneLine(c.Workflow), c.VCPU, mem, time.Duration(c.TotalS*float64(time.Second)), fig)
+	// "not by any budget cap" and not the per-run key by name: the caps are
+	// per-run, repository-daily and project-daily, and compute is outside all
+	// three. Naming one of them here would also read, to a test that greps a
+	// command's whole output, as though that key were the one binding.
+	fmt.Fprintln(w, "  bounded by timeouts.total, not by any budget cap; compute is never capped")
 }
 
 // stageUSD is what the recipe's stage bound costs at the checkout's

@@ -655,6 +655,12 @@ func (r *rend) finishedRow(run RunRow, selected bool) string {
 		word, c = "ready for review", cOK
 	case "draft":
 		word += ", passed review"
+	case "artifacts":
+		// A mode: artifact run succeeded, and its deliverable is in the
+		// runs bucket: the bare stage word (SUCCEEDED) would be the one
+		// thing an owner must not read here, since it did not do what a
+		// succeeded implement run does (design artifact-runs.md §3).
+		word, c = "artifacts, no PR", cOK
 	}
 	segs := []seg{{cur + " " + run.Run + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
 	if run.PRURL != "" {
