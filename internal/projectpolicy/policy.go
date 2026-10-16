@@ -87,9 +87,9 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/repourl"
 )
 
 // Policy is the shared, readable node, decoded as JSON.
@@ -133,7 +133,7 @@ type Policy struct {
 	// sets none, so the runner computes the URL from task.json's repository,
 	// the provider the job's name pins and this block (plan task 3.3 step 3,
 	// design §4.1(1)). The URL is validated on the node against the same rules
-	// the deployer applies (gitprov.CloneURL), so an entry can never point a
+	// the deployer applies (repourl.CloneURL), so an entry can never point a
 	// run at another repository or another provider's host.
 	CloneURLs map[string]string `json:"clone_urls,omitempty"`
 
@@ -396,7 +396,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 // validCloneURLs checks the clone_urls block, entry by entry: each key a
 // canonical repository name, and each value an https URL without credentials
 // that names exactly that repository on that repository's own provider's host
-// — the rules the deployer applies to a repository URL (gitprov.CloneURL, the
+// — the rules the deployer applies to a repository URL (repourl.CloneURL, the
 // one function internal/infra's repoURL and the runner share).
 //
 // Both halves are the security property. A key that is not canonical names no
@@ -416,7 +416,7 @@ func validCloneURLs(urls map[string]string) error {
 		if c, err := Canonical(provider, repo); err != nil || c != key {
 			return fmt.Errorf("%s: a clone_urls key is a canonical repository name, like github/owner/name", at)
 		}
-		if _, err := gitprov.CloneURL(provider, repo, urls[key]); err != nil {
+		if _, err := repourl.CloneURL(provider, repo, urls[key]); err != nil {
 			return fmt.Errorf("%s: %w", at, err)
 		}
 	}

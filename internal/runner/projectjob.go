@@ -8,8 +8,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/repourl"
 )
 
 // The run's job identity (plan task 3.3, design §4.1 and §12a items 1 and 2).
@@ -245,7 +245,7 @@ func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workf
 // — it is a launcher-writable value (12a item 2, D10) and a shared job sets
 // none, so a launcher that overrides it must not be able to point the run at
 // another repository. The URL that comes back was checked against the same
-// rules the deployer applies (gitprov.CloneURL, one function for both), so a
+// rules the deployer applies (repourl.CloneURL, one function for both), so a
 // project job cannot clone from anything but its own repository.
 //
 // A run in a per-repository job keeps the phase-1 answer: the origin of a
@@ -267,7 +267,7 @@ func (r *run) cloneURL(ctx context.Context) (string, error) {
 		}
 		custom = p.CloneURL(canonical)
 	}
-	url, err := gitprov.CloneURL(job.Provider, r.spec.Repo, custom)
+	url, err := repourl.CloneURL(job.Provider, r.spec.Repo, custom)
 	if err != nil {
 		return "", fmt.Errorf("the clone URL of this run's repository on the job profile %q: %w", job.Profile, err)
 	}

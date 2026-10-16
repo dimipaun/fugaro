@@ -12,8 +12,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -154,12 +154,12 @@ func projectPolicyCloning(project, url string) string {
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
 }
 
-// providerCloneURL is gitprov.CloneURL's own answer for a repository: what a
+// providerCloneURL is repourl.CloneURL's own answer for a repository: what a
 // run computes when the policy names no clone URL of its own. It fails the test
 // rather than returning an error, like every other fixture helper.
 func providerCloneURL(t *testing.T, provider, repo string) string {
 	t.Helper()
-	url, err := gitprov.CloneURL(provider, repo, "")
+	url, err := repourl.CloneURL(provider, repo, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func providerCloneURL(t *testing.T, provider, repo string) string {
 
 // cloneHost makes the fixture's git host local, so a run in a project job —
 // whose clone URL is an https URL, because that is what the deployer writes
-// into a job's environment and what gitprov.CloneURL validates — can clone it
+// into a job's environment and what repourl.CloneURL validates — can clone it
 // without reaching the network.
 //
 // It moves the fixture's bare repository to the path the rewrite resolves url

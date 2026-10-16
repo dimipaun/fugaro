@@ -1,10 +1,23 @@
-package gitprov
+// Package repourl is the one answer to "where does this repository clone
+// from": the deployer writes it into a per-repository job's environment
+// (internal/infra's FUGARO_REMOTE) and the runner computes it for a run in a
+// shared project job (plan task 3.3 step 3), and the two must give the same
+// bytes for the same repository.
+//
+// It is a package of its own rather than a function of internal/gitprov or
+// internal/task because it needs both and neither may import the other: the
+// provider kinds are internal/gitprov's (KindForURL) and a repository's
+// canonical form is internal/task's (CanonicalRepo), while internal/task sits
+// above internal/config — whose own test holds config.Providers to
+// internal/gitprov's kinds, so internal/gitprov may not import internal/task.
+package repourl
 
 import (
 	"fmt"
 	"net/url"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -12,15 +25,14 @@ import (
 // one, which must be on the provider's own host, carry no credentials and
 // name exactly this repository, else the provider's usual one.
 //
-// It lives here rather than in internal/infra because two readers must give
-// the same answer byte for byte: the deployer, which writes the URL into a
-// per-repository job's environment (internal/infra's repoURL, FUGARO_REMOTE),
-// and the runner, which computes a project job's clone URL from task.json's
-// repository, the provider the job's own name pins and the project's policy
-// (plan task 3.3 step 3, design §4.1(1)) — FUGARO_REMOTE is a launcher-
-// writable value and a shared job sets none. A deploy-time answer the runner
-// would refuse, or the other way, is a job that cannot run; one function, so
-// the two cannot differ.
+// One function, two readers, byte for byte the same answer: the deployer,
+// which writes the URL into a per-repository job's environment
+// (internal/infra's repoURL, FUGARO_REMOTE), and the runner, which computes a
+// project job's clone URL from task.json's repository, the provider the job's
+// own name pins and the project's policy (plan task 3.3 step 3, design
+// §4.1(1)) — FUGARO_REMOTE is a launcher-writable value and a shared job sets
+// none. A deploy-time answer the runner would refuse, or the other way, is a
+// job that cannot run.
 //
 // The refusals are the security property, not decoration: a URL naming
 // another provider's host, or another repository on the same host, would make
@@ -31,7 +43,7 @@ import (
 // remoteOfAnotherKind, remoteOfAnotherRepo).
 func CloneURL(provider, repo, given string) (string, error) {
 	if given == "" {
-		host := map[string]string{KindGitHub: "github.com", KindBitbucket: "bitbucket.org"}[provider]
+		host := map[string]string{gitprov.KindGitHub: "github.com", gitprov.KindBitbucket: "bitbucket.org"}[provider]
 		if host == "" {
 			return "", fmt.Errorf("git provider %q is not bitbucket or github", provider)
 		}
@@ -41,7 +53,7 @@ func CloneURL(provider, repo, given string) (string, error) {
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("the repository URL %s is not an https URL without credentials", redactURL(given))
 	}
-	if KindForURL(given) != provider {
+	if gitprov.KindForURL(given) != provider {
 		return "", fmt.Errorf("the repository URL %s is not on %s's host", given, provider)
 	}
 	// The URL is where the build and the run clone from, so it must be this

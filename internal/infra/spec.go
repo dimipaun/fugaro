@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -455,13 +456,13 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 // repoURL is the https clone URL: the given one, which must be on the
 // provider's host and carry no credentials, else the provider's usual one.
 //
-// The rules are gitprov.CloneURL's, and only the error shape is this
+// The rules are repourl.CloneURL's, and only the error shape is this
 // package's: the deployer and the runner (a project job's clone URL, plan task
 // 3.3 step 3) must give the same answer, so a URL one of them refuses cannot
 // be one the other accepts. A per-repository job's FUGARO_REMOTE is written
 // from here (cloneJobEnv) and a project job's URL is computed there.
 func repoURL(provider, repo, given string) (string, error) {
-	u, err := gitprov.CloneURL(provider, repo, given)
+	u, err := repourl.CloneURL(provider, repo, given)
 	if err != nil {
 		return "", userErr("%v", err)
 	}
