@@ -55,7 +55,13 @@ func Run(t *testing.T, factory Factory) {
 // JSON) — so what the suite checks is the other half: an Env a launcher must
 // not launch with is one nothing may be created for, on every backend, and one
 // that is well formed is not refused. backend.LaunchEnv is where both backends
-// read it, and a backend that ignored the field would accept all three.
+// read it, and a backend that ignored the field would accept all four.
+//
+// The names refused here are the run's identity and the installation's, both
+// of which the platform sets itself: a backend that reserved only the variable
+// its own override writes (FUGARO_RUN on Cloud Run) would accept an entry the
+// other refuses, and, merging it into the job's environment, hand the run a
+// value the launcher wrote as if the installation had.
 //
 // Both refusals are ErrRejected's meaning (a definitive refusal: nothing was
 // created) and not an ambiguity, because the launcher's caller does different
@@ -67,6 +73,13 @@ func testLaunchEnv(t *testing.T, factory Factory) {
 		{"no = in the entry", "FUGARO_BUDGET_TOKEN1"},
 		{"an empty name", "=1"},
 		{"the run's own identity", "FUGARO_RUN=acme-app/20260927-100000-abcd"},
+		// The installation's own environment, which is the half a backend can
+		// reserve for itself and get wrong on its own: this name is in the set
+		// backend.JobEnvNames both backends ask with, and Cloud Run's own
+		// override merges into the job's environment exactly as Batch's map
+		// write does (review of this change — Cloud Run accepted this entry
+		// while Batch refused it, which is the asymmetry this case catches).
+		{"the installation it runs in", "FUGARO_PROJECT=someone-elses-project"},
 	} {
 		t.Run("refuses "+tc.name, func(t *testing.T) {
 			b := factory(t)

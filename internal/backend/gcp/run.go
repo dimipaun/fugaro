@@ -95,9 +95,13 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	// The spec's own variables (the launcher's budget marker) go in the same
 	// override as FUGARO_RUN: the API merges these into the job's environment.
 	// backend.LaunchEnv is where both backends read them, so an entry this one
-	// refuses (a malformed one, or one naming FUGARO_RUN, the variable this
-	// very override sets) is refused on Cloud Batch too.
-	extra, err := backend.LaunchEnv(spec, "FUGARO_RUN")
+	// refuses (a malformed one, or one naming a variable the job's own
+	// environment already sets) is refused on Cloud Batch too: the two ask with
+	// the same set (backend.JobEnvNames), which is what makes the refusal one
+	// rule rather than a per-backend accident. Cloud Run's override would
+	// otherwise shadow the job's own value for any of them (review of this
+	// change: this backend passed FUGARO_RUN alone).
+	extra, err := backend.LaunchEnv(spec, backend.JobEnvNames...)
 	if err != nil {
 		// Nothing has been sent, so this is a refusal and not an ambiguity:
 		// the launcher's ErrRejected branch drops its claim and the token it
