@@ -366,15 +366,30 @@ func guardProviderHostTo(t *testing.T, from, target string) {
 // in the bucket.
 func TestRunnerRefusesARemoteWithoutQuotingItsCredential(t *testing.T) {
 	for _, tc := range []struct {
-		name, remote, want string
+		name, remote, want, guard string
 	}{
-		{"the credential in the query", "https://github.com/acme/app.git?access_token=ATBBsecret", "https://github.com/acme/app.git"},
-		{"the credential in the userinfo", "https://x:ATBBsecret@github.com/acme/app.git", "https://github.com/acme/app.git"},
-		{"in the query and a fragment", "https://github.com/acme/app.git?access_token=ATBBsecret#ATBBsecret", "https://github.com/acme/app.git"},
+		{"the credential in the query", "https://github.com/acme/app.git?access_token=ATBBsecret", "https://github.com/acme/app.git", "https://github.com/"},
+		{"the credential in the userinfo", "https://x:ATBBsecret@github.com/acme/app.git", "https://github.com/acme/app.git", "https://github.com/"},
+		{"in the query and a fragment", "https://github.com/acme/app.git?access_token=ATBBsecret#ATBBsecret", "https://github.com/acme/app.git", "https://github.com/"},
+		// An empty authority: a shape this PR newly refuses, and one url.Parse
+		// reads with no host and no userinfo (u.User is nil) — so the redactor
+		// had nothing to register while the refusal quoted the string as
+		// written, putting the token in the error and in the run's
+		// result.json both (the review finding on this change). The guard is
+		// the scheme alone, not the provider's host: this spelling does not
+		// literally start with "https://github.com/", so a guard keyed on the
+		// host would let a regressed check reach the forge for real. The
+		// uppercase scheme is the same URL to git, which lowercases it, and
+		// git's prefix rewrite is case-sensitive, so its guard is the
+		// uppercase prefix.
+		{"the credential in an empty authority's userinfo", "https:///x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git", "https://"},
+		{"four slashes", "https:////x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git", "https://"},
+		{"an uppercase scheme", "HTTPS:///x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git", "HTTPS://"},
+		{"an empty authority naming another owner", "https:///x:ATBBsecret@github.com/attacker/malware.git", "github.com/attacker/malware.git", "https://"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
-			guardProviderHost(t, "https://github.com/")
+			guardProviderHost(t, tc.guard)
 			b.deps.Remote = tc.remote
 			rec, err := b.run(t)
 			refusedAdmission(t, b, rec, err, tc.want, "github", "bitbucket", "FUGARO_REMOTE")

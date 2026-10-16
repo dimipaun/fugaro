@@ -381,6 +381,21 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		{"tok@en@host/repo.git", "host/repo.git"},
 		{"tok@en@host", "host"},
 		{"https://host/p@x", "https://host/p@x"},
+		// An empty authority: url.Parse reads the string with no host, both
+		// split readers answer "no host" for it, and the authority-scoped
+		// userinfo read finds no authority at all — so the credential in front
+		// of the "@" was quoted back verbatim, in the refusal that exists
+		// because a remote's userinfo is a token's place (the review finding on
+		// this change). The userinfo is read off the whole head here, the way
+		// the readers of a remote url.Parse refuses read it: git and curl end
+		// it at the last "@" of the text in front of the host, wherever the
+		// authority's start is, and what follows that "@" is what may be
+		// quoted. The uppercase scheme is the same remote to git, which
+		// lowercases it, so it is the same refusal and the same display.
+		{"https:///x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git"},
+		{"https:////x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git"},
+		{"HTTPS:///x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git"},
+		{"https:///x:ATBBsecret@github.com/acme/app.git?ref=main#ATBBsecret", "github.com/acme/app.git"},
 	} {
 		got := remoteDisplay(tc.in)
 		if got != tc.want {
@@ -445,6 +460,18 @@ func TestAddRemoteSecretsRegistersWhatARemoteCanCarryACredentialIn(t *testing.T)
 		// the host and the head of the path, a credential in neither spelling.
 		{remote: "tok@en@host/repo.git", want: []string{"tok@en"}, absent: []string{"host", "repo.git"}},
 		{remote: "https://host/p@x", absent: []string{"host/p", "p@x"}},
+		// An empty authority, which url.Parse reads with no host: u.User is nil
+		// (there is no authority to hold one), so the parsed path registered
+		// nothing, and the authority-scoped raw read found no authority either
+		// — nothing was registered while git is handed the URL verbatim and
+		// echoes it back in the refusal and in result.json (the review finding
+		// on this change). The userinfo is read off the whole head, as it is
+		// for a remote url.Parse refuses, because the parse that would have
+		// found the authority is not one this shape passes.
+		{remote: "https:///x:ATBBsecret@github.com/acme/app.git", want: []string{"ATBBsecret", "x:ATBBsecret"}, absent: []string{"x"}},
+		{remote: "https:////x:ATBBsecret@github.com/acme/app.git", want: []string{"ATBBsecret", "x:ATBBsecret"}},
+		{remote: "HTTPS:///x:ATBBsecret@github.com/acme/app.git", want: []string{"ATBBsecret", "x:ATBBsecret"}},
+		{remote: "https:///ghp_0123456789@github.com/acme/app.git", want: []string{"ghp_0123456789"}},
 		{remote: "x-token-auth:t%6fk@bitbucket.org/acme/app.git", want: []string{"t%6fk", "x-token-auth:t%6fk"}, absent: []string{"x-token-auth", "acme/app"}},
 		{remote: "https://git@github.com/acme/app.git", absent: []string{"git"}},
 		{remote: "https://x-access-token@bitbucket.org/acme/app.git", absent: []string{"x-access-token"}},
@@ -614,6 +641,18 @@ func TestRemoteAdmissionErr(t *testing.T) {
 			"https:///github.com/acme/app.git", "whose host this check cannot read",
 		},
 		{
+			// The refusal quotes the remote, and this shape is where the
+			// credential sits unreadable to url.Parse — so the quote must carry
+			// none of it (the review finding on this change; the secret field
+			// below is what holds the refusal to that).
+			"refused: an empty authority, whose userinfo is not quoted back",
+			"https:///x:ATBBsecret@github.com/acme/app.git", "whose host this check cannot read",
+		},
+		{
+			"refused: an empty authority naming an attacker's host, whose userinfo is not quoted either",
+			"https:////x:ATBBsecret@evil.example/acme/app.git", "whose host this check cannot read",
+		},
+		{
 			"refused: an empty authority naming another host, same reason",
 			"https:///evil.example/acme/app.git", "whose host this check cannot read",
 		},
@@ -746,6 +785,17 @@ func TestRemoteAdmissionErr(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "\n") {
 				t.Errorf("remoteAdmissionErr(%q) = %q: a refusal is one line, and the spelling it quotes is a job's to write", tc.remote, err)
+			}
+			// A refusal never quotes a credential the remote carries: the
+			// spellings that carry one are exactly the ones url.Parse reads
+			// worst (an empty authority has no u.User to drop, a refused
+			// parse has no u.User at all), so this is the invariant the
+			// display's own table verifies one string at a time, asked of
+			// the refusal the run actually publishes.
+			for _, secret := range []string{"ATBBsecret", "glpat-secret", "ghp_0123456789"} {
+				if strings.Contains(tc.remote, secret) && strings.Contains(err.Error(), secret) {
+					t.Errorf("remoteAdmissionErr(%q) = %v: the refusal quotes the remote's credential", tc.remote, err)
+				}
 			}
 		})
 	}

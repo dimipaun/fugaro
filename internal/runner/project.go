@@ -425,15 +425,23 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 	// Only the two schemes a credential is scoped to are this check's: gitops'
 	// CredentialURL answers "" for everything that is not http or https, so an
 	// ssh:// remote — the URL spelling of the scp-like form above, which this
-	// check passes because remoteEndpoint answers endpoint = false for it
-	// (git@github.com:acme/app.git) — has no credential to send anywhere. The
-	// first shape of this check refused every other scheme, which read one
-	// remote two ways by the way it was written: an ssh spellings' pair got one
+	// check passes (git@github.com:acme/app.git) — has no credential to send
+	// anywhere. It passes because the switch below names http and https and
+	// nothing else, not because remoteEndpoint answers endpoint = false for it:
+	// that function reports an endpoint for every scheme with an authority
+	// (ssh://git@github.com:22/acme/app.git is scheme "ssh", port "22",
+	// endpoint = true), which is what lets this refusal read the scheme off the
+	// string rather than off CredentialURL's own parse (so a spelling url.Parse
+	// refuses is still refused here). A reader who took the switch for "any
+	// endpoint must be https" would start refusing ssh remotes that pass today
+	// — and the port an ssh:// remote names is not this check's either, for the
+	// same reason: no credential is scoped to it.
+	//
+	// The first shape of this check refused every other scheme, which read one
+	// remote two ways by the way it was written: an ssh spelling's pair got one
 	// answer from the scp-like branch and the opposite from this one, on a
 	// premise ("the credential sent in cleartext") that does not hold where no
-	// credential is scoped at all (the review finding on this change). The
-	// refusal reads the scheme off the string rather than off CredentialURL's
-	// own parse, so a spelling url.Parse refuses is still refused here.
+	// credential is scoped at all (the review finding on this change).
 	if scheme, port, endpoint := remoteEndpoint(remote); endpoint {
 		switch strings.ToLower(scheme) {
 		case "http":
@@ -607,6 +615,18 @@ func remoteDisplay(remote string) string {
 // a remote's shape ask: a display that ended the userinfo somewhere else than
 // the readers of the same string did would drop a credential's head into a
 // refusal, or quote the tail of one (the review finding on this change).
+//
+// An authority with nothing in it is read off the whole head instead
+// (gitRawUserinfo), because there is no authority-scoped reading of it to make:
+// https:///x:TOKEN@github.com/acme/app.git names github.com and acme/app.git to
+// git (libcurl reads the first path segment as the host), its userinfo is
+// "x:TOKEN" to git all the same — and the empty authority is the one shape that
+// reaches this cut with a credential and no authority to hold it, so returning
+// "no userinfo" here quoted the token back in the refusal and registered it
+// with no redactor entry at all (the review finding on this change). An
+// authority that is *not* empty answers alone: an "@" in the path is no
+// authority's, and reading https://host/p@x from the whole head registered
+// "host/p" as a credential.
 func remoteSplitUserinfo(head string) (userinfo, rest string, ok bool) {
 	off := 0
 	if i := strings.Index(head, "//"); i >= 0 {
@@ -618,12 +638,36 @@ func remoteSplitUserinfo(head string) (userinfo, rest string, ok bool) {
 	}
 	userinfo, host, ok := gitprov.SplitRemoteUserinfo(authority)
 	if !ok {
+		if authority == "" {
+			return gitRawUserinfo(head)
+		}
 		return "", "", false
 	}
 	// The rest keeps whatever followed the authority — the path, usually —
 	// because the display quotes the host's own string (host/repo.git for a
 	// remote written without a scheme), not the host alone.
 	return userinfo, host + head[off+len(authority):], true
+}
+
+// gitRawUserinfo reads a remote head the way git and curl read it when the
+// shape carries no authority to delimit a userinfo in: the userinfo is the text
+// in front of the last "@", the tail is what follows that "@", and both are
+// read off the whole head with the "//" of a scheme and the "/" an empty
+// authority leaves in front of it removed — and with no cut at the first "/",
+// because the authority's end is exactly what this shape does not write. An
+// empty authority's "https:////x:TOKEN@host/path", whose first path segment is
+// the host, is read the same way: "x:TOKEN" is the credential there too.
+func gitRawUserinfo(head string) (userinfo, tail string, ok bool) {
+	rest := head
+	if i := strings.Index(rest, "//"); i >= 0 {
+		rest = rest[i+2:]
+	}
+	rest = strings.TrimLeft(rest, "/")
+	at := strings.LastIndex(rest, "@")
+	if at < 0 {
+		return "", "", false
+	}
+	return rest[:at], rest[at+1:], true
 }
 
 // remoteSecretParams are the query parameters a git remote URL carries a
@@ -739,9 +783,9 @@ func (r *run) addRemoteSecretRaw(remote string) {
 	r.addRemoteSecretUserinfoGitRaw(head)
 }
 
-// addRemoteSecretUserinfoGitRaw registers the userinfo the way git reads it
-// off a remote url.Parse refused: the text in front of the last "@" of the
-// string, with the query and the fragment already cut off and the "//" of a
+// addRemoteSecretUserinfoGitRaw registers the userinfo of a remote head the way
+// git reads it off one url.Parse refused: the text in front of the last "@" of
+// the string, with the query and the fragment already cut off and the "//" of a
 // scheme removed — no other cut, because the shape that defeated the parse is
 // the one where the authority ends somewhere else than the first "/" says. A
 // password holding a "/" is exactly that shape
@@ -753,16 +797,17 @@ func (r *run) addRemoteSecretRaw(remote string) {
 // (https://host/acme@app.git), which is the trade addRemoteSecretRaw's doc
 // makes: a redaction too many costs nothing, a credential missed costs
 // everything.
+//
+// The read itself is gitRawUserinfo's, shared with the empty authority the
+// authority-scoped cut hands here (remoteSplitUserinfo's doc): one reading of
+// "where the userinfo ends when there is no authority to end it", so the
+// display and the redactor cannot disagree about one string.
 func (r *run) addRemoteSecretUserinfoGitRaw(head string) {
-	rest := head
-	if i := strings.Index(rest, "//"); i >= 0 {
-		rest = rest[i+2:]
-	}
-	at := strings.LastIndex(rest, "@")
-	if at < 0 {
+	userinfo, _, ok := gitRawUserinfo(head)
+	if !ok {
 		return
 	}
-	r.addUserinfoSecret(rest[:at])
+	r.addUserinfoSecret(userinfo)
 }
 
 // addUserinfoSecret registers one userinfo as a credential: the password
