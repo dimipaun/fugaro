@@ -60,7 +60,13 @@ config files (`test/unit/{pinning,lockfile,tsconfig}.test.ts`); and the hardened
 window (plan Task 1.1, below): `src/main/window.ts`, `src/main/protocol.ts`,
 `src/main/index.ts`, `src/renderer/index.html`, `tsconfig.build.json`, the
 two test files that try to leave it, and a third that holds the e2e harness's
-own premise (`test/unit/playwright.test.ts`).
+own premise (`test/unit/playwright.test.ts`); the IPC allow-list (plan Task 1.2,
+which this file's history carries without a section of its own):
+`src/main/ipc.ts`, `src/preload/index.ts`, and `test/unit/ipc.test.ts`; and the
+one child process (plan Task 1.3, the last section): `src/main/spawn.ts`,
+`src/main/spawnlog.ts`, `src/source/source.ts`, `src/source/cli.ts`, and the
+three suites that hold them (`test/unit/{spawn,spawnlog,configread}.test.ts`)
+with the fake CLI they spawn (`test/unit/stub.ts`).
 
 ## The toolchain, pinned (Task 1.0)
 
@@ -310,3 +316,109 @@ is not an npm dependency** — npm carries the package, but the runtime comes fr
 Electron's download host, so its pin, download and checksum get the hand-bumped
 treatment the repository already gives the Trivy digest and the Dockerfile
 frontend digest (design section 5.2).
+
+## The one child process, and the spawn log (Task 1.3)
+
+The console reaches the data one way: it spawns the installed `fugaro` and reads
+its JSON (design D1, Option A). It never reads a database, never holds a
+credential and never opens the operator's config. Four files say so —
+`src/main/spawn.ts` decides every spawn, `src/main/spawnlog.ts` is the one thing
+the app writes, `src/source/source.ts` is the data plane every screen talks to,
+and `src/source/cli.ts` is the v1 implementation over the child.
+
+`FugaroSource` **yields `JSONDoc`-shaped snapshots and emits change events, and
+knows nothing about how they were produced**: v1 spawns the CLI, the fixtures of
+Task 1.4 replay a recording, and Option C's loopback API slots in behind the same
+interface without a screen changing. A snapshot is the CLI's document *as it
+arrived* plus the console's own stamp — when it arrived, which one it is in the
+series, which day it belongs to, and whether that day just changed — and the one
+field this task reads out of a document is `day`, which the rollover needs.
+
+| Rule (design §3.4 and §5.1) | What the code does |
+|---|---|
+| 1 — argv is an array, `shell: false`, never built from a job-written field | `argvFor` is the only place an argv is built. It walks the row's *declared* arguments, refuses an undeclared key by name, and passes every value through a conservative character whitelist, so a value that arrived from a document cannot become a command word. Every emitted element is its own array entry, every emitted flag is asserted against `SPAWN_FLAGS`, and the spawner is always called with the literal `shell: false` |
+| 3 — `--project` on every command that takes it | `SPAWN_COMMANDS` carries `takesProject` per row: the nine commands of `addCloudFlags` (`internal/cli/cloud.go:51`) plus a tenth row (the console has two operations over `logs`, `--json` and `--url`, and neither may be the one that forgets). The handshake's argv is exactly `["version"]`, because `newVersionCmd` is `cobra.NoArgs` with no flags. `--config <path>` follows `--project` whenever the installation declares one |
+| 4 — the binary is resolved explicitly | the operator's configured path, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and only then every entry of the app's own `PATH`; the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
+| 5 — the child's environment is built, not inherited | exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*` variables and the chosen installation's `FUGARO_PROJECT`. A hostile `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `SSH_AUTH_SOCK` or ambient `FUGARO_PROJECT` in the app's environment cannot reach the child |
+| 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin` — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
+| 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
+| 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The add-an-installation check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
+| 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
+| Task 0.2's four settled behaviours | restart with the CLI's own backoff (1 s doubling to 30 s) except after a refusal, a signal read as the ordinary end of a feed, the UTC-midnight rollover marked as a **gap** rather than a zero, and the reader rule that a stdout line which is not a JSON object is **skipped** and surfaced as a notice — the degraded mode writes a plain sentence on the same stream as the documents (`runWatchDegraded`, `internal/cli/watch.go`) |
+
+### The spawn log, and the only thing the app writes
+
+**The console writes nothing by default.** Set `FUGARO_CONSOLE_SPAWN_LOG` to a
+path and the main process appends one JSON object per line there, one line per
+child process, **created with mode `0600`**:
+
+```json
+{"ts":"2026-10-15T14:22:31Z","argv":["/opt/homebrew/bin/fugaro","watch","--json","--project","fugaro"],"cwd":"/Users/owner/src/fugaro","project":"fugaro"}
+```
+
+Exactly those four keys. `ts` is RFC 3339 UTC at second precision, `argv` is the
+array as spawned with the binary's absolute path first, `cwd` is absolute, and
+`project` is the installation's project name — **the value passed as
+`--project`, so the bare `version` handshake still records which installation it
+was for**. It holds no command output, no environment, no credential and nothing
+a job wrote. It is **bounded at 1000 records**: at the 1001st spawn the writer
+appends one `{"truncated":true,"limit":1000}` line and stops, rather than
+rotating or truncating in place. It is never read back, never rotated, never
+deleted and never transmitted — `test/unit/spawnlog.test.ts` holds the first and
+the last as scans over `console/src/`, so a screen, a source or an IPC handler
+that started reading it would fail a named test. It is what Check 59's
+assertion (4) reads and what Task 4.3's FACT commands read the key names from.
+
+**It is the only thing the app ever writes to disk.** The one other write in this
+task is a directory rather than a record: `privateWorkingDirectory()` creates an
+empty `0700` directory under the system temporary directory for an installation
+that has no checkout, so that `doctor --dir` is a directory and the child's `cwd`
+is not `/`. Section 5.1 rule 10 is about *records* — no history, no cached
+document, no crash dump, nothing that outlives the process — and this holds
+nothing at all. A later task that persists the installation list (the store here
+is in memory) would be a second thing the app writes and would have to be
+reconciled with rule 10 explicitly rather than growing by accident.
+
+### The spawn properties are tests, and each one fails under a mutation
+
+The tests spawn **a fake `fugaro` in a temporary directory — never the real CLI
+and never the network** (`test/unit/stub.ts`: a shell shim that `exec`s the Node
+running the suite by absolute path, a generated script, and a `scenario.json`).
+The report file the stub appends to is the child's *own* account of its argv,
+`cwd` and environment, which is what makes these tests about what a real machine
+sees rather than about the console's self-consistency. Fifteen mutations were run
+against the committed tree, and each made a named test red:
+
+| Mutation | What fails |
+|---|---|
+| the child's environment merged from the app's own | "gives the child exactly `CHILD_ENV_KEYS` and nothing else" |
+| the child's `PATH` reduced to the binary's directory alone | "builds the child's PATH from the binary's directory and every well-known prefix" |
+| `--project` appended to the `version` handshake | "runs the version handshake bare" |
+| `--project` dropped from `watch` | "live.watch puts --project on its argv, from the chosen installation" |
+| `shell: true` on the real spawner | "hands the real spawner `shell: false`, as a literal, and never `true`" |
+| the argument whitelist removed | the hostile-value table (`; rm -rf /`, `$(id)`, quotes, spaces, leading dashes) |
+| a non-JSON stdout line parsed instead of skipped | "skips a degraded-mode sentence rather than failing the read" |
+| `cwd` left as the app's own | "spawns from the installation's checkout" and "spawns from a private directory the app owns" |
+| `--strict` added to `doctor` | "passes `--dir <that directory>` and never `--strict`" |
+| a candidate with an unreadable version skipped rather than refused | "refuses a candidate whose version cannot be read, rather than skipping it" |
+| a refusal restarted anyway | "does not restart after a refusal, and keeps the CLI's sentence" |
+| the spawn log enabled without the variable | "unset means nothing on disk: no path, no descriptor, no file" (asserted on the injected `fs`, not only on the filesystem) |
+| the spawn log's bound removed | "stops at the bound: one truncation line at record 1001, then nothing" |
+| an `env` field added to a log line | "writes exactly the four keys, checked against a planted fifth" |
+| a `readFileSync(join(homedir(), '.config', 'fugaro', …))` anywhere under `console/src/` | "is clean: no file under console/src/ opens a config, anywhere" — and the planted file that *is* that mutation is a fixture in `test/unit/configread.test.ts`, so the checker is tested against what it must catch |
+
+### What is deliberately not here
+
+- **The wiring.** Nothing registers `handlersFor(source, …)` with
+  `registerConsoleHandlers` and nothing attaches a preload: that is the Live
+  screen's task, and doing it here would flip Task 1.1's named "no preload yet"
+  assertion (and its mutation row) before there is a surface to attach. The
+  pieces are all reachable from a test, which is where they are held.
+- **Persistence.** The installation store is in memory for one run; see the note
+  above on rule 10.
+- **The fixtures.** `FugaroSource`'s second implementation is Task 1.4's
+  recorder and replay, and it slots in behind the same interface.
+- **`version --json` and a schema version.** The CLI has neither (contract §4.3
+  gaps 1 and 3), so the handshake is the one human line and the console refuses a
+  binary whose line it cannot read rather than guessing.
+
