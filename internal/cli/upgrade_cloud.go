@@ -199,11 +199,17 @@ var jobConfigCopyTimeout = 30 * time.Second
 // default one also refreshes every named-account job, so running it fixes
 // both; this note just never checks the named ones itself.
 //
-// "" is nothing to say: every existing job's copy agrees, no workflow has a
-// job yet, or resolveCloudRepo finds nothing to check here at all (no
-// fugaro.yaml, a teammate checkout, a development build, a repository not
-// onboarded: U9's cloudNotHere skips), in which case the note is silent,
-// exactly as the cloud step itself is in those cases. Everything else is
+// "" is nothing to say: no workflow has a job yet, resolveCloudRepo finds
+// nothing to check here at all (no fugaro.yaml, a teammate checkout, a
+// development build, a repository not onboarded: U9's cloudNotHere skips), or
+// every existing job's copy agrees **and no mount can have drifted under it**,
+// in which case the note is silent, exactly as the cloud step itself is in
+// those cases. The last one is narrower than "the copies agree" (code review,
+// minor: the mount clause below was added to the mount-only branch and this
+// paragraph kept the old, exhaustive wording): a project-scope name in the
+// repository's job one is created or deleted for after its apply changes what
+// that job mounts without changing a byte of its env, so jobs whose env
+// matches are still a reason to speak. Everything else is
 // not silent, resolveCloudRepo's own cloudFailed included (a bad fugaro.yaml
 // or origin, an unreadable local config): it says it could not check, with
 // resolveCloudRepo's own reason (already one line and safe to print, the

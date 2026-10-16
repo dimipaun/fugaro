@@ -1841,8 +1841,9 @@ func TestDoctorSecretScopeCheck(t *testing.T) {
 	// The D2 sweep (plan Task 2.1 step 2): the same installation with no
 	// project_secrets entry at all. github-app-key is project-scope eligible
 	// through config.ProjectScopeByDefault, so the line has to say "project
-	// scope" for it here too — and say "no copy stored" for the workflow
-	// secret nothing has a version of, which is the answer the docs promise
+	// scope" for it here too — and say "no enabled copy this repository can
+	// resolve" for the workflow secret nothing has a version of, which is
+	// the answer the docs promise
 	// for every name (both copies really are read: the payloads are here and
 	// the assertions below keep them out of the output).
 	sweep := secretScopeSweepRig(t)
@@ -1855,7 +1856,7 @@ func TestDoctorSecretScopeCheck(t *testing.T) {
 	if !strings.Contains(sc.Problem, "github-app-key") || !strings.Contains(sc.Problem, "project scope") {
 		t.Fatalf("the D2 sweep is not listed as project scope: %q", sc.Problem)
 	}
-	if !strings.Contains(sc.Problem, "db-password") || !strings.Contains(sc.Problem, "no copy stored") {
+	if !strings.Contains(sc.Problem, "db-password") || !strings.Contains(sc.Problem, "no enabled copy this repository can resolve") {
 		t.Fatalf("a name with no stored copy is missing from the listing: %q", sc.Problem)
 	}
 	for _, leak := range []string{"project-value", "repo-value"} {
@@ -1931,6 +1932,46 @@ func TestDoctorSecretScopeSilentWhenAListingIsUnreadable(t *testing.T) {
 	} {
 		if got != nil {
 			t.Errorf("%s: checks = %+v, want none", name, got)
+		}
+	}
+}
+
+// TestDoctorSecretScopeSaysNoEnabledCopyNotNoCopyStored: the line's last
+// answer is about what a job resolves to, and the two states that reach it
+// with a container in them are not "nothing is stored" (code review, minor:
+// the wording said "no copy stored", which is false of both). A container
+// that exists holding only disabled versions left something stored, and so
+// did a project-wide copy that is enabled but not eligible for this
+// repository — ProjectSecretCandidate is what makes a project copy
+// reachable here, and a name outside it resolves to nothing however many
+// versions the project's container holds. Neither state may be reported as
+// having no copy at all.
+func TestDoctorSecretScopeSaysNoEnabledCopyNotNoCopyStored(t *testing.T) {
+	facts := doctorRepoSecrets{repo: "acme/app",
+		repoIDs: map[string]string{"github-app-key": gcp.SecretID("slug", "github-app-key")}}
+	cases := map[string]struct {
+		listed  []secretEntry
+		project []gcp.SecretInfo
+	}{
+		"the repository's container holds only a disabled version": {
+			listed: []secretEntry{{Name: "github-app-key", Latest: ""}},
+		},
+		"the project's container holds an enabled version this repository cannot resolve": {
+			listed:  []secretEntry{},
+			project: []gcp.SecretInfo{{ID: gcp.ProjectSecretID("aurora", "github-app-key"), Latest: "1"}},
+		},
+	}
+	for name, tc := range cases {
+		checks := doctorSecretScopeChecks(facts, tc.listed, tc.project, true)
+		if len(checks) == 0 {
+			t.Fatalf("%s: no secret-scope line", name)
+		}
+		got := checks[0].Problem
+		if strings.Contains(got, "no copy stored") {
+			t.Errorf("%s: the line says a copy is not stored when one is: %q", name, got)
+		}
+		if !strings.Contains(got, "no enabled copy this repository can resolve") {
+			t.Errorf("%s: the line does not say which copy resolves: %q", name, got)
 		}
 	}
 }

@@ -994,10 +994,14 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 // mount, the copy Fugaro resolves for it (facts.logical, facts.repoIDs,
 // facts.candidates, and the two listings doctor already fetched), naming
 // the scope rather than either container's ID — "project scope", "repository
-// copy", or "no copy stored" for a name neither listing holds an enabled
-// version of (code review, minor: the docs say the line answers this for
-// every name, so it does, rather than silently dropping the names nothing
-// is stored for). Informational and never failing, exactly like
+// copy", or "no enabled copy this repository can resolve" for a name neither
+// listing holds an enabled version of that this repository may resolve
+// (code review, minor: the docs say the line answers this for every name, so
+// it does, rather than silently dropping the names nothing is stored for; and
+// the wording says exactly that, not "no copy stored", which is false twice
+// over — a container that exists holding only disabled versions, and a
+// project-wide copy that is enabled but not eligible for this repository,
+// both reach this branch). Informational and never failing, exactly like
 // provider-open-to-every-repository: the state is the owner's, and this only
 // makes it readable in one place.
 //
@@ -1046,13 +1050,17 @@ func doctorSecretScopeChecks(facts doctorRepoSecrets, listed []secretEntry, proj
 		case inProject:
 			lines = append(lines, printable+" — project scope")
 		default:
-			// A name this checkout's jobs mount with no enabled version in
-			// either container: the listing answers the question the docs
-			// ask it ("which copy does this name resolve to") for every
-			// name, not only for the ones something is stored for, and
-			// "nothing yet" is the answer that matters most to a reader
-			// (project-secret-stored is the red check for it).
-			lines = append(lines, printable+" — no copy stored")
+			// A name this checkout's jobs mount that resolves to no enabled
+			// copy at all: neither container holds an enabled version this
+			// repository may resolve — which is not the same as "nothing is
+			// stored" (a container can exist holding only disabled versions,
+			// or hold a project-wide copy this repository is not eligible
+			// for). The listing answers the question the docs ask it ("which
+			// copy does this name resolve to") for every name, not only for
+			// the ones something is stored for, and "nothing yet" is the
+			// answer that matters most to a reader (project-secret-stored is
+			// the red check for it).
+			lines = append(lines, printable+" — no enabled copy this repository can resolve")
 		}
 	}
 	var out []doctorCheck
