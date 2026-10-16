@@ -8,6 +8,28 @@ import (
 // EnvVar is one NAME=value entry of a launch's own environment, parsed.
 type EnvVar struct{ Name, Value string }
 
+// JobIdentityEnv are the variables a job's own environment carries about
+// itself, the same six on both backends: which execution it is (FUGARO_RUN),
+// which backend it is on, which Fugaro project and GCP project it is in, which
+// region it runs in, and where its bucket is (§2.1, §2.5). Batch writes them
+// into the job's variable map; Cloud Run's deploy writes them into the job's
+// environment, and the launch override adds FUGARO_RUN. A launcher's entry
+// naming one of them is refused here, in the seam, rather than by each backend
+// separately: on either platform the entry is merged into the very
+// environment the run reads its own identity and configuration from, so the
+// two backends must answer the same thing about it.
+//
+// The names are the platform's, and the packages that write them keep their
+// own constants (internal/infra's BucketEnv, BackendEnv, GCPProjectEnv,
+// ProjectEnv, RegionEnv; internal/backend's own FUGARO_RUN and
+// internal/runner's readers). internal/infra's
+// TestTheJobIdentityNamesAreTheSeams is what keeps the two spellings from
+// drifting apart.
+var JobIdentityEnv = []string{
+	"FUGARO_RUN", "FUGARO_BACKEND", "FUGARO_BUCKET",
+	"FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION",
+}
+
 // LaunchEnv parses LaunchSpec.Env — the variables a launcher adds for one
 // execution only — into entries, in the order they were given, and refuses
 // the two an entry must not be. Both backends build the run's environment
@@ -27,19 +49,23 @@ type EnvVar struct{ Name, Value string }
 //     name is a launcher's bug, and a silently dropped variable is a run that
 //     behaves as if the launcher had not set it at all — the failure the
 //     budget marker exists to prevent.
-//   - an entry naming a variable in reserved: the job's own environment
-//     already sets it — the run's identity (FUGARO_RUN), which backend it is
-//     on, which project it is in and where its bucket is (§2.1, §2.5) — and
-//     that is what the run believes about itself. Both fields are one env on
-//     the platform, so which of the two values wins is the platform's to
-//     decide; a run whose FUGARO_RUN came from a launch override would be a
-//     run the launcher could not find again.
+//   - an entry naming a variable in reserved, or one of JobIdentityEnv: the
+//     job's own environment already sets it, and that is what the run believes
+//     about itself. Both fields are one env on the platform, so which of the
+//     two values wins is the platform's to decide; a run whose FUGARO_RUN came
+//     from a launch override would be a run the launcher could not find again.
+//     JobIdentityEnv is refused for every backend here; reserved is the rest
+//     of one backend's own map (Batch's job variables beyond the identity
+//     six, its DOCKER_HOST), which the other backend has no counterpart for.
 func LaunchEnv(spec LaunchSpec, reserved ...string) ([]EnvVar, error) {
 	if len(spec.Env) == 0 {
 		return nil, nil
 	}
-	own := make(map[string]bool, len(reserved))
+	own := make(map[string]bool, len(reserved)+len(JobIdentityEnv))
 	for _, name := range reserved {
+		own[name] = true
+	}
+	for _, name := range JobIdentityEnv {
 		own[name] = true
 	}
 	out := make([]EnvVar, 0, len(spec.Env))

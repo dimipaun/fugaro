@@ -102,11 +102,23 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 			t.Fatalf("a malformed launch env %q was sent to the API: %d requests, want the %d before it", bad, got, before)
 		}
 	}
-	// So is an entry naming FUGARO_RUN: this override sets that variable
-	// itself, and the run reads which execution it is from it.
-	spec.Env = []string{"FUGARO_RUN=acme-app/someone-elses-run"}
-	if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {
-		t.Fatalf("Launch overriding FUGARO_RUN = %v, want a refusal", err)
+	// So is an entry naming one of the job's own identity variables. FUGARO_RUN
+	// this override sets itself; the others (FUGARO_PROJECT, FUGARO_BACKEND,
+	// the bucket, the GCP project and the region) the deploy wrote into the
+	// job's environment, and the API merges this override into it — the same
+	// silent replacement Batch refuses, whose job variables are the map the
+	// entry would be written into. An entry that named FUGARO_PROJECT was
+	// carried here and refused there: the two backends must answer the same
+	// thing about the same entry (backend.JobIdentityEnv).
+	for _, name := range backend.JobIdentityEnv {
+		before := len(fr.Requests())
+		spec.Env = []string{name + "=someone-elses"}
+		if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {
+			t.Fatalf("Launch overriding %s = %v, want a refusal (backend.ErrRejected)", name, err)
+		}
+		if got := len(fr.Requests()); got != before {
+			t.Fatalf("a launch env naming %s was sent to the API: %d requests, want the %d before it", name, got, before)
+		}
 	}
 	if gotEnv["FUGARO_RUN"] != "acme-app/20260927-100000-abcd" {
 		t.Errorf("env = %v, want the run's own identity", gotEnv)

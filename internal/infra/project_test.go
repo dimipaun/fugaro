@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
@@ -30,6 +31,31 @@ func TestPlatformEnvNames(t *testing.T) {
 	ws, err = Workflow(in, "web")
 	if err != nil || ws.Env["FUGARO_PROJECT"] != "aurora" {
 		t.Errorf("without outputs: %v, %v", ws.Env, err)
+	}
+}
+
+// The job's own identity variables are one set in two spellings: the ones the
+// deploy writes into every job's environment (this package's consts, built
+// into ws.Env by platformEnv) and the ones backend.LaunchEnv refuses a launch
+// entry for (backend.JobIdentityEnv, the seam both backends build a run's
+// environment through). They have to be the same six, or a launcher's entry
+// naming one of them is refused on Batch — whose job variables are built from
+// this package's names — and silently merged into the job's own environment on
+// Cloud Run — the asymmetry a launcher's entry naming FUGARO_PROJECT could
+// exploit. FUGARO_RUN is the one the deploy does not write: the launcher's own
+// override sets it, per execution.
+func TestTheJobIdentityNamesAreTheSeams(t *testing.T) {
+	ws, err := Workflow(sandboxInputs(t, ""), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range backend.JobIdentityEnv {
+		if name == "FUGARO_RUN" {
+			continue
+		}
+		if _, ok := ws.Env[name]; !ok {
+			t.Errorf("backend.JobIdentityEnv names %s, and the deploy writes no job variable by that name (the job's own are %v)", name, ws.Env)
+		}
 	}
 }
 

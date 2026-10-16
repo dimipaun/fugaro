@@ -93,11 +93,16 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	}
 	job := b.JobPath(spec.Repo.Slug, spec.Workflow)
 	// The spec's own variables (the launcher's budget marker) go in the same
-	// override as FUGARO_RUN: the API merges these into the job's environment.
-	// backend.LaunchEnv is where both backends read them, so an entry this one
-	// refuses (a malformed one, or one naming FUGARO_RUN, the variable this
-	// very override sets) is refused on Cloud Batch too.
-	extra, err := backend.LaunchEnv(spec, "FUGARO_RUN")
+	// override as FUGARO_RUN: the API merges these into the job's environment,
+	// where the deploy already wrote the job's own identity (FUGARO_PROJECT,
+	// FUGARO_BACKEND, the bucket and the region, internal/infra's platformEnv)
+	// — so an entry naming one of those would be what the run reads its own
+	// identity from, exactly as it would be on Batch, whose job variables are
+	// the map the entry would be written into. backend.LaunchEnv is where both
+	// backends read them and where backend.JobIdentityEnv is refused, so the
+	// two backends answer the same thing about the same entry; only the names
+	// beyond the identity six are a backend's own to add (Batch's DOCKER_HOST).
+	extra, err := backend.LaunchEnv(spec)
 	if err != nil {
 		// Nothing has been sent, so this is a refusal and not an ambiguity:
 		// the launcher's ErrRejected branch drops its claim and the token it
