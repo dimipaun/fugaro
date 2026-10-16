@@ -65,7 +65,7 @@
 // the snapshot is this test's record of what main's tree actually has, and the
 // never table's `where` column records where each entry was read.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -101,6 +101,7 @@ import type {
   OperationName,
 } from '../../src/main/ipc'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
+import { SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor } from '../../src/main/spawn'
 import {
   BRIDGE_VERSION,
   CONSOLE_BRIDGE_KEY,
@@ -130,6 +131,50 @@ function codeOnly(relative: string): string {
   return readFileSync(join(SOURCE_ROOT, relative), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '')
+}
+
+/**
+ * sourceFiles is every `.ts` file under `console/src/`, as `path` (relative to
+ * `src/`, POSIX-separated) and comment-stripped `source`. The scans at the
+ * bottom of this file used to take a hand-written list of five names while
+ * claiming to cover "anywhere in src/": a sixth file, or a new directory, was
+ * silently outside the scan. This is the whole tree, so the claim and the check
+ * are the same thing. `test/unit/configread.test.ts` walks the same tree for
+ * rule 7's third prohibition.
+ */
+function sourceFiles(): readonly { readonly path: string; readonly source: string }[] {
+  const walk = (directory: string, prefix: string): { path: string; source: string }[] => {
+    const found: { path: string; source: string }[] = []
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+      if (entry.isDirectory()) found.push(...walk(join(directory, entry.name), relative))
+      else if (entry.name.endsWith('.ts')) found.push({ path: relative, source: codeOnly(relative) })
+    }
+    return found
+  }
+  return walk(SOURCE_ROOT, '')
+}
+
+/**
+ * dynamicCodeOffences returns, for every file, the reasons the scan refuses it:
+ * a `require` with a computed specifier, an `eval`, a `new Function`, or a child
+ * process outside `main/spawn.ts`. It is a function over a list rather than a
+ * loop in the test so that the test below can hand it the mutation directly, the
+ * way `test/unit/configread.test.ts` holds its own planted file.
+ */
+export function dynamicCodeOffences(
+  files: readonly { readonly path: string; readonly source: string }[],
+): readonly string[] {
+  const found: string[] = []
+  for (const file of files) {
+    if (/require\(\s*[^'"]/.test(file.source)) found.push(`${file.path}: a computed require`)
+    if (/\beval\(/.test(file.source)) found.push(`${file.path}: eval`)
+    if (/new Function\(/.test(file.source)) found.push(`${file.path}: new Function`)
+    if (file.path !== 'main/spawn.ts' && file.source.includes('child_process')) {
+      found.push(`${file.path}: a child process`)
+    }
+  }
+  return found
 }
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as this task uses it: a
@@ -1209,6 +1254,14 @@ describe('the day and window arguments', () => {
     })
   }
 
+  // `runs ls --since` is `parseSince` (`internal/cli/runs.go:496`) and this
+  // table is read off it rather than invented: the CLI's own `TestParseSince`
+  // cases (`7d`, `36h`, `90m`, `0` accepted; `""`, `d`, `-1d`, `7w` refused) are
+  // all here, with the two forms the console used to accept and the CLI never
+  // did -- **a UTC calendar day** and **a zero window** -- on the refusing side,
+  // and the duration branch's own boundary (`1h30m`, `1.5h`, `300ms`, `+5h`)
+  // on the accepting one. A form the CLI takes and the console refuses is a
+  // read the operator cannot make, so the mirror may not be narrower either.
   const runWindows: readonly (readonly [string, boolean, string])[] = [
     ['0', true, 'parseSince’s own “no bound”'],
     ['7d', true, 'its default, and the first form its help lists'],
@@ -1219,11 +1272,33 @@ describe('the day and window arguments', () => {
     ['12w', false, 'Go durations have no week unit'],
     ['0d', false, 'parseSince refuses a day count below 1'],
     ['0h', false, 'nor a duration of zero'],
+    ['0m', false, 'nor zero minutes'],
     ['7', false, 'a bare number is neither a form'],
-    ['7s', false, 'seconds are a Go duration the console does not carry'],
     ['-7d', false, 'negative'],
     ['7d ', false, 'a trailing space'],
     ['all', false, 'a word'],
+    // the rest of its `d` branch
+    ['+7d', true, 'strconv.Atoi takes a leading plus'],
+    ['007d', true, 'and leading zeros'],
+    ['7D', false, 'the suffix is lower-case in parseSince'],
+    ['7dd', false, 'one unit'],
+    ['7d5h', false, 'the `d` suffix is tried first, so this is not a duration'],
+    ['1.5d', false, 'the day count is an integer'],
+    // ...and the rest of its duration branch, which is Go’s ParseDuration
+    ['1h30m', true, 'a compound duration'],
+    ['1.5h', true, 'a fractional one'],
+    ['300ms', true, 'milliseconds'],
+    ['5s', true, 'seconds'],
+    ['1us', true, 'microseconds, as `us`'],
+    ['1µs', false, 'U+00B5 is a spelling the spawn alphabet refuses, so the schema refuses it first'],
+    ['1μs', false, 'and so is U+03BC'],
+    ['+5h', true, 'a leading plus'],
+    ['0s', false, 'parseSince refuses a duration of zero however it is spelled'],
+    ['0h0m', false, 'including a compound zero'],
+    ['0.0s', false, 'and a fractional zero'],
+    ['-5h', false, 'negative'],
+    ['h', false, 'a unit with no number'],
+    ['1h 30m', false, 'a space is not part of the grammar'],
   ]
 
   for (const [value, accepted, why] of runWindows) {
@@ -1231,6 +1306,16 @@ describe('the day and window arguments', () => {
       expect(validateArguments('runs.list', { since: value }).ok).toBe(accepted)
     })
   }
+
+  it('refuses a calendar day for runs.list while accepting one for report', () => {
+    // The two grammars side by side, because they are one word apart in the
+    // schema and a validator that read the wrong one passed both tables above
+    // before this pair existed.
+    expect(validateArguments('runs.list', { since: '2026-10-16' }).ok).toBe(false)
+    expect(validateArguments('spend.report', { since: '2026-10-16' }).ok).toBe(true)
+    expect(validateArguments('runs.list', { since: '36h' }).ok).toBe(true)
+    expect(validateArguments('spend.report', { since: '36h' }).ok).toBe(false)
+  })
 
   it('gives each command its own window kind, so neither can drift into the other', () => {
     const kindsOf = (name: 'spend.report' | 'runs.list'): readonly string[] =>
@@ -1282,6 +1367,36 @@ describe('the closed sets', () => {
     ).toBe(false)
     expect(validateArguments('secrets.inventory', { scope: 'global' }).ok).toBe(false)
   })
+
+  it('refuses the pairs the CLI refuses whatever else is set', () => {
+    // `budget show --repo R --all` fails in the CLI (`internal/cli/budget.go:387`)
+    // and `runs ls` refuses both `--repo`/`--all` and `--pr`/`--all`
+    // (`internal/cli/runs.go:118,121`) before it reads anything else, so the
+    // surface must not be able to build those argvs at all: a refusal that
+    // arrives after a child has been spawned is the one outcome the schema
+    // exists to prevent.
+    expect(validateArguments('budget.show', { repo: 'acme/app', all: true })).toEqual({
+      ok: false,
+      reason: "--repo and --all don't go together",
+    })
+    expect(validateArguments('runs.list', { repo: 'acme/app', all: true })).toEqual({
+      ok: false,
+      reason: "--repo and --all don't go together",
+    })
+    expect(validateArguments('runs.list', { pr: 42, all: true })).toEqual({
+      ok: false,
+      reason: 'runs ls --pr needs --repo: a pull request number means something only in one repository',
+    })
+    // The other side of the boundary: either half alone is an argv the CLI
+    // accepts, and so is a flag the payload set to `false` -- that is a flag the
+    // argv does not carry (`argvFor` emits a boolean only when it is true).
+    expect(validateArguments('budget.show', { repo: 'acme/app' }).ok).toBe(true)
+    expect(validateArguments('budget.show', { all: true }).ok).toBe(true)
+    expect(validateArguments('runs.list', { repo: 'acme/app' }).ok).toBe(true)
+    expect(validateArguments('runs.list', { pr: 42 }).ok).toBe(true)
+    expect(validateArguments('runs.list', { repo: 'acme/app', all: false }).ok).toBe(true)
+    expect(validateArguments('runs.list', { pr: 42, all: false }).ok).toBe(true)
+  })
 })
 
 describe('the one URL-shaped argument', () => {
@@ -1319,16 +1434,19 @@ describe('the one URL-shaped argument', () => {
   })
 
   it('hands the handler the parsed URL that was validated, not the string that was sent', () => {
-    // The URL has to be one the *parser* changes, or this test is vacuous: the
-    // first version of it used `https://github.com/acme/app?#f`, whose empty
-    // query and fragment survive parsing byte for byte, so it passed whatever
-    // the code did with `decision.url`. An upper-case host is normalised by the
-    // WHATWG parser (the host, and only the host, is lower-cased), so what the
-    // handler receives is provably not the string the renderer sent.
-    const decision = validateArguments('link.openExternal', { url: 'https://GITHUB.COM/acme/app' })
+    // The input has to be one whose *parsed* form differs from what was sent, or
+    // this test cannot tell the two apart. The first spelling used here,
+    // `https://github.com/acme/app?#f`, is returned byte-identical by the WHATWG
+    // parser, so asserting it proved nothing about which one reaches the
+    // handler. An upper-case host and a `..` segment do not survive the parser
+    // unchanged, and `validateExternalUrl` returns `url.href`
+    // (`src/main/window.ts`), which is what the handler opens.
+    const sent = 'https://GitHub.COM/acme/app/../other'
+    const decision = validateArguments('link.openExternal', { url: sent })
     expect(decision.ok).toBe(true)
     if (!decision.ok) return
-    expect(decision.args['url']).toBe('https://github.com/acme/app')
+    expect(decision.args['url']).toBe('https://github.com/acme/other')
+    expect(decision.args['url']).not.toBe(sent)
     expect(typeof decision.args['url']).toBe('string')
   })
 
@@ -1476,6 +1594,92 @@ describe('the registrar', () => {
     expect(reply.reason).toContain('<path>')
   })
 
+  // A path is not only ever preceded by a space or a quote. Go's own errors put
+  // one straight after a colon (`open:/...` in a wrapped error), Markdown puts
+  // one in backticks, a list puts one in brackets, and a URL can carry one as
+  // `file://`. Each of these spellings reached the renderer whole before.
+  it.each([
+    ['after a colon', 'open:/Users/dimi/.config/fugaro/projects/belong.yaml: permission denied'],
+    ['in brackets', 'refused [/Users/dimi/.config/fugaro/a]'],
+    ['as a file URL', 'cannot load file:///Users/dimi/x'],
+    ['after a semicolon', 'x;/etc/passwd'],
+    ['as a Windows drive after a colon', 'dir:C:\\Users\\dimi'],
+    ['in backticks', 'see `/Users/dimi/x` for details'],
+    ['in angle brackets', 'wrote </Users/dimi/x>'],
+  ])('takes a path %s out of a handler’s message', async (_label, message) => {
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error(message)
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason, message).not.toMatch(/dimi|passwd|Users/)
+    expect(reply.reason, message).toContain('<path>')
+  })
+
+  it('leaves a web URL in a message whole, rather than redacting from its //', async () => {
+    const sentence = 'see https://github.com/acme/app/pull/12 for the run'
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error(sentence)
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    expect(await listener?.(consoleEvent(), {})).toEqual({ ok: false, reason: sentence })
+  })
+
+  it('cuts a long message on a character boundary, never inside a surrogate pair', async () => {
+    // `slice` cuts UTF-16 code units: a cut that lands between the two halves
+    // of an emoji puts an unpaired surrogate on the wire, which is not text.
+    for (const pad of [MAX_REPLY_REASON_LENGTH - 3, MAX_REPLY_REASON_LENGTH - 2, MAX_REPLY_REASON_LENGTH - 1]) {
+      const { ipcMain } = wiredConsole({
+        'cli.version': () => {
+          throw new Error(`${'a'.repeat(pad)}\u{1F600}\u{1F600}tail`)
+        },
+      })
+      const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+      const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+      expect(reply.ok).toBe(false)
+      if (reply.ok) return
+      expect(reply.reason.length).toBeLessThanOrEqual(MAX_REPLY_REASON_LENGTH)
+      expect(reply.reason, String(pad)).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
+      expect(reply.reason.endsWith('…')).toBe(true)
+    }
+  })
+
+  it('drops bidi overrides and zero-width characters from a refusal', async () => {
+    // The validator refuses these in an *argument*; a handler's message is the
+    // other half of the wire, and a right-to-left override in it makes a screen
+    // show a sentence other than the one that was sent.
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('refused \u202Egnp.exe\u202C and \u200Bhidden\u2066x\u2069\uFEFF\u00AD done')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).not.toMatch(/[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/)
+    expect(reply.reason).toBe('refused gnp.exe and hiddenx done')
+  })
+
+  it('answers an unpaired surrogate in a message with text, not with half a character', async () => {
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('bad \uD800 and \uDC00 end')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).not.toMatch(/[\uD800-\uDFFF]/)
+  })
+
   it('keeps a refusal to one line and drops control characters', async () => {
     const { ipcMain } = wiredConsole({
       'cli.version': () => {
@@ -1613,6 +1817,52 @@ const FORGED_EVENTS: readonly (readonly [string, unknown])[] = [
   ['a frame that has gone away', { senderFrame: null, sender: { mainFrame: null } }],
   ['no sending frame at all', { sender: { mainFrame: { url: APP_ENTRY_URL } } }],
   ['no sender at all', { senderFrame: { url: APP_ENTRY_URL } }],
+  // A destroyed frame does not answer `null`: Electron's getters throw ("Render
+  // frame was disposed before WebFrameMain could be accessed"). A gate that let
+  // that throw would reject the invoke instead of refusing it.
+  [
+    'a frame whose senderFrame getter throws',
+    {
+      get senderFrame(): never {
+        throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+      },
+      sender: { mainFrame: { url: APP_ENTRY_URL } },
+    },
+  ],
+  [
+    'a webContents whose sender getter throws',
+    {
+      senderFrame: { url: APP_ENTRY_URL },
+      get sender(): never {
+        throw new Error('Object has been destroyed')
+      },
+    },
+  ],
+  [
+    'a webContents whose mainFrame getter throws',
+    (() => {
+      const frame = { url: APP_ENTRY_URL }
+      return {
+        senderFrame: frame,
+        sender: {
+          get mainFrame(): never {
+            throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+          },
+        },
+      }
+    })(),
+  ],
+  [
+    'a frame whose url getter throws',
+    (() => {
+      const frame = {
+        get url(): never {
+          throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+        },
+      }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
   ['a null event', null],
   ['an event that is not an object', 'fugaro:console/cli.version'],
 ]
@@ -1731,21 +1981,35 @@ describe('the source of the allow-list and the preload', () => {
   })
 
   it('has no dynamic require, no eval and no child process anywhere in src/', () => {
-    const files = [
-      'main/ipc.ts',
-      'preload/index.ts',
-      'main/window.ts',
-      'main/protocol.ts',
-      'main/index.ts',
-    ]
-    for (const file of files) {
-      const source = codeOnly(file)
-      expect(source, file).not.toMatch(/require\(\s*[^'"]/)
-      expect(source, file).not.toMatch(/\beval\(/)
-      expect(source, file).not.toMatch(/new Function\(/)
-      expect(source, file).not.toContain('child_process')
-      expect(source, file).not.toContain('node:child_process')
+    // Every `.ts` file under `console/src/`, walked rather than listed: the name
+    // says "anywhere in src/" and this is what makes that true. The one file
+    // that may reach `node:child_process` is `main/spawn.ts` (Task 1.3, the one
+    // child process the console is allowed), and `spawn.test.ts` asserts that it
+    // is the *only* one.
+    const files = sourceFiles()
+    // The walk found the tree, so the empty-list pass below is not a vacuous
+    // one: two files that must be in it, in two different directories.
+    const paths = files.map((file) => file.path)
+    expect(paths).toContain('main/spawn.ts')
+    expect(paths).toContain('preload/index.ts')
+    expect(dynamicCodeOffences(files)).toEqual([])
+  })
+
+  it('catches the mutation: a planted file with an eval, a require or a child process', () => {
+    // A checker that accepted this would pass the test above too. The planted
+    // path is one no hand-written list had -- `source/screens/` does not exist
+    // yet -- which is exactly the file the old five-name list could not see.
+    const planted = {
+      path: 'source/screens/live.ts',
+      source: [
+        "import { spawn } from 'node:child_process'",
+        'const run = (s: string): unknown => eval(s)',
+        'const load = (m: string): unknown => require(m)',
+      ].join('\n'),
     }
+    const found = dynamicCodeOffences([...sourceFiles(), planted])
+    expect(found).toHaveLength(3)
+    expect(found.join('\n')).toContain('source/screens/live.ts')
   })
 
   it('declares its channel once, in one place', () => {

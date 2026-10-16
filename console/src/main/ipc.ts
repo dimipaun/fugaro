@@ -184,12 +184,15 @@ export const REPORT_MAX_WEEKS = 522
  *     bounded by the same `reportMaxDays` the CLI bounds the range with
  *     (`internal/cli/report.go:40`, `reportRange` at `report.go:93`). A window
  *     in hours or minutes is *not* one of its forms, and neither is `0`;
- *   - `runSince` -- `runs ls --since`'s own forms: `0` for no bound, `Nd`, or a
- *     Go duration in hours or minutes (`36h`, `90m`), which is what its own help
- *     advertises and what `parseSince` takes (`internal/cli/runs.go:496`). A
- *     calendar day is *not* one of its forms: `parseSince` has no date branch.
- *     It is the one kind narrower than its flag -- seconds and compound
- *     durations (`7s`, `1h30m`) are refused, deliberately;
+ *   - `runSince` -- `runs ls --since`'s own forms, which are `parseSince`'s
+ *     exactly (`internal/cli/runs.go:496`): `0` for no bound, `Nd` with at
+ *     least one day, or a *positive Go duration* in any of `time.ParseDuration`'s
+ *     units (`36h`, `90m`, `1h30m`, `1.5h`, `300ms`). **A UTC calendar day is
+ *     not one of them** -- `parseSince` has no date branch, so `--since
+ *     2026-10-16` is a `runs ls` refusal and this grammar refuses it before a
+ *     child exists. The two commands disagree about `--since` and one kind
+ *     cannot say both: `report` refuses `3h` and a bare `0` (its `reportRange`
+ *     has no duration branch), and `runs ls` refuses `12w` and every date;
  *   - `reportDimension` -- `report --by`'s closed set of seven words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
@@ -375,7 +378,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'since',
         kind: 'runSince',
         required: false,
-        why: 'the design allow-list admits `--since` on this command, in `runs ls`’s own forms: 7d, 36h, 90m or 0.',
+        why: 'the design allow-list admits `--since` on this command, in `runs ls`’s own forms: 7d, 36h, 90m, 1h30m or 0 — never a date.',
       },
       {
         key: 'mine',
@@ -845,10 +848,28 @@ const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // The two `--since` flags are two different grammars, and each one is written
 // as its own kind so neither can admit a value its own command refuses. `report`
 // takes days and weeks but not hours (`reportRange`, `internal/cli/report.go:93`
-// -- an `h` suffix falls through to the date parser there); `runs ls` takes days,
-// hours and minutes but no calendar day (`parseSince`, `internal/cli/runs.go:496`).
+// -- an `h` suffix falls through to the date parser there); `runs ls` takes
+// `parseSince`'s own forms (`internal/cli/runs.go:496`), which is what the two
+// patterns below are: its grammar rather than a summary of it. `parseSince`
+// tries the `d` suffix *first* (so `7d5h` is not a duration), then hands
+// anything else to Go's `time.ParseDuration`, whose units are `ns`, `us`,
+// `µs` (U+00B5), `μs` (U+03BC), `ms`, `s`, `m`, `h` -- each with a number that
+// may be fractional, and whose sign may be leading.
+//
+// The console admits six of those eight: the two non-ASCII spellings of a
+// microsecond are left out on purpose. The spawn side's argument alphabet
+// (`ARGUMENT_RE`, `src/main/spawn.ts`) is ASCII, and a value this schema admits
+// and that alphabet refuses would be refused after the click instead of before
+// it. `us` is the same unit and stays, so nothing the operator can ask the CLI
+// for is lost -- only a second spelling of it, and the spawn boundary stays
+// ASCII-only rather than being widened for a unit nobody windows runs by.
+const SINCE_DAYS_RE = /^\+?\d+$/
+const GO_DURATION_RE =
+  /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|ms|s|m|h)(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|ms|s|m|h))*$/
+// `report`'s `--since` is its own grammar, and the digits are bounded by the
+// CLI's own `reportMaxDays` above rather than by this pattern alone: `3660d` is
+// the last day count `reportRange` accepts, and `523w` is one week past it.
 const REPORT_SINCE_RE = /^(\d{1,4})([dw])$/
-const RUN_SINCE_RE = /^(\d{1,4})([dhm])$/
 const REPORT_DIMENSIONS: readonly string[] = Object.freeze([
   'day',
   'week',
@@ -864,6 +885,29 @@ const SECRET_SCOPES: readonly string[] = Object.freeze(['project-wide', 'repo'])
  * arguments of any operation, so the closed-schema check would refuse them
  * anyway; naming them means the refusal says what it is. */
 const PROTOTYPE_KEYS: readonly string[] = Object.freeze(['__proto__', 'constructor', 'prototype'])
+
+/**
+ * REFUSED_PAIRS is every pair of arguments the CLI refuses *whatever else is
+ * set*, keyed by operation, with the CLI's own sentence. Each pair is a
+ * condition the CLI evaluates before it reads anything from an operator's
+ * config -- `o.repo != "" && o.all` (`internal/cli/budget.go:387`,
+ * `internal/cli/runs.go:118`) and `prSet && o.all` (`internal/cli/runs.go:121`)
+ * -- which is what makes it decidable here. The surface must not be able to
+ * express an argv that can only fail after a child has been spawned: the same
+ * principle the `logs` `--json`/`--url` split states, and the reason
+ * `secrets.inventory`'s scope pairing below is checked at all.
+ *
+ * `runs ls --pr` *without* `--repo` is deliberately not here: whether that is
+ * refused depends on how many repositories the local config lists, and the
+ * console does not read the operator's config (rule 7).
+ */
+const REFUSED_PAIRS: Readonly<Record<string, readonly (readonly [string, string, string])[]>> = Object.freeze({
+  'budget.show': [['repo', 'all', "--repo and --all don't go together"]],
+  'runs.list': [
+    ['repo', 'all', "--repo and --all don't go together"],
+    ['pr', 'all', 'runs ls --pr needs --repo: a pull request number means something only in one repository'],
+  ],
+})
 
 /**
  * hiddenCharacterReason refuses the strings that look like one thing and are
@@ -918,6 +962,36 @@ function isCalendarDay(value: string): boolean {
   const day = Number(match[3])
   if (month < 1 || month > 12 || day < 1) return false
   return day <= daysInMonth(year, month)
+}
+
+/**
+ * isRunsSince mirrors `parseSince` (`internal/cli/runs.go:496`) branch for
+ * branch, and it exists because the console used to accept two things that
+ * function always refuses: **a UTC calendar day** (there is no date branch) and
+ * **a zero window** (`0d`, `0h`, `0m` -- `days < 1` and `d <= 0`). Both were
+ * refused by the CLI after a child had been spawned, which is the one outcome
+ * the schema exists to prevent.
+ *
+ * The branches, in the CLI's order:
+ *
+ *   1. `"0"` exactly -- no bound;
+ *   2. a `d` suffix, whose digits `strconv.Atoi` reads and which must be at
+ *      least one. The console's ten-character bound on a string argument is
+ *      what keeps those digits inside `Atoi`'s range, so no integer bound is
+ *      repeated here;
+ *   3. anything else is a Go duration, and `parseSince` refuses `d <= 0`. A
+ *      leading `-` is that case, and so is a duration whose every digit is
+ *      zero (`0s`, `0h0m`); `+5h` is a positive duration the CLI accepts.
+ */
+function isRunsSince(value: string): boolean {
+  if (value === '0') return true
+  if (value.endsWith('d')) {
+    const days = value.slice(0, -1)
+    return SINCE_DAYS_RE.test(days) && Number(days) >= 1
+  }
+  if (!GO_DURATION_RE.test(value)) return false
+  if (value.startsWith('-')) return false
+  return /[1-9]/.test(value)
 }
 
 /** daysInMonth is the calendar's, leap years included. */
@@ -1012,19 +1086,19 @@ function validateValue(
       }
       return { ok: true, value }
     }
-    case 'runSince': {
-      // `runs ls --since`: `0` for no bound, `7d`, or a duration in hours or
-      // minutes (`36h`, `90m`) -- its own help's three examples. A calendar day
-      // is not one of them, and neither is a week. `parseSince` additionally
-      // takes seconds and compound durations (`7s`, `1h30m`); this kind does
-      // not, which is the one place it is narrower than its flag.
-      if (value === '0') return { ok: true, value }
-      const window = RUN_SINCE_RE.exec(value)
-      if (window === null || Number(window[1]) < 1) {
-        return refuse(`${spec.key} must be 0, a number of days like 7d, or hours or minutes like 36h or 90m`)
+    case 'runSince':
+      // `runs ls --since`, which is `parseSince` and nothing else: `0`, `Nd`
+      // with at least one day, or a positive Go duration in any of
+      // `time.ParseDuration`'s units. The point of mirroring it exactly is that
+      // a form the CLI takes is a form the operator can ask for, and a form the
+      // CLI refuses (`2026-10-16`, `0d`, `0h`, `0m`, `7w`) is refused here --
+      // before a child exists, rather than by a sentence from a spawned CLI.
+      if (!isRunsSince(value)) {
+        return refuse(
+          `${spec.key} must be 0, a number of days like 7d, or a Go duration like 36h, 90m or 1h30m`,
+        )
       }
       return { ok: true, value }
-    }
     case 'reportDimension':
       if (!REPORT_DIMENSIONS.includes(value)) return refuse(`${spec.key} must be one of ${REPORT_DIMENSIONS.join(', ')}`)
       return { ok: true, value }
@@ -1056,8 +1130,10 @@ function kindLimit(kind: ArgumentKind): number {
       // longer of the two, and the grammar decides which one a value is.
       return 10
     case 'runSince':
-      // `9999d` / `36h` / `90m` -- four digits and a unit. `0` is shorter.
-      return 5
+      // The longest accepted form is a duration like `1h30m15s`; the bound is
+      // also what keeps a `Nd` day count inside `strconv.Atoi`'s range, which
+      // is why `isRunsSince` needs no integer bound of its own.
+      return 10
     case 'reportDimension':
       return 8
     case 'secretScope':
@@ -1147,6 +1223,17 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
     const decision = validateValue(operation.name, spec, supplied[spec.key])
     if (!decision.ok) return decision
     args[spec.key] = decision.value
+  }
+
+  // The pairs the CLI refuses whatever else is set: an argv that can only fail
+  // is one the surface must not be able to build, because the failure arrives
+  // after a child process has already been spawned. `reachesArgv` and not mere
+  // presence, because `all: false` is a flag the payload did not set -- the
+  // reading `argvFor` gives a boolean (spawn.ts) -- and refusing that would
+  // refuse a payload whose argv has no `--all` in it at all.
+  const reachesArgv = (key: string): boolean => args[key] !== undefined && args[key] !== false
+  for (const [first, second, sentence] of REFUSED_PAIRS[operation.name] ?? []) {
+    if (reachesArgv(first) && reachesArgv(second)) return refuse(sentence)
   }
 
   // The pairing the design states for the secret inventory: the command resolves
@@ -1290,13 +1377,21 @@ export function isConsoleSenderUrl(raw: unknown): boolean {
  * window" are the same set, and every other frame is refused.
  */
 export function isConsoleSender(event: ConsoleEventLike | null | undefined): boolean {
-  if (event === null || event === undefined) return false
-  const frame = event.senderFrame
-  if (frame === null || frame === undefined) return false
-  const sender = event.sender
-  if (sender === null || sender === undefined) return false
-  if (sender.mainFrame !== frame) return false
-  return isConsoleSenderUrl(frame.url)
+  // Every read below goes through Electron getters, and a destroyed frame's
+  // getters *throw* ("Render frame was disposed before WebFrameMain could be
+  // accessed") rather than answer null. A gate that let that escape would turn
+  // a refusal into a rejected invoke, so anything that throws here refuses.
+  try {
+    if (event === null || event === undefined) return false
+    const frame = event.senderFrame
+    if (frame === null || frame === undefined) return false
+    const sender = event.sender
+    if (sender === null || sender === undefined) return false
+    if (sender.mainFrame !== frame) return false
+    return isConsoleSenderUrl(frame.url)
+  } catch {
+    return false
+  }
 }
 
 /** IpcMainLike is the slice of Electron's `ipcMain` this module uses. It is an
@@ -1339,41 +1434,74 @@ function replyReason(error: unknown): string {
 /**
  * ABSOLUTE_PATH_RE matches an absolute path in a message: a POSIX one (`/etc`,
  * `/home/me/x`), a home-relative one (`~/x`), or a Windows one with a drive
- * letter or a UNC prefix. It is anchored on a separator that follows whitespace,
- * a quote or the start of the string, so a flag like `--repo owner/name` keeps
- * its slash, and it stops at the first character that cannot be part of a path
- * in a sentence.
+ * letter or a UNC prefix. It is anchored on a separator that cannot be part of
+ * a word -- the start of the message, whitespace, a quote, a backtick, an
+ * opening bracket, `=`, `,`, `;` or `:` -- so a flag like `--repo owner/name`
+ * keeps its slash, and it stops at the first character that closes a path in a
+ * sentence: whitespace, a quote, a backtick, `)`, `]` or `>`.
  *
- * A colon is deliberately *not* one of the anchoring characters: `https://x/y`
- * is a URL and not a path, and replacing from its `//` would turn the message
- * into `https:<path>`, which reads as a corrupted sentence rather than as a
- * redaction. A drive letter is still matched, because the anchor in front of it
- * is a space, a quote or the start of the message in every message that has one.
+ * A colon *is* an anchor, because Go's own wrapped errors put a path straight
+ * after one (`open:/Users/me/.config/...`), and so is a drive letter after one
+ * (`dir:C:\Users\me`). What keeps a URL from being cut at its `//` -- which
+ * would turn `https://x/y` into `https:<path>`, a corrupted sentence rather than
+ * a redaction -- is the first alternative: a `scheme://` URL is matched whole,
+ * first, and kept, except a `file://` one, which *is* a path and is replaced
+ * whole. `replacePath` is the replacer that makes that choice. The scheme is
+ * bounded and must start a word, so a long run of letters is scanned once
+ * rather than once per position.
  */
-const ABSOLUTE_PATH_RE = /(^|[\s'"(=,])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'")]*/g
+const ABSOLUTE_PATH_RE =
+  /((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s'"`)\]>]*)|(^|[\s'"`([<{=,;:])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>]*/g
 
 /** PATH_PLACEHOLDER is what an absolute path in a message becomes. It names
  * *that* a path was there, which is what a reader needs, and not which one. */
-const PATH_PLACEHOLDER = '$1<path>'
+const PATH_PLACEHOLDER = '<path>'
+
+function replacePath(_match: string, url: string | undefined, anchor: string | undefined): string {
+  if (url !== undefined) return /^file:/i.test(url) ? PATH_PLACEHOLDER : url
+  return `${anchor ?? ''}${PATH_PLACEHOLDER}`
+}
+
+/** INVISIBLE_RE is the format characters `hiddenCharacterReason` refuses in an
+ * argument -- bidi overrides and isolates, zero-width characters, the BOM, the
+ * soft hyphen -- which a refusal drops for the same reason: a right-to-left
+ * override makes a screen show a sentence other than the one that was sent. */
+const INVISIBLE_RE = /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb]/g
+
+/** LONE_SURROGATE_RE is half a character: a high surrogate with no low one
+ * after it, or a low one with no high one before it. */
+const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g
 
 /**
  * boundReason is the one place a handler-authored message is made safe to put in
- * front of a user: control characters out, absolute paths out, one line, and a
- * hard length. It never returns an empty string -- a refusal with no text is a
- * screen with nothing to draw -- and it never echoes more of the message than
- * the bound allows.
+ * front of a user: control characters out, invisible format characters out,
+ * half-characters replaced, absolute paths out, one line, and a hard length cut
+ * on a character boundary. It never returns an empty string -- a refusal with
+ * no text is a screen with nothing to draw -- and it never echoes more of the
+ * message than the bound allows.
  */
 function boundReason(message: string): string {
+  // Every pass below is linear, and the input is first cut to a few times the
+  // bound so that a megabyte-long message costs what a short one does: nothing
+  // past this point can reach the reply anyway.
   const flattened = message
+    .slice(0, MAX_REPLY_REASON_LENGTH * 4)
     .replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(INVISIBLE_RE, '')
+    .replace(LONE_SURROGATE_RE, '\ufffd')
     .replace(/\s+/g, ' ')
     .trim()
   if (flattened === '') return 'the operation failed'
-  const redacted = flattened.replace(ABSOLUTE_PATH_RE, PATH_PLACEHOLDER)
+  const redacted = flattened.replace(ABSOLUTE_PATH_RE, replacePath)
   if (redacted.length <= MAX_REPLY_REASON_LENGTH) return redacted
   // The cut is marked, so a reader can tell a truncated sentence from a whole
-  // one rather than wondering what the CLI meant to say.
-  return `${redacted.slice(0, MAX_REPLY_REASON_LENGTH - 1).trimEnd()}…`
+  // one rather than wondering what the CLI meant to say. It is in UTF-16 code
+  // units, like the bound, and it steps back one when it would land between
+  // the two halves of a surrogate pair: half an emoji is not text.
+  let cut = MAX_REPLY_REASON_LENGTH - 1
+  const last = redacted.charCodeAt(cut - 1)
+  if (last >= 0xd800 && last <= 0xdbff) cut -= 1
+  return `${redacted.slice(0, cut).trimEnd()}…`
 }
 
 /**
