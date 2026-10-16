@@ -68,14 +68,35 @@ func TestRemoteHost(t *testing.T) {
 		// the credential would go to it.
 		{"https://git.example.com/acme/app.git", "git.example.com", "", true},
 		{"https://github.com.evil.example/acme/app.git", "github.com.evil.example", "", true},
-		{"http://127.0.0.1:8080/acme/app.git", "127.0.0.1", "", true},
+		{"http://127.0.0.1:8080/acme/app.git", "127.0.0.1:8080", "", true},
+		// A host naming a port is a host no kind owns, and the port is part of
+		// what git connects to and of what the run's git credential is scoped
+		// to: the host is returned as written, so KindForHost answers "" for
+		// "github.com:8443" and the caller refuses it (the review finding on
+		// this change; SplitRemote used to strip the port, which read this
+		// remote as github.com's).
+		{"https://github.com:8443/acme/app.git", "github.com:8443", "", true},
+		{"ssh://git@github.com:22/acme/app.git", "github.com:22", "", true},
 		// No host: a local path, an empty remote, a bare "/", and a file URL
 		// (whose "file:/" is a scheme, not an scp-like host and path).
 		{"/tmp/fixture.git", "", "", false},
 		{"/srv/git/acme/app", "", "", false},
 		{"", "", "", false},
 		{"https://github.com/", "github.com", "github", true},
-		{"file:///tmp/web.git", "", "", false},
+		// A URL written with an authority this check cannot read a host out of
+		// is the second answer and not the third, because git does not read it
+		// as a local path either: libcurl connects https:///github.com/acme/app.git
+		// to github.com and clones github.com/acme/app.git, a two-"@" authority
+		// is "Bad hostname" to it, and a whitespace-prefixed scheme is
+		// "Malformed input" — so each of these is refused rather than skipped,
+		// which is the fail-open the first shape of this branch left (the
+		// review finding on this change).
+		{"file:///tmp/web.git", "", "", true},
+		{"https:///github.com/acme/app.git", "", "", true},
+		{"https:////github.com/acme/app.git", "", "", true},
+		{"https://a@b@github.com/acme/app.git", "", "", true},
+		{" https://github.com/acme/app.git", "", "", true},
+		{"https://github.com\n/acme/app.git", "", "", true},
 		// A URL git accepts and url.Parse refuses names a host too, so it is
 		// the second answer, not the third: gitprov.SplitRemoteRaw reads the
 		// host off the authority as written (the text after its last "@", where
@@ -267,7 +288,14 @@ func TestRemoteRepoPath(t *testing.T) {
 		{"github.com:acme/app.git/", "acme/app.git", true},
 		// Not scp-like: a URL's authority is "//" and a local path has no
 		// colon before its first "/", so neither names a host and a path.
-		{"file:///tmp/remote.git", "", false},
+		//
+		// A file URL is the third answer's case, not this one's: it is a URL
+		// with an empty authority, and its path is read off the shape rather
+		// than skipped, so no remote goes unasked (the review finding on this
+		// change). The host half refuses it first — remoteHost reads a file URL
+		// as naming no host it can read — so the name is never what decides
+		// that remote's admission.
+		{"file:///tmp/remote.git", "tmp/remote.git", true},
 		{"/tmp/acme:web.git", "", false},
 		// A query or a fragment is not part of the path git clones, so a
 		// remote carrying one is still the repository its path names.
