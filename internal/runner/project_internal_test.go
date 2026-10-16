@@ -342,12 +342,26 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		{"tok@host/repo.git", "host/repo.git"},
 		{"glpat-secret@host/repo.git?access_token=ATBBsecret", "host/repo.git"},
 		{"glpat-secret@host", "host"},
+		// The userinfo ends at the last "@" of the authority, where git and
+		// curl end it, and the authority ends at the first "/": a password
+		// that itself holds an "@" is quoted back in full by a display that
+		// cut at the first one (the tail of the credential, "en@host/repo.git"
+		// here), and an "@" in the path is not the userinfo's to begin with
+		// (the review finding on this change). The path stays in the display
+		// of a remote written without a scheme, so the last "@" is what this
+		// cuts at rather than the host alone.
+		{"tok@en@host/repo.git", "host/repo.git"},
+		{"tok@en@host", "host"},
+		{"https://host/p@x", "https://host/p@x"},
 	} {
 		got := remoteDisplay(tc.in)
 		if got != tc.want {
 			t.Errorf("remoteDisplay(%q) = %q, want %q", tc.in, got, tc.want)
 		}
-		for _, secret := range []string{"glpat-secret", "ATBBsecret", "tok", "x:glpat-secret"} {
+		// "en" is the tail of the credential in the "tok@en@host/repo.git"
+		// case below: the part a display that cut the userinfo at the first
+		// "@" would still quote.
+		for _, secret := range []string{"glpat-secret", "ATBBsecret", "tok", "en", "x:glpat-secret"} {
 			if strings.Contains(got, secret) {
 				t.Errorf("remoteDisplay(%q) = %q quotes %q", tc.in, got, secret)
 			}
@@ -393,6 +407,16 @@ func TestAddRemoteSecretsRegistersWhatARemoteCanCarryACredentialIn(t *testing.T)
 		// remote as a path, so the parsed path registers nothing at all and
 		// the userinfo is only there as written.
 		{remote: "tok@host/repo.git", want: []string{"tok"}, absent: []string{"host", "repo.git"}},
+		// The userinfo is the text between the authority's start and its last
+		// "@", as curl and git read it, so a credential holding one is
+		// registered whole: cutting at the first "@" registered the head of it
+		// ("tok") and left "en" of "tok@en" in every line git writes about the
+		// remote (the review finding on this change). The authority ends at
+		// the first "/", so an "@" in the path is no authority's: reading
+		// https://host/p@x from the first "@" registered "host/p", which is
+		// the host and the head of the path, a credential in neither spelling.
+		{remote: "tok@en@host/repo.git", want: []string{"tok@en"}, absent: []string{"host", "repo.git"}},
+		{remote: "https://host/p@x", absent: []string{"host/p", "p@x"}},
 		{remote: "x-token-auth:t%6fk@bitbucket.org/acme/app.git", want: []string{"t%6fk", "x-token-auth:t%6fk"}, absent: []string{"x-token-auth", "acme/app"}},
 		{remote: "https://git@github.com/acme/app.git", absent: []string{"git"}},
 		{remote: "https://x-access-token@bitbucket.org/acme/app.git", absent: []string{"x-access-token"}},

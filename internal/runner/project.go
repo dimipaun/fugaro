@@ -358,13 +358,14 @@ func remoteDisplay(remote string) string {
 		// (token@host/repo.git, or pw@host). u.String() returns such a string
 		// verbatim — u.User is nil, because the parse never saw an authority —
 		// so quoting it here is exactly the refusal this function exists to
-		// prevent. The "@" is where git and curl end the userinfo with or
-		// without a scheme, and what follows the first one is what may be
+		// prevent. The "@" that ends the userinfo is the authority's last
+		// (remoteSplitUserinfo says why), and what follows it is what may be
 		// quoted; the query and the fragment go with the userinfo, for the
 		// reason the URL branch drops them.
 		head, _, _ := strings.Cut(remote, "#")
 		head, _, _ = strings.Cut(head, "?")
-		if _, rest, ok := strings.Cut(head, "@"); ok {
+		_, rest, ok := remoteSplitUserinfo(head)
+		if ok {
 			if rest == "" {
 				return "the remote"
 			}
@@ -373,6 +374,41 @@ func remoteDisplay(remote string) string {
 		return head
 	}
 	return "the remote"
+}
+
+// remoteSplitUserinfo splits a remote with its query and fragment already cut
+// off at the end of its userinfo: userinfo is what the authority's start and
+// its last "@" enclose, rest is everything after that "@", and ok says whether
+// there was one at all. The "@" is the authority's last because that is where
+// git and curl end the userinfo — a password may hold one, and
+// https://user:a@b@host/repo.git is a credential whose halves a cut at the
+// first "@" splits into a registered fragment and a quoted tail (the review
+// finding on this change). The authority ends at the first "/", so an "@" in
+// the path is no authority's: read from the first "@" of
+// https://host/p@x, the authority looked like "host/p@x" and registered
+// "host/p", which is the host and the head of the path, a credential in
+// neither spelling.
+//
+// A remote with no "//" has its authority at the start of the string: the
+// scp-like form (git@host:owner/name.git) and the scheme-less one
+// (token@host/repo.git) both write the userinfo in front of the whole thing.
+func remoteSplitUserinfo(head string) (userinfo, rest string, ok bool) {
+	off := 0
+	if i := strings.Index(head, "//"); i >= 0 {
+		off = i + 2
+	}
+	authority := head[off:]
+	if i := strings.Index(authority, "/"); i >= 0 {
+		authority = authority[:i]
+	}
+	i := strings.LastIndex(authority, "@")
+	if i < 0 {
+		return "", "", false
+	}
+	// The rest keeps whatever followed the authority — the path, usually —
+	// because the display quotes the host's own string (host/repo.git for a
+	// remote written without a scheme), not the host alone.
+	return authority[:i], authority[i+1:] + head[off+len(authority):], true
 }
 
 // remoteSecretParams are the query parameters a git remote URL carries a
@@ -456,18 +492,19 @@ func (r *run) addRemoteSecrets(remote string) {
 
 // addRemoteSecretRaw reads the three places off a remote url.Parse refuses, as
 // the string was written: the fragment, the query, and the userinfo ahead of
-// the first "@". The cuts are the ones a URL is written with — "?" opens the
+// the last "@". The cuts are the ones a URL is written with — "?" opens the
 // query, "#" the fragment — and both parts are handed to the same parameter
 // parsing the parsed path uses, so a credential-named parameter and a bare
 // token are registered the same way either way.
 //
-// The userinfo is everything in front of the first "@" of the authority, with
-// the "//" of a scheme cut off when there is one; a remote with no "@" has no
-// userinfo to register. An unparseable remote may hold an "@" in its path as
-// well (https://host/acme@app.git), and that part is registered too: the
-// parse that would have told the two apart is the one that failed, and
-// registering a substring that was never a credential costs a redaction while
-// missing one costs the credential. An scp-like remote's "git@" is the
+// The userinfo is read as git reads it rather than as an authority is
+// delimited (addRemoteSecretUserinfoGitRaw has the reading and the shapes that
+// made it a separate one); a remote with no "@" has no userinfo to register.
+// An unparseable remote may hold an "@" in its path as well
+// (https://host/acme@app.git), and that part is registered too: the parse that
+// would have told the two apart is the one that failed, and registering a
+// substring that was never a credential costs a redaction while missing one
+// costs the credential. An scp-like remote's "git@" is the
 // anonymous user every forge writes, and is skipped as it is on the parsed
 // path; a "name:value" userinfo registers the value and the pair, for the
 // reason the parsed path does.
@@ -484,7 +521,49 @@ func (r *run) addRemoteSecretRaw(remote string) {
 	if hasFrag {
 		r.addRemoteSecretParams(frag)
 	}
-	r.addRemoteSecretUserinfoRaw(head)
+	r.addRemoteSecretUserinfoGitRaw(head)
+}
+
+// addRemoteSecretUserinfoGitRaw registers the userinfo the way git reads it
+// off a remote url.Parse refused: the text in front of the last "@" of the
+// string, with the query and the fragment already cut off and the "//" of a
+// scheme removed — no other cut, because the shape that defeated the parse is
+// the one where the authority ends somewhere else than the first "/" says. A
+// password holding a "/" is exactly that shape
+// (https://user:ghp_a/b@github.com/acme/app.git: git connects to github.com
+// and hands over the whole password), and the authority-scoped cut
+// (remoteSplitUserinfo) ends the authority inside it, which would leave a
+// credential git is still handed in no list at all. Reading the whole head
+// registers the path as userinfo for the shapes that are not that one
+// (https://host/acme@app.git), which is the trade addRemoteSecretRaw's doc
+// makes: a redaction too many costs nothing, a credential missed costs
+// everything.
+func (r *run) addRemoteSecretUserinfoGitRaw(head string) {
+	rest := head
+	if i := strings.Index(rest, "//"); i >= 0 {
+		rest = rest[i+2:]
+	}
+	at := strings.LastIndex(rest, "@")
+	if at < 0 {
+		return
+	}
+	r.addUserinfoSecret(rest[:at])
+}
+
+// addUserinfoSecret registers one userinfo as a credential: the password
+// alone and the "name:value" pair for a userinfo that carries one, and the
+// whole of it for one that does not, unless it is a name the forges put in
+// front of a token (remoteAnonymousUsers) — none of those is a secret, and
+// registering one would redact it out of every line the run publishes.
+func (r *run) addUserinfoSecret(userinfo string) {
+	if _, pw, ok := strings.Cut(userinfo, ":"); ok {
+		r.addSecret(pw)
+		r.addSecret(userinfo)
+		return
+	}
+	if userinfo != "" && !remoteAnonymousUsers[strings.ToLower(userinfo)] {
+		r.addSecret(userinfo)
+	}
 }
 
 // addRemoteSecretUserinfoRaw registers the userinfo of remote as it was
@@ -494,27 +573,17 @@ func (r *run) addRemoteSecretRaw(remote string) {
 // spelled differently — addRemoteSecrets's own call says why that matters).
 // remote is the whole string here or the query- and fragment-less head of one;
 // cutting the two off is what keeps a token in a query from being read as a
-// password in front of an "@" that is not an authority's.
+// password in front of an "@" that is not an authority's. The authority and
+// the "@" that ends its userinfo are remoteSplitUserinfo's to find, so this
+// registers the same text remoteDisplay drops from the same string.
 func (r *run) addRemoteSecretUserinfoRaw(remote string) {
 	head, _, _ := strings.Cut(remote, "#")
 	head, _, _ = strings.Cut(head, "?")
-	authority := head
-	if i := strings.Index(authority, "//"); i >= 0 {
-		authority = authority[i+2:]
-	}
-	at := strings.Index(authority, "@")
-	if at < 0 {
+	userinfo, _, ok := remoteSplitUserinfo(head)
+	if !ok {
 		return
 	}
-	userinfo := authority[:at]
-	if _, pw, ok := strings.Cut(userinfo, ":"); ok {
-		r.addSecret(pw)
-		r.addSecret(userinfo)
-		return
-	}
-	if userinfo != "" && !remoteAnonymousUsers[strings.ToLower(userinfo)] {
-		r.addSecret(userinfo)
-	}
+	r.addUserinfoSecret(userinfo)
 }
 
 // addRemoteSecretParams registers the value of every parameter in raw — a
