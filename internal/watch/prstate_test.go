@@ -2,6 +2,7 @@ package watch
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -94,8 +95,58 @@ func TestPRStateDropsMergedAndClosedKeepsOpen(t *testing.T) {
 		t.Fatalf("calls = %v, want three lookups", got)
 	}
 	// The argv is exact: no shell, one element per argument.
-	if want := "pr view 1 --repo acme/app --json state --jq .state"; !slices.Contains(ghCalls(t, calls), want) {
+	if want := "pr view 1 --repo github.com/acme/app --json state --jq .state"; !slices.Contains(ghCalls(t, calls), want) {
 		t.Fatalf("calls = %v, want %q among them", ghCalls(t, calls), want)
+	}
+}
+
+// TestPRStateAsksTheHostTheURLNames is the review finding on a GH_HOST-pinned
+// environment handed a hostless --repo. gh resolves a bare `owner/repo`
+// against its *default* host, and GH_HOST is what sets that default — ghEnv
+// forwards it on purpose, so an operator whose gh is set up for an enterprise
+// host keeps that setup. The lookup would then ask that other GitHub for a
+// repository of the same name and believe whatever it answered there: a MERGED
+// on the wrong host drops a row whose github.com pull request is still open,
+// which is the one thing this whole file exists to get right.
+//
+// ghPRURL matches github.com URLs only, so the host gh is given is the host
+// the URL named, and GH_HOST cannot move the question to another GitHub.
+// Measured against gh 2.101.0: `--repo acme/app` with GH_HOST set fails with
+// "error connecting to github.example.com", `--repo github.com/acme/app` with
+// the same environment reaches api.github.com.
+func TestPRStateAsksTheHostTheURLNames(t *testing.T) {
+	calls := fakeGH(t, "echo OPEN\n")
+	t.Setenv("GH_HOST", "github.example.com")
+	rows := []ReadyRow{readyRow("https://github.com/acme/app/pull/3", 3)}
+	p := NewPRState(PRStateOptions{})
+	p.Filter(rows)
+	p.Settle(5 * time.Second)
+	if got := p.Filter(rows); len(got) != 1 {
+		t.Fatalf("kept %d rows, want the open one", len(got))
+	}
+	got := ghCalls(t, calls)
+	if len(got) != 1 {
+		t.Fatalf("calls = %v, want one lookup", got)
+	}
+	// The repository gh is asked for is the one the row's URL names, host and
+	// all: that is the property, not the literal below it.
+	u, err := url.Parse(rows[0].Run.PRURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := u.Host + "/" + "acme/app"
+	repo := ""
+	argv := strings.Fields(got[0])
+	for i, a := range argv {
+		switch {
+		case a == "--repo" && i+1 < len(argv):
+			repo = argv[i+1]
+		case strings.HasPrefix(a, "--repo="):
+			repo = strings.TrimPrefix(a, "--repo=")
+		}
+	}
+	if repo != want {
+		t.Fatalf("gh was asked for %q, want %q: a bare owner/repo is resolved against gh's default host, and GH_HOST (github.example.com here) is what sets it", repo, want)
 	}
 }
 

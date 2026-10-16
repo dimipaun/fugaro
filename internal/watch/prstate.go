@@ -80,13 +80,19 @@ var (
 	errGHNotLoggedIn = errors.New("gh is not logged in")
 )
 
+// ghHost is the one GitHub a ready row's URL may name, and the host every
+// lookup is pinned to (ask). It is written once so the two cannot drift: the
+// URL that is parsed and the repository gh is asked for name the same host.
+const ghHost = "github.com"
+
 // ghPRURL matches exactly a GitHub pull request URL. Anchored at both ends
 // (\A, \z: not ^ and $, which a trailing newline would satisfy): the whole
 // string must be the URL, so a URL with anything appended to it — a `;rm -rf`,
 // a `$(...)`, a space, another path segment — never matches. The owner is
 // GitHub's login charset (alphanumerics and inner hyphens), the repository
-// GitHub's name charset, and the number is digits with no leading zero.
-var ghPRURL = regexp.MustCompile(`\Ahttps://github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})?)/([A-Za-z0-9_](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9_])?)/pull/([1-9][0-9]{0,9})\z`)
+// GitHub's name charset, and the number is digits with no leading zero. The
+// host is ghHost, the only host a lookup may be sent to.
+var ghPRURL = regexp.MustCompile(`\Ahttps://` + regexp.QuoteMeta(ghHost) + `/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})?)/([A-Za-z0-9_](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9_])?)/pull/([1-9][0-9]{0,9})\z`)
 
 // prRef is one parsed GitHub pull request URL.
 type prRef struct {
@@ -406,9 +412,20 @@ func (p *PRState) look(ref prRef) {
 	p.seen[ref.url] = prAnswer{state: state, at: p.now()}
 }
 
-// ask runs `gh pr view <n> --repo <owner>/<repo> --json state --jq .state`.
-// There is no shell and no interpolation: the number and the repository are
-// separate argv elements, and only ever come from a URL that matched ghPRURL.
+// ask runs `gh pr view <n> --repo github.com/<owner>/<repo> --json state --jq
+// .state`. There is no shell and no interpolation: the number and the
+// repository are separate argv elements, and only ever come from a URL that
+// matched ghPRURL.
+//
+// The repository carries the host, and it is ghHost, the host of the URL that
+// was parsed. A bare `--repo <owner>/<repo>` would be resolved against gh's
+// *default* host instead, and GH_HOST is what sets that default — a variable
+// ghEnv forwards, so an operator whose gh is set up for an enterprise host
+// keeps the setup. The lookup would then ask that other GitHub for a
+// repository of the same name and take its answer: a MERGED there drops a row
+// whose github.com pull request is still open. With the host written out,
+// GH_HOST cannot move the question; a gh that is not logged in to ghHost
+// answers nothing, which fails open like every other bad answer.
 //
 // gh runs the way every other command this tool spawns does (internal
 // procgroup): in a process group of its own, with pipes of our own, and a
@@ -428,7 +445,7 @@ func (p *PRState) ask(ctx context.Context, ref prRef) (prStateKind, error) {
 	code, err := procgroup.Run(ctx, procgroup.Cmd{
 		Name: bin,
 		Args: []string{"pr", "view", strconv.Itoa(ref.number),
-			"--repo", ref.owner + "/" + ref.repo, "--json", "state", "--jq", ".state"},
+			"--repo", ghHost + "/" + ref.owner + "/" + ref.repo, "--json", "state", "--jq", ".state"},
 		Env:    ghEnv(p.getenv),
 		Stdout: &out, Stderr: &complaint,
 		Grace: ghKillGrace,
@@ -493,11 +510,12 @@ func (b *boundedBuffer) String() string {
 // ghEnvKeep is the whole environment a gh of ours may inherit: what it needs
 // to find its configuration and its credentials — the two tokens, the
 // configuration directory (GH_CONFIG_DIR, else XDG_CONFIG_HOME), the host (so
-// a gh set up for an enterprise host is the same gh the operator uses) and the
-// certificate store, since a gh that cannot verify the server cannot answer —
-// plus the terminal it may want to draw in, and the proxy variables, on the
-// off chance that the network only works through one. Nothing else of the
-// operator's (or the run's) environment reaches it.
+// a gh set up for an enterprise host is the same gh the operator uses, though
+// it cannot change which host is asked: ask pins that) and the certificate
+// store, since a gh that cannot verify the server cannot answer — plus the
+// terminal it may want to draw in, and the proxy variables, on the off chance
+// that the network only works through one. Nothing else of the operator's (or
+// the run's) environment reaches it.
 //
 // Variables are forwarded, never read: no value here is inspected, compared or
 // logged. They are named in ghEnvKeep in the order gh is given them.

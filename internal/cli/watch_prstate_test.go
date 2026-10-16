@@ -92,7 +92,9 @@ func TestWatchPlainDropsMergedAndClosedPRs(t *testing.T) {
 	if got := ghWatchCalls(t, calls); len(got) != 3 {
 		t.Fatalf("calls = %v, want one per ready PR", got)
 	}
-	if want := "pr view 42 --repo acme/app --json state --jq .state"; !containsStr(ghWatchCalls(t, calls), want) {
+	// The repository gh is asked for carries its host: a bare owner/repo would
+	// be resolved against gh's default host, which GH_HOST sets.
+	if want := "pr view 42 --repo github.com/acme/app --json state --jq .state"; !containsStr(ghWatchCalls(t, calls), want) {
 		t.Fatalf("calls = %v, want %q among them", ghWatchCalls(t, calls), want)
 	}
 	if strings.Contains(plain, "PR state unavailable") {
