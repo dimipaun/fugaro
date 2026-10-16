@@ -111,7 +111,9 @@ export class CliSource implements FugaroSource {
   readonly #log: SpawnLogWriter
   readonly #clock: () => Date
   readonly #binaryPath: string
-  readonly #feeds = new Set<LiveStream>()
+  /** The live feeds, keyed by the argv that produced them: one child per
+   * subscription, not one per call. See `subscribeLive`. */
+  readonly #feeds = new Map<string, LiveStream>()
 
   private constructor(options: CliSourceOptions, bucket: ResolvedSource) {
     this.#options = options
@@ -216,14 +218,38 @@ export class CliSource implements FugaroSource {
     return this.#readText('cli.version', {})
   }
 
+  /**
+   * subscribeLive is **idempotent for the same arguments while a feed is live**
+   * (the contract `FugaroSource.subscribeLive` states). The surface is
+   * `invoke`-only, so the Live screen reaches `live.watch` once per poll; a
+   * stream per call would be a `fugaro watch` child per poll, and nothing would
+   * ever stop them until `close()`.
+   *
+   * The key is the argv, because the argv is what decides which child this is:
+   * two calls that plan the same argv are the same subscription, and two that do
+   * not are two -- a second repository is legitimately a second `watch`. A feed
+   * that has *ended* is removed, so the call after a refusal starts a fresh
+   * child rather than handing back a dead stream.
+   */
   subscribeLive(args: ValidatedArguments): LiveFeed {
-    const stream = new LiveStream(this.#plan('live.watch', args), {
+    const plan = this.#plan('live.watch', args)
+    const key = plan.argv.join('\u0000')
+    const live = this.#feeds.get(key)
+    if (live !== undefined) return live
+
+    const stream = new LiveStream(plan, {
       ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
       log: this.#log,
       clock: this.#clock,
       firstFrameBudgetMs: this.#options.firstFrameBudgetMs ?? FIRST_FRAME_BUDGET_MS,
     })
-    this.#feeds.add(stream)
+    this.#feeds.set(key, stream)
+    // The listener is what makes the map mean "live": it is also called
+    // immediately for a feed that has already ended, which is why the entry is
+    // only removed when it is still this stream's.
+    stream.onEnded(() => {
+      if (this.#feeds.get(key) === stream) this.#feeds.delete(key)
+    })
     return stream
   }
 
@@ -267,7 +293,7 @@ export class CliSource implements FugaroSource {
   }
 
   async close(): Promise<void> {
-    const feeds = [...this.#feeds]
+    const feeds = [...this.#feeds.values()]
     this.#feeds.clear()
     await Promise.all(feeds.map((feed) => feed.stop()))
     this.#log.close()

@@ -35,8 +35,8 @@
 // of its argv, cwd and environment, which is what makes these tests about what a
 // real machine would see rather than about the console's self-consistency.
 
-import { mkdtempSync, statSync } from 'node:fs'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1114,16 +1114,25 @@ describe('the installation store', () => {
   })
 
   it('never reads the checkout itself: the CLI is the reader', async () => {
-    // The stub's checkout directory is empty -- there is no fugaro.yaml in it --
-    // and the refusal above came from the stub's own sentence. Nothing in the
-    // console could have decided either way, which is rule 7 in one test.
+    // Rule 7, as an observable: **a `fugaro.yaml` that is a directory**. The
+    // console hands the checkout to the child as its `cwd` and reads nothing in
+    // it, so `add` succeeds on the CLI's own answer; a console that opened
+    // `join(checkout, 'fugaro.yaml')` would throw `EISDIR` here, which is the
+    // one way to make the read observable without instrumenting `fs` (a
+    // mode-`0000` file proves nothing when the suite runs as root).
     const directory = freshDirectory()
-    const checkout = freshDirectory('fugaro-empty-checkout-')
+    const checkout = freshDirectory('fugaro-checkout-')
+    mkdirSync(join(checkout, 'fugaro.yaml'), { recursive: true })
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
     const store = createInstallationStore({ appEnv: {} })
     await store.add({ project: PROJECT, binaryPath: stub.binary, checkout })
     expect(store.list()).toHaveLength(1)
-    expect(readFileSync === undefined).toBe(false)
+    // ...and the console's whole use of the checkout is the child's `cwd`: the
+    // child is the thing that read it, and it reported where it stood. The
+    // source-level half of rule 7 -- that no file under `src/` opens a
+    // *config-shaped* path anywhere -- is `test/unit/configread.test.ts`'s scan,
+    // which walks the same tree and holds the mutation as a fixture.
+    expect(stub.reports().at(-1)?.cwd).toBe(checkout)
   })
 })
 
@@ -1232,20 +1241,32 @@ describe('the source scan', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '')
 
-  it('is the only file in src/ that spawns', () => {
-    const files = [
-      'main/ipc.ts',
-      'main/window.ts',
-      'main/protocol.ts',
-      'main/index.ts',
-      'main/spawnlog.ts',
-      'preload/index.ts',
-      'source/source.ts',
-      'source/cli.ts',
-    ]
-    for (const file of files) {
-      expect(codeOnly(file), file).not.toContain('node:child_process')
+  /** srcFiles is every `.ts` file under `console/src/` -- the walk these scans
+   * need before a name that says *src/* is true of them.
+   * `test/unit/ipc.test.ts` and `test/unit/configread.test.ts` walk the same
+   * tree for their own rules. */
+  const srcFiles = (): readonly { readonly path: string; readonly source: string }[] => {
+    const walk = (directory: string, prefix: string): { path: string; source: string }[] => {
+      const found: { path: string; source: string }[] = []
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+        if (entry.isDirectory()) found.push(...walk(join(directory, entry.name), relative))
+        else if (entry.name.endsWith('.ts')) found.push({ path: relative, source: codeOnly(relative) })
+      }
+      return found
     }
+    return walk(SOURCE_ROOT, '')
+  }
+
+  it('is the only file in src/ that spawns', () => {
+    // Every `.ts` file under `console/src/`, walked rather than listed. The name
+    // claims whole-tree reach and the old eight-name list did not have it: a new
+    // module under `source/` or a new directory would have been outside the
+    // scan, which is the one thing this test exists to catch.
+    const spawners = srcFiles()
+      .filter((file) => file.source.includes('child_process'))
+      .map((file) => file.path)
+    expect(spawners).toEqual(['main/spawn.ts'])
     expect(codeOnly('main/spawn.ts')).toContain("from 'node:child_process'")
     // ...and there is exactly one `spawn(` call site, with `shell: false` as a
     // literal rather than a value a caller could set.

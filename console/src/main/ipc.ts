@@ -111,15 +111,18 @@ export const MAX_URL_LENGTH = 2048
  *   - `runId` -- a run id as `task.NewRunID` builds one,
  *     `YYYYMMDD-HHMMSS-xxxx`;
  *   - `day` -- a UTC calendar day, `YYYY-MM-DD`;
- *   - `since` -- `runs ls --since`'s own forms, the ones
- *     `internal/cli/runs.go`'s `parseSince` reads: `0` for everything, or a
- *     window like `7d`, `24h`, `30m`;
+ *   - `since` -- `runs ls --since`'s own forms, exactly the three
+ *     `internal/cli/runs.go`'s `parseSince` reads: `0` for no bound, `Nd` with
+ *     at least one day, or a *positive Go duration* (`36h`, `90m`, `1h30m`).
+ *     **A UTC calendar day is not one of them** -- `parseSince` has no date
+ *     branch, so `--since 2026-10-16` is a `runs ls` refusal and this grammar
+ *     refuses it before a child exists;
  *   - `reportSince` -- `report --since`'s own forms, which are a *different*
  *     grammar (`internal/cli/report.go`'s `reportRange`): a UTC day, or a
  *     window in days or weeks, `30d`/`12w`, bounded at `reportMaxDays` (3660).
  *     The two commands disagree about `--since` and one kind cannot say both:
- *     `report` refuses `3h` and a bare `0`, and `runs ls` refuses `12w` and is
- *     only ever sent days anyway;
+ *     `report` refuses `3h` and a bare `0` (its `reportRange` has no duration
+ *     branch), and `runs ls` refuses `12w` and every date;
  *   - `reportDimension` -- `report --by`'s closed set of seven words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
@@ -305,7 +308,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'since',
         kind: 'since',
         required: false,
-        why: 'the design allow-list admits `--since` on this command.',
+        why: 'the design allow-list admits `--since` on this command, and `runs ls` reads only `0`, `Nd` or a Go duration — never a date.',
       },
       {
         key: 'mine',
@@ -772,7 +775,15 @@ export function isNeverReachable(operation: {
 const REPOSITORY_RE = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/
 const RUN_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4,16}$/
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
-const SINCE_RE = /^(?:\d{1,4}[dhm]|0)$/
+// `runs ls --since` is `parseSince`, and these two patterns are its grammar
+// rather than a summary of it. `parseSince` tries the `d` suffix *first* (so
+// `7d5h` is not a duration), then hands anything else to Go's
+// `time.ParseDuration`, whose units are the eight below -- `ns`, `us`, `µs`
+// (U+00B5), `μs` (U+03BC), `ms`, `s`, `m`, `h` -- each with a number that may be
+// fractional, and whose sign may be leading.
+const SINCE_DAYS_RE = /^\+?\d+$/
+const GO_DURATION_RE =
+  /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))*$/
 // `report`'s `--since` is its own grammar, and the digits are bounded by the
 // CLI's own `reportMaxDays` below rather than by this pattern alone: `3660d` is
 // the last day count `reportRange` accepts, and `523w` is one week past it.
@@ -847,6 +858,36 @@ function isCalendarDay(value: string): boolean {
   const day = Number(match[3])
   if (month < 1 || month > 12 || day < 1) return false
   return day <= daysInMonth(year, month)
+}
+
+/**
+ * isRunsSince mirrors `parseSince` (`internal/cli/runs.go:496`) branch for
+ * branch, and it exists because the console used to accept two things that
+ * function always refuses: **a UTC calendar day** (there is no date branch) and
+ * **a zero window** (`0d`, `0h`, `0m` -- `days < 1` and `d <= 0`). Both were
+ * refused by the CLI after a child had been spawned, which is the one outcome
+ * the schema exists to prevent.
+ *
+ * The branches, in the CLI's order:
+ *
+ *   1. `"0"` exactly -- no bound;
+ *   2. a `d` suffix, whose digits `strconv.Atoi` reads and which must be at
+ *      least one. The console's ten-character bound on a string argument is
+ *      what keeps those digits inside `Atoi`'s range, so no integer bound is
+ *      repeated here;
+ *   3. anything else is a Go duration, and `parseSince` refuses `d <= 0`. A
+ *      leading `-` is that case, and so is a duration whose every digit is
+ *      zero (`0s`, `0h0m`); `+5h` is a positive duration the CLI accepts.
+ */
+function isRunsSince(value: string): boolean {
+  if (value === '0') return true
+  if (value.endsWith('d')) {
+    const days = value.slice(0, -1)
+    return SINCE_DAYS_RE.test(days) && Number(days) >= 1
+  }
+  if (!GO_DURATION_RE.test(value)) return false
+  if (value.startsWith('-')) return false
+  return /[1-9]/.test(value)
 }
 
 /** daysInMonth is the calendar's, leap years included. */
@@ -924,8 +965,8 @@ function validateValue(
       if (!isCalendarDay(value)) return refuse(`${spec.key} must be a UTC day as YYYY-MM-DD`)
       return { ok: true, value }
     case 'since':
-      if (!isCalendarDay(value) && !SINCE_RE.test(value)) {
-        return refuse(`${spec.key} must be a UTC day or a window like 7d`)
+      if (!isRunsSince(value)) {
+        return refuse(`${spec.key} must be 0, a number of days like 7d, or a Go duration like 36h`)
       }
       return { ok: true, value }
     case 'reportSince': {
@@ -969,8 +1010,9 @@ function kindLimit(kind: ArgumentKind): number {
     case 'day':
       return 10
     case 'since':
-      // A day is `2026-10-16`; a window is `7d`. The bound is the longer of the
-      // two, and the grammar decides which one a value is.
+      // The longest accepted form is a duration like `1h30m15s`; the bound is
+      // also what keeps a `Nd` day count inside `strconv.Atoi`'s range, which
+      // is why `isRunsSince` needs no integer bound of its own.
       return 10
     case 'reportSince':
       // A day is `2026-10-16` (`report`'s longest accepted form); `3660d` is 5.

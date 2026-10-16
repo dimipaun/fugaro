@@ -43,7 +43,7 @@
 // the snapshot is this test's record of what main's tree actually has, and the
 // never table's `where` column records where each entry was read.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -95,6 +95,50 @@ function codeOnly(relative: string): string {
   return readFileSync(join(SOURCE_ROOT, relative), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '')
+}
+
+/**
+ * sourceFiles is every `.ts` file under `console/src/`, as `path` (relative to
+ * `src/`, POSIX-separated) and comment-stripped `source`. The scans at the
+ * bottom of this file used to take a hand-written list of five names while
+ * claiming to cover "anywhere in src/": a sixth file, or a new directory, was
+ * silently outside the scan. This is the whole tree, so the claim and the check
+ * are the same thing. `test/unit/configread.test.ts` walks the same tree for
+ * rule 7's third prohibition.
+ */
+function sourceFiles(): readonly { readonly path: string; readonly source: string }[] {
+  const walk = (directory: string, prefix: string): { path: string; source: string }[] => {
+    const found: { path: string; source: string }[] = []
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+      if (entry.isDirectory()) found.push(...walk(join(directory, entry.name), relative))
+      else if (entry.name.endsWith('.ts')) found.push({ path: relative, source: codeOnly(relative) })
+    }
+    return found
+  }
+  return walk(SOURCE_ROOT, '')
+}
+
+/**
+ * dynamicCodeOffences returns, for every file, the reasons the scan refuses it:
+ * a `require` with a computed specifier, an `eval`, a `new Function`, or a child
+ * process outside `main/spawn.ts`. It is a function over a list rather than a
+ * loop in the test so that the test below can hand it the mutation directly, the
+ * way `test/unit/configread.test.ts` holds its own planted file.
+ */
+export function dynamicCodeOffences(
+  files: readonly { readonly path: string; readonly source: string }[],
+): readonly string[] {
+  const found: string[] = []
+  for (const file of files) {
+    if (/require\(\s*[^'"]/.test(file.source)) found.push(`${file.path}: a computed require`)
+    if (/\beval\(/.test(file.source)) found.push(`${file.path}: eval`)
+    if (/new Function\(/.test(file.source)) found.push(`${file.path}: new Function`)
+    if (file.path !== 'main/spawn.ts' && file.source.includes('child_process')) {
+      found.push(`${file.path}: a child process`)
+    }
+  }
+  return found
 }
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as this task uses it: a
@@ -677,7 +721,7 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'live.watch': {},
   'budget.show': { repo: 'acme/app' },
   'spend.report': { by: 'model', since: '7d', until: '2026-10-16', repo: 'acme/app' },
-  'runs.list': { repo: 'acme/app', since: '2026-10-16', mine: true, pr: 42, all: false },
+  'runs.list': { repo: 'acme/app', since: '7d', mine: true, pr: 42, all: false },
   'run.diagnose': { run: '20261016-121029-4a1b' },
   'run.logs': { run: '20261016-121029-4a1b' },
   'run.logLink': { run: '20261016-121029-4a1b' },
@@ -972,15 +1016,51 @@ describe('the day and window arguments', () => {
     })
   }
 
+  // `runs ls --since` is `parseSince` (`internal/cli/runs.go:496`), and this
+  // table is read off it rather than invented: the CLI's own `TestParseSince`
+  // cases (`7d`, `36h`, `90m`, `0` accepted; `""`, `d`, `-1d`, `7w` refused) are
+  // all here, with the two forms the console used to accept and the CLI never
+  // did -- **a UTC calendar day** and **a zero window** -- on the refusing side.
+  // The accepted column is what the mirror must not lose: a duration the CLI
+  // takes and the console refuses is a read the operator cannot make.
   const windows: readonly (readonly [string, boolean])[] = [
-    ['2026-10-16', true],
+    // the CLI's own four
     ['7d', true],
-    ['24h', true],
-    ['30m', true],
+    ['36h', true],
+    ['90m', true],
     ['0', true],
-    ['7', false],
+    ['', false],
+    ['d', false],
+    ['-1d', false],
     ['7w', false],
-    ['-7d', false],
+    // the two the console used to accept: a date and a zero window
+    ['2026-10-16', false],
+    ['0d', false],
+    ['0h', false],
+    ['0m', false],
+    // the rest of `parseSince`'s `d` branch
+    ['1d', true],
+    ['+7d', true],
+    ['007d', true],
+    ['7D', false],
+    ['7dd', false],
+    ['7d5h', false],
+    ['1.5d', false],
+    // ...and the rest of its duration branch, which is Go's `ParseDuration`
+    ['1h30m', true],
+    ['1.5h', true],
+    ['300ms', true],
+    ['5s', true],
+    ['1us', true],
+    ['1µs', true],
+    ['+5h', true],
+    ['0s', false],
+    ['0h0m', false],
+    ['0.0s', false],
+    ['-5h', false],
+    ['h', false],
+    ['5', false],
+    ['1h 30m', false],
     ['7d ', false],
     ['all', false],
   ]
@@ -990,6 +1070,16 @@ describe('the day and window arguments', () => {
       expect(validateArguments('runs.list', { since: value }).ok).toBe(accepted)
     })
   }
+
+  it('refuses a calendar day for runs.list while accepting one for report', () => {
+    // The two grammars side by side, because they are one word apart in the
+    // schema and a validator that read the wrong one passed both tables above
+    // before this pair existed.
+    expect(validateArguments('runs.list', { since: '2026-10-16' }).ok).toBe(false)
+    expect(validateArguments('spend.report', { since: '2026-10-16' }).ok).toBe(true)
+    expect(validateArguments('runs.list', { since: '36h' }).ok).toBe(true)
+    expect(validateArguments('spend.report', { since: '36h' }).ok).toBe(false)
+  })
 
   // `report --since` is a *different* grammar, read off `reportRange`
   // (`internal/cli/report.go`): a date, or days or weeks, at most `reportMaxDays`
@@ -1182,10 +1272,19 @@ describe('the one URL-shaped argument', () => {
   })
 
   it('hands the handler the parsed URL that was validated, not the string that was sent', () => {
-    const decision = validateArguments('link.openExternal', { url: 'https://github.com/acme/app?#f' })
+    // The input has to be one whose *parsed* form differs from what was sent, or
+    // this test cannot tell the two apart. The first spelling used here,
+    // `https://github.com/acme/app?#f`, is returned byte-identical by the WHATWG
+    // parser, so asserting it proved nothing about which one reaches the
+    // handler. An upper-case host and a `..` segment do not survive the parser
+    // unchanged, and `validateExternalUrl` returns `url.href`
+    // (`src/main/window.ts`), which is what the handler opens.
+    const sent = 'https://GitHub.COM/acme/app/../other'
+    const decision = validateArguments('link.openExternal', { url: sent })
     expect(decision.ok).toBe(true)
     if (!decision.ok) return
-    expect(decision.args['url']).toBe('https://github.com/acme/app?#f')
+    expect(decision.args['url']).toBe('https://github.com/acme/other')
+    expect(decision.args['url']).not.toBe(sent)
     expect(typeof decision.args['url']).toBe('string')
   })
 
@@ -1358,21 +1457,35 @@ describe('the source of the allow-list and the preload', () => {
   })
 
   it('has no dynamic require, no eval and no child process anywhere in src/', () => {
-    const files = [
-      'main/ipc.ts',
-      'preload/index.ts',
-      'main/window.ts',
-      'main/protocol.ts',
-      'main/index.ts',
-    ]
-    for (const file of files) {
-      const source = codeOnly(file)
-      expect(source, file).not.toMatch(/require\(\s*[^'"]/)
-      expect(source, file).not.toMatch(/\beval\(/)
-      expect(source, file).not.toMatch(/new Function\(/)
-      expect(source, file).not.toContain('child_process')
-      expect(source, file).not.toContain('node:child_process')
+    // Every `.ts` file under `console/src/`, walked rather than listed: the name
+    // says "anywhere in src/" and this is what makes that true. The one file
+    // that may reach `node:child_process` is `main/spawn.ts` (Task 1.3, the one
+    // child process the console is allowed), and `spawn.test.ts` asserts that it
+    // is the *only* one.
+    const files = sourceFiles()
+    // The walk found the tree, so the empty-list pass below is not a vacuous
+    // one: two files that must be in it, in two different directories.
+    const paths = files.map((file) => file.path)
+    expect(paths).toContain('main/spawn.ts')
+    expect(paths).toContain('preload/index.ts')
+    expect(dynamicCodeOffences(files)).toEqual([])
+  })
+
+  it('catches the mutation: a planted file with an eval, a require or a child process', () => {
+    // A checker that accepted this would pass the test above too. The planted
+    // path is one no hand-written list had -- `source/screens/` does not exist
+    // yet -- which is exactly the file the old five-name list could not see.
+    const planted = {
+      path: 'source/screens/live.ts',
+      source: [
+        "import { spawn } from 'node:child_process'",
+        'const run = (s: string): unknown => eval(s)',
+        'const load = (m: string): unknown => require(m)',
+      ].join('\n'),
     }
+    const found = dynamicCodeOffences([...sourceFiles(), planted])
+    expect(found).toHaveLength(3)
+    expect(found.join('\n')).toContain('source/screens/live.ts')
   })
 
   it('declares its channel once, in one place', () => {

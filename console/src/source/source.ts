@@ -160,6 +160,19 @@ export interface FugaroSource {
   /** `installation` is the resolved header: path, version, project, provenance. */
   readonly installation: InstallationRef
   version(): Promise<TextSnapshot>
+  /**
+   * subscribeLive starts the streaming read, and **a call with the same
+   * arguments while a feed for them is live returns that same feed** rather
+   * than a second one. The contract is here, on the interface, because it is
+   * not an optimisation: Task 1.2's surface is `invoke`-only, so a screen
+   * reaches `live.watch` once per poll, and an implementation that started a
+   * stream per call would leave one child process per poll -- each of them
+   * running `fugaro watch` against the operator's project. A feed that has
+   * ended is not live: the next call is entitled to start a fresh one, which is
+   * how a screen retries after a refusal.
+   *
+   * `close()` stops every feed this source started, live or not.
+   */
   subscribeLive(args: ValidatedArguments): LiveFeed
   showBudget(args: ValidatedArguments): Promise<Snapshot>
   runReport(args: ValidatedArguments): Promise<Snapshot>
@@ -219,9 +232,13 @@ export function refusalFrom(operation: string, sentence: string | null): SourceR
  *
  * `live.watch` answers with the frame the feed already has: Task 1.2's surface is
  * `invoke`-only, so a live update reaches a screen through the feed's listeners
- * that a later task wires to a push channel. Subscribing here and again on every
- * poll would leave a child process per poll, which is the failure mode this
- * mapping exists to make impossible.
+ * that a later task wires to a push channel. The handler calls `subscribeLive`
+ * on every invocation -- one per poll -- so **the idempotency that keeps that
+ * from being a child process per poll is the source's**, stated on
+ * `FugaroSource.subscribeLive` and implemented in `src/source/cli.ts`, not
+ * something this mapping can add by caching: a mapping-level cache would have to
+ * key on the arguments it was handed, which is a second copy of the source's own
+ * idea of what "the same subscription" is.
  */
 export function handlersFor(
   source: FugaroSource,
