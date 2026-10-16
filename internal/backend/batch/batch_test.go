@@ -1654,6 +1654,60 @@ func TestLaunchRefusesASecretThatIsAlsoAJobVariable(t *testing.T) {
 	}
 }
 
+// TestLaunchCarriesTheSpecEnv: the launcher's per-execution variables (the
+// budget marker) go into the task's own variables, which is the whole of a
+// Batch task's environment on the VM (design §2.2). The marker is how a run
+// tells a minted token from a project that published no policy (plan
+// R2-8(a)), and a Batch backend that dropped it would leave every Batch run
+// reading the token's absence as "nothing was minted".
+//
+// The map is also why the job's own names are reserved here and not only on
+// Cloud Run: a later write to a map key is what the run would believe about
+// itself, so an entry naming FUGARO_RUN (the run's own identity, which
+// jobDefinition writes for the same map), FUGARO_BACKEND or FUGARO_PROJECT is
+// refused rather than applied — the same collision the secrets check below
+// refuses, for the same reason.
+func TestLaunchCarriesTheSpecEnv(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	s := spec()
+	s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
+	if _, err := b.Launch(ctx, s); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if vars["FUGARO_BUDGET_TOKEN"] != "1" {
+		t.Errorf("the task's variables = %v, want the launch's own entry in them", vars)
+	}
+	// And the job's own identity is still the job's: the marker went in
+	// beside it, not over it.
+	if vars["FUGARO_RUN"] != backendtest.Slug+"/"+spec().RunID || vars["FUGARO_BACKEND"] != backend.CloudBatch {
+		t.Errorf("the task's variables = %v, want the job's own identity intact", vars)
+	}
+
+	// An entry that is not NAME=value, and one naming a variable this job
+	// already sets, are refused before the create: nothing was created, and
+	// the refusal is definitive (ErrRejected) rather than ambiguous, so the
+	// launcher drops its claim and the token it minted.
+	before := len(bf.Creates())
+	for _, bad := range []string{"FUGARO_BUDGET_TOKEN", "=1", "FUGARO_RUN=acme-app/someone-elses-run", "FUGARO_PROJECT=someone-elses-project"} {
+		s.Env = []string{bad}
+		if _, err := b.Launch(ctx, s); !errors.Is(err, backend.ErrRejected) {
+			t.Fatalf("Launch with Env %q = %v, want ErrRejected", bad, err)
+		}
+	}
+	// A Docker run's own socket variable is one of them, because that block
+	// writes it: the launch merge is after it, so the path the installation
+	// configured is the one that stays.
+	s.Docker, s.Env = true, []string{"DOCKER_HOST=unix:///tmp/other.sock"}
+	if _, err := b.Launch(ctx, s); !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch overriding a Docker run's DOCKER_HOST = %v, want ErrRejected", err)
+	}
+	if got := len(bf.Creates()); got != before {
+		t.Fatalf("a refused launch still created %d job(s)", got-before)
+	}
+}
+
 // TestARunWithoutDockerGetsNoSocket scopes the socket to the workflows that
 // asked for it (design §4.2, §4.4's last check): a run whose workflow did not
 // ask for Docker gets no mount, no group and no DOCKER_HOST, while still

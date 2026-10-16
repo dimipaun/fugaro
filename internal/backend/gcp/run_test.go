@@ -88,14 +88,28 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	if gotEnv["FUGARO_BUDGET_TOKEN"] != "1" || gotEnv["FUGARO_RUN"] != "acme-app/20260927-100000-abcd" {
 		t.Fatalf("env = %v", gotEnv)
 	}
-	// An entry that is not NAME=value is refused before anything starts.
-	before := len(fr.Requests())
-	spec.Env = []string{"FUGARO_BUDGET_TOKEN"}
-	if _, err := b.Launch(ctx, spec); err == nil {
-		t.Fatal("an entry that is not NAME=value was sent to the API")
+	// An entry that is not NAME=value is refused before anything starts, and
+	// as a refusal: nothing has been sent, so the launcher drops its claim and
+	// the token it minted rather than treating the launch as ambiguous (its
+	// ErrRejected branch, internal/cli/run.go).
+	for _, bad := range []string{"FUGARO_BUDGET_TOKEN", "=1"} {
+		before := len(fr.Requests())
+		spec.Env = []string{bad}
+		if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {
+			t.Fatalf("Launch with Env %q = %v, want a refusal (backend.ErrRejected)", bad, err)
+		}
+		if got := len(fr.Requests()); got != before {
+			t.Fatalf("a malformed launch env %q was sent to the API: %d requests, want the %d before it", bad, got, before)
+		}
 	}
-	if len(fr.Requests()) != before {
-		t.Fatalf("a malformed launch env made %d requests", len(fr.Requests())-before)
+	// So is an entry naming FUGARO_RUN: this override sets that variable
+	// itself, and the run reads which execution it is from it.
+	spec.Env = []string{"FUGARO_RUN=acme-app/someone-elses-run"}
+	if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch overriding FUGARO_RUN = %v, want a refusal", err)
+	}
+	if gotEnv["FUGARO_RUN"] != "acme-app/20260927-100000-abcd" {
+		t.Errorf("env = %v, want the run's own identity", gotEnv)
 	}
 }
 

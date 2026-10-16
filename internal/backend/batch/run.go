@@ -128,6 +128,24 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		// side only for a run that has a socket.
 		vars["DOCKER_HOST"] = "unix://" + p
 	}
+	// The launch's own variables (the launcher's budget marker) land in the
+	// same map, which is the whole of the task's environment on the VM
+	// (design §2.2). The map is what makes the identity entries above
+	// reserved: a later write to a map key is what a run would believe about
+	// itself, so an entry naming one of them is refused rather than applied
+	// (backend.LaunchEnv, asked with every key this job already sets). The
+	// merge is after the Docker block so DOCKER_HOST is one of them.
+	reserved := make([]string, 0, len(vars))
+	for name := range vars {
+		reserved = append(reserved, name)
+	}
+	extra, err := backend.LaunchEnv(spec, reserved...)
+	if err != nil {
+		return nil, fmt.Errorf("launching %s: %w", full, err)
+	}
+	for _, kv := range extra {
+		vars[kv.Name] = kv.Value
+	}
 	// The other fast start, and the one a Docker run cannot have: with
 	// streaming on Batch disregards container.options (design §1.2, §2.2).
 	container.EnableImageStreaming = b.o.ImageStreaming
