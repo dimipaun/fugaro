@@ -18,6 +18,9 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -698,9 +701,12 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 			len(kept), strings.Join(out.Globs, ", "), out.FileCount())
 	}
 	names := make([]string, len(kept))
-	// Keyed on the folded name: two names that differ only in case are one
-	// name on a filesystem that folds case, which is where `fugaro artifacts
-	// get` would have the second artifact overwrite the first.
+	// Keyed on ArtifactCollisionKey, the retriever's own key for "these two
+	// names are one file": two names that differ only in case, or in a
+	// normalization macOS applies, are one name where `fugaro artifacts get`
+	// writes them back, so the second artifact would be written over the
+	// first — and a set keyed more weakly than the retriever's is a set the
+	// run stages and no download of it can then hand back.
 	taken := make(map[string]string, len(kept))
 	for i, o := range kept {
 		rel, err := relativeName(r.d.WorkDir, root, o.match)
@@ -711,11 +717,11 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 		if err != nil {
 			return set, fmt.Errorf("the render's %s: %w", o.match, err)
 		}
-		if prev, dup := taken[strings.ToLower(name)]; dup {
-			return set, fmt.Errorf("two of the render's files clean to the same name %q: %s and %s (a name that differs only in case is the same name where the retriever writes it back)",
+		if prev, dup := taken[ArtifactCollisionKey(name)]; dup {
+			return set, fmt.Errorf("two of the render's files clean to the same name %q: %s and %s (a name that differs only in case, or in a Unicode normalization a filesystem may apply, is the same name where the retriever writes it back)",
 				name, prev, o.match)
 		}
-		taken[strings.ToLower(name)] = o.match
+		taken[ArtifactCollisionKey(name)] = o.match
 		names[i] = name
 	}
 	sizes := make([]int64, len(kept))
@@ -1078,29 +1084,183 @@ func commonElems(a, b []string) []string {
 // symlink out of the root has a perfectly good name and must still not be
 // followed.
 func sanitiseName(name string) (string, error) {
-	if name == "" {
-		return "", errors.New("the name is empty")
-	}
-	if i, what := firstControl(name); i >= 0 {
-		return "", fmt.Errorf("the name %q holds %s at byte %d: a name is printed in the report and typed at a shell, and a control character is how a name reads as something other than what it is", name, what, i)
-	}
-	if len(name) > maxArtifactNameBytes {
-		return "", fmt.Errorf("the name is %d bytes, over the %d-byte cap", len(name), maxArtifactNameBytes)
-	}
-	if path.IsAbs(name) {
-		return "", fmt.Errorf("the name %q is absolute: an artifact's name is relative to the outputs root", name)
-	}
-	clean := path.Clean(name)
-	if clean == "." {
-		return "", fmt.Errorf("the name %q names no file", name)
-	}
-	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("the name %q escapes the outputs root", name)
-	}
-	if strings.HasPrefix(clean, ".") {
-		return "", fmt.Errorf("the name %q begins with a dot, which the retriever refuses: a file nobody can fetch back is not uploaded", clean)
+	clean, problem := ArtifactName(name)
+	if problem != "" {
+		return "", errors.New(problem)
 	}
 	return clean, nil
+}
+
+// ArtifactName is the rule above, exported because it is **one rule with two
+// callers**: sanitiseName is the uploader's, and `fugaro artifacts get`
+// (internal/cli) is the retriever's. It returns the name as an artifact's name
+// — path.Clean of it — and the reason it may not be one, or "" when it may.
+//
+// The two sides must not word the rule twice (design §9: the upload path
+// cannot produce what the retrieval path refuses). A retriever that refused
+// one character class more than this list — the zero-width characters and
+// bidi marks a terminal escapes rather than drops, say — would refuse an
+// artifact the run legitimately delivered, and, because `fugaro artifacts get
+// RUN` with no NAME refuses the whole set on one bad entry, would refuse every
+// artifact of that run. So the class is decided here, once, by firstControl's
+// table, and neither caller adds one.
+func ArtifactName(name string) (clean, problem string) {
+	if name == "" {
+		return "", "the name is empty"
+	}
+	if i, what := firstControl(name); i >= 0 {
+		return "", fmt.Sprintf("the name %q holds %s at byte %d: a name is printed in the report and typed at a shell, and a control character is how a name reads as something other than what it is", name, what, i)
+	}
+	// A backslash is not a control character, and it is refused anyway: it is
+	// a path separator on Windows and an ordinary byte everywhere else, so a
+	// name carrying one is two different paths depending on the machine that
+	// reads it. path.Clean — which is what this rule cleans with, and what the
+	// uploader records — reads "frames\a.png" as ONE element, while
+	// filepath.Join (what `fugaro artifacts get` builds its destination with)
+	// reads it as two on Windows, where "frames\..\..\x.png" then leaves the
+	// destination root that the rest of this list exists to keep a name
+	// inside. Refusing it on every platform keeps the rule the same on all of
+	// them, which is the only way the uploader and the retriever can share it.
+	if i := strings.IndexByte(name, '\\'); i >= 0 {
+		return "", fmt.Sprintf("the name %q holds a backslash at byte %d: a backslash separates path elements on Windows and is a character elsewhere, so one name is two different paths", name, i)
+	}
+	if len(name) > maxArtifactNameBytes {
+		return "", fmt.Sprintf("the name is %d bytes, over the %d-byte cap", len(name), maxArtifactNameBytes)
+	}
+	if path.IsAbs(name) {
+		return "", fmt.Sprintf("the name %q is absolute: an artifact's name is relative to the outputs root", name)
+	}
+	clean = path.Clean(name)
+	switch {
+	case clean == ".":
+		return "", fmt.Sprintf("the name %q names no file", name)
+	case clean == ".." || strings.HasPrefix(clean, "../"):
+		return "", fmt.Sprintf("the name %q escapes the outputs root", name)
+	case strings.HasPrefix(clean, "."):
+		return "", fmt.Sprintf("the name %q begins with a dot, which the retriever refuses: a file nobody can fetch back is not uploaded", clean)
+	}
+	return clean, ""
+}
+
+// ArtifactCollisionKey is the identity two artifact names share when one
+// filesystem would store them as one file: the standard's canonical caseless
+// form (Unicode D145, "canonical caseless match") — NFD, then FULL case folding
+// (CaseFolding.txt, every 'C' and 'F' entry), then NFD again.
+//
+// Each of the three steps is there for a reason:
+//
+//   - normalization is not case folding at all: EqualFold("café.png",
+//     "café.png") is false for the NFC and NFD spellings, and macOS — where
+//     the retriever runs — treats them as one file.
+//   - the fold has to be the FULL one, because that is the one the filesystem
+//     uses. Simple folding (strings.EqualFold, unicode.SimpleFold) equates a
+//     rune with a rune; full folding equates a rune with a SEQUENCE, and APFS
+//     — case-insensitive and normalization-insensitive — folds with it:
+//     "straße.png" and "strasse.png" are one file there (ß folds to ss, and ẞ
+//     to the same), and so are "ﬁ.png" and "fi.png", "ς.png" and "σ.png", and
+//     "K.png" (U+212A, the Kelvin sign) and "k.png". A simple-folded key gives
+//     the pairs with a multi-rune fold different keys, so the uploader stages
+//     both and a download writes the second over the first while reporting
+//     both as arrived.
+//   - and it has to be SINGLE-VALUED, which is the one place x/text's tables
+//     are not: for the 172 Cherokee code points (U+13A0–U+13F5, U+13F8–U+13FD,
+//     U+AB70–U+ABBF) cases.Fold maps each case pair to the other member —
+//     U+13A0 to U+AB70, and U+AB70 back to U+13A0 — where CaseFolding.txt names
+//     one target for both (the small letters fold to the capitals: U+AB70–U+ABBF
+//     to U+13A0–U+13EF, U+13F8–U+13FD to U+13F0–U+13F5). Folding is then not
+//     idempotent, so the two spellings of one Cherokee name — one file on any
+//     filesystem that folds case, which is what a case pair is for — would get
+//     two keys and the collision this function exists to catch would be missed.
+//     cherokeeTarget settles each pair on the standard's target, which is what
+//     makes the key a point the fold leaves alone.
+//
+// Normalization is on both sides of the fold, which is the half a name's
+// combining marks need:
+//
+//   - before it, so that two spellings differing only in the ORDER of their
+//     marks — which is no difference at all to the filesystem — fold from the
+//     same input, and so that a precomposed letter is broken into the pieces
+//     the fold then maps. This is the pass that does the work: with
+//     normalization after the fold only, or with NFC before it, one name's two
+//     spellings fold apart and the collision is missed.
+//   - after it, because D145's form is NFD(fold(NFD(x))) and the fold is a
+//     library's tables rather than a promise: a sweep over every code point,
+//     alone and with a mark, found no input whose fold of an NFD string is not
+//     itself NFD, so this pass usually copies — it is here so that the key is
+//     the standard's form by construction rather than by the tables' good
+//     behaviour.
+//
+// The miss without the first pass is not one pair but a family: NFC-then-fold
+// gave "ǰ̣.png" (U+01F0 plus a dot below) and "J̣̌.png" two keys, and the
+// same to the Greek "ᾼ͂.png" and "ᾶι.png", where the ypogegrammeni folds to a
+// standalone iota — one file each on APFS, two keys each here. The sweep in
+// the test over the blocks that hold such letters found 26 pairs of this shape
+// (the reviewer's wider one about 31k), which is why it is a sweep over blocks
+// and not three rows.
+//
+// It is not strings.ToLower either, in the other direction: ToLower maps
+// U+0130 (İ) to a bare 'i', which is not what it folds to — folding U+0130
+// gives 'i' plus U+0307, a combining dot above, which NFC does not compose
+// back (there is no precomposed letter for it), so the key keeps İ.png apart from i.png, which are two files.
+// (The key is coarser than a filesystem here in one spot: İ.png and
+// "i"+U+0307.png share it. That is the direction this function is allowed to
+// err in — a legal record refused — and the download's own no-replace rule is
+// the backstop under it.) Which way a wrong key errs — too coarse and a legal
+// record is refused, too fine and two names are one file nobody saw — is why
+// this is the one function both sides call.
+//
+// The uploader and the retriever ask the "are these two names one file"
+// question with this one function (sanitiseName's duplicate table and the
+// retriever's artifactSetConflict), the same "one rule, two callers" shape
+// ArtifactName has (design §9: "the upload path cannot produce what the
+// retrieval path refuses"). Keyed with a weaker rule — strings.ToLower, or
+// simple folding — the two drift, and a run stages a set its own download
+// then either refuses wholesale or writes over itself.
+//
+// The key is only ever a map key: nothing prints it, and nothing builds a
+// path from it. And it is a second line, not the only one: the download
+// refuses to replace what is at a path unless the operator asked for it, so a
+// collision this key does not know about fails loudly instead of overwriting.
+func ArtifactCollisionKey(name string) string {
+	// NFD, fold, NFD: the standard's canonical caseless form (Unicode D145,
+	// "canonical caseless match"), which is what a filesystem that folds case
+	// and ignores normalization compares. The first NFD pass is the one that
+	// does the work: it puts a name's combining marks in canonical order and
+	// breaks a precomposed letter into the pieces the fold maps, so every
+	// spelling of one name folds from the same input — "ǰ̣.png" and
+	// "J̣̌.png" are one file on APFS, and with NFC-then-fold alone they were
+	// two keys, the fold of the first being the precomposed letter and of the
+	// second a j and two marks. The trailing pass is the standard's own
+	// spelling of the form and in practice a copy (see the comment above).
+	decomposed := norm.NFD.String(name)
+	folded := cases.Fold().String(decomposed)
+	// The fold is applied rune by rune, and settles each Cherokee pair with
+	// cherokeeTarget; for every other code point it already returns one value.
+	var settled strings.Builder
+	settled.Grow(len(folded))
+	for _, r := range folded {
+		settled.WriteRune(cherokeeTarget(r))
+	}
+	return norm.NFD.String(settled.String())
+}
+
+// cherokeeTarget is the code point CaseFolding.txt folds r to for the Cherokee
+// ranges, and r itself for everything else. cases.Fold's tables map each
+// Cherokee case pair to the other member rather than to the standard's target
+// — the small letters fold to the capitals, U+AB70–U+ABBF to U+13A0–U+13EF and
+// U+13F8–U+13FD to U+13F0–U+13F5 — so folding "Ꭰ" twice gives "Ꭰ" again while
+// folding "ꭰ" twice gives "ꭰ": two spellings of one name, two keys, and the
+// collision missed. Mapping the small letters down to the capitals leaves both
+// spellings on the pair's one target, which is what ArtifactCollisionKey needs
+// of it and what the test over the whole ranges pins.
+func cherokeeTarget(r rune) rune {
+	switch {
+	case r >= 0xAB70 && r <= 0xABBF:
+		return r - 0xAB70 + 0x13A0
+	case r >= 0x13F8 && r <= 0x13FD:
+		return r - 0x13F8 + 0x13F0
+	}
+	return r
 }
 
 // firstControl returns the byte offset of the first character in name that
@@ -1111,8 +1271,21 @@ func sanitiseName(name string) (string, error) {
 // sizzle.mp4 from sizzle‮gnp.exe. Punctuation is the render's to choose
 // (design §9 binds the name's first character and nothing else), so a pipe or
 // a backtick is allowed here and escaped where it is rendered
-// (report.go's tableText and tableCode). NUL and the line breaks are the same
+// (report.go's tableText and tableCode) — with one punctuation exception that
+// is a path question and not a terminal one: a backslash is refused, in
+// ArtifactName above, on every platform, because it separates path elements
+// on Windows. NUL and the line breaks are the same
 // rule as the rest of this table rather than a case of their own.
+//
+// What is NOT in this table is as deliberate as what is. The zero-width
+// characters and bidi marks safetext's OneLine escapes (U+200B-U+200D,
+// U+2060, U+FEFF, the soft hyphen, the CGJ, the variation selectors, the tag
+// characters, LRM/RLM/ALM, U+2028/29) are a legal filename a render can
+// deliver — an emoji's variation selector is one — and ArtifactName is the
+// retriever's rule as well as the uploader's, so refusing them here would
+// refuse a name a run legitimately recorded. They are escaped where the name
+// is *printed* (internal/safetext), which is where reading one wrong matters;
+// a path component is not.
 func firstControl(name string) (int, string) {
 	for i, r := range name {
 		switch {
@@ -1408,24 +1581,29 @@ func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
 	if err := checkInputCaps(r.spec.Inputs, caps); err != nil {
 		return err
 	}
-	// Keyed on the FOLDED name, the rule the launcher applies to the same set
-	// and the one Task 4's artifact names are keyed on: the downloads below
-	// all land in one directory, and a name that differs only in case is one
-	// name there — the second file would replace the first while the task
-	// named both. A spec written by hand reaches this with no launcher to
-	// have refused it, which is why the rule is here too and not only there.
+	// Keyed on the FOLDED name — ArtifactCollisionKey, which is the rule the
+	// launcher applies to the same set (internal/cli's --attach check) and the
+	// one Task 4's artifact names are keyed on: the downloads below all land in
+	// one directory, and a name that differs only in case, or in a Unicode
+	// normalization the filesystem applies, is one name there — the second file
+	// would replace the first while the task named both. A case fold weaker
+	// than the key's (strings.ToLower was one) is the drift
+	// ArtifactCollisionKey's own comment warns about: it gives ß/ss and ﬁ/fi
+	// two keys, and the pair then writes over itself on APFS. A spec written by
+	// hand reaches this with no launcher to have refused it, which is why the
+	// rule is here too and not only there.
 	seen := map[string]string{}
 	for _, in := range r.spec.Inputs {
 		if problem := task.InputNameProblem(in.Name); problem != "" {
 			return fmt.Errorf("attached input %q %s", in.Name, problem)
 		}
-		if first, dup := seen[strings.ToLower(in.Name)]; dup {
+		if first, dup := seen[ArtifactCollisionKey(in.Name)]; dup {
 			if first == in.Name {
 				return fmt.Errorf("attached input %q is named twice; one file cannot be two", in.Name)
 			}
-			return fmt.Errorf("attached inputs %q and %q differ only in case, and both are downloaded into the same directory, where that is one name", first, in.Name)
+			return fmt.Errorf("attached inputs %q and %q differ only in case, or in a Unicode normalization, and both are downloaded into the same directory, where that is one name", first, in.Name)
 		}
-		seen[strings.ToLower(in.Name)] = in.Name
+		seen[ArtifactCollisionKey(in.Name)] = in.Name
 	}
 	dir := filepath.Join(r.d.WorkDir, inputsDir)
 	tracked, err := r.trackedInputs(ctx)

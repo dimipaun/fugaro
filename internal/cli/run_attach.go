@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -187,11 +188,15 @@ func attachJudge(cands []attachCandidate, caps config.Inputs) error {
 	}
 	perFile := caps.MaxFileBytes()
 	seen := map[string]string{}
-	// Keyed on the FOLDED name, as the runner's artifact names are (Task 4):
-	// two names differing only in case are one name where the runner writes
-	// them back, and a local run downloads into the checkout on the operator's
-	// own filesystem, which folds. A second upload would then have replaced
-	// the first file, and the task would name two inputs and hold one.
+	// Keyed on the FOLDED name — runner.ArtifactCollisionKey, the same key the
+	// runner's own duplicate check for these names uses and the one Task 4's
+	// artifact names are keyed on: two names differing only in case, or in a
+	// Unicode normalization the filesystem applies, are one name where the
+	// runner writes them back, and a local run downloads into the checkout on
+	// the operator's own filesystem, which folds. A second upload would then
+	// have replaced the first file, and the task would name two inputs and hold
+	// one. One key for both sides, or the launcher accepts a set the runner
+	// refuses (or worse, writes over itself).
 	folded := map[string]string{}
 	var total int64
 	for _, c := range cands {
@@ -207,12 +212,12 @@ func attachJudge(cands []attachCandidate, caps config.Inputs) error {
 			// paths are the whole of what the owner has to tell apart.
 			return userErr("--attach: %s and %s are both named %s; a run stores one object per name, so rename one of them or attach them from different directories", first, c.path, c.name)
 		}
-		if first, dup := folded[strings.ToLower(c.name)]; dup {
-			return userErr("--attach: %s is named %s and %s is named %s; the names differ only in case, and the runner writes the inputs into one directory, where that is one name — so rename one of them or attach them from different directories",
+		if first, dup := folded[runner.ArtifactCollisionKey(c.name)]; dup {
+			return userErr("--attach: %s is named %s and %s is named %s; the names differ only in case (or in a Unicode normalization), and the runner writes the inputs into one directory, where that is one name — so rename one of them or attach them from different directories",
 				first, filepath.Base(first), c.path, c.name)
 		}
 		seen[c.name] = c.path
-		folded[strings.ToLower(c.name)] = c.path
+		folded[runner.ArtifactCollisionKey(c.name)] = c.path
 		switch {
 		case c.mode&fs.ModeSymlink != 0:
 			// Refused, not followed: os.Stat would follow it and describe its

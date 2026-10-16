@@ -803,6 +803,36 @@ func TestAttachRefusesNamesDifferingOnlyInCase(t *testing.T) {
 	wantNoUpload(t, f, n)
 }
 
+// TestAttachRefusesNamesOneFullCaseFoldApart is the same rule asked with a
+// pair a *simple* case fold keeps apart: ß folds to ss (and ﬁ to fi) under
+// Unicode's full case folding, which is what a case-insensitive,
+// normalization-insensitive filesystem — APFS, where a mac runs this — applies
+// to the names in the one directory the inputs land in. A launcher keyed on
+// strings.ToLower, or on the simple fold, accepts straße.png and strasse.png
+// as two names and the second download then replaces the first while the task
+// names both.
+//
+// Mutation (key the folded map on strings.ToLower or on the exact name): this
+// pair is accepted and this test fails on the missing refusal.
+func TestAttachRefusesNamesOneFullCaseFoldApart(t *testing.T) {
+	a := attachShot(t, "straße.png", "sharp s")
+	b := attachShot(t, "strasse.png", "two letters")
+	err := attachPrepared([]string{a, b}, config.Inputs{})
+	if err == nil || !strings.Contains(err.Error(), "only in case") {
+		t.Fatalf("attachPrepared of a full-fold pair = %v, want a refusal naming the pair", err)
+	}
+	for _, p := range []string{a, b} {
+		if !strings.Contains(err.Error(), p) {
+			t.Fatalf("the refusal does not name %s: %v", p, err)
+		}
+	}
+	f := artifactAttachFixture(t)
+	n := guardAttach(t)
+	wantRefused(t, f, "only in case", "run", "--repo", "acme/app", "--recipe", "sizzle",
+		"--run-id", "20261015-100000-abcd", "--attach", a, "--attach", b, "Render the nightly bundle")
+	wantNoUpload(t, f, n)
+}
+
 // TestAttachRefusesADevice: --attach uploads FILES, and a path that is not a
 // regular file — a device, a FIFO, a socket — is refused for the same reason a
 // directory is, one step further on: os.Stat describes it, and the size it

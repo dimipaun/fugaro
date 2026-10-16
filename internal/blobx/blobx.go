@@ -43,6 +43,14 @@ var (
 	ErrConflict = errors.New("the object changed")
 	// ErrExists means Create found the object already there.
 	ErrExists = errors.New("object already exists")
+	// ErrDestExists means a download's destination path was already taken and
+	// the caller asked for a placement that does not replace it
+	// (GetFileExactly with replace false, which is `fugaro artifacts get`
+	// without --force). It is the same answer as the caller's own pre-check
+	// gives for a file it can see, and this is the one that also covers what
+	// the pre-check cannot: a file that appeared after it, and a path this
+	// filesystem folds onto an existing one.
+	ErrDestExists = errors.New("the destination already exists")
 	// ErrForbidden means GCS refused a read, a write or a delete for lack
 	// of permission (HTTP 403). gocloud reports a 403 as NotFound, so
 	// without it a refused write would read as a missing object
@@ -629,7 +637,53 @@ func (b *Bucket) PutFileOpened(ctx context.Context, key string, src *os.File, st
 //     caller, and refusing the names that must not be handed to it — a
 //     `../` out of the artifacts root above all — is fugaro artifacts get's
 //     job (the same design's §9, the plan's Task 7).
+//
+// limit is an upper bound and not an equality, and the difference matters to
+// the caller that knows the object's exact size (a run record's byte count):
+// comparing what this returns with what the caller expected happens after the
+// rename, which is too late to do anything but delete the file this method
+// just placed — and with --force, deleting whatever was at that path before.
+// GetFileExactly is that caller's entry point, and it checks the size where
+// the hash is checked: on the temporary file, before the rename.
 func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64, strict bool) (size int64, sha string, err error) {
+	return b.getFile(ctx, key, path, sum, limit, -1, strict, true)
+}
+
+// GetFileExactly is GetFile for the caller that knows the object's exact size
+// as well as its hash — `fugaro artifacts get`, whose run record carries the
+// byte count it uploaded — and it is checked in the same place and at the same
+// time as the hash: inside, on the temporary file, BEFORE the rename. A size
+// the object does not have is ErrChanged with both numbers in the message, and
+// nothing is placed at path.
+//
+// That placement is the whole point of the method. GetFile's limit is an upper
+// bound, so a caller that compared the size afterwards would be comparing it
+// to a file that is already at its final path — and both ways out of that are
+// wrong: leaving it there breaks "nothing is written unless it is what was
+// asked for", and removing it removes whatever was at that path before the
+// rename. With --force that is the operator's own file, which this package
+// never wrote and must not delete.
+//
+// want is also the cap, so an object larger than the recorded size is
+// ErrTooLarge before its body is read, exactly as with GetFile's limit.
+//
+// replace says whether path may be replaced. With it, the verified temporary
+// file is renamed onto path, which is what `--force` asks for. Without it,
+// nothing at path is ever replaced: placement is a link or an O_EXCL create,
+// and a path that is already taken — a file that appeared after the caller's
+// own check, or one this filesystem considers the same path because of how it
+// folds case (straße.png and strasse.png on APFS, A.png and a.png) — fails as
+// ErrDestExists with path untouched. The caller's own pre-check is a different
+// question asked earlier: it cannot see a file that is not there yet, and it
+// asks the filesystem's view of two names under whatever folding that
+// filesystem has.
+func (b *Bucket) GetFileExactly(ctx context.Context, key, path, sum string, want int64, strict, replace bool) (size int64, sha string, err error) {
+	return b.getFile(ctx, key, path, sum, want, want, strict, replace)
+}
+
+// getFile is GetFile and GetFileExactly: exact < 0 means the caller knows only
+// an upper bound.
+func (b *Bucket) getFile(ctx context.Context, key, path, sum string, limit, exact int64, strict, replace bool) (size int64, sha string, err error) {
 	r, err := b.NewReader(ctx, key, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound && !(strict && isForbidden(err)) {
 		return 0, "", ErrNotExist
@@ -674,6 +728,14 @@ func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64
 		_ = tmp.Close()
 		return 0, "", fmt.Errorf("%s: %w (read %d bytes, the object's size said %d)", key, ErrChanged, n, r.Size())
 	}
+	// The exact size, if the caller has one, is checked here — on the
+	// temporary file, before the rename, beside the hash and for the same
+	// reason: a mismatch must leave the destination as it was, not remove
+	// what the rename put there.
+	if exact >= 0 && n != exact {
+		_ = tmp.Close()
+		return 0, "", fmt.Errorf("%s: %w (read %d bytes, the record says %d)", key, ErrChanged, n, exact)
+	}
 	if err := tmp.Close(); err != nil {
 		return 0, "", err
 	}
@@ -682,11 +744,86 @@ func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64
 	if want != "" && !strings.EqualFold(got, want) {
 		return 0, "", fmt.Errorf("%s: %w (expected sha256 %s, read %s)", key, ErrMismatch, want, got)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := placeVerified(tmpName, path, replace); err != nil {
 		return 0, "", err
 	}
 	done = true
 	return n, got, nil
+}
+
+// linkFile is os.Link, and a test replaces it (see export_test.go) to reach
+// the fallback below: a filesystem without hard links is the one thing this
+// path cannot be given by a test on the machine it runs on, and dropping the
+// O_EXCL from the fallback would then fail nothing.
+var linkFile = os.Link
+
+// placeVerified moves the verified temporary file to path, replacing what is
+// at path only when replace says so.
+//
+// With replace it is os.Rename: the file that was there, if any, is gone, and
+// that is what the caller asked for.
+//
+// Without it the file at path must not be replaced, and nothing here may
+// assume path is free — the caller's earlier look cannot see a file that
+// arrives in between, and it asks about the exact name it has while a
+// filesystem may answer for more than one (a case-insensitive, normalizing
+// one merges straße.png with strasse.png and A.png with a.png). os.Link makes
+// the new name and fails with EEXIST rather than overwriting, and it is
+// atomic: path is never visible half-written. The temporary is removed after
+// the link, which leaves the bytes at path and nothing at the temporary's
+// name. Where hard links are not supported (some network filesystems, and any
+// driver without them) an O_EXCL create plus a copy does the same job with
+// the same no-replace promise, minus the atomicity: the copy is of the
+// temporary that was just verified, and a copy that fails leaves the file
+// this function created removed again.
+func placeVerified(tmp, path string, replace bool) error {
+	if replace {
+		return os.Rename(tmp, path)
+	}
+	switch err := linkFile(tmp, path); {
+	case err == nil:
+		_ = os.Remove(tmp)
+		return nil
+	case errors.Is(err, fs.ErrExist):
+		return fmt.Errorf("%s: %w", path, ErrDestExists)
+	}
+	// Any other reason the link failed: a filesystem without hard links, a
+	// link across filesystems, a refusal. The copy below makes the same
+	// promise — nothing at path is replaced — so it is the right thing to
+	// try rather than a fallback that changes what the caller asked for, and
+	// a filesystem that cannot do that either reports its own error.
+	return copyNoReplace(tmp, path)
+}
+
+// copyNoReplace writes tmp's bytes to a path that must not exist, creating it
+// with O_EXCL so that a path taken in the meantime is refused rather than
+// overwritten. The file is 0600, as the temporary is; a failure removes the
+// file this function made, because it created it and nothing else knows about
+// it.
+func copyNoReplace(tmp, path string) error {
+	src, err := os.Open(tmp)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%s: %w", path, ErrDestExists)
+		}
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	_ = os.Remove(tmp)
+	return nil
 }
 
 // Touch sets the object's GCS custom time, which the bucket's lifecycle

@@ -20,8 +20,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"gocloud.dev/blob"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -1208,6 +1211,13 @@ func TestStageArtifactsRefusesEscapes(t *testing.T) {
 		{strings.Repeat("a", 201), "200"},
 		{".hidden.mp4", "begins with a dot"},
 		{".hidden/a.png", "begins with a dot"},
+		// A backslash is a path separator on Windows and an ordinary
+		// character everywhere else, so a name carrying one is two different
+		// paths depending on the machine that reads it: it is refused on
+		// every platform, and the retriever inherits the rule.
+		{"a\\b.png", "backslash"},
+		{"frames\\..\\..\\x.png", "backslash"},
+		{"..\\x.png", "backslash"},
 	}
 	for _, c := range refused {
 		got, err := runner.SanitiseName(c.name)
@@ -1491,32 +1501,6 @@ func TestAStagedFileReplacedBeforeTheUploadFailsTheRun(t *testing.T) {
 	}
 }
 
-// foldsCase reports whether dir's filesystem treats two names that differ only
-// in case as one: it writes the lower-case name and asks whether the upper-case
-// spelling resolves to the file that write created. macOS's APFS says yes, and
-// ext4 says no — which is what a test that needs two names differing only in
-// case has to know before it can run at all.
-func foldsCase(t *testing.T, dir string) bool {
-	t.Helper()
-	lower := filepath.Join(dir, "case-probe-lower")
-	if err := os.WriteFile(lower, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	upper := filepath.Join(dir, "CASE-PROBE-LOWER")
-	if _, err := os.Stat(upper); err != nil {
-		return false // a case-sensitive filesystem has no such file
-	}
-	a, err := os.Stat(lower)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.Stat(upper)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return os.SameFile(a, b)
-}
-
 // TestAProbeThatRewritesAStagedFileFailsTheUpload is the same hash check from
 // the probe's side, and it is the one window the probe itself opens: the probe
 // runs AFTER the set is staged and hashed and BEFORE the upload (design §3),
@@ -1706,9 +1690,12 @@ func TestArtifactsAreUploadedInNameOrder(t *testing.T) {
 // case-insensitive filesystem would make of two names, which is exactly why it
 // cannot be staged on one.
 func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T) {
-	if foldsCase(t, t.TempDir()) {
-		t.Skip("the temp filesystem folds case, so the render cannot produce both Sizzle.png and sizzle.png")
-	}
+	// Two names that differ only in case are one file on a case-insensitive
+	// filesystem, APFS among them, and the render's own write merges them
+	// there before any table can refuse two artifacts: the assertion is
+	// about the KEY, so it needs a filesystem that holds both. On Linux (CI)
+	// it does; on a mac this skips rather than fail for the machine.
+	requireDistinctNames(t, "Sizzle.png", "sizzle.png")
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
 		renderWrites(outFile{name: "Sizzle.png", body: "one"}, outFile{name: "sizzle.png", body: "two"}))
@@ -1723,6 +1710,255 @@ func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T) {
 		t.Fatalf("reason = %q", rec.Reason)
 	}
 	assertNothingUploaded(t, h)
+}
+
+// requireDistinctNames skips a test whose point needs two names this
+// filesystem keeps apart. A case-insensitive, normalization-insensitive one
+// (APFS, where a mac developer runs this suite) stores s.png and ſ.png as one
+// file, so the render's own write merges them and there is no collision left
+// for the uploader's table to refuse. The skip keeps the assertion about the
+// KEY rather than about the machine: on Linux (CI) it runs, and elsewhere it
+// says so instead of failing.
+func requireDistinctNames(t *testing.T, names ...string) {
+	t.Helper()
+	probe := t.TempDir()
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(probe, n), nil, 0o600); err != nil {
+			t.Skipf("this filesystem cannot hold %q and its folded twin: %v", names[0], err)
+		}
+	}
+	if ents, err := os.ReadDir(probe); err != nil || len(ents) != len(names) {
+		t.Skipf("this filesystem stores %q and %q as one file (%d entries, %v)", names[0], names[1], len(ents), err)
+	}
+}
+
+// TestArtifactCollisionKeyIsTheOneFoldedName pins the key itself, because two
+// callers ask the "are these two names one file" question with it: the
+// uploader's duplicate table below and `fugaro artifacts get`'s
+// artifactSetConflict (internal/cli). A key that is not the same on both sides
+// is the drift this pairs with: a run stages a set its own retriever then
+// refuses wholesale.
+//
+// The unequal pairs are in the table for the same reason as the equal ones.
+// U+0130 (İ) is the rune that makes strings.ToLower the wrong key: ToLower maps
+// it to 'i', which strings.EqualFold does NOT equate with it, so a lower-cased
+// key collides two names that are two files, and refuses İ.png beside i.png.
+// Mutation caught: folding with strings.ToLower, or without the NFC pass.
+func TestArtifactCollisionKeyIsTheOneFoldedName(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		a, b  string
+		equal bool
+	}{
+		{"a name with itself", "sizzle.png", "sizzle.png", true},
+		{"case", "sizzle.png", "SIZZLE.PNG", true},
+		{"the Kelvin sign", "K.png", "K.png", true},
+		{"long s", "s.png", "ſ.png", true},
+		{"final sigma", "ς.png", "σ.png", true},
+		{"NFC and NFD, as macOS stores them", "café.png", "café.png", true},
+		{"NFC and NFD, the other way round", "café.png", "café.png", true},
+		// The full-folding half (CaseFolding.txt 'F' entries): one rune, two
+		// letters, one file on a filesystem that folds the way APFS does.
+		// A simple-folded key — strings.EqualFold, the orbit minimum — gives
+		// each pair two keys, so a record listing both downloads one file.
+		{"sharp s", "straße.png", "strasse.png", true},
+		{"sharp s, upper case", "STRAẞE.png", "STRASSE.png", true},
+		{"fi ligature", "ﬁle.png", "file.png", true},
+		{"fl ligature", "ﬂag.png", "flag.png", true},
+		{"ffi ligature", "oﬃce.png", "office.png", true},
+		{"ff ligature", "ﬀort.png", "ffort.png", true},
+		{"U+0130 folds to i plus a dot, not to i", "I.png", "İ.png", false},
+		{"U+0130 is not i either", "İ.png", "i.png", false},
+		// The Cherokee pairs, where cases.Fold's tables answer with the other
+		// member of the pair instead of CaseFolding.txt's one target: without
+		// cherokeeTarget these spellings of one name get a key each.
+		{"Cherokee case (U+13A0 / U+AB70)", "Ꭰ.png", "ꭰ.png", true},
+		{"Cherokee small letter ye (U+13F0 / U+13F8)", "Ᏸ.png", "ᏸ.png", true},
+		{"Cherokee inside a longer name", "aᎥb.png", "aꭵb.png", true},
+		// Normalization on both sides of the fold: the order of combining
+		// marks, and the pieces a precomposed letter folds into. NFC-then-fold
+		// gave each of these pairs two keys, and APFS — one file for each pair
+		// — is where the collision would have been written over.
+		{"mark order, and a precomposed letter", "ǰ̣.png", "J̣̌.png", true},
+		{"Greek with ypogegrammeni", "ᾼ͂.png", "ᾶι.png", true},
+		{"a different name", "sizzle.png", "sizzle2.png", false},
+		{"a different path", "clips/a.png", "a.png", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ka, kb := runner.ArtifactCollisionKey(tc.a), runner.ArtifactCollisionKey(tc.b)
+			if (ka == kb) != tc.equal {
+				t.Errorf("ArtifactCollisionKey(%q) = %q, ArtifactCollisionKey(%q) = %q: equal = %v, want %v",
+					tc.a, ka, tc.b, kb, ka == kb, tc.equal)
+			}
+		})
+	}
+}
+
+// TestArtifactCollisionKeySettlesEveryCherokeePair walks all 172 Cherokee code
+// points cases.Fold is not idempotent on, rather than sampling them: the pairs
+// are what ArtifactCollisionKey's cherokeeTarget is for, and three rows of the
+// table above would pass for a mapping that settled three.
+//
+// Each pair is asserted both ways round — one key for the two spellings, and
+// that key a settled point of the fold (ArtifactCollisionKey of it is itself).
+// A key equal on a pair but not settled is a key that moves if anything ever
+// folds it again, and this function is handed folded strings as readily as raw
+// names.
+//
+// Mutation caught: dropping the cherokeeTarget pass (returning the fold
+// itself), or mapping only one of the two ranges.
+func TestArtifactCollisionKeySettlesEveryCherokeePair(t *testing.T) {
+	// CaseFolding.txt's Cherokee pairs: the two capital ranges, and the
+	// small-letter range each of them folds to.
+	ranges := []struct {
+		capital, small rune
+		runes          int
+	}{
+		{0x13A0, 0xAB70, 0x50}, // U+13A0–U+13EF and U+AB70–U+ABBF
+		{0x13F0, 0x13F8, 0x06}, // U+13F0–U+13F5 and U+13F8–U+13FD
+	}
+	pairs := 0
+	for _, rg := range ranges {
+		for i := 0; i < rg.runes; i++ {
+			cn, sn := string(rg.capital+rune(i))+".png", string(rg.small+rune(i))+".png"
+			kc, ks := runner.ArtifactCollisionKey(cn), runner.ArtifactCollisionKey(sn)
+			if kc != ks {
+				t.Errorf("ArtifactCollisionKey(%q) = %q, ArtifactCollisionKey(%q) = %q: two spellings of one Cherokee name must share one key",
+					cn, kc, sn, ks)
+			}
+			if again := runner.ArtifactCollisionKey(kc); again != kc {
+				t.Errorf("ArtifactCollisionKey(%q) = %q, and folding that key gives %q: the key must be a settled point of the fold",
+					cn, kc, again)
+			}
+			pairs++
+		}
+	}
+	// The pairs checked have to be all of them — 80 + 6, the 86 pairs that the
+	// 172 code points of U+13A0–U+13F5, U+AB70–U+ABBF and U+13F8–U+13FD make
+	// — so a range that quietly stops short cannot pass as full coverage.
+	if pairs != 86 {
+		t.Errorf("checked %d Cherokee pairs, want 86 (the 172 code points of U+13A0–U+13F5, U+13F8–U+13FD and U+AB70–U+ABBF)", pairs)
+	}
+}
+
+// TestArtifactCollisionKeyIsCanonicalForEveryCaseVariant sweeps the blocks
+// that hold letters a combining mark can be attached to — every code point in
+// them, each with a mark, in both cases — rather than the handful of pairs the
+// table names: the mark-order miss the key had was not one pair but a family of
+// them (a sweep of this shape found 26 at the time, and the reviewer's wider
+// one about 31k), and a key that is right on the two famous pairs and wrong on
+// the rest is a key that still writes one file twice.
+//
+// The reference form is the standard's own definition (Unicode D145, canonical
+// caseless match), written out here a second time. That is deliberate: the
+// question this sweep asks is whether a spelling the standard calls equivalent
+// gets one key, and the answer used to be no.
+//
+// Every key is also asserted to be in NFD, which is a property of the key
+// alone: a key with a precomposed letter in it is a key that has not been
+// normalized after the fold, however the pairs happen to fall.
+//
+// Mutation caught: NFC before the fold (26 of these pairs get two keys),
+// normalizing only after the fold (6 of them do), and any key that is not NFD.
+// Dropping the second NFD pass after an NFD input is NOT caught, because the
+// fold of an NFD string is itself NFD at this version of x/text — the pass is
+// the standard's form, not a load-bearing one, and the comment on the function
+// says so.
+func TestArtifactCollisionKeyIsCanonicalForEveryCaseVariant(t *testing.T) {
+	// The standard's canonical caseless form, for the sweep's own use.
+	caseless := func(s string) string {
+		return norm.NFD.String(cases.Fold().String(norm.NFD.String(s)))
+	}
+	marks := []rune{0x0300, 0x030c, 0x0323, 0x0342}
+	blocks := []struct {
+		lo, hi rune
+		what   string
+	}{
+		{0x00c0, 0x02ff, "Latin-1 letters, Latin Extended-A and -B, IPA"},
+		{0x0300, 0x03ff, "combining marks, Greek and Coptic"},
+		{0x1e00, 0x1fff, "Latin Extended Additional, Greek Extended"},
+		{0xfb00, 0xfb4f, "the ligatures, which fold to sequences"},
+	}
+	checked := 0
+	for _, b := range blocks {
+		for r := b.lo; r <= b.hi; r++ {
+			for _, m := range marks {
+				for _, flip := range []func(rune) rune{unicode.ToUpper, unicode.ToLower} {
+					x := norm.NFC.String(string(r) + string(m))
+					y := norm.NFC.String(string(flip(r)) + string(m))
+					if x == y || caseless(x) != caseless(y) {
+						continue
+					}
+					checked++
+					kx, ky := runner.ArtifactCollisionKey(x), runner.ArtifactCollisionKey(y)
+					if kx != ky {
+						t.Errorf("in %s: ArtifactCollisionKey(%q) = %q, ArtifactCollisionKey(%q) = %q: the standard calls these one name", b.what, x, kx, y, ky)
+					}
+					if nfd := norm.NFD.String(kx); nfd != kx {
+						t.Errorf("in %s: ArtifactCollisionKey(%q) = %q is not its own NFD (%q): the key has to be normalized after the fold", b.what, x, kx, nfd)
+					}
+				}
+			}
+		}
+	}
+	// A sweep that quietly stops checking anything passes just as well as a
+	// sweep that checks everything, so the count is asserted too.
+	if checked < 1000 {
+		t.Errorf("sweep checked %d case-variant pairs, want at least 1000: the blocks or the marks have gone missing", checked)
+	}
+}
+
+// TestArtifactNameCollisionOnAFoldedNameIsRefused: the collision the uploader
+// refuses has to be the retriever's, or a run stages a set its own download
+// refuses wholesale (`fugaro artifacts get RUN` says the record's names are
+// one file, in artifactSetConflict).
+//
+// The two pairs are the two keys that were wrong, one per direction:
+//
+//   - "s" and the long s U+017F, which unicode.ToLower leaves alone (so a
+//     lower-cased key stages both and the download then writes one file while
+//     reporting two).
+//   - "straße" and "strasse", which case folding equates only in its FULL
+//     form: one rune becomes two letters. strings.EqualFold and
+//     unicode.SimpleFold keep them apart, and APFS — the filesystem this key
+//     is about — does not: it folds both ways, which is why the uploader has
+//     to as well.
+//
+// The filesystem has to keep the two names apart for the collision to be the
+// table's rather than the render's own write, and a case-folding,
+// normalization-insensitive one (APFS) does not; where it does not, the test
+// skips rather than assert something the filesystem decided.
+//
+// Mutation (key the collision map on the name as written, on strings.ToLower,
+// or on simple folding): the run succeeds with two artifacts and this test
+// fails.
+func TestArtifactNameCollisionOnAFoldedNameIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		a, b  string
+		bytes int
+	}{
+		{"long s", "s.png", "ſ.png", 4},
+		{"sharp s (full folding: one rune, two letters)", "straße.png", "strasse.png", 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requireDistinctNames(t, tc.a, tc.b)
+			h := newHarnessFiles(t, renderCfg(t, "", ""),
+				artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+				renderWrites(outFile{name: tc.a, size: tc.bytes}, outFile{name: tc.b, size: tc.bytes}))
+			rec, err := h.run(t)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+				t.Fatalf("record = %+v", rec)
+			}
+			if !strings.Contains(rec.Reason, "same name") {
+				t.Fatalf("reason = %q, want the collision refusal", rec.Reason)
+			}
+			assertNothingUploaded(t, h)
+		})
+	}
 }
 
 // TestStageArtifactsRefusesADotNamedMatch is the paired rule: the retriever
