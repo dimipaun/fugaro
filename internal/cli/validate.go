@@ -387,7 +387,13 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		// without one nothing is resolved at all (the note below), so there is
 		// no table to build.
 		routes = runner.ProvidersFor(claimed, repo)
-		ownRoutes = runner.ProvidersFor(lc.Providers, repo)
+		// ownRoutes is the same table before the filter: the operator's own
+		// providers exactly as the operator wrote them, which is the only table
+		// that can answer whether an entry's allow_data_to was *written*
+		// (claudeDirectRefusal). runner.ProvidersFor rewrites every entry it
+		// keeps to `allow_data_to: [repo]` and so answers "written" for one that
+		// never wrote the key at all.
+		ownRoutes = lc.Providers
 	}
 	for _, p := range pins {
 		if !readable {
@@ -459,15 +465,24 @@ func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
 // routingProblems' second rule; the doc comment above has the reading of "no
 // Anthropic key" it rests on.
 //
-// The two provider tables it asks are two different questions, and both are
-// already the run's own: routes is the table the run will have, which is what
-// "does this run need the key" is about (config.AnthropicKeyNeeded, the rule
-// providerProblems' own note asks), and own is the operator's own table —
-// routingProblems filters both by this repository's allow_data_to before
-// handing them over, which is what "does this project route Claude *for this
-// repository*" is about: a route that claims the model but does not admit the
-// checkout being validated would halt the run if the switch named it, so
-// "write the switch" is not advice that run can take.
+// The two provider tables it asks are two different questions. routes is the
+// table the run will have, which is what "does this run need the key" is about
+// (config.AnthropicKeyNeeded, the rule providerProblems' own note asks). own is
+// the operator's own table *as the operator wrote it* — the entry's own list,
+// which is the only thing that can answer D1b's question, whether the claiming
+// entry's allow_data_to was written.
+//
+// That question must be asked of own and never of runner.ProvidersFor's table:
+// the filter rewrites every entry it keeps to `allow_data_to: [repo]` (its own
+// doc — the run only needs to know it is allowed), so over it an entry that
+// never wrote allow_data_to reads as written, and this refusal stated a premise
+// the warning providerProblems prints for the same file contradicts (an absent
+// allow_data_to is exactly what OpenToEveryRepoReason describes). Which entry
+// claims the model for this repository is still the run's own filter's answer —
+// a route written for other repositories only is no route this run carries, so
+// "write the switch" is not advice that run can take — and that filter is asked
+// first, for the entry's name; the written question is then asked of the
+// operator's entry by that name.
 func claudeDirectRefusal(a config.Agent, p claudePin, routes, own map[string]config.ModelProvider, repo, mode string) string {
 	if mode != policy.ModeEnforce {
 		// Without a gateway there is no routing at all: nothing is sent to a
@@ -484,8 +499,28 @@ func claudeDirectRefusal(a config.Agent, p claudePin, routes, own map[string]con
 	// answers it over the routes this repository's run would have, so this rule
 	// and the run's own resolution cannot disagree about whether a route is
 	// there.
-	if _, _, ok := config.RoutingClaudeFor(&config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{p.model}}, p.model, own); !ok {
+	probe := &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{p.model}}
+	name, _, ok := config.RoutingClaudeFor(probe, p.model, runner.ProvidersFor(own, repo))
+	if !ok {
+		// No route of this project claims the model for this repository: there
+		// is nothing to send the call to, and "write the switch" would be advice
+		// this project cannot take.
 		return ""
+	}
+	if !own[name].AllowDataToWritten() {
+		// The entry admits this repository (it survived the filter above) and
+		// names no repository in allow_data_to — the state the run's own table
+		// cannot show, and the one D1b's safeguard is about: an absent
+		// allow_data_to already means every repository of the project, which is
+		// why this one path requires the list to be written. The switch cannot
+		// route through the entry as it stands, so the message says which entry
+		// names no repository, and what to write, before it says to write the
+		// switch.
+		what := `allow_data_to naming the repositories whose code may be sent there, e.g. ["owner/name"]`
+		if repo != "" {
+			what = fmt.Sprintf(`allow_data_to: [%q]`, repo)
+		}
+		return fmt.Sprintf(`%s is pinned and goes direct, and this call needs the Anthropic API key (%s), while provider %s of this project claims the model and its allow_data_to names no repository: an absent allow_data_to already means every repository of the project may mount its key and send it code, and an empty list is refused as naming nobody, which is why D1b's safeguard requires the list to be written before the switch may route a Claude call through that entry. Write %s on %s — or ["*"] to mean every repository on purpose — and then write routing.claude: openrouter in the project config: routing: {claude: {via: openrouter, models: [%s]}} (the switch is the operator's and never a repository's; D1a, D1b, design §6.2)`, p.model, config.MissingAnthropicKey, name, what, name, p.model)
 	}
 	return fmt.Sprintf("%s is pinned and goes direct, and this call needs the Anthropic API key (%s), while a route of this project claims the model and its allow_data_to is written: write `routing.claude: openrouter` in the project config — routing: {claude: {via: openrouter, models: [%s]}} — to send the call there instead (the switch is the operator's and never a repository's; D1a, D1b, design §6.2)", p.model, config.MissingAnthropicKey, p.model)
 }

@@ -1717,7 +1717,20 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 		named = c.Models
 	}
 	if len(named) == 0 {
-		lines = append(lines, "no routing switch is published, so every Claude ID goes direct (D1b's default)")
+		// Two states read as one here before: no switch at all, and a switch
+		// that is published and names no Claude ID. The second is a legal block
+		// — `via: direct` with an empty list routes nothing, which is D1b's
+		// default said out loud (CheckRoutingShape) — and "no routing switch is
+		// published" is a claim about the node that is false of it. c is
+		// non-nil here only for a block that reached the check: projectpolicy
+		// holds a node to CheckRoutingShape (validRouting), and an empty list
+		// under either open via, or a block written with no via at all, is
+		// refused there, so this prints the state the node can actually be in.
+		if c == nil {
+			lines = append(lines, "no routing switch is published, so every Claude ID goes direct (D1b's default)")
+		} else {
+			lines = append(lines, fmt.Sprintf("a switch is published with via: %s; every Claude ID goes direct (D1b's default)", c.ViaValue()))
+		}
 	}
 	for _, repo := range repos {
 		providers := runner.ProvidersFor(lc.Providers, repo)

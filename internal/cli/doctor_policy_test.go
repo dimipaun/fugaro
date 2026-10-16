@@ -444,10 +444,27 @@ func TestDoctorRoutingCheckNamesTheLiveQuestion(t *testing.T) {
 	if c, ok := doctorChecksByID(t)["routing-resolution"]; !ok || !strings.Contains(c.Problem, "no routing switch is published") {
 		t.Fatalf("a policy with no switch: routing-resolution = %+v (present %v)", c, ok)
 	}
+	// A *published* switch that names no model is a different state and a
+	// different sentence: `via: direct` with an empty list is a legal block
+	// (CheckRoutingShape) that routes nothing — D1b's default is what it opts
+	// every ID into — but the node did publish a switch, and "no routing switch
+	// is published" is a claim about the node that is not true of it. This read
+	// the two states as one, the same conflation validate's own line was fixed
+	// for.
+	doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) {
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{Via: config.RouteDirect}}
+	}), doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n"))
+	c, ok := doctorChecksByID(t)["routing-resolution"]
+	if !ok || !strings.Contains(c.Problem, "a switch is published with via: direct; every Claude ID goes direct") {
+		t.Fatalf("a published via: direct switch: routing-resolution = %+v (present %v)", c, ok)
+	}
+	if strings.Contains(c.Problem, "no routing switch is published") {
+		t.Errorf("a published switch is reported as an unpublished one: %+v", c)
+	}
 	// Nothing published at all: the resolution is unresolved, and doctor says
 	// why instead of inventing one.
 	doctorPolicyRig(t, nil, "")
-	c, ok := doctorChecksByID(t)["routing-resolution"]
+	c, ok = doctorChecksByID(t)["routing-resolution"]
 	if !ok || c.Severity != "info" || !strings.Contains(c.Problem, "unresolved") {
 		t.Fatalf("no policy published: routing-resolution = %+v (present %v), want an info check saying unresolved", c, ok)
 	}

@@ -1109,6 +1109,65 @@ func TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
 	}
 }
 
+// TestValidateAsksWhetherAllowDataToWasWritten pins the review finding on the
+// refusal above: it decided "the route's allow_data_to is written" over
+// runner.ProvidersFor's table, and that table rewrites every entry it keeps to
+// `allow_data_to: [repo]` (runner.ProvidersFor's own doc — the run only needs
+// to know it is allowed), so an entry whose allow_data_to was *never written*
+// read as written: D1b's safeguard, decided by the filter that erases the
+// difference. The refusal then stated a premise the warning validate prints
+// for the same file contradicts ("has no allow_data_to, so every repository of
+// the project may mount its key and send it code" — OpenToEveryRepoReason), and
+// sent the owner to write a switch whose route is not ready. The question is
+// asked of the entry the operator wrote, its own list, and the two states read
+// as the two different things they are.
+func TestValidateAsksWhetherAllowDataToWasWritten(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\nworkflows:"
+	pinned := func() string {
+		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
+	}
+	// routedProjectBlock's route with its allow_data_to removed: the entry
+	// claims the model, admits every repository of the project (an absent
+	// allow_data_to already means that) and never wrote the list D1b is about.
+	// A run of acme/sandbox carries it — ProvidersFor keeps it and rewrites its
+	// allow_data_to — so the refusal fires: the call goes direct and needs a key
+	// nobody has. What it may not say is that the route is ready.
+	unwritten := strings.Replace(routedProjectBlock, `    allow_data_to: ["acme/sandbox"]`+"\n", "", 1)
+	if unwritten == routedProjectBlock {
+		t.Fatal("the fixture still carries an allow_data_to")
+	}
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, budget+unwritten)
+	inCheckoutOf(t, "acme/sandbox")
+	out, errOut, err := execute(t, "validate", pinned())
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "routing.claude: openrouter") {
+		t.Fatalf("exit %d, out %q: want a refusal naming `routing.claude: openrouter`", ExitCode(err), out)
+	}
+	if strings.Contains(out, "its allow_data_to is written") {
+		t.Fatalf("the refusal reads allow_data_to as written over the table that rewrites it, next to its own warning (%q):\n%s", errOut, out)
+	}
+	// The truth about that entry, and what to write instead: the entry names no
+	// repository, and the message names the entry, the missing list and the
+	// switch, in that order.
+	if !strings.Contains(out, "its allow_data_to names no repository") || !strings.Contains(out, "provider openrouter of this project") || !strings.Contains(out, `allow_data_to: ["acme/sandbox"]`) {
+		t.Fatalf("the refusal does not say the entry names no repository and what to write:\n%s", out)
+	}
+	if !strings.Contains(errOut, "providers.openrouter: has no allow_data_to") {
+		t.Fatalf("the refusal's premise must be the warning's too, and the warning is:\n%s", errOut)
+	}
+	// An entry that lists the repository is the other state, and it counts as
+	// written: the same file with the list in place is refused for the missing
+	// switch alone, which is what the message then says.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, budget+routedProjectBlock)
+	inCheckoutOf(t, "acme/sandbox")
+	out, _, err = execute(t, "validate", pinned())
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "its allow_data_to is written") {
+		t.Fatalf("an entry that lists the repository must count as written: exit %d, out %q", ExitCode(err), out)
+	}
+}
+
 // TestValidateJSONNotesTheAnthropicKey: the note is machine-readable too, in
 // its own channel: never a problem, never a warning.
 func TestValidateJSONNotesTheAnthropicKey(t *testing.T) {
