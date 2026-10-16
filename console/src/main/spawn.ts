@@ -225,8 +225,8 @@ export interface Backoff {
 /**
  * SpawnArgumentKind says how one declared argument becomes argv. It is narrower
  * than Task 1.2's `ArgumentKind`, which says what the renderer may *send*: two
- * of those kinds are one string spelling, so a `since` and a `reportSince` are
- * both `value` here, and the only kind whose argv spelling differs is
+ * of those kinds are one string spelling, so a `runSince` and a `reportSince`
+ * are both `value` here, and the only kind whose argv spelling differs is
  * `pullRequest`, where the validator's number has to become the digits the
  * CLI's `IntVar --pr` reads. `SPAWN_KIND_FOR` below is the mapping, and
  * `assertSpawnSurface` refuses a table that disagrees with it -- which is what
@@ -245,8 +245,8 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   repository: 'value',
   runId: 'value',
   day: 'value',
-  since: 'value',
   reportSince: 'value',
+  runSince: 'value',
   reportDimension: 'value',
   secretScope: 'secretScope',
   pullRequest: 'pullRequest',

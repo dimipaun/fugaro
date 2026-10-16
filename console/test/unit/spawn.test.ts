@@ -80,6 +80,7 @@ import type {
   Timers,
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
+import { validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, createInstallationStore } from '../../src/source/cli'
 import { SourceRefusal, handlersFor } from '../../src/source/source'
@@ -377,6 +378,38 @@ describe('the spawn table and the argv it builds', () => {
       const argv = argvFor('spend.report', { since: value }, safeContext())
       expect(argv[argv.indexOf('--since') + 1], value).toBe(value)
     }
+  })
+
+  // The two guards are two alphabets -- the validator's grammar per kind and the
+  // spawn side's ARGUMENT_RE -- and a value the first admits and the second
+  // refuses is a refusal the operator sees only after the click. Task 1.2's
+  // `runSince` admitted `1µs` (U+00B5) and `1μs` (U+03BC), which the spawn
+  // alphabet refuses, so every `--since` and every other string a validator can
+  // hand over is driven through both here.
+  it('turns every value the validator accepts into argv, so the two guards agree', () => {
+    const samples: readonly (readonly [OperationName, Record<string, unknown>])[] = [
+      ['runs.list', { since: '0' }],
+      ['runs.list', { since: '7d' }],
+      ['runs.list', { since: '+7d' }],
+      ['runs.list', { since: '36h' }],
+      ['runs.list', { since: '1h30m' }],
+      ['runs.list', { since: '1.5h' }],
+      ['runs.list', { since: '+5h' }],
+      ['runs.list', { since: '1us' }],
+      ['runs.list', { since: '1µs' }],
+      ['runs.list', { since: '1μs' }],
+      ['runs.list', { since: '300ms' }],
+      ['spend.report', { since: '12w', until: '2026-10-16', by: 'person' }],
+      ['run.diagnose', { run: '20260101-120000-abcd' }],
+    ]
+    for (const [operation, payload] of samples) {
+      const decision = validateArguments(operation, payload)
+      if (!decision.ok) continue
+      expect(() => argvFor(operation, decision.args, safeContext()), `${operation} ${JSON.stringify(payload)}`).not.toThrow()
+    }
+    // ...and the agreement is not vacuous: the ASCII forms do get through.
+    expect(validateArguments('runs.list', { since: '1us' }).ok).toBe(true)
+    expect(validateArguments('runs.list', { since: '1h30m' }).ok).toBe(true)
   })
 
   it('refuses a value that is not a boolean or a string where the schema says so', () => {

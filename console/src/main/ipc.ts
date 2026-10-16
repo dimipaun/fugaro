@@ -852,12 +852,20 @@ const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // `parseSince`'s own forms (`internal/cli/runs.go:496`), which is what the two
 // patterns below are: its grammar rather than a summary of it. `parseSince`
 // tries the `d` suffix *first* (so `7d5h` is not a duration), then hands
-// anything else to Go's `time.ParseDuration`, whose units are the eight below --
-// `ns`, `us`, `µs` (U+00B5), `μs` (U+03BC), `ms`, `s`, `m`, `h` -- each with a
-// number that may be fractional, and whose sign may be leading.
+// anything else to Go's `time.ParseDuration`, whose units are `ns`, `us`,
+// `µs` (U+00B5), `μs` (U+03BC), `ms`, `s`, `m`, `h` -- each with a number that
+// may be fractional, and whose sign may be leading.
+//
+// The console admits six of those eight: the two non-ASCII spellings of a
+// microsecond are left out on purpose. The spawn side's argument alphabet
+// (`ARGUMENT_RE`, `src/main/spawn.ts`) is ASCII, and a value this schema admits
+// and that alphabet refuses would be refused after the click instead of before
+// it. `us` is the same unit and stays, so nothing the operator can ask the CLI
+// for is lost -- only a second spelling of it, and the spawn boundary stays
+// ASCII-only rather than being widened for a unit nobody windows runs by.
 const SINCE_DAYS_RE = /^\+?\d+$/
 const GO_DURATION_RE =
-  /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))*$/
+  /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|ms|s|m|h)(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|ms|s|m|h))*$/
 // `report`'s `--since` is its own grammar, and the digits are bounded by the
 // CLI's own `reportMaxDays` above rather than by this pattern alone: `3660d` is
 // the last day count `reportRange` accepts, and `523w` is one week past it.
