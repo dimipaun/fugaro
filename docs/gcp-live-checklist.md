@@ -2431,6 +2431,18 @@ fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --json --pro
 
 **Paste back:** every FACT line above, never a secret value and never a key value. Never run this against `belong`.
 
+## Check 50: a Claude senior through a provider route, and whether its cache markers survive (installation fugaro only, never belong; run by you; NOT RUN)
+
+Phase 1b of the project-centric design ([design/project-centric.md](design/project-centric.md) §6.2, §11) adds the routing switch, and this check is the phase's only owner-run step. It is written and not run.
+
+1. Setup, guard, and the recorded state.
+2. The refusal, unclaimed.
+3. The claim.
+4. Two runs of the same small task.
+5. Whether the routed run reports cache reads at all.
+6. The `auto` case.
+7. Restore.
+
 ## Check 52: the four probes phase 3 depends on (installation fugaro, sandbox only, never belong; run by you; NOT RUN)
 
 Design §13 lists what was never settled from the code, and this phase is the one that needs four of them — three as probes and one, U1, as a ruling already made. **They are answered before any phase 3 code is written**, because they decide whether the phase is shaped the way the design says: who may carry a secret reference decides whether an execution override can mount one at all (U2), and the Secret Manager IAM question decides whether a runtime fetch is even a fallback (design §4.5, U3). **U1 needs no run: the owner ruled it on 2026-10-15** — a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket stays on the per-repository path. That is the branch the design's §4.5 already names for a failed verification, and it is what the design's own D5 row and §13 entry do **not** yet say: both still read as they did before the ruling (*"First-class in phase 3, via a project-wide Bitbucket access token"*; the token scope listed as UNVERIFIED), so the plan carries the amendment that corrects them and applies it in its Task 0.5 (§2 below records the ruling and that amendment; the heading above keeps the plan's word "four", which is the check's own name). This check is phase 3's **go/no-go**: nothing in phase 3 starts before the remaining three are answered.

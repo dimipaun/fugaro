@@ -1288,3 +1288,354 @@ func chk49MustContain(t *testing.T, got, part string, want []string) {
 		}
 	}
 }
+
+// TestChecklistHasCheck50: docs/gcp-live-checklist.md must carry phase 1b's
+// owner-run check (design project-centric.md §6.2 and §11; plan
+// 2026-10-14-project-centric.md Task 1b.4) as one owner-run, not-yet-run,
+// installation-`fugaro`-only check numbered 50 — with its row in the check
+// list and Check 43's guard block (the three hard stops and the project
+// pinning) inside its section, so a reader cannot mistake it for something CI
+// covers and no step of it can run against a project other than fugaro-dev.
+//
+// The owner runs this document against the live installation and it spends
+// real money on both sides of the comparison (Anthropic tokens and provider
+// credit), so the assertions below are per-line: each is a fact the section
+// must state — a stop it can take, a flag a command must carry, a FACT it
+// records, a step of its Restore — and each of the hand mutations the plan's
+// task names fails one of them rather than passing on the heading alone.
+//
+// Three claims this section exists for are pinned in their own words, because
+// each is the reason the check is written rather than assumed:
+//
+//   - the number it settles (step 5): the reviewer's own cache_read and
+//     cache_write_5m counts for the routed run against the direct one, and the
+//     two cost.model_usd figures — the sentence doctor's routing-cache-markers
+//     check and docs/multi-model.md leave unmeasured until this check runs;
+//   - the two halves a routed call needs, neither routing alone (step 3): the
+//     route entry's explicit claim and the switch, both resolved through
+//     pricing.RouteIDFor by config.RoutingClaudeFor;
+//   - where a failure lands (0.8.0.x): the design's conclusion does not change
+//     and the docs do, which is a patch-line change and not a re-cut.
+func TestChecklistHasCheck50(t *testing.T) {
+	const path = "../../docs/gcp-live-checklist.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	// The heading itself carries the four markers the plan's Task 1b.4 fixes
+	// ("installation fugaro only, never belong; run by you; NOT RUN"), so it is
+	// asserted as a whole rather than as four substrings that would also pass
+	// on the heading alone.
+	const heading = "## Check 50: a Claude senior through a provider route, and whether its cache markers survive (installation fugaro only, never belong; run by you; NOT RUN)"
+	section := docSection(t, path, doc, heading)
+	body := section
+	if i := strings.Index(body, "\n"); i != -1 {
+		body = body[i+1:]
+	}
+	chk50MustContain(t, body, "body", []string{
+		"**Never `belong`**",
+		"you run every command",
+		"no agent runs any step of this check",
+		// The phase and its release: phase 1b ships inside 0.8.0 (R6).
+		"0.8.0",
+	})
+
+	// Its row in the check list (the summary table), not only the section.
+	var row string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 50 |") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		// Not Fatal: the guard-block pins below must still run, so the first
+		// red run reports the table row and the unguarded section together —
+		// which is the state this task's red step is written against.
+		t.Error("the check list has no `| 50 |` row")
+	} else {
+		chk50MustContain(t, row, "row", []string{
+			"See \"Check 50\" below",
+			"**USER-RUN, NOT RUN.**",
+			"never `belong`",
+			"sandbox repository only",
+			// The release mapping: a step-5 failure is a docs-and-help-text change
+			// on the 0.8.0 line, not a re-cut of 0.8.0 and not a 0.9.0 item.
+			"0.8.0.x",
+			// What the check settles, named in the row too: the number is the point.
+			"cache reads",
+		})
+	}
+
+	// Check 43's guard block inside the section — the three hard stops and the
+	// project pinning, not merely a ${P:?...}.
+	chk50MustContain(t, section, "section", []string{
+		"P=fugaro-dev",
+		`[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$JOB" ] && [ -n "$C" ] && [ -n "$TASK" ] \`,
+		// C is the operator's project config, and it is the block's and not
+		// step 1's: step 7 restores it in a later shell, where step 1's shell
+		// is gone.
+		"C=$HOME/.config/fugaro/projects/fugaro.yaml",
+		`|| { echo "Check 50 stopped: re-run the whole setup block`,
+		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+		`|| { echo "Check 50 stopped: this is not the fugaro-dev installation" >&2; exit 1; }`,
+		`git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$'`,
+		`|| { echo "Check 50 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }`,
+		// The block is re-run at the start of every step, and pasted into a
+		// file: an interactive zsh does not honour its `#` comments.
+		"RE-RUN THIS WHOLE BLOCK at the start of every",
+		"Paste the block into a file, not straight into an interactive zsh",
+	})
+
+	// The switch the check is about, and the three values it accepts, with the
+	// absent-means-direct default (D1b) and the repository's inability to write
+	// it (D1a).
+	chk50MustContain(t, section, "section", []string{
+		"`routing.claude`",
+		"`direct`",
+		"`openrouter`",
+		"`auto`",
+		"absent",
+		"a repository cannot write it",
+		"allow_data_to",
+		// Routing exists only with the gateway: with the budget off there is
+		// nothing for the switch to act on.
+		"Routing exists only with the gateway",
+	})
+
+	// The steps, in order, and the closing paragraph.
+	chk50MustContain(t, section, "section", []string{
+		"### 1. Setup and guard",
+		"### 2. The refusal, unclaimed",
+		"### 3. ",
+		"### 4. ",
+		"### 5. ",
+		"### 6. ",
+		"### 7. Restore",
+		"**Paste back:** every `FACT` line above, never a key and never a token.",
+	})
+
+	// Each step's FACT lines, pinned INDIVIDUALLY and counted: a total count
+	// alone passes when one step's line is deleted and another's is added, and
+	// a step whose lines were turned into "Note:" would keep the count too.
+	chk50Facts := []struct {
+		step string
+		want []string
+	}{
+		{"### 1.", []string{
+			"**FACT:** the state as recorded",
+		}},
+		{"### 2.", []string{
+			"**FACT:** the two refusals verbatim",
+			"**FACT:** that message verbatim",
+		}},
+		{"### 3.", []string{
+			"**FACT:** the publish's printed diff",
+			"**FACT:** `fugaro validate`'s resolution line verbatim",
+			"**FACT:** the repository's refusal verbatim",
+			"**FACT:** the job's environment now names `FUGARO_MODEL_PRICES`",
+		}},
+		{"### 4.", []string{
+			"**FACT:** for the reviewer's own `model call` lines in each run",
+			"**FACT:** `cost.model_usd` and `cost.reported_usd`",
+		}},
+		{"### 5.", []string{
+			"**FACT:** both token counts side by side",
+			"**FACT:** the two `cost.model_usd` figures",
+		}},
+		{"### 6.", []string{
+			"**FACT:** which route each of the two runs took",
+			"**FACT:** that the `anthropic-api-key` version",
+		}},
+		{"### 7.", []string{
+			"**FACT:** the restore is complete",
+			"**FACT:** the sandbox still runs",
+		}},
+	}
+	total := 0
+	for _, tc := range chk50Facts {
+		step := chk50Step(t, section, tc.step)
+		if n := strings.Count(step, "**FACT:**"); n != len(tc.want) {
+			t.Errorf("the Check 50 section's %s step carries %d FACT lines, want exactly the %d pinned below: a step's own FACT lines are what the owner pastes back for it", tc.step, n, len(tc.want))
+		}
+		total += len(tc.want)
+		for _, w := range tc.want {
+			if !strings.Contains(step, w) {
+				t.Errorf("the Check 50 section's %s step is missing its FACT line %q", tc.step, w)
+			}
+		}
+	}
+	if n := strings.Count(section, "**FACT:**"); n != total {
+		t.Errorf("the Check 50 section carries %d FACT lines and the per-step pins above account for %d: every FACT line belongs to a step, and an unpinned one is a line nothing guards", n, total)
+	}
+	if head := section[:strings.Index(section, "### 1.")]; strings.Contains(head, "**FACT:**") {
+		t.Error("the Check 50 section has a FACT line before its first step, which no per-step pin above reaches")
+	}
+
+	// The number this check exists to record: the cache fields, both ways, and
+	// the cost beside them. A section that only says "compare the runs" records
+	// nothing, which is the failure mode the plan's step 5 is written against.
+	chk50MustContain(t, chk50Step(t, section, "### 5."), "step 5", []string{
+		"`cache_read`",
+		"`cache_write_5m`",
+		"`cost.model_usd`",
+		"full input rate",
+		// A direct run with no cache field is not a baseline, and saying so is
+		// what stops a zero being read as the route's doing.
+		"not a baseline",
+	})
+
+	// The failure's own landing place: the docs change, the design's
+	// conclusion does not, and it is a patch-line change.
+	chk50MustContain(t, section, "section", []string{
+		"**Where a failure lands (0.8.0.x).**",
+		"the design's conclusion does not change but the docs do",
+		"`docs/multi-model.md`",
+		"0.8.0.x",
+		// A failure does not stop the check or unship the switch.
+		"A failure here is not a stop for the rest of the check",
+	})
+
+	// The two halves a routed call needs, and the resolver they share: the
+	// route entry's explicit claim, the switch, pricing.RouteIDFor behind
+	// config.RoutingClaudeFor — so a reader cannot think the switch alone
+	// routes, or that a spelling is derived rather than read from the map.
+	chk50MustContain(t, section, "section", []string{
+		"neither routes on its own",
+		"internal/config/routing.go",
+		"internal/pricing/canonical.go",
+		"`config.RoutingClaudeFor`",
+		"`RouteIDFor`",
+		// The measured rows the switch may name, and the refusal for every
+		// other Claude ID.
+		"anthropic/claude-sonnet-5.5",
+		"claude-sonnet-5-5",
+		"no route's own ID has been measured for it",
+	})
+
+	// Every `fugaro run` carries the block's TASK and the sandbox's base
+	// branch: a launch with no task is refused before any gate, and the sandbox
+	// repository has no `main`.
+	var runs int
+	for _, line := range fugaroCommands(section) {
+		if strings.HasPrefix(line, "fugaro run ") {
+			runs++
+			if !strings.Contains(line, `"$TASK"`) {
+				t.Errorf("the Check 50 section has a `fugaro run` with no task: %q — the launcher refuses a taskless launch before any policy gate, so this step never reaches what it is there to produce", line)
+			}
+			if !strings.Contains(line, "--ref master") {
+				t.Errorf("the Check 50 section has a `fugaro run` that does not pass `--ref master`: %q — the sandbox's base branch is master and the runner's fetch of a branch that does not exist fails the run", line)
+			}
+		}
+	}
+	if runs < 4 {
+		t.Errorf("the Check 50 section has %d `fugaro run` lines, want at least 4 (the direct and routed comparison runs, the two `auto` runs, and the restore's confirmation run)", runs)
+	}
+
+	// Every command that acts on a project names it, and no gcloud/fugaro
+	// command interpolates an unguarded ${VAR}: an empty variable there is an
+	// empty argument gcloud resolves from its ambient configuration.
+	unguarded := regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
+	for _, line := range sectionCommands(section) {
+		if strings.HasPrefix(line, "gcloud ") &&
+			!strings.Contains(line, `--project="${P:?}"`) &&
+			!strings.Contains(line, `"${P:?}"`) &&
+			!strings.Contains(line, `projects/${P:?}`) {
+			t.Errorf("the Check 50 section has a gcloud command that does not name the project: %q", line)
+		}
+		if m := unguarded.FindString(line); m != "" {
+			t.Errorf("the Check 50 section has an unguarded %s in a command: %q", m, line)
+		}
+	}
+	var sawDoctor bool
+	for _, line := range fugaroCommands(section) {
+		if strings.HasPrefix(line, "fugaro doctor --project fugaro") {
+			sawDoctor = true
+			continue
+		}
+		if !strings.Contains(line, "--project fugaro") {
+			t.Errorf("the Check 50 section has a fugaro command that does not name the installation: %q", line)
+		}
+		if m := unguarded.FindString(line); m != "" {
+			t.Errorf("the Check 50 section has an unguarded %s in a fugaro command: %q", m, line)
+		}
+	}
+	if !sawDoctor {
+		t.Error("the Check 50 section's guard block is not read as a command, so nothing checks that it pins the installation")
+	}
+
+	// No step handles a secret VALUE: the check reads a version number, a set
+	// of env names, log lines and result.json. The provider key and the
+	// Anthropic key are both never read, printed or recorded here.
+	for _, dead := range []string{
+		"gcloud secrets versions access", "gcloud secrets create", "--data-file",
+		"print-access-token", "ANTHROPIC_API_KEY=", "OPENROUTER_API_KEY=",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 50 section handles a secret value (%q): this check reads a version number and env names, never a value", dead)
+		}
+	}
+	chk50MustContain(t, section, "section", []string{
+		"never a value",
+	})
+
+	// The numbering ruling names the number, so a later plan does not take it.
+	ruling := strings.Join(strings.Fields(doc), " ")
+	if !strings.Contains(ruling, "Check 50 is phase 1b's") {
+		t.Error("the Numbering ruling does not name Check 50 as phase 1b's")
+	}
+}
+
+// chk50StepMarkers is the Check 50 section's steps in the order they appear,
+// with the closing paragraph as the last boundary so step 7's slice ends where
+// the section's FACT walk should.
+var chk50StepMarkers = []string{
+	"### 1.", "### 2.", "### 3.", "### 4.", "### 5.", "### 6.", "### 7.",
+	"**Paste back:**",
+}
+
+// chk50Step returns one step of the Check 50 section: from its marker to the
+// next step's, so a FACT line is attributed to the step that carries it rather
+// than to the section as a whole. A marker that is missing, or out of order,
+// fails the test: the pins below are only as good as the slicing.
+func chk50Step(t *testing.T, section, marker string) string {
+	t.Helper()
+	i := -1
+	for k, m := range chk50StepMarkers {
+		if m == marker {
+			i = k
+			break
+		}
+	}
+	if i < 0 {
+		t.Fatalf("chk50Step(%q): not one of the Check 50 section's step markers", marker)
+	}
+	from := strings.Index(section, marker)
+	if from < 0 {
+		t.Fatalf("the Check 50 section has no %q step", marker)
+	}
+	to := len(section)
+	for _, next := range chk50StepMarkers[i+1:] {
+		if j := strings.Index(section[from+len(marker):], next); j >= 0 {
+			to = from + len(marker) + j
+			break
+		}
+	}
+	if to <= from {
+		t.Fatalf("the Check 50 section's %q step is empty: %q must come after it", marker, chk50StepMarkers[i+1])
+	}
+	return section[from:to]
+}
+
+// chk50MustContain fails the test for each want that is not in got, naming the
+// part of the section (its body, its table row, the whole section) that should
+// hold it.
+func chk50MustContain(t *testing.T, got, part string, want []string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("the Check 50 section's %s is missing %q", part, w)
+		}
+	}
+}
