@@ -273,6 +273,10 @@ func TestRunnerAdmitsARemoteNamingItsOwnRepository(t *testing.T) {
 // them (gitprov.KindForURL reads the host and nothing else): without the
 // endpoint check they were admitted, and the credential went where they point
 // (the review finding on this change).
+//
+// "The scheme is not https" is only the http case: gitops scopes a credential
+// to http and https alone, so the ssh spelling of this run's own remote is not
+// this check's (TestRunnerAdmitsTheSshSpellingOfItsOwnRemote).
 func TestRunnerRefusesARemoteOffTheProvidersEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		name, remote, guard, want string
@@ -287,6 +291,26 @@ func TestRunnerRefusesARemoteOffTheProvidersEndpoint(t *testing.T) {
 			rec, err := b.run(t)
 			refusedAdmission(t, b, rec, err, tc.want, "FUGARO_REMOTE", "before any git credential")
 		})
+	}
+}
+
+// The scheme and the port are the credential's, and only where a credential is
+// scoped at all: internal/gitops' CredentialURL answers "" for every scheme
+// that is not http or https (its own test pins ssh://git@github.com/acme/web.git
+// -> ""), so an ssh:// remote has no git credential to send anywhere — and the
+// scp-like spelling of one never reached the endpoint check either, because
+// remoteEndpoint answers endpoint = false for it. Refusing the URL spelling
+// while admitting the scp-like one read two spellings of one remote two ways,
+// on a premise ("the credential sent in cleartext") that does not hold where no
+// credential is scoped (the review finding on this change). Only the transport
+// is local: git's insteadOf rule rewrites the URL onto the fixture's remote.
+func TestRunnerAdmitsTheSshSpellingOfItsOwnRemote(t *testing.T) {
+	const remote = "ssh://git@github.com/acme/app.git"
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	guardProviderHostTo(t, remote, "file://"+b.remote)
+	b.deps.Remote = remote
+	if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v: the scp-like spelling of this remote (git@github.com:acme/app.git) is admitted, so this spelling of it must be too", rec, err)
 	}
 }
 

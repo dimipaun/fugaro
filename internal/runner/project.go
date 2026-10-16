@@ -793,14 +793,29 @@ func (r *run) admissionCheck(ctx context.Context) error {
 	// refuses rather than skipping. A remote naming no URL at all (the
 	// scp-like form, a local path) is not this check's: it names no endpoint
 	// for a credential to be scoped to.
+	//
+	// Only the two schemes a credential is scoped to are this check's: gitops'
+	// CredentialURL answers "" for everything that is not http or https, so an
+	// ssh:// remote — the URL spelling of the scp-like form above, which this
+	// check passes because remoteEndpoint answers endpoint = false for it
+	// (git@github.com:acme/app.git) — has no credential to send anywhere. The
+	// first shape of this check refused every other scheme, which read one
+	// remote two ways by the way it was written: an ssh spellings' pair got one
+	// answer from the scp-like branch and the opposite from this one, on a
+	// premise ("the credential sent in cleartext") that does not hold where no
+	// credential is scoped at all (the review finding on this change). The
+	// refusal reads the scheme off the string rather than off CredentialURL's
+	// own parse, so a spelling url.Parse refuses is still refused here.
 	if scheme, port, endpoint := remoteEndpoint(remote); endpoint {
-		if scheme != "https" {
-			return fmt.Errorf("the run would clone from %s, which is written over %s and not https: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change where its git credential is sent — and the run scopes this repository's git credential to the remote's endpoint (internal/gitops' CredentialURL, which has no allow-list of its own), so an %s:// remote has the provider's credential for %s sent in cleartext over a connection nothing authenticates, while the launcher writes no other scheme (internal/infra's repoURL refuses one before it deploys anything) — so the run stops before any git credential is requested",
-				remoteDisplay(remote), scheme, RemoteEnv, scheme, repo)
-		}
-		if port != "" {
-			return fmt.Errorf("the run would clone from %s, whose authority names the port %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change where its git credential is sent — and the run scopes this repository's git credential to the remote's endpoint (internal/gitops' CredentialURL, which has no allow-list of its own), so the credential for %s would go to the endpoint that port names and not to the one the launcher wrote, while the launcher writes no port at all (internal/infra's repoURL refuses a repository URL with one before it deploys anything) — so the run stops before any git credential is requested",
-				remoteDisplay(remote), port, RemoteEnv, repo)
+		switch strings.ToLower(scheme) {
+		case "http":
+			return fmt.Errorf("the run would clone from %s, which is written over %s and not https: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change where its git credential is sent — and the run scopes this repository's git credential to the remote's endpoint (internal/gitops' CredentialURL, which has no allow-list of its own), so an http:// remote has the provider's credential for %s sent in cleartext over a connection nothing authenticates, while the launcher writes no other scheme (internal/infra's repoURL refuses one before it deploys anything) — so the run stops before any git credential is requested",
+				remoteDisplay(remote), scheme, RemoteEnv, repo)
+		case "https":
+			if port != "" {
+				return fmt.Errorf("the run would clone from %s, whose authority names the port %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change where its git credential is sent — and the run scopes this repository's git credential to the remote's endpoint (internal/gitops' CredentialURL, which has no allow-list of its own), so the credential for %s would go to the endpoint that port names and not to the one the launcher wrote, while the launcher writes no port at all (internal/infra's repoURL refuses a repository URL with one before it deploys anything) — so the run stops before any git credential is requested",
+					remoteDisplay(remote), port, RemoteEnv, repo)
+			}
 		}
 	}
 	named, namedOK, namedErr := repoNamedByRemote(remote)
