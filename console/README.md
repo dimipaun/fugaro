@@ -86,12 +86,19 @@ the pinning test asserts the `dependencies` set is exactly the one name above.
 `6.8.9` is the version npm's `latest` tag resolves to; `6.8.10` is published
 under a `v26` tag and is deliberately not taken here.
 
-`engines.node` is `>=22.12.0`, and it is read off the pinned tools rather than
-guessed: Electron 44.7.2 declares `>= 22.12.0` and Vitest 5.0.5 declares
-`^22.12.0 || ^24.0.0 || >=26.0.0`, so a Node below the intersection is a Node
-that was never going to run this toolchain. The console's CI job takes its
-version from this field (Task 1.4), and `.npmrc` sets `engine-strict=true` so a
-mismatched reader finds out at install time.
+**The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
+It is the version every command in this task was run on, and it is a member of
+both pinned tools' own engine ranges (Electron 44.7.2 declares `>= 22.12.0`,
+Vitest 5.0.5 declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the
+toolchain is asking for anything narrower. A range here would have been the one
+float left in a task whose whole subject is exact pins — and the plan already
+hands this field to CI (Task 1.4's `actions/setup-node` takes its version from
+it), so an exact value is what makes the runner's Node the same Node the tests
+were written against. Bumping it is a deliberate edit, like every other pin, and
+`test/unit/pinning.test.ts` refuses a wildcard, a tag or an operator in this
+field the way it refuses one in a specifier. `.npmrc` sets `engine-strict=true`,
+so a reader whose Node is another version finds out at install time rather than
+in a test failure nobody can explain.
 
 ### Commands
 
@@ -99,7 +106,7 @@ mismatched reader finds out at install time.
 npm ci --ignore-scripts --no-audit --no-fund   # the install; never `npm install`
 npm run test:unit                              # vitest, test/unit/*.test.ts
 npm run test:e2e                               # playwright, test/e2e/*.spec.ts; passes with no specs
-npm run typecheck                              # tsc --noEmit over src/, test/, tools/
+npm run typecheck                              # tsc --noEmit over src/, test/, tools/ and the root config files
 ```
 
 `npm ci` — never `npm install` — is the install step in this file, in the plan's
@@ -136,9 +143,38 @@ of specifiers it must accept and refuse, so "package.json is clean" cannot pass
 on a checker that accepts everything. `test/unit/lockfile.test.ts` holds the
 other half: the lockfile exists, is `lockfileVersion` 3, declares exactly the
 names and specifiers `package.json` declares, locks each of them to its pinned
-version with an `integrity` hash, and resolves **every** entry — the manifest's
-six names and all ~95 transitive packages, which are code that runs just the
-same — from `https://registry.npmjs.org/`, with nothing floating anywhere.
-`.npmrc`'s `save-exact=true` is the same rule enforced by the client, so a later
-`npm install <package>` writes an exact pin and not the first range a test would
-have to catch.
+version with an `integrity` hash, and resolves **every** entry — the names the
+manifest declares and every package that arrives through them, which is code
+that runs just the same — from `https://registry.npmjs.org/`, with nothing
+floating anywhere. `.npmrc`'s `save-exact=true` is the same rule enforced by the
+client, so a later `npm install <package>` writes an exact pin and not the first
+range a test would have to catch. `test/unit/tsconfig.test.ts` is the third
+piece: every TypeScript file at the console's root — today
+`playwright.config.ts`, whose `testDir` is what keeps Playwright from collecting
+the vitest unit tests — is asserted to be inside `tsconfig.json`'s `include`,
+because a file outside `include` is not typechecked at all.
+
+### Dependabot's scope is not extended here (a decision, not an oversight)
+
+Recorded as the plan words it, because the plan hands this decision to this
+task: "**Dependabot's scope is not extended here.** §5.2 notes that the console
+adds a second thing Dependabot should watch — `console/package.json` and its
+lockfile — and that Electron's own binary is not an ordinary npm dependency at
+all. `.github/dependabot.yml` is not under `.github/workflows/`, so an agent may
+edit it, and this plan deliberately does not: it belongs with Task 1.0's pins,
+and the owner may prefer to keep Dependabot's scope where it is rather than have
+a weekly PR stream behind an approval gate. **Listed so that the omission is a
+decision, not an oversight.**"
+(`docs/plans/2026-10-15-desktop-console.md`, "Open items, listed rather than
+fixed", item 5.)
+
+So `.github/dependabot.yml` still tracks one ecosystem — `github-actions` from
+`/`, weekly — and nothing in this task edits it. What that costs is visible
+rather than hidden: the console's pins are bumped by hand, by a person, with the
+lockfile in the same commit, and the only things watching them are
+`test/unit/pinning.test.ts` and `test/unit/lockfile.test.ts`. Dependabot could
+not fully watch this tree even if it were pointed at it: **Electron's own binary
+is not an npm dependency** — npm carries the package, but the runtime comes from
+Electron's download host, so its pin, download and checksum get the hand-bumped
+treatment the repository already gives the Trivy digest and the Dockerfile
+frontend digest (design section 5.2).

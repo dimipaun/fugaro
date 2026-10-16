@@ -107,6 +107,13 @@ describe('console/package-lock.json', () => {
     expect(lock.name).toBe(manifest.name)
     expect(root.name).toBe(manifest.name)
     expect(root.version).toBe(manifest.version)
+    // `engines` travels into the lockfile too, and it is a pin here rather than
+    // a range (see test/unit/pinning.test.ts). A manifest Node bumped without
+    // regenerating the lockfile would leave the two disagreeing, which is the
+    // same drift the dependency assertions above exist for.
+    expect(root.engines, 'the root lock entry must carry the manifest’s engines').toEqual(
+      manifest.engines,
+    )
   })
 
   it('is in sync with package.json: the same dependency names in both directions', () => {
@@ -153,16 +160,21 @@ describe('console/package-lock.json', () => {
   })
 
   it('has a resolved, non-floating tree, every entry from the registry', () => {
-    // The whole tree, not only the manifest's five names: ~95 transitive
-    // packages arrive through those five, and every one of them is code that
-    // runs. So each non-link entry is checked for an exact version, for an
-    // integrity hash, and for a `resolved` URL on this registry's host --
-    // `https://registry.npmjs.org/`, not merely `https://`. The host is what a
-    // committed lockfile is for: an entry pointing at another host is a
-    // supply-chain decision nobody reviewed, and one an integrity hash cannot
-    // catch, because the hash would simply be of the other host's tarball.
+    // The whole tree, not only the names the manifest declares: every package
+    // that arrives through them is code that runs too, and there are more of
+    // those than there are direct dependencies -- deliberately not a number,
+    // which would go stale the next time the tree changes (it did, when
+    // electron-updater joined the manifest). So each non-link entry is checked
+    // for an exact version, for an integrity hash, and for a `resolved` URL on
+    // this registry's host -- `https://registry.npmjs.org/`, not merely
+    // `https://`. The host is what a committed lockfile is for: an entry
+    // pointing at another host is a supply-chain decision nobody reviewed, and
+    // one an integrity hash cannot catch, because the hash would simply be of
+    // the other host's tarball.
     const entries = Object.entries(packages).filter(([path]) => path !== '')
-    expect(entries.length, 'the lockfile holds no packages: it is not this project’s').toBeGreaterThan(1)
+    expect(entries.length, 'the lockfile holds no packages: it is not this project’s').toBeGreaterThan(
+      Object.keys(declaredDependencies).length,
+    )
     const problems: string[] = []
     for (const [path, entry] of entries) {
       if (entry.link === true) continue

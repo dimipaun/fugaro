@@ -27,5 +27,10 @@
     "noEmit": true,
     "skipLibCheck": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "tools/**/*.ts"]
+  // playwright.config.ts is named here rather than left to the directories: it
+  // sits at the console's root, and a config file that escapes `npm run
+  // typecheck` is a guard nobody can see breaking -- a typo in testDir or
+  // testMatch would silently let Playwright collect the vitest unit tests
+  // again. test/unit/tsconfig.test.ts holds that, file by file.
+  "include": ["playwright.config.ts", "src/**/*.ts", "test/**/*.ts", "tools/**/*.ts"]
 }
