@@ -320,7 +320,10 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // routingProblems are plan task 1b.3's two routing rules: the resolution the
 // switch licenses, printed when this command can read it, and the note a Claude
 // pin carries when a project routing Claude through a provider leaves it on the
-// direct route.
+// direct route. Both are asked of the switch's own list as well as of the pins,
+// because the run asks them of the list: a switch that names a model no pin
+// uses is a switch the run still has to carry out, and one it cannot carry out
+// halts it (the switch check below).
 //
 // The resolution is printed only when the switch is readable, and the switch is
 // the operator's own project config: validate reads no policy node (design §11:
@@ -361,7 +364,7 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // this project's own providers cannot take.
 //
 // A note the reader would see twice — the same path and the same sentence —
-// is printed once (dedupeNotes). claudePins enumerates the three pin paths, and
+// is printed once (dedupeLines). claudePins enumerates the three pin paths, and
 // the routing lines are keyed by the model rather than by the pin, so a file
 // whose agent.model serves both the coder and the reviewer printed the same
 // routing line twice. A pin's own line keeps its own path, which is what the
@@ -377,10 +380,23 @@ func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claud
 // saying this project has no Anthropic key; the owner's own route table is.
 func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, notes []config.Problem) {
 	pins := claudePins(cfg.Agent, claimed)
-	if len(pins) == 0 {
+	readable := lc != nil && lc.Name == cfg.Project
+	// The switch is the operator's project config: with none there is nothing
+	// to read (the unresolved-offline note below) and nothing to ask the
+	// runner's decision about.
+	var sw *config.RoutingClaude
+	if readable {
+		sw = claudeSwitchOf(lc.Routing)
+	}
+	if len(pins) == 0 && sw == nil {
+		// Nothing to say: no Claude pin carries a line, and no switch is
+		// readable whose own list could halt a run. The early return may not
+		// stand on the pins alone — a switch names its models itself, and the
+		// run halts on those whether or not a pin uses one (the switch check
+		// below) — but with no switch in hand there is no line to print either
+		// way.
 		return nil, nil
 	}
-	readable := lc != nil && lc.Name == cfg.Project
 	// The mode is the run's own (policy.Merge), as budgetProblems computes it:
 	// only an enforcing budget puts a gateway in front of the call, and routing
 	// is the gateway's.
@@ -423,15 +439,48 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	// runner's own decision (routingReachOf) and used by every line below: the
 	// switch's reach is the same for each pin, and the pins differ only in
 	// whether a route carries them.
-	//
-	// The switch is the operator's project config: with none there is nothing
-	// to read (the unresolved-offline note below) and nothing to ask the
-	// runner's decision about.
-	var sw *config.RoutingClaude
-	if readable {
-		sw = claudeSwitchOf(lc.Routing)
-	}
 	reach, why := routingReachOf(sw, cfg.Agent.Auth, mode)
+	// The switch's own list, judged over the routes this run carries and
+	// before the pins, because that is the run's own order: applyRouting calls
+	// config.CheckRouting(block, r.modelProviders(), "routing") over every ID
+	// in routing.claude.models and returns on the first problem, long before it
+	// looks at a pin. validate read that list only through the pins — one line
+	// per pinned model — so a switch naming a model no pin uses printed
+	// "claude-opus-5-5 -> direct" and exited 0 while every run of the
+	// configuration halted with "the project's routing switch is not usable",
+	// and a file with no Claude pin at all returned before the switch was read.
+	//
+	// The project config's own loader does not catch it either: localcfg holds
+	// the switch to CheckRouting over c.Providers, the operator's table
+	// unfiltered by allow_data_to, and the entry that claims the model may be
+	// one this repository's run does not carry (runner.ProvidersFor, above).
+	//
+	// The path is CheckRouting's own ("routing.claude.models[i]"), which is
+	// what the loader writes for the same rule at load, so the owner edits the
+	// key the same sentence names on both sides.
+	if sw != nil {
+		pinned := make(map[string]bool, len(pins))
+		for _, p := range pins {
+			pinned[p.model] = true
+		}
+		for _, q := range config.CheckRouting(&config.Routing{Claude: sw}, routes, "routing") {
+			if m, ok := switchListModel(sw, q.Path); ok && pinned[m] {
+				// The pin rule below judges this model itself, in the sentence
+				// a pin needs ("a call the switch names has no direct
+				// fall-back") and with the same verdict attached. One model
+				// said twice is the repetition dedupeLines exists to drop.
+				continue
+			}
+			msg := q.Message
+			verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth, mode)
+			msg += verdict
+			if halt {
+				problems = append(problems, config.Problem{Path: q.Path, Message: msg})
+				continue
+			}
+			notes = append(notes, config.Problem{Path: q.Path, Message: msg})
+		}
+	}
 	// The pins the switch rewrote, which are the ones the run's own rules judge
 	// once this loop is done. It stays empty wherever no run of this
 	// configuration takes the route.
@@ -494,17 +543,13 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			// of one function may not disagree about whether routing reaches
 			// here — and the note, unlike this problem, never turns on the key.
 			msg := fmt.Sprintf("%s is named by routing.claude.models and does not resolve over the routes a run of %s carries: no single provider entry claims it with allow_data_to written, or the entry that claims it does not admit this repository, and a call the switch names has no direct fall-back (D1b, design §6.2)", p.model, repo)
-			fix := "fix the list, the claim, or the allow_data_to of the entry that claims it"
-			switch reach {
-			case routingAlways:
-				problems = append(problems, config.Problem{Path: "routing.claude", Message: msg + ". A run of this repository halts with \"the project's routing switch is not usable\"; " + fix})
-			case routingKeyless:
-				// The one fact that decides it is not this command's to read,
-				// so the sentence names both runs rather than picking one.
-				notes = append(notes, config.Problem{Path: "routing.claude", Message: msg + ". via: auto is key-presence driven, so which run this halts is a fact this command does not read: a run of this repository with no Anthropic API key stored halts with \"the project's routing switch is not usable\", and one with a key stored keeps the pins direct; " + fix})
-			default:
-				notes = append(notes, config.Problem{Path: "routing.claude", Message: msg + ". The switch reaches no run of this configuration (" + routingInertWhy(why, cfg.Agent.Auth, mode) + "), so nothing halts here and the pins keep their Claude IDs; " + fix})
+			verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth, mode)
+			msg += verdict + "; fix the list, the claim, or the allow_data_to of the entry that claims it"
+			if halt {
+				problems = append(problems, config.Problem{Path: "routing.claude", Message: msg})
+				continue
 			}
+			notes = append(notes, config.Problem{Path: "routing.claude", Message: msg})
 		default:
 			// The route the switch licenses, said with what a run of this
 			// configuration does with it: the reach is the runner's own
@@ -565,19 +610,26 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			}
 		}
 	}
-	return problems, dedupeNotes(notes)
+	return dedupeLines(problems), dedupeLines(notes)
 }
 
-// dedupeNotes drops a note the reader would see twice: the same path and the
-// same sentence, which is what a configuration serving two pins from one model
+// dedupeLines drops a line the reader would see twice: the same path and the same
+// sentence, which is what a configuration serving two pins from one model
 // produces. claudePins enumerates the three pin paths and a file may fill two of
 // them from one key (agent.model, or an unset agent.models.reviewer), while the
 // routing lines name the model rather than the pin — so the same line came back
-// once per pin, and the second copy says nothing the first did not. A note about
-// a pin keeps that pin's path, which is what the run's own pin rules name
-// (internal/config's pinPaths), so a path that differs is not repetition: only
-// both together are.
-func dedupeNotes(ns []config.Problem) []config.Problem {
+// once per pin, and the second copy says nothing the first did not. A note a
+// pin's own rule writes keeps that pin's path, which is what the run's pin rules
+// name (internal/config's pinPaths), so a note whose path differs is not
+// repetition: only both together are.
+//
+// The problems go through the same rule, because the routing halt is keyed by
+// the switch rather than by the pin too — its sentence names routing.claude, the
+// key the owner edits being the switch's list — so a file whose agent.model
+// answers for both the coder and the reviewer held the same halt twice: the
+// repetition this routine exists to drop, in the slice that decides the exit
+// code.
+func dedupeLines(ns []config.Problem) []config.Problem {
 	seen := make(map[string]bool, len(ns))
 	out := make([]config.Problem, 0, len(ns))
 	for _, n := range ns {
@@ -661,6 +713,50 @@ func routingInertWhy(why runner.RoutingInert, auth, mode string) string {
 	default:
 		return "the switch routes nothing itself (via: direct)"
 	}
+}
+
+// switchVerdict is the clause a line about a switch no run of this repository
+// can carry out ends with: what the switch's reach makes of it. halt is true
+// where the clause is a problem — every run of this configuration reaches the
+// switch, so every run of it halts — and false where the line is a note,
+// because some run does not: via: auto's reach hangs on the key the job holds
+// (routingKeyless), and the other reasons say the switch reaches no run at all.
+//
+// Two rules end a sentence with it: the pin rule, for a model the switch names
+// and cannot resolve, and the switch's own list. They say it through one
+// function so that one configuration is never called a halt in one line and
+// something else in the next; the review finding on the switch's own list was
+// exactly a halt no line spoke of, and the four-state table in
+// TestValidateDoesNotClaimAHaltWithoutAGateway is the other half of the rule.
+func switchVerdict(reach routingReach, why runner.RoutingInert, auth, mode string) (verdict string, halt bool) {
+	switch reach {
+	case routingAlways:
+		return ". A run of this repository halts with \"the project's routing switch is not usable\"", true
+	case routingKeyless:
+		// The one fact that decides it is not this command's to read, so the
+		// sentence names both runs rather than picking one.
+		return ". via: auto is key-presence driven, so which run this halts is a fact this command does not read: a run of this repository with no Anthropic API key stored halts with \"the project's routing switch is not usable\", and one with a key stored keeps the pins direct", false
+	default:
+		return ". The switch reaches no run of this configuration (" + routingInertWhy(why, auth, mode) + "), so nothing halts here and the pins keep their Claude IDs", false
+	}
+}
+
+// switchListModel is the model a problem from config.CheckRouting is about,
+// where it is about one entry of the switch's list: CheckRouting's path for
+// those is "<path>.claude.models[i]", and a caller that drops a line it has
+// already printed per pin needs the model rather than the index. A problem
+// about the block itself — the via, the list — names no model, and ok is false
+// for it.
+func switchListModel(sw *config.RoutingClaude, path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "routing.claude.models[")
+	if !ok {
+		return "", false
+	}
+	i, err := strconv.Atoi(strings.TrimSuffix(rest, "]"))
+	if err != nil || i < 0 || i >= len(sw.Models) {
+		return "", false
+	}
+	return sw.Models[i], true
 }
 
 // routedAgent is the agent internal/runner's applyRouting produces out of this
