@@ -253,10 +253,13 @@ func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 // these arise only from a remote edited after launch, which is the case the
 // check is for.
 //
-// Mutation (run, restored): return "" for a path CanonicalRepo refuses, as the
-// first three rows did before this fix. The three rows below then run on: they
-// fail on the refusal they expect and, with the git rewrite in place, on the
-// clone.
+// Mutation (run, restored): return "" for a path CanonicalRepo refuses, as this
+// function did before the fix. The two rows whose path CanonicalRepo *refuses*
+// (the ".." one and the doubled slash) then fail: the run goes on and halts on
+// the clone instead, with the reason the test wants nowhere in it. The tree URL
+// is unaffected by that mutation and is here for the other reading — a path
+// CanonicalRepo *accepts* and that is another repository, which the check
+// caught before the fix and must keep catching.
 func TestRunnerRefusesARemoteOfAnotherRepositoryOnTheSameHost(t *testing.T) {
 	for _, tc := range []struct{ remote, display, quotedRepo string }{
 		// https, the form internal/infra writes into FUGARO_REMOTE.

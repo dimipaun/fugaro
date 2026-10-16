@@ -200,6 +200,72 @@ budget: { rtdb_url: https://aurora-default-rtdb.firebaseio.com, firebase_api_key
 	}
 }
 
+// A project job on Vertex carries the two Vertex names, not only the grant (a
+// review finding): the job's Vertex flag becomes roles/aiplatform.user on its
+// service account, and the Google auth libraries read the project and region
+// under Vertex's own names — ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION —
+// rather than GOOGLE_CLOUD_PROJECT, so a Vertex-auth run in a job without them
+// is refused for want of a project while holding a grant it cannot use. The
+// per-repository path sets exactly these two from exactly these values
+// (spec.go's `if ws.Vertex`), and platformEnv's own comment already counts
+// them as installation identity: a project job on Vertex is the same
+// installation, so it names them the same way.
+//
+// Mutation (run, restored): drop the `if vertex` block from projectJobEnv. The
+// Vertex branches below fail; the rest of the file is unaffected, because the
+// non-Vertex branches assert the names are *absent*.
+func TestProjectJobsOnVertexCarryTheVertexEnvironment(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+projectProfilesLCBlock)
+	if !slices.Contains(PlatformEnv, VertexRegionEnv) || !slices.Contains(PlatformEnv, VertexProjectEnv) {
+		t.Fatalf("PlatformEnv = %v, want it to name Vertex's two variables: it is the list upgrade copies over, and the list these jobs are held to", PlatformEnv)
+	}
+	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("%d jobs, want 2", len(jobs))
+	}
+	// The four identity variables plus Vertex's two — no budget backend in
+	// this fixture, so nothing else may appear.
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, VertexRegionEnv, VertexProjectEnv}
+	for name, j := range jobs {
+		if !j.Vertex {
+			t.Errorf("job %s is on Vertex: grant and environment disagree", name)
+		}
+		if j.Env[VertexRegionEnv] != "us-east5" || j.Env[VertexProjectEnv] != "proj-1234" {
+			t.Errorf("job %s env = %v, want %s=us-east5 and %s=proj-1234 (the local config's region and GCP project)", name, j.Env, VertexRegionEnv, VertexProjectEnv)
+		}
+		if j.Env[VertexRegionEnv] != lc.Region || j.Env[VertexProjectEnv] != lc.GCPProject {
+			t.Errorf("job %s vertex env is not the installation's own region and project: %v", name, j.Env)
+		}
+		for _, k := range slices.Sorted(maps.Keys(j.Env)) {
+			if !slices.Contains(allowed, k) {
+				t.Errorf("job %s sets %s, which is not one of the installation's variables", name, k)
+			}
+		}
+	}
+
+	// The other way round: an installation that does not use Vertex does not
+	// advertise it. A job carrying ANTHROPIC_VERTEX_PROJECT_ID without the
+	// grant would send runs at Vertex with a token that cannot reach it.
+	off, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, j := range off {
+		if j.Vertex {
+			t.Errorf("job %s is not on Vertex: grant and environment disagree", name)
+		}
+		if _, dup := j.Env[VertexRegionEnv]; dup {
+			t.Errorf("job %s sets %s off Vertex: %v", name, VertexRegionEnv, j.Env)
+		}
+		if _, dup := j.Env[VertexProjectEnv]; dup {
+			t.Errorf("job %s sets %s off Vertex: %v", name, VertexProjectEnv, j.Env)
+		}
+	}
+}
+
 // A profile may mount only project-wide containers: a name the installation
 // does not store project-wide, or one nothing configures at all, is refused
 // rather than granted (a grant on a secret that is not created is a plan that

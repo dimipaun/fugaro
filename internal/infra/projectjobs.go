@@ -71,7 +71,7 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			// second parse is cheaper than a duplicated rule.
 			return nil, userErr("profiles.%s.timeout_class: %v", name, err)
 		}
-		env := projectJobEnv(lc, bucket)
+		env := projectJobEnv(lc, bucket, vertex)
 		secretEnv, account, err := projectJobSecrets(lc, name, env, pr)
 		if err != nil {
 			return nil, err
@@ -121,12 +121,27 @@ func profilesAsPolicy(profiles map[string]config.JobProfile) map[string]projectp
 // repository's. What stays is what belongs to the installation (D11, plan
 // task 1.4 step 1): a job deployed without the two backend variables cannot
 // read the project's policy at all.
-func projectJobEnv(lc *localcfg.Config, bucket string) map[string]string {
+//
+// vertex is the installation's own Vertex setting — the same one that becomes
+// the job's Vertex grant, and the same one a per-repository workflow reads at
+// spec.go's own `if ws.Vertex` — so a job granted roles/aiplatform.user also
+// carries the project and region under Vertex's names. A profile's Vertex
+// flag is an installation-wide fact, not a per-repository one, so it belongs
+// here rather than on the execution: the Google auth libraries read
+// ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION (they do not read
+// GOOGLE_CLOUD_PROJECT for this), so without them every Vertex-auth run in a
+// shared job — the default installation's runs — would be refused for want of
+// a project, with the grant it was given unused.
+func projectJobEnv(lc *localcfg.Config, bucket string, vertex bool) map[string]string {
 	env := map[string]string{
 		ProjectEnv:    lc.Name,
 		GCPProjectEnv: lc.GCPProject,
 		RegionEnv:     lc.Region,
 		BucketEnv:     "gs://" + bucket,
+	}
+	if vertex {
+		env[VertexRegionEnv] = lc.Region
+		env[VertexProjectEnv] = lc.GCPProject
 	}
 	if b := lc.Budget; b != nil {
 		if b.RTDBURL != "" {
