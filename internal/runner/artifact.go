@@ -1157,17 +1157,32 @@ func ArtifactName(name string) (clean, problem string) {
 //     — case-insensitive and normalization-insensitive — folds with it:
 //     "straße.png" and "strasse.png" are one file there (ß folds to ss, and ẞ
 //     to the same), and so are "ﬁ.png" and "fi.png", "ς.png" and "σ.png", and
-//     "K.png" (U+212A, the Kelvin sign) and "k.png" — while "İ.png" folds to
-//     "i" plus a combining dot above, which NFC puts back to "İ.png". A
-//     simple-folded key gives the pairs with a multi-rune fold different keys,
-//     so the uploader stages both and a download writes the second over the
-//     first while reporting both as arrived.
+//     "K.png" (U+212A, the Kelvin sign) and "k.png". A simple-folded key gives
+//     the pairs with a multi-rune fold different keys, so the uploader stages
+//     both and a download writes the second over the first while reporting
+//     both as arrived.
+//   - and it has to be SINGLE-VALUED, which is the one place x/text's tables
+//     are not: for the 172 Cherokee code points (U+13A0–U+13F5, U+13F8–U+13FD,
+//     U+AB70–U+ABBF) cases.Fold maps each case pair to the other member —
+//     U+13A0 to U+AB70, and U+AB70 back to U+13A0 — where CaseFolding.txt names
+//     one target for both (the small letters fold to the capitals: U+AB70–U+ABBF
+//     to U+13A0–U+13EF, U+13F8–U+13FD to U+13F0–U+13F5). Folding is then not
+//     idempotent, so the two spellings of one Cherokee name — one file on any
+//     filesystem that folds case, which is what a case pair is for — would get
+//     two keys and the collision this function exists to catch would be missed.
+//     cherokeeTarget settles each pair on the standard's target, which is what
+//     makes the key a point the fold leaves alone.
 //
 // It is not strings.ToLower either, in the other direction: ToLower maps
-// U+0130 (İ) to 'i', which is not what it folds to, so a lower-cased key
-// collides two names that are two files. Which way a wrong key errs — too
-// coarse and a legal record is refused, too fine and two names are one file
-// nobody saw — is why this is the one function both sides call.
+// U+0130 (İ) to a bare 'i', which is not what it folds to — folding U+0130
+// gives 'i' plus U+0307, a combining dot above, and NFC has no composition for
+// that pair, so the key keeps İ.png apart from i.png, which are two files.
+// (The key is coarser than a filesystem here in one spot: İ.png and
+// "i"+U+0307.png share it. That is the direction this function is allowed to
+// err in — a legal record refused — and the download's own no-replace rule is
+// the backstop under it.) Which way a wrong key errs — too coarse and a legal
+// record is refused, too fine and two names are one file nobody saw — is why
+// this is the one function both sides call.
 //
 // The uploader and the retriever ask the "are these two names one file"
 // question with this one function (sanitiseName's duplicate table and the
@@ -1182,7 +1197,35 @@ func ArtifactName(name string) (clean, problem string) {
 // refuses to replace what is at a path unless the operator asked for it, so a
 // collision this key does not know about fails loudly instead of overwriting.
 func ArtifactCollisionKey(name string) string {
-	return cases.Fold().String(norm.NFC.String(name))
+	folded := cases.Fold().String(norm.NFC.String(name))
+	// The fold is applied rune by rune and settles each Cherokee pair with
+	// cherokeeTarget; for every other code point it already returns one value,
+	// so this loop is a copy of the fold and nothing more.
+	var key strings.Builder
+	key.Grow(len(folded))
+	for _, r := range folded {
+		key.WriteRune(cherokeeTarget(r))
+	}
+	return key.String()
+}
+
+// cherokeeTarget is the code point CaseFolding.txt folds r to for the Cherokee
+// ranges, and r itself for everything else. cases.Fold's tables map each
+// Cherokee case pair to the other member rather than to the standard's target
+// — the small letters fold to the capitals, U+AB70–U+ABBF to U+13A0–U+13EF and
+// U+13F8–U+13FD to U+13F0–U+13F5 — so folding "Ꭰ" twice gives "Ꭰ" again while
+// folding "ꭰ" twice gives "ꭰ": two spellings of one name, two keys, and the
+// collision missed. Mapping the small letters down to the capitals leaves both
+// spellings on the pair's one target, which is what ArtifactCollisionKey needs
+// of it and what the test over the whole ranges pins.
+func cherokeeTarget(r rune) rune {
+	switch {
+	case r >= 0xAB70 && r <= 0xABBF:
+		return r - 0xAB70 + 0x13A0
+	case r >= 0x13F8 && r <= 0x13FD:
+		return r - 0x13F8 + 0x13F0
+	}
+	return r
 }
 
 // firstControl returns the byte offset of the first character in name that

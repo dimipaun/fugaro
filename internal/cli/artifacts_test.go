@@ -1044,6 +1044,18 @@ func TestArtifactsGetRefusesDuplicateNames(t *testing.T) {
 			},
 			quote: []string{`"A.png"`, `"a.png"`},
 		},
+		{
+			// The pairs cases.Fold is not idempotent on: U+13A0 and U+AB70 are
+			// the same Cherokee letter, so a key that folds them to each other
+			// gives this record two keys and the retriever writes one file
+			// twice while reporting two arrivals.
+			name: "Cherokee case pairs",
+			files: []runstore.ArtifactFile{
+				{Name: "Ꭰ.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+				{Name: "ꭰ.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+			},
+			quote: []string{`"Ꭰ.png"`, `"ꭰ.png"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)

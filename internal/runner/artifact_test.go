@@ -1766,6 +1766,12 @@ func TestArtifactCollisionKeyIsTheOneFoldedName(t *testing.T) {
 		{"ff ligature", "ﬀort.png", "ffort.png", true},
 		{"U+0130 folds to i plus a dot, not to i", "I.png", "İ.png", false},
 		{"U+0130 is not i either", "İ.png", "i.png", false},
+		// The Cherokee pairs, where cases.Fold's tables answer with the other
+		// member of the pair instead of CaseFolding.txt's one target: without
+		// cherokeeTarget these spellings of one name get a key each.
+		{"Cherokee case (U+13A0 / U+AB70)", "Ꭰ.png", "ꭰ.png", true},
+		{"Cherokee small letter ye (U+13F0 / U+13F8)", "Ᏸ.png", "ᏸ.png", true},
+		{"Cherokee inside a longer name", "aᎥb.png", "aꭵb.png", true},
 		{"a different name", "sizzle.png", "sizzle2.png", false},
 		{"a different path", "clips/a.png", "a.png", false},
 	} {
@@ -1776,6 +1782,53 @@ func TestArtifactCollisionKeyIsTheOneFoldedName(t *testing.T) {
 					tc.a, ka, tc.b, kb, ka == kb, tc.equal)
 			}
 		})
+	}
+}
+
+// TestArtifactCollisionKeySettlesEveryCherokeePair walks all 172 Cherokee code
+// points cases.Fold is not idempotent on, rather than sampling them: the pairs
+// are what ArtifactCollisionKey's cherokeeTarget is for, and three rows of the
+// table above would pass for a mapping that settled three.
+//
+// Each pair is asserted both ways round — one key for the two spellings, and
+// that key a settled point of the fold (ArtifactCollisionKey of it is itself).
+// A key equal on a pair but not settled is a key that moves if anything ever
+// folds it again, and this function is handed folded strings as readily as raw
+// names.
+//
+// Mutation caught: dropping the cherokeeTarget pass (returning the fold
+// itself), or mapping only one of the two ranges.
+func TestArtifactCollisionKeySettlesEveryCherokeePair(t *testing.T) {
+	// CaseFolding.txt's Cherokee pairs: the two capital ranges, and the
+	// small-letter range each of them folds to.
+	ranges := []struct {
+		capital, small rune
+		runes          int
+	}{
+		{0x13A0, 0xAB70, 0x50}, // U+13A0–U+13EF and U+AB70–U+ABBF
+		{0x13F0, 0x13F8, 0x06}, // U+13F0–U+13F5 and U+13F8–U+13FD
+	}
+	pairs := 0
+	for _, rg := range ranges {
+		for i := 0; i < rg.runes; i++ {
+			cn, sn := string(rg.capital+rune(i))+".png", string(rg.small+rune(i))+".png"
+			kc, ks := runner.ArtifactCollisionKey(cn), runner.ArtifactCollisionKey(sn)
+			if kc != ks {
+				t.Errorf("ArtifactCollisionKey(%q) = %q, ArtifactCollisionKey(%q) = %q: two spellings of one Cherokee name must share one key",
+					cn, kc, sn, ks)
+			}
+			if again := runner.ArtifactCollisionKey(kc); again != kc {
+				t.Errorf("ArtifactCollisionKey(%q) = %q, and folding that key gives %q: the key must be a settled point of the fold",
+					cn, kc, again)
+			}
+			pairs++
+		}
+	}
+	// The pairs checked have to be all of them — 80 + 6, the 86 pairs that the
+	// 172 code points of U+13A0–U+13F5, U+AB70–U+ABBF and U+13F8–U+13FD make
+	// — so a range that quietly stops short cannot pass as full coverage.
+	if pairs != 86 {
+		t.Errorf("checked %d Cherokee pairs, want 86 (the 172 code points of U+13A0–U+13F5, U+13F8–U+13FD and U+AB70–U+ABBF)", pairs)
 	}
 }
 
