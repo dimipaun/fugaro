@@ -367,6 +367,19 @@ func probeFailure(err error, detail string) error {
 // environment, because a newline-separated list inside one variable cannot
 // survive a name that holds a newline (design §3) — and every shell reads a
 // file with `while IFS= read -r` without quoting rules in play.
+// probeGrace is how long the probe's process group gets between SIGTERM and
+// SIGKILL once its deadline has ended: internal/verify's commandGrace, the
+// grace verify.Run gives every command it runs (verify.go:35, 5s). The plan
+// names it for the probe for the reason the number matters — the probe's
+// deadline is a bound on the RUN, with the finalize reserve behind it, and
+// procgroup's own default of 10s would let a repository's probe that ignores
+// SIGTERM hold the run that long past the deadline it was given. It is
+// repeated here rather than referenced because internal/verify's is
+// unexported and Task 5 makes no edit to internal/verify (plan Task 5's file
+// list); the value is the contract, and TestProbeGraceBoundsAProbeThat
+// IgnoresSIGTERM fails if it drifts back to procgroup's default.
+const probeGrace = 5 * time.Second
+
 const artifactNamesFile = "artifact-names.txt"
 
 // runProbe runs commands.probe once, after the render and before the upload,
@@ -468,6 +481,7 @@ func (r *run) runProbe(ctx context.Context, set artifactSet) (runstore.ProbeResu
 	out := agent.NewRedactor(tail, r.secretList())
 	code, runErr := procgroup.Run(probeCtx, procgroup.Cmd{
 		Name: "sh", Args: []string{"-c", command}, Dir: r.d.WorkDir, Env: env, Stdout: out, Stderr: out,
+		Grace: probeGrace,
 	})
 	// Flushed before the tail is read, exactly as the render's is: a probe
 	// whose failing line has no newline is the ordinary shape of a failure

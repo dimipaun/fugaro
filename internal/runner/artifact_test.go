@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -2758,6 +2759,174 @@ func TestProbeOutputIsRedacted(t *testing.T) {
 	}
 	if strings.Contains(string(report), h.failsFile) {
 		t.Fatalf("the report publishes the workflow's secret:\n%s", report)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestProbeCommandComesFromTheWorkflowNotTheSettingsFile is Review Focus 1's
+// probe half, the twin of the render's test. The probe that runs is
+// commands.probe as bootstrap read it from fugaro.yaml at the task's ref — the
+// runner's in-memory r.wf — never a probe key of <StateDir>/workflow.json,
+// which is 0644 inside the directory the plan-stage agent writes, because it
+// is the same user in the same container. The plan stage here rewrites
+// exactly that file: the command that runs is unchanged, and the repository
+// text the plan stage substituted never executes. (verify.Settings has no
+// Probe field at all, which is the point — the file cannot name a probe even
+// if a later change adds one to the struct; what this pins is that the
+// runner's command comes from the config it read once.)
+//
+// Mutation (take the probe's command from verify.LoadSettings, or from any
+// file under the state directory, instead of r.wf): the substituted command
+// runs, out/HACKED.png exists, and this test fails.
+func TestProbeCommandComesFromTheWorkflowNotTheSettingsFile(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec("version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - plan: {}\n  - render: {}\n"+
+			"outputs: { globs: [out/*.png], probe: probe }\n"),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ntouch \"$FUGARO_STATE_DIR/probe-ran.txt\"\n")))
+	rewrite := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		settings := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "workflow.json")
+		body := `{"build":"sh build.sh","test":"sh test.sh","probe":"mkdir -p out && echo hacked > out/HACKED.png"}`
+		if err := os.WriteFile(settings, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return planStage(t, ctx, req)
+	}
+	rec, err := h.run(t, rewrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = %+v", rec)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.StateDir, "probe-ran.txt")); err != nil {
+		t.Fatalf("the workflow's own commands.probe did not run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "HACKED.png")); err == nil {
+		t.Fatal("the probe ran the command the plan stage wrote into the state directory")
+	}
+}
+
+// TestProbeIsCutAtTheFinalizeReserve is the probe's other bound, the twin of
+// TestRenderIsCutAtTheFinalizeReserve: the probe runs under timeouts.verify
+// AND under the run's finalize reserve (design §4.5), and when the reserve
+// comes first it is the reserve that ends the probe. The budget below leaves
+// about eight seconds between the run's start and finalizeAt, with
+// timeouts.verify asking for 60s, so a probe that sleeps 30s can only be cut
+// by the reserve — and the reason the record carries names the bound that
+// applied, rather than quoting a timeouts.verify that still had 58s to run.
+//
+// Mutations: drop the `f.Before(deadline)` arm of Budget.StepDeadline and
+// nothing cuts the probe — it sleeps its full 30s, exits 0, and the run ends
+// succeeded/artifacts, so this test fails on its first assertion. Keep the cap
+// and revert the reason to "timed out after 60s" and it fails on the reason,
+// which no longer names the bound that ended the probe.
+func TestProbeIsCutAtTheFinalizeReserve(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", "{ total: 30s, stage: 10s, verify: 60s, finalize_reserve: 22s }"),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\nsleep 30\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run with no artifacts", rec)
+	}
+	if !strings.Contains(rec.Reason, "finalize reserve") {
+		t.Fatalf("the reason does not name the bound that ended the probe: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "timed out after 60s") {
+		t.Fatalf("the reason blames a timeout that never fired: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "time budget exhausted") {
+		t.Fatalf("the reserve did not hold: %q", rec.Reason)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestProbeGraceBoundsAProbeThatIgnoresSIGTERM: timeouts.verify bounds the
+// RUN, not the repository's willingness to stop. The probe runs through
+// procgroup, which sends the group SIGTERM when the deadline ends and then
+// SIGKILLs it after a grace — so a probe that ignores SIGTERM decides, by
+// itself, how long past its deadline the run goes. The probe here traps TERM
+// and spins in the shell: no child can die for it, which is the only shape
+// that survives SIGTERM, and it costs one core for the few seconds the test
+// takes. It records when it started, so what the assertion measures is the
+// probe's own wall clock and not the run's (the clone and the render are not
+// part of the bound).
+//
+// The command is `exec sh probe.sh`, and the exec is the point rather than
+// decoration: procgroup signals and reaps the process it started, so a
+// wrapper shell that does not trap TERM would die on the deadline itself and
+// the grace would never be exercised. `exec` makes the trapped shell the
+// tracked process, which is what a repository's own probe is when it names a
+// binary directly (commands.probe: ./tools/check --slow).
+//
+// Mutation (drop Grace from the probe's procgroup.Cmd): the SIGKILL lands 10s
+// after the deadline — procgroup's default — instead of the 5s verify.Run
+// gives its own commands, and this test fails on the elapsed time.
+func TestProbeGraceBoundsAProbeThatIgnoresSIGTERM(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "exec sh probe.sh", "{ total: 5m, stage: 2m, verify: 1s, finalize_reserve: 30s }"),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ntrap '' TERM\ndate +%s%N > \"$FUGARO_STATE_DIR/probe-started\"\nwhile :; do :; done\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe timed out after 1s") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	ns, err := strconv.ParseInt(strings.TrimSpace(readText(t, filepath.Join(h.deps.StateDir, "probe-started"))), 10, 64)
+	if err != nil {
+		t.Fatalf("the probe's own start time: %v", err)
+	}
+	// The probe cannot end itself (it ignores TERM and spins), so this is the
+	// deadline plus the grace the runner passed, plus the moment between the
+	// SIGKILL and the run finishing. The ceiling is the deadline plus the 5s
+	// grace verify uses, with room for a slow box — and well under the 10s
+	// procgroup defaults to, which is what makes the mutation visible.
+	if d := time.Since(time.Unix(0, ns)); d > 1*time.Second+5*time.Second+4*time.Second {
+		t.Fatalf("the probe ran %s past its own start: timeouts.verify (1s) plus the grace the runner passes did not bound it", d)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestProbeTailKeepsAFinalLineWithoutANewline is the probe's half of the
+// render's flush test: a failed probe's output is what explains the failure to
+// an owner, and it goes through the redactor a line at a time — the redactor
+// holds a partial line until a newline arrives, so runProbe must flush it
+// before reading the tail. A probe whose failing message ends without a
+// newline (a printf with no trailing \n is the ordinary shape of one) is in
+// report.md with the flush and gone without it.
+//
+// Mutation: drop out.Flush() from runProbe and the report's log tail stops
+// after the lines that ended in a newline, so this test fails.
+func TestProbeTailKeepsAFinalLineWithoutANewline(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\necho 'first line'\nprintf 'the probe failed without a newline'\nexit 4\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe exited 4") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "the probe failed without a newline") {
+		t.Fatalf("the probe's last line, which has no trailing newline, is not in the report:\n%s", report)
 	}
 	assertNoUpload(t, h)
 }

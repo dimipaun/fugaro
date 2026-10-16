@@ -483,6 +483,74 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 	}
 }
 
+// TestResultSchemaStatesTheNoProbeVerdict is Review Focus 6's schema half for
+// the probe: a record this runner writes carries a probe verdict for every
+// artifact it uploaded, and a recipe that asked for no probe records
+// {ran: false, exit_code: -1} rather than leaving the key out — "no probe
+// ran" is stated in the record, not inferred from a field that is not there
+// (plan Task 5). The schema says the same thing in the one place it can
+// enforce it: a verdict that did not run must carry the -1 that marks it, so
+// a record — hand-edited, or written by something that got this wrong — can
+// never read as a probe that ran and passed with exit code 0.
+//
+// The key itself stays out of the item's required list, and the description
+// says why: a record written before the probe step existed carries none, the
+// same reason the artifacts array is optional at the record level. What is
+// required is the shape of a verdict that IS there.
+//
+// Mutation (drop the allOf from the schema's probe object, or set its const
+// to 0): this test fails on the {ran: false, exit_code: 0} document it
+// builds, which the schema then accepts.
+func TestResultSchemaStatesTheNoProbeVerdict(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20261016-100000-abcd", Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeArtifacts,
+		StartedAt: at,
+		Artifacts: []runstore.ArtifactFile{{
+			Name: "sizzle.png", Bytes: 6, SHA256: strings.Repeat("b", 64), ContentType: "image/png",
+			Probe: &runstore.ProbeResult{Ran: false, ExitCode: -1},
+		}},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"probe":{"ran":false,"exit_code":-1}`) {
+		t.Fatalf("the record does not carry the no-probe verdict this test is about: %s", data)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a no-probe verdict: %v\n%s", err, data)
+	}
+	// The same artifact with the exit code a PASSING probe would have: the
+	// schema must refuse it, because a reader cannot tell the two apart
+	// otherwise and the whole point of the -1 is that it is not 0.
+	raw := strings.Replace(string(data), `"exit_code":-1`, `"exit_code":0`, 1)
+	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader([]byte(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Fatalf("the schema accepts a probe that did not run with a passing exit code: %s", raw)
+	}
+	// A verdict that ran is unconstrained on the far side: a probe killed by
+	// its deadline is {ran: true, exit_code: -1}, which is also what
+	// procgroup reports for a signalled process.
+	raw = strings.Replace(string(data), `"ran":false,"exit_code":-1`, `"ran":true,"exit_code":-1`, 1)
+	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader([]byte(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a probe that ran and was killed: %v\n%s", err, raw)
+	}
+}
+
 // TestResultSchemaAcceptsARecordWithoutArtifacts is Review Focus 8's schema
 // half: a result.json written before this change validates without an
 // artifacts key at all, so an old record is never refused for a field that
