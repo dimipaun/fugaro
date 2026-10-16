@@ -699,8 +699,21 @@ func TestRunsLsShowsArtifactCountOnlyWhenThereAreArtifacts(t *testing.T) {
 		{Name: "sizzle.mp4", Bytes: int64(len(body)) + 1024, SHA256: sha256Hex(body), ContentType: "video/mp4"},
 		{Name: "frames/a.png", Bytes: 1024, SHA256: sha256Hex(body), ContentType: "image/png"},
 	}, nil)
+	// A run whose record is the shape written before this task: no artifacts
+	// field at all, which is every run that opens a pull request (Review
+	// Focus 8 — the new fields are omitempty, so an old reader sees the row
+	// it always saw).
 	seedRun(t, f, without, "", "someone@example.com", false)
+	writeRecord(t, f, without, &runstore.Record{Version: 1, RunID: without, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady})
 
+	raw, _, err := execute(t, "runs", "ls", "--json", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(raw, `"artifact_count"`); n != 1 {
+		t.Errorf("--json carries artifact_count on %d rows, want only the one that has artifacts:\n%s", n, raw)
+	}
 	got, _ := lsJSON(t, "--since", "0")
 	rows := map[string]runview.Row{}
 	for _, r := range got.Runs {
