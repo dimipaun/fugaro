@@ -1085,8 +1085,22 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is mode: %s, but the task says mode: %s", rrec.Name, rcp.Mode, spec.Mode)
 	}
 	r.artifact, r.out = rcp.Mode == recipe.ModeArtifact, rcp.Outputs
+	// A task that attached files under a resolved recipe of another mode
+	// fails the run before its first step (design §8.2): the launcher
+	// refuses this for every launch that resolves a recipe, and this is the
+	// arm that catches the ones it could not resolve — a recipe the runner
+	// chose, or a hand-written task.json — where the inputs would otherwise
+	// be downloaded into a run that commits a diff and opens a pull request,
+	// and nothing in its steps reads inputs/. Keyed on the RESOLVED mode, not
+	// on spec.Mode, because a spec is allowed to carry none.
+	if len(spec.Inputs) > 0 && !r.artifact {
+		return fmt.Errorf("the task attached %d file(s), but recipe %s is mode: %s: an attached file is only read by a mode: artifact run", len(spec.Inputs), rrec.Name, rcp.Mode)
+	}
 	if r.artifact {
 		r.artifactPlan, r.useWhen = artifactHasPlan(rcp), r.redact(rcp.UseWhen)
+		if err := r.downloadInputs(ctx, wf.Inputs); err != nil {
+			return err
+		}
 	}
 	if lo, hi, ok := recipe.ReviewPRRange(rrec.Name); ok {
 		if n := len(spec.ReviewPRs); n < lo || n > hi {
@@ -1302,6 +1316,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 		"FUGARO_STATE_DIR":        r.d.StateDir,
 		"BASH_DEFAULT_TIMEOUT_MS": bashMS,
 		"BASH_MAX_TIMEOUT_MS":     bashMS,
+	}
+	if len(r.spec.Inputs) > 0 {
+		// The directory the task's attachments were downloaded into, for
+		// the run that has them (design §4 step 5). It is absolute, so a
+		// step that changes directory still finds it, and it is set only
+		// when the task attached something: a variable naming a directory
+		// that does not exist is worse than no variable at all.
+		set["FUGARO_INPUTS_DIR"] = filepath.Join(r.d.WorkDir, inputsDir)
 	}
 	for k, v := range gitops.Identity {
 		set[k] = v

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,6 +43,14 @@ var (
 	ErrConflict = errors.New("the object changed")
 	// ErrExists means Create found the object already there.
 	ErrExists = errors.New("object already exists")
+	// ErrDestExists means a download's destination path was already taken and
+	// the caller asked for a placement that does not replace it
+	// (GetFileExactly with replace false, which is `fugaro artifacts get`
+	// without --force). It is the same answer as the caller's own pre-check
+	// gives for a file it can see, and this is the one that also covers what
+	// the pre-check cannot: a file that appeared after it, and a path this
+	// filesystem folds onto an existing one.
+	ErrDestExists = errors.New("the destination already exists")
 	// ErrForbidden means GCS refused a read, a write or a delete for lack
 	// of permission (HTTP 403). gocloud reports a 403 as NotFound, so
 	// without it a refused write would read as a missing object
@@ -185,6 +194,42 @@ func (s sourceReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
 	if err != nil && !errors.Is(err, io.EOF) {
 		err = sourceReadErr{err}
+	}
+	return n, err
+}
+
+// copyAborted is a copy that stopped because the context ended and not because
+// the source or the bucket failed and not because the source ran out: the fd
+// was closed under a read that was parked, so the error the read reports is
+// this call's own doing and the context's error is the honest one.
+type copyAborted struct{ err error }
+
+func (e copyAborted) Error() string { return e.err.Error() }
+func (e copyAborted) Unwrap() error { return e.err }
+
+// copyBounded copies src into dst, bounded twice: by the size that was
+// stat'ed plus one byte, and by ctx. want is that size, so what arrives is at
+// most one byte more than the file this call accounted for — a source that
+// grows while it is copied (a writer that was never stopped) is refused by the
+// caller's own n != want check rather than drained. Without the byte bound a
+// source that keeps producing never reaches an end at all.
+//
+// The context bound is what stops a copy of a source that *stalls*, which no
+// byte bound can: a non-blocking FIFO that some other process holds open with
+// nothing to send reads as a fd parked on EAGAIN, and a parked read is only
+// woken by something else touching the fd. Closing it is that something —
+// Close evicts the parked read (internal/poll's evict, which is why the read
+// comes back "file already closed" rather than blocking on) — so the watchdog
+// closes src when ctx is done and the copy returns copyAborted around ctx.Err.
+// src is PutFile's own fd and PutFile closes it again on the way out, which is
+// harmless; the stop returned by context.AfterFunc is what keeps the watchdog
+// from closing a source whose copy has already finished.
+func copyBounded(ctx context.Context, dst io.Writer, src *os.File, want int64) (int64, error) {
+	stop := context.AfterFunc(ctx, func() { src.Close() })
+	defer stop()
+	n, err := io.Copy(dst, io.LimitReader(sourceReader{src}, want+1))
+	if err != nil && ctx.Err() != nil && errors.Is(err, fs.ErrClosed) {
+		return n, copyAborted{ctx.Err()}
 	}
 	return n, err
 }
@@ -431,16 +476,74 @@ func (b *Bucket) Put(ctx context.Context, key string, data []byte, contentType s
 // to reach this path at all: gocloud buffers a non-file driver's bytes until
 // Close, so a test driver that fails there is how the classification is
 // pinned.)
+//
+// What is streamed is a regular file, and nothing else, checked on the fd this
+// call opened and before a byte is read. O_NOFOLLOW refuses a symlink and the
+// size bound bounds bytes, but neither bounds *time*: a path replaced by a
+// FIFO that another process holds open with nothing to send gives os.NewFile a
+// non-blocking fd that is registered with the netpoller, so the first Read
+// parks on EAGAIN until a writer sends data, and no context reaches a parked
+// read. Close does — it evicts the parked read — which is why the copy is run
+// under a watchdog that closes the source when the context ends: a source that
+// is refused outright costs nothing, and one that stalls is bounded by the
+// caller's own deadline instead of by the container's.
 func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifNotExist bool) (size int64, sum string, err error) {
-	f, err := os.Open(path)
+	// OpenSource, not os.Open: the path is opened without following a final
+	// symlink and without blocking on a FIFO, because between a caller's own
+	// check of this path and this line anything the same user runs may have
+	// replaced it — a link to /dev/zero would otherwise stream until the
+	// container is killed. The refusal is reported as a source failure, the
+	// same as any other: it is the file the caller named that could not be
+	// read, and no bucket did anything.
+	f, err := OpenSource(path)
 	if err != nil {
-		return 0, "", err
+		return 0, "", fmt.Errorf("reading %s: %w", path, err)
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
 		return 0, "", err
 	}
+	// The fstat the copy's size bound comes from is already made here, so the
+	// regular-file check costs nothing, happens before any read, and every
+	// caller gets it. A directory (its first read is EISDIR), a device, a
+	// socket and a FIFO are all refusals rather than streams: a FIFO with an
+	// idle writer is the one that never returns, but none of them is the file
+	// a caller staged. ErrChanged is the sentinel because that is exactly what
+	// happened to the path — it was one thing when the caller looked at it and
+	// another when this call opened it — and it is the same answer
+	// runstore.PutFileFrom gives a staged path that is not a regular file.
+	if !st.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("%s: %w (it is not a regular file)", path, ErrChanged)
+	}
+	return b.PutFileOpened(ctx, key, f, st, contentType, ifNotExist)
+}
+
+// PutFileOpened is PutFile for a caller that already holds the file open, and
+// it is the whole of PutFile below the open: it re-checks the handle, streams
+// exactly size bytes of it, and returns what it wrote. Only the holder of a
+// long-lived handle can do what PutFile cannot — judge the file's caps on the
+// very fd it then uploads, so the bytes that go up are the bytes that were
+// judged, and a file that grew or shrank in between is a refusal rather than
+// an upload of something nobody checked (internal/cli's --attach, whose caps
+// are checked before the launch's later gates and whose upload runs after
+// them: between the two the path may be a different file entirely).
+//
+// size must be the size the caller read from this same handle. It is the
+// copy's bound and not a fresh fstat: a file that grew since the caller looked
+// reads one byte past what was judged, which copyBounded's bound allows and
+// the n != size check below refuses, so what leaves is never more than the
+// size the caller checked against its cap plus one byte. f's own fstat is
+// still re-checked here (it costs nothing on an open fd) so that no caller can
+// reach the copy with a directory, a device or a FIFO — GetFile-staged
+// attachments and the launcher's judged files are the two callers, and only
+// one of them is in this module. The handle is closed by the caller, not here.
+func (b *Bucket) PutFileOpened(ctx context.Context, key string, src *os.File, st fs.FileInfo, contentType string, ifNotExist bool) (size int64, sum string, err error) {
+	path := src.Name()
+	if !st.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("%s: %w (it is not a regular file)", path, ErrChanged)
+	}
+	want := st.Size()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	w, err := b.NewWriter(ctx, key, &blob.WriterOptions{ContentType: contentType, IfNotExist: ifNotExist})
@@ -448,22 +551,29 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 		return 0, "", writeErr(err, ifNotExist)
 	}
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(w, h), sourceReader{f})
+	n, err := copyBounded(ctx, io.MultiWriter(w, h), src, want)
 	if err != nil {
 		// The abort rule: cancel, then close, and report the cause rather
 		// than whatever Close says about the aborted write.
 		cancel()
 		_ = w.Close()
+		// A copy the watchdog cut short is the context's, not the source's:
+		// the fd was closed under a read that was never going to return, so
+		// what the read reports is this call's own doing.
+		var ab copyAborted
+		if errors.As(err, &ab) {
+			return 0, "", fmt.Errorf("reading %s: %w", path, ab.err)
+		}
 		var se sourceReadErr
 		if errors.As(err, &se) {
 			return 0, "", fmt.Errorf("reading %s: %w", path, se.err)
 		}
 		return 0, "", writeErr(err, ifNotExist)
 	}
-	if n != st.Size() {
+	if n != want {
 		cancel()
 		_ = w.Close()
-		return 0, "", fmt.Errorf("%s: %w (read %d bytes, its size said %d)", path, ErrChanged, n, st.Size())
+		return 0, "", fmt.Errorf("%s: %w (read %d bytes, its size said %d)", path, ErrChanged, n, want)
 	}
 	if err := w.Close(); err != nil {
 		return 0, "", writeErr(err, ifNotExist)
@@ -527,7 +637,53 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 //     caller, and refusing the names that must not be handed to it — a
 //     `../` out of the artifacts root above all — is fugaro artifacts get's
 //     job (the same design's §9, the plan's Task 7).
+//
+// limit is an upper bound and not an equality, and the difference matters to
+// the caller that knows the object's exact size (a run record's byte count):
+// comparing what this returns with what the caller expected happens after the
+// rename, which is too late to do anything but delete the file this method
+// just placed — and with --force, deleting whatever was at that path before.
+// GetFileExactly is that caller's entry point, and it checks the size where
+// the hash is checked: on the temporary file, before the rename.
 func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64, strict bool) (size int64, sha string, err error) {
+	return b.getFile(ctx, key, path, sum, limit, -1, strict, true)
+}
+
+// GetFileExactly is GetFile for the caller that knows the object's exact size
+// as well as its hash — `fugaro artifacts get`, whose run record carries the
+// byte count it uploaded — and it is checked in the same place and at the same
+// time as the hash: inside, on the temporary file, BEFORE the rename. A size
+// the object does not have is ErrChanged with both numbers in the message, and
+// nothing is placed at path.
+//
+// That placement is the whole point of the method. GetFile's limit is an upper
+// bound, so a caller that compared the size afterwards would be comparing it
+// to a file that is already at its final path — and both ways out of that are
+// wrong: leaving it there breaks "nothing is written unless it is what was
+// asked for", and removing it removes whatever was at that path before the
+// rename. With --force that is the operator's own file, which this package
+// never wrote and must not delete.
+//
+// want is also the cap, so an object larger than the recorded size is
+// ErrTooLarge before its body is read, exactly as with GetFile's limit.
+//
+// replace says whether path may be replaced. With it, the verified temporary
+// file is renamed onto path, which is what `--force` asks for. Without it,
+// nothing at path is ever replaced: placement is a link or an O_EXCL create,
+// and a path that is already taken — a file that appeared after the caller's
+// own check, or one this filesystem considers the same path because of how it
+// folds case (straße.png and strasse.png on APFS, A.png and a.png) — fails as
+// ErrDestExists with path untouched. The caller's own pre-check is a different
+// question asked earlier: it cannot see a file that is not there yet, and it
+// asks the filesystem's view of two names under whatever folding that
+// filesystem has.
+func (b *Bucket) GetFileExactly(ctx context.Context, key, path, sum string, want int64, strict, replace bool) (size int64, sha string, err error) {
+	return b.getFile(ctx, key, path, sum, want, want, strict, replace)
+}
+
+// getFile is GetFile and GetFileExactly: exact < 0 means the caller knows only
+// an upper bound.
+func (b *Bucket) getFile(ctx context.Context, key, path, sum string, limit, exact int64, strict, replace bool) (size int64, sha string, err error) {
 	r, err := b.NewReader(ctx, key, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound && !(strict && isForbidden(err)) {
 		return 0, "", ErrNotExist
@@ -572,6 +728,14 @@ func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64
 		_ = tmp.Close()
 		return 0, "", fmt.Errorf("%s: %w (read %d bytes, the object's size said %d)", key, ErrChanged, n, r.Size())
 	}
+	// The exact size, if the caller has one, is checked here — on the
+	// temporary file, before the rename, beside the hash and for the same
+	// reason: a mismatch must leave the destination as it was, not remove
+	// what the rename put there.
+	if exact >= 0 && n != exact {
+		_ = tmp.Close()
+		return 0, "", fmt.Errorf("%s: %w (read %d bytes, the record says %d)", key, ErrChanged, n, exact)
+	}
 	if err := tmp.Close(); err != nil {
 		return 0, "", err
 	}
@@ -580,11 +744,86 @@ func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64
 	if want != "" && !strings.EqualFold(got, want) {
 		return 0, "", fmt.Errorf("%s: %w (expected sha256 %s, read %s)", key, ErrMismatch, want, got)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := placeVerified(tmpName, path, replace); err != nil {
 		return 0, "", err
 	}
 	done = true
 	return n, got, nil
+}
+
+// linkFile is os.Link, and a test replaces it (see export_test.go) to reach
+// the fallback below: a filesystem without hard links is the one thing this
+// path cannot be given by a test on the machine it runs on, and dropping the
+// O_EXCL from the fallback would then fail nothing.
+var linkFile = os.Link
+
+// placeVerified moves the verified temporary file to path, replacing what is
+// at path only when replace says so.
+//
+// With replace it is os.Rename: the file that was there, if any, is gone, and
+// that is what the caller asked for.
+//
+// Without it the file at path must not be replaced, and nothing here may
+// assume path is free — the caller's earlier look cannot see a file that
+// arrives in between, and it asks about the exact name it has while a
+// filesystem may answer for more than one (a case-insensitive, normalizing
+// one merges straße.png with strasse.png and A.png with a.png). os.Link makes
+// the new name and fails with EEXIST rather than overwriting, and it is
+// atomic: path is never visible half-written. The temporary is removed after
+// the link, which leaves the bytes at path and nothing at the temporary's
+// name. Where hard links are not supported (some network filesystems, and any
+// driver without them) an O_EXCL create plus a copy does the same job with
+// the same no-replace promise, minus the atomicity: the copy is of the
+// temporary that was just verified, and a copy that fails leaves the file
+// this function created removed again.
+func placeVerified(tmp, path string, replace bool) error {
+	if replace {
+		return os.Rename(tmp, path)
+	}
+	switch err := linkFile(tmp, path); {
+	case err == nil:
+		_ = os.Remove(tmp)
+		return nil
+	case errors.Is(err, fs.ErrExist):
+		return fmt.Errorf("%s: %w", path, ErrDestExists)
+	}
+	// Any other reason the link failed: a filesystem without hard links, a
+	// link across filesystems, a refusal. The copy below makes the same
+	// promise — nothing at path is replaced — so it is the right thing to
+	// try rather than a fallback that changes what the caller asked for, and
+	// a filesystem that cannot do that either reports its own error.
+	return copyNoReplace(tmp, path)
+}
+
+// copyNoReplace writes tmp's bytes to a path that must not exist, creating it
+// with O_EXCL so that a path taken in the meantime is refused rather than
+// overwritten. The file is 0600, as the temporary is; a failure removes the
+// file this function made, because it created it and nothing else knows about
+// it.
+func copyNoReplace(tmp, path string) error {
+	src, err := os.Open(tmp)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%s: %w", path, ErrDestExists)
+		}
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	_ = os.Remove(tmp)
+	return nil
 }
 
 // Touch sets the object's GCS custom time, which the bucket's lifecycle

@@ -101,6 +101,15 @@ type Row struct {
 	// follow-up's, known before it starts).
 	Branch  string `json:"branch,omitempty"`
 	Outcome string `json:"outcome,omitempty"`
+	// ArtifactCount and ArtifactBytes are what the run's record says it
+	// delivered: how many artifacts, and their recorded total size (design
+	// artifact-runs.md §9). Both are the record's own account, never a
+	// bucket listing, and both are 0 for a run whose record has none —
+	// which is every run that opens a pull request, so the fields stay
+	// absent in its JSON (the rule the other optional fields follow).
+	// The artifacts themselves, name by name, are `fugaro artifacts ls`.
+	ArtifactCount int   `json:"artifact_count,omitempty"`
+	ArtifactBytes int64 `json:"artifact_bytes,omitempty"`
 	// TaskPR is the pull request the task continues (a follow-up);
 	// RecordPR is the one the run's record names; PR is the record's,
 	// else the task's.
@@ -238,6 +247,14 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 			// The runner's record names the execution that owns the run; after
 			// a double launch, launch.json may name the duplicate.
 			row.Execution = r.Execution
+		}
+		// The record's artifacts: the count and the recorded total, for a
+		// listing that shows a column (or a field) only when a run has one.
+		row.ArtifactCount = len(r.Artifacts)
+		for _, a := range r.Artifacts {
+			// A negative byte count is not a size; it shows as none rather
+			// than subtracting from the total (the record is untrusted text).
+			row.ArtifactBytes += max(0, a.Bytes)
 		}
 	}
 	if e != nil && row.LogURL == "" {
