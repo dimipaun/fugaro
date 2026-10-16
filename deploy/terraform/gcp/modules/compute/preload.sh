@@ -193,13 +193,15 @@ if [ -n "$BUILD" ]; then
   fi
 
   # 7. The builder is this build's, and always goes -- built or not. The flag
-  #    stays set until the delete has returned, so one that fails is tried
-  #    again by the trap rather than leaking the VM and its disk.
-  if ! gcloud compute instances delete "$BUILDER" --project="$PROJECT" \
+  #    is cleared ONLY when the delete has actually returned, so a delete that
+  #    fails leaves it raised and the EXIT trap tries once more; clearing it
+  #    either way would leak the VM and its disk to the next build's step 3.
+  if gcloud compute instances delete "$BUILDER" --project="$PROJECT" \
       --zone="$ZONE" --quiet >/dev/null 2>&1; then
-    say "the builder VM $BUILDER could not be deleted; the next build clears it"
+    BUILDER_UP=""
+  else
+    say "the builder VM $BUILDER could not be deleted; the trap tries once more"
   fi
-  BUILDER_UP=""
   [ -n "$BUILT" ] || exit 1
 fi
 

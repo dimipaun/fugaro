@@ -2258,7 +2258,11 @@ case "$args" in
   *"instances create "*) exit 0;;
   *"instances get-serial-port-output "*) printf '%s\n' "$MARKER"; exit 0;;
   *"instances stop "*) exit 0;;
-  *"instances delete "*) exit 0;;
+  *"instances delete "*)
+      # A delete that will not go: step 7 tolerates it, and the flag it reads
+      # is what decides whether the trap tries once more.
+      if [ -n "$FAIL_INSTANCE_DELETE" ]; then printf 'the delete failed\n' >&2; exit 1; fi
+      exit 0;;
   *"images create "*)
       if [ -n "$FAIL_CREATE" ]; then printf 'the create failed\n' >&2; exit 1; fi
       name="$(printf '%s\n' "$args" | awk '{print $4}')"
@@ -2401,6 +2405,35 @@ func TestComputePreloadShellDecidesAndReplaces(t *testing.T) {
 		}
 		if len(gcloudCalls(t, calls, "images delete")) != 0 {
 			t.Errorf("a failed build deleted an image:\n%s", strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a builder VM whose delete fails is tried once more by the trap", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":            preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":           "",
+			"MARKER":               "fugaro-preload-built",
+			"FAIL_INSTANCE_DELETE": "1",
+		})
+		// The build itself is not failed by a VM that will not go: the image it
+		// made exists and the sweep is not its business.
+		if err != nil {
+			t.Fatalf("preload.sh exited %v although the generation was created:\n%s", err, out)
+		}
+		if len(gcloudCalls(t, calls, "images create")) != 1 {
+			t.Fatalf("the fixture did not reach the image create:\n%s", strings.Join(calls, "\n"))
+		}
+		if !strings.Contains(out, "could not be deleted; the trap tries once more") {
+			t.Errorf("step 7 did not report the delete it lost:\n%s", out)
+		}
+		// Two: step 7's own attempt, and the trap's, which only runs because
+		// step 7 left the flag raised. Clearing the flag unconditionally after
+		// a failed delete leaks the VM and its disk to the next build's step 3.
+		if got := len(gcloudCalls(t, calls, "instances delete")); got < 2 {
+			t.Errorf("the failed delete was attempted %d time(s), want a second attempt by the EXIT trap:\n%s", got, strings.Join(calls, "\n"))
+		}
+		if !strings.Contains(out, "the build exited") {
+			t.Errorf("the trap did not run for the builder VM it was told is still up:\n%s", out)
 		}
 	})
 }
