@@ -279,18 +279,19 @@ files are still covered by `terraform fmt -check -recursive deploy/terraform`,
 by `tflint --recursive`, by `sh deploy/terraform/scan.sh` and by
 `deploy/terraform/terraform_test.go`'s Go-side pins (which run under the
 `test` job's `go test -race ./...`). What waits for the copy is
-`terraform validate` on the root and its ten mock-provider runs in
+`terraform validate` on the root and its thirteen mock-provider runs in
 `roots/compute/tests/compute.tftest.hcl` — the reaper's six-permission role,
 the conditioned launcher binding, the run accounts' roles, the NAT's network
-and subnetwork, the two APIs and nothing else, the preload build's actAs, and
-the two variable refusals.
+and subnetwork, the deny-all ingress rule the run VMs sit under, the
+scheduled preload rebuild, the two APIs and nothing else, the preload build's
+actAs, and the four variable refusals.
 
 **Verified in the run that staged this** (linux_amd64, terraform v1.16.4 —
 the version the job pins — and provider `hashicorp/google` 8.4.0 from the
 committed lock file): `terraform -chdir=deploy/terraform/gcp/roots/compute
 init -backend=false -lockfile=readonly -input=false`, `validate` and `test`
 against the mock provider, with `TF_DATA_DIR` outside the tree as the job's
-step sets it — `Success! 10 passed, 0 failed` — plus `terraform fmt -check
+step sets it — `Success! 13 passed, 0 failed` — plus `terraform fmt -check
 -recursive deploy/terraform` and `tflint --chdir=deploy/terraform/gcp
 --recursive` clean. **What is not verified is the workflow run itself**: no
 GitHub Actions run of this file has happened, and none can from here. Copying
