@@ -80,3 +80,45 @@ func TestValidateProjectSecretsAcceptsEmptyAllowList(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectScopeByDefaultIsNotTheWholeReservedSet pins the two names D2 does
+// not sweep in: bitbucket-token, because a Bitbucket credential is a
+// repository access token issued for one repository and works for no other
+// (PerRepositorySecret, the owner's ruling of 2026-10-15), and the bare
+// claude-oauth-token, which is person-owned (design §7). Everything else in
+// ReservedSecrets is swept in, so a reserved name added without a decision
+// here shows up as a failure rather than silently taking a scope.
+func TestProjectScopeByDefaultIsNotTheWholeReservedSet(t *testing.T) {
+	want := map[string]bool{
+		BitbucketSecret:      false,
+		"github-app-key":     true,
+		"claude-oauth-token": false,
+		AnthropicSecret:      true,
+	}
+	for name := range ReservedSecrets {
+		if _, ok := want[name]; !ok {
+			t.Fatalf("%q is a reserved secret this test does not classify: decide whether D2 sweeps it into project scope", name)
+		}
+	}
+	for name, swept := range want {
+		if _, ok := ReservedSecrets[name]; !ok {
+			t.Fatalf("%q is not a reserved secret", name)
+		}
+		if got := ProjectScopeByDefault(name); got != swept {
+			t.Errorf("ProjectScopeByDefault(%q) = %v, want %v", name, got, swept)
+		}
+	}
+	if !PerRepositorySecret(BitbucketSecret) {
+		t.Errorf("PerRepositorySecret(%q) = false", BitbucketSecret)
+	}
+	for _, name := range []string{"github-app-key", AnthropicSecret, "claude-oauth-token", "npm-token"} {
+		if PerRepositorySecret(name) {
+			t.Errorf("PerRepositorySecret(%q) = true: only a credential issued for one repository is one", name)
+		}
+	}
+	// A named account's derived secret is not reserved at all; its account's
+	// own allow_data_to stays its rule (finding 12).
+	if ProjectScopeByDefault(ClaudeAccountSecret("acme-personal")) {
+		t.Error("a named Claude account's derived secret was swept into project scope")
+	}
+}

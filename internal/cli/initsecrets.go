@@ -372,6 +372,25 @@ func (s *secretsStage) authorize(env initflow.Env) error {
 	return nil
 }
 
+// projectScope is where this stage stores name: the project's own container
+// when the plan may mount a project copy for *this repository*, this
+// repository's own otherwise.
+//
+// It is infra.ProjectSecretCandidate, the one function that answers
+// eligibility, and the same answer find() reads to call a name covered -- so
+// the stage can never store a value somewhere the check above would not look
+// for it. The repository is the argument that matters (code review, high): a
+// repo-unaware test -- "project_secrets lists someone, so the name has a
+// project-wide meaning" -- called the name project-scope for a repository the
+// list does not name, and `init` on that repository then wrote its value over
+// the shared copy another repository mounts, a copy it may not mount itself,
+// and Verify failed. "Absent or empty means nobody" decides, and it decides
+// for the repository in hand.
+func (s *secretsStage) projectScope(name string) bool {
+	_, ok := infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo)
+	return ok
+}
+
 // find lists the repository's secrets (metadata only) and returns what its
 // jobs mount that has no value yet.
 //
@@ -500,7 +519,15 @@ func (s *secretsStage) Left() initflow.Left {
 	}
 	var cmds []string
 	for _, name := range needs {
-		set := selfCommand() + " secrets set " + quoteWord(name) + " --repo " + quoteWord(s.tg.repo)
+		// The scope the command stores to is the scope the prompt above
+		// stores to (projectScope): a name this repository may mount
+		// project-wide defaults to the project's own container, and the fix
+		// the user is handed must not quietly store a repository copy that
+		// would then override the project one forever.
+		set := selfCommand() + " secrets set " + quoteWord(name)
+		if !s.projectScope(name) {
+			set += " --repo " + quoteWord(s.tg.repo)
+		}
 		switch {
 		case isClaudeOAuthSecret(name):
 			cmds = append(cmds, "claude setup-token", set)
@@ -597,7 +624,31 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		value []byte
 		err   error
 	)
-	fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
+	// The prompt is where a person learns the blast radius (plan Task 2.1
+	// step 4): a name this repository may mount project-wide is stored
+	// project-wide -- D2's default for `secrets set <name>` with no flag.
+	//
+	// The way out names a command, never a flag of this one (code review,
+	// low): the stage has no --repo, `fugaro init --repo` never runs it, and
+	// the command Left() hands the user for the same name is the bare one.
+	// `secrets set <name> --repo <owner/name>` is the command that stores this
+	// repository's own copy, and it is run in the user's own terminal like
+	// every other store -- here, before answering, since a value typed at
+	// this prompt goes to the project's container.
+	//
+	// The reach is projectReach's answer, the same sentence `secrets set`'s own
+	// note uses (code review, low): a fixed "every enrolled repository" is false
+	// of a name whose project_secrets entry lists repositories, or whose
+	// provider's allow_data_to does, and the reach is exactly what decides
+	// whether storing the shared copy is safe. The prompt fires only where the
+	// name has a project-wide meaning for this repository (projectScope), so
+	// projectReach's "no repository can mount it" is not reachable here.
+	if s.projectScope(name) {
+		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; for this repository's own copy instead, press Ctrl-C here and run '%s secrets set %s --repo %s' in your own terminal, then start this again):\n",
+			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name), selfCommand(), quoteWord(name), quoteWord(s.tg.repo))
+	} else {
+		fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager, in this repository's own copy):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
+	}
 	if isClaudeOAuthSecret(name) {
 		fmt.Fprintln(w, name+": run claude setup-token in your own terminal first, then paste the token it prints")
 	}
@@ -619,8 +670,14 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	}
 	defer release()
 
+	// The same scope decision the prompt above announced, from the same
+	// function, so the two cannot disagree.
 	id := gcp.SecretID(s.tg.slug, name)
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: s.tg.label, gcp.LabelSecret: name}
+	if s.projectScope(name) {
+		id = gcp.ProjectSecretID(s.e.lc.Name, name)
+		labels = map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: s.e.lc.Name, gcp.LabelSecret: name}
+	}
 	if _, err := st.Set(ctx, id, value, labels); err != nil {
 		if ny := s.smProblem(err); ny != nil {
 			return ny

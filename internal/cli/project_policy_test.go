@@ -268,6 +268,27 @@ func TestProjectPolicyPublishRefusesAVersionItCannotWrite(t *testing.T) {
 	}
 }
 
+// The delete is refused by the same check, before the branch that would
+// remove it: this command may neither overwrite nor delete a node a newer
+// Fugaro wrote, so the older binary's whole remedy for a node ahead of it is
+// the upgrade (projectpolicy.CLISkew). Pinned because the sentence there says
+// so — a reader who was told to try the delete and found this refusal would
+// have been sent in a circle, which is the fault the older-node direction had.
+func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
+	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	if err == nil {
+		t.Fatal("deleting a policy written by a newer Fugaro was allowed")
+	}
+	if !strings.Contains(err.Error(), "version") {
+		t.Errorf("the refusal does not name the version skew: %v", err)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+		t.Fatal("the newer node was removed")
+	}
+}
+
 // put writes p as the policy node, the way an earlier publish did.
 func put(t *testing.T, f *projectFixture, p *projectpolicy.Policy) {
 	t.Helper()
@@ -1424,15 +1445,28 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
-		// The broader pattern really does keep every repository the removed one
-		// admitted, so the runs are not refused (the review of PR #390).
-		"pattern, a broader pattern": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
+		// A broader pattern is not the bare wildcard and still admits every
+		// repository the removed one did (code review, medium): */acme/*
+		// matches github/acme/app, and canonicalRepoArg accepts the entry, so
+		// claiming the runs stop here would be a stop that does not happen.
+		"pattern, a broader pattern remains": {[]string{"*/acme/*", "github/acme/*"}, "github/acme/*", true, "*/acme/*"},
 		// A covering entry need not be written with bare "*" segments: github/ac*
 		// admits every owner whose name starts with "ac", which is every owner
 		// github/acme/* admitted, so the runs are not refused either. MatchRepo
 		// answers this — and coversRepo did not, which is why the sentence could
 		// claim a stop the removal does not make (the review of PR #402).
 		"pattern, a partial wildcard that covers it": {[]string{"github/ac*/*", "github/acme/*"}, "github/acme/*", true, "github/ac*/*"},
+		"pattern, another provider's remains":        {[]string{"gitlab/acme/*", "github/acme/*"}, "github/acme/*", false, ""},
+		// A removed entry is not a revocation when what remains admits every
+		// repository it did — and here what remains admits the entry itself:
+		// github/acme/*app is a pattern, and github/acme/* admits the string
+		// "*app" as the repository it reads, so every repository the removed
+		// entry admitted is still admitted. MatchRepo had the wildcard and
+		// the literal the wrong way round, so this read "refused from now
+		// on": the operator was told a stop happened that did not.
+		"pattern, a wildcard over a literal wildcard": {[]string{"github/acme/*", "github/acme/*app"}, "github/acme/*app", true, "github/acme/*"},
+		"pattern, the same width narrower":            {[]string{"github/acme/*", "github/*/*"}, "github/*/*", false, ""},
+		"pattern, its own repo entry remains":         {[]string{"github/acme/app", "github/acme/*"}, "github/acme/*", false, ""},
 		// The removed entry carries a "*" in its *name* (its last segment is
 		// "*-web", not "*"), and github/*/* admits every repository that entry
 		// admitted. MatchRepo meets that "*" as a character of the subject

@@ -41,12 +41,18 @@
 //     as validateBudget checks them: a mode outside off/observe/enforce is
 //     refused, because policy.Merge skips a mode it does not recognise and the
 //     run then falls back to off — enforcement that silently never turns on,
-//     the exact failure this package promises to prevent;
+//     the exact failure this package promises to prevent. Its member names are
+//     held to the documented spelling too (checkMemberNames, validBudget):
+//     encoding/json folds case, so a strict decode alone would read
+//     {"mode": "enforce", "MODE": "off"} as whichever of the two the document
+//     wrote last;
 //   - model_prices is read with the catalogue's own parser and keeps the
 //     catalogue's pointer spelling, so an omitted optional rate keeps its list
 //     default instead of being priced at zero; its member names are escaped on
 //     the node (an RTDB key cannot hold the "/" or "." of a model ID) and
-//     unescaped when the node is read, see Prices;
+//     unescaped when the node is read, see Prices — and the names *inside* an
+//     entry are held to the documented spelling as the budget block's are, for
+//     the same reason;
 //   - a providers entry is the document internal/runner's ProvidersFromEnv
 //     decodes out of FUGARO_MODEL_PROVIDERS (Provider embeds
 //     config.ModelProvider, so the spelling cannot drift) and is checked by
@@ -68,13 +74,24 @@
 //     strictness above does not catch by itself. The tolerance that stays is at
 //     the top level, where every unknown key is listed in Policy.UnknownKeys:
 //     each one is a section of its own, so tolerating it leaves the rest of the
-//     policy in force. Inside `routing` there is no such key to tolerate. The
-//     block has exactly one member that does anything — routing.claude — so a
-//     block naming no claude switch (a misspelt member, or a vendor this
-//     release does not route) would decode to a nil switch and leave every
-//     Claude call on the direct route while the node says otherwise: it is
-//     refused, see validRoutingMembers. The values of the switch itself are
-//     checked by validRouting, which refuses a block this Fugaro cannot act on.
+//     policy in force. Inside `routing` the tolerance is the same only while
+//     the block still names a switch: an unknown member beside a written
+//     `claude` is ignored as an unknown top-level key is, and Decode lists no
+//     key of the block — which is why the node is edited as a document rather
+//     than as a value of this Fugaro's type (internal/cli's patchPolicyJSON) —
+//     but a block that names no `claude` switch at all is refused
+//     (validRoutingMembers), because the block has exactly one member that does
+//     anything: a misspelt member, or a vendor this release does not route,
+//     would otherwise decode to a nil switch and leave every Claude call on the
+//     direct route while the node says otherwise. The switch's own values are
+//     held to the rules the operator's config loader applies
+//     (config.CheckRouting, validRouting), and the member names encoding/json
+//     reads them by are held to their spelling (CheckRoutingMemberNames),
+//     because a name those checks do not read is not a value anything refuses —
+//     it is a value nothing looked at. routing is decoded and validated and
+//     not applied: phase 1b is what reads it, so an ignored key inside the
+//     block changes no run today, and these checks are what protect the reader
+//     that will read it.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -284,7 +301,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		if err := dec.Decode(&p.Budget); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: budget: %w", err)
 		}
-		if err := validBudget(p.Budget); err != nil {
+		if err := validBudget(braw, p.Budget); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: budget: %w", err)
 		}
 	}
@@ -575,7 +592,7 @@ func CheckRoutingMemberNames(raw json.RawMessage) error {
 		return fmt.Errorf("projectpolicy: routing: %w", err)
 	}
 	if err := checkMemberNames("routing", names, []string{"claude"}); err != nil {
-		return err
+		return fmt.Errorf("projectpolicy: %w", err)
 	}
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &members); err != nil {
@@ -589,10 +606,13 @@ func CheckRoutingMemberNames(raw json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("projectpolicy: routing.claude: %w", err)
 	}
-	return checkMemberNames("routing.claude", cnames, []string{"via", "models"})
+	if err := checkMemberNames("routing.claude", cnames, []string{"via", "models"}); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	return nil
 }
 
-// checkMemberNames refuses, at one level of the block, a member name encoding/json
+// checkMemberNames refuses, at one level of a block, a member name encoding/json
 // would read as another: the exact same name twice (the decoder keeps the last it
 // reads, so which value survives depends on the order the keys were written in),
 // two names differing only in case (the decoder matches a member name
@@ -600,22 +620,33 @@ func CheckRoutingMemberNames(raw json.RawMessage) error {
 // another case (which is the same sentence one name at a time). A name this
 // Fugaro does not model passes: an unknown key here is a key this reader ignores,
 // and the refusal for a block that then names no switch is validRoutingMembers'.
+//
+// It is the one check DisallowUnknownFields cannot make. That decoder refuses a
+// name no field answers to, and passes a name that answers to a field in
+// another case — which is how {"mode": "enforce", "MODE": "off"} comes to be a
+// budget whose mode is decided by the order the keys were written in, and how a
+// rate written INPUT_PER_M lands on input_per_m. Three written blocks are held
+// to it: the budget block (validBudget), a model_prices entry
+// (Prices.UnmarshalJSON) and the routing switch (CheckRoutingMemberNames,
+// which adds the prefix its exported errors carry). The prefix is the block's
+// path without that prefix — "budget", "model_prices" — so the caller's own
+// wrap names the block once.
 func checkMemberNames(prefix string, names, known []string) error {
 	seen := map[string]bool{}
 	folded := map[string]string{}
 	for _, n := range names {
 		if seen[n] {
-			return fmt.Errorf("projectpolicy: %s names %q twice: encoding/json keeps the last one it reads, so which value this Fugaro routes by would depend on the order the keys were written in — write the member once", prefix, n)
+			return fmt.Errorf("%s names %q twice: encoding/json keeps the last one it reads, so which value this Fugaro reads would depend on the order the keys were written in — write the member once", prefix, n)
 		}
 		seen[n] = true
 		lower := strings.ToLower(n)
 		if first, dup := folded[lower]; dup {
-			return fmt.Errorf("projectpolicy: %s names both %q and %q, which encoding/json reads as one member (it matches a member name case-insensitively), so which value this Fugaro routes by would depend on the order the keys were written in — write the member once, spelled as the node spells it", prefix, first, n)
+			return fmt.Errorf("%s names both %q and %q, which encoding/json reads as one member (it matches a member name case-insensitively), so which value this Fugaro reads would depend on the order the keys were written in — write the member once, spelled as the node spells it", prefix, first, n)
 		}
 		folded[lower] = n
 		for _, k := range known {
 			if lower == strings.ToLower(k) && n != k {
-				return fmt.Errorf("projectpolicy: %s spells %s as %q: encoding/json matches a member name case-insensitively, so this Fugaro reads it as %s — write the member as %s documents it, or remove it", prefix, k, n, k, k)
+				return fmt.Errorf("%s spells %s as %q: encoding/json matches a member name case-insensitively, so this Fugaro reads it as %s — write the member as %s documents it, or remove it", prefix, k, n, k, k)
 			}
 		}
 	}
@@ -760,12 +791,33 @@ func validPricePolicy(name, policy string) error {
 	return fmt.Errorf("projectpolicy: providers.%s.price_policy %q must be %s or %s", name, policy, PricePolicyCheapest, PricePolicyHighest)
 }
 
+// budgetMembers are the member names the budget block is documented with, in
+// the spelling its json tags write: the names checkMemberNames holds a written
+// block to, and the same four internal/config reads fugaro.yaml's budget block
+// by.
+var budgetMembers = []string{"allowed_models", "max_run_tokens", "mode", "per_run_usd"}
+
 // validBudget mirrors internal/config's checks of fugaro.yaml's budget: block
 // (validateBudget) for the four keys the policy carries — every value and, for
 // allowed_models, every entry (CheckModelID, DuplicateModel) — because these
 // values are enforced, not advisory. An unrecognised mode is the dangerous one:
 // policy.Merge treats it as unset, and the run falls back to off.
-func validBudget(b Budget) error {
+//
+// raw is the block as written, and it is read first for the member *names*
+// (checkMemberNames, against budgetMembers): the strict decode above refuses a
+// name no field answers to, but not a name that answers to one in another case,
+// and {"mode": "enforce", "MODE": "off"} would otherwise decode to whichever
+// the document wrote last — a budget this reader enforces and its author cannot
+// read. internal/config's own decoder refuses the same spelling in fugaro.yaml,
+// and the node is the document a run is metered by.
+func validBudget(raw json.RawMessage, b Budget) error {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return err
+	}
+	if err := checkMemberNames("budget", names, budgetMembers); err != nil {
+		return err
+	}
 	if b.Mode == "" {
 		// The block is there and names no mode: a node published for its caps
 		// alone would take the mode from the job environment, which nobody

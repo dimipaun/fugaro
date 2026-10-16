@@ -167,10 +167,11 @@ func ValidPattern(pattern string) error {
 // contains a "*" — but MatchRepo's second argument is also read as a *pattern*
 // by the removal warning (internal/cli's admittedBy), where "*" is ordinary
 // text that the pattern's wildcard must still be able to match. Comparing the
-// two positions first made a "*" in the subject consume a "*" in the pattern
-// literally, so matchSeg("a*", "a*b") was false and the warning could claim a
-// security control was removed when a broader entry still admitted the same
-// repositories (the review of this change). For a subject with no "*" the two
+// two positions first made a "*" in the subject spend the pattern's wildcard on
+// a single character and lose it, so matchSeg("a*", "a*b") was false, "*" did
+// not admit "*app" and the warning could claim a security control was removed
+// when a broader entry still admitted the same repositories — a revocation that
+// did not happen (the review of this change). For a subject with no "*" the two
 // orders agree exactly, so this decides nothing about any run's admission.
 func matchSeg(pattern, s string) bool {
 	var (

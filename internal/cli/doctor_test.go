@@ -796,8 +796,45 @@ func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
 	if !strings.Contains(c.Problem, "acme-personal") {
 		t.Fatalf("problem doesn't name the account: %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal --repo acme/app") {
+	// The fix stores the token where D2 (plan Task 2.1) puts this name: the
+	// project copy, which is the one the job mounts and the reach the
+	// account's own allow_data_to already decided. `--repo acme/app` would
+	// store a repository copy that then wins over the project copy forever
+	// (§5, the footgun the project-secret checks name).
+	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal") {
 		t.Fatalf("fix doesn't name the exact commands: %q", c.Fix)
+	}
+	if strings.Contains(c.Fix, "--repo") {
+		t.Fatalf("the fix asks for a repository copy that would override the project's: %q", c.Fix)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredFromTheProject: a named account's token
+// stored once for the project is stored -- the job mounts the project copy --
+// so doctor must not call it missing, and must not hand the owner the
+// repository-copy command that would override it (code review, medium: the
+// check read only the repository's own containers).
+func TestDoctorClaudeAccountsStoredFromTheProject(t *testing.T) {
+	r := claudeAccountsRig(t)
+	const value = "fake-token-0123456789"
+	putProjectSecret(t, r.sm, "aurora", "claude-oauth-token-acme-personal", []byte(value))
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || !c.OK {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if strings.Contains(out, value) {
+		t.Fatalf("the value leaked: %s", out)
 	}
 	if a := r.sm.Accessed(); len(a) != 0 {
 		t.Fatalf("doctor read a secret value: %v", a)
@@ -1007,7 +1044,7 @@ func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
 	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
 		hostileAccount: {AllowDataTo: []string{hostileRepo}},
 	}}
-	c := claudeAccountsStoredCheck(lc, hostileRepo, []secretEntry{})
+	c := claudeAccountsStoredCheck(lc, hostileRepo, []secretEntry{}, nil, true)
 	if c == nil || c.OK {
 		t.Fatalf("claudeAccountsStoredCheck = %+v", c)
 	}
@@ -1026,7 +1063,7 @@ func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
 	// The "could not list" warning branch (listed == nil) prints the repo and
 	// the names too: it must escape and bound them just the same (replacing
 	// printableRepo/printableNamed with the raw values there stayed green).
-	w := claudeAccountsStoredCheck(lc, hostileRepo, nil)
+	w := claudeAccountsStoredCheck(lc, hostileRepo, nil, nil, false)
 	if w == nil || w.OK {
 		t.Fatalf("claudeAccountsStoredCheck(listed=nil) = %+v, want a warning", w)
 	}
@@ -1483,11 +1520,20 @@ func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) {
 	if !strings.Contains(c.Problem, "github-app-key") {
 		t.Fatalf("problem doesn't name the secret: %q", c.Problem)
 	}
+	if !strings.Contains(c.Fix, "secrets set github-app-key") {
+		t.Fatalf("fix doesn't name the command: %q", c.Fix)
+	}
 	if !strings.Contains(c.Fix, "secrets set github-app-key --repo acme/app") {
 		t.Fatalf("fix doesn't name the repository command: %q", c.Fix)
 	}
-	if !strings.Contains(c.Fix, "secrets set github-app-key --project-wide") {
-		t.Fatalf("fix doesn't name the project-wide command: %q", c.Fix)
+	// The bare command leads (code review, low): it is D2's default store, so
+	// it is the command that puts the value where the repositories the owner
+	// allow-listed it for mount it. --repo first offered a repository copy --
+	// the one that wins over the project copy forever -- to a person whose
+	// repository may already mount the shared one. The sibling
+	// claude-accounts check leads the same way.
+	if first, _, _ := strings.Cut(c.Fix, ", or "); !strings.HasSuffix(first, "secrets set github-app-key") {
+		t.Fatalf("fix does not lead with the bare command: %q", c.Fix)
 	}
 }
 
@@ -1512,6 +1558,95 @@ func TestDoctorProjectSecretStoredPassesWithEitherCopy(t *testing.T) {
 	}
 	if out := string(r.sm.Latest(gcp.SecretID(slug, "github-app-key"))); out != "" {
 		t.Fatalf("a repository copy exists: %q", out)
+	}
+}
+
+// apiKeyRig is a doctor rig inside a checkout of github.com/acme/app whose
+// config takes the api-key auth with lines (the agent and budget blocks to
+// splice in) and whose local config offers one provider serving deepseek/*.
+func apiKeyRig(t *testing.T, lines string) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	yaml := strings.Replace(cliMinimalYAML, "workflows:", lines+"workflows:", 1)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"+
+		"repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n")
+	// The two names this rig's runs really need, so the key under test is the
+	// only thing left: the git credential, and the provider's own key.
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("pem"))
+	putProjectSecret(t, r.sm, "aurora", "openrouter-api-key", []byte("provider-value"))
+	return r
+}
+
+// TestDoctorDoesNotRequireTheOptionalAnthropicKey: D2's sweep makes
+// anthropic-api-key project-wide-eligible for every repository (a reserved
+// name with no per-name list), and the project-secret-stored check then
+// demanded a stored value for it. The key is one a job can go without
+// (infra.OptionalSecret): a repository whose models all route through a
+// provider never needs one, and Readiness drops the mount and deploys rather
+// than gate it -- so doctor failed outright, "no run of a workflow mounting
+// one can start", for a repository whose runs are fine (code review, high).
+func TestDoctorDoesNotRequireTheOptionalAnthropicKey(t *testing.T) {
+	apiKeyRig(t, "agent: { auth: api-key, models: { coder: deepseek/coder, reviewer: deepseek/coder } }\n"+
+		"budget: { mode: enforce, per_run_usd: 20 }\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed a repository that needs no Anthropic key: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	for _, id := range []string{"project-secret-stored", "project-secret-optional"} {
+		if c, ok := doctorCheckByID(o.Checks, id); ok && !c.OK {
+			t.Fatalf("%s = %+v, want no check or an ok one: the job drops the key's mount and deploys without it", id, c)
+		}
+	}
+}
+
+// TestDoctorWarnsForTheOptionalAnthropicKeyWhenItIsNeeded: the key is needed
+// when a pin no provider serves goes direct to Anthropic, and when the budget
+// isn't enforcing every call goes there whatever the pins are
+// (config.AnthropicKeyNeeded) -- so a keyless repository's runs are refused
+// at agent start. Readiness says so as a note and never gates the deploy, so
+// doctor warns and does not fail.
+func TestDoctorWarnsForTheOptionalAnthropicKeyWhenItIsNeeded(t *testing.T) {
+	for _, tc := range []struct{ name, lines string }{
+		{"a pin no provider serves", "agent: { auth: api-key, models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 } }\n" +
+			"budget: { mode: enforce, per_run_usd: 20 }\n"},
+		{"nothing routes to a provider", "agent: { auth: api-key, models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 } }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorWarnsForTheOptionalAnthropicKey(t, tc.lines)
+		})
+	}
+}
+
+func doctorWarnsForTheOptionalAnthropicKey(t *testing.T, lines string) {
+	t.Helper()
+	apiKeyRig(t, lines)
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed on a warning: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-optional")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-optional = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "anthropic-api-key") {
+		t.Fatalf("problem doesn't name the key: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "secrets set anthropic-api-key") {
+		t.Fatalf("fix doesn't name the command: %q", c.Fix)
+	}
+	if stored, ok := doctorCheckByID(o.Checks, "project-secret-stored"); ok && !stored.OK {
+		t.Fatalf("project-secret-stored = %+v: the optional key is not the red gate", stored)
 	}
 }
 
@@ -1734,6 +1869,12 @@ func TestDoctorFlagsExtraAccessorForNamedAccountVariant(t *testing.T) {
 	// needs its token stored, or that check fails doctor outright and this
 	// test could not tell a warning from a failure.
 	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-personal", []byte("repo-value"))
+	// D2's sweep makes github-app-key a project candidate for every
+	// repository, so project-secret-stored now also asks whether a value is
+	// stored anywhere for the key this checkout's workflow mounts: without
+	// one its own check is red (no run can start), which is not what this
+	// test is about.
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "github-app-key", []byte("repo-value"))
 
 	const name = "claude-oauth-token-acme-personal"
 	projID := putProjectSecret(t, r.sm, "aurora", name, []byte("project-value"))

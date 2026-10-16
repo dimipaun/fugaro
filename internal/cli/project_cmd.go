@@ -1870,6 +1870,12 @@ func entriesExcept(allow []string, entry string) []string {
 // segment, so no entry can be reported as still admitting a repository the
 // removal really does refuse.
 //
+// That soundness is a property of the matcher, not of this function, and it
+// takes the "*" the second argument may carry being matched as the character
+// it stands for: github/acme/*app removed while github/acme/* remains is not a
+// revocation, and the matcher reads it that way only because a pattern's
+// wildcard is tried before literal equality (projectpolicy.matchSeg).
+//
 // An entry is a pattern when it carries a wildcard, and that is not a question
 // for this function: MatchRepo reads a concrete repository and a pattern alike,
 // because ValidPattern accepts a concrete name too (a pattern with no "*"

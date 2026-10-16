@@ -28,9 +28,14 @@ const RulesVersion = 1
 //
 //	var ve *projectpolicy.VersionError
 //	if errors.As(err, &ve) {
-//		msg = fmt.Sprintf(projectpolicy.RunnerSkew, ve.Found, ve.Understood) // the runner, task 1.3
-//		msg = fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood)   // the CLI, task 1.6
+//		msg = fmt.Sprintf(projectpolicy.RunnerSkew, ve.Found, ve.Understood)  // the runner, task 1.3
+//		msg = fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood)     // the CLI, node newer
+//		msg = fmt.Sprintf(projectpolicy.CLISkewNewer, ve.Found, ve.Understood) // the CLI, node older
 //	}
+//
+// Found and Understood are what tells the two CLI directions apart
+// (Found > Understood is the older binary), and internal/cli's cliSkewSentence
+// is the one place that picks between them.
 //
 // Error is the shared sentence, with no side's remedy.
 type VersionError struct {
@@ -45,11 +50,45 @@ func (e *VersionError) Error() string { return fmt.Sprintf(Skew, e.Found, e.Unde
 
 // The version-skew messages. Skew is the sentence both sides print; RunnerSkew
 // is the runner's refusal (the image is older than the published policy) and
-// CLISkew the CLI's (this Fugaro is older than the node, so publishing from it
-// would write the policy backwards). Each takes the found version and the
-// understood one, in that order.
+// the CLI has two, one per direction of the skew, because the CLI is the side an
+// operator upgrades and the remedy is not the same in both:
+//
+//   - CLISkew: the node is newer than this Fugaro, so nothing here can read it
+//     and the upgrade is missing on this machine. `fugaro upgrade` is the whole
+//     remedy, and neither of the other two moves is one: `fugaro init
+//     --firebase` would redeploy this release's rules template over rules a
+//     newer Fugaro wrote (the reasoning requirePolicyRules and doctor's
+//     rules-newer-than-this-Fugaro warning both give), and there is nothing to
+//     delete either — `fugaro project policy publish` refuses a node written by
+//     a newer Fugaro and `--delete` goes through the same refusal
+//     (internal/cli's refuseNewerPolicy, which the publish path calls before
+//     the delete branch), and doctor reports the state as
+//     policy-newer-than-binary with the upgrade as its fix. The runner image
+//     older than the policy refuses the same node with RunnerSkew, its own
+//     remedy beside the shared sentence.
+//   - CLISkewNewer: the node is older than this Fugaro. Nothing is upgraded —
+//     this binary is the newer side — and the remedy is the deletion: this
+//     release's publish refuses to overwrite a node written in another version
+//     (internal/cli's publishedPolicyOf, which words the same refusal, and
+//     docs/project-layer.md and `fugaro doctor` carry it too), so the node has
+//     to go first, with `fugaro project policy publish --delete`, and the
+//     publish that follows writes this release's shape. `fugaro init
+//     --firebase` is deliberately not named: it deploys this release's rules
+//     template and marker and never writes config/policy/shared, so an operator
+//     sent to re-run it would come back to the same refusal. A hand-written
+//     node, or one a release before this shape wrote, is the only way to get
+//     here (Decode refuses a version this Fugaro does not know, and a node below
+//     Version is not the legacy path — that is the marker's job, Read).
+//
+// A message that printed CLISkew for both directions sent the operator of a node
+// that was merely behind to upgrade a Fugaro that was already ahead of it, and
+// one that printed the newer direction's re-run of init at an older binary would
+// redeploy the release's rules template over rules a newer Fugaro wrote (the
+// reasoning requirePolicyRules uses for the marker). Each takes the found
+// version and the understood one, in that order.
 const (
-	Skew       = "the project policy is version %d; this Fugaro understands version %d"
-	RunnerSkew = Skew + "; refresh the runner image (fugaro upgrade), or publish a policy this runner understands"
-	CLISkew    = Skew + "; upgrade Fugaro"
+	Skew         = "the project policy is version %d; this Fugaro understands version %d"
+	RunnerSkew   = Skew + "; refresh the runner image (fugaro upgrade), or publish a policy this runner understands"
+	CLISkew      = Skew + "; upgrade Fugaro (fugaro upgrade)"
+	CLISkewNewer = Skew + "; the node is older than this Fugaro: publishing refuses to overwrite a node written in another version, so remove it with 'fugaro project policy publish --delete' and publish it again from this release"
 )
