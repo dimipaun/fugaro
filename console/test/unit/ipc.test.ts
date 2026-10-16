@@ -1594,6 +1594,92 @@ describe('the registrar', () => {
     expect(reply.reason).toContain('<path>')
   })
 
+  // A path is not only ever preceded by a space or a quote. Go's own errors put
+  // one straight after a colon (`open:/...` in a wrapped error), Markdown puts
+  // one in backticks, a list puts one in brackets, and a URL can carry one as
+  // `file://`. Each of these spellings reached the renderer whole before.
+  it.each([
+    ['after a colon', 'open:/Users/dimi/.config/fugaro/projects/belong.yaml: permission denied'],
+    ['in brackets', 'refused [/Users/dimi/.config/fugaro/a]'],
+    ['as a file URL', 'cannot load file:///Users/dimi/x'],
+    ['after a semicolon', 'x;/etc/passwd'],
+    ['as a Windows drive after a colon', 'dir:C:\\Users\\dimi'],
+    ['in backticks', 'see `/Users/dimi/x` for details'],
+    ['in angle brackets', 'wrote </Users/dimi/x>'],
+  ])('takes a path %s out of a handler’s message', async (_label, message) => {
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error(message)
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason, message).not.toMatch(/dimi|passwd|Users/)
+    expect(reply.reason, message).toContain('<path>')
+  })
+
+  it('leaves a web URL in a message whole, rather than redacting from its //', async () => {
+    const sentence = 'see https://github.com/acme/app/pull/12 for the run'
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error(sentence)
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    expect(await listener?.(consoleEvent(), {})).toEqual({ ok: false, reason: sentence })
+  })
+
+  it('cuts a long message on a character boundary, never inside a surrogate pair', async () => {
+    // `slice` cuts UTF-16 code units: a cut that lands between the two halves
+    // of an emoji puts an unpaired surrogate on the wire, which is not text.
+    for (const pad of [MAX_REPLY_REASON_LENGTH - 3, MAX_REPLY_REASON_LENGTH - 2, MAX_REPLY_REASON_LENGTH - 1]) {
+      const { ipcMain } = wiredConsole({
+        'cli.version': () => {
+          throw new Error(`${'a'.repeat(pad)}\u{1F600}\u{1F600}tail`)
+        },
+      })
+      const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+      const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+      expect(reply.ok).toBe(false)
+      if (reply.ok) return
+      expect(reply.reason.length).toBeLessThanOrEqual(MAX_REPLY_REASON_LENGTH)
+      expect(reply.reason, String(pad)).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
+      expect(reply.reason.endsWith('…')).toBe(true)
+    }
+  })
+
+  it('drops bidi overrides and zero-width characters from a refusal', async () => {
+    // The validator refuses these in an *argument*; a handler's message is the
+    // other half of the wire, and a right-to-left override in it makes a screen
+    // show a sentence other than the one that was sent.
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('refused \u202Egnp.exe\u202C and \u200Bhidden\u2066x\u2069\uFEFF\u00AD done')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).not.toMatch(/[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/)
+    expect(reply.reason).toBe('refused gnp.exe and hiddenx done')
+  })
+
+  it('answers an unpaired surrogate in a message with text, not with half a character', async () => {
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('bad \uD800 and \uDC00 end')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).not.toMatch(/[\uD800-\uDFFF]/)
+  })
+
   it('keeps a refusal to one line and drops control characters', async () => {
     const { ipcMain } = wiredConsole({
       'cli.version': () => {
@@ -1731,6 +1817,52 @@ const FORGED_EVENTS: readonly (readonly [string, unknown])[] = [
   ['a frame that has gone away', { senderFrame: null, sender: { mainFrame: null } }],
   ['no sending frame at all', { sender: { mainFrame: { url: APP_ENTRY_URL } } }],
   ['no sender at all', { senderFrame: { url: APP_ENTRY_URL } }],
+  // A destroyed frame does not answer `null`: Electron's getters throw ("Render
+  // frame was disposed before WebFrameMain could be accessed"). A gate that let
+  // that throw would reject the invoke instead of refusing it.
+  [
+    'a frame whose senderFrame getter throws',
+    {
+      get senderFrame(): never {
+        throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+      },
+      sender: { mainFrame: { url: APP_ENTRY_URL } },
+    },
+  ],
+  [
+    'a webContents whose sender getter throws',
+    {
+      senderFrame: { url: APP_ENTRY_URL },
+      get sender(): never {
+        throw new Error('Object has been destroyed')
+      },
+    },
+  ],
+  [
+    'a webContents whose mainFrame getter throws',
+    (() => {
+      const frame = { url: APP_ENTRY_URL }
+      return {
+        senderFrame: frame,
+        sender: {
+          get mainFrame(): never {
+            throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+          },
+        },
+      }
+    })(),
+  ],
+  [
+    'a frame whose url getter throws',
+    (() => {
+      const frame = {
+        get url(): never {
+          throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+        },
+      }
+      return { senderFrame: frame, sender: { mainFrame: frame } }
+    })(),
+  ],
   ['a null event', null],
   ['an event that is not an object', 'fugaro:console/cli.version'],
 ]

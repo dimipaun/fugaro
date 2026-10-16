@@ -1377,13 +1377,21 @@ export function isConsoleSenderUrl(raw: unknown): boolean {
  * window" are the same set, and every other frame is refused.
  */
 export function isConsoleSender(event: ConsoleEventLike | null | undefined): boolean {
-  if (event === null || event === undefined) return false
-  const frame = event.senderFrame
-  if (frame === null || frame === undefined) return false
-  const sender = event.sender
-  if (sender === null || sender === undefined) return false
-  if (sender.mainFrame !== frame) return false
-  return isConsoleSenderUrl(frame.url)
+  // Every read below goes through Electron getters, and a destroyed frame's
+  // getters *throw* ("Render frame was disposed before WebFrameMain could be
+  // accessed") rather than answer null. A gate that let that escape would turn
+  // a refusal into a rejected invoke, so anything that throws here refuses.
+  try {
+    if (event === null || event === undefined) return false
+    const frame = event.senderFrame
+    if (frame === null || frame === undefined) return false
+    const sender = event.sender
+    if (sender === null || sender === undefined) return false
+    if (sender.mainFrame !== frame) return false
+    return isConsoleSenderUrl(frame.url)
+  } catch {
+    return false
+  }
 }
 
 /** IpcMainLike is the slice of Electron's `ipcMain` this module uses. It is an
@@ -1426,41 +1434,74 @@ function replyReason(error: unknown): string {
 /**
  * ABSOLUTE_PATH_RE matches an absolute path in a message: a POSIX one (`/etc`,
  * `/home/me/x`), a home-relative one (`~/x`), or a Windows one with a drive
- * letter or a UNC prefix. It is anchored on a separator that follows whitespace,
- * a quote or the start of the string, so a flag like `--repo owner/name` keeps
- * its slash, and it stops at the first character that cannot be part of a path
- * in a sentence.
+ * letter or a UNC prefix. It is anchored on a separator that cannot be part of
+ * a word -- the start of the message, whitespace, a quote, a backtick, an
+ * opening bracket, `=`, `,`, `;` or `:` -- so a flag like `--repo owner/name`
+ * keeps its slash, and it stops at the first character that closes a path in a
+ * sentence: whitespace, a quote, a backtick, `)`, `]` or `>`.
  *
- * A colon is deliberately *not* one of the anchoring characters: `https://x/y`
- * is a URL and not a path, and replacing from its `//` would turn the message
- * into `https:<path>`, which reads as a corrupted sentence rather than as a
- * redaction. A drive letter is still matched, because the anchor in front of it
- * is a space, a quote or the start of the message in every message that has one.
+ * A colon *is* an anchor, because Go's own wrapped errors put a path straight
+ * after one (`open:/Users/me/.config/...`), and so is a drive letter after one
+ * (`dir:C:\Users\me`). What keeps a URL from being cut at its `//` -- which
+ * would turn `https://x/y` into `https:<path>`, a corrupted sentence rather than
+ * a redaction -- is the first alternative: a `scheme://` URL is matched whole,
+ * first, and kept, except a `file://` one, which *is* a path and is replaced
+ * whole. `replacePath` is the replacer that makes that choice. The scheme is
+ * bounded and must start a word, so a long run of letters is scanned once
+ * rather than once per position.
  */
-const ABSOLUTE_PATH_RE = /(^|[\s'"(=,])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'")]*/g
+const ABSOLUTE_PATH_RE =
+  /((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s'"`)\]>]*)|(^|[\s'"`([<{=,;:])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>]*/g
 
 /** PATH_PLACEHOLDER is what an absolute path in a message becomes. It names
  * *that* a path was there, which is what a reader needs, and not which one. */
-const PATH_PLACEHOLDER = '$1<path>'
+const PATH_PLACEHOLDER = '<path>'
+
+function replacePath(_match: string, url: string | undefined, anchor: string | undefined): string {
+  if (url !== undefined) return /^file:/i.test(url) ? PATH_PLACEHOLDER : url
+  return `${anchor ?? ''}${PATH_PLACEHOLDER}`
+}
+
+/** INVISIBLE_RE is the format characters `hiddenCharacterReason` refuses in an
+ * argument -- bidi overrides and isolates, zero-width characters, the BOM, the
+ * soft hyphen -- which a refusal drops for the same reason: a right-to-left
+ * override makes a screen show a sentence other than the one that was sent. */
+const INVISIBLE_RE = /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb]/g
+
+/** LONE_SURROGATE_RE is half a character: a high surrogate with no low one
+ * after it, or a low one with no high one before it. */
+const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g
 
 /**
  * boundReason is the one place a handler-authored message is made safe to put in
- * front of a user: control characters out, absolute paths out, one line, and a
- * hard length. It never returns an empty string -- a refusal with no text is a
- * screen with nothing to draw -- and it never echoes more of the message than
- * the bound allows.
+ * front of a user: control characters out, invisible format characters out,
+ * half-characters replaced, absolute paths out, one line, and a hard length cut
+ * on a character boundary. It never returns an empty string -- a refusal with
+ * no text is a screen with nothing to draw -- and it never echoes more of the
+ * message than the bound allows.
  */
 function boundReason(message: string): string {
+  // Every pass below is linear, and the input is first cut to a few times the
+  // bound so that a megabyte-long message costs what a short one does: nothing
+  // past this point can reach the reply anyway.
   const flattened = message
+    .slice(0, MAX_REPLY_REASON_LENGTH * 4)
     .replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(INVISIBLE_RE, '')
+    .replace(LONE_SURROGATE_RE, '\ufffd')
     .replace(/\s+/g, ' ')
     .trim()
   if (flattened === '') return 'the operation failed'
-  const redacted = flattened.replace(ABSOLUTE_PATH_RE, PATH_PLACEHOLDER)
+  const redacted = flattened.replace(ABSOLUTE_PATH_RE, replacePath)
   if (redacted.length <= MAX_REPLY_REASON_LENGTH) return redacted
   // The cut is marked, so a reader can tell a truncated sentence from a whole
-  // one rather than wondering what the CLI meant to say.
-  return `${redacted.slice(0, MAX_REPLY_REASON_LENGTH - 1).trimEnd()}…`
+  // one rather than wondering what the CLI meant to say. It is in UTF-16 code
+  // units, like the bound, and it steps back one when it would land between
+  // the two halves of a surrogate pair: half an emoji is not text.
+  let cut = MAX_REPLY_REASON_LENGTH - 1
+  const last = redacted.charCodeAt(cut - 1)
+  if (last >= 0xd800 && last <= 0xdbff) cut -= 1
+  return `${redacted.slice(0, cut).trimEnd()}…`
 }
 
 /**
