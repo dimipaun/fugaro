@@ -1,9 +1,38 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// fencedBlocks returns the body of every fenced code block in a document
+// section, indented ones included (step 0's build block sits inside a list
+// item). The info string (```bash) is dropped: what comes back is what a shell
+// would be given.
+func fencedBlocks(section string) []string {
+	var out []string
+	var cur []string
+	in := false
+	for _, l := range strings.Split(section, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "```") {
+			if in {
+				out = append(out, strings.Join(cur, "\n"))
+				cur = nil
+			}
+			in = !in
+			continue
+		}
+		if in {
+			cur = append(cur, l)
+		}
+	}
+	return out
+}
 
 // TestChecklistHasCheck38: docs/gcp-live-checklist.md's Check 38 is the
 // owner-run live check for checkout: clone (design generic-tool.md G4, plan
@@ -36,10 +65,55 @@ func TestChecklistHasCheck38(t *testing.T) {
 	section := docSection(t, path, doc, "## Check 38")
 
 	// The shape: user-run, not run, sandbox only, never belong.
-	for _, want := range []string{"USER-RUN, NOT RUN", "run by you", "sandbox", "Never `belong`"} {
+	for _, want := range []string{"USER-RUN, NOT RUN", "run by you", "Never `belong`"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Check 38 section does not say %q", want)
 		}
+	}
+	// ... and "sandbox" alone was toothless: the word appears in dozens of
+	// sentences, so asserting it said nothing. The property it stood for is
+	// that every step runs against the sandbox repository, and that the guard
+	// is what enforces it — its third hard stop is the checkout's origin.
+	for _, want := range []string{"this checkout's origin is not the sandbox", "edgeappinc/fugarosandbox"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's guard does not prove the sandbox checkout (%q)", want)
+		}
+	}
+
+	// An apostrophe inside a ${VAR:?...} message is not a message with an
+	// apostrophe: bash parses the word expecting a closing quote, so the block
+	// fails with "unexpected EOF while looking for matching `''" and none of it
+	// runs. Step 4's chain carried two ("step 1's run ID", "step 1's pull
+	// request number"), which broke the whole chain — the files, the commits
+	// and both pushes — and Check 43 carried a third and a fourth. The bash
+	// parse below (over the section's fenced blocks) is the same defect's other
+	// face; this one names it, and covers the whole file, because the message
+	// is the only place a stray apostrophe is invisible.
+	apostropheInVarMsg := regexp.MustCompile(`\$\{[^}\n]*:\?[^}\n]*'`)
+	if m := apostropheInVarMsg.FindString(doc); m != "" {
+		t.Errorf("a ${VAR:?...} message carries an apostrophe, which bash reads as an unclosed quote: %s", m)
+	}
+
+	// Every fenced block in this section is meant to be pasted into a shell
+	// and run, so every one of them has to parse. bash -n is the check that
+	// does not need anything installed or any cloud: it is what caught the
+	// apostrophes above.
+	blocks := fencedBlocks(section)
+	if len(blocks) < 8 {
+		t.Errorf("the Check 38 section has %d fenced blocks; the extractor or the section lost some", len(blocks))
+	}
+	if bash, err := exec.LookPath("bash"); err == nil {
+		for i, b := range blocks {
+			f := filepath.Join(t.TempDir(), fmt.Sprintf("check38-%d.sh", i))
+			if err := os.WriteFile(f, []byte(b), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command(bash, "-n", f).CombinedOutput(); err != nil {
+				t.Errorf("Check 38's fenced block %d does not parse as bash (%v): %s", i, err, out)
+			}
+		}
+	} else {
+		t.Log("bash is not on PATH: the syntax half of this test did not run")
 	}
 
 	// The guard block, re-run at the start of every step: the project is
@@ -185,16 +259,50 @@ func TestChecklistHasCheck38(t *testing.T) {
 	}
 
 	// The Restore, which is where an attempt that never finished is caught:
-	// it branches on the recorded state (the sandbox's own fugaro.yaml set
-	// the key, so write it back; it did not, so drop it), and deletes the
-	// record last. A later edit that silently dropped any of these would
-	// leave a half-restored sandbox with nothing to notice it.
+	// it branches on the recorded state, and deletes the record last. A later
+	// edit that silently dropped any of these would leave a half-restored
+	// sandbox with nothing to notice it.
+	for _, want := range []string{"$S/checkout", "$S/checkout-source", "`rm -rf \"$S\"`"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's Restore does not say %q", want)
+		}
+	}
+
+	// ... every source the recording block can record, not only the two the
+	// Restore used to branch on. SourceOf returns "repo", "default", "project"
+	// and "profile <name>" (internal/config/resolve.go's SourceOf/SourceProfile),
+	// and a `checkout:` the project layer or a profile sets is not in the
+	// sandbox's own file at all — the case the old two-branch Restore read as
+	// "default" and then dropped a key that was never there.
 	for _, want := range []string{
-		"$S/checkout", "$S/checkout-source", "says `repo`", "says `default`",
-		"`rm -rf \"$S\"`", "last",
+		"says `repo`", "says `default`", "says `project`", "says `profile <name>`",
+		"not in the sandbox's fugaro.yaml", "never edit the project layer",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Check 38 section's Restore does not say %q", want)
+		}
+	}
+	// The recording block refuses a source it does not handle, so an unhandled
+	// one stops the check at the record rather than at the Restore, when the
+	// sandbox is already half-changed.
+	for _, want := range []string{`case "$(cat "$T/checkout-source")" in`, "a source this check does not know"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Check 38 section's recorded state does not refuse an unhandled checkout source (%q)", want)
+		}
+	}
+
+	// The record goes last, anchored: "last" on its own was satisfied by "the
+	// last is not a spare" in step 4. The deletion is the Restore's own fifth
+	// item, and it comes after the clones the check made are removed.
+	if i := strings.Index(section, "**Restore.**"); i < 0 {
+		t.Error("the Check 38 section has no Restore paragraph")
+	} else {
+		restore := section[i:]
+		if !strings.Contains(restore, "5. **The record, last.** `rm -rf \"$S\"`") {
+			t.Error("the Check 38 Restore does not delete the record last, as its own fifth item")
+		}
+		if del, clones := strings.Index(restore, "`rm -rf \"$S\"`"), strings.Index(restore, "rm -rf /tmp/check38-bin"); del < 0 || clones < 0 || del < clones {
+			t.Error("the Check 38 Restore deletes the record before it has removed the clones it made")
 		}
 	}
 
