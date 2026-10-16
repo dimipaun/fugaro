@@ -8,13 +8,19 @@ package cli
 // imports nothing from console/, embeds nothing from it and adds no go.mod
 // dependency to reach it.
 //
-// Two halves. TestDocsDesktopConsoleDesignCarriesTheDecisions is the design's
-// own presence test (design section 9.5 item 1): the load-bearing strings of
-// docs/design/desktop-console.md. TestDocsDesktopConsoleContractNamesEveryWatchField
+// Two halves, three test families. TestDocsDesktopConsoleDesignCarriesTheDecisions
+// is the design's own presence test (design section 9.5 item 1): the load-bearing
+// strings of docs/design/desktop-console.md. TestDocsDesktopConsoleContractNamesEveryWatchField
 // is the stronger half this task adds: console/docs/json-contract.md must name
 // every json tag of internal/watch/json.go's shapes, derived from the structs
 // themselves rather than from a hand-kept list, so a rename in json.go fails a
 // test here instead of silently breaking a screen.
+//
+// TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers came later, with Task 5.0:
+// section 10's answer column, read as the twenty-row table it is (four ruled
+// cells compared exactly, the sixteen acceptances to the recommendation they
+// accept, and no twenty-first row or empty cell admitted), plus the design's
+// record that the owner's answers of 2026-10-16 do not reach this document.
 
 import (
 	"context"
@@ -86,6 +92,117 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 			if !strings.Contains(doc, want) {
 				t.Errorf("%s no longer carries %s: it never says %q", path, tc.what, want)
 			}
+		}
+	}
+}
+
+// TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers is the plan's Task 5.0
+// red step: the owner's answers of 2026-10-15 pinned where the design records
+// them -- section 10's last column -- and the lines that record what the
+// owner's answers of 2026-10-16 do to THIS design (nothing: D22, D34 and D21
+// belong to docs/design/desktop-console-v2.md's D21-D38, and no row of
+// section 10 moves).
+//
+// The column is read as a TABLE, not as prose, for the reason
+// TestDocsDesktopConsoleDesignAllowListIsExactArgv documents: a substring
+// check is satisfied by a sentence about the answers, so a cell could be
+// emptied, flipped or a twenty-first row added with no answer at all and the
+// test would still pass. Every one of the twenty rows is compared, in order,
+// with its key and its answer; the four ruled cells exactly, and the sixteen
+// acceptances as the recommendation they accept. D13's recommendation carries
+// a bare "|" inside a code span (`example|show|layer|init|publish`), which
+// docTableAfter splits on, so the answer is read as the row's LAST cell -- the
+// column's position is what is fixed, not the cell count.
+func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	for _, want := range []string{
+		"| Owner's answer 2026-10-15 |",
+		"the other sixteen accepted as recommended",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer carries section 10's answer column: it never says %q", path, want)
+		}
+	}
+
+	// The ruled cells, exactly as the owner ruled them, and the two acceptances
+	// that carry a recorded amendment to the recommendation they accept.
+	const accepted = "**Accepted as recommended.**"
+	ruled := map[string]string{
+		"**D1**":  "**CLI sidecar (option A), behind the `FugaroSource` interface; direct RTDB/Firestore access with the operator's credentials (option B) never.**",
+		"**D3**":  "**This repository, under `console/`.**",
+		"**D4**":  "**Direct download plus a Homebrew cask; signed, notarised and stapled.** Apple signing enters this repository's release path **tag-only**, behind `scripts/release-gate.sh` and a **protected GitHub environment**; **the owner holds the certificate and runs every signing step**. **The Mac App Store is out.**",
+		"**D11**": "**Its own artifact, published from the CLI's `vX.Y.Z` tag, with a declared supported CLI range.**",
+	}
+
+	// The sixteen lines the plan calls "accepted as recommended", keyed to the
+	// clause that must follow the acceptance where the design records one; ""
+	// is the plain acceptance, and D12 and D13 are the two with an amendment.
+	acceptedSixteen := map[string]string{
+		"**D2**": "", "**D5**": "", "**D6**": "", "**D7**": "", "**D8**": "",
+		"**D9**": "", "**D10**": "",
+		"**D12**": "with Check 59 written as 59a and 59b",
+		"**D13**": "with the pairing check above recorded",
+		"**D14**": "", "**D15**": "", "**D16**": "", "**D17**": "", "**D18**": "",
+		"**D19**": "", "**D20**": "",
+	}
+
+	rows := docTableAfter(t, path, doc, "| Owner's answer 2026-10-15 |")
+	if len(rows) != 20 {
+		t.Errorf("%s's section 10 carries %d answer rows, want the twenty decisions D1 to D20", path, len(rows))
+	}
+	seen := map[string]bool{}
+	for _, cells := range rows {
+		key := cells[0]
+		answer := cells[len(cells)-1]
+		seen[key] = true
+		if strings.Trim(answer, "*") == "" || strings.TrimSpace(answer) == "" {
+			t.Errorf("%s's section 10 leaves %s unanswered: its answer cell is %q", path, key, answer)
+			continue
+		}
+		if want, ok := ruled[key]; ok {
+			if answer != want {
+				t.Errorf("%s's %s answer is no longer the ruling of 2026-10-15:\n got %q\nwant %q", path, key, answer, want)
+			}
+			continue
+		}
+		clause, ok := acceptedSixteen[key]
+		if !ok {
+			t.Errorf("%s's section 10 carries an answer row for %s, which this test's twenty do not: a decision was added or renumbered", path, key)
+			continue
+		}
+		if !strings.HasPrefix(answer, "**Accepted as recommended") {
+			t.Errorf("%s's %s answer is no longer \"accepted as recommended\": it reads %q", path, key, answer)
+			continue
+		}
+		if clause == "" && answer != accepted {
+			t.Errorf("%s's %s answer gained a clause beyond the plain acceptance: %q", path, key, answer)
+		}
+		if clause != "" && !strings.Contains(answer, clause) {
+			t.Errorf("%s's %s answer no longer records %q: it reads %q", path, key, clause, answer)
+		}
+	}
+	for key := range ruled {
+		if !seen[key] {
+			t.Errorf("%s's section 10 no longer carries an answer row for %s", path, key)
+		}
+	}
+	for key := range acceptedSixteen {
+		if !seen[key] {
+			t.Errorf("%s's section 10 no longer carries an answer row for %s", path, key)
+		}
+	}
+
+	// What the answers of 2026-10-16 do to THIS design: nothing, and it says so
+	// in two places -- the v2 note above section 1 and section 10's own prose.
+	for _, want := range []string{
+		"2026-10-16: the two answers to that spec's decisions",
+		"**No answer of 2026-10-16 changes any row of §10 below**",
+		"they do not reopen or amend anything below",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer records what the answers of 2026-10-16 do here: it never says %q", path, want)
 		}
 	}
 }
