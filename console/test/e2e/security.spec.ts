@@ -43,6 +43,35 @@ const PROBE_ORIGIN = 'https://example.invalid'
 // declares no `"type"`), so `__dirname` is the spec's directory on disk.
 const consoleDir = join(__dirname, '..', '..')
 
+/** ConsoleDocument is the console's own document, as the frame reports it. */
+interface ConsoleDocument {
+  href: string
+  title: string
+  heading: string | null
+}
+
+/**
+ * consoleDocument reads the document the frame is showing, from inside the
+ * frame.
+ *
+ * It is not `expect(page).toHaveTitle(...)`, and that is deliberate. A
+ * navigation the renderer started and the main process then denied leaves
+ * Playwright's view of the frame's title empty -- `page.title()` returns `''`
+ * and `toHaveTitle` retries against that same string until it times out, on
+ * Electron 44.7.2 with Playwright 1.64.1 -- while `page.evaluate` reads the
+ * same frame's live document and finds the title and the `<h1>` intact. The
+ * claim these assertions make is about the console's document, so they read it
+ * where it is: in the page. `toHaveTitle` is still used for the initial load,
+ * where no navigation has been denied.
+ */
+function consoleDocument(page: Page): Promise<ConsoleDocument> {
+  return page.evaluate(() => ({
+    href: window.location.href,
+    title: document.title,
+    heading: document.querySelector('h1')?.textContent ?? null,
+  }))
+}
+
 test.describe('the hardened window', () => {
   let app: ElectronApplication
   let page: Page
@@ -161,7 +190,11 @@ test.describe('the hardened window', () => {
     })
     await page.waitForTimeout(250)
     expect(page.url()).toBe(APP_ENTRY_URL)
-    await expect(page).toHaveTitle('Fugaro console')
+    expect(await consoleDocument(page)).toEqual({
+      href: APP_ENTRY_URL,
+      title: 'Fugaro console',
+      heading: 'Fugaro console',
+    })
 
     // The remote attempt, which is what rule 2 is actually about. Whether an
     // aborted remote navigation commits an error page is Chromium's business;
@@ -172,7 +205,11 @@ test.describe('the hardened window', () => {
     }, `${PROBE_ORIGIN}/console-navigate-probe`)
     await page.waitForTimeout(250)
     expect(page.url()).toBe(APP_ENTRY_URL)
-    await expect(page).toHaveTitle('Fugaro console')
+    expect(await consoleDocument(page)).toEqual({
+      href: APP_ENTRY_URL,
+      title: 'Fugaro console',
+      heading: 'Fugaro console',
+    })
     expect(remoteRequests).toEqual([])
   })
 })
