@@ -1082,10 +1082,13 @@ func recipeForLaunch(ctx context.Context, cfg *config.Config, spec *task.Spec) *
 	root := checkoutRoot(ctx, spec.Repo)
 	if spec.Recipe == nil {
 		if spec.IsFollowUp() {
-			// Resolved from the checkout alone: cfg may be nil (no checkout
-			// here at all), and the answer is the same either way — the
-			// default name, read from the repository layer when there is one
-			// and the catalog otherwise, as the runner reads it.
+			// Resolved without cfg: agent.recipe is not consulted for a
+			// follow-up, so the name is the default's and this checkout's
+			// layer, when there is one, is read for it exactly as the runner
+			// reads that layer at the base — from the working tree here, which
+			// is the approximation every launcher-side read of a base file
+			// makes, and the runner stays the backstop for a base whose file
+			// differs from it.
 			return localRecipeNamed(root, recipe.DefaultName)
 		}
 		if cfg == nil {

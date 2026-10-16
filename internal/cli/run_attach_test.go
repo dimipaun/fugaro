@@ -370,6 +370,56 @@ func TestAttachAllowsASetExactlyAtTheCaps(t *testing.T) {
 	}
 }
 
+// TestAttachRefusesARecipeItCannotReadHere: a task that names a REPOSITORY
+// recipe carries its name alone (taskRecipe), so the launcher resolves it from
+// this checkout's copy of the file — and with no checkout there, or no such
+// file in it, it has not read the recipe the run will use. The refusal is
+// fail-closed and names the recipe, so the owner is not told "--attach needs
+// an artifact recipe" as though they had named a non-artifact one when the
+// truth is that the launcher could not tell.
+//
+// Mutation (drop the `case spec.Recipe != nil` arm): the generic refusal below
+// fires and this test fails on the sentence that names the recipe.
+func TestAttachRefusesARecipeItCannotReadHere(t *testing.T) {
+	t.Chdir(t.TempDir())
+	spec := &task.Spec{Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Ref: "main", Task: "Render the nightly bundle",
+		Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}
+	err := checkAttachRecipe(context.Background(), spec)
+	if err == nil || !strings.Contains(err.Error(), "recipe sizzle could not be read here") {
+		t.Fatalf("checkAttachRecipe = %v, want a refusal naming the recipe it could not read", err)
+	}
+}
+
+// TestAttachUploadsCreateOnly: every upload is a create-only write
+// (blobx.PutFile's ifNotExist), and the arm that classifies the refusal is
+// reachable even though the deterministic refusal — the run-id freshness
+// check — comes first: a second launcher that won the run id in the meantime
+// writes the object this one is about to, and this is what stops it
+// overwriting the inputs of the run whose task is already there. The message
+// says which run and which file, since the launcher lost a race it cannot see.
+//
+// Mutation (pass false for PutFile's ifNotExist, or drop the
+// errors.Is(err, blobx.ErrExists) arm): the second upload overwrites the first
+// and this test fails on the missing refusal and on the object's bytes.
+func TestAttachUploadsCreateOnly(t *testing.T) {
+	f := artifactAttachFixture(t)
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	id := "20261015-100000-abcd"
+	writeBucketFile(t, f, inputKey(id, "shot.png"), "a second launcher's bytes")
+	shot := attachShot(t, "shot.png", "these bytes")
+	_, err = attachInputs(context.Background(), blobx.Wrap(b), "runs/"+appSlug+"/"+id+"/", []string{shot}, config.Inputs{})
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "input shot.png is already in run runs/"+appSlug+"/"+id) {
+		t.Fatalf("attachInputs = %v, want a refusal naming the file and the run", err)
+	}
+	if got := string(object(t, f, inputKey(id, "shot.png"))); got != "a second launcher's bytes" {
+		t.Fatalf("the existing object was overwritten: %q", got)
+	}
+}
+
 // TestAttachRefusesDuplicateBaseNames: two attachments with one base name
 // would be one object and one entry, so the second is refused rather than
 // overwriting the first.
@@ -535,6 +585,37 @@ func TestAttachOnAFollowUpResolvesTheRecipeTheRunnerWill(t *testing.T) {
 		t.Fatalf("%d executions, want none", n)
 	}
 	wantNoUpload(t, f, calls)
+}
+
+// TestAttachNeverReadsADefaultRecipeFromTheWorkingDirectory: the repository
+// layer is read from a checkout OF THE TASK'S REPOSITORY, and with no such
+// checkout there is no root to read it from — an empty root handed to
+// recipe.ReadRepoFile is a RELATIVE path, which the process resolves against
+// its own working directory. A directory that merely happens to hold
+// .fugaro/recipes/default.yaml (here an artifact one) would then decide a
+// follow-up's launch: --attach would be allowed, the files uploaded, and the
+// runner — which reads the repository layer at the task's base ref, not from
+// this directory — would run the catalog default and refuse the task at
+// bootstrap, with the bytes already in the bucket.
+//
+// Mutation (read the repository layer with an empty root, i.e. drop the
+// `root != ""` guard from localRecipeNamed): the artifact recipe in the
+// working directory is resolved, the refusal disappears and this test fails.
+func TestAttachNeverReadsADefaultRecipeFromTheWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".fugaro", "recipes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, recipe.RepoPath(recipe.DefaultName)), []byte(projectSizzle), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	spec := &task.Spec{Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Ref: "main",
+		Branch: "fugaro/20261015-090000-aaaa", PR: 7, PreviousRun: "20261015-090000-aaaa", Task: "Render the nightly bundle"}
+	err := checkAttachRecipe(context.Background(), spec)
+	if err == nil || !strings.Contains(err.Error(), "a follow-up never takes agent.recipe") || !strings.Contains(err.Error(), "mode: implement") {
+		t.Fatalf("checkAttachRecipe = %v, want the catalog default resolved rather than a file from the working directory", err)
+	}
 }
 
 // TestAttachRefusesARecipeTheRunnerChooses: the arm a launcher-side refusal

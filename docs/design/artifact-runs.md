@@ -559,7 +559,7 @@ write:
 1. **Resolve the run id first**, and **establish that it is a new one before a
    single byte is uploaded.** A repeated `--run-id` is not a new run: the
    launcher adopts the stored task when it is byte-identical and refuses a
-   different one (`createTask`, `internal/cli/run.go:1146-1172`, over
+   different one (`createTask`, `internal/cli/run.go:1328`, over
    `runstore.CreateTask`'s `ErrExists`) — and that check happens *after* an
    upload would have. Uploading first would therefore **overwrite a finished
    run's `inputs/` objects before the launcher ever looked at its task**, which
@@ -606,7 +606,7 @@ write:
      mode: <mode>".
    - **A launch that leaves the recipe to the runner is refused too.** When
      `spec.Recipe` is nil the CLI cannot know what the runner will pick
-     (`runnerChooses`, `internal/cli/run.go:1108`: no recipe in the task, not a
+     (`runnerChooses`, `internal/cli/run.go:1128`: no recipe in the task, not a
      follow-up, no checkout here — the runner then takes `agent.recipe` from
      `fugaro.yaml` at the ref, else the catalog default), so it cannot promise
      an artifact run. The refusal says so and names the fix: pass the artifact
@@ -683,7 +683,12 @@ write:
    screenshot. The plan step's prompt names it, and the environment gains
    `FUGARO_INPUTS_DIR`.
 6. **The report and `result.json` record each input** (name, bytes, sha256) so
-   a reader can see exactly what the run was given.
+   a reader can see exactly what the run was given. Task 6 writes the half it
+   owns — `runstore.InputFile` and `Record.Inputs`, in `result.json`, once the
+   files the list names are actually in the checkout — and nothing renders it
+   yet: the report and the `runs ls`/`diagnose` display that read the record
+   belong to the CLI surface of the task that owns them (the plan's Task 7).
+   This line describes the finished feature, not what Task 6 ships alone.
 
 *Alternatives, and their costs:* **`--attach-stdin`/a directory flag** —
 convenience only; **attaching after the launch** (an upload to a run already
@@ -1027,7 +1032,7 @@ produced (out), and files an operator handed to a model-driven job (in).
 
    **And the runner does not trust `Spec.Mode` either, because it may be
    empty.** The launcher does not always resolve the recipe: when it leaves the
-   choice to the runner (`runnerChooses`, `internal/cli/run.go:950`) the spec
+   choice to the runner (`runnerChooses`, `internal/cli/run.go:1128`) the spec
    carries **no** `mode`, and the runner takes it from the recipe it resolves
    (`agent.recipe` at the ref, else the catalog default). So the runner's rule
    is: **`Spec.Mode` when set, the resolved recipe's mode when not**, and the
@@ -1527,7 +1532,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V19 | GPUs are out of scope in the VM design, by name | `docs/design/compute-backend.md:1485` (§6.3) |
 | V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:51-58`, `internal/cli/docs_checkout_test.go:123-132` |
 | V21 | Check numbers: rows exist for 40–47 (`:317-324`) and 57 (`:325`); **48–56 are reserved by the project-centric plan** (PR #366) and 57 by the compute backend, so **58 is the next free number**; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md:250-257,317-325,1431,1437-1458` |
-| V24 | A repeated `--run-id` adopts a byte-identical stored task and refuses a different one, **after** `CreateTask` — so an upload ordered before it would rewrite a finished run's inputs | `createTask` `internal/cli/run.go:1146-1172`, `runstore.CreateTask`/`ErrExists`, `blobx.Create`'s `IfNotExist` `internal/blobx/blobx.go:107-127` |
+| V24 | A repeated `--run-id` adopts a byte-identical stored task and refuses a different one, **after** `CreateTask` — so an upload ordered before it would rewrite a finished run's inputs | `createTask` `internal/cli/run.go:1328`, `runstore.CreateTask`/`ErrExists`, `blobx.Create`'s `IfNotExist` `internal/blobx/blobx.go:107-127` |
 | V25 | An artifact run would checkpoint like an implement run unless it is stopped: the gate is `checkpointsOn()`, not the checkout arm | `internal/runner/checkpoint.go:65` (`r.follow == nil && r.baseSHA != "" && r.startSHA != "" && cfg.Git.PR.CheckpointsOn()`), `runner.go:1684` (`startCheckpoints` inside the stage runner) |
 | V26 | The agent's git credentials enter its environment at **two** sites inside `bootstrap` (the repo env and the stage env map), and the workflow's secrets at a third (`!r.review`) | `internal/runner/runner.go:635`, `:1135`, `:1091-1099` |
 | V27 | `verify.Settings` is written at bootstrap, before any stage, from the workflow's commands — and it is a **0644 file re-read per invocation** by `verify.LoadSettings`, so it is not a place a fixed command can live | `verify.WriteSettings` call, `internal/runner/runner.go:1073-1081`; `internal/verify/verify.go:26,60,85` |

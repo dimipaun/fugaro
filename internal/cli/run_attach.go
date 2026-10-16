@@ -296,9 +296,18 @@ func checkAttachRecipe(ctx context.Context, spec *task.Spec) error {
 // attachCaps is the workflow's inputs caps for this launch, as the launcher
 // can read them: the checkout's fugaro.yaml when there is one. With no
 // checkout to read — a launch made from outside the repository — the zero
-// config.Inputs answers with the defaults (config.Inputs.MaxFileCount and
-// its two siblings), which is the conservative reading of a workflow this
-// CLI cannot see, and the runner applies the workflow's own values again.
+// config.Inputs answers with the DEFAULTS (config.Inputs.MaxFileCount and its
+// two siblings).
+//
+// Those defaults are the caps' ceilings, not a floor, so the zero value is
+// not the conservative reading of a workflow this CLI cannot see: a workflow
+// may declare `inputs.max_files: 1` (config.validateInputs bounds the caps
+// from above only), and a launch from outside the checkout then uploads a
+// set the workflow refuses. That is the accepted cost of the check being a
+// pre-check — design §4 step 2 has the launcher refuse a set over the caps
+// before the first byte and the runner apply the workflow's own values
+// again, which is the check that always bites — but it is not conservatism
+// and must not be described as though it were.
 func attachCaps(ctx context.Context, spec *task.Spec) config.Inputs {
 	cfg := checkoutConfig(ctx, spec.Repo)
 	if cfg == nil {
@@ -323,10 +332,14 @@ const attachDirectAnthropic = "Anthropic (direct)"
 // it is on its way to Anthropic. The set is the union of:
 //
 //   - each provider that claims one of the run's models (config.ProviderFor)
-//     AND may receive this repository's data (config.ModelProvider.AllowsData),
-//     which is the same filter runner.ProvidersEnv applies when it builds the
-//     job's own FUGARO_MODEL_PROVIDERS — the launcher computes what the job
-//     will have, and nothing more; and
+//     AND may receive this repository's data (config.ModelProvider.AllowsData).
+//     The AllowsData half is the filter runner.ProvidersEnv applies when it
+//     builds the job's own FUGARO_MODEL_PROVIDERS; the "claims one of the
+//     run's models" half is this line's own narrowing and is NOT part of that
+//     set — the job is handed every allowed provider so it can route, and a
+//     provider that claims none of these three models is one this file's
+//     bytes cannot reach. The two sets are not the same set, and nothing here
+//     claims they are; and
 //   - attachDirectAnthropic whenever any of those models is not claimed by
 //     one of those providers, which is config.NeedsAnthropicKey's own rule
 //     and is the case a default Claude workflow always takes.

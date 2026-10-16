@@ -466,3 +466,58 @@ func TestInputsNamedTwiceAreRefused(t *testing.T) {
 	seedInputs(t, h, runInputKey(h, "shot.png"), body)
 	wantBootstrapError(t, h, nil, "is named twice", "shot.png")
 }
+
+// TestAnInputsDirectoryTheCheckoutLinksElsewhereIsRefused: the checkout is the
+// repository at the run's ref, so it can commit `inputs` — or a directory
+// under it — as a symbolic link, and every write of the download would follow
+// it. The bytes a launcher attached would land outside the checkout entirely,
+// and the name refusals above (which judge the NAME) would have had nothing to
+// say about it: this is the mirror of the traversal hole and is closed the
+// same way, by refusing a link rather than following it, which is how
+// readRepoRecipe reads a repository file.
+//
+// Mutation (restore the MkdirAll calls in downloadInputs, i.e. drop the
+// !st.IsDir() arm of mkdirInputDir / mkdirInputParents): the run succeeds and
+// the attached bytes are written through the link, outside the checkout, and
+// this test fails on the missing refusal and on the target's own contents.
+func TestAnInputsDirectoryTheCheckoutLinksElsewhereIsRefused(t *testing.T) {
+	link := func(t *testing.T, h *harness, rel, target string) {
+		t.Helper()
+		commitToRemote(t, h, func(dir string) {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(dir, rel)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	t.Run("the inputs directory itself", func(t *testing.T) {
+		target := t.TempDir()
+		spec := artifactSpec(sizzleRenderOnlyYAML)
+		shot, body := attachedInput("shot.png", "png-bytes")
+		spec.Inputs = []task.InputFile{shot}
+		h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+		link(t, h, runstore.InputsDir, target)
+		seedInputs(t, h, runInputKey(h, "shot.png"), body)
+		wantBootstrapError(t, h, nil, "a checkout cannot commit it as a link or a file")
+		if _, err := os.Stat(filepath.Join(target, "shot.png")); !os.IsNotExist(err) {
+			t.Errorf("the attached bytes were written through the link, outside the checkout (%v)", err)
+		}
+	})
+	t.Run("a directory under it", func(t *testing.T) {
+		target := t.TempDir()
+		spec := artifactSpec(sizzleRenderOnlyYAML)
+		// A nested name can only come from a task written by hand: the
+		// launcher attaches base names and nothing else.
+		shot, body := attachedInput("sub/shot.png", "png-bytes")
+		spec.Inputs = []task.InputFile{shot}
+		h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+		link(t, h, filepath.Join(runstore.InputsDir, "sub"), target)
+		seedInputs(t, h, runInputKey(h, "sub/shot.png"), body)
+		wantBootstrapError(t, h, nil, "a checkout cannot commit it as a link or a file")
+		if _, err := os.Stat(filepath.Join(target, "shot.png")); !os.IsNotExist(err) {
+			t.Errorf("the attached bytes were written through the link, outside the checkout (%v)", err)
+		}
+	})
+}

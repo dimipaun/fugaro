@@ -421,10 +421,13 @@ func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
 		seen[in.Name] = true
 	}
 	dir := filepath.Join(r.d.WorkDir, inputsDir)
+	if err := mkdirInputDir(dir); err != nil {
+		return err
+	}
 	for _, in := range r.spec.Inputs {
 		dest := filepath.Join(dir, filepath.FromSlash(in.Name))
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return fmt.Errorf("creating %s: %w", filepath.Dir(dest), err)
+		if err := mkdirInputParents(dir, in.Name); err != nil {
+			return err
 		}
 		key := runstore.InputKey(r.d.Store.Prefix(), in.Name)
 		// The limit is the size the spec claims, not the workflow's
@@ -451,6 +454,56 @@ func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
 	// that failed.
 	r.rec.Inputs = r.spec.Inputs
 	r.save(ctx)
+	return nil
+}
+
+// mkdirInputDir creates the checkout's inputs/ directory, or leaves the one
+// that is already there, and refuses to write through anything else. The
+// checkout is the repository at the run's ref: it can contain `inputs` as a
+// symbolic link — to an absolute path, to a sibling directory, anywhere —
+// and every write below would follow it, so the attached bytes would land
+// outside the checkout entirely and the name refusals above (which judge the
+// NAME) would have had nothing to say about it. A link is refused rather
+// than followed, the rule readRepoRecipe already reads a repository file by.
+func mkdirInputDir(dir string) error {
+	st, err := os.Lstat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("creating %s: %w", dir, err)
+		}
+		return nil
+	case err != nil:
+		return fmt.Errorf("creating %s: %w", dir, err)
+	case !st.IsDir():
+		return fmt.Errorf("%s is %s, and this run's attached inputs are written inside it: a checkout cannot commit it as a link or a file", dir, st.Mode())
+	}
+	return nil
+}
+
+// mkdirInputParents creates the directories a name with path elements needs
+// inside inputs/, one element at a time: os.MkdirAll would follow a symbolic
+// link a committed checkout put there, which is the same hole mkdirInputDir
+// closes one level up. The launcher never attaches anything but base names
+// (its duplicate-name rule depends on that), so a nested name arrives only in
+// a task written by hand — the spec this has to hold for.
+func mkdirInputParents(dir, name string) error {
+	parts := strings.Split(name, "/")
+	cur := dir
+	for _, part := range parts[:len(parts)-1] {
+		cur = filepath.Join(cur, part)
+		st, err := os.Lstat(cur)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			if err := os.Mkdir(cur, 0o755); err != nil {
+				return fmt.Errorf("creating %s: %w", cur, err)
+			}
+		case err != nil:
+			return fmt.Errorf("creating %s: %w", cur, err)
+		case !st.IsDir():
+			return fmt.Errorf("%s is %s, and this run's attached inputs are written inside it: a checkout cannot commit it as a link or a file", cur, st.Mode())
+		}
+	}
 	return nil
 }
 
