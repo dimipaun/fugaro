@@ -800,9 +800,12 @@ child's stdout.
 `loadFixture` verifies **before** it returns anything, and refuses by name at
 each step: the header parses; the format version is one this build knows; the
 redaction marker names a redactor this build knows; the body's digest matches
-the header's; the record count matches the header's; every record is a
-well-formed envelope with a non-decreasing timestamp; and every document and
-notice passes the redaction audit. The redactor check is not decoration: **a
+the header's; **the header itself is redaction-clean**; the record count matches
+the header's; every record is a well-formed envelope with a non-decreasing
+timestamp; and every document and notice passes the redaction audit. The
+header's own audit is not decoration either: **the digest covers the body, not
+the header**, so a hand-edited `"project"` — a value `FixtureSource` hands a
+screen as the installation's name — would otherwise pass every check above it. The redactor check is not decoration: **a
 digest alone proves only that the file is the one the recorder wrote — it says
 nothing about whether the recorder was the one in this repository**, so a
 fixture stamped by an older or unknown redactor is refused rather than trusted.
@@ -863,6 +866,7 @@ fixture `--out` names, and only after the text has gone back through the real
 | a repository pseudonym replaced by the value itself | "uses stable, one-way pseudonyms and never the value itself" |
 | the header's `sha256` left unchecked on load | "refuses a fixture whose hash does not verify" |
 | the header's `redactor` left unchecked on load | "refuses a fixture whose redaction marker this build does not know" |
+| the header left out of the redaction audit, so an edited `project` passes the digest and every check above it | "refuses a header that carries what the redactor removes" |
 | a fixture edited after it was written to carry an address | "refuses a fixture whose records carry what the redactor removes" |
 | the replay firing records back-to-back instead of on their stamps | "replays the recording on the recording's own clock" |
 | the committed synthetic fixture hand-edited, digest and all | "is exactly what the redaction path writes from the documents in source" |

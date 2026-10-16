@@ -349,7 +349,12 @@ export function recorderMeta(options: RecorderOptions, now: Date, cliVersion?: s
     case: options.caseName,
     project: PROJECT_MARKER,
     synthetic: false,
-    note: `recorded on ${stampOf(now)} by tools/record-fixture and redacted with the console's own rules; read it before you commit it`,
+    // The note is free text in the header, and the loader audits the header
+    // with the same rules as a document, so it may not spell a path-shaped
+    // name: `tools/record-fixture` is an `owner/name` to the repository rule,
+    // and a note that tripped a class would refuse the recording this tool had
+    // just made.
+    note: `recorded on ${stampOf(now)} by the console's own recorder, redacted with the console's own rules; read it before you commit it`,
     ...(cliVersion === undefined ? {} : { cli: cliVersion }),
     recorded: stampOf(now),
   }

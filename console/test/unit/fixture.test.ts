@@ -206,6 +206,29 @@ describe('the fixture format and its loader', () => {
     expect(() => loadFixture(project)).toThrow(/not this class's marker/)
   })
 
+  it('refuses a header that carries what the redactor removes', () => {
+    // **The digest covers the body, not the header**, so a header edited after
+    // the recorder wrote it passes every check above this one -- and it is the
+    // half a reader sees: `FixtureSource` hands a screen the header's `project`
+    // as the installation's name. A header carrying identity means the file was
+    // edited by hand, which is exactly what the audit is here to catch.
+    const records: FixtureRecord[] = [{ at: '2026-10-15T12:00:00Z', document: { day: '2026-10-15' } }]
+    const addressed = writeFixture(records, { ...SYNTHETIC_META, project: 'ana@example.com' })
+    expect(() => loadFixture(addressed, 'edited.ndjson')).toThrow(
+      /edited\.ndjson's header at project still holds an address/,
+    )
+    const pathy = writeFixture(records, { ...SYNTHETIC_META, note: 'a first look at /Users/ana/src/fugaro' })
+    expect(() => loadFixture(pathy)).toThrow(/header at note still holds a filesystem path/)
+    // A key in the header is audited too, on the same rules as a document's.
+    // `writeFixture` writes only the fields it knows, so this one is hand-made:
+    // which is the whole threat, a file edited after the recorder wrote it.
+    const keyed = writeFixture(records, SYNTHETIC_META).replace('"synthetic":', '"acme/secret-repo":1,"synthetic":')
+    expect(() => loadFixture(keyed)).toThrow(/is a key that carries a repository path/)
+    // And the header this repository commits, written by the same redaction
+    // path, is clean -- otherwise the fixture above would be a refusal.
+    expect(() => { loadFixture(theSource(), SYNTHETIC_WHERE) }).not.toThrow()
+  })
+
   it('verifies the committed synthetic fixture, and says it is synthetic', () => {
     const fixture = loaded()
     expect(fixture.header.version).toBe(FIXTURE_FORMAT_VERSION)

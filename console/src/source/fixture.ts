@@ -241,7 +241,8 @@ function digest(body: string): string {
  * naming what failed. The order of the checks is the order of the claims: the
  * file is a fixture at all, this build knows the format, this build knows **the
  * redactor that made it**, the bytes are the ones the header describes, the
- * records are well-formed and in order, and nothing in them is unredacted.
+ * header itself is redaction-clean, the records are well-formed and in order,
+ * and nothing in them is unredacted.
  */
 export function loadFixture(text: string, where = 'the fixture'): LoadedFixture {
   const newline = text.indexOf('\n')
@@ -266,6 +267,15 @@ export function loadFixture(text: string, where = 'the fixture'): LoadedFixture 
       `${where} does not verify: the body's sha256 is ${actual}, and its header says ${header.sha256}`,
     )
   }
+
+  // **The header is the one part of a fixture the digest does not cover**, so
+  // every check above can pass while it carries identity: an edit to
+  // `"project"` — a value `FixtureSource` hands a screen as the installation's
+  // name — leaves the body's sha256 untouched. It is audited with the same
+  // rules as a document, minus the installation's own literals (the loader is
+  // told nothing about an installation, and a synthetic fixture's invented
+  // project name must stay allowed).
+  auditOrRefuse(header, `${where}'s header`)
 
   const lines = body.endsWith('\n') ? body.slice(0, -1).split('\n') : body.split('\n')
   const records: FixtureRecord[] = []
