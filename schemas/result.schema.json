@@ -273,7 +273,7 @@
         "additionalProperties": false,
         "required": ["name", "bytes", "sha256"],
         "properties": {
-          "name": { "type": "string", "minLength": 1, "description": "The name it is stored and written under: runs/<slug>/<run>/inputs/<name> in the bucket, <checkout>/inputs/<name> in the run." },
+          "name": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "The name it is stored and written under: runs/<slug>/<run>/inputs/<name> in the bucket, <checkout>/inputs/<name> in the run. A name of nothing but whitespace is no name (task.InputNameBlank, the same rule the task schema and the launcher apply)." },
           "bytes": { "type": "integer", "minimum": 0 },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The sha256 the launcher read while uploading; the runner verified the object it downloaded against it." }
         }
