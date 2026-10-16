@@ -556,12 +556,6 @@ func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 	return out
 }
 
-// checkPolicyWeWouldWrite reads back the node the publisher is about to
-// write. The publisher builds the policy itself, so a node it cannot read is
-// a bug in the publisher or an operator value the policy's own rules refuse
-// (a price_policy outside its two values, a misspelt model pattern, a
-// per_run_usd that rounds to nothing): either way nothing is written, and the
-// operator sees which value it was.
 // policyNodeBytes is the document a publish writes: the policy built from the
 // operator's config, with the `routing` member of the node being replaced
 // carried over byte for byte.
@@ -760,6 +754,12 @@ func jsonMember(raw []byte, key string) (json.RawMessage, bool, error) {
 // built from and a node the runs it bounds cannot use. Both writers go through
 // it — the publisher, on the policy it built, and `repos add|rm`, on the node
 // it patched — so neither can write something the other would refuse.
+//
+// The publisher builds the policy itself, so a node it cannot read is a bug in
+// the publisher or an operator value the policy's own rules refuse (a
+// price_policy outside its two values, a misspelt model pattern, a per_run_usd
+// that rounds to nothing): either way nothing is written, and the operator
+// sees which value it was.
 func checkPolicyBytes(raw []byte) error {
 	p, found, err := projectpolicy.Decode(raw)
 	switch {
@@ -1021,21 +1021,19 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 	}
 }
 
-// deleteProjectPolicy removes the published policy (B5). The children go
-// first and the shared node last: the shared node's existence *is*
-// project-centric mode, so deleting it first and failing on a child would
-// leave a $slug node behind that nothing reads, while deleting the shared
-// node last means a failure leaves a policy that still governs. Runs in
-// flight are what makes this ask: a repository that is mid-run keeps the
-// policy until it finishes.
+// deleteProjectPolicy removes the published policy (B5): the child nodes of
+// config/policy/repos first, the shared node last. The children go first
+// because the shared node's existence *is* project-centric mode, so deleting
+// it first and failing on a child would leave a $slug node behind that nothing
+// reads, while deleting the shared node last means a failure leaves a policy
+// that still governs. Runs in flight are what makes this ask: a repository
+// that is mid-run keeps the policy until it finishes.
 //
 // The children are removed whether or not the shared node is there: a delete
 // that failed on the shared node leaves them behind, and a later --delete that
 // answered "nothing to delete" on the strength of the absent shared node would
 // leave them forever (the review of PR #390). A governance node left under
 // config/policy/repos is policy text a later release may read.
-// deleteProjectPolicy removes the policy: the child nodes of config/policy/repos
-// first, the shared node last (B5).
 //
 // etag is the one readPolicyNode returned for that first read — the node
 // refuseNewerPolicy saw, the one the in-flight check and the confirmation were
