@@ -104,7 +104,7 @@ workflows:
     resources: { cpu: 4, memory: 8Gi }
 ```
 
-Changing `image.apt` rebuilds the image: `fugaro image refresh` in the repository's checkout, in your own terminal window (or with `--yes` from CI; it is refused in a coding-agent session, and there is still no `--json` or `--plan-only`). Until that rebuild has run, a job still lacks the package and the render fails with `ffmpeg: not found`. The recipe side of this — `mode: artifact`, `steps`, `outputs` and the probe — is [artifact-runs.md](artifact-runs.md).
+Changing `image.apt` needs a rebuild, and the command for it is `fugaro image build` in the repository's checkout, in your own terminal window (it asks for the project's name typed there, and a coding-agent session never confirms one). **`fugaro image refresh` is not that rebuild:** refresh rebuilds a workflow only when the base image the workflow was built from is not the one the config pins now — it reads the build record's `base_ref` and never the image config (`refreshVerdict`, `internal/cli/image_refresh_rules.go`) — so on a repository already built from the current base it prints `current: built from …`, submits no Cloud Build, and the package never arrives. Until a rebuild from the changed config has run, a job still lacks the package and the render fails with `ffmpeg: not found`. The recipe side of this — `mode: artifact`, `steps`, `outputs` and the probe — is [artifact-runs.md](artifact-runs.md).
 
 ## When `image:` is not enough: a Dockerfile
 

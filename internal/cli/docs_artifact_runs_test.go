@@ -175,6 +175,12 @@ func TestChecklistHasCheck58(t *testing.T) {
 		"ref_or_stop",
 		"step_guard",
 		"at_pushed_head",
+		// A key the record does not hold is an error, not an empty value:
+		// `sed -n` alone exits 0 with nothing, and every refusal below is
+		// spelled as an exit status. Without this line `ref_or_stop` and
+		// `revert_once` only refuse a *missing record file*, which is not what
+		// the section says they do.
+		`[ -n "$v" ] || return 1`,
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 58 does not carry the record-file rule %q", want)
@@ -211,18 +217,38 @@ func TestChecklistHasCheck58(t *testing.T) {
 		}
 	}
 
-	// 6. The reverts. Exactly one `git revert` in the whole section, and it
-	// is the guarded one: the SHA comes out of the attempt record, a missing
-	// record refuses, and an already-reverted commit is a no-op. An
-	// unguarded `git revert --no-edit HEAD` in the Restore fails here.
+	// 5b. The rebuild that bakes `image.apt` in is `fugaro image build`, and
+	// the check must not send the owner to `fugaro image refresh` instead.
+	// refresh decides on the build record's `base_ref` alone
+	// (refreshVerdict, internal/cli/image_refresh_rules.go): on a sandbox
+	// already built from this release's base it prints `current: built from …`,
+	// submits no Cloud Build, and ffmpeg never arrives — so steps 2–7 would
+	// fail for a reason that is the check's own instruction.
+	if !strings.Contains(section, `fugaro image build --project fugaro --repo "${R:?}" --workflow "${W:?}"`) {
+		t.Error("Check 58 does not rebuild the workflow with `fugaro image build`, the command that carries an `image.apt` change")
+	}
+	for _, line := range strings.Split(section, "\n") {
+		s := strings.TrimSpace(line)
+		if strings.HasPrefix(s, "fugaro image refresh") || strings.Contains(s, "&& fugaro image refresh") {
+			t.Errorf("Check 58 rebuilds with `fugaro image refresh`, which ignores the image config: %q", s)
+		}
+	}
+
+	// 6. The reverts. Exactly one `git revert` *command* in the whole section,
+	// and it is the guarded one: the SHA comes out of the attempt record, a
+	// missing record refuses, and an already-reverted commit is a no-op. An
+	// unguarded `git revert --no-edit HEAD` in the Restore fails here. A line
+	// that only talks about reverting — a comment, or the refusal message that
+	// names `git revert --continue` as the way out — is not a command.
 	reverts := 0
 	for _, line := range strings.Split(section, "\n") {
-		if !strings.Contains(line, "git revert") {
+		s := strings.TrimSpace(line)
+		if !strings.HasPrefix(s, "git revert") {
 			continue
 		}
 		reverts++
-		if !strings.Contains(line, `git revert --no-edit "${c:?}"`) {
-			t.Errorf("Check 58 has an unguarded revert: %q", strings.TrimSpace(line))
+		if !strings.Contains(s, `git revert --no-edit "${c:?}"`) {
+			t.Errorf("Check 58 has an unguarded revert: %q", s)
 		}
 	}
 	if reverts != 1 {
@@ -249,7 +275,14 @@ func TestChecklistHasCheck58(t *testing.T) {
 	for _, want := range []string{
 		"git status --porcelain",
 		"rec_has commit_5801 ||",
-		`for key in $(rec_commit_keys); do revert_once "$key" || exit 1; done`,
+		// NEWEST FIRST: `git revert` is a 3-way merge, so reverting step 1's
+		// commit while a later one touching the same `fugaro.yaml` lines still
+		// stands conflicts — the half-finished attempt this Restore exists for.
+		// The order is pinned here, and so is the refusal that names the step
+		// that would not revert.
+		"keys=$(rec_commit_keys | awk ",
+		"for key in $keys; do",
+		`revert_once "$key" || { echo "Check 58 stopped: the step tagged ${key} did not revert`,
 		`git push origin "$(rec_get base_branch)"`,
 	} {
 		if !strings.Contains(strings.Join(blocks[restore], "\n"), want) {
