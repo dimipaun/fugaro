@@ -83,7 +83,7 @@ import type {
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import { validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
-import { CliSource, createInstallationStore } from '../../src/source/cli'
+import { CliSource, MAX_LIVE_FEEDS, createInstallationStore } from '../../src/source/cli'
 import { SourceRefusal, handlersFor } from '../../src/source/source'
 import { installStub } from './stub'
 import type { Stub } from './stub'
@@ -1331,6 +1331,38 @@ describe('the live subscription', () => {
     await source.close()
     await waitFor(() => stub.kills().length === 2)
     expect(stub.kills().map((kill) => kill.signal)).toEqual(['SIGTERM', 'SIGTERM'])
+  })
+
+  it('keeps at most MAX_LIVE_FEEDS children, stopping the least recently used', async () => {
+    // Every distinct valid repository is a distinct argv, so a renderer that
+    // walked through repositories used to start one `fugaro watch` per name and
+    // keep every one of them until quit.
+    expect(MAX_LIVE_FEEDS).toBe(4)
+    const stub = installStub(freshDirectory(), {
+      commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
+    })
+    const source = await liveSource(stub)
+    const repos = ['acme/a', 'acme/b', 'acme/c', 'acme/d']
+    const feeds = repos.map((repo) => source.subscribeLive({ repo }))
+    await Promise.all(feeds.map((feed) => feed.current()))
+    // `acme/a` is used again, so `acme/b` is now the least recently used.
+    expect(source.subscribeLive({ repo: 'acme/a' })).toBe(feeds[0])
+    let evicted: string | null = null
+    feeds[1]?.onEnded((end) => {
+      evicted = end.reason
+    })
+    const fifth = source.subscribeLive({ repo: 'acme/e' })
+    await fifth.current()
+    await waitFor(() => evicted !== null)
+    expect(evicted).toBe('stopped')
+    await waitFor(() => stub.kills().length === 1)
+    expect(stub.kills()[0]?.argv).toContain('acme/b')
+    expect(watchSpawns(stub)).toBe(5)
+    // The evicted subscription is a fresh child when it is asked for again.
+    expect(source.subscribeLive({ repo: 'acme/b' })).not.toBe(feeds[1])
+    await waitFor(() => watchSpawns(stub) === 6)
+    await source.close()
+    await waitFor(() => stub.kills().length === 6)
   })
 
   it('answers every overlapping current() with the same first frame', async () => {

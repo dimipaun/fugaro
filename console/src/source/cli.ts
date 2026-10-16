@@ -81,6 +81,15 @@ import type {
  */
 export const FIRST_FRAME_BUDGET_MS = 15_000
 
+/**
+ * MAX_LIVE_FEEDS is how many `fugaro watch` children one source keeps at once.
+ * A subscription is keyed by its argv, so every distinct valid repository is a
+ * distinct child; without a ceiling a renderer that walked through repositories
+ * would leave one process per name running until quit. Past this many, the
+ * least recently used feed is stopped (its child gets `SIGTERM`) and dropped.
+ */
+export const MAX_LIVE_FEEDS = 4
+
 /** CliSourceOptions is everything a v1 source is built from. `appEnv` is the
  * app's own environment, used for `HOME`, `TMPDIR`, `LANG`/`LC_ALL`, the five
  * `XDG_*` variables and binary resolution -- and for nothing else, because
@@ -230,12 +239,27 @@ export class CliSource implements FugaroSource {
    * not are two -- a second repository is legitimately a second `watch`. A feed
    * that has *ended* is removed, so the call after a refusal starts a fresh
    * child rather than handing back a dead stream.
+   *
+   * At most `MAX_LIVE_FEEDS` feeds are kept: the map is in recency order (a hit
+   * moves its entry to the end), and a new subscription past the ceiling stops
+   * the oldest one first.
    */
   subscribeLive(args: ValidatedArguments): LiveFeed {
     const plan = this.#plan('live.watch', args)
     const key = plan.argv.join('\u0000')
     const live = this.#feeds.get(key)
-    if (live !== undefined) return live
+    if (live !== undefined) {
+      this.#feeds.delete(key)
+      this.#feeds.set(key, live)
+      return live
+    }
+    while (this.#feeds.size >= MAX_LIVE_FEEDS) {
+      const oldest = this.#feeds.entries().next().value
+      if (oldest === undefined) break
+      const [oldestKey, oldestStream] = oldest
+      this.#feeds.delete(oldestKey)
+      void oldestStream.stop()
+    }
 
     const stream = new LiveStream(plan, {
       ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
