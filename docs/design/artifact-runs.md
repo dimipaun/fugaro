@@ -1334,59 +1334,23 @@ produced (out), and files an operator handed to a model-driven job (in).
    refuse a launch, and says so (D9). The line is printed on the `warn` writer,
    once per launch, **only when `--attach` carried a file**, exactly where the
    other launch notes go.
-9. **`SECURITY.md` must be extended, and this is the exact text this design
-   commits to.** In **"### The assumption"** (`SECURITY.md:17-19`), the
-   paragraph after the existing one:
+9. **`SECURITY.md` carries this text, and this block is kept equal to it.**
+   **The file is the source of the wording:** where the two disagree, the shipped
+   `SECURITY.md` wins and this block is corrected to it, not the other way round
+   (the four-paragraph shape below is what shipped; the review that produced it
+   is also why the third paragraph names symbols rather than `runner.go` line
+   numbers — those had drifted — and why the first says the render is repository
+   text read once and is not a boundary against the agent). It goes in
+   **"### The assumption"** (`SECURITY.md:21-27`), as the paragraph after the
+   existing one:
 
-> **A run may also be given files, and may also be asked for one.** An
-> artifact run (`docs/design/artifact-runs.md`) has no git token and no pull
-> request: it is handed files the launcher attached, and it leaves files in
-> the runs bucket instead. Two consequences follow, and neither is a sandbox.
-> **In:** an attached file is trusted exactly as much as the task text, since
-> the agent reads it and can act on what is in it — a screenshot can contain a
-> token, a customer's name or someone's face, and an operator who attaches a
-> file they did not write has handed the agent that content as an instruction.
-> **Out:** an artifact is output of the same unsandboxed agent, written to
-> `runs/<slug>/<run>/artifacts/` under this repository's job account — the
-> account a run of this repository runs as; there is no per-run account — so
-> every launcher and every operator of the installation can read it
-> (a launcher holds `objectViewer` on the whole bucket, an operator
-> `objectAdmin`), every run of the same repository can read and overwrite it
-> (the account is scoped to the repository's prefix, not to one run), and it
-> is deleted with the rest of the run's record after 90 days by default.
-> Nothing about an artifact is trusted: `fugaro artifacts get` verifies the
-> sha256 recorded by the run, refuses a mismatch, never opens, executes or
-> unpacks what it writes, and downloads into a **fresh directory it creates**
-> (never `.`) — so a crafted name in a tampered record cannot land a
-> `.git/hooks/` or `.claude/` file in a checkout you are working in. That hash is **integrity in transit, not tamper
-> evidence**: it and the artifact live in the same repository-scoped prefix, so
-> anything that can rewrite one can rewrite the other — including another run of
-> the same repository. Tampering is not detectable today; what is guaranteed is
-> that the bytes you receive are the bytes the run uploaded.
+> **A run may also be given files, and may also be asked for one.** An artifact run (`docs/design/artifact-runs.md`) has no git token and no pull request: it is handed files the launcher attached, and it leaves files in the runs bucket instead. Two consequences follow, and neither is a sandbox. **In:** an attached file is trusted exactly as much as the task text, since the agent reads it and can act on what is in it — a screenshot can contain a token, a customer's name or someone's face, and an operator who attaches a file they did not write has handed the agent that content as an instruction. **Out:** an artifact is output of the same unsandboxed agent, written to `runs/<slug>/<run>/artifacts/` under this repository's job account — the account a run of this repository runs as; there is no per-run account — so every launcher and every operator of the installation can read it (a launcher holds `objectViewer` on the whole bucket, an operator `objectAdmin`), every run of the same repository can read and overwrite it (the account is scoped to the repository's prefix, not to one run), and it is deleted with the rest of the run's record after 90 days by default. Nothing about an artifact is trusted: `fugaro artifacts get` verifies the sha256 recorded by the run, refuses a mismatch, never opens, executes or unpacks what it writes, and downloads into a **fresh directory it creates** (never `.`) — so a crafted name in a tampered record cannot land a `.git/hooks/` or `.claude/` file in a checkout you are working in. **And what produces it is repository text read once, which is not a boundary against the agent:** `commands.render` and `commands.probe` are the repository's own commands, kept in the runner's in-memory workflow configuration rather than re-read from a file the run itself can write, so the command string that ran is the string a reviewer read at the task's ref — but the plan stage and the render step are the same container, the same user and the same environment, so a render command that names a file in the checkout runs **that file's working-tree bytes**, which the plan stage could have rewritten, no more and no less than every other file in a checkout the agent controls.
 >
-> **The render step runs with the run's own environment, secrets included.**
-> `commands.render` executes as the agent's user with the agent's environment
-> (`internal/runner/runner.go:1091-1099`, gated on `!r.review`), so a workflow's
-> secrets are visible to it — that is deliberate and is why an artifact recipe
-> must not be handed to an untrusted repository. It also means a render command
-> can write a secret into a deliverable, and the deliverable is readable by
-> everyone the paragraph above names.
+> That hash is **integrity in transit, not tamper evidence**: it and the artifact live in the same repository-scoped prefix, so anything that can rewrite one can rewrite the other — including another run of the same repository. Tampering is not detectable today; what is guaranteed is that the bytes you receive are the bytes the run uploaded.
 >
-> **Today that "everyone" stops at this repository, and that boundary is a
-> precondition, not a property of artifacts.** An artifact run's account is the
-> repository's job account, so only runs *of this repository* can read or
-> overwrite its deliverables. Project-centric phase 3's shared project jobs and
-> the VM backend's accounts are **not** per-repository: on either of them the
-> same run's inputs, artifacts and record would be readable and overwritable by
-> **every run on the profile**. Because that blast radius has not been reviewed,
-> **an artifact-producing run stays on the plain per-repository Cloud Run
-> backend until a per-run prefix condition or a per-run account exists**
-> (`docs/design/artifact-runs.md` §8.5, D11). **No code in this slice enforces
-> that, and this document does not claim it does**: it is a decision about when
-> artifact runs may be *enabled* on those backends, and the plan that does so
-> must bring the per-run boundary with it. Until then an artifact run is only
-> ever launched on the per-repository Cloud Run backend this installation uses
-> today.
+> **The render step runs with the run's own environment, secrets included.** `commands.render` executes as the agent's user with the agent's environment, so a workflow's secrets are visible to it — that is deliberate and is why an artifact recipe must not be handed to an untrusted repository. The runner builds the workflow's secret names into that environment only when `!r.review` (the `secretEnvs` block in `internal/runner/runner.go`), hands the result to `r.env` via `agent.BuildEnv`, and `runRender` in `internal/runner/artifact.go` starts the command with `Env: r.env`. It also means a render command can write a secret into a deliverable, and the deliverable is readable by everyone the paragraph above names.
+>
+> **Today that "everyone" stops at this repository, and that boundary is a precondition, not a property of artifacts.** An artifact run's account is the repository's job account, so only runs *of this repository* can read or overwrite its deliverables. Project-centric phase 3's shared project jobs and the VM backend's accounts are **not** per-repository: on either of them the same run's inputs, artifacts and record would be readable and overwritable by **every run on the profile**. Because that blast radius has not been reviewed, **an artifact-producing run stays on the plain per-repository Cloud Run backend until a per-run prefix condition or a per-run account exists** (`docs/design/artifact-runs.md` §8.5, D11). **No code in this slice enforces that, and this document does not claim it does**: it is a decision about when artifact runs may be *enabled* on those backends, and the plan that does so must bring the per-run boundary with it. Until then an artifact run is only ever launched on the per-repository Cloud Run backend this installation uses today.
 
    And in **"Known limits"**, one bullet:
 
@@ -1700,7 +1664,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | U3 | The container's own filesystem: the platform's model is an in-memory filesystem with no volumes (**not stated anywhere in this repository** — this design takes the platform's documented behaviour, not a repo fact), so what a render's temp files do to the job's memory, and **what an OOM kill looks like from outside** (a run with no `result.json`, or a recorded failure?) is unverified | Check 58 step 7's third half: a render driven past the container's memory, observed and written down |
 | U4 | Whether a Cloud Run job's `resources` may be raised on a *running* job's future executions without a new job (it cannot today: the resources are in the job spec) | an owner-run `gcloud run jobs update` on the sandbox; it affects only the docs' "raise the ceiling" advice |
 | U5 | Whether content-type sniffing is needed at all in practice (what the object store reports for a `.mp4` written by ffmpeg on the base image) | Check 58 step 5's recorded type |
-| U6 | The real wall-clock of the upload inside `finalize_reserve` for a file near `max_bytes` | Check 58 step 6, plus the cap's own default choice |
+| U6 | The real wall-clock of the upload inside `finalize_reserve` for a file near `max_bytes` | Check 58 step **6b** — a render-only recipe whose two artifacts are written at exactly `outputs.max_bytes`, because step 6's own set is a few megabytes per file and never reaches that size — plus the cap's own default choice |
 
 ## 13. Open for the owner
 
