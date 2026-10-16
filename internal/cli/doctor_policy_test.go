@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -354,6 +355,35 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// operator to redeploy on a credential problem would be a guess.
 		if strings.Contains(c.Problem, "older than the marker") {
 			t.Errorf("the unreadable-rules note claims the deployed rules are stale: %+v", c)
+		}
+	})
+
+	t.Run("this Fugaro cannot generate its own rules", func(t *testing.T) {
+		// The comparison needs the rules this binary would write, and
+		// doctorRulesSkew folded a failure to generate them into its no-skew
+		// branch: nothing was reported, which is indistinguishable from a check
+		// that was made and found the deployed rules current, while
+		// internal/infra (firebasedb.go) propagates the same error. The
+		// template is embedded, so no test can break it from the outside —
+		// rulesGenerate is the seam.
+		doctorPolicyRig(t, doctorPolicy(nil), "")
+		rulesGenerate = func() ([]byte, error) { return nil, errors.New("the template is not JSON") }
+		t.Cleanup(func() { rulesGenerate = rules.Generate })
+		checks := doctorChecksByID(t)
+		c, ok := checks["policy-rules-skew"]
+		if !ok {
+			t.Fatalf("policy-rules-skew did not fire though this Fugaro could not generate the rules it would compare against, so doctor reported the installation as having no skew: %+v", checks)
+		}
+		if c.Severity != "info" {
+			t.Errorf("policy-rules-skew carries severity %q, want the info note this file's other checks-that-could-not-be-made carry: %+v", c.Severity, c)
+		}
+		if !strings.Contains(c.Problem, "could not be generated") || !strings.Contains(c.Problem, "whether") {
+			t.Errorf("the note does not say that the rules could not be generated and what that leaves unknown: %+v", c)
+		}
+		// It is not the skew: the deployed rules were read and were not
+		// compared, so the operator must not be sent to redeploy them.
+		if strings.Contains(c.Problem, "older than the marker") {
+			t.Errorf("the note claims the deployed rules are stale: %+v", c)
 		}
 	})
 

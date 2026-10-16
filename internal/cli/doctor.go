@@ -1751,14 +1751,34 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			Problem: fmt.Sprintf("the deployed rules could not be read (%v), so whether %s is the generation this Fugaro reads a project policy under, and whether the policy it carries is the one deployed, is unknown", err, marker),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}
-	want, err := rules.Generate()
-	if err != nil || infra.SameJSON(live, want) {
+	want, err := rulesGenerate()
+	if err != nil {
+		// The rules this Fugaro would generate are what the comparison needs,
+		// and not generating them is not "the rules are current": folding this
+		// into the no-skew branch below reported nothing at all, which reads
+		// exactly like a check that was made and found no skew (the review
+		// finding on this change). It is the unreadable-read case's sibling —
+		// doctor cannot tell whether the deployed rules are the generation this
+		// Fugaro reads a project policy under — so it is the same info note,
+		// naming what failed.
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
+			Problem: fmt.Sprintf("the rules this Fugaro would generate could not be generated (%v), so whether the deployed rules are the generation this Fugaro reads a project policy under, and whether the policy they carry is the one deployed, is unknown", err),
+			Fix:     fmt.Sprintf("this binary's embedded rules template is broken, so nothing can be said about %s; report it, and check the installation with a release build (fugaro doctor from one)", marker)}}
+	}
+	if infra.SameJSON(live, want) {
 		return nil
 	}
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
 		Fix:     fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
 }
+
+// rulesGenerate is rules.Generate, indirect so a test can drive the branch
+// that reads its error: the template is embedded in the binary, so no test can
+// break it from the outside, and a failure means this build's own rules cannot
+// be produced — which doctor must report rather than read as "no skew" (the
+// review finding on this change).
+var rulesGenerate = rules.Generate
 
 // emptyPolicyNode reports whether a node read back from the database is JSON
 // null or empty: both the fake and the real database report an absent node as
