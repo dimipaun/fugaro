@@ -88,10 +88,13 @@
 //     (config.CheckRouting, validRouting), and the member names encoding/json
 //     reads them by are held to their spelling (CheckRoutingMemberNames),
 //     because a name those checks do not read is not a value anything refuses —
-//     it is a value nothing looked at. routing is decoded and validated and
-//     not applied: phase 1b is what reads it, so an ignored key inside the
-//     block changes no run today, and these checks are what protect the reader
-//     that will read it.
+//     it is a value nothing looked at. routing is decoded and validated here
+//     and applied by the run that reads it: internal/runner's applyRouting
+//     rewrites the run's Claude pins from the switch the block names (Task
+//     1b.2), so what the tolerance above costs is a member nothing acts on
+//     rather than a switch that does nothing — and these checks are what
+//     protect that reader, because nothing acts on the block before they have
+//     judged it.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -127,7 +130,7 @@ type Policy struct {
 	AllowRepos []string            `json:"allow_repos"`
 	Providers  map[string]Provider `json:"providers,omitempty"`
 	Prices     Prices              `json:"model_prices,omitempty"` // the owner's price overrides, keyed by model ID (Prices documents the node's own spelling)
-	Routing    *Routing            `json:"routing,omitempty"`      // phase 1b writes it; nil = direct (D1b)
+	Routing    *Routing            `json:"routing,omitempty"`      // the run applies it (internal/runner's applyRouting); nil = direct (D1b)
 
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
@@ -233,8 +236,11 @@ type PriceTier struct {
 	OutputPerM       *float64 `json:"output_per_m"`
 }
 
-// Routing is phase 1b's routing layer (D1a: an object, not a scalar). nil is
-// today's behaviour, direct (D1b).
+// Routing is phase 1b's routing layer (D1a: an object, not a scalar), and this
+// release applies it: internal/runner's applyRouting rewrites the run's Claude
+// pins from the switch before any consumer reads them, so the block decides
+// where a routed call goes and what it costs. nil is today's behaviour, direct
+// (D1b).
 //
 // It is config.Routing, aliased rather than respelled, for the reason Provider
 // embeds config.ModelProvider: one document, one declaration. The switch is

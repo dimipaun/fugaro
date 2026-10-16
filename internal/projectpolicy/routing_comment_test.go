@@ -10,11 +10,17 @@ import (
 // both halves of that were misstated in this package's own prose: the package
 // doc said routing's tolerance "cannot fail open" and that validRouting
 // "refuses a block this Fugaro cannot act on" (it refuses one *value*), and
-// validRouting's own comment said "routing is enforced" — which nothing does.
-// The runner decodes the block with the rest of the policy and acts on none of
-// it; internal/cli preserves it byte-for-byte (patchPolicyJSON) and prints it.
-// Phase 1b is what applies it. A comment that says otherwise is what a reader
-// trusts when they decide whether a key they added to `routing` takes effect.
+// validRouting's own comment said "routing is enforced" — which nothing did
+// while the block was inert. The other direction is the mistake the first
+// correction left behind: the prose that said the runner "acts on none of it"
+// and that "phase 1b is what applies it" describes this release as the one
+// before it. The run *does* apply the switch — internal/runner's applyRouting
+// rewrites its Claude pins from it before any consumer reads them (Task 1b.2,
+// design §6.2) — and internal/cli writes the block from the operator's config
+// (patchPolicyJSON, `project policy publish`). A comment that says otherwise is
+// what a reader trusts when they decide whether a key they added to `routing`
+// takes effect: they publish a switch believing their Claude calls still go
+// direct, and nothing tells them they do not.
 //
 // #414 sharpened what the tolerance is: an unknown member of the block is
 // ignored only while the block still names a `claude` switch — a block that
@@ -41,13 +47,18 @@ func TestRoutingCommentsMatchTheCode(t *testing.T) {
 	for _, bad := range []string{
 		"routing is enforced",
 		"which refuses a block this Fugaro cannot act on",
+		// The stale half: the run applies the switch (internal/runner's
+		// applyRouting), so the document may not say that nothing does.
+		"not applied: phase 1b is what reads it",
+		"phase 1b is what applies it",
+		"acts on none of it",
 		// The unqualified form: the tolerance is conditional on the block
 		// naming a switch, and validRoutingMembers refuses one that names none
 		// (the test below decodes both).
 		"unknown keys inside `routing` are ignored",
 	} {
 		if strings.Contains(text, bad) {
-			t.Errorf("policy.go still claims %q: an unknown member of routing is ignored only beside a written `claude`, a block naming no `claude` switch is refused (validRoutingMembers), and nothing applies the block yet", bad)
+			t.Errorf("policy.go still claims %q: an unknown member of routing is ignored only beside a written `claude`, a block naming no `claude` switch is refused (validRoutingMembers), and the run applies the block (internal/runner's applyRouting)", bad)
 		}
 	}
 	for _, want := range []string{
@@ -57,11 +68,11 @@ func TestRoutingCommentsMatchTheCode(t *testing.T) {
 		"CheckRoutingMemberNames",
 		// Where the switch's values are judged.
 		"config.CheckRouting",
-		// Why tolerating anything there is not a live risk in this release.
-		"not applied",
+		// Where the block is applied, which this release does.
+		"internal/runner's applyRouting",
 	} {
 		if !strings.Contains(text, want) {
-			t.Errorf("policy.go no longer says %q about routing: the merged code refuses a block that names no `claude` switch (validRoutingMembers), checks the switch's names (CheckRoutingMemberNames) and values (config.CheckRouting), and phase 1b is what applies the block", want)
+			t.Errorf("policy.go no longer says %q about routing: the merged code refuses a block that names no `claude` switch (validRoutingMembers), checks the switch's names (CheckRoutingMemberNames) and values (config.CheckRouting), and the run applies the block (internal/runner's applyRouting, Task 1b.2)", want)
 		}
 	}
 
