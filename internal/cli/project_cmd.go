@@ -1965,6 +1965,27 @@ func admittedBy(allow []string, arg string) (bool, string) {
 	return false, ""
 }
 
+// configRepo finds this machine's config entry for a bare owner/name, folding
+// case the way canonicalRepoArg does. The config's repos: map is keyed by the
+// operator's own spelling and the loader does not fold it, so the exact lookup
+// this used to be made `repos add Acme/App` refuse where
+// `repos add github/Acme/App` worked, although the doc above promises the
+// fold (the review finding on this change). The exact spelling is tried first,
+// so an entry the operator wrote with upper-case letters is read as written
+// where the argument is written the same way.
+func configRepo(lc *localcfg.Config, arg string) (localcfg.Repo, bool) {
+	if r, ok := lc.Repos[arg]; ok {
+		return r, true
+	}
+	folded := asciiLower(arg)
+	for name, r := range lc.Repos {
+		if asciiLower(name) == folded {
+			return r, true
+		}
+	}
+	return localcfg.Repo{}, false
+}
+
 // canonicalRepoArg is the operator's argument as a canonical allow-list
 // entry. A bare owner/name takes its provider from this machine's config
 // (repos: is keyed by owner/name); anything else must already be canonical,
@@ -1972,7 +1993,11 @@ func admittedBy(allow []string, arg string) (bool, string) {
 // has (a nested group is a repository path like any other). Upper-case letters
 // are folded — ASCII only, and a concrete name goes through
 // projectpolicy.Canonical — so the entry written is one the runner's own
-// canonical form could have produced.
+// canonical form could have produced. The config lookup folds with the rest
+// (configRepo): the repos: map is keyed by the operator's own spelling, which
+// this does not require to be lower-case, so `acme/app` and `Acme/App` find
+// each other's entry instead of the second spelling refusing on a
+// case-sensitive lookup.
 func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	if arg == "*" {
 		// The allow-list's own entry for every repository — the design's
@@ -1989,7 +2014,7 @@ func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	}
 	parts := strings.Split(arg, "/")
 	if len(parts) == 2 {
-		r, ok := lc.Repos[arg]
+		r, ok := configRepo(lc, arg)
 		if !ok || r.Provider == "" {
 			return "", userErr("%q is not a repository this machine's config lists (its provider would come from there), so name it canonically: provider/owner/name, as in \"github/acme/app\" or \"bitbucket/acme/*\"", arg)
 		}

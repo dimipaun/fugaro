@@ -2027,6 +2027,56 @@ func TestProjectReposEditANestedRepository(t *testing.T) {
 	}
 }
 
+// TestProjectReposEditFoldsTheConfigLookupToo: the bare owner/name spelling
+// takes its provider from this machine's config, and this command folds
+// upper-case letters everywhere else (github/Acme/App is written
+// github/acme/app). The lookup itself was case-sensitive — lc.Repos is keyed by
+// the operator's own spelling — so `repos add Acme/App` was refused where
+// `repos add github/Acme/App` worked, for the same repository (the review
+// finding on this change). Both spellings of both shapes resolve now, and the
+// entry written is the canonical one either way.
+func TestProjectReposEditFoldsTheConfigLookupToo(t *testing.T) {
+	// The config lists this repository with upper-case letters, so the fold has
+	// to work in both directions: the argument folded to the config's spelling
+	// and the config's spelling folded to the argument's.
+	f := newProjectFixture(t, "  Acme/Mixed: { provider: github, workflows: [web] }\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{"Acme/Mixed", "acme/mixed", "ACME/MIXED"} {
+		out, _, err := execute(t, "project", "repos", "add", arg)
+		if err != nil {
+			t.Fatalf("repos add %s = %v: the config lookup is folded like the rest of the argument", arg, err)
+		}
+		allow := publishedPolicy(t, f).AllowRepos
+		if !slices.Contains(allow, "github/acme/mixed") {
+			t.Fatalf("repos add %s wrote %v, want the canonical entry github/acme/mixed", arg, allow)
+		}
+		if arg == "Acme/Mixed" {
+			// The first add is the one that writes: the line names the entry
+			// the operator's spelling resolved to.
+			if want := "github/acme/mixed"; !strings.Contains(out, want) {
+				t.Errorf("the diff for %s does not name %s:\n%s", arg, want, out)
+			}
+		}
+	}
+	// The fully canonical spelling of the same repository is the same entry,
+	// not a second one: whatever the spelling, what is written is canonical.
+	if _, _, err := execute(t, "project", "repos", "add", "GITHUB/Acme/Mixed"); err != nil {
+		t.Fatal(err)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	n := 0
+	for _, e := range allow {
+		if e == "github/acme/mixed" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("allow_repos = %v, want exactly one github/acme/mixed entry", allow)
+	}
+}
+
 // TestProjectPolicyPublishDiffNamesProvidersAndRates: the diff is the only
 // place an operator reads what a publish replaces, so it prints every value
 // about money and data sharing field by field — a changed base_url, a widened
