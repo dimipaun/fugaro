@@ -203,13 +203,19 @@ func TestMatchRepoReadsAStarInTheSubject(t *testing.T) {
 }
 
 func TestValidPattern(t *testing.T) {
-	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*", "bitbucket/group/sub/app"} {
+	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*"} {
 		if err := ValidPattern(ok); err != nil {
 			t.Errorf("ValidPattern(%q) = %v, want nil", ok, err)
 		}
 	}
 	for _, bad := range []string{"", "acme/*", "github", "github/acme", "GitHub/acme/app", "github/acme/app.git", "github/acme/a b", "github//app", "github/acme/",
-		"github/../app", "github/./app", "github/acme/..", "github/acme/."} {
+		"github/../app", "github/./app", "github/acme/..", "github/acme/.",
+		// A canonical repository is provider/owner/name, and MatchRepo
+		// compares segment against segment (a "*" never crosses a "/"), so a
+		// longer path can never match one: it is a typo that would silently
+		// admit nothing rather than the nested group it looks like (the
+		// review finding on this change).
+		"bitbucket/group/sub/app", "github/acme/app/extra"} {
 		if err := ValidPattern(bad); err == nil {
 			t.Errorf("ValidPattern(%q) = nil, want an error", bad)
 		}
