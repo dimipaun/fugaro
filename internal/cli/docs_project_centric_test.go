@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -318,7 +319,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 		`jobs/${SANDBOX_JOB:?}:run`,
 		`OPERATION=$(jq -r '.name // empty' "${CHK52_TMP:?}/run-a.json")`,
 		`jq -r '.metadata.name // empty'`,
-		`internal/backend/gcp/run.go:103-107`,
+		`internal/backend/gcp/run.go:118-129`,
 		`"value":"plain-literal"`,
 		// A refusal is an answer, not a stop: (a) branches on the API's error
 		// so (b), (c), U3 and U4 still run, and nothing aborts on a missing
@@ -345,6 +346,12 @@ func TestChecklistHasCheck52(t *testing.T) {
 		"the base image's `CMD [\"fugaro\", \"exec\"]` (`images/base/Dockerfile:293`)",
 		"the failure of these executions' own tasks recorded as the expected outcome, not as the answer",
 	})
+
+	// The section's code citations, resolved against the tree at the line each
+	// one names: the response's Operation metadata is read by the backend at
+	// gcp/run.go:118-129, and a drift there is a reader sent to code that is
+	// not the field the step reads back.
+	checkCitations(t, section, "Check 52 section", chk52Citations)
 	if strings.Contains(section, `jq -c '{status, code:`) {
 		t.Error("the Check 52 section prints the refusal's status from the response's top level, where it is null: the API's error body carries it inside .error")
 	}
@@ -630,7 +637,12 @@ func commandLines(section string, verbs ...string) []string {
 // "no other repository's run started" FACT deleted; and each of the stale
 // citations (doctor.go:748, cloud.go:53, runner.go:797, gcp/run.go:82-98,
 // upgrade_cloud.go:162, run.go:441 — the last a number that belongs to no
-// citation at all, since launchPolicyGates is called at run.go:449) put back.
+// citation at all, since launchPolicyGates is called at run.go:473) put back;
+// and the citations the second review found drifted (run.go:507 for the
+// missing-task message, run.go:449 for the allow-list gate, runner.go:863 and
+// :922, runstore.go:411 and :405, policy.go:203 and :261-264, run.go:817-823,
+// runner.go:992, upgrade_cloud.go:166, project.go:461, gcp/run.go:87) put
+// back — chk49Citations is what holds their replacements to the tree.
 func TestChecklistHasCheck49(t *testing.T) {
 	const path = "../../docs/gcp-live-checklist.md"
 	data, err := os.ReadFile(path)
@@ -730,16 +742,15 @@ func TestChecklistHasCheck49(t *testing.T) {
 
 	// Step 6(b)'s admissionCheck citation, and it has to be pinned as the
 	// PHRASE: the section spells the first number of that sentence out as
-	// `internal/runner/runner.go:863` and abbreviates the second to `(:922)`,
-	// so the full-path entry in the absent list below cannot catch it — the
-	// string `internal/runner/runner.go:862` occurs nowhere in the section.
-	// Verified by mutation: rewriting the citation back to `(:862)` leaves a
-	// full-path-only guard passing, and fails this one.
+	// `internal/runner/runner.go:883` and abbreviates the second to `(:951)`,
+	// so a full-path guard alone cannot hold the abbreviation. The number is
+	// resolved against the tree in chk49Citations below as well, so a drift in
+	// the file — not just in the sentence — fails here.
 	chk49MustContain(t, chk49Step(t, section, "**(b) The run's own.**"), "step 6(b)", []string{
-		"`admissionCheck` ever runs (`:922`)",
+		"`admissionCheck` ever runs (`:951`)",
 	})
 	if strings.Contains(section, "`admissionCheck` ever runs (`:862`)") {
-		t.Error("the Check 49 section's step 6(b) cites :862 for admissionCheck: the merge with next moved the call to :922, and :862 is now `func (r *run) bootstrap(...)`")
+		t.Error("the Check 49 section's step 6(b) cites :862 for admissionCheck: the call is at :951 on this tree (`admissionCheck(ctx)` in the run's own start), and :862 is inside openCheckout")
 	}
 
 	// Step 6, both ways: no key of fugaro.yaml names a repository, so the
@@ -956,11 +967,11 @@ func TestChecklistHasCheck49(t *testing.T) {
 	})
 
 	// Every `fugaro run` carries the block's TASK. A launch with no task is
-	// refused at run.go:220, before openCloud and long before the allow-list
-	// gate at run.go:449 (`launchPolicyGates`; :441 is a comment inside
-	// budgetPrecheck's block, which is the stale number the section is checked
-	// against below), so a bare `fugaro run` in step 3, 5, 6(a), 7 or 8 never
-	// reaches what the step is there to produce.
+	// refused at run.go:220, before openCloud (:229) and long before the
+	// allow-list gate at run.go:473 (`launchPolicyGates`; :441 is a comment
+	// inside budgetPrecheck's block, which is the stale number the section is
+	// checked against below), so a bare `fugaro run` in step 3, 5, 6(a), 7 or 8
+	// never reaches what the step is there to produce.
 	chk49MustContain(t, section, "section", []string{
 		"TASK='Do not change any file and do not open a pull request. Reply with the single word ok.'",
 		"Every `fugaro run` below carries a task, and it has to",
@@ -973,7 +984,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 	})
 	// Every run names the sandbox's base branch, and it is `master`: the
 	// sandbox repository has no `main` (deploy/sandbox/fugaro.yaml), and --ref
-	// is carried into the job verbatim (run.go:817-823) and fetched by the
+	// is carried into the job verbatim (run.go:589-594) and fetched by the
 	// runner (gitops.go:239), so a run pointed at a branch that does not exist
 	// halts on the fetch. Checked as a property of every `fugaro run` line
 	// rather than as `--ref main` asserted absent, so any other wrong branch is
@@ -1075,14 +1086,30 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// the stop points at code a --plan-only run cannot execute.
 		"internal/cli/init_firebase.go:290",
 		// Step 6(b)'s admissionCheck. :862 was the call when the section was
-		// written and :922 is where the merge with next left it — the file grew
-		// above it, and :862 is now `func (r *run) bootstrap(...)`, which is the
-		// reader the same sentence cites at :863. The two numbers came from one
-		// reading of the file and only one of them was updated. This entry
-		// catches the citation only if it is ever written out in full; the
-		// section abbreviates it, and the phrase pin above step 6 is what
-		// actually holds it.
+		// written; the merge with next moved it twice (to :922, then to :951,
+		// where `admissionCheck(ctx)` is called in the run's own start), and
+		// :862 is now inside openCheckout. This entry catches the citation only
+		// if it is ever written out in full; the section abbreviates it, and
+		// the phrase pin above step 6 is what actually holds it.
 		"internal/runner/runner.go:862",
+		// The citations the second review found drifted: each pointed at
+		// unrelated code at HEAD after the merge with next moved the file under
+		// it. The replacements are resolved against the tree by
+		// chk49Citations; these entries keep the old numbers from coming back
+		// from the same reading that produced them.
+		"internal/cli/run.go:507",
+		"internal/cli/run.go:449",
+		"internal/cli/run.go:817-823",
+		"internal/runner/runner.go:863",
+		"internal/runner/runner.go:922",
+		"internal/runner/runner.go:992",
+		"internal/runner/project.go:461",
+		"internal/runner/policy.go:203",
+		"internal/runner/policy.go:261-264",
+		"internal/runstore/runstore.go:411",
+		"internal/runstore/runstore.go:405",
+		"internal/cli/upgrade_cloud.go:166",
+		"internal/backend/gcp/run.go:87",
 	} {
 		if strings.Contains(section, dead) {
 			t.Errorf("the Check 49 section cites %q, which does not point at what it says on this tree", dead)
@@ -1164,10 +1191,17 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// repository's stored task.
 	chk49MustContain(t, section, "section", []string{
 		"**`FUGARO_RUN` is `<repo-slug>/<run-id>`, both halves required.**",
-		"`internal/runstore/runstore.go:411`",
+		"`internal/runstore/runstore.go:416`",
 		"--update-env-vars FUGARO_RUN=not-this-jobs-slug-000000000000/20261015-000000-dead",
 		"a run id that names no run anywhere",
 	})
+
+	// Every citation the section makes in full is resolved against the tree,
+	// at the line it names: a number that drifts with a later merge fails here
+	// instead of leaving the owner on unrelated code. The section's two
+	// abbreviated citations — `(:229)` for openCloud and `(:951)` for
+	// admissionCheck — are held by the phrase pins above.
+	checkCitations(t, section, "Check 49 section", chk49Citations)
 
 	// No step handles a secret value: the check reads the rules' bytes, the
 	// node's version and the job environment's key *presence*, never a value.
@@ -1706,6 +1740,11 @@ func TestChecklistHasCheck50(t *testing.T) {
 		"never a value",
 	})
 
+	// The section's code citations, resolved against the tree at the line each
+	// one names. Check 50 is the section this PR writes, so its citations are
+	// the ones a reader of this PR follows.
+	checkCitations(t, section, "Check 50 section", chk50Citations)
+
 	// The numbering ruling names the number, so a later plan does not take it —
 	// and says Task 1b.3's output is not in the binary, so the section below
 	// does not claim an output this tree cannot produce.
@@ -1805,6 +1844,145 @@ func chk50MustContain(t *testing.T, got, part string, want []string) {
 	for _, w := range want {
 		if !strings.Contains(got, w) {
 			t.Errorf("the Check 50 section's %s is missing %q", part, w)
+		}
+	}
+}
+
+// chk49Citations are the code citations the Check 49 section makes in full.
+// Resolved against the tree by checkCitations: the merge with next moved several
+// of these files under the numbers the section carried, and a pin on the number
+// could not see it.
+var chk49Citations = []chkCitation{
+	{"internal/runner/policy.go:215", "func (r *run) policyCeiling"},
+	{"internal/cli/project_cmd.go:218", "func requirePolicyRules"},
+	{"internal/cli/run.go:220", "taskText(cmd, o.tf, args, prSet)"},
+	{"internal/cli/run.go:473", "launchPolicyGates(ctx, env, slug, spec)"},
+	{"internal/cli/run.go:531", "pass the task as TEXT or with --task-file (- for stdin)"},
+	{"internal/cli/run.go:589-594", "ref = c.Git.BaseBranch"},
+	{"internal/gitops/gitops.go:239", "\"fetch\", \"--quiet\", \"origin\", ref"},
+	{"internal/runner/runner.go:1021", "CheckoutNewBranch(ctx, spec.Ref, branch)"},
+	{"internal/cli/cloud.go:54", "\"project\", \"\", \"the Fugaro project"},
+	{"internal/cli/doctor.go:1448", "\"project: %s (GCP %s, %s)\\n\""},
+	{"internal/localcfg/select.go:163", "this checkout belongs to project"},
+	{"internal/cli/init.go:1285-1287", "planOnly"},
+	{"internal/cli/init_firebase.go:210-213", "r.installRoot(ctx, c, t, wd, lc, spec)"},
+	{"internal/cli/init_firebase.go:289", "r.applyRoot(ctx, ft, fwd, \"firebase\""},
+	{"internal/cli/init_firebase.go:474", "already has the rules"},
+	{"internal/cli/init_firebase.go:477-480", "\"The Firebase project %s:\\n\""},
+	{"internal/infra/firebasedb.go:222", "changes the mode"},
+	{"internal/cli/upgrade_cloud.go:221", "func jobConfigCopyNote"},
+	{"internal/cli/image_refresh_steps.go:241", "func (r *initRun) refreshCloneJobs"},
+	{"internal/cli/upgrade.go:85-110", "what fugaro update-skills does"},
+	{"internal/cli/init_repo_stage.go:163", "s.anchor(ctx, env, s.e.r.o.planOnly)"},
+	{"internal/cli/init_fugaroyaml.go:220", "\"Write this to %s? [y/N]: \""},
+	{"internal/cli/init_fugaroyaml.go:243", "func (s *repositoryStage) anchor"},
+	{"internal/projectpolicy/match.go:17", "func Canonical(provider, repo string)"},
+	{"internal/cli/project_cmd.go:352", "func allowSourcesOf"},
+	{"internal/runstore/runstore.go:410-413", "runRefRE"},
+	{"internal/runstore/runstore.go:416", "func ParseRef"},
+	{"internal/cli/exec.go:60", "os.Getenv(\"FUGARO_RUN\")"},
+	{"internal/runner/runner.go:883", "r.d.Store.ReadTask(ctx)"},
+	{"internal/backend/gcp/names.go:383", "func BucketCondition"},
+	{"internal/runner/project.go:650", "The run stops before any lease exists"},
+	{"internal/infra/spec.go:753", "env[MaxRunUSDEnv]"},
+}
+
+// chk50Citations are the code citations the Check 50 section makes in full,
+// resolved against the tree by checkCitations.
+var chk50Citations = []chkCitation{
+	{"internal/runner/routing.go:52", "func (r *run) applyRouting"},
+	{"internal/runner/routing.go:56-65", "r.gatewayOn()"},
+	{"internal/runner/routing.go:70-96", "config.RouteAuto"},
+	{"internal/config/routing.go:98-125", "func CheckRouting"},
+	{"internal/config/routing.go:237", "func RoutingClaudeFor"},
+	{"internal/config/config.go:417", "const MissingAnthropicKey"},
+	{"internal/config/config.go:590", "dec.KnownFields(true)"},
+	{"internal/pricing/overrides.go:15", "EnvName = \"FUGARO_MODEL_PRICES\""},
+	{"internal/infra/spec.go:765", "env[ModelPricesEnv]"},
+	{"internal/cli/cloud.go:54", "\"project\", \"\", \"the Fugaro project"},
+	{"internal/cli/doctor.go:1448", "\"project: %s (GCP %s, %s)\\n\""},
+}
+
+// chk52Citations are the code citations the Check 52 section makes in full,
+// resolved against the tree by checkCitations.
+var chk52Citations = []chkCitation{
+	{"internal/backend/gcp/run.go:118-129", "op.Metadata"},
+	{"internal/backend/gcp/run.go:82-95", "func (b *Backend) Launch"},
+	{"internal/backend/gcp/run.go:394-419", "func (b *Backend) toExecution"},
+	{"internal/cli/exec.go:60", "os.Getenv(\"FUGARO_RUN\")"},
+	{"internal/localcfg/select.go:163", "this checkout belongs to project"},
+}
+
+// chkCitation is one code citation a checklist section makes: the text the
+// document carries, and a token that has to be on the line (or inside the
+// range) it names. The citations are the way an owner reads the code behind a
+// FACT, so a number that has drifted leaves them on unrelated code.
+//
+// A pin on the NUMBER cannot hold this: the same reading that produces a drift
+// produces the new number, and until someone makes that reading the pin keeps
+// passing while the sentence points somewhere else. Resolving the token against
+// the tree is what makes a drift fail.
+type chkCitation struct{ cite, anchor string }
+
+// parseCitation reads "internal/x/y.go:123" or "internal/x/y.go:123-130".
+func parseCitation(cite string) (path string, first, last int, ok bool) {
+	i := strings.LastIndex(cite, ":")
+	if i < 0 {
+		return "", 0, 0, false
+	}
+	path, spec := cite[:i], cite[i+1:]
+	if j := strings.Index(spec, "-"); j >= 0 {
+		first, last = atoiOrZero(spec[:j]), atoiOrZero(spec[j+1:])
+	} else {
+		first, last = atoiOrZero(spec), atoiOrZero(spec)
+	}
+	return path, first, last, first > 0 && last >= first
+}
+
+func atoiOrZero(s string) int {
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
+// checkCitations resolves each citation against the tree, from internal/cli to
+// the repository root. Two failures it reports: the section no longer carries
+// the citation at all (the doc and this table have to move together), and the
+// citation is there but the token is not on the line it names (the number
+// drifted off the code the sentence is about).
+func checkCitations(t *testing.T, section, part string, cites []chkCitation) {
+	t.Helper()
+	for _, c := range cites {
+		if !strings.Contains(section, c.cite) {
+			t.Errorf("the %s no longer carries the citation %q: if the code moved, fix the section and this table in the same commit — the table is what resolves the number against the tree", part, c.cite)
+			continue
+		}
+		path, first, last, ok := parseCitation(c.cite)
+		if !ok {
+			t.Errorf("chkCitation(%q): not path:line or path:line-line", c.cite)
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(path)))
+		if err != nil {
+			t.Errorf("the %s cites %s, which cannot be read from here: %v", part, c.cite, err)
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		if last > len(lines) {
+			t.Errorf("the %s cites %s, and %s has %d lines: the citation is past the end of the file", part, c.cite, path, len(lines))
+			continue
+		}
+		found := false
+		for n := first; n <= last && !found; n++ {
+			found = strings.Contains(lines[n-1], c.anchor)
+		}
+		if !found {
+			t.Errorf("the %s cites %s for %q, and that is not in %s:%d-%d (which reads %q … %q): the citation points at code that is not what the sentence names", part, c.cite, c.anchor, path, first, last, strings.TrimSpace(lines[first-1]), strings.TrimSpace(lines[last-1]))
 		}
 	}
 }
