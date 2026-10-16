@@ -931,6 +931,120 @@ func TestValidateNotesAnthropicKeyNeededOffline(t *testing.T) {
 	}
 }
 
+// routedProjectBlock is a project config whose one route claims a Claude
+// model, with allow_data_to written: D1b's safeguard as the owner writes it.
+// The switch itself is what a test adds or leaves out — an absent switch is
+// direct (D1b).
+const routedProjectBlock = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["anthropic/claude-sonnet-5.5"]
+    allow_data_to: ["acme/sandbox"]
+`
+
+// routedSwitchBlock is the switch that opt-in writes: the explicit list of
+// canonical Claude IDs (D1a), never a pattern.
+const routedSwitchBlock = `routing:
+  claude:
+    via: openrouter
+    models: [claude-sonnet-5-5]
+`
+
+// projectRouting appends body to the isolated project config writeProject
+// wrote: validate reads the operator's own file, the one `fugaro project
+// policy publish` seeds the node from.
+func projectRouting(t *testing.T, body string) {
+	t.Helper()
+	path := writeProject(t, "aurora", "proj-1234")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(body); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestValidatePrintsUnresolvedOffline is plan task 1b.3's first requirement
+// (design §11): the routing resolution is printed when validate can read the
+// switch — the operator's own project config — and the line says "unresolved
+// offline" when it cannot. A resolution validate did not resolve is never
+// printed as if it had been, so the two states read differently.
+func TestValidatePrintsUnresolvedOffline(t *testing.T) {
+	const claude = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\nworkflows:"
+	// No project config for this file's project: there is no switch to read,
+	// and the line says which it is.
+	isolateProjects(t, t.TempDir())
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	_, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("validate: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5") || !strings.Contains(errOut, "unresolved offline") {
+		t.Fatalf("want a `routing.claude: ... unresolved offline` line:\n%s", errOut)
+	}
+	// The project config in hand: the same pin resolves, and the line is the
+	// resolution.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, routedProjectBlock+routedSwitchBlock)
+	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	_, errOut, err = execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("validate: %v\n%s", err, errOut)
+	}
+	if strings.Contains(errOut, "unresolved offline") {
+		t.Fatalf("the switch is readable here, yet the line says unresolved:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Fatalf("want the resolution line:\n%s", errOut)
+	}
+}
+
+// TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch is plan task 1b.3's second
+// requirement, design §6.2's safeguard: a project that routes Claude through a
+// provider — the owner docs/design/mixed-credentials.md §1 describes, an
+// OpenRouter key and no Anthropic one — and pins a Claude model the switch
+// leaves on the direct route is refused, and the message names the one line
+// that fixes it. Without the claim there is nothing to route the call to, and
+// the state stays the note it always was.
+func TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	pinned := func() string {
+		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
+	}
+	// The route claims the model and its allow_data_to is written; the switch
+	// does not name it, so the call goes direct and needs a key nobody has.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, budget+routedProjectBlock)
+	out, _, err := execute(t, "validate", pinned())
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "routing.claude: openrouter") {
+		t.Fatalf("exit %d, out %q: want a refusal naming `routing.claude: openrouter`", ExitCode(err), out)
+	}
+	// The refusal is the pin's own, so its path is the key the owner fixes.
+	if !strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("the refusal does not name the pin: %q", out)
+	}
+	// With the switch written the same file is valid: the route is one the
+	// owner already claims, and the resolution is what the run takes.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, budget+routedProjectBlock+routedSwitchBlock)
+	if out, _, err := execute(t, "validate", pinned()); err != nil {
+		t.Fatalf("a switch naming the pinned model is refused: %v\n%s", err, out)
+	}
+	// A Claude pin nothing claims is not this refusal: there is no route to
+	// send it to, and the missing key stays the note it has always been.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, budget)
+	if out, _, err := execute(t, "validate", pinned()); err != nil {
+		t.Fatalf("a Claude pin with no route to take is refused: %v\n%s", err, out)
+	}
+}
+
 // TestValidateJSONNotesTheAnthropicKey: the note is machine-readable too, in
 // its own channel: never a problem, never a warning.
 func TestValidateJSONNotesTheAnthropicKey(t *testing.T) {

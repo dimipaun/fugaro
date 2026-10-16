@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -401,5 +402,53 @@ func TestDoctorPolicyChecksAreReadOnly(t *testing.T) {
 		if req.Method != "GET" {
 			t.Errorf("doctor made a non-read call to the database fake: %s %s", req.Method, req.Path)
 		}
+	}
+}
+
+// TestDoctorRoutingCheckNamesTheLiveQuestion is plan task 1b.3 step 2: the
+// routing-resolution check prints the resolution the published policy
+// licenses — or says it is unresolved, rather than printing one nobody read —
+// and routing-cache-markers names the question Check 50 answers: whether a
+// routed Claude senior's cache markers survive a provider route, and the cost
+// that hangs on it. Both are info: neither fails doctor.
+func TestDoctorRoutingCheckNamesTheLiveQuestion(t *testing.T) {
+	doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) {
+		p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: "anthropic-compat", BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+			AllowDataTo: []string{"*"},
+		}}}
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{
+			Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}}
+	}), "")
+	checks := doctorChecksByID(t)
+	res, ok := checks["routing-resolution"]
+	if !ok || res.Severity != "info" {
+		t.Fatalf("routing-resolution = %+v (present %v), want an info check", res, ok)
+	}
+	if !strings.Contains(res.Problem, "claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Errorf("the resolution check does not print the resolution: %+v", res)
+	}
+	cm, ok := checks["routing-cache-markers"]
+	if !ok || cm.Severity != "info" {
+		t.Fatalf("routing-cache-markers = %+v (present %v), want an info check", cm, ok)
+	}
+	for _, want := range []string{"Check 50", "cache_read", "unmeasured"} {
+		if !strings.Contains(cm.Problem, want) {
+			t.Errorf("the cache-markers check does not name %q: %+v", want, cm)
+		}
+	}
+	// A node with no switch routes nothing: the check says that rather than
+	// printing a resolution for a switch that is not published.
+	doctorPolicyRig(t, doctorPolicy(nil), "")
+	if c, ok := doctorChecksByID(t)["routing-resolution"]; !ok || !strings.Contains(c.Problem, "no routing switch is published") {
+		t.Fatalf("a policy with no switch: routing-resolution = %+v (present %v)", c, ok)
+	}
+	// Nothing published at all: the resolution is unresolved, and doctor says
+	// why instead of inventing one.
+	doctorPolicyRig(t, nil, "")
+	c, ok := doctorChecksByID(t)["routing-resolution"]
+	if !ok || c.Severity != "info" || !strings.Contains(c.Problem, "unresolved") {
+		t.Fatalf("no policy published: routing-resolution = %+v (present %v), want an info check saying unresolved", c, ok)
 	}
 }

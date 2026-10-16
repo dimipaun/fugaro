@@ -292,6 +292,134 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	return problems, warnings, notes
 }
 
+// claudePin is one of the run's three pins whose model is a canonical Claude
+// ID: the pins the routing switch applies to, because D1a's list is a list of
+// exactly those IDs.
+type claudePin struct{ path, model string }
+
+// claudePins are the run's Claude pins, in the pin order config's own rules
+// use. A pin that is not a canonical Claude ID — a provider's own model, a
+// route's ID, an alias, nothing at all — is not one: those have their own
+// rules (providerProblems, CheckAllowed) and the switch never names them.
+func claudePins(a config.Agent, claimed map[string]config.ModelProvider) []claudePin {
+	// The runner's default background model (a provider coder's own) is the
+	// run's, exactly as budgetProblems judges it.
+	a.Models.Background = config.EffectiveBackground(a, claimed)
+	var out []claudePin
+	for i, path := range [...]string{"agent.models.coder", "agent.models.reviewer", "agent.models.background"} {
+		// The same three paths config's own pin rules name (internal/config's
+		// pinPaths, which the pin order of PinnedModels is defined against), so
+		// a problem here points at the key the owner edits.
+		if m := a.PinnedModels()[i]; config.CheckRoutingModel(m) == "" {
+			out = append(out, claudePin{path: path, model: m})
+		}
+	}
+	return out
+}
+
+// routingProblems are plan task 1b.3's two routing rules: the resolution the
+// switch licenses, printed when this command can read it, and the refusal of a
+// Claude pin that a project routing Claude through a provider leaves on the
+// direct route.
+//
+// The resolution is printed only when the switch is readable, and the switch is
+// the operator's own project config: validate reads no policy node (design §11:
+// offline), which is the same reading budgetProblems and providerProblems give
+// the providers. With no config for this file's project there is nothing to
+// resolve from, and the line says "unresolved offline" — a resolution this
+// command did not resolve is never printed as if it had been (the resolver's
+// own contract, config.RoutingClaudeFor). A model the switch names and cannot
+// resolve is a problem, not a silent fall-back to direct: D1b's safeguard.
+//
+// The refusal is design §6.2's safeguard read from the offline side. A project
+// that routes Claude through a provider is a project with no Anthropic key to
+// fall back on (docs/design/mixed-credentials.md §1: an OpenRouter key and
+// subscription OAuth tokens, no Anthropic one), and a Claude pin the switch
+// leaves on the direct route is a call nothing can make — the gateway refuses
+// it by name when no key is stored (config.MissingAnthropicKey). That a key
+// version exists is a fact only the cloud knows, so this refuses the state
+// validate *can* read offline: an api-key run under an enforcing budget, whose
+// Claude call therefore goes to Anthropic (config.AnthropicKeyNeeded), and a
+// route of the owner's that claims this model with allow_data_to written — the
+// resolver answers whether it would take the call. A Claude pin nothing claims
+// keeps the note it always was: there is no route to send it to, and "write the
+// switch" would be advice this project's own providers cannot take.
+func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, notes []config.Problem) {
+	pins := claudePins(cfg.Agent, claimed)
+	if len(pins) == 0 {
+		return nil, nil
+	}
+	readable := lc != nil && lc.Name == cfg.Project
+	// The mode is the run's own (policy.Merge), as budgetProblems computes it:
+	// only an enforcing budget puts a gateway in front of the call, and routing
+	// is the gateway's.
+	mode := ""
+	if readable {
+		mode = policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
+	}
+	repo, rerr := originRepo(ctx)
+	if rerr != nil {
+		repo = "" // an unknown repository: no provider's allow_data_to can be said to cover it
+	}
+	for _, p := range pins {
+		if !readable {
+			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
+				"%s unresolved offline: the switch is the operator's project config for %s and this command has none selected (design §11), so a resolution it cannot read is not printed as one; `fugaro doctor` reads the published policy and prints it", p.model, cfg.Project)})
+			continue
+		}
+		route, sent, ok := config.RoutingClaudeFor(claudeSwitchOf(lc.Routing), p.model, claimed)
+		switch {
+		case !ok:
+			problems = append(problems, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
+				"%s is named by routing.claude.models and does not resolve: no single provider entry claims it with allow_data_to written, and a call the switch names has no direct fall-back (D1b, design §6.2). config.CheckRouting refuses that switch at load; fix the list or the claim", p.model)})
+		case route == config.RouteDirect:
+			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
+			if why := claudeDirectRefusal(cfg.Agent, p, claimed, repo, mode); why != "" {
+				problems = append(problems, config.Problem{Path: p.path, Message: why})
+			}
+		default:
+			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> %s, sent as %s", p.model, route, sent)})
+		}
+	}
+	return problems, notes
+}
+
+// claudeSwitchOf is the switch a routing block holds: nil for no block, nil
+// for a block with no claude member (a `routing: {}` the loader reads as an
+// absent switch). The resolver takes a nil switch and answers direct (D1b), so
+// callers pass this rather than reading through the block.
+func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
+	if r == nil {
+		return nil
+	}
+	return r.Claude
+}
+
+// claudeDirectRefusal is the message a Claude pin that goes direct carries when
+// the run cannot make the call as it stands — "" for every other state. It is
+// routingProblems' second rule; the doc comment above has the reading of "no
+// Anthropic key" it rests on.
+func claudeDirectRefusal(a config.Agent, p claudePin, claimed map[string]config.ModelProvider, repo, mode string) string {
+	if mode != policy.ModeEnforce {
+		// Without a gateway there is no routing at all: nothing is sent to a
+		// provider, and "write the switch" would be advice this run cannot take
+		// (the same reading providerProblems' key note gives that state).
+		return ""
+	}
+	if !config.AnthropicKeyNeeded(a, claimed, repo, mode) {
+		// The run does not need the key on this configuration (an oauth run
+		// brings its own token): nothing is missing.
+		return ""
+	}
+	// Would the switch resolve this model if it named it? The one resolver
+	// answers it over the same routes, so this rule and the run's own
+	// resolution cannot disagree about whether a route is there.
+	if _, _, ok := config.RoutingClaudeFor(&config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{p.model}}, p.model, claimed); !ok {
+		return ""
+	}
+	return fmt.Sprintf("%s is pinned and goes direct, and this call needs the Anthropic API key (%s), while a route of this project claims the model and its allow_data_to is written: write `routing.claude: openrouter` in the project config — routing: {claude: {via: openrouter, models: [%s]}} — to send the call there instead (the switch is the operator's and never a repository's; D1a, D1b, design §6.2)", p.model, config.MissingAnthropicKey, p.model)
+}
+
 // setsPolicy is whether the file has a budget: block or a token limit: the
 // keys that the default branch's file bounds.
 func setsPolicy(cfg *config.Config) bool {
@@ -416,6 +544,8 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc, claimed)
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
+				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, claimed)
+				problems, notes = append(problems, rtp...), append(notes, rtn...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {

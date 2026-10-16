@@ -1511,15 +1511,18 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 		// The state of every installation that has not run init --firebase:
 		// there is no node to read, and the runs take their ceiling from the
 		// job environment, exactly as they did before this model (P3).
-		return []doctorCheck{{ID: "policy-published", Severity: "info",
+		checks := []doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
 			Fix:     "fugaro init --firebase <firebase-project-id> --name " + lc.Name + " adds the backend the policy is published to"}}
+		return append(checks, doctorRoutingChecks(nil,
+			fmt.Sprintf("project %s has no Firebase budget backend, so there is no policy node to read a switch from", lc.Name))...)
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
-		return []doctorCheck{{ID: "policy-published", Severity: "info",
+		return append([]doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("whether project %s publishes a policy could not be checked: %v", lc.Name, err),
-			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}}
+			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
+			doctorRoutingChecks(nil, fmt.Sprintf("the budget database could not be reached (%v), so the published switch cannot be read", err))...)
 	}
 	checks := doctorRulesSkew(ctx, db)
 	// The node is read through projectpolicy.Read, the reader a run uses
@@ -1535,7 +1538,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 		// The marker is not a generation at all. doctorRulesSkew has reported it,
 		// and Read cannot get past it — neither can a run — so there is nothing
 		// further doctor can honestly say about the node.
-		return checks
+		return append(checks, doctorRoutingChecks(nil,
+			fmt.Sprintf("%s does not record the rules generation a policy is read under, so no run reads the node and no switch can be resolved from it", projectpolicy.PathRulesMarker()))...)
 	case errors.As(err, &ve):
 		// P8's release skew, both directions: Decode refuses a node of any other
 		// version, and the two remedies are opposite. A newer node needs a newer
@@ -1544,18 +1548,24 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 		// Fugaro" is backwards there and the remedy is the one the publisher
 		// itself words (publishedPolicyOf): remove it, then publish.
 		if ve.Found > ve.Understood {
-			return append(checks, doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
+			checks = append(checks, doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
 				Problem: fmt.Sprintf("%s: %s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood), shared),
 				Fix:     fmt.Sprintf("upgrade Fugaro to a release that understands version %d", ve.Found)})
+			return append(checks, doctorRoutingChecks(nil,
+				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found))...)
 		}
-		return append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
+		checks = append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
 			Problem: fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood),
 			Fix:     fmt.Sprintf("fugaro project policy publish --delete removes it, then 'fugaro project policy publish' writes this Fugaro's version %d", ve.Understood)})
+		return append(checks, doctorRoutingChecks(nil,
+			fmt.Sprintf("the node at %s is a policy of version %d, which no run applies, so no switch is in force", shared, ve.Found))...)
 	case err != nil:
 		// A read that failed is not "no policy": doctor says which it is.
-		return append(checks, doctorCheck{ID: "policy-published", Severity: "info",
+		checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("the project policy could not be read (%v), so whether one is published, and whether the runs are bounded by it, is unknown", err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"})
+		return append(checks, doctorRoutingChecks(nil,
+			fmt.Sprintf("the policy at %s could not be read (%v), so the switch it holds is unknown", shared, err))...)
 	case !found:
 		info := doctorCheck{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("no policy is published at %s: runs take their ceiling from the job environment", shared),
@@ -1570,7 +1580,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 				shared, projectpolicy.PathRulesMarker())
 			info.Fix = "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal to deploy the rules a policy is read under, then 'fugaro project policy publish'"
 		}
-		return append(checks, info)
+		return append(checks, append([]doctorCheck{info},
+			doctorRoutingChecks(nil, fmt.Sprintf("no policy is published at %s, so there is no switch to resolve", shared))...)...)
 	}
 	// found, and Read returned no error: the node is in force, so the checks
 	// below can read it — Decode's error would have arrived as err above.
@@ -1591,7 +1602,103 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
 	}
-	return checks
+	// The two routing checks of plan task 1b.3 step 2, over the node in force:
+	// they are read off the policy the runs themselves read, so what doctor
+	// prints is the resolution a run takes (config.RoutingClaudeFor over the
+	// node's own providers).
+	return append(checks, doctorRoutingChecks(p, "")...)
+}
+
+// routingCacheMarkersUnmeasured is what doctor says when the policy routes a
+// Claude ID: whether a provider route reports cache_read/cache_write tokens at
+// all is unmeasured, and a routed Claude senior that never reports a cache read
+// is charged at the full input rate — the difference between list price and
+// several times list price for a long senior review (design §6.2). Check 50 is
+// the run that measures it (plan task 1b.4), and until it is run the cost of a
+// routed Claude senior is a guess.
+const routingCacheMarkersUnmeasured = "a routed Claude senior's cost is unmeasured: whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN), and a routed Claude that never reports a cache read is charged at the full input rate rather than the cache rate"
+
+// routingCacheMarkersNothingRouted is the same check on a policy that routes no
+// Claude ID: the question is not live yet, and saying which state this is is
+// what keeps the sentence above from reading as a warning about nothing.
+const routingCacheMarkersNothingRouted = "no Claude ID is routed through a provider by this policy, so no call is charged at a route's rate: when the switch routes one, whether that route reports cache_read/cache_write tokens at all is unmeasured until Check 50 runs"
+
+// doctorRoutingChecks are doctor's two routing checks (plan task 1b.3 step 2).
+//
+// routing-resolution prints the resolution the published policy licenses, one
+// line per Claude ID the switch names, over the node's own providers — the same
+// resolver and the same table a run resolves with (config.RoutingClaudeFor), so
+// what doctor prints and what a run takes cannot be two answers. When the node
+// cannot be read at all, why says which state that is: doctor prints no
+// resolution it did not read, the line `fugaro validate` prints "unresolved
+// offline" from the operator's side.
+//
+// routing-cache-markers names the live question a routed Claude senior leaves
+// open until Check 50 is run.
+//
+// Both are info, and neither ever fails doctor: an unmeasured cost and a node
+// the credentials cannot read are not defects in a configuration, and the
+// resolution is a fact about the node rather than a verdict on it.
+func doctorRoutingChecks(p *projectpolicy.Policy, why string) []doctorCheck {
+	if p == nil {
+		return []doctorCheck{
+			{ID: "routing-resolution", Severity: "info",
+				Problem: "the routing resolution is unresolved: " + why,
+				Fix:     "fugaro project policy show prints the switch the published node holds, and `fugaro validate` prints this line from the operator's own config (offline)"},
+			{ID: "routing-cache-markers", Severity: "info",
+				Problem: routingCacheMarkersNothingRouted,
+				Fix:     "fugaro project policy publish writes the switch the owner's config holds; Check 50 measures what a routed Claude costs"},
+		}
+	}
+	var c *config.RoutingClaude
+	if p.Routing != nil {
+		c = p.Routing.Claude
+	}
+	providers := nodeProviders(p)
+	var lines []string
+	routed := false
+	if c == nil || len(c.Models) == 0 {
+		lines = append(lines, "no routing switch is published, so every Claude ID goes direct (D1b's default)")
+	}
+	var named []string
+	if c != nil {
+		named = c.Models
+	}
+	for _, m := range named {
+		route, sent, ok := config.RoutingClaudeFor(c, m, providers)
+		switch {
+		case !ok:
+			lines = append(lines, fmt.Sprintf("%s -> unresolved: the switch names it and no single provider entry claims it with allow_data_to written (D1b's safeguard; config.CheckRouting refuses that switch at load)", m))
+		case route == config.RouteDirect:
+			lines = append(lines, fmt.Sprintf("%s -> direct (via: %s)", m, c.ViaValue()))
+		default:
+			routed = true
+			lines = append(lines, fmt.Sprintf("%s -> %s, sent as %s", m, route, sent))
+		}
+	}
+	markers := routingCacheMarkersNothingRouted
+	if routed {
+		markers = routingCacheMarkersUnmeasured
+	}
+	return []doctorCheck{
+		{ID: "routing-resolution", Severity: "info",
+			Problem: "routing resolves as the published policy licenses it: " + strings.Join(lines, "; "),
+			Fix:     "fugaro project policy show prints the switch, and `fugaro validate` prints the same line for a repository's own pins"},
+		{ID: "routing-cache-markers", Severity: "info", Problem: markers,
+			Fix: "fugaro run's model call lines record serving_model, priced_as, cache_read and cache_write_5m: Check 50 is the run that compares them on a routed Claude senior"},
+	}
+}
+
+// nodeProviders are the routes the published node itself carries: the table a
+// reader of the node resolves the switch over (internal/runner's ProvidersFrom
+// the same block), never the operator's local config, which the node was
+// seeded from.
+func nodeProviders(p *projectpolicy.Policy) map[string]config.ModelProvider {
+	out := make(map[string]config.ModelProvider, len(p.Providers))
+	for name, pv := range p.Providers {
+		out[name] = pv.ModelProvider
+	}
+	return out
 }
 
 // doctorAllowListUncovered is the other half of allow-list-empty, and the
