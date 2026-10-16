@@ -4,6 +4,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -828,5 +829,112 @@ func TestProjectSecretIDDistinctFromRepoSecretID(t *testing.T) {
 	// (the domain separation this function's own comment names).
 	if ProjectSecretID("acme/app", "x") == SecretID("acme/app", "x") {
 		t.Fatal("ProjectSecretID collided with SecretID for a slug-shaped project name")
+	}
+}
+
+// The project job's name (plan task 3.2 step 1) has three properties, and it
+// has no inverse: it is written from a (profile, provider, account) the
+// policy holds and matched by computing it, never parsed (R2-5).
+func TestProjectJobNameIsStableAndDistinct(t *testing.T) {
+	// Stable: the same triple is always the same name, and the name is one
+	// Cloud Run and IAM accept.
+	triples := []struct{ profile, provider, account string }{
+		{"standard", "github", "default"},
+		{"standard", "bitbucket", "default"},
+		{"heavy", "github", ""}, // an api-key job: no account segment
+		{"a-hyphenated-profile", "bitbucket", "alice"},
+		{strings.Repeat("p", 40), "bitbucket", "default"}, // truncated readable part
+		{"standard", "bitbucket", strings.Repeat("a", 31)},
+		{"p-standard", "bitbucket", "default"}, // confusable with the prefix
+		{"standard", "bitbucket", "default-default"},
+	}
+	seen := map[string]string{}
+	for _, tr := range triples {
+		name := ProjectJobName(tr.profile, tr.provider, tr.account)
+		if got := ProjectJobName(tr.profile, tr.provider, tr.account); got != name {
+			t.Errorf("ProjectJobName(%q, %q, %q) is not stable: %q then %q", tr.profile, tr.provider, tr.account, name, got)
+		}
+		if !jobNameRE.MatchString(name) {
+			t.Errorf("ProjectJobName(%q, %q, %q) = %q, which is not a Cloud Run job name", tr.profile, tr.provider, tr.account, name)
+		}
+		if !strings.HasPrefix(name, "fugaro-p-") {
+			t.Errorf("ProjectJobName(%q, %q, %q) = %q, which does not carry the project prefix", tr.profile, tr.provider, tr.account, name)
+		}
+		// The readable part is the triple, or as much of it as fits: it is a
+		// prefix of the whole thing (never a rewording), and a short triple
+		// is not truncated at all.
+		want := "fugaro-p-" + tr.profile + "-" + tr.provider
+		if tr.account != "" {
+			want += "-" + tr.account
+		}
+		stem := strings.TrimSuffix(name, name[len(name)-1-jobHashHex:])
+		if !strings.HasPrefix(want, stem) || stem == "fugaro-p-" {
+			t.Errorf("ProjectJobName(%q, %q, %q) = %q: the readable part %q is not a prefix of %q", tr.profile, tr.provider, tr.account, name, stem, want)
+		}
+		if len(want) <= maxJobName-1-jobHashHex && stem != want {
+			t.Errorf("ProjectJobName(%q, %q, %q) = %q: %q fits, so nothing should be truncated", tr.profile, tr.provider, tr.account, name, want)
+		}
+		if strings.Contains(name, "--") {
+			t.Errorf("ProjectJobName(%q, %q, %q) = %q, which has an empty segment", tr.profile, tr.provider, tr.account, name)
+		}
+		saID := ProjectServiceAccountID(tr.profile, tr.provider, tr.account)
+		if !saIDRE.MatchString(saID) {
+			t.Errorf("ProjectServiceAccountID(%q, %q, %q) = %q, which is not a service account ID", tr.profile, tr.provider, tr.account, saID)
+		}
+		for _, k := range []string{name, saID} {
+			if prev, dup := seen[k]; dup {
+				t.Errorf("%q is the name of two triples: %v", k, prev)
+			}
+			seen[k] = tr.profile + "/" + tr.provider + "/" + tr.account
+		}
+	}
+	// A legacy per-repository name is never a project name for the fixture
+	// policy: the two namespaces cannot collide, so a run that matched
+	// CLOUD_RUN_JOB against a computed project name can never match a
+	// repository's job by accident.
+	slug := realSlug(t, "bitbucket", "acme/sandbox")
+	for _, tr := range triples {
+		for _, wf := range []string{"web", "api", "standard", "default"} {
+			if legacy := JobName(slug, wf); legacy == ProjectJobName(tr.profile, tr.provider, tr.account) {
+				t.Errorf("ProjectJobName(%q, %q, %q) equals the legacy job name %q", tr.profile, tr.provider, tr.account, legacy)
+			}
+		}
+	}
+}
+
+// The widened condition (plan task 3.2 step 2): one clause per prefix, no
+// slug, and it is not the per-repository builder called with an empty slug.
+func TestProjectBucketConditionHasNoSlug(t *testing.T) {
+	bucket := "fugaro-runs-proj-1234"
+	got := ProjectBucketCondition(bucket, JobBucketPrefixes)
+	want := `resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || ` +
+		`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/cache/") || ` +
+		`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/locks/")`
+	if got != want {
+		t.Fatalf("ProjectBucketCondition = %q, want %q", got, want)
+	}
+	if clauses := strings.Split(got, " || "); len(clauses) != len(JobBucketPrefixes) {
+		t.Errorf("%d clauses for %d prefixes", len(clauses), len(JobBucketPrefixes))
+	}
+	for _, clause := range strings.Split(got, " || ") {
+		// Everything after objects/ must be the prefix and nothing else: a
+		// fourth segment would be a slug.
+		rest, ok := strings.CutPrefix(clause, `resource.name.startsWith("projects/_/buckets/`+bucket+`/objects/`)
+		if !ok {
+			t.Fatalf("clause %q is not a prefix clause of %s", clause, bucket)
+		}
+		rest = strings.TrimSuffix(rest, `")`)
+		prefix, _, ok2 := strings.Cut(rest, "/")
+		if !ok2 || !slices.Contains(JobBucketPrefixes, prefix) {
+			t.Errorf("clause %q names more than the prefix", clause)
+		}
+	}
+	// A slug reaches a repository's own prefix only; the widened condition
+	// reaches every repository's, which is the regression D4 documents.
+	if perSlug := BucketCondition(bucket, JobBucketPrefixes, "acme-sandbox-0123456789abcdef"); got == perSlug {
+		t.Error("the project condition equals a per-slug one")
+	}
+	if strings.Contains(ProjectBucketCondition(bucket, JobBucketPrefixes), "acme-sandbox") {
+		t.Error("the project condition names a repository")
 	}
 }

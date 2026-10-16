@@ -137,6 +137,59 @@ func ServiceAccountID(slug, workflow string) string {
 	return derive(stem(slug, workflow), slug, workflow, maxSAID, saHashHex)
 }
 
+// projectStem is the readable part of a project job's name:
+// fugaro-p-<profile>-<provider>-<account>, with the account segment left off
+// when there is none (an api-key or Vertex profile runs as no Claude
+// account). Sanitized like every other name, so a name outside Cloud Run's
+// charset becomes a name it accepts rather than a refused plan.
+//
+// It is written, never read back: there is no ParseProjectJobName (R2-5).
+// derive truncates the readable part, profile names hold hyphens, the account
+// segment may be empty and "fugaro-p-" is also the legacy stem of an owner
+// named "p" — so the name is a *name*, and the (profile, provider, account)
+// set a reader needs comes from the policy, matched by computing these names
+// (Task 3.3 step 1).
+func projectStem(profile, provider, account string) string {
+	s := "fugaro-p-" + profile + "-" + provider
+	if account != "" {
+		s += "-" + account
+	}
+	return sanitize(s)
+}
+
+// projectKey is derive's hash input for a project name. The three parts are
+// joined with NUL, which no profile, provider or account name may hold, so
+// two different triples can never hash the same: the readable part above is
+// lossy on purpose (truncation, sanitizing, and profile/provider/account
+// names that hold hyphens merge distinct triples).
+func projectKey(profile, provider, account string) (slug, second string) {
+	return profile + "\x00" + provider, account
+}
+
+// ProjectJobName is the shared job of (profile, provider, account) (design
+// §4.1, plan task 3.2 step 1): fugaro-p-<profile>-<provider>-<account>, plus a
+// hash of the triple, built with derive exactly as JobName is so the length
+// limit and the collision behaviour are the same.
+//
+// The provider is part of the name and is never an env var: a launcher may
+// override any variable through run.jobs.runWithOverrides, so the provider —
+// which decides which repository the runner may clone and which git
+// credential the job holds — must come from something only Cloud Run sets.
+// The account is the Claude OAuth account the job's token belongs to.
+func ProjectJobName(profile, provider, account string) string {
+	slug, second := projectKey(profile, provider, account)
+	return derive(projectStem(profile, provider, account), slug, second, maxJobName, jobHashHex)
+}
+
+// ProjectServiceAccountID is a project job's dedicated service account ID
+// (design §4.1): one account per (profile, provider, account), because the
+// secrets a job mounts are only readable by the runs using that job, built
+// like ProjectJobName within 30 characters.
+func ProjectServiceAccountID(profile, provider, account string) string {
+	slug, second := projectKey(profile, provider, account)
+	return derive(projectStem(profile, provider, account), slug, second, maxSAID, saHashHex)
+}
+
 // SecretID is the Secret Manager secret holding a repository's logical
 // secret (a workflow secret's name, or one of config.ReservedSecrets),
 // built like JobName.
@@ -383,9 +436,44 @@ var (
 func BucketCondition(bucket string, prefixes []string, slug string) string {
 	conds := make([]string, len(prefixes))
 	for i, p := range prefixes {
-		conds[i] = fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, p, slug)
+		conds[i] = bucketPrefixClause(bucket, p, slug)
 	}
 	return strings.Join(conds, " || ")
+}
+
+// ProjectBucketCondition is the IAM condition that limits a *project job's*
+// objectUser grant on bucket to each prefix, with no slug (plan task 3.2
+// step 2). A project job serves every repository admitted to its profile, so
+// the object it may write is no longer inside one repository's prefix:
+//
+//	resource.name.startsWith("projects/_/buckets/<b>/objects/runs/") ||
+//	resource.name.startsWith("projects/_/buckets/<b>/objects/cache/") ||
+//	resource.name.startsWith("projects/_/buckets/<b>/objects/locks/")
+//
+// This is a *widening*, and a documented regression of a 0.7.0 property:
+// SECURITY.md and docs/design/bucket-iam.md state it (D4, D13). It is a
+// separate builder from BucketCondition rather than that one called with an
+// empty slug, so a reader of a per-repository caller cannot mistake this
+// condition for it and so the per-repository path keeps its per-slug
+// condition, byte for byte, until Task 4.4 drops it.
+func ProjectBucketCondition(bucket string, prefixes []string) string {
+	conds := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		conds[i] = bucketPrefixClause(bucket, p, "")
+	}
+	return strings.Join(conds, " || ")
+}
+
+// bucketPrefixClause is one clause of a bucket condition: the bucket's objects
+// under prefix, inside slug's own prefix when slug is set, or directly under
+// prefix when it is empty (a project job's widened clause). The trailing
+// slashes keep a slug from reaching another slug it is a string prefix of
+// (design §6.1).
+func bucketPrefixClause(bucket, prefix, slug string) string {
+	if slug == "" {
+		return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/")`, bucket, prefix)
+	}
+	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, prefix, slug)
 }
 
 // BucketConditionTitle is the title of the bucket condition of the account

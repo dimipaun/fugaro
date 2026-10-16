@@ -299,3 +299,10 @@ func sortedProfileNames(entries map[string]json.RawMessage) []string {
 	sort.Strings(names)
 	return names
 }
+
+// CheckProfiles is validProfiles for a caller outside this package, which
+// needs the same rules and must not carry a second copy of them: infra's
+// project-job layout (plan task 3.2) validates the local config's profiles
+// with it before it deploys a job, so a profile `fugaro project policy
+// publish` would refuse can never be deployed as one nobody can select.
+func CheckProfiles(profiles map[string]Profile) error { return validProfiles(profiles) }
