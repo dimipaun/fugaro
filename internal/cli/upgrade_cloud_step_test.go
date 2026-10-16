@@ -181,15 +181,43 @@ func TestUpgradeNoteSaysTheEnvCopyIsInert(t *testing.T) {
 	}
 }
 
-// TestUpgradeCloudNoNoteWhenJobConfigCopyMatches: the deployed job's copy
-// (here, no providers and no model_prices, which is also what this local
-// config produces) matches, so there is nothing to report.
+// TestJobConfigCopyMountNoteIsSilentWithoutAProjectScopeName: the clause is
+// about the names this repository may mount from the project's container, so
+// with none of them there is nothing it could tell a reader and it returns
+// "" — a note that stayed silent when every name resolves to the
+// repository's own container, which is what makes the mount-only case above
+// worth printing at all.
+func TestJobConfigCopyMountNoteIsSilentWithoutAProjectScopeName(t *testing.T) {
+	if got := jobConfigCopyMountNote(nil); got != "" {
+		t.Errorf("the mount clause is not silent with no project-scope name: %q", got)
+	}
+	if got := jobConfigCopyMountNote([]string{}); got != "" {
+		t.Errorf("the mount clause is not silent with an empty list: %q", got)
+	}
+	if got := jobConfigCopyMountNote([]string{"github-app-key"}); !strings.Contains(got, "github-app-key") {
+		t.Errorf("the mount clause does not name the project-scope name: %q", got)
+	}
+}
+
+// TestUpgradeNoteNamesTheMountCase (plan Task 2.3 step 2): after D2 a name
+// stored at project scope changes what a job mounts when the project's copy
+// is created or deleted, so the drift note must say that the mounts are
+// still a reason to re-run init --repo — the one thing the policy does not
+// carry — and that phase 3 moves the mounts to a shared profile.
 //
-// Mutation (verified, run and restored): remove jobConfigCopyNote's
-// `if len(diffs) == 0 { return "" }` guard: this test fails, finding an
-// unexpected note.
-func TestUpgradeCloudNoNoteWhenJobConfigCopyMatches(t *testing.T) {
+// Mutation (verified, run and restored): make jobConfigCopyMountNote return
+// "": this test fails, finding no mount clause in the note.
+func TestUpgradeNoteNamesTheMountCase(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	db := gcpfake.NewRTDB(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+" }\n")
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
@@ -197,8 +225,86 @@ func TestUpgradeCloudNoNoteWhenJobConfigCopyMatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if strings.Contains(out, "job's copy") {
-		t.Fatalf("an unexpected note:\n%s", out)
+	for _, want := range []string{
+		"what a job mounts is still decided here",
+		"fugaro secrets set NAME",
+		"phase 3 gives the mounts to a shared profile",
+		"fugaro init --repo .",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the note lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestUpgradeNoteSaysWhatNeedsNoRerun: the mount clause has two halves, and
+// the second is the one that saves an operator a needless apply. Only
+// creating or deleting a project-scope copy changes what a job mounts; a new
+// version of that container, or a rotated value, changes nothing at all,
+// because the job mounts the container rather than a copy of the value. A
+// note that named only the first half would read as "any secret change means
+// another fugaro init --repo".
+//
+// Written first, against the note as it was (the mount clause named only the
+// reason to re-run): it fails, finding no "needs no re-run".
+func TestUpgradeNoteSaysWhatNeedsNoRerun(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"what a job mounts is still decided here",
+		"created or deleted",
+		"a new version",
+		"rotated value",
+		"needs no re-run",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the mount clause lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestUpgradeNoteNamesTheMountCaseWithNothingElseStale: the mount-only case.
+// Every env key the deployed job carries matches this checkout's — the STALE
+// half has nothing to say — but whether a name resolves to the project's
+// container or the repository's is not in that env copy at all (the variable
+// name is the same either way; the mount is the IAM member and
+// repo.project_secrets), so an env diff can never show that a project-scope
+// copy was created or deleted after the apply. The note has to say so on its
+// own, naming the names this repository may mount project-wide.
+//
+// Written first, against the note as it was (the mount clause was appended
+// only after the STALE branch, which returns early when nothing differs): it
+// fails, finding no mount clause at all.
+func TestUpgradeNoteNamesTheMountCaseWithNothingElseStale(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil) // exactly what this local config writes now
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"what a job mounts is still decided here",
+		"github-app-key",
+		"created or deleted",
+		"fugaro init --repo .",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the mount-only note lacks %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"STALE", "use the old copy until"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("a matching env copy was reported as %q:\n%s", unwanted, out)
+		}
 	}
 }
 

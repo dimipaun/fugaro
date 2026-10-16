@@ -499,6 +499,47 @@ func TestProjectPolicyPublishNeverSeedsFromTheBucket(t *testing.T) {
 	}
 }
 
+// TestProjectShowReadsASharedConfigOfANonDefaultImageSource: the shared config
+// is read with an anchor that includes the image_source this machine records,
+// so an installation that took a fork's base pin (ghcr.io/acme rather than the
+// default ghcr.io/dimipaun) still reads the published document. Omitting the
+// field there refused the document, and that refusal is a hard error in every
+// command that seeds the allow-list — `project show`, `project repos ls` and
+// the `project policy publish` that is the only CLI remedy, so there was no
+// path out.
+func TestProjectShowReadsASharedConfigOfANonDefaultImageSource(t *testing.T) {
+	f := newProjectFixtureWith(t, "", "image_source: ghcr.io/acme\n")
+	writeSharedConfigWithSource(t, f, "ghcr.io/acme", "    acme/third:\n        provider: github\n        workflows:\n            - web\n")
+	// The publish writes the allow-list from the same seed, and it is the
+	// only CLI remedy an operator has, so it is the first half of the path.
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("project policy publish refused a shared config published by this machine's own image_source: %v", err)
+	}
+	got := publishedPolicy(t, f).AllowRepos
+	want := []string{"bitbucket/acme/other", "github/acme/app", "github/acme/third"}
+	if len(got) != len(want) {
+		t.Fatalf("allow_repos = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("allow_repos = %v, want %v", got, want)
+		}
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatalf("project show refused it too: %v", err)
+	}
+	var doc struct {
+		Enrolled map[string]string `json:"enrolled"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if doc.Enrolled["github/acme/third"] != "the shared config" {
+		t.Errorf("enrolled = %v, want github/acme/third from the shared config", doc.Enrolled)
+	}
+}
+
 // TestProjectPolicyPublishSeedIsOnlyTheOperatorsRepos: the seed is the
 // operator's repos: map plus the shared config's repository list, and nothing
 // else (P4).
@@ -1393,12 +1434,25 @@ func TestProjectReposAddRefusesUnicodeLookalikes(t *testing.T) {
 // bucket it was read from.
 func writeSharedConfig(t *testing.T, f *projectFixture, repos string) {
 	t.Helper()
+	writeSharedConfigWithSource(t, f, "", repos)
+}
+
+// writeSharedConfigWithSource is writeSharedConfig for an installation whose
+// local config records a non-default image_source: a publisher there writes
+// the same source into the document it publishes, and ParseShared accepts it
+// only from a reader that records the same one.
+func writeSharedConfigWithSource(t *testing.T, f *projectFixture, source, repos string) {
+	t.Helper()
+	sourceLine := ""
+	if source != "" {
+		sourceLine = "image_source: " + source + "\n"
+	}
 	s := `version: 1
 name: aurora
 gcp_project: proj-1234
 region: us-east5
 runs_bucket: unused-bucket
-registry_host: us-east5-docker.pkg.dev/proj-1234
+` + sourceLine + `registry_host: us-east5-docker.pkg.dev/proj-1234
 base_images:
     base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.3.1
 build:

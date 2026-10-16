@@ -137,3 +137,113 @@ func TestSecurityMdStatesTheProjectScopeDefault(t *testing.T) {
 		t.Error("SECURITY.md does not say which names the default leaves alone")
 	}
 }
+
+// TestDocsStateTheProjectScopeDefaultWhereASecretIsStored (plan Task 2.3
+// step 3): D2 changed where `fugaro secrets set` puts a value, so every page
+// a person meets the command on has to say the default and what it changes —
+// the project layer (the scope table's "outside this table" paragraph), the
+// multi-model guide (which keys a job mounts, and when a re-run of init
+// --repo is what changes that), the dogfooding page (whose own installation
+// enrolls three repositories), and the setup skill, where the changed prompt
+// wording and doctor's own scope listing are what a person reads before
+// recommending a store. The sentences wrap in the files, so the assertions
+// are made against the whitespace-normalized text.
+func TestDocsStateTheProjectScopeDefaultWhereASecretIsStored(t *testing.T) {
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{"../../docs/project-layer.md", []string{
+			"a secret name is stored **project-wide by default**",
+			"`fugaro secrets set NAME` with no flag writes the project's own container",
+			"`--repo` is what asks for one repository's own copy instead",
+			"warns when a repository copy shadows the project's",
+		}},
+		{"../../docs/multi-model.md", []string{
+			"One key for the whole project, and it is the default.",
+			"`--project-wide` is still accepted as a synonym",
+			"a project-scope copy created or deleted after a job's apply changes what that job mounts only on the next `fugaro init --repo`",
+		}},
+		{"../../docs/dogfooding.md", []string{
+			"Both are stored once for the project",
+			"being stored once is not the same as reaching every job",
+			"which `fugaro doctor` lists per name and warns about when it happens",
+		}},
+		{"../../plugin/skills/setup/SKILL.md", []string{
+			"`secret-scope` line says which copy it resolves for every name",
+		}},
+	}
+	for _, tc := range cases {
+		data, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := strings.Join(strings.Fields(string(data)), " ")
+		for _, want := range tc.want {
+			if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q", tc.path, want)
+			}
+		}
+	}
+}
+
+// TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository: the two
+// sentences the code review of this PR found wrong (item 1), corrected once
+// more in the second review round. `fugaro init --repo`'s secrets stage has no
+// --repo of its own to pass (internal/cli/initsecrets.go, the prompt's own
+// "press Ctrl-C here" text is the way out), so a page that tells a reader to
+// pass one at the prompt describes a flag that does not exist; and
+// `bitbucket-token` is a PerRepositorySecret, which is *not* the same as never
+// project-wide (internal/config/project_secrets.go): D2's sweep skips it, so it
+// is per-repository by default, but `AllowedForProjectSecret` is asked before
+// the sweep in infra.ProjectSecretCandidate, so an explicit
+// `project_secrets.bitbucket-token` allow-list entry does store it project-wide.
+// The pages have to say that, not "never" — SECURITY.md and gcp-setup.md
+// already do.
+func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing.T) {
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{"../../plugin/skills/setup/SKILL.md", []string{
+			"Init's prompts (step 9) have no `--repo` to pass",
+			"except a per-repository one (`bitbucket-token`, project-wide only through an explicit `project_secrets` allow-list entry)",
+			"per-repository by default; project-wide only through that same entry",
+			"press Ctrl-C at the prompt and run the command it printed in your own terminal, then start init again",
+			"a covered name is not asked for",
+		}},
+		{"../../plugin/skills/setup/reference/decisions.md", []string{
+			"`bitbucket-token` reaches project scope only through an explicit `project_secrets` entry",
+		}},
+		{"../../docs/multi-model.md", []string{
+			"the prompt has no `--repo` to pass",
+			"press Ctrl-C at it, run the command it printed (`fugaro secrets set <name> --repo <owner>/<name>`) in your own terminal, and start init again",
+			"`bitbucket-token` excepted: a repository access token serves one repository, so it is stored per repository by default and the prompt offers it project-wide only through an explicit `project_secrets` allow-list entry",
+		}},
+	}
+	for _, tc := range cases {
+		data, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := strings.Join(strings.Fields(string(data)), " ")
+		for _, want := range tc.want {
+			if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q", tc.path, want)
+			}
+		}
+		// The wrong sentences, in every spelling this PR gave them: the
+		// first two told a reader the init prompt takes `--repo`, the third
+		// said bitbucket-token is never project-wide.
+		for _, wrong := range []string{
+			"store project-wide unless `--repo` is passed",
+			"stored project-wide unless you pass `--repo`",
+			"never project-wide",
+			"no prompt ever offers it project-wide",
+		} {
+			if strings.Contains(doc, wrong) {
+				t.Errorf("%s still tells a reader the init prompt takes `--repo`: %q", tc.path, wrong)
+			}
+		}
+	}
+}

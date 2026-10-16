@@ -95,3 +95,40 @@ func knownEnvName(t *testing.T, name string) bool {
 	}
 	return false
 }
+
+// TestSecurityMdNarrowsTheUncomparedRemoteToWhatRemains: the launcher-
+// environment bullet said a remote naming another repository *on the same
+// host* "is not compared with the task at all until Task 3.3 computes the
+// clone URL from the task itself". That stopped being true when the check
+// landed (internal/runner's remoteOfAnotherRepository, asked by admissionCheck
+// before any git credential is requested, pinned by
+// TestRunnerRefusesARemoteOnAnotherRepositoryOfTheSameHost), so the sentence
+// overstated the residual risk — and, in the same breath, said nothing about
+// the corners that really are uncompared. What stays uncompared is the remote
+// no parser here can place: a host Fugaro does not recognise, and a path that
+// is not exactly one owner and one name.
+func TestSecurityMdNarrowsTheUncomparedRemoteToWhatRemains(t *testing.T) {
+	data, err := os.ReadFile("../../SECURITY.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	for _, want := range []string{
+		"remoteOfAnotherRepository",
+		"a remote on a host Fugaro does not recognise",
+		"a self-hosted forge included",
+		"not exactly one owner and one name",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("SECURITY.md never says %q", want)
+		}
+	}
+	for _, banned := range []string{
+		"names another repository *on the same host*, or any remote on a host Fugaro does not recognise, is not compared",
+		"*on the same host*, or any remote",
+	} {
+		if strings.Contains(s, banned) {
+			t.Errorf("SECURITY.md still says %q: a remote naming another repository on that host is compared and refused", banned)
+		}
+	}
+}

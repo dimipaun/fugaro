@@ -387,6 +387,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 					if c := doctorProjectSecretScopeCheck(ctx, lc, facts, o.Secrets, projSecrets); c != nil {
 						o.Checks = append(o.Checks, *c)
 					}
+					o.Checks = append(o.Checks, doctorSecretScopeChecks(facts, o.Secrets, projSecrets, projOK)...)
 				}
 			}
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(resolved)); c != nil {
@@ -981,6 +982,110 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 	return &doctorCheck{ID: "project-secret-scope-stale", Severity: "warning",
 		Problem: strings.Join(stale, "; ") + ": the deployed job was applied before the secret's scope changed",
 		Fix:     "run " + selfCommand() + " init --repo " + quoteWord(facts.repo) + " in your own terminal to reapply the repository, so the next run mounts the copy Fugaro resolves"}
+}
+
+// doctorSecretScopeChecks are doctor's "secret-scope" pair (plan Task 2.3
+// step 1): what this checkout's jobs mount, and from where — the surface
+// the cross-cutting list asks for next to the launcher grants, since under
+// D2 the same name can resolve to two different containers and only one of
+// them is the one a job reads.
+//
+// "secret-scope" is the info line: for every name this checkout's jobs
+// mount, the copy Fugaro resolves for it (facts.logical, facts.repoIDs,
+// facts.candidates, and the two listings doctor already fetched), naming
+// the scope rather than either container's ID — "project scope", "repository
+// copy", or "no enabled copy this repository can resolve" for a name neither
+// listing holds an enabled version of that this repository may resolve
+// (code review, minor: the docs say the line answers this for every name, so
+// it does, rather than silently dropping the names nothing is stored for; and
+// the wording says exactly that, not "no copy stored", which is false twice
+// over — a container that exists holding only disabled versions, and a
+// project-wide copy that is enabled but not eligible for this repository,
+// both reach this branch). Informational and never failing, exactly like
+// provider-open-to-every-repository: the state is the owner's, and this only
+// makes it readable in one place.
+//
+// "secret-scope-shadowed" is the warning: a name stored both project-wide
+// and in this repository's own container, where the repository copy wins
+// (design project-secrets.md §5) — the footgun `fugaro secrets set` already
+// warns about at store time (internal/cli/secrets.go's storeSecretValue
+// notes), now visible from a checkout instead of only at the moment of
+// storing. A warning, not red: the next init --repo cannot change which copy
+// wins, so the fix is deliberate, and doctor without --strict still passes.
+//
+// It is the stored copies it compares, not a deployed job's mounts: that is
+// project-secret-scope-stale's own question, and a job that is merely behind
+// its repository's stored copies is already named there.
+//
+// Both read metadata only — names and version state — and never a value.
+// The pair says nothing when the listings could not be read (listed == nil,
+// or !projectOK): project-secret-stored already fails closed on exactly that
+// unreadable listing, so this stays silent rather than double-report a state
+// neither can vouch for.
+func doctorSecretScopeChecks(facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) []doctorCheck {
+	if listed == nil || !projectOK {
+		return nil
+	}
+	repoEnabled := projectSecretEnabledFromEntries(listed)
+	projEnabled := projectSecretEnabled(project)
+	names := map[string]bool{}
+	for name := range facts.repoIDs {
+		names[name] = true
+	}
+	for name := range facts.candidates {
+		names[name] = true
+	}
+	var lines, shadowed []string
+	for _, name := range slices.Sorted(maps.Keys(names)) {
+		_, isCandidate := facts.candidates[name]
+		inProject := isCandidate && projEnabled[name]
+		inRepo := repoEnabled[name]
+		printable := pluginwire.Printable(name)
+		switch {
+		case inRepo && inProject:
+			lines = append(lines, printable+" — repository copy, which wins over the project's")
+			shadowed = append(shadowed, name)
+		case inRepo:
+			lines = append(lines, printable+" — repository copy")
+		case inProject:
+			lines = append(lines, printable+" — project scope")
+		default:
+			// A name this checkout's jobs mount that resolves to no enabled
+			// copy at all: neither container holds an enabled version this
+			// repository may resolve — which is not the same as "nothing is
+			// stored" (a container can exist holding only disabled versions,
+			// or hold a project-wide copy this repository is not eligible
+			// for). The listing answers the question the docs ask it ("which
+			// copy does this name resolve to") for every name, not only for
+			// the ones something is stored for, and "nothing yet" is the
+			// answer that matters most to a reader (project-secret-stored is
+			// the red check for it).
+			lines = append(lines, printable+" — no enabled copy this repository can resolve")
+		}
+	}
+	var out []doctorCheck
+	if len(lines) > 0 {
+		out = append(out, doctorCheck{ID: "secret-scope", Severity: "info",
+			Problem: "secrets this checkout's jobs mount, by the copy Fugaro resolves for each: " + strings.Join(lines, "; "),
+			Fix: "run " + selfCommand() + " secrets ls --json for the project's containers and " +
+				selfCommand() + " secrets ls --repo " + quoteWord(facts.repo) + " --json for this repository's own"})
+	}
+	if len(shadowed) > 0 {
+		printable := printableNames(shadowed)
+		// Every shadowed name gets its own command (code review, minor): the
+		// fix is printed to be pasted, and naming only the first left the
+		// others with no command at all.
+		cmds := make([]string, 0, len(shadowed))
+		for _, name := range shadowed {
+			cmds = append(cmds, selfCommand()+" secrets set "+quoteWord(name)+" --repo "+quoteWord(facts.repo))
+		}
+		out = append(out, doctorCheck{ID: "secret-scope-shadowed", Severity: "warning",
+			Problem: fmt.Sprintf("%s: stored in %s's own container and project-wide at once, and a repository copy with an enabled version wins over the project copy, so the project's value never reaches this repository",
+				strings.Join(printable, ", "), pluginwire.Printable(facts.repo)),
+			Fix: "store the value you mean with " + strings.Join(cmds, ", or ") +
+				" to keep this repository's own copy up to date, or disable the repository copy's versions (gcloud secrets versions disable) if the project's value is the one this repository should mount"})
+	}
+	return out
 }
 
 // doctorProjectSecretAccessorChecks is doctor's project-wide
