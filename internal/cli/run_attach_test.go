@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gocloud.dev/blob"
 
@@ -487,6 +488,53 @@ func TestAttachRefusesANonArtifactRecipe(t *testing.T) {
 	wantRefused(t, f, "--attach needs an artifact recipe; default is mode: "+recipe.ModeImplement,
 		"run", "--repo", "acme/app", "--recipe", "default", "--run-id", "20261015-100000-abcd", "--attach", shot, "Add a feature")
 	wantNoUpload(t, f, n)
+}
+
+// TestAttachOnAFollowUpResolvesTheRecipeTheRunnerWill: a follow-up does not
+// take agent.recipe from fugaro.yaml — the runner's resolveRecipe consults it
+// only for a first run (`r.follow == nil && cfg.Agent.Recipe != ""`,
+// internal/runner/recipe.go) and otherwise runs its default — and the
+// launcher used to resolve that same key for a follow-up anyway. A
+// fugaro.yaml naming an artifact recipe (here a REPOSITORY recipe, the one
+// kind localRecipe can read) then made --attach look legal on a follow-up
+// whose previous run carried no recipe at all (resolveFollowUp's
+// `rcp == nil && c.Chosen == nil` arm, internal/cli/followup.go): the launcher
+// uploaded the files, wrote the task naming them, and the run failed at
+// bootstrap with "the task attached 1 file(s), but recipe default is mode:
+// implement" — the bytes had left the machine for a run that could never read
+// them, which is the whole thing the launcher's refusals exist to prevent.
+//
+// The previous run is seeded exactly that way — no recipe in its task, none in
+// its record — and the job image is release080, so the image gate cannot
+// refuse this launch first and stand in for the refusal under test.
+//
+// Mutation (drop the spec.IsFollowUp() arm of recipeForLaunch, or resolve
+// agent.recipe for a follow-up as for a first run): the launch is not refused
+// at all, a job starts, and this test fails on wantRefused's execution count
+// as well as on the missing sentence — with the file already in the bucket.
+func TestAttachOnAFollowUpResolvesTheRecipeTheRunnerWill(t *testing.T) {
+	f := newCloudFixture(t)
+	appRepoCheckout(t, map[string]string{
+		"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\nagent:\n  recipe: sizzle\n" +
+			"workflows:\n  web: { commands: { build: sh build.sh, render: sh render.sh, test: sh test.sh } }\n",
+		recipe.RepoPath("sizzle"): projectSizzle,
+	})
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	seedSpec(t, f, firstRunSpec(rootID), false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+	calls := guardAttach(t)
+	shot := attachShot(t, "shot.png", "png-bytes")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--attach", shot, "Render the bundle")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a follow-up never takes agent.recipe") ||
+		!strings.Contains(err.Error(), "mode: implement") {
+		t.Fatalf("err = %v, want a refusal naming the recipe the runner would run", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	wantNoUpload(t, f, calls)
 }
 
 // TestAttachRefusesARecipeTheRunnerChooses: the arm a launcher-side refusal

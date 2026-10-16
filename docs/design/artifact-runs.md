@@ -598,7 +598,7 @@ write:
    Task 6, with its own test). An attachment is only meaningful to a run that
    will produce files rather than a pull request: on an implement or review
    recipe the inputs would be downloaded into a run that commits a diff and
-   opens a PR, and nothing in its steps reads `inputs/`. Two arms, both
+   opens a PR, and nothing in its steps reads `inputs/`. Three arms, all
    fail-closed:
 
    - **A resolved recipe whose mode is not `artifact` is refused**, naming the
@@ -606,12 +606,23 @@ write:
      mode: <mode>".
    - **A launch that leaves the recipe to the runner is refused too.** When
      `spec.Recipe` is nil the CLI cannot know what the runner will pick
-     (`runnerChooses`, `internal/cli/run.go:950`: no recipe in the task, not a
+     (`runnerChooses`, `internal/cli/run.go:1108`: no recipe in the task, not a
      follow-up, no checkout here — the runner then takes `agent.recipe` from
      `fugaro.yaml` at the ref, else the catalog default), so it cannot promise
      an artifact run. The refusal says so and names the fix: pass the artifact
      recipe explicitly. Being unable to *prove* the recipe is artifact mode is
      not a reason to upload the files anyway.
+   - **A follow-up whose previous run left no recipe behind is refused.** A
+     follow-up runs the recipe of the run it continues — the previous task's,
+     else that run's record's — and when both are silent the runner runs its
+     own default, because `resolveRecipe` reads `agent.recipe` only for a first
+     run (`r.follow == nil && cfg.Agent.Recipe != ""`). The launcher resolves
+     the same way (`recipeForLaunch`), so the refusal names the recipe the run
+     will really use and says why: reading `agent.recipe` here would let an
+     artifact recipe in `fugaro.yaml` — which the follow-up will not run — pass
+     the check, and the bytes would leave the machine for a run that fails at
+     bootstrap with "the task attached N file(s), but recipe default is mode:
+     implement".
 
    The rule is deliberately the launcher's, because the launcher is where the
    bytes are: a refusal there costs nothing and leaves nothing in the bucket.

@@ -86,6 +86,16 @@ func localRecipe(root string, cfg *config.Config) *recipe.Recipe {
 	if name == "" {
 		name = recipe.DefaultName
 	}
+	return localRecipeNamed(root, name)
+}
+
+// localRecipeNamed is localRecipe for a recipe NAME the caller resolved
+// itself, rather than the one this file selects: the follow-up case, where
+// agent.recipe is not consulted at all (recipeForLaunch, internal/cli/run.go,
+// mirroring the runner's resolveRecipe), so the name is recipe.DefaultName
+// whatever the file says. The repository layer is read first and the catalog
+// second, the order the runner reads them in.
+func localRecipeNamed(root, name string) *recipe.Recipe {
 	if !recipe.NameRE.MatchString(name) {
 		return nil
 	}

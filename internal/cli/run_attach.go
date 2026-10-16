@@ -246,13 +246,15 @@ func attachUpload(ctx context.Context, env *cloudEnv, spec *task.Spec, prefix st
 // downloaded into a run that commits a diff and opens a PR, and nothing in
 // its steps reads inputs/.
 //
-// Two arms, both fail-closed. A resolved recipe of another mode is refused
+// Three arms, all fail-closed. A resolved recipe of another mode is refused
 // with its name and its mode. A launch that leaves the recipe to the runner
 // (runnerChooses: no recipe in the task, not a follow-up, no checkout here)
 // is refused too, because this CLI cannot prove the mode the runner will
 // pick — it takes agent.recipe from fugaro.yaml at the ref, else the catalog
 // default — and being unable to prove it is not a reason to upload the files
-// anyway. The message names the fix.
+// anyway. The message names the fix. And a follow-up the previous run left no
+// recipe for is refused with the recipe the runner will really use, since it
+// never reads agent.recipe for one (recipeForLaunch's follow-up arm).
 func checkAttachRecipe(ctx context.Context, spec *task.Spec) error {
 	if spec.Mode == recipe.ModeArtifact {
 		return nil
@@ -264,13 +266,24 @@ func checkAttachRecipe(ctx context.Context, spec *task.Spec) error {
 	switch {
 	case rcp != nil && rcp.Mode == recipe.ModeArtifact:
 		// An artifact recipe the CLI resolved is exactly what --attach needs,
-		// whatever spec.Mode says: the arm above is keyed on the task's own
-		// mode, and design §8.2 lets a task carry none (the runner resolves
-		// the recipe from the task, the checkout or the catalog, and its own
-		// cross-check refuses a stamp that disagrees with the recipe). Keying
-		// this on rcp != nil alone would refuse an artifact recipe here with a
-		// message claiming it is not one.
+		// whatever spec.Mode says: the first arm above is keyed on the task's
+		// own mode, and design §8.2 lets a task carry none (the runner
+		// resolves the recipe from the task, the checkout or the catalog, and
+		// its own cross-check refuses a stamp that disagrees with the recipe).
+		// Keying this on rcp != nil alone would refuse an artifact recipe here
+		// with a message claiming it is not one.
 		return nil
+	case spec.IsFollowUp() && spec.Recipe == nil && rcp != nil:
+		// A follow-up runs the recipe of the run it continues, carried either
+		// in its task or in that run's record; when both are silent the runner
+		// takes its own default, and it never reads agent.recipe for a
+		// follow-up (resolveRecipe's `r.follow == nil` arm). So rcp is the
+		// recipe the run will really use — not artifact — even when THIS
+		// checkout's fugaro.yaml names an artifact one, which is exactly what
+		// this sentence has to say: an owner looking at a fugaro.yaml that
+		// already names an artifact recipe would otherwise read the generic
+		// refusal below as a bug.
+		return userErr("--attach needs an artifact recipe; the run this follow-up continues left no recipe behind, and a follow-up never takes agent.recipe from fugaro.yaml, so the runner runs recipe %s (mode: %s)", rcp.Name, rcp.Mode)
 	case rcp != nil:
 		return userErr("--attach needs an artifact recipe; %s is mode: %s", rcp.Name, rcp.Mode)
 	case spec.Recipe != nil:

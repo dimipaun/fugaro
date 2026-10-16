@@ -1064,13 +1064,30 @@ func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
 // recipeForLaunch is the recipe this launch will run, parsed: the task's own
 // (the text the launcher embedded for a project or catalog recipe, else the
 // repository file a repo-sourced one names, read from this checkout), or,
-// for a task that names none, the one this checkout's config selects
-// (localRecipe, exactly as `fugaro validate` resolves it). nil when the
-// launcher cannot read or parse it here: the runner resolves the same
-// recipe at the task's ref and refuses it there.
+// for a task that names none, the one the runner will resolve for it —
+// agent.recipe from this checkout's config, for a FIRST run (localRecipe,
+// exactly as `fugaro validate` resolves it), and the catalog default for a
+// follow-up, which never takes agent.recipe at all (the runner's
+// resolveRecipe, internal/runner/recipe.go: `r.follow == nil &&
+// cfg.Agent.Recipe != ""`). nil when the launcher cannot read or parse it
+// here: the runner resolves the same recipe at the task's ref and refuses it
+// there.
+//
+// The follow-up arm is not a detail: --attach resolves the mode through this
+// function (checkAttachRecipe), and reading agent.recipe for a follow-up made
+// the launcher allow, upload for and write a task for an artifact recipe the
+// runner would then not run — it takes the default (mode: implement) — so the
+// run failed at bootstrap with the bytes already in the bucket.
 func recipeForLaunch(ctx context.Context, cfg *config.Config, spec *task.Spec) *recipe.Recipe {
 	root := checkoutRoot(ctx, spec.Repo)
 	if spec.Recipe == nil {
+		if spec.IsFollowUp() {
+			// Resolved from the checkout alone: cfg may be nil (no checkout
+			// here at all), and the answer is the same either way — the
+			// default name, read from the repository layer when there is one
+			// and the catalog otherwise, as the runner reads it.
+			return localRecipeNamed(root, recipe.DefaultName)
+		}
 		if cfg == nil {
 			return nil
 		}
