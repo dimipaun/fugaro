@@ -813,6 +813,7 @@ const bashTimeoutSlack = 2 * time.Minute
 // read before the checkout exists. It costs nothing — bootstrap's FetchBase
 // brings origin/<base> up to date before anything reads it — and the task's
 // own ref is fetched separately either way (CheckoutNewBranch).
+//
 // remote is where the clone comes from. It is r.cloneURL's answer for this run
 // — computed from task.json, the job's provider and the policy on a project
 // job, the job's environment's remote on a per-repository one (projectjob.go) —
