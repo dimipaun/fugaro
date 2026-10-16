@@ -617,8 +617,9 @@ const (
 
 // CheckRoutingMemberNames refuses a routing block whose member names encoding/json
 // does not read the way the document spells them: a name written twice, two names
-// that differ only in case, or a modelled name (`claude`, `via`, `models`) spelled
-// in another case. It is exported because the CLI's publish writes into the same
+// that fold to one under Unicode simple case folding, or a modelled name
+// (`claude`, `via`, `models`) spelled in a folding of itself. It is exported
+// because the CLI's publish writes into the same
 // block and must not add an exact `claude` beside a `Claude` a hand-written node
 // already carries: the two fold to one field, and which one wins is the order the
 // keys were written in.
@@ -665,11 +666,12 @@ func CheckRoutingMemberNames(raw json.RawMessage) error {
 // checkMemberNames refuses, at one level of a block, a member name encoding/json
 // would read as another: the exact same name twice (the decoder keeps the last it
 // reads, so which value survives depends on the order the keys were written in),
-// two names differing only in case (the decoder matches a member name
-// case-insensitively, so they are one field), or a modelled name spelled in
-// another case (which is the same sentence one name at a time). A name this
-// Fugaro does not model passes: an unknown key here is a key this reader ignores,
-// and the refusal for a block that then names no switch is validRoutingMembers'.
+// two names that fold to one (the decoder folds a member name by Unicode simple
+// case folding before matching it, so they are one field), or a modelled name
+// spelled in a folding of itself (which is the same sentence one name at a
+// time). A name this Fugaro does not model passes: an unknown key here is a key
+// this reader ignores, and the refusal for a block that then names no switch is
+// validRoutingMembers'.
 //
 // It is the one check DisallowUnknownFields cannot make. That decoder refuses a
 // name no field answers to, and passes a name that answers to a field in
@@ -681,22 +683,35 @@ func CheckRoutingMemberNames(raw json.RawMessage) error {
 // which adds the prefix its exported errors carry). The prefix is the block's
 // path without that prefix — "budget", "model_prices" — so the caller's own
 // wrap names the block once.
+//
+// The folding is *the decoder's own*, which is not strings.ToLower: encoding/json
+// folds a member name with unicode.SimpleFold (foldName's contract is
+// bytes.EqualFold, so strings.EqualFold answers it), and SimpleFold has orbits
+// ToLower does not. U+017F LATIN SMALL LETTER LONG S (ſ) is ToLower's own
+// spelling of itself — ToLower("ſ") is "ſ" — and is in 's”s orbit, so a block
+// naming allowed_models and allowed_modelſ was read as one member by the
+// decoder while this check saw two names, and the allow-list the document
+// visibly states was not the one the run was bounded by (code review of the
+// first shape of this check). U+212A KELVIN SIGN is the mirror case, fold-equal
+// to 'k' and *not* lower-cased to anything else — both are refused now, and
+// TestDecodeRefusesFoldEqualMemberNames holds the cases.
 func checkMemberNames(prefix string, names, known []string) error {
 	seen := map[string]bool{}
-	folded := map[string]string{}
+	var written []string
 	for _, n := range names {
 		if seen[n] {
 			return fmt.Errorf("%s names %q twice: encoding/json keeps the last one it reads, so which value this Fugaro reads would depend on the order the keys were written in — write the member once", prefix, n)
 		}
 		seen[n] = true
-		lower := strings.ToLower(n)
-		if first, dup := folded[lower]; dup {
-			return fmt.Errorf("%s names both %q and %q, which encoding/json reads as one member (it matches a member name case-insensitively), so which value this Fugaro reads would depend on the order the keys were written in — write the member once, spelled as the node spells it", prefix, first, n)
+		for _, prev := range written {
+			if strings.EqualFold(prev, n) {
+				return fmt.Errorf("%s names both %q and %q, which encoding/json reads as one member (it folds a member name by Unicode simple case folding, as strings.EqualFold does), so which value this Fugaro reads would depend on the order the keys were written in — write the member once, spelled as the node spells it", prefix, prev, n)
+			}
 		}
-		folded[lower] = n
+		written = append(written, n)
 		for _, k := range known {
-			if lower == strings.ToLower(k) && n != k {
-				return fmt.Errorf("%s spells %s as %q: encoding/json matches a member name case-insensitively, so this Fugaro reads it as %s — write the member as %s documents it, or remove it", prefix, k, n, k, k)
+			if n != k && strings.EqualFold(n, k) {
+				return fmt.Errorf("%s spells %s as %q: encoding/json folds a member name by Unicode simple case folding (as strings.EqualFold does) before it matches it, so this Fugaro reads it as %s — write the member as %s documents it, or remove it", prefix, k, n, k, k)
 			}
 		}
 	}
