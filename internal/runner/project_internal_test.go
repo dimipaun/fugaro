@@ -64,13 +64,13 @@ func TestRemoteOfAnotherKind(t *testing.T) {
 
 // The owner/name half of the remote binding: the same repository written the
 // ways git writes it — .git or not, mixed case, an scp-like remote, a userinfo
-// — is one repository, and anything that names no owner/name is left to the
-// checks that were always there rather than refused here. A remote that names
-// a repository is what admissionCheck compares with the task's own.
+// — is one repository, and a remote that names no repository path at all is
+// left to the checks that were always there rather than refused here. A remote
+// that names a repository is what admissionCheck compares with the task's own.
 func TestRepoNamedByRemote(t *testing.T) {
 	for _, tc := range []struct {
 		remote, want string
-		ok           bool
+		named        bool
 	}{
 		{"https://github.com/acme/app.git", "acme/app", true},
 		{"https://github.com/acme/app", "acme/app", true},
@@ -83,14 +83,96 @@ func TestRepoNamedByRemote(t *testing.T) {
 		// admits more than one "/"), so it is a name this check compares like
 		// any other rather than one it refuses.
 		{"https://gitlab.example.com/group/sub/app.git", "group/sub/app", true},
+		// A remote that names no path: a local path, a bare host, an empty
+		// string. Nothing to compare, and the checks that were always there
+		// still run.
 		{"/tmp/fixture.git", "", false},
 		{"/srv/git/acme/app", "", false},
 		{"http://127.0.0.1:8080/", "", false},
+		{"https://github.com/", "", false},
 		{"", "", false},
 	} {
-		got, ok := repoNamedByRemote(tc.remote)
-		if got != tc.want || ok != tc.ok {
-			t.Errorf("repoNamedByRemote(%q) = (%q, %v), want (%q, %v)", tc.remote, got, ok, tc.want, tc.ok)
+		got, named, err := repoNamedByRemote(tc.remote)
+		if err != nil {
+			t.Errorf("repoNamedByRemote(%q) = error %v, want (%q, %v, nil)", tc.remote, err, tc.want, tc.named)
+			continue
+		}
+		if got != tc.want || named != tc.named {
+			t.Errorf("repoNamedByRemote(%q) = (%q, %v), want (%q, %v)", tc.remote, got, named, tc.want, tc.named)
+		}
+	}
+}
+
+// A remote that names a repository path canonicalization refuses is an error,
+// never a "nothing to compare": skipping it is what let
+// https://github.com/acme/app.git/../../attacker/malware — which git's HTTP
+// transport resolves to github.com/attacker/malware — through the owner/name
+// binding, and the run cloned it under acme/app's slug. Every path here is one
+// git or the server may read differently from this check, so every one of them
+// must come back as a refusal (the review finding on this change).
+func TestRepoNamedByRemoteRefusesAPathItCannotRead(t *testing.T) {
+	for _, remote := range []string{
+		// Dot segments: RFC 3986 §5.2.4 removes them, so this is
+		// github.com/attacker/malware.
+		"https://github.com/acme/app.git/../../attacker/malware",
+		"https://github.com/acme/app.git/../../../attacker/malware",
+		"https://github.com/acme/../attacker/malware.git",
+		"https://github.com/./acme/app.git",
+		"https://github.com/acme/app/..",
+		"git@github.com:acme/../attacker/malware.git",
+		// Encoded separators and encoded dots: url.Parse decodes "%2F" into a
+		// separator, so reading Path instead of EscapedPath would compare a
+		// repository the remote does not plainly name.
+		"https://github.com/acme%2Fapp.git",
+		"https://github.com/acme%2F..%2Fattacker/malware.git",
+		"https://github.com/%2e%2e/attacker/malware.git",
+		// An empty segment: two separators where a segment must be.
+		"https://github.com//attacker/malware.git",
+		"https://github.com/acme//app.git",
+		// A segment a repository name cannot hold (task's repoRE): the
+		// remote is not an owner/name, whatever the server makes of it.
+		"https://github.com/acme/app.git;x",
+		"https://github.com/acme/app%20x.git",
+		"https://github.com/acme/app.git%00",
+	} {
+		got, named, err := repoNamedByRemote(remote)
+		if err == nil {
+			t.Errorf("repoNamedByRemote(%q) = (%q, %v, nil), want a refusal: a path this check cannot read is one git may resolve to another repository", remote, got, named)
+			continue
+		}
+		if named {
+			t.Errorf("repoNamedByRemote(%q) reported a name beside its refusal", remote)
+		}
+	}
+}
+
+// The path half on its own: what counts as "the remote names a repository
+// path", and what the path is before canonicalization (which is the caller's
+// refusal to make). EscapedPath is the source, so an encoded separator stays
+// visible instead of decoding into one.
+func TestRemoteRepoPath(t *testing.T) {
+	for _, tc := range []struct {
+		remote, want string
+		named        bool
+	}{
+		{"https://github.com/acme/app.git", "acme/app.git", true},
+		{"https://github.com/acme/app.git/", "acme/app.git", true},
+		{"https://github.com/acme/app.git/../../attacker/malware", "acme/app.git/../../attacker/malware", true},
+		{"https://github.com/acme%2Fapp.git", "acme%2Fapp.git", true},
+		{"git@github.com:acme/app.git", "acme/app.git", true},
+		// A query or a fragment is not part of the path git clones, so a
+		// remote carrying one is still the repository its path names.
+		{"https://github.com/acme/app.git?ref=x", "acme/app.git", true},
+		{"https://github.com/acme/app.git#main", "acme/app.git", true},
+		{"https://github.com/", "", false},
+		{"https://github.com", "", false},
+		{"http://127.0.0.1:8080/", "", false},
+		{"/tmp/fixture.git", "", false},
+		{"", "", false},
+	} {
+		got, named := remoteRepoPath(tc.remote)
+		if got != tc.want || named != tc.named {
+			t.Errorf("remoteRepoPath(%q) = (%q, %v), want (%q, %v)", tc.remote, got, named, tc.want, tc.named)
 		}
 	}
 }

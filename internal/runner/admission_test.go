@@ -240,6 +240,50 @@ func TestRunnerRefusesARemoteNamingAnotherRepository(t *testing.T) {
 	refusedAdmission(t, b, rec, err, "attacker/malware", "acme/app", "FUGARO_REMOTE", "before any git credential")
 }
 
+// A remote whose path is not an owner/name is refused, not skipped. Skipping it
+// was the first shape of the check: repoNamedByRemote answered "names no
+// repository" for any path task.CanonicalRepo refuses, so the comparison never
+// ran, and git's HTTP transport resolves dot segments before it asks the
+// server (RFC 3986 §5.2.4), which made
+// https://github.com/acme/app.git/../../attacker/malware a clone of
+// github.com/attacker/malware under acme/app's slug — its locks, its cache, its
+// budget session and the policy's admission all naming a repository whose work
+// was not the work being run. A remote may only tighten the run's admission,
+// never change which repository it is for, so every one of these stops before
+// any git credential is requested.
+//
+// Mutation (run, restored): make repoNamedByRemote return ok=false on
+// task.CanonicalRepo's error (the shape this test was written against). Every
+// case below is admitted — the run goes on to clone — and no other test fails.
+func TestRunnerRefusesARemoteWhosePathIsNotAnOwnerName(t *testing.T) {
+	for _, tc := range []struct{ name, remote string }{
+		{"dot segments to another repository", "https://github.com/acme/app.git/../../attacker/malware"},
+		{"three dot segments", "https://github.com/acme/app.git/../../../attacker/malware"},
+		{"a dot segment in the owner", "https://github.com/acme/../attacker/malware.git"},
+		{"a trailing dot segment", "https://github.com/acme/app/.."},
+		{"an encoded separator", "https://github.com/acme%2Fapp.git"},
+		{"encoded separators around an encoded dot segment", "https://github.com/acme%2F..%2Fattacker/malware.git"},
+		{"an encoded dot segment", "https://github.com/%2e%2e/attacker/malware.git"},
+		{"an empty segment", "https://github.com//attacker/malware.git"},
+		{"a character a repository name cannot hold", "https://github.com/acme/app.git;x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			remote := tc.remote
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b.deps.Remote = remote
+			// Nothing here may reach github.com even if this check regresses:
+			// the same local rewrite the sibling remote tests use.
+			gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+			if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, "acme/app", "FUGARO_REMOTE", "before any git credential")
+		})
+	}
+}
+
 // The slug the run was launched for and the repository its task names must
 // agree: FUGARO_RUN is what keys the locks, the cache and the budget session,
 // and a job launched for one repository must not run another repository's
