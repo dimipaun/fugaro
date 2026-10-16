@@ -1354,9 +1354,10 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 		}
 	}
 	for _, r := range doc.AllowRepos {
-		if !slices.Contains(running, r) {
-			doc.EnrolledNotRunning = append(doc.EnrolledNotRunning, r)
+		if entryHasARun(r, running) {
+			continue
 		}
+		doc.EnrolledNotRunning = append(doc.EnrolledNotRunning, r)
 	}
 	if o.json {
 		return writeJSON(out, doc)
@@ -1394,6 +1395,25 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 		fmt.Fprintf(out, "  %s is on the allow-list and has no run in flight here\n", r)
 	}
 	return nil
+}
+
+// entryHasARun reports whether any run in flight is of a repository this one
+// allow-list entry admits.
+//
+// The run registry holds repository names, and an entry is not one: an entry
+// that is a pattern (github/acme/*) or the wildcard "*" equals no name at all,
+// so a comparison by equality reported every pattern as "on the allow-list and
+// has no run in flight here" while the repositories it admits were running.
+// The question is admission — MatchRepo, which is what the runner's admission
+// check and the launcher's advisory check ask (projectpolicy.AdmitRepo is the
+// same matcher over a whole list, and this is one entry of a list).
+func entryHasARun(entry string, running []string) bool {
+	for _, r := range running {
+		if projectpolicy.MatchRepo(entry, r) {
+			return true
+		}
+	}
+	return false
 }
 
 // printCaps prints the ceiling the installation's nodes carry: what a run uses

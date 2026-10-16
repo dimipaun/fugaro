@@ -1044,6 +1044,82 @@ func TestProjectShowPrintsEnrolledAndRunning(t *testing.T) {
 	}
 }
 
+// TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun: the run
+// registry holds repository names, and the entry side of the pair compared
+// each allow-list entry to them literally. A pattern entry (github/acme/*)
+// never equals a repository name, so it was reported as "on the allow-list and
+// has no run in flight here" while github/acme/app — the repository it admits,
+// and whose run is in flight — was running, which is the one thing this pair
+// of lists exists to say. Admission is the list's own matcher
+// (projectpolicy.AdmitRepo, which the runner and the launcher use), and the
+// question here is that matcher asked of one entry.
+func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "rm", "github/acme/app", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	// The pattern admits github/acme/app, and a run of it is in flight.
+	appSlug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(budget.PathAgent(appSlug, "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
+
+	out, _, err := execute(t, "project", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "github/acme/* is on the allow-list and has no run in flight here") {
+		t.Errorf("project show calls the pattern idle though the repository it admits is running now:\n%s", out)
+	}
+	if !strings.Contains(out, "bitbucket/acme/other is on the allow-list and has no run in flight here") {
+		t.Errorf("project show no longer reports the entry nothing is running:\n%s", out)
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		AllowRepos         []string `json:"allow_repos"`
+		EnrolledNotRunning []string `json:"enrolled_not_running"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if !slices.Contains(doc.AllowRepos, "github/acme/*") {
+		t.Fatalf("allow_repos = %v, want the pattern the test enrolled", doc.AllowRepos)
+	}
+	if len(doc.EnrolledNotRunning) != 1 || doc.EnrolledNotRunning[0] != "bitbucket/acme/other" {
+		t.Errorf("enrolled_not_running = %v, want [bitbucket/acme/other]: the pattern's repository is running now", doc.EnrolledNotRunning)
+	}
+	// A second installation, with nothing running: the same pattern is idle
+	// there, and saying so is right — the matcher answers about the runs there
+	// are.
+	newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+		t.Fatal(err)
+	}
+	js, _, err = execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if !slices.Contains(doc.EnrolledNotRunning, "github/acme/*") {
+		t.Errorf("enrolled_not_running = %v, want the pattern too: nothing is running here", doc.EnrolledNotRunning)
+	}
+}
+
 // TestNotAdmittedNoteNamesARemedyThatWorks: 'fugaro project repos add' takes a
 // canonical name, and a repository the registry knows only as a slug has none —
 // task.Slug is a hash, so it cannot be turned back into one. The note that
