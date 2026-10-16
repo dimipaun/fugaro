@@ -12,6 +12,9 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/spf13/cobra"
 
@@ -55,14 +58,20 @@ import (
 //   - an existing file, a symlink and anything that is not a regular file are
 //     refusals, --force or not (a symlink is a path out of the directory the
 //     user named);
-//   - the bytes are written by blobx.GetFile into a temporary file in the
-//     destination's own directory and renamed into place only once the
-//     recorded size and sha256 both match, and the recorded size is then
-//     checked against what was read — the record's own two fields have to
-//     agree with each other and with the object, or the file is removed
-//     again, so a mismatch, an over-cap object, a truncated one or a record
-//     whose bytes disagree with its hash leaves NOTHING at the destination
-//     path — not even a partial file;
+//   - the set of names is checked as a set, because the destination is a path
+//     on the operator's filesystem and not a name in a bucket: a name recorded
+//     twice, two names a case-insensitive (or normalizing) filesystem writes
+//     to one file, and a name that is a directory of another are all refused
+//     before a byte is read (design §8.2);
+//   - the bytes are written by blobx.GetFileExactly into a temporary file in
+//     the destination's own directory and renamed into place only once the
+//     recorded size and sha256 both match — both verified on that temporary,
+//     before the rename, so a refusal cannot remove what the rename put there
+//     and never the operator's own file — and the download is bounded by the
+//     recorded size and by a deadline derived from it: a mismatch, an
+//     over-cap object, a truncated one, a stalled read or a record whose
+//     bytes disagree with its hash leaves NOTHING at the destination path —
+//     not even a partial file;
 //   - and nothing downloaded is ever opened, executed or unpacked (§8.1): the
 //     recorded content type is printed as the record's claim and stops there.
 //
@@ -352,7 +361,10 @@ func runArtifactsGet(cmd *cobra.Command, o *artifactsGetOptions, ref, name strin
 	// Every name and destination is checked BEFORE the first byte is read, so
 	// a record with one bad entry downloads nothing at all: an "all
 	// artifacts" run that silently skipped one would tell the owner
-	// everything came back when it did not (design §9).
+	// everything came back when it did not (design §9). The checks create
+	// nothing — the directories a name needs are made by prepareArtifactDest
+	// when that file is about to be written — so a refused record leaves no
+	// half-made tree behind either.
 	root := artifactDestRoot(o.out, s.RunID())
 	if err := prepareArtifactRoot(root); err != nil {
 		return err
@@ -364,7 +376,7 @@ func runArtifactsGet(cmd *cobra.Command, o *artifactsGetOptions, ref, name strin
 		}
 	}
 	for i, a := range selected {
-		if err := getArtifact(ctx, env, s, a, dests[i], cmd.OutOrStdout()); err != nil {
+		if err := getArtifact(ctx, env, s, a, root, dests[i], cmd.OutOrStdout()); err != nil {
 			return err
 		}
 	}
@@ -400,41 +412,25 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 		if len(files) == 0 {
 			return nil, userErr("run %s recorded no artifacts", s.Slug()+"/"+s.RunID())
 		}
-		// One name, one artifact: the record is untrusted text, and two
-		// entries for one name would be downloaded twice, to one path, with
-		// two success lines printed for one file. This is the retriever's
-		// half of the uploader's "no duplicate after normalisation" refusal
-		// (design §8.2).
+		// One name, one artifact, one path: the record is untrusted text, and
+		// two entries that a filesystem would write to one file are refused
+		// before any destination exists or any byte is read. This is the
+		// retriever's half of the uploader's "no duplicate after
+		// normalisation" refusal (design §8.2).
 		//
-		// It is a case-folded comparison and not a set membership test,
-		// because the destination is a path on the operator's filesystem:
-		// on one that ignores case (APFS, NTFS) "A.png" and "a.png" are one
-		// file, and checkArtifactDest proves every destination before the
-		// first byte is read — so the second download would land on the
-		// first file's path without --force ever being consulted. A pair
-		// that only such a filesystem would confuse is refused here rather
-		// than left to the kernel.
+		// The comparison is artifactSetConflict's, and it is the whole set's
+		// and not a running one: a check that keeps one name per key and
+		// overwrites it is order-dependent, and a record that lists its names
+		// in the order that hides a pair defeats it. It is also the set's
+		// because one of the refusals it makes is between two DIFFERENT
+		// names — a name that is a directory of another.
 		//
-		// Naming one of them still works (`get RUN A.png`): the refusal is
-		// about writing two artifacts to one path, not about the record
-		// being unreadable, and a named fetch of a doubled name is refused
-		// above by the len(chosen) != 1 check.
-		exact := make(map[string]bool, len(files))
-		folded := make(map[string]string, len(files))
-		for _, a := range files {
-			if exact[a.Name] {
-				return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and two downloads of it would write the same file twice", s.Slug()+"/"+s.RunID(), a.Name)
-			}
-			exact[a.Name] = true
-			key := strings.ToLower(a.Name)
-			// The map is the cheap lookup; EqualFold is what decides, so the
-			// refusal is exactly the "these are the same file name" rule and
-			// not a lower-casing heuristic that could refuse two names a
-			// filesystem keeps apart.
-			if first, ok := folded[key]; ok && strings.EqualFold(first, a.Name) {
-				return nil, userErr("run %s recorded %q and %q, which differ only by case: on a filesystem that ignores case they are one file, and the second download would overwrite the first", s.Slug()+"/"+s.RunID(), first, a.Name)
-			}
-			folded[key] = a.Name
+		// Naming one of a colliding pair still works (`get RUN A.png`): the
+		// refusal is about writing two artifacts to one path, not about the
+		// record being unreadable, and a named fetch of a doubled name is
+		// refused above, by the case that names the duplication.
+		if conflict := artifactSetConflict(files); conflict != "" {
+			return nil, userErr("run %s recorded %s", s.Slug()+"/"+s.RunID(), conflict)
 		}
 	}
 	// The refusals below are the selected set's, whether it is the whole
@@ -474,6 +470,99 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 		}
 	}
 	return files, nil
+}
+
+// artifactSetConflict is why the record's artifacts cannot all be downloaded
+// into one destination root, as a sentence naming them, or "" when they can.
+//
+// Two questions, both about the destination being a path on the operator's
+// filesystem rather than about the record being readable:
+//
+//   - two names a case-insensitive filesystem writes to one file. APFS and
+//     NTFS ignore case; macOS normalises as well, so "café.png" in its NFC
+//     form (U+00E9) and in its NFD form (e + U+0301) are one file there. The
+//     collision is decided by foldKey, which is EqualFold's equivalence plus
+//     NFC, and the answer is the set's: every name is filed under its key
+//     before any pair is reported, so the order the record lists them in
+//     cannot hide a pair, and no entry can evict another from the table.
+//   - a name that is a directory of another ("a" and "a/b.png"). Only one of
+//     the two can exist: the first needs root/a to be a file and the second
+//     needs it to be a directory. Left to the download, the check phase's
+//     MkdirAll makes root/a a directory and the rename of "a" then fails as a
+//     remote error, which is not what a record's own contradiction is.
+func artifactSetConflict(files []runstore.ArtifactFile) string {
+	byKey := make(map[string]string, len(files))
+	for _, a := range files {
+		key := foldKey(a.Name)
+		first, ok := byKey[key]
+		switch {
+		case !ok:
+			byKey[key] = a.Name
+		case first == a.Name:
+			return fmt.Sprintf("the artifact %q twice: one name is one artifact, and two downloads of it would write the same file twice", a.Name)
+		default:
+			return fmt.Sprintf("%q and %q, which differ only by case, or in a Unicode normalization a filesystem may apply: one of the two would be written over the other", first, a.Name)
+		}
+	}
+	// The prefix question, asked of the whole set: every ancestor of every
+	// name is looked up, and the map above holds one name per key, so this is
+	// independent of the order the record lists its entries in.
+	for _, a := range files {
+		key := foldKey(a.Name)
+		for i := strings.LastIndexByte(key, '/'); i > 0; i = strings.LastIndexByte(key[:i], '/') {
+			if ancestor, ok := byKey[key[:i]]; ok {
+				return fmt.Sprintf("%q and %q: the first names a file and the second a file inside a directory of that name, so one download would have to write a file where the other needs a directory", ancestor, a.Name)
+			}
+		}
+	}
+	return ""
+}
+
+// foldKey is a name's canonical identity for the "these two names are one
+// file" question: NFC-normalised, and then every rune replaced by the smallest
+// rune in its simple case-folding orbit.
+//
+// Both halves are load-bearing, and neither is strings.ToLower:
+//
+//   - a lower-cased key is not EqualFold's equivalence. unicode.ToLower maps
+//     U+0130 (İ) to 'i', which strings.EqualFold does NOT equate with it, so a
+//     table keyed that way collides two names that are two files — and, with
+//     one name per key, an entry like that evicts the entry it collided with
+//     and hides the real pair behind it (a record listing "I.png", "İ.png",
+//     "i.png" has a genuine collision between the first and the last). It
+//     misses real collisions on the other side as well: ToLower(U+017F) is
+//     U+017F, and the long s folds with "s" and "S" (U+212A, the Kelvin sign,
+//     is the same shape for k and K). The orbit minimum gets both cases
+//     right, in the direction EqualFold decides ("K" for k, K and U+212A;
+//     "S" for s, S and U+017F; "İ" stays "İ").
+//   - normalization is not case folding at all: EqualFold("café.png",
+//     "café.png") is false for the NFC and NFD spellings, and macOS — where
+//     an operator runs this — treats them as one file.
+//
+// The key is only ever a map key: nothing prints it, and nothing writes a
+// path from it.
+func foldKey(name string) string {
+	folded := norm.NFC.String(name)
+	var b strings.Builder
+	b.Grow(len(folded))
+	for _, r := range folded {
+		b.WriteRune(foldRune(r))
+	}
+	return b.String()
+}
+
+// foldRune is the smallest rune in r's simple case-folding orbit — the orbit
+// unicode.SimpleFold cycles through, over which strings.EqualFold considers its
+// members equal. The minimum is what makes the orbit a single key: whichever
+// member a name is written with, the key is the same rune.
+func foldRune(r rune) rune {
+	min := r
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		if f < min {
+			min = f
+		}
+	}
+	return min
 }
 
 // artifactNameProblem is why name, read out of a run's result.json, may not
@@ -554,16 +643,14 @@ func checkArtifactDest(root, name string, force bool) (string, error) {
 	if err := parentUnderRoot(root, parent); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", userErr("creating %s: %v", oneLine(parent), err)
-	}
-	// Again, now that it exists: MkdirAll created nothing outside root (the
-	// check above resolved the deepest directory that was there and the rest
-	// is names it made), and this resolves what is really there now, so a
-	// link swapped in between the two is caught too.
-	if err := underArtifactRoot(root, parent); err != nil {
-		return "", err
-	}
+	// The parent is proved and NOT created: this is the check phase, which
+	// runs for every entry before the first byte is read, and a phase that
+	// creates directories changes the filesystem it is checking — a refusal
+	// on a later entry then leaves a half-made tree behind, and a record
+	// naming both "a" and "a/b.png" has its contradiction resolved into a
+	// directory by the check for the second entry rather than reported.
+	// prepareArtifactDest makes the directory when a file is about to be
+	// written into it.
 	fi, err := os.Lstat(dest)
 	switch {
 	case os.IsNotExist(err):
@@ -582,6 +669,28 @@ func checkArtifactDest(root, name string, force bool) (string, error) {
 		return "", userErr("%s already exists: pass --force to replace it", oneLine(dest))
 	}
 	return dest, nil
+}
+
+// prepareArtifactDest creates the directories dest's name needs, at the moment
+// a file is about to be written into them, and re-proves the parent is inside
+// root now that it exists.
+//
+// The parent was proved once already, by checkArtifactDest, on the deepest
+// directory that existed then; this repeats the two steps in the order that
+// matters — prove, create, prove again — so a link swapped in between the
+// check and the write is caught, and nothing is created outside root.
+func prepareArtifactDest(root, dest string) error {
+	parent := filepath.Dir(dest)
+	if err := parentUnderRoot(root, parent); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return userErr("creating %s: %v", oneLine(parent), err)
+	}
+	// Again, now that it exists: MkdirAll created nothing outside root (the
+	// check above resolved the deepest directory that was there and the rest
+	// is names it made), and this resolves what is really there now.
+	return underArtifactRoot(root, parent)
 }
 
 // underArtifactRoot refuses dir unless, with every symlink on the way
@@ -672,10 +781,16 @@ func artifactObjectKey(prefix, name string) (string, error) {
 // with the bytes: two recorded fields that disagree are a reason to refuse
 // rather than to believe the hash (the record is untrusted text; design §9
 // "get verifies the byte count and the sha256 against the record").
-func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runstore.ArtifactFile, dest string, out io.Writer) error {
+func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runstore.ArtifactFile, root, dest string, out io.Writer) error {
 	key, err := artifactObjectKey(s.Prefix(), a.Name)
 	if err != nil {
 		return userErr("run %s recorded an artifact named %q, which cannot be retrieved: %v", s.Slug()+"/"+s.RunID(), a.Name, err)
+	}
+	// The directories this name needs, made now that this file is the one
+	// about to be written — after every destination has been checked, and
+	// before a byte is read.
+	if err := prepareArtifactDest(root, dest); err != nil {
+		return err
 	}
 	// A bounded read: a stalled object must not hang the command forever.
 	ctx, cancel := artifactReadContext(ctx, a.Bytes)

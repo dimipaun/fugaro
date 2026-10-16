@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1146,6 +1147,186 @@ func TestArtifactsLsEscapesAProbeWarningsTab(t *testing.T) {
 	}
 	if !strings.Contains(out, "exit 0 (the tab?here)") {
 		t.Errorf("the probe's warning is not printed table-escaped:\n%q", out)
+	}
+}
+
+// TestArtifactsGetRefusesEveryOneFileFoldCollision: the collision rule is
+// "these two names are one file", and it has to be order-independent: the
+// entries are the record's, and a record that lists the names in the order that
+// hides a pair defeats a check that keeps one name per key and overwrites it.
+// The pairs below are the ones a lower-cased key gets wrong or misses —
+// U+0130 (İ), whose lower case is 'i' but which EqualFold does NOT equate with
+// it, so an entry like it evicts the entry it collided with and the real pair
+// goes unnoticed; U+212A (the Kelvin sign) and U+017F (long s), which fold to
+// k/K and s/S and which a lower-cased key misses on one side; and the NFC/NFD
+// pair macOS stores as one file, which no case folding equates at all.
+//
+// Each pair is listed in BOTH orders, and the İ case needs the third name that
+// makes the eviction visible: without it the record is refused for the
+// (İ, i) pair's key collision only by accident.
+func TestArtifactsGetRefusesEveryOneFileFoldCollision(t *testing.T) {
+	body := []byte("one")
+	for _, tc := range []struct {
+		name  string
+		names []string
+	}{
+		{"U+0130 between a pair that folds", []string{"I.png", "\u0130.png", "i.png"}},
+		{"the same, listed the other way", []string{"i.png", "\u0130.png", "I.png"}},
+		{"the Kelvin sign", []string{"K.png", "\u212a.png"}},
+		{"the Kelvin sign, listed the other way", []string{"\u212a.png", "K.png"}},
+		{"long s", []string{"s.png", "\u017f.png"}},
+		{"long s, listed the other way", []string{"\u017f.png", "s.png"}},
+		{"NFC and NFD, as macOS stores them", []string{"caf\u00e9.png", "cafe\u0301.png"}},
+		{"NFC and NFD, listed the other way", []string{"cafe\u0301.png", "caf\u00e9.png"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			const id = "20261016-090000-abcd"
+			files := make([]runstore.ArtifactFile, len(tc.names))
+			bodies := map[string][]byte{}
+			for i, n := range tc.names {
+				files[i] = runstore.ArtifactFile{Name: n, Bytes: int64(len(body)), SHA256: sha256Hex(body)}
+				bodies[n] = body
+			}
+			seedArtifactRun(t, f, id, files, bodies)
+
+			_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+			if err == nil {
+				t.Fatalf("get accepted a record whose names are one file on a case-insensitive, normalizing filesystem: %v", tc.names)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d (a bad record is the user's to read)", code, ExitUserError)
+			}
+			if names := dirEntries(t, artifactRunDir(id)); len(names) != 0 {
+				t.Errorf("a one-file record downloaded %q, want nothing", names)
+			}
+		})
+	}
+	// The pairs the rule must NOT refuse: a case-insensitive filesystem keeps
+	// these apart on every platform Go folds for, so refusing them would
+	// refuse a record no run could have avoided.
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	kept := []string{"\u0130.png", "i.png"}
+	files := make([]runstore.ArtifactFile, 0, len(kept))
+	bodies := map[string][]byte{}
+	for _, n := range kept {
+		files = append(files, runstore.ArtifactFile{Name: n, Bytes: int64(len(body)), SHA256: sha256Hex(body)})
+		bodies[n] = body
+	}
+	seedArtifactRun(t, f, id, files, bodies)
+	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id); err != nil {
+		t.Errorf("get refused \u0130.png and i.png, which EqualFold keeps apart: %v", err)
+	}
+}
+
+// TestArtifactsGetRefusesANameThatIsADirectoryOfAnother: "a" and "a/b.png"
+// cannot both be written — the second needs root/a to be a directory and the
+// first needs it to be a file — and the record is refused before any directory
+// is created, as a usage error. The alternative is what the check phase used
+// to do: create root/a while checking a/b.png, then fail to rename a file onto
+// the directory it had just made, and exit 2 with a bare rename error.
+// Mutation caught: creating parents during the check phase, or leaving the
+// prefix relation to the rename.
+func TestArtifactsGetRefusesANameThatIsADirectoryOfAnother(t *testing.T) {
+	body := []byte("one")
+	for _, tc := range []struct {
+		name  string
+		names []string
+	}{
+		{"the file first", []string{"a", "a/b.png"}},
+		{"the file inside first", []string{"a/b.png", "a"}},
+		{"deeper", []string{"frames/a.png", "frames"}},
+		{"deeper, listed the other way", []string{"frames", "frames/a.png"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			const id = "20261016-090000-abcd"
+			files := make([]runstore.ArtifactFile, len(tc.names))
+			for i, n := range tc.names {
+				files[i] = runstore.ArtifactFile{Name: n, Bytes: int64(len(body)), SHA256: sha256Hex(body)}
+			}
+			// No objects at all: the record is the hostile half (a sibling run
+			// of the same repository can rewrite result.json), and the refusal
+			// has to come before the bucket is asked for anything — which is
+			// also what lets this test seed a pair of names no object store
+			// could hold at once.
+			seedArtifactRun(t, f, id, files, nil)
+
+			_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+			if err == nil {
+				t.Fatalf("get accepted a record naming both a file and a file inside it: %v", tc.names)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d (the record is the user's to read, not a remote failure)", code, ExitUserError)
+			}
+			for _, n := range tc.names {
+				if !strings.Contains(err.Error(), strconv.Quote(n)) {
+					t.Errorf("the refusal does not name %q: %v", n, err)
+				}
+			}
+			if _, err := os.Lstat(filepath.Join(dir, artifactRunDir(id))); !os.IsNotExist(err) {
+				t.Errorf("a prefix-conflicting record created the destination root: %v", err)
+			}
+		})
+	}
+	// A name that merely shares a prefix is not a conflict: "a" and "ab.png"
+	// are two files, and "a/b.png" and "ab.png" are two more.
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "a", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+		{Name: "ab.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{"a": body, "ab.png": body})
+	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id); err != nil {
+		t.Errorf("get refused two names that share a prefix but are not one inside the other: %v", err)
+	}
+}
+
+// TestArtifactsGetCreatesNoDirectoriesWhileChecking: every destination is
+// proved before the first byte is read, and proving one must not change the
+// filesystem — a check phase that creates directories leaves a half-made tree
+// behind when a LATER entry is refused, and it is what makes the prefix
+// conflict above reachable in the first place. Mutation caught: MkdirAll
+// during the check phase.
+func TestArtifactsGetCreatesNoDirectoriesWhileChecking(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	body := []byte("one")
+	// The second entry's destination is a symlink, which the check refuses;
+	// the first entry's parent (root/frames) must not have been created by the
+	// time that refusal is reported.
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "frames/a.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+		{Name: "b.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{"frames/a.png": body, "b.png": body})
+	root := filepath.Join(dir, artifactRunDir(id))
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "elsewhere"), filepath.Join(root, "b.png")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+	if code := ExitCode(err); code != ExitUserError {
+		t.Fatalf("get with a symlinked destination = %v, want a user error", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "frames")); !os.IsNotExist(err) {
+		t.Errorf("the check phase created %s: a refused record left a directory behind", filepath.Join(root, "frames"))
+	}
+	if entries := dirEntries(t, root); len(entries) != 1 || entries[0] != "b.png" {
+		t.Errorf("the destination root holds %v, want just the symlink that was already there", entries)
 	}
 }
 
