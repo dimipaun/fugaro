@@ -33,6 +33,8 @@ steps:
 ```
 
 - `implement` always runs first, unless `mode: review` (section 3) says there is no `implement` at all. `steps` lists what follows it, in order.
+- `plan` and `render` are the two step kinds of `mode: artifact` (section 3): `plan` is an agent stage and `render` is deterministic, running the workflow's `commands.render`. An artifact recipe's `steps` is exactly those two, in that order, or `render` alone — a `render`-only recipe calls no model at all.
+- `outputs` is a top-level block, legal only on `mode: artifact` (section 3): `globs` (required: the artifact paths, relative to the checkout), `max_files`, `max_bytes` (each artifact) and `max_total_bytes` (the whole set), and `probe`, which is `probe` or `none` and names the workflow's `commands.probe`. `outputs` on any other mode is refused outright (section 8), and `mode: artifact` without it is too.
 - `check` may appear at most once, and only before `first_line` and `review`: `check: { command: build | test | lint, autofix: true }`. `command` names a `commands.*` key of the `fugaro.yaml` the run reads at its ref (never a command of its own: a recipe never names a command). `autofix` is allowed only with `command: lint`, and needs `commands.fix` next to `commands.lint`. `commands.fix` is trusted only when it exits 0, does not time out, and leaves the branch's history exactly where it found it: a timeout, a non-zero exit, or a commit it made on its own, are all discarded (reset to the commit read before the fix ran, untracked files removed) rather than committed under the runner's identity, and the check step ends red with a plain explanation of why. A follow-up (`fugaro run --pr N`) keeps its recipe, so its check still runs; a clean or fixed check never ends or shortens a follow-up the way it does a first run — the launcher asked for something specific (replying to comments, applying instructions), and the gate passing does not mean that work is done.
 - `first_line` may appear at most once, with `max_rounds` 1 to 3. It is a review by the coder's model in a fresh session, followed by a fix when it asks for changes. It never decides readiness.
 - `review` is required in every recipe: exactly once, and last, with `max_rounds` 1 to 10 (1 only, under `mode: review`). A recipe cannot produce a ready pull request without a senior review.
@@ -64,7 +66,7 @@ Only the catalog's own `default` follows `agent.first_line_review`. Every other 
 
 Every catalog recipe is launchable. `commands.lint` and `commands.fix` exist in `fugaro.yaml` (validated, schema'd); a `check` step is executed by the runner as a gate before `implement` (so `test-and-fix` and `lint-fix` run), and `mode: review` is executed directly, in place of `implement` (so `review-only` and `pick` run) — section 3.
 
-## 3. Review mode and pick
+## 3. Review mode, pick, and artifact mode
 
 `mode: review` (default `mode: implement`) means the recipe has no `implement` and no `fix`: exactly one `review` step, `max_rounds: 1`, and no `roles` (there is no coder step to map them onto). `review-only` and `pick` are both `mode: review`; the difference is how they are launched, not the format.
 
@@ -102,6 +104,27 @@ The model credential reaching the agent (`cfg.Agent.auth`, needed for the stage 
 `review-only` reviews one pull request, checked out in place. `pick` compares 2 to 4: each head gets its own directory (a git worktree), and the prompt lists them so the agent reads every one before naming which to keep. `fugaro run --attempts N` (2 to 4) launches that many independent runs of the same task, under one batch label, so `pick` has something to compare once they have all opened a pull request; `pick` itself only ever needs the pull requests its own `--pr` already names.
 
 A follow-up (`fugaro run --pr N` with no `--recipe`, or one naming an ordinary recipe) never runs a `mode: review` recipe, even one it would otherwise inherit from the pull request's own history (a prior run's recipe, or the one the runner chose for it): `fugaro run` refuses it before any cloud work, since a follow-up only ever continues a pull request Fugaro itself opened, which `mode: review` never does.
+
+**`mode: artifact` is the other mode with no pull request**: the run's deliverable is a file it uploads to the runs bucket instead of a branch and a PR, and you fetch it back with `fugaro artifacts get`. The recipe names the agent stage, the render step and the deliverable's own `outputs` block, and the workflow's `fugaro.yaml` carries the commands it runs:
+
+```yaml
+version: 1
+name: sizzle
+description: Render a short video from attached screenshots with ffmpeg.
+use_when: You have screenshots (or frames) and want a video file back, not a pull request.
+mode: artifact
+steps:
+  - plan: {}       # the agent writes the render plan; no push, no git token
+  - render: {}     # deterministic: runs the workflow's commands.render
+outputs:
+  globs: ["out/*.mp4"]
+  max_files: 8
+  max_bytes: 268435456        # each artifact
+  max_total_bytes: 2147483648 # the whole set
+  probe: probe                # names the workflow's commands.probe
+```
+
+Launch it with `fugaro run --recipe sizzle --attach screenshot.png`, which uploads the file to the run's own `inputs/` and is refused unless the recipe really is `mode: artifact`. `plan` and `render` are the only step kinds it may use, with `render` last — and `steps: [render: {}]` alone is legal, a recipe that calls no model at all. `implement`, `first_line`, `bounce`, `roles` and a carry-over of the ordinary loop are refused: there is no PR to loop around. Neither command comes from the recipe (a recipe never names a command): the render runs the workflow's `commands.render` and the optional probe runs its `commands.probe`, both read from `fugaro.yaml` at the task's ref, and a render step with no `commands.render` — or `probe: probe` with no `commands.probe` — is refused before the first step. Write `commands.render` as the script itself, an inline `|` block: a command that names a file in the checkout runs that file's working-tree bytes, which the plan stage could have rewritten. The rest — the caps, the probe's interface, `--attach` and where the files go — is [artifact-runs.md](artifact-runs.md).
 
 ## 4. Loop knobs stay outside the recipe
 
@@ -158,6 +181,9 @@ A recipe that uses a reserved key is refused with a message that says so:
 - `model` and `models`: a recipe never names a model; models come from `agent.models`.
 - any role other than `reviewer` or `coder`; any `reviewer` value other than `coder`; any `coder` value other than `reviewer`; and both mapped at once (`reviewer: coder` and `coder: reviewer` exclude each other).
 - `check.command` other than `build`, `test` or `lint`; `autofix` on anything but `command: lint`.
+- `outputs` on a recipe that is not `mode: artifact` ("is only for `mode: artifact`"), and `mode: artifact` with no `outputs` at all ("is required for `mode: artifact`").
+- `roles` on a `mode: artifact` recipe: it has no agent steps to map them onto.
+- `plan` or `render` in a recipe of any other mode ("is only for `mode: artifact`"), and `check`, `first_line` or `review` in a `mode: artifact` one ("is not a step of `mode: artifact`") — an artifact recipe takes one `render`, optionally after one `plan`, and nothing else.
 
 There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
 
