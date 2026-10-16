@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/procgroup"
@@ -83,24 +84,47 @@ func gateVerifyKind(kind recipe.CheckCommand) verify.Kind {
 	}
 }
 
+// GateProblem is one refusal about how a recipe and one workflow's config
+// fit together: Field, the key under the workflow it is about
+// ("commands" or "resources.memory"), and Message, worded to follow "the "
+// at that key's path — the shape internal/cli's gateCheckProblems reports
+// problems in, so the two callers of RecipeGateProblems can print it at the
+// right key without re-deriving which key it was.
+type GateProblem struct {
+	Field   string
+	Message string
+}
+
+// The Field values a GateProblem carries: the workflow's commands.* block
+// (a step the recipe names has no command to run) and its resources.memory
+// (the caps the recipe declares cannot fit the container).
+const (
+	GateCommands = "commands"
+	GateMemory   = "resources.memory"
+)
+
 // checkGateCommands refuses a check step whose commands.* key is empty (or
-// all whitespace) in cmds, and an autofix step whose commands.fix is empty
+// all whitespace) in wf, and an autofix step whose commands.fix is empty
 // (or all whitespace): a check step the recipe named never silently skips
 // (design G10), and autofix: true never silently does nothing (G11) — with
 // no commands.fix, runAutofix would otherwise run `sh -c ""`, change
 // nothing, and a clean check would report the gate "clean" for a repository
-// that was never actually judged as a hand-written fix would be.
-func checkGateCommands(steps []recipe.Step, cmds config.Commands, ref string) error {
-	for _, msg := range gateCommandProblems(steps, cmds) {
-		return fmt.Errorf("the recipe's %s in fugaro.yaml at %s", msg, ref)
+// that was never actually judged as a hand-written fix would be. For a
+// mode: artifact recipe it refuses the artifact arm of the same list
+// instead (RecipeGateProblems): an artifact launch whose recipe the
+// launcher could not resolve reaches its first step only through this call.
+func checkGateCommands(rcp *recipe.Recipe, wf config.Workflow, ref string) error {
+	for _, p := range RecipeGateProblems(rcp, wf) {
+		return fmt.Errorf("the recipe's %s in fugaro.yaml at %s", p.Message, ref)
 	}
 	return nil
 }
 
 // gateCommandProblems is checkGateCommands' and RecipeGateProblems' shared
 // list of what is wrong between steps and cmds, each already worded to
-// follow "the recipe's ": "check step needs commands.lint" or "check step
-// has autofix: true but no commands.fix".
+// follow "the " (internal/cli's per-key path) or "the recipe's " (the
+// launch's error): "check step needs commands.lint" or "check step has
+// autofix: true but no commands.fix".
 func gateCommandProblems(steps []recipe.Step, cmds config.Commands) []string {
 	var out []string
 	for _, s := range steps {
@@ -114,12 +138,60 @@ func gateCommandProblems(steps []recipe.Step, cmds config.Commands) []string {
 	return out
 }
 
-// RecipeGateProblems is what `fugaro validate` reports for rcp's check
-// steps against cmds (one workflow's commands.*): the same two refusals
-// checkGateCommands makes at launch, so a broken pairing shows up before a
-// launch, not only at it.
-func RecipeGateProblems(rcp *recipe.Recipe, cmds config.Commands) []string {
-	return gateCommandProblems(checkGateSteps(rcp), cmds)
+// RecipeGateProblems is what `fugaro validate` reports for rcp against wf
+// (one workflow's config): the same refusals checkGateCommands makes at
+// launch, so a broken pairing shows up before a launch, not only at it.
+// For a mode: artifact recipe those are the artifact arms — the render and
+// probe steps need commands.render and commands.probe, and the caps the
+// recipe declares must fit the workflow's memory (outputsMemoryProblem) —
+// because an artifact recipe has no check steps at all.
+func RecipeGateProblems(rcp *recipe.Recipe, wf config.Workflow) []GateProblem {
+	var out []GateProblem
+	for _, msg := range gateCommandProblems(checkGateSteps(rcp), wf.Commands) {
+		out = append(out, GateProblem{Field: GateCommands, Message: msg})
+	}
+	if rcp.Mode != recipe.ModeArtifact {
+		return out
+	}
+	if strings.TrimSpace(wf.Commands.Render) == "" {
+		out = append(out, GateProblem{Field: GateCommands, Message: "render step needs commands.render"})
+	}
+	if rcp.Outputs != nil && rcp.Outputs.Probe == recipe.ProbeCommand && strings.TrimSpace(wf.Commands.Probe) == "" {
+		out = append(out, GateProblem{Field: GateCommands, Message: "probe step needs commands.probe"})
+	}
+	if p, bad := outputsMemoryProblem(rcp, wf); bad {
+		out = append(out, p)
+	}
+	return out
+}
+
+// outputsMemoryProblem is the memory rule (design artifact-runs.md §5.2,
+// U3): on Cloud Run the container's filesystem is memory, the runner stages
+// a copy of every artifact beside the render's originals, and the inputs it
+// downloaded sit in the same filesystem, so 2 × outputs.max_total_bytes +
+// inputs.max_total_bytes must fit resources.memory. A set that cannot fit is
+// a killed container with no result.json, not a clean failure, which is why
+// this is refused rather than left to the render to discover. The three
+// numbers are in the message: the set, the doubled peak and the limit.
+// false when it fits, or when resources.memory is not a size this can judge
+// (Validate refuses that separately, and guessing a limit here would report
+// a refusal about a number nobody wrote).
+func outputsMemoryProblem(rcp *recipe.Recipe, wf config.Workflow) (GateProblem, bool) {
+	if rcp.Outputs == nil {
+		return GateProblem{}, false
+	}
+	limit, err := backend.MemoryGiB(wf.Resources.Memory)
+	if err != nil {
+		return GateProblem{}, false
+	}
+	outputs, inputs := rcp.Outputs.MaxSetBytes(), wf.Inputs.MaxSetBytes()
+	need := 2*outputs + inputs
+	if float64(need) <= limit*float64(int64(1)<<30) {
+		return GateProblem{}, false
+	}
+	return GateProblem{Field: GateMemory, Message: fmt.Sprintf(
+		"outputs caps need %s of memory (2 × %s of outputs plus %s of inputs), over resources.memory %s: raise resources.memory or lower the caps",
+		recipe.SizeText(need), recipe.SizeText(outputs), recipe.SizeText(inputs), wf.Resources.Memory)}, true
 }
 
 // runGate runs steps (the recipe's check steps) in order. Every command it

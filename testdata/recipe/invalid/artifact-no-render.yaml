@@ -1,0 +1,7 @@
+version: 1
+name: artifact-no-render
+mode: artifact
+outputs:
+  globs: ["out/*.png"]
+steps:
+  - plan: {}
