@@ -105,12 +105,15 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	// Cloud Run fills in and the codec reads back to say which job and which
 	// execution this is — internal/backend's codec.go), and FUGARO_RUN, which
 	// this override sets below. An entry naming one of them is applied over
-	// the value the run believes about itself, which is exactly what Batch
-	// refuses for the keys its job definition writes; this backend reserved
-	// FUGARO_RUN alone, so a launcher entry naming FUGARO_BUCKET or
-	// FUGARO_REGION was applied here and refused there (the review finding on
-	// this change).
-	reserved := append([]string{"FUGARO_RUN", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION"}, backend.PlatformEnvNames...)
+	// the value the run believes about itself, which is what
+	// backend.ReservedEnvNames is: one list for both backends, so Batch
+	// refuses the same names rather than the keys of its own map alone (the
+	// review finding on this change: this backend reserved FUGARO_RUN alone,
+	// so a launcher entry naming FUGARO_BUCKET or FUGARO_REGION was applied
+	// here and refused there — and Batch's map holds no FUGARO_BUCKET at all,
+	// so the parity this comment claimed was not the reservation the two
+	// backends made).
+	reserved := backend.ReservedEnvNames("FUGARO_RUN", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION")
 	extra, err := backend.LaunchEnv(spec, reserved...)
 	if err != nil {
 		// Nothing has been sent, so this is a refusal and not an ambiguity:

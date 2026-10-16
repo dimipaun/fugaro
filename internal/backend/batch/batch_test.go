@@ -1666,7 +1666,9 @@ func TestLaunchRefusesASecretThatIsAlsoAJobVariable(t *testing.T) {
 // itself, so an entry naming FUGARO_RUN (the run's own identity, which
 // jobDefinition writes for the same map), FUGARO_BACKEND or FUGARO_PROJECT is
 // refused rather than applied — the same collision the secrets check below
-// refuses, for the same reason.
+// refuses, for the same reason. The platform's own five are reserved beside
+// them (backend.ReservedEnvNames, which is the same list Cloud Run asks), so
+// the two backends refuse one set of launch entries rather than each its own.
 func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, nil)
@@ -1689,8 +1691,20 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	// already sets, are refused before the create: nothing was created, and
 	// the refusal is definitive (ErrRejected) rather than ambiguous, so the
 	// launcher drops its claim and the token it minted.
+	//
+	// The platform's own five are reserved here too, Cloud Run's list
+	// (backend.ReservedEnvNames), and FUGARO_BUCKET is the one of them no
+	// Batch job writes: an entry naming it would be the only writer of the
+	// bucket a run puts its results in, which is what the same entry is
+	// refused for on Cloud Run — where the job's environment already holds it
+	// — rather than a name this backend happens not to set (the review
+	// finding on this change).
 	before := len(bf.Creates())
-	for _, bad := range []string{"FUGARO_BUDGET_TOKEN", "=1", "FUGARO_RUN=acme-app/someone-elses-run", "FUGARO_PROJECT=someone-elses-project"} {
+	for _, bad := range []string{
+		"FUGARO_BUDGET_TOKEN", "=1", "FUGARO_RUN=acme-app/someone-elses-run",
+		"FUGARO_PROJECT=someone-elses-project", "FUGARO_BUCKET=gs://someone-elses-bucket",
+		"FUGARO_REGION=elsewhere",
+	} {
 		s.Env = []string{bad}
 		if _, err := b.Launch(ctx, s); !errors.Is(err, backend.ErrRejected) {
 			t.Fatalf("Launch with Env %q = %v, want ErrRejected", bad, err)

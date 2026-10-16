@@ -26,6 +26,30 @@ type EnvVar struct{ Name, Value string }
 // launch can silently rewrite. Not to be written to.
 var PlatformEnvNames = []string{"FUGARO_BUCKET", "FUGARO_BACKEND", "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION"}
 
+// ReservedEnvNames is the reserved list both backends hand LaunchEnv: the
+// names a backend's own job definition writes (own) and the platform's five
+// (PlatformEnvNames). It is one function rather than two lists because the
+// two backends must refuse the same launch entries — a launch that lands on
+// Cloud Run and one that lands on Batch differ in nothing the launcher's
+// entry is allowed to name — and because they did not: Cloud Run reserved the
+// platform's five and Batch reserved the keys of its own variables map, which
+// holds four of them and no FUGARO_BUCKET (no Batch job writes the runs
+// bucket; Batch's launcher wiring is not built yet), so an entry naming
+// FUGARO_BUCKET was refused on one backend and applied on the other (the
+// review finding on this change).
+//
+// A backend whose environment does not hold a name here still reserves it:
+// on Batch the map is the whole of the task's environment, so the entry would
+// not be applied *over* the platform's bucket but would be the only writer of
+// it, which is the same thing the reservation refuses elsewhere — a launch
+// telling a run which bucket to write its results to and to read the
+// project's policy from.
+func ReservedEnvNames(own ...string) []string {
+	out := make([]string, 0, len(own)+len(PlatformEnvNames))
+	out = append(out, own...)
+	return append(out, PlatformEnvNames...)
+}
+
 // LaunchEnv parses LaunchSpec.Env — the variables a launcher adds for one
 // execution only — into entries, in the order they were given, and refuses
 // the two an entry must not be. Both backends build the run's environment

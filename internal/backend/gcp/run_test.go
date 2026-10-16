@@ -120,8 +120,8 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	// The override is merged into that environment rather than replacing it,
 	// so each of these was applied over the value the run reads its own
 	// identity and configuration from — the reservation the seam documents,
-	// which Batch makes for every key of its map and this backend made for
-	// FUGARO_RUN alone (the review finding on this change).
+	// which Batch asks for the same list (backend.ReservedEnvNames) and this
+	// backend made for FUGARO_RUN alone (the review finding on this change).
 	for _, name := range append([]string{"CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION"}, backend.PlatformEnvNames...) {
 		before := len(fr.Requests())
 		spec.Env = []string{name + "=someone-elses-" + strings.ToLower(name)}
