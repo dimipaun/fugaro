@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // fakeWatchGH writes an executable gh, first on PATH, whose body is script; it
@@ -195,6 +199,49 @@ func TestWatchNeverExecutesGHForOtherURLs(t *testing.T) {
 	}
 	if got := ghWatchCalls(t, calls); got != nil {
 		t.Fatalf("gh ran for a URL it must never see: %v", got)
+	}
+}
+
+// The live plain path — fugaro watch --plain, and every non-TTY fugaro watch —
+// applies the filter frame by frame, and not only in --once: the first frame
+// draws the list as it is, and the frame after the answer drops the merged PR.
+// A live frame has no wait of its own, so what it drops comes from the filter's
+// return value; discarding that value is this test's whole subject.
+func TestEmitLiveFramesApplyPRState(t *testing.T) {
+	fakeWatchGH(t, "case \"$3\" in 42) echo MERGED ;; *) echo OPEN ;; esac\n")
+	now := time.Now().UTC()
+	v := watch.View{Repos: []watch.RepoBlock{{Slug: "a", Name: "acme/app"}}}
+	v = watch.MergeFinished(v, watch.Config{}, []watch.FinishedRun{
+		{Run: "r-merged", Slug: "a", Title: "Already merged", Status: "succeeded", Outcome: "ready",
+			PRURL: "https://github.com/acme/app/pull/42", PRNumber: 42, FinishedAt: now.Add(-10 * time.Minute)},
+		{Run: "r-open", Slug: "a", Title: "Still open", Status: "succeeded", Outcome: "ready",
+			PRURL: "https://github.com/acme/app/pull/43", PRNumber: 43, FinishedAt: now.Add(-9 * time.Minute)},
+	}, now)
+	var buf bytes.Buffer
+	d := &WatchDeps{Out: &buf, LC: &localcfg.Config{Name: "aurora"},
+		Filter:  watch.Filter{Keep: 6 * time.Hour, KeepCount: 15, FailedKeep: 24 * time.Hour},
+		Acks:    watch.LoadAcks(filepath.Join(t.TempDir(), "watch-acks.json")),
+		PRState: watch.NewPRState(watch.PRStateOptions{})}
+	o := &watchOptions{plain: true}
+
+	if err := d.emit(o, v, false); err != nil {
+		t.Fatal(err)
+	}
+	if first := buf.String(); !strings.Contains(first, "Ready for your review (2)") {
+		t.Fatalf("the first live frame must draw the list as it is:\n%s", first)
+	}
+	d.PRState.Settle(5 * time.Second)
+	buf.Reset()
+	if err := d.emit(o, v, false); err != nil {
+		t.Fatal(err)
+	}
+	second := buf.String()
+	if !strings.Contains(second, "Ready for your review (1)") {
+		t.Fatalf("the next live frame must drop the merged PR:\n%s", second)
+	}
+	section := readySection(second)
+	if strings.Contains(section, "pull/42") || !strings.Contains(section, "pull/43") {
+		t.Fatalf("want only the open PR listed:\n%s", section)
 	}
 }
 

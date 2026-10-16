@@ -288,9 +288,12 @@ func (d *WatchDeps) emit(o *watchOptions, v watch.View, header bool) error {
 	ready := watch.ReadyRowsOf(v) // before the filter: a ready PR outlives --keep (design generic-tool §10.1)
 	// The lookups start here and run in the background, so the frame is never
 	// held up by a gh; a row stays listed until an answer says otherwise
-	// (fail open). --once is one snapshot, so it waits for the answers it just
-	// started, briefly, before printing the count.
-	d.PRState.Filter(ready)
+	// (fail open). The result is the whole point: a live frame drops a merged
+	// or closed PR from the answers already cached, and starts what is
+	// missing for the frames after this one. --once is one snapshot, so it
+	// waits for the answers it just started, briefly, before printing the
+	// count.
+	ready = d.PRState.Filter(ready)
 	if o.once {
 		d.PRState.Settle(prStateOnceWait)
 		ready = d.PRState.Filter(ready)

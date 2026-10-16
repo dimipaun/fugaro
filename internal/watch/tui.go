@@ -274,6 +274,14 @@ func (m *model) rebuild() {
 	// ready for review any more, whatever result.json said. The list is drawn
 	// from the cache as it is now; a lookup still running leaves the row
 	// listed (fail open) and the next tick redraws once it answers.
+	//
+	// The version is read BEFORE the filter, so it names the cache this frame
+	// was drawn from. An answer landing during the build is then a version the
+	// frame has not shown, and the next tick redraws it; reading it afterwards
+	// would treat that answer as already drawn — and since a merged answer is
+	// never re-asked and its URL is no longer busy, no later bump would come
+	// to correct it: the row would stay on screen for the life of the screen.
+	prVersion := m.o.PRState.Version()
 	ready = m.o.PRState.Filter(ready)
 	v, _ = m.filter.Apply(v, m.acks.Has)
 	v = DropEmptyFinishedBlocks(v)
@@ -294,7 +302,7 @@ func (m *model) rebuild() {
 	m.scroll, m.follow = fr.Scroll, false
 	m.frame = fr.String()
 	m.dirty = false
-	m.prSeen = m.o.PRState.Version()
+	m.prSeen = prVersion
 }
 
 // ackSelected acknowledges the selected row's failure (key x), when it names
