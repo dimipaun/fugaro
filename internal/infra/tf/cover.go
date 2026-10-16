@@ -196,9 +196,12 @@ var RolePermissions = map[string][]string{
 	// The preloaded boot image's build: boot one COS VM, read its serial
 	// output, stop it, image its disk, delete it — and nothing else, setMetadata
 	// (how SSH keys reach a VM) among the nothing else.
-	"fugaroPreloadBuilder": {"compute.instances.create", "compute.instances.get", "compute.instances.list", "compute.instances.getSerialPortOutput",
-		"compute.instances.stop", "compute.instances.delete", "compute.images.create", "compute.images.get", "compute.images.getFromFamily",
-		"compute.images.delete", "compute.zoneOperations.get"},
+	"fugaroPreloadBuilder": {"compute.instances.create", "compute.instances.setMetadata", "compute.instances.setLabels",
+		"compute.instances.setServiceAccount", "compute.instances.get", "compute.instances.list", "compute.instances.getSerialPortOutput",
+		"compute.instances.stop", "compute.instances.delete", "compute.disks.create", "compute.subnetworks.use",
+		"compute.images.useReadOnly", "compute.zoneOperations.get", "compute.disks.useReadOnly", "compute.images.create",
+		"compute.images.setLabels", "compute.images.get", "compute.images.getFromFamily", "compute.images.list",
+		"compute.images.delete"},
 }
 
 // knownCommands are the container command and args the modules set: none for

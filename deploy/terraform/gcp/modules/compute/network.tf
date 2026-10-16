@@ -9,17 +9,19 @@
 # APIs, and a Fugaro run's egress is mostly elsewhere (docs checked
 # 2026-10-15, §1.7). So NAT is what this module provisions.
 #
-# The router and the NAT are named after the installation and carry
-# fugaro=managed. They are created on the network and subnetwork the caller
+# The router and the NAT are created on the network and subnetwork the caller
 # names, and destroyed with this root — never adopted from, and never a reason
-# to touch, a NAT someone else made: a project's own NAT is not this one.
+# to touch, a NAT someone else made: a project's own NAT is not this one. They
+# carry no labels, and cannot: the provider's google_compute_router takes no
+# labels argument (terraform validate, 2026-10-16) and google_compute_router_nat
+# takes none either. Their names are the mark — `fugaro-router` and `fugaro-nat`,
+# from the same singleton set as the accounts and roles — and a project that
+# already has one of those names fails the apply rather than being adopted.
 resource "google_compute_router" "this" {
   project = var.project
   name    = "fugaro-router"
   region  = var.region
   network = var.network
-
-  labels = { fugaro = "managed" }
 
   depends_on = [google_project_service.this]
 }

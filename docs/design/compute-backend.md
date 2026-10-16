@@ -3708,7 +3708,26 @@ senior reviewer before merge, not just the normal one.
    than an apply — the stage is idempotent to rerun. Image streaming is **not**
    enabled (C4: the preloaded boot image is the fast-start path, and a Docker
    run's `options` needs streaming off), so `containerfilesystem` is not
-   among the APIs it enables. What it does not do, by design: no secret is
+   among the APIs it enables. The preload builder's custom role is the build's
+   own calls, which is a longer list than its four `gcloud` calls suggest — a
+   create is checked argument by argument, so the boot disk
+   (`compute.disks.create`), the interface on the named subnetwork
+   (`compute.subnetworks.use`), the startup script
+   (`compute.instances.setMetadata`), the labels, the run account the VM runs
+   as and the boot image are each their own permission — and it holds no
+   instance or image admin role and nothing that could create a job or a
+   second VM. `setMetadata` is the one permission there wider than the build's
+   use of it (it is also how SSH keys reach a VM) and it is deliberate and
+   bounded rather than dropped: a builder VM with no startup script pulls
+   nothing, so the build has no version of itself without it, and its only
+   holder is the preload account, which nothing but the scheduled rebuild and
+   its Cloud Build step runs as.
+   `TestComputePreloadBuilderRoleAreExactlyTheBuild` pins the list, so
+   widening it is a test failure. The installation's `operators` hold actAs on
+   the preload account and nothing else here: applying the root creates the
+   rebuild's Scheduler job, whose OAuth token is minted from that account, and
+   it is the same grant the installation module makes on its own scheduler
+   account. What it does not do, by design: no secret is
    handled, the installation's own root and the belong installation are never
    touched, and nothing selects the backend — `backend: cloud-batch` stays
    refused until the enable task (9). **The live step is the owner's**: the

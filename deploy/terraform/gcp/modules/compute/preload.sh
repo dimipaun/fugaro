@@ -6,11 +6,19 @@
 # 120 s-above-baseline budget is met by the preload and by nothing else a
 # Docker run can use.
 #
-# It runs as a Cloud Build step, as the preload builder account, which holds
-# compute.instances.{create,get,list,getSerialPortOutput,stop,delete},
-# compute.images.{create,get,getFromFamily,delete} and nothing else: no
-# instance or image admin role, no setMetadata (how SSH keys reach a VM), no
-# disk create or delete.
+# It runs as a Cloud Build step, as the preload builder account, whose custom
+# role carries exactly what these gcloud calls need and nothing else: the
+# instances permissions for the builder VM (create, and the setMetadata,
+# setLabels and setServiceAccount its arguments are each checked against; get,
+# list, getSerialPortOutput, stop, delete), compute.disks.create and
+# compute.subnetworks.use for its boot disk and its interface on the named
+# subnetwork, compute.images.useReadOnly for the image it boots from,
+# compute.disks.useReadOnly for imaging its stopped disk, and
+# compute.images.{create,setLabels,get,getFromFamily,list,delete}. No instance
+# or image admin role, and no permission anywhere to create a job or a second
+# VM. setMetadata is the one permission here wider than this script's use of
+# it (it is also how SSH keys reach a VM) and it cannot be dropped: a VM with
+# no startup script pulls nothing.
 #
 # What it must never do: delete a VM or an image it did not create. Every
 # delete below is guarded by the fugaro=managed label AND by the name, so a
@@ -20,6 +28,7 @@ set -euo pipefail
 
 : "${PROJECT:?}" "${ZONE:?}" "${IMAGE:?}" "${BASE_IMAGE:?}" "${BASE_PROJECT:?}" "${BASE_FAMILY:?}"
 : "${REGISTRY_HOST:?}" "${RUN_ACCOUNT:?}" "${MACHINE_TYPE:?}" "${IMAGE_PREFIX:?}"
+: "${NETWORK:?}" "${SUBNETWORK:?}"
 
 BUILDER="fugaro-preload-build"
 MARKER="fugaro-preload-built"
@@ -57,11 +66,17 @@ else
   #    image into its Docker data root from its startup script -- the same
   #    procedure 57a-3b used, and the only one measured to work: no package
   #    manager is involved. It has no external IP, so its startup script's
-  #    last line is read from the SERIAL PORT below.
+  #    last line is read from the SERIAL PORT below, and its egress is the
+  #    module's NAT -- which is on ONE network and ONE subnetwork, the ones
+  #    the job's VMs are on. Both are named explicitly for that reason: a
+  #    builder left on whatever the project's default placement is would pull
+  #    through an egress path the runs do not use, and --no-address with no
+  #    NAT behind it pulls nothing at all.
   say "creating the builder VM $BUILDER from projects/$BASE_PROJECT/global/images/$BASE_RELEASE"
   gcloud compute instances create "$BUILDER" --project="$PROJECT" --zone="$ZONE" \
     --image="projects/$BASE_PROJECT/global/images/$BASE_RELEASE" \
     --machine-type="$MACHINE_TYPE" --no-address \
+    --network="$NETWORK" --subnet="$SUBNETWORK" \
     --service-account="$RUN_ACCOUNT" --scopes=cloud-platform \
     --labels=fugaro=managed \
     --metadata=startup-script="$(printf '%s\n' \

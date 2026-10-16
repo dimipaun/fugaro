@@ -106,7 +106,7 @@ variable "launchers" {
 }
 
 variable "operators" {
-  description = "The IAM members who may run the preload rebuild by hand (the Scheduler job's own run call). They are the installation's operators."
+  description = "The installation's operators: the members who apply this root. They get actAs on the preload account and nothing else here — creating the rebuild's Scheduler job, whose OAuth token is minted from that account, needs it, and the same grant the installation module makes on its scheduler account."
   type        = set(string)
 }
 

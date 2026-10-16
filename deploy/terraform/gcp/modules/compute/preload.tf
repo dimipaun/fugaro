@@ -36,6 +36,12 @@ locals {
         "BASE_IMAGE=${var.base_image}",
         "BASE_PROJECT=${var.base_project}",
         "BASE_FAMILY=${var.base_family}",
+        # The builder VM is placed on the same network and subnetwork as the
+        # job's VMs, and on no other: the NAT that gives a no-external-IP VM
+        # its egress is on those two, so a builder placed anywhere else would
+        # be a VM with no egress at all.
+        "NETWORK=${var.network}",
+        "SUBNETWORK=${var.subnetwork}",
         "REGISTRY_HOST=${var.region}-docker.pkg.dev",
         # The builder VM's own identity: a run-class account, whose reader
         # grant lets the pull happen. It is passed as the EMAIL a VM's
@@ -54,11 +60,11 @@ locals {
 # idempotent, so a rebuild of an image that is already there costs one API
 # call and nothing else.
 resource "google_cloud_scheduler_job" "preload_rebuild" {
-  project   = var.project
-  name      = var.names.preload_scheduler_job
-  region    = var.region
-  schedule  = var.preload_schedule
-  time_zone = "Etc/UTC"
+  project     = var.project
+  name        = var.names.preload_scheduler_job
+  region      = var.region
+  schedule    = var.preload_schedule
+  time_zone   = "Etc/UTC"
   description = "Rebuilds fugaro's preloaded Batch boot image: a Batch image's supported lifetime can end 60 days after its starting date (design compute-backend §1.2)."
 
   http_target {

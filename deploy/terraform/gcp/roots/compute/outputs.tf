@@ -22,6 +22,14 @@ output "preload_scheduler_job" {
   value = module.compute.preload_scheduler_job
 }
 
+output "router" {
+  value = module.compute.router
+}
+
+output "nat" {
+  value = module.compute.nat
+}
+
 output "network" {
   value = module.compute.network
 }

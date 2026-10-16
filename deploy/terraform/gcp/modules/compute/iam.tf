@@ -165,10 +165,31 @@ resource "google_service_account" "preload" {
 }
 
 # The build boots one VM from Google's COS family, waits for the pull, stops
-# it, images its disk and deletes the VM (57a-3b's procedure, §7.2). These are
-# the permissions those four calls need and nothing more: no instance or image
-# admin role, no setMetadata (which is how SSH keys reach a VM), no disk
-# create or delete — the boot disk is the instance's own, and it goes with it.
+# it, images its disk and deletes the VM (57a-3b's procedure, §7.2). The list
+# is what those gcloud calls need, which is a good deal more than
+# instances.create: Google's own table checks each of the create call's
+# arguments separately, so a boot disk (compute.disks.create), a network
+# interface on the named subnetwork (compute.subnetworks.use), a startup
+# script (compute.instances.setMetadata), labels
+# (compute.instances.setLabels), the run account the VM runs as
+# (compute.instances.setServiceAccount) and the image it boots from
+# (compute.images.useReadOnly) are each their own permission. Imaging the
+# stopped VM reads its disk (compute.disks.useReadOnly), labels the image
+# (compute.images.setLabels), and the stale sweep lists the project's images
+# (compute.images.list).
+#
+# What this is NOT: an instance or an image admin role. There is no
+# compute.disks.delete — the boot disk is the instance's own and goes with it
+# — and no permission anywhere to create a job or a second VM.
+#
+# One permission here is wider than this build uses and cannot be dropped:
+# compute.instances.setMetadata is how a startup script is set and it is also
+# how SSH keys reach a VM. A builder VM with no startup script pulls nothing,
+# so the build has no version of itself that does not carry it; what keeps it
+# small is that exactly one account holds it — the preload builder's, which
+# nothing but the scheduled rebuild and its Cloud Build step runs as — and
+# that the grant is this custom role, not a predefined one that would carry
+# the same permission plus a hundred more.
 resource "google_project_iam_custom_role" "preload_builder" {
   project     = var.project
   role_id     = var.names.preload_role_id
@@ -176,17 +197,30 @@ resource "google_project_iam_custom_role" "preload_builder" {
   description = "The preloaded boot image's build: boot a COS VM, read its startup script's serial output, stop it, image its disk, delete it (design compute-backend §1.2, C19)."
 
   permissions = [
+    # The builder VM, and what its creation checks.
     "compute.instances.create",
+    "compute.instances.setMetadata",
+    "compute.instances.setLabels",
+    "compute.instances.setServiceAccount",
     "compute.instances.get",
     "compute.instances.list",
     "compute.instances.getSerialPortOutput",
     "compute.instances.stop",
     "compute.instances.delete",
+    # Its boot disk, the network interface, the image it boots from, and the
+    # zone operation every one of these calls waits on.
+    "compute.disks.create",
+    "compute.subnetworks.use",
+    "compute.images.useReadOnly",
+    "compute.zoneOperations.get",
+    # Imaging the stopped VM, and the stale sweep that follows it.
+    "compute.disks.useReadOnly",
     "compute.images.create",
+    "compute.images.setLabels",
     "compute.images.get",
     "compute.images.getFromFamily",
+    "compute.images.list",
     "compute.images.delete",
-    "compute.zoneOperations.get",
   ]
 }
 
@@ -244,6 +278,21 @@ resource "google_service_account_iam_member" "preload_run_account_user" {
   service_account_id = "projects/${var.project}/serviceAccounts/${trimprefix(each.value, "serviceAccount:")}"
   role               = "roles/iam.serviceAccountUser"
   member             = google_service_account.preload.member
+}
+
+# The installation's operators, who apply this root. Creating the Scheduler job
+# below — whose OAuth token is minted from the preload account — needs actAs on
+# that account (cloud.google.com/scheduler/docs/http-target-auth, checked
+# 2026-10-15), and it is the same grant the installation module makes on its own
+# scheduler account for the same reason (modules/installation/scheduler.tf). It
+# is actAs on this one account, never a role on the project: an operator who may
+# run a rebuild must not thereby be able to run code as every account in it.
+resource "google_service_account_iam_member" "preload_operator" {
+  for_each = var.operators
+
+  service_account_id = google_service_account.preload.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = each.value
 }
 
 # The reader grant the builder VM's own pull needs: the same repository the

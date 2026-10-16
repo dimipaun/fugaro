@@ -62,7 +62,11 @@ const (
 	PreloadAccountID = "fugaro-preload"
 	// PreloadRoleID is the preload builder's custom role: boot one COS VM,
 	// read its startup script's serial output, stop it, image its disk and
-	// delete it — and nothing else, setMetadata included.
+	// delete it — and nothing else. It is longer than the four calls suggest,
+	// because a create is checked argument by argument (boot disk, interface,
+	// startup script, labels, the account the VM runs as, the image it boots
+	// from); it holds no instance or image admin role, and no permission to
+	// create a job or a second VM.
 	PreloadRoleID = "fugaroPreloadBuilder"
 	// PreloadImage is the prefix of the preloaded boot image's name in the
 	// installation's project. The module appends the hash of the pinned

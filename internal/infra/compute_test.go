@@ -286,16 +286,14 @@ func TestJobRunAccountsReadsTheJobMark(t *testing.T) {
 // vice versa. An output added to the root and not to the struct is a name the
 // stage and a later doctor check would have to re-derive from the state, and
 // a field with no output behind it would read as empty forever.
+//
+// It reads the ROOT's file, the way TestComputeVarsMatchRootVariables reads
+// the root's variables.tf: `terraform output -json` in the compute workdir is
+// the root's answer, so an output that stops at the module is a name the
+// stage never sees. That the root passes the module's set through unchanged is
+// the second half of the test.
 func TestComputeOutputsCoverTheRoot(t *testing.T) {
-	b, err := fs.ReadFile(terraform.FS, "gcp/modules/compute/outputs.tf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	re := regexp.MustCompile(`(?m)^output "([a-z0-9_]+)"\s*\{`)
-	var declared []string
-	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
-		declared = append(declared, m[1])
-	}
+	declared := declaredOutputs(t, "gcp/roots/compute/outputs.tf")
 	if len(declared) == 0 {
 		t.Fatal("the compute root declares no outputs")
 	}
@@ -304,11 +302,30 @@ func TestComputeOutputsCoverTheRoot(t *testing.T) {
 	for i := range typ.NumField() {
 		read = append(read, typ.Field(i).Tag.Get("json"))
 	}
-	slices.Sort(declared)
 	slices.Sort(read)
 	if !slices.Equal(declared, read) {
 		t.Errorf("the compute root's outputs are %q, ComputeOutputs reads %q", declared, read)
 	}
+	if module := declaredOutputs(t, "gcp/modules/compute/outputs.tf"); !slices.Equal(module, declared) {
+		t.Errorf("the module's outputs are %q and the root passes through %q: a root output is the module's, one for one", module, declared)
+	}
+}
+
+// declaredOutputs are the output names one of the compute tree's files
+// declares, sorted.
+func declaredOutputs(t *testing.T, path string) []string {
+	t.Helper()
+	b, err := fs.ReadFile(terraform.FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(?m)^output "([a-z0-9_]+)"\s*\{`)
+	var out []string
+	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+		out = append(out, m[1])
+	}
+	slices.Sort(out)
+	return out
 }
 
 // DecodeComputeOutputs reads the root's own names and is not confused by one

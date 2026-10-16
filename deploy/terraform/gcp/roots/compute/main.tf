@@ -32,22 +32,22 @@ provider "google" {
 module "compute" {
   source = "../../modules/compute"
 
-  project             = var.project
-  project_number      = var.project_number
-  region              = var.region
-  network             = var.network
-  subnetwork          = var.subnetwork
-  names               = var.names
-  manage_apis         = var.manage_apis
-  launchers           = var.launchers
-  operators           = var.operators
-  run_accounts        = var.run_accounts
-  registry_repository = var.registry_repository
-  base_image          = var.base_image
-  base_project        = var.base_project
-  base_family         = var.base_family
-  preload_zone        = var.preload_zone
-  preload_schedule    = var.preload_schedule
+  project              = var.project
+  project_number       = var.project_number
+  region               = var.region
+  network              = var.network
+  subnetwork           = var.subnetwork
+  names                = var.names
+  manage_apis          = var.manage_apis
+  launchers            = var.launchers
+  operators            = var.operators
+  run_accounts         = var.run_accounts
+  registry_repository  = var.registry_repository
+  base_image           = var.base_image
+  base_project         = var.base_project
+  base_family          = var.base_family
+  preload_zone         = var.preload_zone
+  preload_schedule     = var.preload_schedule
   builder_machine_type = var.builder_machine_type
   build_submitter_role = var.build_submitter_role
 }

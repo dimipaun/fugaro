@@ -72,6 +72,7 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/compute/variables.tf",
 		"gcp/roots/compute/outputs.tf",
 		"gcp/roots/compute/.terraform.lock.hcl",
+		"gcp/roots/compute/tests/compute.tftest.hcl",
 	} {
 		if _, err := fs.Stat(FS, p); err != nil {
 			t.Errorf("embedded tree lacks %s: %v", p, err)
@@ -1336,18 +1337,44 @@ func TestComputeReaperRoleIsExactlySix(t *testing.T) {
 
 // The preload builder's role is the build's own calls and nothing more, and
 // it is granted on the project to the preload account only.
+//
+// The list is longer than the build's four calls because a create is checked
+// argument by argument: the boot disk (compute.disks.create), the interface on
+// the named subnetwork (compute.subnetworks.use), the startup script
+// (compute.instances.setMetadata), the labels (compute.instances.setLabels),
+// the run account the VM runs as (compute.instances.setServiceAccount) and the
+// image it boots from (compute.images.useReadOnly) are each their own
+// permission. What it does NOT carry is the point: no instance or image admin
+// role, no compute.disks.delete (the boot disk is the instance's own and goes
+// with it), and nothing that could create a job or a second VM.
+//
+// setMetadata is the one permission here wider than the build's own use of it
+// -- it is also how SSH keys reach a VM -- and it is pinned as an exception
+// rather than forbidden, because the build has no version of itself without
+// it: a builder VM with no startup script pulls nothing (design §1.2). What
+// bounds it is the holder: exactly one account, the preload builder's, which
+// nothing but the scheduled rebuild and its Cloud Build step runs as.
 func TestComputePreloadBuilderRoleAreExactlyTheBuild(t *testing.T) {
 	want := []string{
+		"compute.disks.create",
+		"compute.disks.useReadOnly",
 		"compute.images.create",
 		"compute.images.delete",
 		"compute.images.get",
 		"compute.images.getFromFamily",
+		"compute.images.list",
+		"compute.images.setLabels",
+		"compute.images.useReadOnly",
 		"compute.instances.create",
 		"compute.instances.delete",
 		"compute.instances.get",
 		"compute.instances.getSerialPortOutput",
 		"compute.instances.list",
+		"compute.instances.setLabels",
+		"compute.instances.setMetadata",
+		"compute.instances.setServiceAccount",
 		"compute.instances.stop",
+		"compute.subnetworks.use",
 		"compute.zoneOperations.get",
 	}
 	found := 0
@@ -1360,13 +1387,40 @@ func TestComputePreloadBuilderRoleAreExactlyTheBuild(t *testing.T) {
 			if got := permissionsOf(t, path, blk); !slices.Equal(got, want) {
 				t.Errorf("%s: the preload builder holds %v, want exactly %v", path, got, want)
 			}
-			if strings.Contains(blk.body, "compute.instances.setMetadata") {
-				t.Errorf("%s: the preload builder holds setMetadata, which is how SSH keys reach a VM (design §3.2)", path)
-			}
 		}
 	})
 	if found != 1 {
 		t.Errorf("found %d preload builder roles, want 1", found)
+	}
+}
+
+// The builder VM is placed on the network and the subnetwork the module
+// creates its NAT on, and on no other: the VM has no external IP, so a
+// placement anywhere else is a VM with no egress, and the pull the whole
+// preload exists for would never finish (design §1.7).
+func TestComputePreloadBuildsOnTheNATsNetwork(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+	if !strings.Contains(script, `gcloud compute instances create "$BUILDER"`) {
+		t.Fatal("preload.sh no longer creates the builder VM with the name this test looks for")
+	}
+	for _, want := range []string{`--network="$NETWORK"`, `--subnet="$SUBNETWORK"`, "--no-address"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the builder VM's create does not name %s", want)
+		}
+	}
+	// And the two it names are the module's own inputs, passed to the step.
+	tf, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"NETWORK=${var.network}", "SUBNETWORK=${var.subnetwork}"} {
+		if !strings.Contains(string(tf), want) {
+			t.Errorf("the preload build's environment does not pass %s to the script", want)
+		}
 	}
 }
 
