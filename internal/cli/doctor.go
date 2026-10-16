@@ -1397,6 +1397,22 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 	checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 		Problem: fmt.Sprintf("a policy is published at %s (version %d, %d allow-list entries)", shared, p.Version, len(p.AllowRepos)),
 		Fix:     "fugaro project policy show prints it"})
+	if len(p.UnknownKeys) > 0 {
+		// A key this Fugaro does not read is a policy that never takes effect,
+		// and the node is in force all the same: the runner enforces every
+		// value it does understand and warns once about the rest
+		// (internal/runner/projectpolicy.go), while every CLI reader refuses
+		// the node outright (refuseUnknownPolicyKeys). The info line above is
+		// honest about the second and silent about the first, so an operator
+		// who asked doctor read a healthy policy where `fugaro project policy
+		// show`, `project show` and `repos ls` all refuse and where the node's
+		// opening key may be one no run applies. It is a warning and not a
+		// refusal, because doctor only reports: the remedies are the two the
+		// readers' own refusal names.
+		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
+			Problem: fmt.Sprintf("%s lists %s, which this Fugaro does not know: the runs apply the values they read and nothing of these, and 'fugaro project policy show', 'fugaro project show' and 'fugaro project repos ls' refuse the node rather than act on a half-read policy", shared, strings.Join(p.UnknownKeys, ", ")),
+			Fix:     "fix the policy by hand (correct the key, or remove it), or upgrade Fugaro: 'fugaro upgrade'"})
+	}
 	if len(p.AllowRepos) == 0 {
 		// Empty inside a *published* policy is deny-all (design §5), which is a
 		// different state from an installation that published nothing: every

@@ -1653,6 +1653,16 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 // node's allow_repos and nothing else: the rest of the published policy is
 // written back as it was read, under the ETag the read returned, so a
 // concurrent publisher is refused rather than overwritten.
+//
+// It is a writer, so it takes every refusal `policy publish` takes before it
+// writes anything: the shared config and a database that is not this
+// project's (openProjectBudget, whose comment above says why), and the
+// deployed rules marker (requirePolicyRules) — a policy written to a
+// deployment whose marker is absent or older than this Fugaro is one the runs
+// it bounds cannot read, and an edit to the allow-list is a publish of the
+// list. Without that last gate `repos add`/`repos rm` were the one way to
+// write the shared node the runner reads on a deployment `policy publish`
+// would refuse to touch.
 func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string, remove bool) error {
 	ctx := cmd.Context()
 	// openProjectBudget, not openBudget: this writes the published policy node,
@@ -1662,6 +1672,11 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	// must be this project's.
 	lc, db, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
+		return err
+	}
+	// The same read `policy publish` makes first, and for the same reason: the
+	// marker says the deployed rules are new enough to read what is written.
+	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()

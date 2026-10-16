@@ -468,8 +468,22 @@ func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 	// An explicit anthropic/<id> is the claim form (P4: a price or an allowed
 	// model is not a permission): it is ACCEPTED where it is written and
 	// enables nothing; only the wildcard and glob spellings above are refused.
-	if _, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["anthropic/claude-sonnet-5.5"]}}`)); err != nil {
+	// The decoded policy is read back, not only the absence of an error: the
+	// entry has to be *there*, whole, or the acceptance above says nothing
+	// about what a run would enforce (the review's finding — the result used
+	// to be discarded here and the assertion below read the two-model decode
+	// from above, so an anthropic entry that decoded to nothing was accepted
+	// and never checked).
+	//
+	// Mutation (run, restored): drop every entry beginning "anthropic/" where
+	// Decode fills Budget.AllowedModels. This assertion fails and the
+	// two-model one below still passes, which is the gap it was written for.
+	ap, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["anthropic/claude-sonnet-5.5"]}}`))
+	if err != nil {
 		t.Fatalf("an explicit anthropic/<id> allowed model must be accepted (a price is not a permission): %v", err)
+	}
+	if got := ap.Budget.AllowedModels; len(got) != 1 || got[0] != "anthropic/claude-sonnet-5.5" {
+		t.Errorf("AllowedModels = %v, want exactly the anthropic entry as it was written", got)
 	}
 	if len(p.Budget.AllowedModels) != 2 {
 		t.Errorf("AllowedModels = %v, want both", p.Budget.AllowedModels)

@@ -1120,6 +1120,51 @@ func TestProjectReposEditKeepsTheKeysItDoesNotKnow(t *testing.T) {
 	}
 }
 
+// TestProjectReposEditRefusesWithoutTheRulesMarker: `repos add` and `repos rm`
+// write the node the runner reads, so they are publishes of the allow-list and
+// take `policy publish`'s own gate (P3, a review finding): a policy edited
+// into a deployment whose rules carry no marker — or one older than this
+// Fugaro's — is one the runs it bounds cannot read. Before this they were the
+// one way to write the shared node on a deployment `policy publish` refuses to
+// touch, and the write went through.
+//
+// Mutation (run, restored): drop the requirePolicyRules call from
+// runProjectReposEdit. Both cases below write the node and the test fails on
+// the refusal it expects.
+func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
+	for _, tc := range []struct {
+		what   string
+		marker any
+		want   string
+	}{
+		{"no marker at all", nil, "carry no policy marker"},
+		{"a marker behind this Fugaro's", projectpolicy.RulesVersion - 1, "older than the marker"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(projectpolicy.PathShared(), someFuturePolicy())
+			before := nodeJSON(t, f, projectpolicy.PathShared())
+			f.db.Set(projectpolicy.PathRulesMarker(), tc.marker)
+
+			for _, args := range [][]string{
+				{"project", "repos", "add", "github/acme/new"},
+				{"project", "repos", "rm", "github/acme/app"},
+			} {
+				_, _, err := execute(t, args...)
+				if err == nil {
+					t.Fatalf("%v was allowed with %s", args, tc.what)
+				}
+				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "init --firebase") {
+					t.Errorf("%v refused with %q, want it to say %q and to name the fix", args, err, tc.want)
+				}
+			}
+			if got := nodeJSON(t, f, projectpolicy.PathShared()); got != before {
+				t.Errorf("the node changed: %s, want %s", got, before)
+			}
+		})
+	}
+}
+
 // TestProjectReposEditRefusesAMisspeltProviderKey: the other half of the
 // tolerance above. An unknown key inside a providers entry is not preserved —
 // it is refused, with the remedy, and the node is left exactly as it was: a
