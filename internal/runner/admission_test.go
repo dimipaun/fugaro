@@ -226,6 +226,46 @@ func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 	refusedAdmission(t, b, rec, err, "https://github.com/acme/app.git", "github", "bitbucket", "FUGARO_REMOTE", "before any git credential")
 }
 
+// The kind is not the whole question (a review finding): the derived kind's
+// own host carries every repository of that provider, so a remote that agrees
+// with the kind may still be another repository's, and the run would clone,
+// cache, lock and account under its own slug while doing another repository's
+// work. internal/infra's repoURL refuses this when it builds the job ("it must
+// be this repository, not only this provider"), so it takes an edit of the
+// job's environment after launch, exactly like the cross-provider case above.
+// The policy admits the repository the slug names, which is why this is the
+// remote's refusal and not the allow-list's.
+func TestRunnerRefusesARemoteOfAnotherRepositoryOnTheSameHost(t *testing.T) {
+	for _, tc := range []struct{ remote, display, quotedRepo string }{
+		// https, the form internal/infra writes into FUGARO_REMOTE.
+		{"https://github.com/evil/other.git", "https://github.com/evil/other.git", "evil/other"},
+		// scp-like, which a launcher may write and which git clones just the
+		// same; the refusal quotes its host alone (remoteDisplay), so the
+		// repository the message names is what carries the case.
+		{"git@github.com:evil/other.git", "github.com", "evil/other"},
+		// The same owner, another repository: the near miss worth naming.
+		{"https://github.com/acme/other.git", "https://github.com/acme/other.git", "acme/other"},
+	} {
+		t.Run(tc.remote, func(t *testing.T) {
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b.deps.Remote = tc.remote
+			// As above: nothing here may reach github.com, not even if the
+			// check this test covers regresses.
+			gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+			if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+			// The scp-like form would otherwise be carried by ssh, which is a
+			// network call before it is anything else: an ssh that exits
+			// immediately keeps a regressed run offline too.
+			t.Setenv("GIT_SSH_COMMAND", "false")
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, tc.display, tc.quotedRepo, "github", "acme/app", "FUGARO_REMOTE", "not only this provider", "before any git credential")
+		})
+	}
+}
+
 // The slug the run was launched for and the repository its task names must
 // agree: FUGARO_RUN is what keys the locks, the cache and the budget session,
 // and a job launched for one repository must not run another repository's

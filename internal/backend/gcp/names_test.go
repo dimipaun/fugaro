@@ -791,6 +791,59 @@ func TestJobSADisplayNameFitsIAMLimitForVariants(t *testing.T) {
 	}
 }
 
+// TestProjectSADisplayNameFitsIAMLimit is the same review finding for the
+// project jobs (plan task 3.2): ProjectSADisplayName's natural concatenation,
+// "Fugaro project job "+profile+" "+provider+" "+account, reaches 19+40+1+9+1
+// +31 = 101 characters at the bounds a valid local config may name — a
+// 40-character profile (config.ProjectNameRE, which projectpolicy.CheckProfiles
+// holds a profile name to), the longest provider name (bitbucket, 9) and a
+// Claude account at config.MaxClaudeAccountNameLen (31) — one over IAM's 100.
+// A config that validates would then plan cleanly and fail the apply, so the
+// fallback must trigger and the name must stay within the limit.
+func TestProjectSADisplayNameFitsIAMLimit(t *testing.T) {
+	maxProfile := strings.Repeat("a", 40) // config.ProjectNameRE's longest
+	if !config.ProjectNameRE.MatchString(maxProfile) {
+		t.Fatalf("test fixture maxProfile %q is not a valid profile name", maxProfile)
+	}
+	maxAccount := strings.Repeat("b", config.MaxClaudeAccountNameLen)
+	const maxProvider = "bitbucket" // the longest provider Fugaro names a job for
+	if natural := len("Fugaro project job ") + len(maxProfile) + 1 + len(maxProvider) + 1 + len(maxAccount); natural != 101 {
+		t.Fatalf("the natural display name is %d characters, want the 101 this test is about", natural)
+	}
+
+	name := ProjectSADisplayName(maxProfile, maxProvider, maxAccount)
+	if len(name) > jobSADisplayNameMaxLen {
+		t.Fatalf("ProjectSADisplayName(40-char profile, %s, 31-char account) = %d characters, want <= %d (IAM's display-name limit): %q", maxProvider, len(name), jobSADisplayNameMaxLen, name)
+	}
+	if name2 := ProjectSADisplayName(maxProfile, maxProvider, maxAccount); name2 != name {
+		t.Fatalf("ProjectSADisplayName is not deterministic: %q then %q for the same inputs", name, name2)
+	}
+	// A practical collision guard, not a hard invariant (service accounts
+	// carry no labels; a display name is never parsed back): distinct triples
+	// still get distinct display names.
+	if other := ProjectSADisplayName(maxProfile, maxProvider, strings.Repeat("c", config.MaxClaudeAccountNameLen)); other == name {
+		t.Errorf("two distinct accounts produced the same display name: %q", name)
+	}
+
+	// The empty account (an api-key or Vertex profile, projectjobs.go) and the
+	// shorter, realistic triples are within the limit too, and a short one is
+	// the natural form rather than the fallback: the hash suffix is what says
+	// the readable part was cut.
+	if got := ProjectSADisplayName("standard", "bitbucket", "default"); got != "Fugaro project job standard bitbucket default" {
+		t.Errorf("ProjectSADisplayName(standard, bitbucket, default) = %q, want the natural form", got)
+	}
+	for _, tc := range []struct{ profile, provider, account string }{
+		{"standard", "bitbucket", ""},
+		{"standard", "bitbucket", "default"},
+		{strings.Repeat("a", 25), "bitbucket", strings.Repeat("b", 20)},
+		{maxProfile, "github", ""},
+	} {
+		if n := ProjectSADisplayName(tc.profile, tc.provider, tc.account); len(n) > jobSADisplayNameMaxLen {
+			t.Errorf("ProjectSADisplayName(%q, %q, %q) = %d characters, want <= %d: %q", tc.profile, tc.provider, tc.account, len(n), jobSADisplayNameMaxLen, n)
+		}
+	}
+}
+
 func TestDefaultRegistryHost(t *testing.T) {
 	if got := DefaultRegistryHost("us-east5", "my-proj"); got != "us-east5-docker.pkg.dev/my-proj" || !registryHostRE.MatchString(got) {
 		t.Errorf("DefaultRegistryHost = %q, want us-east5-docker.pkg.dev/my-proj", got)

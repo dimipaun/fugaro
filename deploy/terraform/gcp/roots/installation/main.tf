@@ -72,4 +72,12 @@ module "project" {
   job_runner_role = module.installation.role_ids.job_runner
   launchers       = var.launchers
   operators       = var.operators
+
+  # The runs bucket arrives as a name, and every other grant in this tree
+  # references the bucket resource itself — which is what orders them. On a
+  # fresh installation the bucket is created in this same apply, and a
+  # bucket grant created before it would fail with a 404, so this module
+  # waits for the installation that creates it (internal/cli's init note:
+  # "the apply may just have created the runs bucket").
+  depends_on = [module.installation]
 }

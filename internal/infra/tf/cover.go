@@ -448,7 +448,7 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // carry none; a person's objectUser carries exactly the launchers' condition
 // on one of this run's buckets; an account's objectUser carries either a
 // project job's widened condition (gcp.ProjectBucketCondition, byte for byte,
-// with the title of an account this plan creates in the same module) or
+// in the project module, with the title of an account that module creates) or
 // clauses of gcp.BucketCondition's shape, each on one of this run's buckets.
 // The modules never set a description, and a condition known only after apply
 // is not covered.
@@ -525,25 +525,40 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs map[string]bool) 
 	return ""
 }
 
+// projectModule is the module path of a project job's resources: the
+// installation root calls deploy/terraform/gcp/modules/project as the module
+// "project", once per (profile, provider, account)
+// (roots/installation/main.tf). The path is what says a grant belongs to that
+// module — the account IDs cannot: a per-repository job account matches
+// jobAccount's shape too (fugaro-<readable slug>-<workflow>-<8 hex>), so a
+// repository whose slug begins with "p" gets an ID of the project job's own
+// shape, and the widened condition would then be accepted for it.
+var projectModule = regexp.MustCompile(`^module\.project\["[^"]+"\]$`)
+
 // projectJobCondition reports whether a bucket grant is a project job's
 // widened one (plan task 3.2 step 2, gcp.ProjectBucketCondition), for the
-// account the grant is written for: the expression is that builder's bytes for
-// one of this run's buckets — no slug, and no other expression can pass, since
-// this compares the whole string — the bucket is that one, and the title is
-// the condition title of the job account named by the member, or, when the
-// member is computed as the module writes it, of an account this plan creates
-// in the same module.
+// account the grant is written for: the grant lives in the project module, the
+// expression is that builder's bytes for one of this run's buckets — no slug,
+// and no other expression can pass, since this compares the whole string — the
+// bucket is that one, and the title is the condition title of the job account
+// named by the member, or, when the member is computed as the module writes
+// it, of an account this plan creates in the same module.
 //
-// The last part is what keeps the widening bounded: the widened condition is
-// the modules' only for the project jobs they create, so widening a
-// per-repository job's grant, or granting it to an account of another module,
-// is still a plan the review screen stops.
+// Both parts are what keep the widening bounded: the widened condition is the
+// project module's own, for the accounts that module creates, so widening a
+// per-repository job's grant — in its workflow module, where the account is
+// created just the same — or granting it to an account of another module, is
+// still a plan the review screen stops.
 func (c Cover) projectJobCondition(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) bool {
+	if !projectModule.MatchString(modulePrefix(rc)) {
+		return false
+	}
 	var id string
 	switch m := saMember.FindStringSubmatch(str(rc.Change.After["member"])); {
 	case m != nil:
-		// The grant names its account: it must be a Fugaro job account of
-		// this run and the title must be that account's condition title.
+		// The grant names its account (an update plan, where the account
+		// already exists): it must be a Fugaro job account of this run and the
+		// title must be that account's condition title.
 		if !slices.Contains(c.Projects, m[2]) || !jobAccountID(m[1]) {
 			return false
 		}

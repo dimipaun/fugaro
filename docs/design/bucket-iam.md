@@ -153,8 +153,11 @@ Veto alternative: build the expression in HCL from `var.runs_bucket`. That gives
 | `objectAdmin` | person | no condition |
 | `objectViewer` | person | no condition |
 | `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |
-| `objectUser` | Fugaro account | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/<slug>/")`, with `<b>` in `Cover.Buckets`, `<p>` in `runs`, `cache`, `locks` or `builds`, and a non-empty `<slug>` |
+| `objectUser` | Fugaro account in a repository's workflow module | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/<slug>/")`, with `<b>` in `Cover.Buckets`, `<p>` in `runs`, `cache`, `locks` or `builds`, and a non-empty `<slug>` |
+| `objectUser` | Fugaro job account in the project module (`module.project["<job>"]`, phase 3) | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/")` — the widened form, with no `<slug>` at all — with `<b>` and `<p>` as above |
 | `objectViewer` | Fugaro account | no condition (the history account) |
+
+The two `objectUser` rows are told apart by the module the grant is in, not by the account's name: a per-repository job account is `fugaro-` + the repository slug + `-` + the workflow + `-` + 8 hex, so a repository whose slug begins with `p` gets an ID of the project job's own shape (`fugaro-p-…`), and a name-shape check alone would admit the widened condition for it. `Cover.projectJobCondition` therefore takes the widened condition only under `module.project["<job>"]` (`Cover`'s `projectModule`): the one confirmation that covers a project job's grant without a per-clause comparison cannot be reached by a grant a repository's workflow module writes. The widened row is §10's regression, accepted in D4.
 
 A condition known only after apply is not covered. `grantRules` moves `objectUser` and `objectViewer` to `toPeople | toAccounts`. The other checks still apply: a person must be on the review screen (`Listed`) and the bucket must be this run's.
 

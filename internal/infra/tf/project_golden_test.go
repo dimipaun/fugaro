@@ -129,11 +129,14 @@ func TestGoldenInstallationHasOneProjectJobPerTriple(t *testing.T) {
 	// repository's: every project account in the plan belongs to exactly one
 	// job of the fixture, and there are no others.
 	//
-	// The ceiling this claim is about is Check 52 step 5 (U4): the owner's
-	// results of 2026-10-16 on the sandbox installation fugaro record 10
-	// service accounts in `fugaro-dev` and Cloud Quotas reporting
-	// ServiceAccountsPerProject as -1 (no fixed limit), so the headroom design
-	// §13 claims is there and this assertion stays as the plan wrote it.
+	// Design §13 names the ceiling this claim is about — Google's default
+	// service-account quota, about 100 per project, which today's model exceeds
+	// at about 60 repositories and this one does not — and settling it is Check
+	// 52 step 5 (U4), which the plan's Task 3.0 owns. That check is written and
+	// not run (its section is headed NOT RUN and step 5's FACT line is empty),
+	// so this assertion stands on the design's claim and on the shape above,
+	// not on a measured count; the probe's numbers belong in the checklist,
+	// which is where the plan records them, and not here.
 	projectSAs := map[string]bool{}
 	for _, rc := range p.ResourceChanges {
 		if rc.Type == "google_service_account" && strings.HasPrefix(rc.Address, "module.project[") {
@@ -199,23 +202,69 @@ func TestProjectJobBucketGrantsAreTheWidenedCondition(t *testing.T) {
 			}
 		}
 	}
-	// The review screen accepts what the modules write, and only that: the
-	// widened condition of an account the plan creates in the same module is
-	// covered, and the same condition for an account it does not create is
-	// not (a plan that widened a per-repository job's grant is still stopped).
+	// The review screen accepts what the modules write, and only that. Three
+	// cases, because the widened condition is the one grant the operator's
+	// single confirmation covers without a per-clause comparison:
+	//
+	//   - the project module's own grant, whose member the module computes as
+	//     its account's member, is covered;
+	//   - the same condition for an account the plan does not create is not;
+	//   - and the same condition written into a *repository's* workflow module
+	//     is not, in either form of the member: that module creates its own job
+	//     account (modules/workflow/sa.tf), and a per-repository job account is
+	//     fugaro-<readable>-<8 hex> just as a project job's is, so the module
+	//     path is what tells the two apart. Accepting it would let one
+	//     confirmation widen a per-repository job's grant to a whole profile.
 	saID := gcp.ProjectServiceAccountID("standard", "bitbucket", "default")
-	created := rc("google_service_account", map[string]any{"account_id": saID}, map[string]any{}, "create")
-	grant := func(id string) ResourceChange {
-		return rc("google_storage_bucket_iam_member", map[string]any{
+	mod := `module.project["` + gcp.ProjectJobName("standard", "bitbucket", "default") + `"]`
+	created := inModule(mod, "google_service_account", map[string]any{"account_id": saID}, map[string]any{}, "create")
+	grant := func(mod, id string) ResourceChange {
+		return inModule(mod, "google_storage_bucket_iam_member", map[string]any{
 			"bucket": f.RunsBucket, "role": "roles/storage.objectUser",
-			"condition": []any{map[string]any{"title": gcp.BucketConditionTitle(saID), "expression": want, "description": nil}},
+			"condition": []any{map[string]any{"title": gcp.BucketConditionTitle(id), "expression": want, "description": nil}},
 		}, map[string]any{"member": true}, "create")
 	}
-	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{created, grant(saID)}}, nil); len(got) != 0 {
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{created, grant(mod, saID)}}, nil); len(got) != 0 {
 		t.Errorf("a project job's widened grant is not covered: %q", got)
 	}
-	stranger := rc("google_service_account", map[string]any{"account_id": "fugaro-p-other-github-0123456789ab"}, map[string]any{}, "create")
-	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{stranger, grant(saID)}}, nil); len(got) == 0 {
+	stranger := inModule(mod, "google_service_account", map[string]any{"account_id": "fugaro-p-other-github-0123456789ab"}, map[string]any{}, "create")
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{stranger, grant(mod, saID)}}, nil); len(got) == 0 {
 		t.Error("a widened grant whose title names no account the plan creates is covered")
 	}
+
+	// A per-repository job's own module: the account is created there, so
+	// without the module path the computed-member form would be covered.
+	repoMod := `module.repo.module.workflow["api"]`
+	repoSA := gcp.ServiceAccountID("bitbucket-acme-app", "api")
+	repoCreated := inModule(repoMod, "google_service_account", map[string]any{"account_id": repoSA}, map[string]any{}, "create")
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{repoCreated, grant(repoMod, repoSA)}}, nil); !refusedTheGrant(got, repoMod+".google_storage_bucket_iam_member.x") {
+		t.Errorf("a per-repository job account's grant, widened to the whole prefix, is covered: %s is a workflow module's grant, not the project module's\nrefused: %q", repoMod, got)
+	}
+	// The named-member form: an update plan, where the account already exists.
+	named := inModule(repoMod, "google_storage_bucket_iam_member", map[string]any{
+		"bucket": f.RunsBucket, "role": "roles/storage.objectUser", "member": "serviceAccount:" + repoSA + "@" + goldenCover().Projects[0] + ".iam.gserviceaccount.com",
+		"condition": []any{map[string]any{"title": gcp.BucketConditionTitle(repoSA), "expression": want, "description": nil}},
+	}, map[string]any{}, "create")
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{named}}, nil); !refusedTheGrant(got, repoMod+".google_storage_bucket_iam_member.x") {
+		t.Errorf("a per-repository job account's widened grant is covered when the grant names its member\nrefused: %q", got)
+	}
+}
+
+// refusedTheGrant reports whether the grant at addr is what the review screen
+// refused, and for the widened condition: a synthetic plan can be refused for
+// other reasons, and an assertion that only counts entries would pass for the
+// wrong one.
+func refusedTheGrant(got []string, addr string) bool {
+	for _, why := range got {
+		if strings.HasPrefix(why, addr+" ") && strings.Contains(why, "not a Fugaro prefix condition") {
+			return true
+		}
+	}
+	return false
+}
+
+// inModule is rc (cover_test.go) with an explicit address, so a case can put a
+// resource in the module the guard has to tell apart.
+func inModule(mod, typ string, after, unk map[string]any, acts ...string) ResourceChange {
+	return ResourceChange{Address: mod + "." + typ + ".x", Type: typ, Change: Change{Actions: acts, After: after, AfterUnknown: unk}}
 }

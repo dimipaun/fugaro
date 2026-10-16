@@ -418,6 +418,37 @@ func LegacyJobSADisplayName(slug, workflow string) string {
 	return "Fugaro M4 job " + slug + " " + workflow
 }
 
+// ProjectSADisplayName is a project job service account's display name, its
+// ownership mark (service accounts carry no labels), in the shape
+// JobSADisplayName uses for a per-repository job.
+//
+// It needs the same fallback for the same reason, and more often: the natural
+// "Fugaro project job <profile> <provider> <account>" reaches 19+40+1+9+1+31 =
+// 101 characters — one over IAM's limit, with a project name at
+// config.ProjectNameRE's 40, the longest provider (bitbucket) and a Claude
+// account at config.MaxClaudeAccountNameLen — so a valid local config would
+// plan cleanly and fail the apply. Over the limit it truncates the readable
+// part and appends a short hash of the triple, like JobSADisplayName. Nothing
+// compares this name (internal/infra/discover.go compares job accounts'
+// display names, not project jobs'), so the hash is the same cosmetic guard:
+// an account's ID and email are its real identity.
+func ProjectSADisplayName(profile, provider, account string) string {
+	const prefix = "Fugaro project job "
+	readable := profile + " " + provider
+	if account != "" {
+		readable += " " + account
+	}
+	if name := prefix + readable; len(name) <= jobSADisplayNameMaxLen {
+		return name
+	}
+	sum := sha256.Sum256([]byte(profile + "\x00" + provider + "\x00" + account))
+	suffix := " " + hex.EncodeToString(sum[:])[:jobSADisplayNameHashHex]
+	if budget := jobSADisplayNameMaxLen - len(prefix) - len(suffix); len(readable) > budget {
+		readable = readable[:budget]
+	}
+	return prefix + strings.TrimRight(readable, " ") + suffix
+}
+
 // BuildSADisplayName is a build service account's display name.
 func BuildSADisplayName(slug string) string { return "Fugaro build " + slug }
 

@@ -62,6 +62,71 @@ func TestRemoteOfAnotherKind(t *testing.T) {
 	}
 }
 
+// The kind is not the whole question (review finding): a provider's host
+// carries every repository of that provider, so a remote that agrees with the
+// derived kind may still be another repository's. internal/infra's repoURL
+// refuses exactly that when it builds the job ("it must be this repository,
+// not only this provider"), and the run refuses it for the same reason: the
+// slug keys its locks, its cache and its budget session.
+//
+// A remote that names no repository path — a local path, an httptest URL, a
+// host no Fugaro knows, the root of a known host — is not a disagreement, as
+// it is not for remoteOfAnotherKind, and another provider's host stays that
+// function's business rather than being reported twice.
+func TestRemoteOfAnotherRepo(t *testing.T) {
+	for _, tc := range []struct{ kind, repo, remote, want string }{
+		{"github", "acme/app", "https://github.com/acme/app.git", ""},
+		{"github", "acme/app", "git@github.com:acme/app.git", ""},
+		{"github", "acme/app", "https://github.com/ACME/App.GIT", ""}, // canonical: case, ".git"
+		{"github", "acme/app", "https://github.com/evil/other.git", "evil/other"},
+		{"github", "acme/app", "https://github.com/acme/other.git", "acme/other"},
+		{"github", "acme/app", "https://github.com/evil/other", "evil/other"},
+		{"github", "acme/app", "git@github.com:evil/other.git", "evil/other"},
+		{"github", "acme/app", "https://github.com/evil/other/tree/main", "evil/other/tree/main"},
+		{"bitbucket", "group/sub/repo", "https://bitbucket.org/group/sub/repo.git", ""},
+		{"bitbucket", "group/sub/repo", "https://bitbucket.org/group/sub/other.git", "group/sub/other"},
+		{"github", "acme/app", "https://bitbucket.org/evil/other.git", ""},
+		{"github", "acme/app", "/tmp/fixture.git", ""},
+		{"github", "acme/app", "http://127.0.0.1:8080/acme/app.git", ""},
+		{"github", "acme/app", "https://github.com.evil.example/evil/other.git", ""},
+		{"github", "acme/app", "https://github.com", ""},
+		{"github", "acme/app", "https://github.com/", ""},
+		{"", "acme/app", "https://github.com/evil/other.git", ""},
+		{"github", "not a repository", "https://github.com/evil/other.git", ""}, // the slug check refuses it
+	} {
+		if got := remoteOfAnotherRepo(tc.kind, tc.repo, tc.remote); got != tc.want {
+			t.Errorf("remoteOfAnotherRepo(%q, %q, %q) = %q, want %q", tc.kind, tc.repo, tc.remote, got, tc.want)
+		}
+	}
+}
+
+// remoteRepoPath is what remoteOfAnotherRepo compares, so it is checked on its
+// own: the path of a URL, what follows the colon of an scp-like remote, and
+// nothing at all for a remote that carries no repository path.
+func TestRemoteRepoPath(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"https://github.com/acme/app.git", "acme/app.git", true},
+		{"https://x:glpat-secret@github.com/acme/app.git", "acme/app.git", true},
+		{"git@github.com:acme/app.git", "acme/app.git", true},
+		{"x-token-auth@bitbucket.org:acme/app.git", "acme/app.git", true},
+		{"ssh://git@github.com/acme/app.git", "acme/app.git", true},
+		{"https://github.com/", "", false},
+		{"https://github.com", "", false},
+		{"/srv/git/acme/app", "", false},
+		{"file:///srv/git/acme/app.git", "", false},
+		{"", "", false},
+	} {
+		got, ok := remoteRepoPath(tc.in)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("remoteRepoPath(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
 // A refusal quotes the remote, and a remote URL is where a launcher may have
 // put a token: the run never registers that one as a secret, so the display
 // form drops the userinfo instead of relying on redaction later.

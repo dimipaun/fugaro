@@ -181,6 +181,61 @@ func remoteOfAnotherKind(derived, remote string) string {
 	return ""
 }
 
+// remoteOfAnotherRepo names the repository a remote on the derived kind's own
+// host actually is, when that is not the run's repository. "" is no
+// disagreement, and it is the answer for most remotes, including every remote
+// remoteOfAnotherKind already refuses and every remote that names no
+// repository path at all.
+//
+// The kind alone is not enough (a review finding): a provider's host carries
+// every repository of that provider, so "https://github.com/evil/other.git" is
+// github's and is still not this run's. internal/infra's repoURL refuses
+// exactly that when it builds the job ("it must be this repository, not only
+// this provider"); a launcher that edits the job's environment after launch
+// would otherwise hand the run another repository while the run keeps the slug
+// of its own — and the slug is what keys its locks, its cache and its budget
+// session.
+func remoteOfAnotherRepo(derived, repo, remote string) string {
+	if derived == "" || gitprov.KindForURL(remote) != derived {
+		return ""
+	}
+	path, ok := remoteRepoPath(remote)
+	if !ok {
+		return ""
+	}
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return "" // no canonical form to compare against; the slug check refuses it
+	}
+	got, err := task.CanonicalRepo(path)
+	if err != nil || got == want {
+		// Not a repository path at all ("/tree/main" of a web URL, say):
+		// whatever it is, it is not one the run's slug could name, and the
+		// kind's own host is where the clone would go, so the run is admitted
+		// as it always was.
+		return ""
+	}
+	return got
+}
+
+// remoteRepoPath is the repository path a remote names on its host: the path
+// of a URL ("https://github.com/acme/app.git"), or what follows the colon of
+// an scp-like remote ("git@github.com:acme/app.git"). ok is false for a remote
+// that carries no such path, and for one that is a local path.
+func remoteRepoPath(remote string) (string, bool) {
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		path := strings.Trim(u.Path, "/")
+		return path, path != ""
+	}
+	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
+		if _, path, ok := strings.Cut(rest, ":"); ok {
+			path = strings.Trim(path, "/")
+			return path, path != ""
+		}
+	}
+	return "", false
+}
+
 // remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
 // its host alone, anything else as the URL without its userinfo. Deps.Remote is
 // a launcher's to set and a remote URL may carry a token in its userinfo; the
@@ -250,18 +305,30 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and the run's slug %s is the slug of %s under %s: the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 			envKind, GitProviderEnv, slug, repo, kind)
 	}
-	if remote := r.originURL(ctx); remoteOfAnotherKind(kind, remote) != "" {
-		// The remote is where the clone comes from, and it is the job's own
-		// environment (Deps.Remote, RemoteEnv) or the origin of a checkout
-		// already in the work directory — a launcher's to set, both of them.
-		// The launcher refuses a repository URL off the provider's host before
-		// it deploys anything (internal/infra's repoURL, and the build's own
-		// CheckRepoURL), so a run meets this when the job's environment was
-		// edited after launch: a repository of the same owner and name on
-		// another provider's host is another repository, and the run's slug —
-		// which keys its locks, its cache and its budget — would not name it.
+	// The remote is where the clone comes from, and it is the job's own
+	// environment (Deps.Remote, RemoteEnv) or the origin of a checkout already
+	// in the work directory — a launcher's to set, both of them. The launcher
+	// refuses a repository URL that is not this repository before it deploys
+	// anything (internal/infra's repoURL, and the build's own CheckRepoURL), so
+	// a run meets these when the job's environment was edited after launch. The
+	// two questions are the kind's and the repository's: another provider's
+	// host is another repository — the same owner and name is the case worth
+	// naming — and so is another repository on the same provider's host, where
+	// the kind alone would agree. The run's slug keys its locks, its cache and
+	// its budget session, so it names neither.
+	remote := r.originURL(ctx)
+	if other := remoteOfAnotherKind(kind, remote); other != "" {
 		return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
-			remoteDisplay(remote), remoteOfAnotherKind(kind, remote), slug, repo, kind, RemoteEnv)
+			remoteDisplay(remote), other, slug, repo, kind, RemoteEnv)
+	}
+	if other := remoteOfAnotherRepo(kind, repo, remote); other != "" {
+		// internal/infra's repoURL refuses this at deploy time — "it must be
+		// this repository, not only this provider" — and the run refuses it
+		// here for the same reason: it clones, caches, locks and accounts under
+		// its slug, and another repository's URL under that slug is another
+		// repository's work.
+		return fmt.Errorf("the run would clone from %s, which is the repository %s on %s's host, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and it must be this repository, not only this provider, so the run stops before any git credential is requested",
+			remoteDisplay(remote), other, kind, slug, repo, kind, RemoteEnv)
 	}
 	if want, err := task.Slug(kind, repo); err != nil || want != slug {
 		// Implied by the derivation; re-checked so the two values the run

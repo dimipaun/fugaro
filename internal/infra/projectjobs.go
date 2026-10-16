@@ -82,7 +82,7 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			Provider:       pr.Provider,
 			Account:        account,
 			Job:            gcp.ProjectJobName(name, pr.Provider, account),
-			ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: projectSADisplayName(name, pr.Provider, account)},
+			ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(name, pr.Provider, account)},
 			Image:          lc.BaseImage(config.BaseKind),
 			CPU:            strconv.Itoa(pr.CPU),
 			Memory:         pr.Memory,
@@ -108,16 +108,6 @@ func profilesAsPolicy(profiles map[string]config.JobProfile) map[string]projectp
 		out[name] = projectpolicy.Profile{JobProfile: pr}
 	}
 	return out
-}
-
-// projectSADisplayName is a project job service account's display name, in
-// the shape the M4 bootstrap used for job accounts (gcp.JobSADisplayName).
-func projectSADisplayName(profile, provider, account string) string {
-	s := "Fugaro project job " + profile + " " + provider
-	if account != "" {
-		s += " " + account
-	}
-	return s
 }
 
 // projectJobEnv is a project job's plain environment: the installation's
