@@ -64,7 +64,7 @@ Each task is independently mergeable: it lands with its own tests, and **nothing
 ### Phase V2.0 — the gate, made checkable
 
 **V2.0.1 — the decisions, answered and pinned. (needs the answers to D21–D38 — D22 and D34 are answered, 2026-10-16, and D21 with D22; D23–D33 and D35–D38 are still open; the owner's task, not an agent's)**
-The owner answers the decisions still open in [desktop-console-v2.md](../design/desktop-console-v2.md)'s tables — the answers already given (D21, D22) are recorded and not re-asked. Then one task records the answers as a test, in the shape the v1 design's D-table already has: every row D21–D38 carries an answer (D21's in its prose paragraph, since it has no row), and the answer text names the task in this plan that implements it.
+The owner answers the decisions still open in [desktop-console-v2.md](../design/desktop-console-v2.md)'s tables — the answers already given (D21, D22 and D34) are recorded and not re-asked. Then one task records the answers as a test, in the shape the v1 design's D-table already has: every row D21–D38 carries an answer (D21's in its prose paragraph, since it has no row), and the answer text names the task in this plan that implements it.
 *Files:* `docs/design/desktop-console-v2.md`; `internal/cli/docs_desktop_console_v2_test.go` (new).
 *Verification:* `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsDesktopConsoleV2' -count=1` — green, and red if a row is deleted or its answer is blanked (the mutation is proven red in the PR that adds it, as this tree's docs tests do).
 *Independent merge:* yes — it touches one document and one test.
