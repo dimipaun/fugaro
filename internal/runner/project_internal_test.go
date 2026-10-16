@@ -76,6 +76,13 @@ func TestRepoNamedByRemote(t *testing.T) {
 		{"https://github.com/acme/app", "acme/app", true},
 		{"https://github.com/Acme/App.git", "acme/app", true},
 		{"git@github.com:acme/app.git", "acme/app", true},
+		// The same scp-like remote without the userinfo git makes optional,
+		// and its colon-slash spelling: git ssh's to github.com and asks for
+		// the same repository either way, so both name one here too (the
+		// review finding on this change).
+		{"github.com:acme/app.git", "acme/app", true},
+		{"github.com:/acme/app.git", "acme/app", true},
+		{"github.com:attacker/malware.git", "attacker/malware", true},
 		{"ssh://git@github.com/acme/app.git", "acme/app", true},
 		{"https://x:token@github.com/acme/app.git", "acme/app", true},
 		{"https://github.com/attacker/malware.git", "attacker/malware", true},
@@ -120,6 +127,9 @@ func TestRepoNamedByRemoteRefusesAPathItCannotRead(t *testing.T) {
 		"https://github.com/./acme/app.git",
 		"https://github.com/acme/app/..",
 		"git@github.com:acme/../attacker/malware.git",
+		"github.com:acme/../attacker/malware.git",
+		"github.com:/acme/../attacker/malware.git",
+		"github.com:/acme%2F..%2Fattacker/malware.git",
 		// Encoded separators and encoded dots: url.Parse decodes "%2F" into a
 		// separator, so reading Path instead of EscapedPath would compare a
 		// repository the remote does not plainly name.
@@ -160,6 +170,13 @@ func TestRemoteRepoPath(t *testing.T) {
 		{"https://github.com/acme/app.git/../../attacker/malware", "acme/app.git/../../attacker/malware", true},
 		{"https://github.com/acme%2Fapp.git", "acme%2Fapp.git", true},
 		{"git@github.com:acme/app.git", "acme/app.git", true},
+		{"github.com:acme/app.git", "acme/app.git", true},
+		{"github.com:/acme/app.git", "acme/app.git", true},
+		{"github.com:acme/app.git/", "acme/app.git", true},
+		// Not scp-like: a URL's authority is "//" and a local path has no
+		// colon before its first "/", so neither names a host and a path.
+		{"file:///tmp/remote.git", "", false},
+		{"/tmp/acme:web.git", "", false},
 		// A query or a fragment is not part of the path git clones, so a
 		// remote carrying one is still the repository its path names.
 		{"https://github.com/acme/app.git?ref=x", "acme/app.git", true},
@@ -187,6 +204,13 @@ func TestRemoteDisplayDropsUserinfo(t *testing.T) {
 		{"https://x-token-auth@bitbucket.org/acme/app.git", "https://bitbucket.org/acme/app.git"},
 		{"git@github.com:acme/app.git", "github.com"},
 		{"x-token-auth@bitbucket.org:acme/app.git", "bitbucket.org"},
+		// The scp-like form without userinfo is still ssh's host and path, so
+		// its display is the host alone like its userinfo-bearing sibling's.
+		{"github.com:acme/app.git", "github.com"},
+		{"github.com:/acme/app.git", "github.com"},
+		// Neither shape: quoted as written.
+		{"/tmp/fixture.git", "/tmp/fixture.git"},
+		{"file:///tmp/fixture.git", "file:///tmp/fixture.git"},
 	} {
 		if got := remoteDisplay(tc.in); got != tc.want {
 			t.Errorf("remoteDisplay(%q) = %q, want %q", tc.in, got, tc.want)

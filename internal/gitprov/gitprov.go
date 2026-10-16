@@ -278,16 +278,50 @@ func DraftTitle(title string, draft bool) string {
 	return title
 }
 
+// SplitRemote splits a git remote into the host it points at and the path
+// that names the repository there, in the two shapes git accepts: a URL
+// ("https://github.com/acme/app.git", "ssh://git@github.com/acme/app.git"),
+// and the scp-like form git reads as ssh, which is a host, a colon and a path
+// ("git@github.com:acme/app.git").
+//
+// ok is false for a remote that names no host at all: a local path, an empty
+// string, a URL with an empty authority.
+//
+// The scp-like form is recognised by a colon *before the first "/"* and not
+// followed by "//" (which is a URL's authority, not a separator). It is not
+// recognised by an "@": git makes the userinfo optional — it ssh's to
+// github.com and asks for the same repository in "github.com:owner/name.git"
+// and in "git@github.com:owner/name.git" alike — and keying on the "@" read
+// both spellings as a URL whose *scheme* is "github.com", with no host and no
+// path, so both halves of the run's remote binding skipped them (the review
+// finding on this change). Both halves of the run's remote binding — the host
+// kind here and the owner/name in internal/runner — ask this one question
+// rather than each keeping its own copy of it.
+func SplitRemote(remote string) (host, path string, ok bool) {
+	if remote == "" {
+		return "", "", false
+	}
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		// EscapedPath, not Path: url.Parse decodes "%2F" into a separator, and
+		// a caller comparing the path must see the remote as git will send it.
+		return u.Hostname(), u.EscapedPath(), true
+	}
+	if host, rest, ok := strings.Cut(remote, ":"); ok && host != "" &&
+		!strings.Contains(host, "/") && !strings.HasPrefix(rest, "//") {
+		if _, h, ok := strings.Cut(host, "@"); ok {
+			// scp-like with userinfo: user@host:path.
+			host = h
+		}
+		return host, rest, true
+	}
+	return "", "", false
+}
+
 // KindForURL names the provider hosting a git remote URL: KindGitHub for
 // github.com, KindBitbucket for bitbucket.org, and "" for anything else
 // (a local path, or another host).
 func KindForURL(remote string) string {
-	var host string
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		host = u.Hostname()
-	} else if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		host, _, _ = strings.Cut(rest, ":") // scp-like: git@host:owner/repo.git
-	}
+	host, _, _ := SplitRemote(remote)
 	switch strings.ToLower(host) {
 	case "github.com":
 		return KindGitHub

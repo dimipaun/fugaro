@@ -158,18 +158,18 @@ func remoteOfAnotherKind(derived, remote string) string {
 // The path is read from EscapedPath, not Path: url.Parse decodes "%2F" into a
 // separator, so a remote that encodes one would otherwise be compared as a
 // repository it does not plainly name.
-func remoteRepoPath(remote string) (path string, named bool) {
-	if remote == "" {
+//
+// The shape is gitprov.SplitRemote's question, not a second copy of it: the
+// host-kind half of this binding (remoteOfAnotherKind, through
+// gitprov.KindForURL) reads the same remote, and the two must not disagree
+// about what it names. Keying the scp-like form on "@" here made them agree on
+// the wrong answer for a userinfo-less scp remote — "github.com:attacker/malware.git"
+// came back as naming nothing, from both halves, while git ssh'd to github.com
+// and asked for attacker/malware.git (the review finding on this change).
+func remoteRepoPath(remote string) (string, bool) {
+	_, p, ok := gitprov.SplitRemote(remote)
+	if !ok {
 		return "", false
-	}
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		path = u.EscapedPath()
-	} else if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		// scp-like: git@github.com:owner/name.git (url.Parse reads this as a
-		// scheme-less opaque URL with no host).
-		if _, p, ok := strings.Cut(rest, ":"); ok {
-			path = p
-		}
 	}
 	// Exactly one leading and one trailing "/" is the URL's own punctuation,
 	// not a segment: "https://github.com/acme/app.git/" is the same remote as
@@ -177,11 +177,11 @@ func remoteRepoPath(remote string) (path string, named bool) {
 	// empty segment ("github.com//acme/app") reaches the refusal below instead
 	// of being normalized away — normalizing is what a reader of the URL would
 	// do and git may not.
-	path = strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/")
-	if path == "" {
+	p = strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
+	if p == "" {
 		return "", false
 	}
-	return path, true
+	return p, true
 }
 
 // repoNamedByRemote is the repository a git remote URL names, canonicalized
@@ -227,17 +227,23 @@ func repoNamedByRemote(remote string) (string, bool, error) {
 // run never registers that one as a secret, so it is dropped here rather than
 // redacted later.
 func remoteDisplay(remote string) string {
-	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		if host, _, ok := strings.Cut(rest, ":"); ok {
-			return host
-		}
-	}
 	u, err := url.Parse(remote)
-	if err != nil {
-		return "the remote"
+	if err == nil && u.Host != "" {
+		u.User = nil
+		return u.String()
 	}
-	u.User = nil
-	return u.String()
+	// Not a URL with a host: the scp-like form git reads as ssh, whose display
+	// is the host alone — the userinfo before it may be a token, and the path
+	// is what the refusal names. A remote with neither shape is quoted as it
+	// was written, minus any userinfo.
+	if host, _, ok := gitprov.SplitRemote(remote); ok {
+		return host
+	}
+	if err == nil {
+		u.User = nil
+		return u.String()
+	}
+	return "the remote"
 }
 
 // admissionCheck admits the repository this run was launched for, before any

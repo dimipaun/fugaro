@@ -266,18 +266,28 @@ func TestRunnerRefusesARemoteWhosePathIsNotAnOwnerName(t *testing.T) {
 		{"an encoded dot segment", "https://github.com/%2e%2e/attacker/malware.git"},
 		{"an empty segment", "https://github.com//attacker/malware.git"},
 		{"a character a repository name cannot hold", "https://github.com/acme/app.git;x"},
+		// The scp-like form without userinfo, which git honors: it ssh's to
+		// github.com and asks for attacker/malware.git, and both halves of the
+		// binding read it as "nothing to compare" — the owner/name comparison
+		// because remoteRepoPath keyed the shape on "@", the host-kind half
+		// because gitprov.KindForURL did (the review finding on this change).
+		{"an scp-like remote naming another repository", "github.com:attacker/malware.git"},
+		{"a colon-slash scp-like remote naming another repository", "github.com:/attacker/malware.git"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := tc.remote
 			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
 			b.deps.Remote = remote
 			// Nothing here may reach github.com even if this check regresses:
-			// the same local rewrite the sibling remote tests use.
+			// the same local rewrite the sibling remote tests use, plus an ssh
+			// command that fails at once for the scp-like shapes, which the
+			// rewrite does not cover.
 			gitcfg := filepath.Join(t.TempDir(), "gitconfig")
 			if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+			t.Setenv("GIT_SSH_COMMAND", "false")
 			rec, err := b.run(t)
 			refusedAdmission(t, b, rec, err, "acme/app", "FUGARO_REMOTE", "before any git credential")
 		})
