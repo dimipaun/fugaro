@@ -1794,13 +1794,18 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	if err := checkPolicyBytes(patched); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "allow_repos: %v → %v\n", before, allow)
+	// The line is printed after the write, not before it: it is a claim about
+	// the node, and a PutIfMatch that comes back refused (the policy changed
+	// while this ran, or the credential may not write it) left the list
+	// exactly as it was — an operator who read "allow_repos: [a] → [a b]" on a
+	// failed write would take the entry for enrolled.
 	if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(patched)); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return userErr("the policy changed while this ran; nothing was written: run it again")
 		}
 		return dbErr(lc, err, true)
 	}
+	fmt.Fprintf(out, "allow_repos: %v → %v\n", before, allow)
 	fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
 	return nil
 }

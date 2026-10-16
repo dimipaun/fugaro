@@ -2541,6 +2541,53 @@ func TestProjectReposRmOfANameOnlyAPatternAdmitsSaysThePatternKeepsIt(t *testing
 	}
 }
 
+// TestProjectReposEditPrintsTheNewListOnlyAfterTheWrite: the edit printed
+// "allow_repos: [before] → [after]" before the ETag-guarded PutIfMatch, so a
+// write that failed — a policy that changed while the command ran, or a
+// credential that may not write the node — was reported to the operator as if
+// the list had been replaced, in the command whose whole output is that one
+// line and "set <node>". The diff line is a claim about the node.
+func TestProjectReposEditPrintsTheNewListOnlyAfterTheWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stdin string
+	}{
+		{"add", []string{"project", "repos", "add", "github/acme/new"}, ""},
+		{"rm", []string{"project", "repos", "rm", "github/acme/app"}, "aurora\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+				t.Fatal(err)
+			}
+			before := publishedPolicy(t, f).AllowRepos
+			// The one write the edit ends on is refused.
+			f.db.DenyNext(1)
+			var out string
+			var err error
+			if tc.stdin != "" {
+				typed(t)
+				out, _, err = executeStdin(t, tc.stdin, tc.args...)
+			} else {
+				out, _, err = execute(t, tc.args...)
+			}
+			if err == nil {
+				t.Fatalf("the refused write was reported as a success:\n%s", out)
+			}
+			if strings.Contains(out, "allow_repos:") {
+				t.Errorf("the edit printed the new allow-list before the write that would have set it:\n%s", out)
+			}
+			if strings.Contains(out, "set "+projectpolicy.PathShared()) {
+				t.Errorf("the edit says it set the node a refused write left untouched:\n%s", out)
+			}
+			if got := publishedPolicy(t, f).AllowRepos; !slices.Equal(got, before) {
+				t.Errorf("allow_repos = %v, want the list unchanged (%v)", got, before)
+			}
+		})
+	}
+}
+
 // TestProjectReposEditRefusesTheSharedConfig: repos add and rm write the
 // published policy, so they are writers like `policy publish` and take its
 // two refusals — the shared config is not an operator's own installation, and
