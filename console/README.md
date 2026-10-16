@@ -52,10 +52,13 @@ packages as this module's, and so a `.go` file put under
 name. `testdata/` is read deliberately.
 
 What is here today: this file, the contract the console reads
-(`docs/json-contract.md`, pinned by plan Task 0.1), and the pinned toolchain
-(plan Task 1.0): `package.json`, `package-lock.json`, `tsconfig.json`,
+(`docs/json-contract.md`, pinned by plan Task 0.1), the pinned toolchain (plan
+Task 1.0): `package.json`, `package-lock.json`, `tsconfig.json`,
 `playwright.config.ts`, `.npmrc`, `.gitignore`, and the two unit tests that hold
-the pinning rule and the lockfile.
+the pinning rule and the lockfile; and the hardened window (plan Task 1.1,
+below): `src/main/window.ts`, `src/main/protocol.ts`, `src/main/index.ts`,
+`src/renderer/index.html`, `tsconfig.build.json`, and the two test files that
+try to leave it.
 
 ## The toolchain, pinned (Task 1.0)
 
@@ -73,7 +76,7 @@ the rest are build and test tooling:
 | Package | Version | Where | Why it is here |
 |---|---|---|---|
 | `electron` | `44.7.2` | `devDependencies` | the app's runtime, bumped on purpose |
-| `typescript` | `7.0.2` | `devDependencies` | `tsc --noEmit`; the type checker, not the build |
+| `typescript` | `7.0.2` | `devDependencies` | `tsc --noEmit` for `npm run typecheck`, and `tsc -p tsconfig.build.json` for `npm run build` (Task 1.1: the build is `tsc` too, because the pinning rule leaves no room for a bundler) |
 | `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
 | `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
 | `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
@@ -98,7 +101,9 @@ mismatched reader finds out at install time.
 ```
 npm ci --ignore-scripts --no-audit --no-fund   # the install; never `npm install`
 npm run test:unit                              # vitest, test/unit/*.test.ts
-npm run test:e2e                               # playwright, test/e2e/*.spec.ts; passes with no specs
+npm run build                                  # tsc -p tsconfig.build.json, src/ -> dist/
+npm run test:e2e                               # playwright, test/e2e/*.spec.ts; builds first
+npm run test:e2e -- security                   # just the window's spec
 npm run typecheck                              # tsc --noEmit over src/, test/, tools/
 ```
 
@@ -126,6 +131,92 @@ and resolves `node_modules/electron/dist/electron`. So the e2e path works with
 scripts ignored, the runtime arrives on the machine that runs the tests rather
 than on the machine that installs, and by packaging time (Task 4.1) it is
 already on disk.
+
+## The hardened window (Task 1.1)
+
+The console's shell is one window, and everything it is allowed to do is
+decided in two modules. `src/main/window.ts` holds the window's construction
+options and the four policies on it:
+
+| Rule (design §5.1) | What the code does |
+|---|---|
+| 1 — the renderer is untrusted by construction | `contextIsolation: true`, `nodeIntegration: false`, `nodeIntegrationInWorker: false`, `sandbox: true`, `webviewTag: false`, `allowRunningInsecureContent: false`, `experimentalFeatures: false` — and nothing else, asserted key by key |
+| 2 — no remote content, ever | the only load is `app://console/index.html`; `will-navigate` denies every navigation; `setWindowOpenHandler` returns `{ action: 'deny' }`; `will-attach-webview` refuses; every permission is denied in both of Electron's handlers; the one `openExternal` path validates `https:`, no credentials, no port, host on an allow-list |
+| 3 — a deny-by-default CSP, as a real header | `src/main/protocol.ts` registers `app` as a standard, secure scheme (no `bypassCSP`) and serves the bundle through `protocol.handle('app', …)`, so every response carries the design's CSP — header first, `<meta>` copy beside it |
+| D14 — the allow-list is the guarantee | the `openExternal` allow-list is exactly three hosts: `github.com`, `bitbucket.org` (rule 2's "both providers' web hosts") and `console.cloud.google.com` (where `fugaro logs RUN --url` points). Rule 2 also names "the docs" and no document on this tree names a docs host, so none is on the list; a fourth entry is a deliberate edit, with the case for it, in the code and in the test that holds the list |
+
+The protocol handler is deny-by-default in the same shape: one scheme, one
+host, no port, no credentials, no query, no dot segment in the raw request URL,
+no NUL, no backslash, and a resolved path that must stay under the bundle root.
+The two refusals worth knowing about are the ones the URL parser makes
+interesting — `app://console/../../etc/passwd` is refused as a traversal by a
+check on the *raw* URL, because the WHATWG parser normalises dot segments away
+before anything parsed can see them, and `%2e%2e%2f%2e%2e%2f` survives that
+normalisation as a single segment and is caught by the containment check after
+the one decode. Both are asserted, with their statuses and reasons.
+
+Two things are here that the plan's Files column for Task 1.1 does not name,
+said out loud rather than slipped in:
+
+- **`src/main/index.ts`, the entry point.** `window.ts` and `protocol.ts` are
+  libraries; without a caller the scheme is never registered, `protocol.handle`
+  never runs, and the e2e spec has no application to launch. It registers the
+  scheme before `whenReady`, installs the three denials on every
+  `web-contents-created`, serves `src/renderer` and builds the window. It holds
+  no decision the unit tests cannot reach.
+- **`tsconfig.build.json` and package.json's `main`/`build`.** Electron runs a
+  file, and `tsc` is the only transform available: the pinning rule holds
+  `dependencies` to the one entry Task 1.0 installed, so a bundler would be a
+  dependency this task is not allowed to gain. `npm run test:e2e` builds before
+  Playwright starts, so the spec always launches what the tree currently says.
+
+`tsc` copies nothing, so the bundle's files stay where they were written and the
+handler's root is `src/renderer` under the app's own path
+(`app.getAppPath()`), not `dist/`. Packing the renderer into a packaged app is
+Task 4.1's, and this task builds no package.
+
+What is deliberately **not** here: the preload and its `contextBridge` surface
+(Task 1.2), the spawn allow-list (Task 2.1), and the Electron fuses (Task 4.1).
+The window is built so that each of those lands inside something already
+switched off — `consoleWebPreferences()` asserts the absence of a `preload`
+today precisely so that adding one is a decision rather than an oversight.
+
+### The security properties are tests, and each one fails under a mutation
+
+`test/unit/window.test.ts` never loads Electron: `src/main/*` imports *types*
+only and takes the runtime as an argument, so the window's decisions are driven
+under plain Node with a fake `webContents`, `session`, `protocol` and
+BrowserWindow class, and nothing is mocked that could hide a decision.
+`test/e2e/security.spec.ts` launches the real app and asserts what the browser
+does with them.
+
+| Mutation | What fails |
+|---|---|
+| any of the seven flags flipped (e.g. `contextIsolation: false`, `sandbox: false`) | the named row of the flag table |
+| a flag *added* beside the right ones | "sets exactly those flags and no others" |
+| a `preload` appearing | "no preload yet" |
+| `will-navigate` that does not deny | the navigation table, the wiring test, and the e2e navigation test |
+| `setWindowOpenHandler` returning `{ action: 'allow' }` | the window-open test, the wiring test, and the e2e `window.open` test |
+| a permission handler calling back `true`, or a check handler returning `true` | the two halves of the permission test |
+| `validateExternalUrl` accepting `javascript:`, `file:` or `data:` | three rows of its table |
+| accepting an off-allow-list host, credentials or a port | the rows that name each |
+| `openExternal` called on a refused link | "calls nothing at all for a refused link" |
+| the protocol handler serving another scheme or host | the row's status and reason |
+| serving a path outside the bundle root | the traversal row, the `%2e%2e%2f` row, and `isInsideBundleRoot`'s own cases |
+| `registerSchemesAsPrivileged` without `standard`/`secure`, or with `bypassCSP` | the registration test |
+| the CSP losing a directive (`connect-src 'none'` above all) | the directive test, and the e2e probe: no `securitypolicyviolation` naming `connect-src` |
+| the `<meta>` copy drifting from the header | "byte for byte" |
+| `loadURL` to anything but the bundled document | `createConsoleWindow`'s test |
+
+The e2e network probe is the one place where two gates stand behind one
+assertion, and it is worth being precise about which is which: `connect-src
+'none'` refuses the request inside Blink and produces a
+`securitypolicyviolation` event naming the directive, and a Playwright route
+handler aborts every remote request that gets that far and records it. A
+relaxed CSP fails on both counts — the violation never fires and the request
+shows up in the handler's record. The record is asserted empty, which is also
+the assertion to revisit first if a future Chromium starts reporting
+CSP-blocked requests to Playwright's network events.
 
 ### The pinning rule is a test, not a habit
 
