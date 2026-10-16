@@ -148,9 +148,12 @@ func projectPolicyFor(project, profile string) string {
 // projectPolicyCloning is projectPolicyFor plus the one clone_urls entry the
 // remote test needs: a custom clone URL for the fixture's repository, which
 // lives in the policy and not in a job's environment (design §4.1(1), plan task
-// 3.3 step 3).
+// 3.3 step 3). The member name is the escaped spelling the node holds — a
+// canonical repository name carries slashes and RTDB refuses a key containing
+// one (projectpolicy's CloneURLs) — so the fixture publishes what a real
+// publish publishes.
 func projectPolicyCloning(project, url string) string {
-	return `{"version":1,"allow_repos":` + project + `,"clone_urls":{"github/acme/app":"` + url + `"},` +
+	return `{"version":1,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
 }
 
