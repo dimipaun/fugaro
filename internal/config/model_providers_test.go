@@ -517,3 +517,39 @@ func TestClaimedClaudeRouteKeepsEveryOtherRefusal(t *testing.T) {
 		t.Errorf("a claimed Claude route under enforce was refused: %s", problemsText(got))
 	}
 }
+
+// TestTheNameDirectIsRefused is the review of this task's routing work: a
+// resolved route is a provider entry's *name* (RoutingClaudeFor answers the
+// entry, not the entry's kind), and the direct route is spelled with the same
+// string (RouteDirect, the value of routing.claude.via that means "call
+// Anthropic"). providerNameRE allows "direct", so nothing refused a provider
+// entry called that, and a switch routing a Claude ID to it resolved to
+// RouteDirect: the runner reads a route of RouteDirect as a call that went
+// direct and halts an otherwise valid run ("the project's routing switch is not
+// usable", internal/runner/routing.go), and a pin carrying the entry's own
+// route ID is refused as a direct pin (internal/config/pins.go).
+//
+// The collision is asserted first, because it is the whole reason for the
+// refusal: if a later change gives the route result its own flag — the other
+// fix the review offered — this test should be rewritten rather than kept.
+func TestTheNameDirectIsRefused(t *testing.T) {
+	p := okProvider()
+	p.Models = []string{"anthropic/claude-sonnet-5.5"}
+	providers := map[string]ModelProvider{RouteDirect: p}
+	sw := &RoutingClaude{Via: RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}
+	route, sent, ok := RoutingClaudeFor(sw, "claude-sonnet-5-5", providers)
+	if !ok || route != RouteDirect || sent != "anthropic/claude-sonnet-5.5" {
+		t.Fatalf("RoutingClaudeFor(an entry named %q) = %q, %q, %v: the collision this name is refused for is gone, so the refusal (and this test) must be reconsidered",
+			RouteDirect, route, sent, ok)
+	}
+	ps := ValidateModelProviders(providers)
+	if len(ps) == 0 {
+		t.Fatalf("a provider entry named %q was accepted: a call routed to it reads as a call that went direct", RouteDirect)
+	}
+	got := problemsText(ps)
+	for _, want := range []string{"providers." + RouteDirect, "direct", "routing.claude.via", "halt"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not name %q: %s", want, got)
+		}
+	}
+}
