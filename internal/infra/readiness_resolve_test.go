@@ -152,3 +152,37 @@ func TestReadinessProjectSecretGateNeedsDiscoveryConfirmation(t *testing.T) {
 		t.Errorf("missing = %v, want an unresolved bitbucket-token", missing)
 	}
 }
+
+// Task 2.2 step 2: a project-covered name that is stored nowhere is reported
+// with the command that stores it where the plan would resolve it -- the bare
+// `fugaro secrets set <name>`, project scope by D2's default -- and never
+// `--repo`, whose copy would then win over the project's forever.
+func TestReadinessNamesTheProjectScopeFix(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(webappInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logical := "github-app-key"
+	if _, ok := spec.ProjectSecretCandidates[logical]; !ok {
+		t.Fatalf("no ProjectSecretCandidates entry for %s: this test needs a name the plan may resolve project-wide", logical)
+	}
+	// Neither copy has a version: the repository's container exists, empty.
+	f.sm.Seed(spec.Secrets[logical], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), nil)
+	got, missing, _ := readinessOf(t, f, spec)
+	if id, ok := got.ProjectSecrets[logical]; ok {
+		t.Errorf("ProjectSecrets[%s] = %q, want no entry: nothing is stored", logical, id)
+	}
+	var reason string
+	for _, m := range missing {
+		if m.Kind == MissingSecret && strings.Contains(m.Reason, logical) {
+			reason = m.Reason
+		}
+	}
+	if reason == "" {
+		t.Fatalf("missing = %v, want a MissingSecret naming %s", missing, logical)
+	}
+	if !strings.Contains(reason, "fugaro secrets set "+logical) || strings.Contains(reason, "--repo") {
+		t.Errorf("reason = %q, want the project-scope fix (secrets set, no --repo)", reason)
+	}
+}

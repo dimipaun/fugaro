@@ -1,9 +1,11 @@
 package infra
 
 import (
+	"maps"
 	"slices"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -161,5 +163,91 @@ func TestSecretMountsListedProviderStillRefusesUnlistedRepo(t *testing.T) {
 		if m.Logical == "openrouter-api-key" {
 			t.Fatalf("mounts = %+v, want no openrouter-api-key for a repo an explicit, non-empty list excludes (P7 must not weaken this case)", ms)
 		}
+	}
+}
+
+// mounted reports whether the plan's jobs still mount logical: a workflow's or
+// the check job's own secret env, by the logical name each entry resolves
+// through.
+func mounted(spec RepoSpec, logical string) bool {
+	is := func(m map[string]string) bool {
+		return slices.Contains(slices.Collect(maps.Values(m)), logical)
+	}
+	for _, name := range slices.Sorted(maps.Keys(spec.Workflows)) {
+		if is(spec.Workflows[name].SecretEnv) {
+			return true
+		}
+	}
+	return spec.Check != nil && is(spec.Check.SecretEnv)
+}
+
+// Task 2.2 step 1, at D2's default: with no project_secrets entry at all, the
+// one predicate (ProjectSecretCandidate, through config.ProjectScopeByDefault)
+// accepts the GitHub App key project-wide, so the repository's own job mounts
+// the PROJECT's secret ID when the repository has no copy of its own. #343
+// resolved the project copy only for a name the owner had opted in.
+func TestProjectSecretMountsOnTheRepoJobWithoutARepoCopy(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(webappInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logical := "github-app-key"
+	cand, ok := spec.ProjectSecretCandidates[logical]
+	if !ok {
+		t.Fatalf("no ProjectSecretCandidates entry for %s (candidates = %v): D2's sweep is the default this test pins", logical, spec.ProjectSecretCandidates)
+	}
+	if want := gcp.ProjectSecretID(spec.Installation.ProjectName, logical); cand != want {
+		t.Fatalf("candidate = %q, want the project's own ID %q", cand, want)
+	}
+	// The repository's container exists with no version -- what Terraform's
+	// module leaves behind, and the state a project-scope store leaves the
+	// repository in -- and the project's copy is live.
+	f.sm.Seed(spec.Secrets[logical], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), nil)
+	f.seedProjectSecret(spec, logical)
+	got, missing, _ := readinessOf(t, f, spec)
+	if id := got.MountSecretID(logical); id != cand {
+		t.Errorf("the repository's job mounts %q for %s, want the project's %q", id, logical, cand)
+	}
+	if got.Secrets[logical] != spec.Secrets[logical] {
+		t.Errorf("the repository's own container became %q, want %q: Terraform's for_each must not move", got.Secrets[logical], spec.Secrets[logical])
+	}
+	if !mounted(got, logical) {
+		t.Errorf("no job mounts the resolved name any more: %v", got.Workflows)
+	}
+	if missingNames(missing, logical) {
+		t.Errorf("missing = %v, want none: the project copy resolves", missing)
+	}
+}
+
+// The other direction of the same rule: a repository copy with an enabled
+// version wins, so the job keeps mounting the repository's own ID and
+// Readiness records no project resolution -- even though the name is a project
+// candidate and a project copy is live. A mount that preferred the project
+// here would silently change which value a run reads the moment one is stored.
+func TestRepoCopyStillWins(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(webappInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logical := "github-app-key"
+	if _, ok := spec.ProjectSecretCandidates[logical]; !ok {
+		t.Fatalf("no ProjectSecretCandidates entry for %s: this test needs a name that could resolve project-wide", logical)
+	}
+	f.sm.Seed(spec.Secrets[logical], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), []byte("repo"))
+	f.seedProjectSecret(spec, logical)
+	got, missing, _ := readinessOf(t, f, spec)
+	if id, ok := got.ProjectSecrets[logical]; ok {
+		t.Errorf("ProjectSecrets[%s] = %q, want no entry: the repository's own copy has an enabled version", logical, id)
+	}
+	if id := got.MountSecretID(logical); id != spec.Secrets[logical] {
+		t.Errorf("the repository's job mounts %q, want the repository's own %q", id, spec.Secrets[logical])
+	}
+	if !mounted(got, logical) {
+		t.Errorf("no job mounts the name any more: %v", got.Workflows)
+	}
+	if missingNames(missing, logical) {
+		t.Errorf("missing = %v, want none: the repository's own copy resolves", missing)
 	}
 }

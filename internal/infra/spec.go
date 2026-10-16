@@ -959,6 +959,34 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 	return gcp.ProjectSecretID(lc.Name, logical), true
 }
 
+// MountSecretID is the one place that answers "which secret ID does this
+// repository's job mount for logical": the project's copy when Readiness
+// resolved the name to it (ProjectSecrets, written by resolveProject from the
+// one predicate, infra.ProjectSecretCandidate, which is D2's
+// config.ProjectScopeByDefault), the repository's own container otherwise, and
+// "" when neither holds the name -- a name no job mounts at all, or an
+// optional secret Readiness dropped for having no version anywhere.
+//
+// It reads the decision, it does not take it: the two maps are exactly the two
+// the repository module's Terraform merge reads
+// (deploy/terraform/gcp/modules/repo/workflows.tf's local.secrets prefers
+// var.repo.project_secrets over the repository's own container, which is what
+// makes a project-scope key mount on the repository's job at all). A caller
+// that spelled that precedence itself could point a job at a secret the plan
+// never mounted, so the readers of it ask here instead of repeating it.
+//
+// The phase-3 hand-off (plan Task 2.2 step 3): a repository has a job of its
+// own until phase 3. When it stops having one, the same resolution feeds a
+// profile's mount list instead, and the repository copy's precedence survives
+// only on the per-repository path -- so that move lands here, not in each
+// caller.
+func (rs RepoSpec) MountSecretID(logical string) string {
+	if id := rs.ProjectSecrets[logical]; id != "" {
+		return id
+	}
+	return rs.Secrets[logical]
+}
+
 // UsesVertex reports whether any of the repository's workflows
 // authenticates its agent through Vertex AI.
 func (rs RepoSpec) UsesVertex() bool {
