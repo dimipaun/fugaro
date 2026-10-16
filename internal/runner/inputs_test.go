@@ -557,9 +557,66 @@ func TestAnInputsDirectoryTheCheckoutLinksElsewhereIsRefused(t *testing.T) {
 		h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
 		link(t, h, filepath.Join(runstore.InputsDir, "sub"), target)
 		seedInputs(t, h, runInputKey(h, "sub/shot.png"), body)
-		wantBootstrapError(t, h, nil, "a checkout cannot commit it as a link or a file")
+		// Two refusals apply and either is enough: the inputs/ directory is
+		// not the run's own because the checkout committed an entry in it,
+		// and the entry itself is a link the writes would follow. The first
+		// is the one that fires, and the point this arm exists for is the
+		// second half — nothing is written through the link either way.
+		wantBootstrapError(t, h, nil, "already has", "holding sub")
 		if _, err := os.Stat(filepath.Join(target, "shot.png")); !os.IsNotExist(err) {
 			t.Errorf("the attached bytes were written through the link, outside the checkout (%v)", err)
 		}
 	})
+}
+
+// TestACommittedInputsDirectoryIsRefused is the same directory, committed as a
+// plain directory of files rather than as a link: the run downloads its
+// attachments into the checkout at inputs/, so reusing one the repository
+// already commits would let an attached file whose name matches a committed
+// one overwrite it in the very checkout the run goes on to commit and push —
+// and the committed files would sit where the task's inputs are, as though the
+// launcher had attached them. The directory is the run's, and the repository
+// has to give up the name (or the launch drop its attachments).
+//
+// Mutation (leave the existing directory as it is — return nil instead of
+// reading it): the run downloads into the committed directory, the committed
+// file is replaced by the attachment, and this test fails on the missing
+// refusal and on the file's own contents.
+func TestACommittedInputsDirectoryIsRefused(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	shot, body := attachedInput("shot.png", "png-bytes")
+	spec.Inputs = []task.InputFile{shot}
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	commitToRemote(t, h, func(dir string) {
+		if err := os.MkdirAll(filepath.Join(dir, runstore.InputsDir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, runstore.InputsDir, "shot.png"), []byte("the repository's own file"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	seedInputs(t, h, runInputKey(h, "shot.png"), body)
+	wantBootstrapError(t, h, nil, "already has", "holding shot.png")
+	if got, err := os.ReadFile(filepath.Join(h.deps.WorkDir, runstore.InputsDir, "shot.png")); err == nil && string(got) == "png-bytes" {
+		t.Fatal("the attachment overwrote the file the repository committed")
+	}
+}
+
+// TestInputsDifferingOnlyInCaseAreRefused: the runner's duplicate rule is
+// keyed on the FOLDED name, as the artifact names are (Task 4): every input
+// goes into one directory, and a name that differs only in case is one name
+// on a case-folding filesystem, which is where a local run writes them. The
+// second download would replace the first while the record names both.
+//
+// Mutation (key the seen map on the exact name alone): both files are written
+// and recorded, this test fails on the missing refusal.
+func TestInputsDifferingOnlyInCaseAreRefused(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	upper, _ := attachedInput("A.png", "upper")
+	lower, _ := attachedInput("a.png", "lower")
+	spec.Inputs = []task.InputFile{upper, lower}
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	seedInputs(t, h, runInputKey(h, "A.png"), []byte("upper"))
+	seedInputs(t, h, runInputKey(h, "a.png"), []byte("lower"))
+	wantBootstrapError(t, h, nil, "differ only in case", "\"A.png\" and \"a.png\"")
 }

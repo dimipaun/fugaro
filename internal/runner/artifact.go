@@ -1127,15 +1127,24 @@ func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
 	if err := checkInputCaps(r.spec.Inputs, caps); err != nil {
 		return err
 	}
-	seen := map[string]bool{}
+	// Keyed on the FOLDED name, the rule the launcher applies to the same set
+	// and the one Task 4's artifact names are keyed on: the downloads below
+	// all land in one directory, and a name that differs only in case is one
+	// name there — the second file would replace the first while the task
+	// named both. A spec written by hand reaches this with no launcher to
+	// have refused it, which is why the rule is here too and not only there.
+	seen := map[string]string{}
 	for _, in := range r.spec.Inputs {
 		if problem := task.InputNameProblem(in.Name); problem != "" {
 			return fmt.Errorf("attached input %q %s", in.Name, problem)
 		}
-		if seen[in.Name] {
-			return fmt.Errorf("attached input %q is named twice; one file cannot be two", in.Name)
+		if first, dup := seen[strings.ToLower(in.Name)]; dup {
+			if first == in.Name {
+				return fmt.Errorf("attached input %q is named twice; one file cannot be two", in.Name)
+			}
+			return fmt.Errorf("attached inputs %q and %q differ only in case, and both are downloaded into the same directory, where that is one name", first, in.Name)
 		}
-		seen[in.Name] = true
+		seen[strings.ToLower(in.Name)] = in.Name
 	}
 	dir := filepath.Join(r.d.WorkDir, inputsDir)
 	if err := mkdirInputDir(dir); err != nil {
@@ -1174,14 +1183,30 @@ func (r *run) downloadInputs(ctx context.Context, caps config.Inputs) error {
 	return nil
 }
 
-// mkdirInputDir creates the checkout's inputs/ directory, or leaves the one
-// that is already there, and refuses to write through anything else. The
-// checkout is the repository at the run's ref: it can contain `inputs` as a
-// symbolic link — to an absolute path, to a sibling directory, anywhere —
-// and every write below would follow it, so the attached bytes would land
-// outside the checkout entirely and the name refusals above (which judge the
-// NAME) would have had nothing to say about it. A link is refused rather
-// than followed, the rule readRepoRecipe already reads a repository file by.
+// mkdirInputDir creates the checkout's inputs/ directory and refuses to write
+// through anything else. The checkout is the repository at the run's ref, and
+// the directory this run writes its attachments into must be the run's own:
+//
+//   - a `inputs` the checkout commits as a symbolic link — to an absolute
+//     path, to a sibling directory, anywhere — would be followed by every
+//     write below, so the attached bytes would land outside the checkout
+//     entirely and the name refusals above (which judge the NAME) would have
+//     had nothing to say about it. A link is refused rather than followed,
+//     the rule readRepoRecipe already reads a repository file by; and
+//   - a `inputs` the checkout commits as a DIRECTORY is refused too, which is
+//     the same hazard with no link in it: an attached file whose name is one
+//     of the committed files' would overwrite it in the checkout the run
+//     commits from, and the committed files would sit beside the run's inputs
+//     as though the task had attached them. Nothing here can tell a file the
+//     repository committed from a file the launcher attached to a LATER run
+//     in a reused checkout; the directory is the run's, and a repository that
+//     wants the name has to give it up (rename it, or drop the attachments
+//     from the launch).
+//
+// An empty directory is the one case taken: git does not commit directories,
+// so an `inputs/` with nothing in it cannot have come from the repository and
+// is the run's own (a local run reusing a working directory). It is used as
+// it is, which is what makes a second artifact run in one checkout work.
 func mkdirInputDir(dir string) error {
 	st, err := os.Lstat(dir)
 	switch {
@@ -1195,7 +1220,29 @@ func mkdirInputDir(dir string) error {
 	case !st.IsDir():
 		return fmt.Errorf("%s is %s, and this run's attached inputs are written inside it: a checkout cannot commit it as a link or a file", dir, st.Mode())
 	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", dir, err)
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("the checkout already has %s, holding %s, and this run's attached inputs are written inside it: an attached file could overwrite a file the repository committed. Remove it from the repository, or run without attachments",
+			dir, strings.Join(inputDirEntries(entries), ", "))
+	}
 	return nil
+}
+
+// inputDirEntries names up to three of the entries of a committed inputs/
+// directory for the refusal above, so the owner is told which directory is in
+// the way and what is in it.
+func inputDirEntries(entries []os.DirEntry) []string {
+	out := make([]string, 0, 4)
+	for _, e := range entries {
+		if len(out) == 3 {
+			return append(out, fmt.Sprintf("and %d more", len(entries)-3))
+		}
+		out = append(out, e.Name())
+	}
+	return out
 }
 
 // mkdirInputParents creates the directories a name with path elements needs
