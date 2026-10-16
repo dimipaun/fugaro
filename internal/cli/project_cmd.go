@@ -407,15 +407,7 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 		return nil, bucketErr(url, "opening the bucket", err)
 	}
 	defer func() { _ = b.Close() }()
-	// ImageSource is part of the anchor (code review, high): ParseShared
-	// refuses a published image_source this machine's local config does not
-	// record (sharedcfg.go's "image_source" case), and a config published
-	// from a machine that took a fork's base pin carries one. Leaving the
-	// field out here refused every non-default installation's shared config
-	// — and with it the allow-list seed of `project show`, `project repos ls`
-	// and `project policy publish`, the publish included, so there was no
-	// CLI path out. Every other reader of this anchor sets it.
-	sc, refused, err := readShared(ctx, b, SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: lc.RunsBucketName(), ImageSource: lc.ImageSource})
+	sc, refused, err := readShared(ctx, b, SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: lc.RunsBucketName()})
 	switch {
 	case err != nil:
 		return nil, err
