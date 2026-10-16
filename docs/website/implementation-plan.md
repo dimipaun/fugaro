@@ -12,9 +12,9 @@ This is a plan for a second artifact that does not exist yet, in a repository wh
 
 **Two things this plan does not do.** It does not answer any decision row: §10 lists them, and the gate at §12 holds the whole plan behind the owner's answers. And it does not touch a single file under `.github/workflows/` — the deploy workflow is **staged** under `docs/pending-workflows/` for the owner to copy, which is the mechanism the repository already uses (F4, F62).
 
-## 1. Phase summary
+## 1. Part summary
 
-| Phase | What it ships | Tasks | Independently mergeable? | Reviewer tier |
+| Part | What it ships | Tasks | Independently mergeable? | Reviewer tier |
 |---|---|---|---|---|
 | **Part 0 — The facts** | The generated content layer: install facts, site facts, the CLI reference, the security page's source, the changelog's source, and `fugaro stats runs` — the owner-run, read-only aggregation. No site code. | W0.1–W0.6 | Yes, each on its own; the whole part merges without Part 1 | **opus** (W0.3 is SECURITY-SENSITIVE), sonnet for the rest |
 | **Part 1 — The site** | The Astro app under `website/`: toolchain, tokens and palettes, layout, the generated-content pipeline, and the ten sections of the spec that the repository can back. Plus its hermetic gates: build, link/anchor check, drift tests, accessibility and origin lint. | W1.1–W1.11 | Yes, per PR group; the shell (W1.1–W1.3) must land before the pages | **opus** for the boundary and origin tests, sonnet for the pages |
@@ -149,7 +149,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 
 **What the parallelism buys, stated honestly.** The plan's wall-clock is not the sum of its tasks: L0 and L1 are two agents, L4 is up to eight, and the only true serialization is the shell (W1.1 → W1.3) and the gates (W1.11, W2.1). The reason to cut it this way is not speed but **independence**: every level's PR is mergeable alone, and the owner's unanswered decisions (D90–D109) block exactly one thing — Part 2, which is why Parts 0 and 1 can start the day the gate opens even if the host, the domain and the palette are still open.
 
-## 8. Phase 0 — The facts the site renders
+## 8. Part 0 — The facts the site renders
 
 ### Task W0.1: The install facts, and the test that holds them to the repository
 
@@ -260,7 +260,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 
 **Red step.** Write the set-equality test first, with the JSON absent. `Expected: FAIL` — `changelog.json lists 0 releases, docs/releases/ holds 13`.
 
-## 9. Phase 1 — The site
+## 9. Part 1 — The site
 
 ### Task W1.1: The site's shell, toolchain and build
 
@@ -457,7 +457,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 
 **Red step.** Run the origin check against a page carrying a Google Fonts link. `Expected: FAIL` — `fonts.googleapis.com is not on the allowed-host list`.
 
-## 10. Phase 2 — Hosting, deploy and the live checks
+## 10. Part 2 — Hosting, deploy and the live checks
 
 ### Task W2.1: The deploy workflow, staged for the owner — SECURITY-SENSITIVE
 
@@ -532,7 +532,7 @@ Nine agent tasks plus two owner gates. **Everything else is a side branch and ca
 
 **Red step.** Write the no-iframe test with a placeholder embed. `Expected: FAIL` — `hero embeds youtube.com while features.video is false`.
 
-## 11. Phase 3 — After the console ships (unscheduled)
+## 11. Part 3 — After the console ships (unscheduled)
 
 ### Task W3.1: The console downloads become real
 

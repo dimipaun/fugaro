@@ -10,7 +10,7 @@ This directory is the documentation of a **second artifact**: a public site for 
 |---|---|
 | [spec.md](spec.md) | **The owner's text, verbatim** — committed byte for byte and alone, before anything that answers it. It is the source document for the other three, and it is not edited when they disagree with it. |
 | [reconciliation.md](reconciliation.md) | What the spec asks for, checked against `origin/main` at `76f6c59`. Sixty-three numbered findings classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol; a concept-to-repo table; twenty decision rows **D90–D109**; the five things the reconciliation **refuses** to accept from the spec; and six **UNVERIFIED** items. |
-| [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: four phases, twenty-eight tasks, ten PR groups, and a **Parallel execution** section of eight levels with the critical path. Every task carries the files it touches, its tests, its command, its dependencies, its commit and its **red step**; every phase carries its reviewer tier. |
+| [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: four parts, twenty-four tasks, ten PR groups, and a **Parallel execution** section of eight levels with the critical path. Every task carries the files it touches, its tests, its command, its dependencies, its commit and its **red step**; every phase carries its reviewer tier. |
 | this file | The index, and the status line above. |
 
 ## The short version
@@ -31,7 +31,7 @@ The plan takes **check 69 and up** (written as 69a–69c) for the site's live ch
 
 ## Where the work happens, once it is approved
 
-| Phase | What it ships | Paths |
+| Part | What it ships | Paths |
 |---|---|---|
 | **Part 0 — the facts** | The generated content layer and its drift tests, plus the aggregation command. No site code. Mergeable on its own. | `website/data/`, `website/content/`, `internal/clidoc/`, `internal/stats/`, `internal/cli/docs_website_*.go`, `internal/cli/stats.go` |
 | **Part 1 — the site** | The Astro app: toolchain, tokens and three palettes, layout, and the ten sections the repository can back — plus the hermetic gates (build, links, anchors, origins, accessibility, byte budget). | `website/` |
