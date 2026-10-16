@@ -336,7 +336,7 @@ field this task reads out of a document is `day`, which the rollover needs.
 
 | Rule (design §3.4 and §5.1) | What the code does |
 |---|---|
-| 1 — argv is an array, `shell: false`, never built from a job-written field | `argvFor` is the only place an argv is built. It walks the row's *declared* arguments, refuses an undeclared key by name, and passes every value through a conservative character whitelist, so a value that arrived from a document cannot become a command word. Every emitted element is its own array entry, every emitted flag is asserted against `SPAWN_FLAGS`, and the spawner is always called with the literal `shell: false` |
+| 1 — argv is an array, `shell: false`, never built from a job-written field | `argvFor` is the only place an argv is built. It walks the row's *declared* arguments, refuses an undeclared key by name, and passes every value through a conservative character whitelist, so a value that arrived from a document cannot become a command word. Every emitted element is its own array entry, every emitted flag is asserted against `SPAWN_FLAGS`, and the spawner is always called with the literal `shell: false`. The schema's kinds and the table's kinds are related by exactly one mapping, `SPAWN_KIND_FOR`, and `assertSpawnSurface` refuses a row whose kind disagrees with the operation's schema — so a validated value that argv cannot spell is a table-load failure rather than a refusal a user reads |
 | 3 — `--project` on every command that takes it | `SPAWN_COMMANDS` carries `takesProject` per row: the nine commands of `addCloudFlags` (`internal/cli/cloud.go:51`) plus a tenth row (the console has two operations over `logs`, `--json` and `--url`, and neither may be the one that forgets). The handshake's argv is exactly `["version"]`, because `newVersionCmd` is `cobra.NoArgs` with no flags. `--config <path>` follows `--project` whenever the installation declares one |
 | 4 — the binary is resolved explicitly | the operator's configured path, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and only then every entry of the app's own `PATH`; the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
 | 5 — the child's environment is built, not inherited | exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*` variables and the chosen installation's `FUGARO_PROJECT`. A hostile `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `SSH_AUTH_SOCK` or ambient `FUGARO_PROJECT` in the app's environment cannot reach the child |
@@ -386,8 +386,8 @@ and never the network** (`test/unit/stub.ts`: a shell shim that `exec`s the Node
 running the suite by absolute path, a generated script, and a `scenario.json`).
 The report file the stub appends to is the child's *own* account of its argv,
 `cwd` and environment, which is what makes these tests about what a real machine
-sees rather than about the console's self-consistency. Fifteen mutations were run
-against the committed tree, and each made a named test red:
+sees rather than about the console's self-consistency. Seventeen mutations were
+run against the committed tree, and each made a named test red:
 
 | Mutation | What fails |
 |---|---|
@@ -406,6 +406,8 @@ against the committed tree, and each made a named test red:
 | the spawn log's bound removed | "stops at the bound: one truncation line at record 1001, then nothing" |
 | an `env` field added to a log line | "writes exactly the four keys, checked against a planted fifth" |
 | a `readFileSync(join(homedir(), '.config', 'fugaro', …))` anywhere under `console/src/` | "is clean: no file under console/src/ opens a config, anywhere" — and the planted file that *is* that mutation is a fixture in `test/unit/configread.test.ts`, so the checker is tested against what it must catch |
+| `runs.list`'s `pr` row back to `kind: 'value'` — the bug a review found here: the schema hands over a *number* and that case required a string, so every PR-filtered run list was refused on the way to a spawn that never happened | "what the schema validates is what the spawn table accepts > spawns runs.list from the payload validateArguments returns", and 29 others: the kind disagreement makes `assertSpawnSurface` refuse the table, so `CliSource.create` and everything behind it fails too |
+| `spend.report`'s `since` back to the runs grammar (`kind: 'since'`) | the report-range rows of "the day and window arguments" (`12w`, `522w`, `0d`, `3h`, `3661d`) and "carries the report range 12w through to argv unchanged" |
 
 ### What is deliberately not here
 
