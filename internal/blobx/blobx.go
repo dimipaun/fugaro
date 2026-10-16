@@ -480,14 +480,14 @@ func (b *Bucket) Put(ctx context.Context, key string, data []byte, contentType s
 // is refused outright costs nothing, and one that stalls is bounded by the
 // caller's own deadline instead of by the container's.
 func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifNotExist bool) (size int64, sum string, err error) {
-	// openSource, not os.Open: the path is opened without following a final
+	// OpenSource, not os.Open: the path is opened without following a final
 	// symlink and without blocking on a FIFO, because between a caller's own
 	// check of this path and this line anything the same user runs may have
 	// replaced it — a link to /dev/zero would otherwise stream until the
 	// container is killed. The refusal is reported as a source failure, the
 	// same as any other: it is the file the caller named that could not be
 	// read, and no bucket did anything.
-	f, err := openSource(path)
+	f, err := OpenSource(path)
 	if err != nil {
 		return 0, "", fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -508,6 +508,34 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 	if !st.Mode().IsRegular() {
 		return 0, "", fmt.Errorf("%s: %w (it is not a regular file)", path, ErrChanged)
 	}
+	return b.PutFileOpened(ctx, key, f, st, contentType, ifNotExist)
+}
+
+// PutFileOpened is PutFile for a caller that already holds the file open, and
+// it is the whole of PutFile below the open: it re-checks the handle, streams
+// exactly size bytes of it, and returns what it wrote. Only the holder of a
+// long-lived handle can do what PutFile cannot — judge the file's caps on the
+// very fd it then uploads, so the bytes that go up are the bytes that were
+// judged, and a file that grew or shrank in between is a refusal rather than
+// an upload of something nobody checked (internal/cli's --attach, whose caps
+// are checked before the launch's later gates and whose upload runs after
+// them: between the two the path may be a different file entirely).
+//
+// size must be the size the caller read from this same handle. It is the
+// copy's bound and not a fresh fstat: a file that grew since the caller looked
+// reads one byte past what was judged, which copyBounded's bound allows and
+// the n != size check below refuses, so what leaves is never more than the
+// size the caller checked against its cap plus one byte. f's own fstat is
+// still re-checked here (it costs nothing on an open fd) so that no caller can
+// reach the copy with a directory, a device or a FIFO — GetFile-staged
+// attachments and the launcher's judged files are the two callers, and only
+// one of them is in this module. The handle is closed by the caller, not here.
+func (b *Bucket) PutFileOpened(ctx context.Context, key string, src *os.File, st fs.FileInfo, contentType string, ifNotExist bool) (size int64, sum string, err error) {
+	path := src.Name()
+	if !st.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("%s: %w (it is not a regular file)", path, ErrChanged)
+	}
+	want := st.Size()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	w, err := b.NewWriter(ctx, key, &blob.WriterOptions{ContentType: contentType, IfNotExist: ifNotExist})
@@ -515,7 +543,7 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 		return 0, "", writeErr(err, ifNotExist)
 	}
 	h := sha256.New()
-	n, err := copyBounded(ctx, io.MultiWriter(w, h), f, st.Size())
+	n, err := copyBounded(ctx, io.MultiWriter(w, h), src, want)
 	if err != nil {
 		// The abort rule: cancel, then close, and report the cause rather
 		// than whatever Close says about the aborted write.
@@ -534,10 +562,10 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 		}
 		return 0, "", writeErr(err, ifNotExist)
 	}
-	if n != st.Size() {
+	if n != want {
 		cancel()
 		_ = w.Close()
-		return 0, "", fmt.Errorf("%s: %w (read %d bytes, its size said %d)", path, ErrChanged, n, st.Size())
+		return 0, "", fmt.Errorf("%s: %w (read %d bytes, its size said %d)", path, ErrChanged, n, want)
 	}
 	if err := w.Close(); err != nil {
 		return 0, "", writeErr(err, ifNotExist)

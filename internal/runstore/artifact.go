@@ -1,5 +1,24 @@
 package runstore
 
+import "github.com/dimipaun/fugaro/internal/task"
+
+// InputFile is one attached input as result.json records it: the same shape
+// the task spec carries (task.InputFile), aliased rather than copied so the
+// record's type and the schema's object cannot drift from the task's. It is
+// the task spec's list, echoed after the inputs were downloaded and verified
+// (design artifact-runs.md §4 step 6), so a reader sees exactly what the run
+// was given.
+type InputFile = task.InputFile
+
+// InputsDir is the object-name segment a run's attached inputs live under,
+// and the checkout directory the runner downloads them into.
+const InputsDir = "inputs"
+
+// InputKey is the object name of one attached input of the run stored under
+// prefix (runstore.Store.Prefix()): the launcher writes it there and the
+// runner reads it back from there, so the two spell the leaf once.
+func InputKey(prefix, name string) string { return prefix + InputsDir + "/" + name }
+
 // OutcomeArtifacts is the outcome of a run whose deliverable is in the
 // bucket: a mode: artifact run that rendered, uploaded and (when the recipe
 // asks for one, a later release) probed its outputs. It opens no pull

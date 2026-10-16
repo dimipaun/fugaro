@@ -751,6 +751,105 @@ func TestPutFileAbortsOnAShortRead(t *testing.T) {
 	}
 }
 
+// TestPutFileOpenedUploadsExactlyTheSizeTheCallerJudged is the half of
+// PutFileOpened that PutFile cannot give a caller: the handle is the one the
+// caller fstat'ed, and the size it read there is the copy's bound, so a file
+// that GREW after the caller looked cannot be uploaded past what it judged.
+// The extra bytes are never read (the copy stops one byte past the size) and
+// what arrives one byte past it is refused, leaving no object rather than one
+// nobody checked the size of.
+//
+// Mutation (take a fresh fstat in PutFileOpened, or drop the n != want check):
+// the grown source is uploaded whole as a success and this test fails on both
+// the error and the object's content.
+func TestPutFileOpenedUploadsExactlyTheSizeTheCallerJudged(t *testing.T) {
+	ctx := context.Background()
+	src := writeSource(t, bytes.Repeat([]byte("x"), 1024))
+	f, err := blobx.OpenSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The path is a different, longer file by the time the upload runs. The
+	// handle is still the old one, but the bytes behind it grew.
+	if err := os.WriteFile(src, bytes.Repeat([]byte("x"), 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := &abortDriver{}
+	b := blobx.Wrap(blob.NewBucket(d))
+	n, _, err := b.PutFileOpened(ctx, "artifacts/x.mp4", f, st, "video/mp4", false)
+	if !errors.Is(err, blobx.ErrChanged) {
+		t.Fatalf("PutFileOpened of a grown source = %v, want ErrChanged", err)
+	}
+	if n != 0 {
+		t.Fatalf("PutFileOpened reported %d bytes for an aborted write", n)
+	}
+	if d.commits != 0 {
+		t.Fatalf("the refused write committed %d times", d.commits)
+	}
+	if _, _, err := b.Read(ctx, "artifacts/x.mp4"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("the aborted write left an object: %v", err)
+	}
+	// The judged size is what goes up when the file did not move: the first
+	// 1024 bytes of what is now at that path, hashed as they were read.
+	same := writeSource(t, bytes.Repeat([]byte("y"), 1024))
+	f2, err := blobx.OpenSource(same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f2.Close()
+	st2, err := f2.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok := blobx.Wrap(memblob.OpenBucket(nil))
+	n, sum, err := ok.PutFileOpened(ctx, "artifacts/y.mp4", f2, st2, "video/mp4", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256(bytes.Repeat([]byte("y"), 1024))
+	if n != 1024 || sum != hex.EncodeToString(want[:]) {
+		t.Fatalf("PutFileOpened = %d bytes, %s, want 1024 and the file's own sha256", n, sum)
+	}
+	if got, _, err := ok.Read(ctx, "artifacts/y.mp4"); err != nil || !bytes.Equal(got, bytes.Repeat([]byte("y"), 1024)) {
+		t.Fatalf("the object is %d bytes and err %v, want the 1024 judged bytes", len(got), err)
+	}
+}
+
+// TestPutFileOpenedRefusesAHandleThatIsNotARegularFile: the fstat check is
+// made on the handle being read, not on the path it was opened from, so a
+// caller that holds a FIFO open (the launcher opening every path --attach
+// named, one handle each, before it judges their caps) is refused here even
+// though its own open succeeded. Nothing is read and no writer is asked for.
+//
+// Mutation (drop the regular-file check from PutFileOpened): the copy reads
+// the FIFO and this test fails on the error and on the driver's counts.
+func TestPutFileOpenedRefusesAHandleThatIsNotARegularFile(t *testing.T) {
+	ctx := context.Background()
+	fifo, _ := fifoSource(t, true)
+	f, err := blobx.OpenSource(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &abortDriver{}
+	b := blobx.Wrap(blob.NewBucket(d))
+	if _, _, err := b.PutFileOpened(ctx, "artifacts/x.mp4", f, st, "video/mp4", false); !errors.Is(err, blobx.ErrChanged) {
+		t.Fatalf("PutFileOpened of a FIFO handle = %v, want ErrChanged", err)
+	}
+	if d.commits != 0 || d.closes != 0 {
+		t.Fatalf("the refused handle was written anyway: commits = %d, closes = %d", d.commits, d.closes)
+	}
+}
+
 // TestPutFileDoesNotFollowASymlinkSource: PutFile is given a path by a caller
 // that has decided a moment earlier that the path holds the file it wants, and
 // anything the same user is running can replace it in between. The open is
