@@ -46,8 +46,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"regexp"
-	"strings"
+	"sort"
 	"time"
 
 	batch "google.golang.org/api/batch/v1"
@@ -271,6 +272,9 @@ func New(ctx context.Context, o Options) (*Backend, error) {
 	if err := checkServiceAccount(o.ServiceAccount); err != nil {
 		return nil, err
 	}
+	if err := checkSecrets(o.Secrets); err != nil {
+		return nil, err
+	}
 	if err := checkVM(&o); err != nil {
 		return nil, err
 	}
@@ -305,6 +309,54 @@ func checkServiceAccount(email string) error {
 		return errors.New("the Batch backend needs the dedicated service account's email: left unset, Batch runs the job's VMs as the default Compute Engine service account, which is Editor on the project")
 	case defaultComputeServiceAccountRE.MatchString(email):
 		return fmt.Errorf("the Batch backend must not run a job's VMs as the default Compute Engine service account (%s): use the repository's dedicated account", email)
+	}
+	return nil
+}
+
+// envNameRE is what an environment variable name looks like: the form every
+// container runtime accepts, and therefore the form Options.Secrets' keys must
+// have.
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// secretNameRE is what Options.Secrets' values must look like: a Secret
+// Manager secret's resource name, with or without an explicit version. The
+// version is optional because Batch accepts the name and resolves the latest
+// version on the VM, and an installation that wants a pinned version gets one
+// by naming it (design §1.6).
+var secretNameRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/secrets/([A-Za-z0-9_-]{1,255})(/versions/([A-Za-z0-9_-]{1,255}))?$`)
+
+// checkSecrets refuses a Secrets map that could put a secret's VALUE into a
+// job definition. The job object is readable by anyone with batch.jobs.get,
+// and the whole point of the field is that the values never enter it (design
+// §1.6, C10): the map is environment variable NAME -> Secret Manager secret
+// NAME, and the VM resolves the names as the job's service account.
+//
+// Both halves are checked, because either can be misused to smuggle a value
+// in: a caller that passes a value where a name belongs, and a caller that
+// passes a value as the environment variable name. The check is here rather
+// than at the create so that an installation misconfigured once is refused at
+// startup, not at the first run that asked for a secret.
+//
+// Neither refusal repeats what it refused. The value slot's refusal names the
+// variable it belongs to -- a key that passed envNameRE is a variable's name,
+// not a secret -- and the key slot's refusal names nothing, because a key that
+// failed envNameRE may well be a secret's value. An error string is written to
+// terminals, logs and issue reports; it is never a place to print a secret.
+func checkSecrets(secrets map[string]string) error {
+	keys := make([]string, 0, len(secrets))
+	for k := range secrets {
+		keys = append(keys, k)
+	}
+	// Sorted, so an installation with two bad entries reports the same one
+	// every time (a map's order is not one).
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !envNameRE.MatchString(k) {
+			return errors.New(`an entry of the Batch backend's secrets has a key that is not an environment variable name: the map is variable name -> Secret Manager secret name, so each key is the variable's name ([A-Za-z_][A-Za-z0-9_]*). The refused key is not repeated here, because a secret's value is the one thing that must not be: if a value was passed as a key, this is where it stops, and this message is not the place to print it (design compute-backend.md §1.6, C10)`)
+		}
+		if !secretNameRE.MatchString(secrets[k]) {
+			return fmt.Errorf("the Batch backend's secret for %s is not a Secret Manager secret's resource name: it must be projects/<project>/secrets/<secret> or projects/<project>/secrets/<secret>/versions/<version>. The value is not repeated here, because a job carries names and never values (design compute-backend.md §1.6, C10): if a secret's value was passed as this entry's name, this is where it stops", k)
+		}
 	}
 	return nil
 }
@@ -374,15 +426,32 @@ func checkNetwork(o *Options) error {
 
 // checkDocker refuses a socket configuration that could not work. A gid is
 // read off the VM (design §2.2), so a negative one is a value no VM answered,
-// and a path is a path.
+// and a path has to be the path of a socket on that VM: the mount is
+// `<path>:<path>`, and `--group-add <gid>` is what opens it, so a path that is
+// the root directory, a relative path or a file that is not the daemon's
+// socket is a mount of nothing, a mount of somewhere else, or a bind of a
+// non-socket that the container comes up unable to talk to.
+//
+// The name check is deliberately narrow -- the last path element must be
+// `docker.sock` -- because this field is the one thing about the socket that
+// comes from an operator rather than from the VM, and every value it accepts
+// is a path the mount and the run's `DOCKER_HOST` both carry. An installation
+// whose daemon listens somewhere else is a fact to bring to this package, not
+// something to spell around.
 func checkDocker(d Docker) error {
 	switch {
 	case d.SocketGID < 0:
 		return fmt.Errorf("the Docker socket's gid %d is not a gid: read it off the VM with `stat -c %%g %s` (design §2.2)", d.SocketGID, d.path())
 	case d.SocketGID == 0 && d.SocketPath != "":
 		return errors.New("the Docker socket has a path but no gid: without the gid a run that asks for Docker is refused, and a configured path alone cannot open the socket")
-	case !strings.HasPrefix(d.path(), "/"):
+	case !path.IsAbs(d.path()):
 		return fmt.Errorf("the Docker socket's path %q is not an absolute path on the VM", d.path())
+	case path.Clean(d.path()) == "/":
+		return fmt.Errorf("the Docker socket's path %q is the VM's root directory, not a socket: the job mounts this path from the host into the container, so it would hand the run the whole filesystem of the machine that has the daemon (design §2.2)", d.SocketPath)
+	case path.Clean(d.path()) != d.path():
+		return fmt.Errorf("the Docker socket's path %q is not a clean path (%q): the job mounts it verbatim, so it must be spelled the way it is on the VM", d.SocketPath, path.Clean(d.path()))
+	case path.Base(d.path()) != "docker.sock":
+		return fmt.Errorf("the Docker socket's path %q does not end in docker.sock: it is the daemon's socket on the VM (Container-Optimized OS keeps it at %s), not a directory or another file (design §2.2)", d.path(), HostSocketPath)
 	}
 	return nil
 }

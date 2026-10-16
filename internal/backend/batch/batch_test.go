@@ -452,24 +452,81 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 	}
 }
 
-// TestLaunchSendsNoSecretValue is C10 stated as a search: the bytes Batch
-// receives must not contain a secret's value. The job carries names only, and
-// this is the test that would fail if someone later resolved one.
+// TestLaunchSendsNoSecretValue is C10 stated as a search of the bytes Batch
+// receives, over the one surface where a caller could actually put a value
+// there: Options.Secrets. The job carries names only, and this is the test
+// that fails if someone later resolves one.
+//
+// Hand mutation: in run.go, write the secrets into the task's plain
+// Variables as well (`vars[k] = v` beside `env.SecretVariables = ...`, or
+// `env.Variables = b.o.Secrets` in its place). It is the mutation the review
+// called M4, and it stayed green against the earlier version of this test:
+// that one searched for a value the backend was never given, so nothing could
+// make it fail. This one passes a recognisable value through the API surface
+// -- both halves of the map, the value slot and the variable-name slot -- and
+// then requires the job's serialized form to contain the secret's *name*
+// exactly once.
 func TestLaunchSendsNoSecretValue(t *testing.T) {
 	ctx := context.Background()
 	const value = "sk-ant-not-a-real-secret-value"
+
+	// A value in the name slot: the entry a caller reaching for "set this env
+	// var to the API key" would write. Refused at New, before any job can be
+	// created, and the refusal must not repeat the value -- an error is
+	// written to terminals, logs and bug reports.
+	o := testOptions(t)
+	o.Secrets = map[string]string{"ANTHROPIC_API_KEY": value}
+	b0, err := New(ctx, o)
+	if err == nil {
+		t.Fatalf("New accepted a secret value in the name slot (%+v)", b0)
+	}
+	if strings.Contains(err.Error(), value) || strings.Contains(err.Error(), "sk-ant-") {
+		t.Fatalf("the refusal repeats the secret value: %v", err)
+	}
+
+	// A value used as the variable's name: the other way a value can reach the
+	// map, and the one where even naming the offending entry would print it.
+	o = testOptions(t)
+	o.Secrets = map[string]string{value: testSecret}
+	b1, err := New(ctx, o)
+	if err == nil {
+		t.Fatalf("New accepted a secret value as a variable name (%+v)", b1)
+	}
+	if strings.Contains(err.Error(), value) || strings.Contains(err.Error(), "sk-ant-") {
+		t.Fatalf("the refusal repeats the secret value: %v", err)
+	}
+
+	// The documented use: an environment variable name mapped to the secret's
+	// resource name. The job may carry that name -- it is what the VM resolves
+	// -- and nothing else about the secret.
 	b, bf, _, _ := newTestBackend(t, func(o *Options) {
 		o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret}
 	})
 	if _, err := b.Launch(ctx, spec()); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
-	raw, err := json.Marshal(bf.Creates()[0].Job)
+	job := bf.Creates()[0].Job
+	raw, err := json.Marshal(job)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	if strings.Contains(string(raw), value) || strings.Contains(string(raw), "sk-ant-") {
 		t.Fatalf("the job definition carries a secret value: %s", raw)
+	}
+	// Exactly once, and therefore only under secretVariables: the platform
+	// resolves the entry there, so a copy of the name in the task's plain
+	// variables is the same leak under another label (and a copy in both would
+	// also be the collision jobDefinition refuses).
+	if n := strings.Count(string(raw), testSecret); n != 1 {
+		t.Fatalf("the secret's name appears %d times in the job definition, want once (under secretVariables): %s", n, raw)
+	}
+	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables"); len(got) != 6 {
+		t.Errorf("the task's plain variables = %v, want the job's own six and no secret", got)
+	}
+	for k, v := range object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables") {
+		if s, ok := v.(string); ok && strings.Contains(s, "secrets/") {
+			t.Errorf("variables[%s] = %q names a secret: secrets belong in secretVariables", k, s)
+		}
 	}
 }
 
@@ -1402,12 +1459,24 @@ func TestJobDefinitionIsAVMWithTheDesignsNetwork(t *testing.T) {
 		t.Errorf("noExternalIpAddress = %v, want true (C7)", ni["noExternalIpAddress"])
 	}
 
-	// The task asks for the machine type's quantities, not the workflow's
-	// resources: a VM is whatever the machine type is (design §5.2), and a
-	// task whose computeResource outgrew its VM would sit QUEUED.
+	// The task asks for a share of the machine type, not the whole of it: the
+	// VM it lands on also runs the OS, the Batch agent and the Docker daemon,
+	// and a request for the whole type leaves nothing for them and sits
+	// QUEUED. 2000m/4096MiB on e2-standard-4 is what Check 57a scheduled with
+	// (design §7.2), and it is half the vCPUs and a quarter of the memory.
 	cr := object(t, call.Job, "taskGroups", "0", "taskSpec", "computeResource")
-	if fmt.Sprint(cr["cpuMilli"]) != "4000" || fmt.Sprint(cr["memoryMib"]) != "16384" {
-		t.Errorf("computeResource = %v, want e2-standard-4's 4000m/16384MiB", cr)
+	if fmt.Sprint(cr["cpuMilli"]) != "2000" || fmt.Sprint(cr["memoryMib"]) != "4096" {
+		t.Errorf("computeResource = %v, want e2-standard-4's 2000m/4096MiB (Check 57a's measured request)", cr)
+	}
+	// And the rest of the job is unmoved by that: the VM is still the whole
+	// machine type (design §5.2 -- the run is billed for the VM, not for the
+	// task's share of it).
+	mt, err := MachineTypeOf(testMachineType)
+	if err != nil {
+		t.Fatalf("MachineTypeOf(%s): %v", testMachineType, err)
+	}
+	if jsonInt(t, cr["cpuMilli"]) >= int64(mt.VCPU)*1000 || jsonInt(t, cr["memoryMib"]) >= int64(mt.MemoryGiB)*1024 {
+		t.Errorf("the task asked for the whole VM (%v), leaving the OS, the agent and Docker nothing", cr)
 	}
 }
 
@@ -1459,6 +1528,111 @@ func TestDockerRunMountsTheSocketAndJoinsItsGroup(t *testing.T) {
 	tg := object(t, bf.Creates()[0].Job, "taskGroups", "0")
 	if v, ok := tg["runAsNonRoot"]; ok {
 		t.Errorf("taskGroups[0].runAsNonRoot = %v, want the field absent", v)
+	}
+}
+
+// TestDockerRunMountsTheConfiguredSocketPath: the socket's path is the
+// installation's, not this package's (Docker.SocketPath, design §2.2). The
+// mount and the run's DOCKER_HOST are both built from it, and neither may
+// fall back to this package's default when one was configured -- a run whose
+// daemon listens at /run/docker.sock would otherwise get a mount of a path
+// that is not there and an address that is not its socket.
+//
+// Hand mutation: in run.go, use HostSocketPath instead of `d.path()` for the
+// volume and for DOCKER_HOST (`p := HostSocketPath`). This is the review's
+// M18, which stayed green while every test ran with the default path.
+func TestDockerRunMountsTheConfiguredSocketPath(t *testing.T) {
+	ctx := context.Background()
+	const p = "/run/docker.sock"
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.Docker.SocketPath = p })
+	if _, err := b.Launch(ctx, dockerSpec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	job := bf.Creates()[0].Job
+	container := object(t, job, "taskGroups", "0", "taskSpec", "runnables", "0", "container")
+	if got := container["volumes"]; !equalJSON(got, []any{p + ":" + p}) {
+		t.Errorf("container.volumes = %v, want the configured socket %s:%s", got, p, p)
+	}
+	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables")["DOCKER_HOST"]; got != "unix://"+p {
+		t.Errorf("DOCKER_HOST = %v, want unix://%s", got, p)
+	}
+	// And the default is not also sent: one socket, one mount.
+	if raw, err := json.Marshal(job); err != nil {
+		t.Fatalf("marshal: %v", err)
+	} else if strings.Contains(string(raw), HostSocketPath) {
+		t.Errorf("the job carries this package's default socket path %s as well: %s", HostSocketPath, raw)
+	}
+}
+
+// TestTheJobHasNoTaskEnvironments: a Batch task's environment comes from
+// taskSpec.environment, and the task-level place (TaskGroup.taskEnvironments)
+// is left empty on purpose. Check 57a-12 measured what a task-level
+// environment does to the pair Batch injects -- a task-level BATCH_TASK_INDEX
+// of 99 reached the container while BATCH_TASK_COUNT stayed 1 -- so a job of
+// this backend never writes there: the run's identity is the job env, and the
+// injected index is not a pair anything may depend on (design §2.5, §8.1
+// Task 7).
+//
+// Hand mutation: add `TaskEnvironments: map[string]*batch.Environment{...}`
+// to the TaskGroup in run.go with any variable in it. The review called the
+// earlier version's silence on this M15, which stayed green.
+func TestTheJobHasNoTaskEnvironments(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	job := bf.Creates()[0].Job
+	tg := object(t, job, "taskGroups", "0")
+	if v, ok := tg["taskEnvironments"]; ok && v != nil {
+		t.Errorf("taskGroups[0].taskEnvironments = %v, want it absent: a task-level environment overrides the task index Batch injects (Check 57a-12)", v)
+	}
+	// The deprecated map beside it, which the API still accepts and which
+	// would be the same override under an older name.
+	if v, ok := object(t, job, "taskGroups", "0", "taskSpec")["environments"]; ok && v != nil {
+		t.Errorf("taskSpec.environments = %v, want it absent (deprecated, and the same override)", v)
+	}
+	// The environment the job does carry is the task's own, and the run's
+	// identity is in it.
+	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables")["FUGARO_RUN"]; got == nil {
+		t.Errorf("the task's own environment is missing: %v", job)
+	}
+}
+
+// TestLaunchRefusesASecretThatIsAlsoAJobVariable: the job's own variables are
+// how the run is told which run, backend and project it is (§2.1, §2.5), and
+// secretVariables resolve into the same environment on the VM. A name in both
+// would leave which entry wins to the platform, so the launch is refused
+// before anything is created rather than launched with a run whose identity
+// may have come from a secret.
+//
+// Hand mutation: drop the collision loop in jobDefinition (leave
+// `env.SecretVariables = b.o.Secrets` alone), which launches the job with
+// FUGARO_RUN in both fields.
+func TestLaunchRefusesASecretThatIsAlsoAJobVariable(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, func(o *Options) {
+		o.Secrets = map[string]string{"FUGARO_RUN": testSecret}
+	})
+	_, err := b.Launch(ctx, spec())
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch(secret named FUGARO_RUN) = %v, want ErrRejected", err)
+	}
+	if !strings.Contains(err.Error(), "FUGARO_RUN") {
+		t.Errorf("the refusal does not name the colliding variable: %v", err)
+	}
+	if len(bf.Creates()) != 0 {
+		t.Fatalf("a refused launch still created %d job(s)", len(bf.Creates()))
+	}
+	// A secret that is not one of the job's own variables is unaffected.
+	b2, bf2, _, _ := newTestBackend(t, func(o *Options) {
+		o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret}
+	})
+	if _, err := b2.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch(a secret that collides with nothing): %v", err)
+	}
+	if got := object(t, bf2.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "secretVariables")["ANTHROPIC_API_KEY"]; got != testSecret {
+		t.Errorf("secretVariables = %v", got)
 	}
 }
 
@@ -1559,7 +1733,37 @@ func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
 		{"a socket path that is not absolute", func(o *Options) {
 			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "run/docker.sock"}
 		}},
+		// The mount is `<path>:<path>`, so a path that is the root directory
+		// hands the run the whole filesystem of the machine that has the
+		// daemon, and a path that is not the daemon's socket is a bind of
+		// nothing the run can talk to (design §2.2).
+		{"a socket path that is the root directory", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "/"}
+		}},
+		{"a socket path that is a directory", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "/var/run"}
+		}},
+		{"a socket path that is not docker.sock", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "/var/run/fugaro.sock"}
+		}},
+		{"a socket path that is not clean", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "/var/run/../run/docker.sock/"}
+		}},
 		{"a negative boot disk size", func(o *Options) { o.BootDiskGB = -1 }},
+		// A secret is a NAME on both sides of the map: the value slot is the
+		// resource name the VM resolves, the key is the environment variable.
+		{"a secret value where a name belongs", func(o *Options) {
+			o.Secrets = map[string]string{"ANTHROPIC_API_KEY": "sk-ant-not-a-real-secret-value"}
+		}},
+		{"a secret value as the variable name", func(o *Options) {
+			o.Secrets = map[string]string{"sk-ant-not-a-real-secret-value": testSecret}
+		}},
+		{"a secret name that is not a resource name", func(o *Options) {
+			o.Secrets = map[string]string{"ANTHROPIC_API_KEY": "fugaro-acme-app-anthropic-api-key"}
+		}},
+		{"a variable name with a dash in it", func(o *Options) {
+			o.Secrets = map[string]string{"ANTHROPIC-API-KEY": testSecret}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o := testOptions(t)
@@ -1573,6 +1777,18 @@ func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
 	// its own field.
 	if _, err := New(context.Background(), testOptions(t)); err != nil {
 		t.Fatalf("New(refused a complete configuration): %v", err)
+	}
+	// And the forms that are right are not refused by a check written too
+	// tightly: a secret named with a pinned version, and a socket path that is
+	// not this package's default.
+	o := testOptions(t)
+	o.Secrets = map[string]string{
+		"ANTHROPIC_API_KEY": testSecret + "/versions/7",
+		"FUGARO_OTEL_TOKEN": "projects/" + testProject + "/secrets/fugaro-otel",
+	}
+	o.Docker.SocketPath = "/run/docker.sock"
+	if _, err := New(context.Background(), o); err != nil {
+		t.Fatalf("New(refused a valid secret name or socket path): %v", err)
 	}
 }
 
@@ -1678,6 +1894,47 @@ func TestAFinishedBatchRunHasNoWindowToPrice(t *testing.T) {
 	}
 }
 
+// TestTheTaskLeavesTheVMHeadroom: computeResource is a share of the machine
+// type, never the whole of it, on every type this build can price. Batch
+// places a task on a VM that can hold what it asks for, and that VM is also
+// running the OS, the Batch agent and the Docker daemon (design §1.3, §2.2):
+// a request for the whole type is a job that sits QUEUED, which is the failure
+// this leaves room against. The shares themselves are Check 57a's measured
+// request -- 2000m/4096MiB on e2-standard-4, half the vCPUs and a quarter of
+// the memory (§7.2) -- and Check 57b-8 is what measures whether they can be
+// raised.
+func TestTheTaskLeavesTheVMHeadroom(t *testing.T) {
+	for _, name := range KnownMachineTypes() {
+		mt, err := MachineTypeOf(name)
+		if err != nil {
+			t.Fatalf("MachineTypeOf(%s): %v", name, err)
+		}
+		got := taskResources(mt)
+		fullCPU, fullMem := int64(mt.VCPU)*1000, int64(mt.MemoryGiB)*1024
+		if want := fullCPU / 2; got.CpuMilli != want {
+			t.Errorf("%s: cpuMilli = %d, want half the type's %d = %d", name, got.CpuMilli, fullCPU, want)
+		}
+		if want := fullMem / 4; got.MemoryMib != want {
+			t.Errorf("%s: memoryMib = %d, want a quarter of the type's %d = %d", name, got.MemoryMib, fullMem, want)
+		}
+		if got.CpuMilli >= fullCPU || got.MemoryMib >= fullMem {
+			t.Errorf("%s: the task asked for the whole machine type (%+v)", name, got)
+		}
+		if got.CpuMilli <= 0 || got.MemoryMib <= 0 {
+			t.Errorf("%s: the task asked for nothing (%+v)", name, got)
+		}
+	}
+	// The design's own probe request, on the design's own type: the numbers
+	// above are not invented, they are what Check 57a submitted.
+	mt, err := MachineTypeOf("e2-standard-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := taskResources(mt); got.CpuMilli != 2000 || got.MemoryMib != 4096 {
+		t.Errorf("e2-standard-4 = %+v, want Check 57a's 2000m/4096MiB", got)
+	}
+}
+
 // batchJobIDRE is Batch's job id rule, restated here so the test does not
 // depend on the fake's copy of it.
 var batchJobIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$`)
@@ -1704,6 +1961,17 @@ func object(t *testing.T, v any, keys ...string) map[string]any {
 		t.Fatalf("path %v is %T, not an object", keys, v)
 	}
 	return m
+}
+
+// jsonInt reads a decoded JSON number as an int64, whether the decoder gave a
+// float64 or a string.
+func jsonInt(t *testing.T, v any) int64 {
+	t.Helper()
+	n, err := strconv.ParseFloat(fmt.Sprint(v), 64)
+	if err != nil {
+		t.Fatalf("%v is not a number", v)
+	}
+	return int64(n)
 }
 
 // equalJSON compares two decoded JSON values by their canonical JSON.

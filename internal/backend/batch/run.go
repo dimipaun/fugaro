@@ -138,6 +138,23 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 	env := &batch.Environment{Variables: vars}
 	if len(b.o.Secrets) > 0 {
 		// Names, never values: the VM reads the named secrets itself.
+		//
+		// A secret may not also be one of the job's own variables. Both fields
+		// are one env map on the VM, so a name in both leaves which entry wins
+		// to the platform -- and the entries in `vars` are how the job tells
+		// the runner which run it is, which backend it is on and which project
+		// it is in (§2.1, §2.5). A run whose FUGARO_RUN came from a secret
+		// would be a run the launcher could not find again.
+		secretNames := make([]string, 0, len(b.o.Secrets))
+		for name := range b.o.Secrets {
+			secretNames = append(secretNames, name)
+		}
+		sort.Strings(secretNames)
+		for _, name := range secretNames {
+			if _, ok := vars[name]; ok {
+				return nil, fmt.Errorf("launching %s: the secret %s is also one of the job's own environment variables, and the job's value is the one the run reads its own identity and configuration from (design §2.1, §2.5): refusing rather than leaving which entry wins to the platform", full, name)
+			}
+		}
 		env.SecretVariables = b.o.Secrets
 	}
 	return &batch.Job{
@@ -192,18 +209,50 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 				ForceSendFields: []string{"MaxRetryCount"},
 				MaxRunDuration:  fmt.Sprintf("%ds", int((timeout+backend.TaskTimeoutSlack)/time.Second)),
 				Environment:     env,
-				// The task asks for the machine type's own quantities, not
-				// the workflow's resources: a VM is whatever its machine
-				// type is (design §5.2), and a computeResource larger than
-				// the VM would leave the task QUEUED forever.
-				ComputeResource: &batch.ComputeResource{
-					CpuMilli:  int64(mt.VCPU) * 1000,
-					MemoryMib: int64(mt.MemoryGiB) * 1024,
-				},
-				Runnables: []*batch.Runnable{{Container: container}},
+				// The task asks for a share of the machine type, not all of
+				// it: Batch places a task on a VM that can hold what this
+				// asks for, and the VM also runs the OS, the Batch agent and
+				// the Docker daemon, with the run's own containers on top of
+				// them (design §1.3, §2.2). A request for the whole type
+				// leaves nothing for those and sits QUEUED; the shares below
+				// are what Check 57a actually scheduled with (§7.2).
+				ComputeResource: taskResources(mt),
+				Runnables:       []*batch.Runnable{{Container: container}},
 			},
 		}},
 	}, nil
+}
+
+// taskVCPUShare and taskMemShare are the headroom a run's task leaves to the
+// VM it runs on: the task asks for half the machine type's vCPUs and a
+// quarter of its memory.
+//
+// Batch places a task on a VM that can hold what its computeResource asks for,
+// and that VM is also running the OS, the Batch agent and the Docker daemon,
+// with the run's own containers on top of them. A task that asked for the
+// whole machine type -- 4000m/16384MiB on `e2-standard-4` -- would leave
+// nothing for any of those and would sit QUEUED. Check 57a's submissions asked
+// for exactly these shares on that type (2000m/4096MiB, design §7.2, the
+// committed job JSON) and every one of them scheduled, which is the whole of
+// the evidence there is: **Check 57b-8 is what measures the largest request
+// that actually schedules on `e2-standard-4`**, and these two numbers move
+// only when it says they can.
+//
+// They are a ceiling, not a measurement of what a workflow needs -- the
+// workflow `resources` field is where a run's real needs belong (design §4),
+// and plumbed there they can only ask for less than this.
+const (
+	taskVCPUShare = 2
+	taskMemShare  = 4
+)
+
+// taskResources is what a run's task asks Batch for: the machine type's own
+// quantities less that headroom.
+func taskResources(mt MachineType) *batch.ComputeResource {
+	return &batch.ComputeResource{
+		CpuMilli:  int64(mt.VCPU) * 1000 / taskVCPUShare,
+		MemoryMib: int64(mt.MemoryGiB) * 1024 / taskMemShare,
+	}
 }
 
 // Execution reads one run by its full resource name.

@@ -823,6 +823,23 @@ group, so the name form fails with `Unable to find group docker` before docker
 is ever reached. A gid that does not exist in the container is what
 `--group-add` takes; a name has to be looked up, and this one is not there.
 
+**When it is read is fixed, and it is not at run start.** The field is a fact
+about the **boot image** rather than about a run: `jobs.create` happens before
+any VM of the job exists, and a runnable's `options` is a static string in the
+job definition (Batch has no patch or update — §2.4), so there is no moment at
+which a launcher could ask a running VM for its socket's gid and put the answer
+into the job it is submitting. A design that said "read the gid at run start"
+would be describing something Batch cannot express. The gid is therefore
+**recorded once, when the preloaded image is built**: Task 6 boots the VM it
+builds `__PRELOAD_IMG__` on, reads `stat -c %g /var/run/docker.sock` there, and
+writes the number into the installation's configuration
+(`Options.Docker.SocketGID`, §8.1 Task 7) — and **re-reads it on every rebuild
+of that image**, because the socket's gid belongs to the image's COS build and
+moves when it does. A recorded gid that no longer matches the image is a mount
+the container comes up unable to open, which is 57b-1's FACT to catch; 57a-6's
+own reading (412, on the image it used) is a measurement of that image and never
+a default this code may carry.
+
 (c) is **not** a second way to root, and it is not a way to test (a) either.
 `--privileged` gives the container the host's devices and the full capability
 **sets**, but it does not change the **uid**: the container still starts as the
@@ -1957,7 +1974,7 @@ need the thing it gates cannot gate it, so this one is split:
   project (step 1 alone uses the *existing* Cloud Run backend, for the
   baseline the 120 s budget is measured against). It is the design's **go/no-go**, and the plan
   makes it Task 0 (§8.1): if it fails, nothing below it is built.
-- **57b — the post-build acceptance run.** Seven steps that only make sense once
+- **57b — the post-build acceptance run.** Eight steps that only make sense once
   `backend: cloud-batch` can be enabled, i.e. after the last task of §8.1. They
   are the check's *acceptance* half, and the design's §4.4 `doctor` gate is what
   stops anyone running them early.
@@ -2204,7 +2221,7 @@ resources**.
 
 ```bash
 # === Check 57: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
-# step (57a-0, 0b, 0c, 1..12, 57b-1..7, Restore). It is idempotent, and nothing
+# step (57a-0, 0b, 0c, 1..12, 57b-1..8, Restore). It is idempotent, and nothing
 # below the three hard stops runs unless all three pass. ===
 P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and never read from gcloud
 L=us-east5                   # the sandbox installation's region
@@ -3183,7 +3200,7 @@ named individually.
 
 ### 57b. The post-build acceptance run (after the enable task)
 
-These seven need `backend: cloud-batch` selectable, so they run **last**
+These eight need `backend: cloud-batch` selectable, so they run **last**
 (§8.1's task 9 is the enable task and task 10 is this section's second half).
 They are the design's acceptance criteria, not its go/no-go.
 
@@ -3273,6 +3290,27 @@ restore cannot find.
    just-scheduled job from being deleted for its queue wait. **FACT:** per
    state, whether a job-level event exists, the time it carries, and the
    `runDuration` read against the clock.
+8. **The largest `computeResource` that still schedules on `e2-standard-4`.**
+   The job a Fugaro run creates asks the task for a **share of the machine
+   type**, not the whole of it: `taskSpec.computeResource` is half the type's
+   vCPUs and a quarter of its memory (2000m/4096MiB on `e2-standard-4`), because
+   the VM that holds the task is also running the OS, the Batch agent and the
+   Docker daemon, with the run's own containers on top of them (§1.3, §2.2). The
+   shares in the built code are Check 57a's own submission — the only request
+   this project has ever seen schedule on that type — so they are a **floor
+   known to work, not a measured maximum**, and nothing in 57a says what the
+   maximum is. This step is what does: on the sandbox, submit the same probe
+   job (§7.1's JSON, no Fugaro change) with `cpuMilli`/`memoryMib` raised, and
+   find the largest pair for which the job leaves `QUEUED` and reaches
+   `RUNNING` on an `e2-standard-4` — the machine type being fixed, and the VM's
+   own capacity being 4000m/16384MiB, so the headroom is whatever is left.
+   **FACT:** per submission, the request, whether the job reached `RUNNING`, and
+   how long it sat `QUEUED` first; and the largest request that scheduled. If it
+   is comfortably above 2000m/4096MiB, the built shares may be raised toward the
+   workflow's own `resources` field (§4); if it is at or below them, the design's
+   answer for a run that asks for more is to run it on a larger machine type,
+   not to overcommit the task. A request that never schedules is not free: the
+   queue deadline is what eventually kills it (§1.4).
 
 **FACT lines to record:** every `FACT:` above; the `fugaro version` and the
 date; the machine type and boot-image version; the median launch-to-first-line
@@ -3656,15 +3694,19 @@ senior reviewer before merge, not just the normal one.
    `enableImageStreaming` on a Docker workflow. This is the
    task that makes root-on-a-VM real, hence the review.
    **Built** (`internal/backend/batch/run.go`'s `jobDefinition`, `Launch` and
-   `Execution`, `batch.go`'s `checkVM`/`checkNetwork`/`checkDocker` and
-   `Options.Docker`, the `DOCKER_HOST` line in `internal/agent/env.go`'s
-   `baseEnv`, `SECURITY.md`'s "The VM backend, and the Docker daemon it gives a
-   run", with §3.6's section written as this task asked): the machine type and
+   `Execution`, `batch.go`'s `checkSecrets`/`checkVM`/`checkNetwork`/`checkDocker`
+   and `Options.Docker`, the `DOCKER_HOST` line in `internal/agent/env.go` —
+   **not** `baseEnv`: it is a separate arm of `BuildEnv`, gated on
+   `EnvSpec.Docker`, so a run whose workflow did not ask for `docker: true`
+   never has it in its environment however the runner's own environment is set
+   (§4.3, §4.4's last check) — `SECURITY.md`'s "The VM backend, and the Docker
+   daemon it gives a run", with §3.6's section written as this task asked): the
+   machine type and
    its `computeResource` quantities, the preloaded boot disk, the network
    interface with `noExternalIpAddress`, the socket's `volumes` and
    `options: "--group-add <gid>"`, `Execution.MachineType` (which is what
    makes a Batch run price as VM-backed rather than as Cloud Run), and the
-   refusals. Two of them are this task's own reading of §2.2 and are worth
+   refusals. Three of them are this task's own reading of §2.2 and are worth
    stating: **the gid cannot be read at run start** — `jobs.create` happens
    before any VM exists and Batch's container `options` are static — so it
    belongs to the boot image, Task 6 reads it off the VM it builds that image
@@ -3672,7 +3714,11 @@ senior reviewer before merge, not just the normal one.
    Docker run on an installation that has recorded none is refused
    (`backend.ErrRejected`, before the create) rather than launched with a
    socket it cannot open, and nothing in this package carries a literal 412
-   (the tests use 998, so a hard-coded one could not pass). And **the
+   (the tests use 998, so a hard-coded one could not pass). **Because the gid is
+   recorded rather than read at run start, it is a fact about the boot image,
+   and Task 6 must re-read it off every image rebuild** — a rebuilt image whose
+   socket gid moved leaves the recorded one stale, and the mount would then come
+   up unable to open the socket, which is 57b-1's FACT to catch. And **the
    streaming refusal is `Launch`'s, not `New`'s**: an installation may have
    streaming on for its non-Docker workflows, and it is only the combination
    that Batch would run with `options` disregarded. `Cloud Run` refuses a
