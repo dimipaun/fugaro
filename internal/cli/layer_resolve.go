@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // layerOptions say where findLayer takes the project layer from.
@@ -299,11 +300,24 @@ func resolveFugaroYAML(ctx context.Context, data []byte, lc *localcfg.Config, o 
 }
 
 // layerRoutes are the routes an in-checkout command must judge a pin or a
-// provider by: lc's own, with the checkout layer's claude_models merged in
-// (config.ApplyClaudeClaims, design mixed-credentials.md §4 and P8). Without
-// it a pin the layer claims is refused here as "no provider serves it" while
-// the same run succeeds in the cloud. Never lc.Providers itself: the project
-// config on disk carries no claim.
+// provider by: the repository's runs' own, with the checkout layer's
+// claude_models merged in (config.ApplyClaudeClaims, design
+// mixed-credentials.md §4 and P8). Without it a pin the layer claims is refused
+// here as "no provider serves it" while the same run succeeds in the cloud.
+// Never lc.Providers itself: the project config on disk carries no claim.
+//
+// "The repository's runs' own" is runner.ProvidersFor's filter — the entries
+// whose allow_data_to names repo, exactly what runner.ProvidersEnv writes into
+// the job's FUGARO_MODEL_PROVIDERS — and not the whole installation table. The
+// merge is a rule over the routes the table it is handed holds (a claim may
+// only extend a route the owner defined, and the result must not collide with
+// another route), so merging over the unfiltered table judged claims against
+// routes this repository's runs never carry: a claim colliding only with an
+// entry the repository is not allowed to use halted validate while the run
+// resolved the same claim happily. The run's own merge is the same two steps
+// over the same table — runner.resolveConfig: config.ClaimsOnRoutes, then
+// config.ApplyClaudeClaims — and both use the shared helpers, so the two
+// cannot disagree about a claim either way.
 //
 // Only the *routing* rules take this map. The price table stays lc.Providers'
 // — the claim-blind table the run's own environment builds, since
@@ -315,15 +329,27 @@ func resolveFugaroYAML(ctx context.Context, data []byte, lc *localcfg.Config, o 
 // does a merge the rules refuse — an undefined provider name, an empty list, a
 // pattern collision: the problems are returned instead, because the run would
 // not start either and no rule may judge a route table that was refused.
-func layerRoutes(lc *localcfg.Config, l *config.ProjectLayer) (map[string]config.ModelProvider, []config.Problem) {
+//
+// The one rule that is validate's own rather than a run's is the P8 refusal of
+// a claim naming a provider the *installation* config does not define: the
+// filter above drops such a name like any other route this repository does not
+// carry, and this command holds the whole table, which is where that name can
+// be told apart from one written for another repository (config.
+// UnknownClaimNames, over lc.Providers).
+func layerRoutes(lc *localcfg.Config, l *config.ProjectLayer, repo string) (map[string]config.ModelProvider, []config.Problem) {
 	if lc == nil {
 		return nil, nil
 	}
-	if len(config.ClaudeClaimsOf(l)) == 0 {
+	claims := config.ClaudeClaimsOf(l)
+	if len(claims) == 0 {
 		return lc.Providers, nil
 	}
-	merged, ps := config.ApplyClaudeClaims(lc.Providers, l.ClaudeModels)
+	routes := runner.ProvidersFor(lc.Providers, repo)
+	merged, ps := config.ApplyClaudeClaims(routes, config.ClaimsOnRoutes(routes, claims))
 	if len(ps) > 0 {
+		return lc.Providers, ps
+	}
+	if ps := config.UnknownClaimNames(lc.Providers, claims); len(ps) > 0 {
 		return lc.Providers, ps
 	}
 	return merged, nil

@@ -54,7 +54,7 @@ func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) boo
 	if cfg != nil {
 		layer = cfg.Layer
 	}
-	providers, _ := layerRoutes(lc, layer)
+	providers, _ := layerRoutes(lc, layer, repo)
 	return config.AnthropicKeyNeeded(cfg.Agent, providers, repo, mode)
 }
 
@@ -1333,7 +1333,15 @@ func newValidateCmd() *cobra.Command {
 					claimed = lc.Providers
 				}
 				if lc != nil && lc.Name == cfg.Project {
-					merged, lp := layerRoutes(lc, rf.Layer.Layer)
+					// The filter layerRoutes merges over is the repository's:
+					// the checkout's origin, and "" (only the routes written
+					// for every repository) when there is none — the reading
+					// the rules below already give that state.
+					repo, rerr := originRepo(cmd.Context())
+					if rerr != nil {
+						repo = ""
+					}
+					merged, lp := layerRoutes(lc, rf.Layer.Layer, repo)
 					claimed = merged
 					problems = append(problems, lp...)
 				}
