@@ -231,12 +231,25 @@ func TestRoutingRefusesAModelTwoRoutesClaim(t *testing.T) {
 	}
 	// One entry claiming it twice (the two spellings on one route) is one
 	// entry, and resolves: the ambiguity is between *routes*, and there is one.
-	both := map[string]ModelProvider{"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer", Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5-5"}, AllowDataTo: []string{"*"}}}
-	if ps := CheckRouting(switchOn, both, "routing"); len(ps) != 0 {
-		t.Errorf("one entry claiming the model twice: problems = %s, want none", problemsText(ps))
-	}
-	if route, sent, ok := RoutingClaudeFor(switchOn.Claude, canonicalClaude, both); !ok || route != "openrouter" || sent != "anthropic/claude-sonnet-5.5" {
-		t.Errorf("one entry claiming the model twice: RoutingClaudeFor = (%q, %q, %v), want the entry's first spelling", route, sent, ok)
+	//
+	// The two orders are the same entry and must read the same way. Taking the
+	// first match inside the entry made them different — the order that listed
+	// the route's own ID first resolved, and the same two written the other way
+	// round refused the switch, because the claim the run is judged and sent by
+	// was the first spelling rather than the map's pair (review finding on this
+	// change). Hand mutation this fails on: restoring the `break` after the
+	// first same-model match, which makes the second case below refused.
+	for _, order := range [][]string{
+		{"anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5-5"},
+		{"anthropic/claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"},
+	} {
+		both := map[string]ModelProvider{"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer", Secret: "openrouter-api-key", Models: order, AllowDataTo: []string{"*"}}}
+		if ps := CheckRouting(switchOn, both, "routing"); len(ps) != 0 {
+			t.Errorf("one entry claiming the model twice as %v: problems = %s, want none", order, problemsText(ps))
+		}
+		if route, sent, ok := RoutingClaudeFor(switchOn.Claude, canonicalClaude, both); !ok || route != "openrouter" || sent != "anthropic/claude-sonnet-5.5" {
+			t.Errorf("one entry claiming the model twice as %v: RoutingClaudeFor = (%q, %q, %v), want the map's pair for it (anthropic/claude-sonnet-5.5), whatever order the entry lists the two in", order, route, sent, ok)
+		}
 	}
 }
 

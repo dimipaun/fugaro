@@ -280,16 +280,38 @@ type routeClaim struct {
 // different spellings are an ambiguity the caller has to refuse (CheckRouting
 // does, naming both), and picking one by sort order would answer a routing
 // question with an alphabetical accident (the review of PR #414).
+//
+// Within one entry, the claim is the map's pair when the entry writes it, and
+// the first claim it writes otherwise. One entry spells this model twice only
+// when it writes both the route's own ID and the canonical-looking one
+// (anthropic/claude-sonnet-5.5 and anthropic/claude-sonnet-5-5 are one model),
+// and which of the two the entry is judged and sent by must not depend on the
+// order the two are listed in: taking the first match made
+// [anthropic/claude-sonnet-5.5, anthropic/claude-sonnet-5-5] resolve and the
+// same two in the other order a refusal (review finding on this change). The
+// preference is not a second derivation — it selects between spellings the
+// entry itself wrote, and the map still answers which one a route is sent.
 func claudeClaimsFor(providers map[string]ModelProvider, model string) []routeClaim {
 	var out []routeClaim
 	for _, n := range sortedKeys(providers) {
 		pv := providers[n]
+		var matched []string
 		for _, pat := range pv.Models {
 			if tail := claudeRouteID(pat); tail != "" && sameClaudeID(tail, model) {
-				out = append(out, routeClaim{name: n, claim: pat, p: pv})
+				matched = append(matched, pat)
+			}
+		}
+		if len(matched) == 0 {
+			continue
+		}
+		claim := matched[0]
+		for _, pat := range matched {
+			if routeIDPair(model, pat) {
+				claim = pat
 				break
 			}
 		}
+		out = append(out, routeClaim{name: n, claim: claim, p: pv})
 	}
 	return out
 }

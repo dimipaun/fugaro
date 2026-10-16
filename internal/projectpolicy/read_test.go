@@ -167,6 +167,39 @@ func TestReadRefusesANonIntegerMarker(t *testing.T) {
 	}
 }
 
+// A negative generation is an integer, so the unmarshal above accepts it, and
+// Read's only question about it is `gen < RulesVersion` — which a negative one
+// answers "yes", making the whole node read as legacy "no policy" and dropping
+// a published policy without a word. That is the fail-open MarkerError exists
+// to prevent, so a negative generation is refused as a marker error naming the
+// node.
+//
+// Hand mutation this fails on: dropping the `gen < 0` check (or widening it to
+// `gen < -1`), which turns the negative marker back into (nil, false, nil).
+func TestReadRefusesANegativeMarker(t *testing.T) {
+	for _, v := range []int{-1, -2, RulesVersion - 100} {
+		f, db := readDB(t)
+		f.Set(PathRulesMarker(), v)
+		f.Set(PathShared(), json.RawMessage(readPolicy))
+		p, found, err := Read(context.Background(), db)
+		if err == nil || p != nil || found {
+			t.Fatalf("marker %d: Read = (%v, %v, %v), want a refusal: a negative generation must not read as \"no policy\"", v, p, found, err)
+		}
+		var me *MarkerError
+		if !errors.As(err, &me) || !strings.Contains(err.Error(), PathRulesMarker()) {
+			t.Errorf("marker %d: err = %v, want a MarkerError naming the node", v, err)
+		}
+	}
+	// A generation above this one is at least this one's: it reads as deployed
+	// rather than as an error, so the check above refuses negatives alone.
+	f, db := readDB(t)
+	f.Set(PathRulesMarker(), RulesVersion+1)
+	f.Set(PathShared(), json.RawMessage(readPolicy))
+	if p, found, err := Read(context.Background(), db); err != nil || !found || p == nil {
+		t.Errorf("marker above this generation: Read = (%v, %v, %v), want the policy", p, found, err)
+	}
+}
+
 // The keys this Fugaro does not know are tolerated and exposed (Decode's own
 // tolerance must not be silent): the runner logs them, the CLI refuses them.
 func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
