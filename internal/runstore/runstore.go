@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -459,6 +460,18 @@ func (s *Store) PutFile(ctx context.Context, name string, data []byte, contentTy
 // what the first one recorded.
 func (s *Store) PutFileFrom(ctx context.Context, name, path, contentType, want string) (int64, string, error) {
 	key := s.prefix + strings.TrimPrefix(name, "/")
+	// The file was staged by this run a moment ago, so a symlink or a device
+	// at path is not the staged artifact: it is something that got between the
+	// two steps. This names that in the record's own words; what makes the
+	// upload itself safe is blobx.PutFile's open (O_NOFOLLOW|O_NONBLOCK) and
+	// its copy bounded by the size it stats through the file it opened, which
+	// is why this check may be a check and not the guard.
+	if st, err := os.Lstat(path); err != nil {
+		return 0, "", fmt.Errorf("reading the staged artifact %s: %w", path, err)
+	} else if !st.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("the staged artifact %s is not a regular file (%s): %w (it was hashed as a regular file of %d bytes)",
+			path, st.Mode(), blobx.ErrChanged, st.Size())
+	}
 	b := &blobx.Bucket{Bucket: s.bucket}
 	size, sum, err := b.PutFile(ctx, key, path, contentType, true)
 	if err != nil {
@@ -469,6 +482,19 @@ func (s *Store) PutFileFrom(ctx context.Context, name, path, contentType, want s
 		return 0, "", fmt.Errorf("%s: %w (this run staged %s and uploaded %s): the staged file changed before the upload", key, blobx.ErrMismatch, want, sum)
 	}
 	return size, sum, nil
+}
+
+// DeleteFile removes one of the run's own objects. It is what a failed upload
+// step cleans up after itself with: the writes are create-only, so an object
+// left behind by an attempt whose record says it uploaded nothing is both an
+// artifact no record accounts for and a key the next execution of the same run
+// would fail on.
+func (s *Store) DeleteFile(ctx context.Context, name string) error {
+	key := s.prefix + strings.TrimPrefix(name, "/")
+	if err := s.bucket.Delete(ctx, key); err != nil {
+		return fmt.Errorf("deleting %s: %w", key, err)
+	}
+	return nil
 }
 
 // read reads one of the run's objects, refusing one larger than max.

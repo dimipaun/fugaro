@@ -432,7 +432,12 @@ func (b *Bucket) Put(ctx context.Context, key string, data []byte, contentType s
 // Close, so a test driver that fails there is how the classification is
 // pinned.)
 func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifNotExist bool) (size int64, sum string, err error) {
-	f, err := os.Open(path)
+	// openSource, not os.Open: the path is opened without following a final
+	// symlink and without blocking on a FIFO, because between a caller's own
+	// check of this path and this line anything the same user runs may have
+	// replaced it — a link to /dev/zero would otherwise stream until the
+	// container is killed.
+	f, err := openSource(path)
 	if err != nil {
 		return 0, "", err
 	}
@@ -448,7 +453,12 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 		return 0, "", writeErr(err, ifNotExist)
 	}
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(w, h), sourceReader{f})
+	// Bounded by the size that was stat'ed, plus one byte: a source that grows
+	// while it is copied — a writer that was never stopped, a device, a FIFO
+	// with a writer on the other end — is read at most one byte past the file
+	// this call accounted for, which the check below then refuses. Without the
+	// bound the copy of a source that never ends never returns.
+	n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(sourceReader{f}, st.Size()+1))
 	if err != nil {
 		// The abort rule: cancel, then close, and report the cause rather
 		// than whatever Close says about the aborted write.

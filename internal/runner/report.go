@@ -167,7 +167,7 @@ func artifactsSection(rec *runstore.Record) string {
 	fmt.Fprintf(&b, "\n%d files, uploaded to this run's bucket under `%s`:\n\n", len(rec.Artifacts), runstore.ArtifactPrefix)
 	b.WriteString("| Artifact | Bytes | sha256 | Type |\n|---|---|---|---|\n")
 	for _, a := range rec.Artifacts {
-		fmt.Fprintf(&b, "| `%s` | %d | `%s` | %s |\n", a.Name, a.Bytes, shortSum(a.SHA256), a.ContentType)
+		fmt.Fprintf(&b, "| %s | %d | `%s` | %s |\n", tableCode(a.Name), a.Bytes, shortSum(a.SHA256), tableText(a.ContentType))
 	}
 	b.WriteString("\nEach row is what the run's own record says the object at that name holds: download it and hash it to check the bytes arrived as rendered.\n\n")
 	return b.String()
@@ -209,19 +209,51 @@ func testsLine(rec *runstore.Record) string {
 	return s + ")\n\n"
 }
 
-// fence returns a backtick fence longer than any backtick run in s, so s
-// cannot end the code block early.
-func fence(s string) string {
+// tableText renders a value into a markdown table cell. A pipe ends the cell
+// — every value after it slides a column, so a reader sees the render's text
+// where the run's account should be — and GFM's own escape for it is a
+// backslash, which is why the value is escaped rather than the row rebuilt.
+// An artifact's name is the render's to choose, so this is reachable: the
+// sanitiser refuses control characters and keeps punctuation.
+func tableText(s string) string {
+	return strings.ReplaceAll(s, "|", `\|`)
+}
+
+// tableCode is tableText as a code span, which is how the report shows a name
+// or a hash. A backtick inside the value would end the span, so the fence is
+// one backtick longer than the longest run of them in the value, and a value
+// that starts or ends with one gets GFM's own padding space, which the code
+// span's rule strips again.
+func tableCode(s string) string {
+	fence := "`"
+	if n := longestRun(s, '`'); n > 0 {
+		fence = strings.Repeat("`", n+1)
+	}
+	body := tableText(s)
+	if strings.HasPrefix(body, "`") || strings.HasSuffix(body, "`") {
+		body = " " + body + " "
+	}
+	return fence + body + fence
+}
+
+// longestRun is the length of the longest run of c in s.
+func longestRun(s string, c rune) int {
 	longest, run := 0, 0
-	for _, c := range s {
-		if c == '`' {
+	for _, r := range s {
+		if r == c {
 			run++
 			longest = max(longest, run)
 		} else {
 			run = 0
 		}
 	}
-	return strings.Repeat("`", max(3, longest+1))
+	return longest
+}
+
+// fence returns a backtick fence longer than any backtick run in s, so s
+// cannot end the code block early.
+func fence(s string) string {
+	return strings.Repeat("`", max(3, longestRun(s, '`')+1))
 }
 
 // followUpSection renders fu; reason is why the run ended a draft.

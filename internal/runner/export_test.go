@@ -227,6 +227,16 @@ func SanitiseName(name string) (string, error) { return sanitiseName(name) }
 // fixture artifact is, so the branch needs its own table.
 func ArtifactContentType(name, path string) (string, error) { return artifactContentType(name, path) }
 
+// SetArtifactCheckedSeam runs f in stageArtifacts after every match has been
+// examined and sized against the caps and before the first copy: it is how a
+// test changes a match between the check and the use of it (the window a
+// background process has, and the one the copy's own open and bound close).
+func SetArtifactCheckedSeam(t *testing.T, f func()) {
+	prev := artifactCheckedSeam
+	artifactCheckedSeam = f
+	t.Cleanup(func() { artifactCheckedSeam = prev })
+}
+
 // SetArtifactStagedSeam runs f in collectArtifacts after the set is staged
 // and hashed and before anything is uploaded, for the rest of t: it is how a
 // test replaces a staged file between the hash and the upload (Review Focus
