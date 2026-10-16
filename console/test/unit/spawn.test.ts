@@ -115,7 +115,10 @@ const COMMANDS_WITHOUT_PROJECT: readonly OperationName[] = ['cli.version']
 
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
-  return mkdtempSync(join(tmpdir(), prefix))
+  // The canonical spelling: on macOS the temporary directory is reached through
+  // the `/var -> /private/var` link, and a child reports its cwd as the
+  // realpath, so a test comparing the two needs the realpath on both sides.
+  return realpathSync(mkdtempSync(join(tmpdir(), prefix)))
 }
 
 /** safeContext is the main-process state a plan is built from in a test. */
@@ -642,11 +645,12 @@ describe('the child environment', () => {
     })
     await source.environmentReport({})
     const report = stub.reports().at(-1)
-    // `/bin/sh` -- the shim's own interpreter, not the console -- adds `PWD` to
-    // the environment it execs into. It is the one key allowed outside the fixed
-    // set here, and it is named rather than waved through: any other addition
-    // still fails this test.
-    expect(report?.envKeys).toEqual([...CHILD_ENV_KEYS, 'PWD'].sort())
+    // The stub is exec'd directly (no shell in between, see `stub.ts`), so the
+    // child sees exactly the fixed set -- plus, on macOS alone, the one key the
+    // operating system itself adds to every process it starts. It is named
+    // rather than waved through: any other addition still fails this test.
+    const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
+    expect(report?.envKeys.filter((key) => !platformKeys.includes(key))).toEqual([...CHILD_ENV_KEYS].sort())
     expect(report?.env['FUGARO_CONFIG']).toBeUndefined()
     expect(report?.env['GOOGLE_APPLICATION_CREDENTIALS']).toBeUndefined()
     expect(report?.env['ANTHROPIC_API_KEY']).toBeUndefined()
@@ -682,7 +686,7 @@ describe('the child’s working directory', () => {
     await source.environmentReport({})
     const cwd = stub.reports().at(-1)?.cwd ?? ''
     expect(cwd).not.toBe('/')
-    expect(cwd.startsWith(tmpdir())).toBe(true)
+    expect(cwd.startsWith(realpathSync(tmpdir()))).toBe(true)
     expect(statSync(cwd).isDirectory()).toBe(true)
     expect(statSync(cwd).mode & 0o777).toBe(0o700)
   })
@@ -768,6 +772,18 @@ describe('binary resolution', () => {
       '~/.local/bin',
       '/usr/bin',
     ])
+  })
+
+  it('never takes a relative PATH entry as a place to find the binary', () => {
+    // A relative entry (`bin`, `.`, `./tools`, or the empty entry, which POSIX
+    // reads as the current directory) resolves against whatever the app's own
+    // working directory happens to be, which is nothing the operator chose.
+    const candidates = binDirectories({
+      appEnv: { PATH: 'bin::./tools:.:/usr/sbin' },
+      home: '/Users/owner',
+      prefixes: [],
+    })
+    expect([...candidates]).toEqual(['/usr/sbin/fugaro'])
   })
 
   it('resolves a configured path first, and reports where it came from', async () => {
@@ -1131,7 +1147,15 @@ describe('the supervisor', () => {
     // A directory that exists: `safeContext`'s default cwd is a checkout path
     // that is only real on the machine the console ships to.
     const plan = planFor('cli.version', {}, safeContext({ binaryPath: stub.binary, directory: freshDirectory() }))
-    const probe = await probeVersion(plan, { timeoutMs: 50, shutdownGraceMs: 50 })
+    // The deadline is a manual timer fired once the stub has reported -- after
+    // its SIGTERM handler is installed -- so the test does not depend on how
+    // long Node takes to start on this machine (a 50 ms deadline is shorter
+    // than that on a laptop, and the child was killed before it could report).
+    const timers = manualTimers()
+    const pending = probeVersion(plan, { timers, shutdownGraceMs: 50 })
+    await waitFor(() => stub.calls() === 1)
+    timers.fire()
+    const probe = await pending
     expect(probe).toEqual({ ok: false, reason: 'the binary did not answer `version` in time' })
     await waitFor(() => stub.kills().length === 1)
     expect(stub.kills()[0]?.signal).toBe('SIGTERM')

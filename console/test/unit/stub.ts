@@ -23,6 +23,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 /** StubAnswer is what one command does when the stub is asked for it. */
 export interface StubAnswer {
@@ -113,10 +114,18 @@ export function installStub(directory: string, scenario: StubScenario): Stub {
 
   writeFileSync(scenarioPath, JSON.stringify(scenario, null, 2))
   writeFileSync(scriptPath, stubScript(reportPath, scenarioPath, killsPath))
-  // The shim is a shell script rather than a copy of node with a shebang,
-  // because `#!/usr/bin/env node` would resolve `node` through the child's
-  // `PATH` -- which is one of the things under test here.
-  writeFileSync(binary, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(scriptPath)} "$@"\n`)
+  // The shim names Node by absolute path, because `#!/usr/bin/env node` would
+  // resolve `node` through the child's `PATH` -- which is one of the things
+  // under test here. It is the generated script itself with Node as its
+  // interpreter, not a `/bin/sh` wrapper: a shell adds `PWD` and `SHLVL` to the
+  // environment it execs into, and the environment is also under test. A Node
+  // path with whitespace cannot be a shebang, so that alone falls back to the
+  // shell.
+  if (/\s/.test(process.execPath)) {
+    writeFileSync(binary, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(scriptPath)} "$@"\n`)
+  } else {
+    writeFileSync(binary, `#!${process.execPath}\nimport(${JSON.stringify(pathToFileURL(scriptPath).href)})\n`)
+  }
   chmodSync(binary, 0o755)
 
   return {

@@ -85,7 +85,7 @@ import { spawn } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 
 import { CONSOLE_OPERATIONS, isNeverReachable } from './ipc'
 import type { ArgumentKind, OperationName, ValidatedArgument, ValidatedArguments } from './ipc'
@@ -675,8 +675,11 @@ export function binDirectories(options: {
     candidates.push(join(base, FUGARO_BINARY_NAME))
   }
   const path = options.appEnv['PATH'] ?? ''
+  // Only absolute entries: a relative one (`bin`, `.`, or the empty entry,
+  // which POSIX reads as `.`) resolves against the app's own working directory,
+  // which is nothing the operator chose.
   for (const entry of path.split(':')) {
-    if (entry !== '') candidates.push(join(entry, FUGARO_BINARY_NAME))
+    if (entry !== '' && isAbsolute(entry)) candidates.push(join(entry, FUGARO_BINARY_NAME))
   }
   return Object.freeze(dedupe(candidates))
 }
