@@ -1312,7 +1312,7 @@ Read the base image it printed: it must be a release ref at `cloneSince` (`0.7.5
 # moved from, then re-record the ref the check's own steps actually run on
 # (step 2 and the Restore read $S/base-image, so it has to name this one)
 S=/tmp/check38-state
-cp "$S/base-image" "$S/base-image-moved-from"
+[ -e "$S/base-image-moved-from" ] || cp "$S/base-image" "$S/base-image-moved-from"
 fugaro doctor --project fugaro --gcp-project "${P:?}" --json | jq -r '.project.base_images.base' > "$S/base-image"
 [ -s "$S/base-image" ] && [ "$(cat "$S/base-image")" != null ] && [ -n "$(cat "$S/base-image")" ] \
   || { echo "Check 38 stopped: the re-recorded base-image came back empty (doctor failed, or printed no project: line). Read its own output above before going on." >&2; exit 1; }
