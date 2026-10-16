@@ -149,7 +149,10 @@ export class CliSource implements FugaroSource {
       binaryPath: resolution.path,
       version: resolution.version,
       project: options.target.project,
-      source: resolution.source === 'configured' ? 'configured' : 'well-known',
+      // Passed through, not re-derived: `resolution.source` is already the
+      // installation's own `source` vocabulary, so there is no second spelling
+      // of it here for a later edit to disagree with.
+      source: resolution.source,
       ...(options.checkout === undefined ? {} : { checkout: options.checkout }),
     }
     return new CliSource(options, {

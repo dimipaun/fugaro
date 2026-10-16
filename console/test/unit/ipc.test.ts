@@ -70,6 +70,7 @@ import type {
   ConsoleReply,
   OperationName,
 } from '../../src/main/ipc'
+import { SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor } from '../../src/main/spawn'
 import {
   BRIDGE_VERSION,
   CONSOLE_BRIDGE_KEY,
@@ -989,6 +990,119 @@ describe('the day and window arguments', () => {
       expect(validateArguments('runs.list', { since: value }).ok).toBe(accepted)
     })
   }
+
+  // `report --since` is a *different* grammar, read off `reportRange`
+  // (`internal/cli/report.go`): a date, or days or weeks, at most `reportMaxDays`
+  // (3660). The runs table above is what the console used to apply here, which
+  // refused `2026-10-01` -- the form the CLI documents first -- and accepted
+  // `3h`, which `report` then refused with its own message.
+  const reportWindows: readonly (readonly [string, boolean])[] = [
+    ['2026-10-01', true],
+    ['30d', true],
+    ['12w', true],
+    ['3660d', true],
+    ['522w', true],
+    ['3h', false],
+    ['30m', false],
+    ['0', false],
+    ['7', false],
+    ['0d', false],
+    ['-7d', false],
+    ['2026-02-30', false],
+    ['3661d', false],
+    ['523w', false],
+    ['all', false],
+  ]
+
+  for (const [value, accepted] of reportWindows) {
+    it(`${accepted ? 'accepts' : 'refuses'} the report range ${JSON.stringify(value)}`, () => {
+      expect(validateArguments('spend.report', { since: value }).ok).toBe(accepted)
+    })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// The boundary between the schema and the spawn table
+// ---------------------------------------------------------------------------
+
+/**
+ * The two halves of Task 1.2 and Task 1.3 meet at one type: `validateArguments`
+ * produces a `ValidatedArguments`, and `argvFor` consumes one. Each half was
+ * tested against its own table and neither was tested against the other, which
+ * is how `runs.list`'s `pr` came to be validated as a *number* and emitted as a
+ * *string*: every PR-filtered run list refused with "runs.list's pr is not a
+ * string", from the one path a real payload takes.
+ *
+ * So this section runs the real path -- `validateArguments` then `argvFor`, on
+ * `WELL_FORMED` and on the shapes that only one of the two halves knows about.
+ */
+describe('what the schema validates is what the spawn table accepts', () => {
+  const context = {
+    target: { project: 'fugaro' },
+    directory: '/Users/owner/src/fugaro',
+  }
+
+  it.each(CONSOLE_OPERATIONS.map((operation) => operation.name))(
+    'spawns %s from the payload validateArguments returns',
+    (name) => {
+      const decision = validateArguments(name, WELL_FORMED[name])
+      expect(decision.ok, `${name}: ${decision.ok ? '' : decision.reason}`).toBe(true)
+      if (!decision.ok) return
+      // The operation's own read, so this runs the pair a handler runs;
+      // `link.openExternal` is the one operation with no row, because it opens
+      // a window rather than spawning.
+      if (!SPAWN_COMMANDS.some((row) => row.operation === name)) return
+      expect(() => argvFor(name, decision.args, context), name).not.toThrow()
+    },
+  )
+
+  it('keeps the two kind vocabularies in agreement, argument by argument', () => {
+    // The check `assertSpawnSurface` makes, made here from the outside: every
+    // argument a row declares is emitted the one way its schema says it must
+    // be. A row that disagreed would be caught by the table load, and this
+    // names the argument rather than the table.
+    for (const row of SPAWN_COMMANDS) {
+      const operation = CONSOLE_OPERATIONS.find((candidate) => candidate.name === row.operation)
+      expect(operation, `${row.operation} has a row and no operation`).toBeDefined()
+      if (operation === undefined) continue
+      for (const spec of row.args) {
+        const argument = operation.args.find((candidate) => candidate.key === spec.key)
+        expect(argument, `${row.operation} ${spec.key}: the row declares an argument the schema does not`).toBeDefined()
+        if (argument === undefined) continue
+        expect(spec.kind, `${row.operation} ${spec.key}`).toBe(SPAWN_KIND_FOR[argument.kind])
+      }
+    }
+  })
+
+  it('spells the number the schema validates, not the string it once required', () => {
+    const decision = validateArguments('runs.list', { repo: 'acme/widgets', pr: 412 })
+    expect(decision.ok).toBe(true)
+    if (!decision.ok) return
+    expect(decision.args['pr']).toBe(412)
+    const argv = argvFor('runs.list', decision.args, context)
+    expect(argv).toContain('--pr')
+    expect(argv[argv.indexOf('--pr') + 1]).toBe('412')
+    // ...and the string form is not what the schema emits, so a spawn that
+    // received one would be a spawn that skipped the validator.
+    expect(validateArguments('runs.list', { repo: 'acme/widgets', pr: '412' }).ok).toBe(false)
+  })
+
+  it.each([
+    ['2026-10-01'],
+    ['30d'],
+    ['12w'],
+  ])('carries the report range %s through to argv unchanged', (since) => {
+    const decision = validateArguments('spend.report', { since })
+    expect(decision.ok).toBe(true)
+    if (!decision.ok) return
+    const argv = argvFor('spend.report', decision.args, context)
+    expect(argv[argv.indexOf('--since') + 1]).toBe(since)
+  })
+
+  it('refuses the report range the runs grammar admits before argv is built', () => {
+    expect(validateArguments('spend.report', { since: '3h' }).ok).toBe(false)
+    expect(validateArguments('runs.list', { since: '12w' }).ok).toBe(false)
+  })
 })
 
 describe('the closed sets', () => {

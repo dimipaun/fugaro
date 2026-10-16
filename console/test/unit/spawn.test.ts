@@ -307,7 +307,7 @@ describe('the spawn table and the argv it builds', () => {
   it('emits one array element per value, in the operation’s own order', () => {
     const argv = argvFor(
       'runs.list',
-      { repo: 'acme/widgets', since: '3d', mine: true, pr: '412' },
+      { repo: 'acme/widgets', since: '3d', mine: true, pr: 412 },
       safeContext({ project: 'chosen' }),
     )
     expect(argv).toEqual([
@@ -335,7 +335,41 @@ describe('the spawn table and the argv it builds', () => {
 
   it('refuses an argument the operation does not declare, by name', () => {
     expect(() => argvFor('live.watch', { nope: 'x' }, safeContext())).toThrow(/does not declare/)
-    expect(() => argvFor('runs.list', { pr: '412' }, safeContext())).toHaveLength(0)
+    expect(() => argvFor('runs.list', { until: '2026-10-16' }, safeContext())).toThrow(/does not declare/)
+  })
+
+  // `runs.list`'s `pr` is the one argument whose *type* changes on the way to
+  // argv: the schema hands over a number and the CLI's `--pr` is an `IntVar`
+  // that reads digits. This pair is that boundary from both sides, and the
+  // first version of this test asserted `toHaveLength(0)` on an arrow function
+  // -- `Function#length` is arity, so it passed whether `argvFor` threw or not,
+  // and it fed `'412'` as a string, which the validator never emits.
+  it('spells the validated pull request number as the digits --pr reads', () => {
+    const argv = argvFor('runs.list', { repo: 'acme/widgets', pr: 412 }, safeContext())
+    expect(argv).toContain('--pr')
+    expect(argv).toContain('412')
+    expect(argv[argv.indexOf('--pr') + 1]).toBe('412')
+  })
+
+  it('refuses a pull request that is not a number the validator would hand over', () => {
+    for (const value of ['412', ' 412', '-1', '412; rm -rf /'] as const) {
+      expect(() => argvFor('runs.list', { pr: value }, safeContext()), value).toThrow(/not a pull request number/)
+    }
+    for (const value of [-1, 0, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => argvFor('runs.list', { pr: value }, safeContext()), String(value)).toThrow(
+        /not a pull request number/,
+      )
+    }
+  })
+
+  it('accepts the report window `report` reads, and only that one', () => {
+    // `spend.report`'s `--since` is not `runs ls`'s: `reportRange` reads a date
+    // or `Nd`/`Nw`, so `12w` and `2026-10-01` must survive argvFor while `3h`
+    // is the runs grammar's shape and never reaches this row from the schema.
+    for (const value of ['2026-10-01', '30d', '12w'] as const) {
+      const argv = argvFor('spend.report', { since: value }, safeContext())
+      expect(argv[argv.indexOf('--since') + 1], value).toBe(value)
+    }
   })
 
   it('refuses a value that is not a boolean or a string where the schema says so', () => {

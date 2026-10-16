@@ -111,9 +111,16 @@ export const MAX_URL_LENGTH = 2048
  *   - `runId` -- a run id as `task.NewRunID` builds one,
  *     `YYYYMMDD-HHMMSS-xxxx`;
  *   - `day` -- a UTC calendar day, `YYYY-MM-DD`;
- *   - `since` -- `--since`'s own two forms: a UTC day, or `Nd`/`Nh`/`Nm`, or `0`
- *     for everything;
- *   - `reportDimension` -- `report --by`'s closed set of six words;
+ *   - `since` -- `runs ls --since`'s own forms, the ones
+ *     `internal/cli/runs.go`'s `parseSince` reads: `0` for everything, or a
+ *     window like `7d`, `24h`, `30m`;
+ *   - `reportSince` -- `report --since`'s own forms, which are a *different*
+ *     grammar (`internal/cli/report.go`'s `reportRange`): a UTC day, or a
+ *     window in days or weeks, `30d`/`12w`, bounded at `reportMaxDays` (3660).
+ *     The two commands disagree about `--since` and one kind cannot say both:
+ *     `report` refuses `3h` and a bare `0`, and `runs ls` refuses `12w` and is
+ *     only ever sent days anyway;
+ *   - `reportDimension` -- `report --by`'s closed set of seven words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
@@ -124,6 +131,7 @@ export type ArgumentKind =
   | 'runId'
   | 'day'
   | 'since'
+  | 'reportSince'
   | 'reportDimension'
   | 'secretScope'
   | 'pullRequest'
@@ -258,13 +266,13 @@ export const CONSOLE_OPERATIONS = [
         key: 'by',
         kind: 'reportDimension',
         required: false,
-        why: '`--by` is the breakdown switch the Spend screen draws; its six words are closed.',
+        why: '`--by` is the breakdown switch the Spend screen draws; its seven words are closed.',
       },
       {
         key: 'since',
-        kind: 'since',
+        kind: 'reportSince',
         required: false,
-        why: '`--since` is the range picker, in the CLI’s own two forms.',
+        why: '`--since` is the range picker: `report` reads a UTC day or `30d`/`12w` here, which is not what `runs ls` reads.',
       },
       {
         key: 'until',
@@ -765,6 +773,11 @@ const REPOSITORY_RE = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/
 const RUN_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4,16}$/
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 const SINCE_RE = /^(?:\d{1,4}[dhm]|0)$/
+// `report`'s `--since` is its own grammar, and the digits are bounded by the
+// CLI's own `reportMaxDays` below rather than by this pattern alone: `3660d` is
+// the last day count `reportRange` accepts, and `523w` is one week past it.
+const REPORT_SINCE_RE = /^(\d{1,4})([dw])$/
+const REPORT_MAX_DAYS = 3660
 const REPORT_DIMENSIONS: readonly string[] = Object.freeze([
   'day',
   'week',
@@ -915,6 +928,20 @@ function validateValue(
         return refuse(`${spec.key} must be a UTC day or a window like 7d`)
       }
       return { ok: true, value }
+    case 'reportSince': {
+      // The grammar `reportRange` reads, in its order: a date if it carries a
+      // dash, else `Nd` or `Nw` with a count of at least one and a range no
+      // longer than `reportMaxDays`.
+      if (isCalendarDay(value)) return { ok: true, value }
+      const window = REPORT_SINCE_RE.exec(value)
+      if (window === null) return refuse(`${spec.key} must be a UTC day, or a window like 30d or 12w`)
+      const count = Number(window[1])
+      const days = window[2] === 'w' ? count * 7 : count
+      if (count < 1 || days > REPORT_MAX_DAYS) {
+        return refuse(`${spec.key} must be a range of at most ${REPORT_MAX_DAYS} days`)
+      }
+      return { ok: true, value }
+    }
     case 'reportDimension':
       if (!REPORT_DIMENSIONS.includes(value)) return refuse(`${spec.key} must be one of ${REPORT_DIMENSIONS.join(', ')}`)
       return { ok: true, value }
@@ -944,6 +971,9 @@ function kindLimit(kind: ArgumentKind): number {
     case 'since':
       // A day is `2026-10-16`; a window is `7d`. The bound is the longer of the
       // two, and the grammar decides which one a value is.
+      return 10
+    case 'reportSince':
+      // A day is `2026-10-16` (`report`'s longest accepted form); `3660d` is 5.
       return 10
     case 'reportDimension':
       return 8

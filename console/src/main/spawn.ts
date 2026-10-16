@@ -87,7 +87,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { CONSOLE_OPERATIONS, isNeverReachable } from './ipc'
-import type { OperationName, ValidatedArgument, ValidatedArguments } from './ipc'
+import type { ArgumentKind, OperationName, ValidatedArgument, ValidatedArguments } from './ipc'
 import type { SpawnLogWriter } from './spawnlog'
 
 /** JSONObject is a JSON object as it arrived: the CLI's document, undecoded.
@@ -222,8 +222,37 @@ export interface Backoff {
   readonly maxMs: number
 }
 
-/** SpawnArgumentKind says how one declared argument becomes argv. */
-export type SpawnArgumentKind = 'value' | 'boolean' | 'secretScope'
+/**
+ * SpawnArgumentKind says how one declared argument becomes argv. It is narrower
+ * than Task 1.2's `ArgumentKind`, which says what the renderer may *send*: two
+ * of those kinds are one string spelling, so a `since` and a `reportSince` are
+ * both `value` here, and the only kind whose argv spelling differs is
+ * `pullRequest`, where the validator's number has to become the digits the
+ * CLI's `IntVar --pr` reads. `SPAWN_KIND_FOR` below is the mapping, and
+ * `assertSpawnSurface` refuses a table that disagrees with it -- which is what
+ * makes "the validator emits a number here" and "argv wants a string there" a
+ * build-time failure rather than a refusal a user sees.
+ */
+export type SpawnArgumentKind = 'value' | 'boolean' | 'secretScope' | 'pullRequest'
+
+/**
+ * SPAWN_KIND_FOR is the one place the two kind vocabularies are related: the
+ * operation's declared kind (ipc.ts) to the way that argument reaches argv. It
+ * is a `Record<ArgumentKind, …>`, so a new kind in ipc.ts with no entry here is
+ * a compile error rather than an argument with no argv spelling.
+ */
+export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.freeze({
+  repository: 'value',
+  runId: 'value',
+  day: 'value',
+  since: 'value',
+  reportSince: 'value',
+  reportDimension: 'value',
+  secretScope: 'secretScope',
+  pullRequest: 'pullRequest',
+  flag: 'boolean',
+  link: 'value',
+})
 
 /** SpawnArgument is one declared argument of one command. `flag` is null for a
  * positional (a run id, which always comes last before the console's own
@@ -297,7 +326,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
       { key: 'repo', flag: '--repo', kind: 'value' },
       { key: 'since', flag: '--since', kind: 'value' },
       { key: 'mine', flag: '--mine', kind: 'boolean' },
-      { key: 'pr', flag: '--pr', kind: 'value' },
+      { key: 'pr', flag: '--pr', kind: 'pullRequest' },
       { key: 'all', flag: '--all', kind: 'boolean' },
     ],
     dirFlag: false,
@@ -476,6 +505,24 @@ export function argvFor(
         argv.push(value)
         break
       }
+      case 'pullRequest': {
+        // The validator hands this over as the *number* it checked (ipc.ts's
+        // `pullRequest` kind returns it unchanged), and the CLI's `--pr` is an
+        // `IntVar`: the digit spelling is what it reads. The spelling is then
+        // put through the same whitelist as every other value, so a number that
+        // is not a number -- `NaN`, `Infinity`, `1e21`, `-1`, `1.5` -- is
+        // refused here rather than turned into argv.
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+          refused(`${operation}'s ${spec.key} is not a pull request number`)
+        }
+        const spelled = String(value)
+        if (!isSafeArgumentValue(spelled)) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        if (spec.flag !== null) argv.push(spec.flag)
+        argv.push(spelled)
+        break
+      }
     }
   }
 
@@ -554,6 +601,17 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
     for (const spec of row.args) {
       if (!declared.has(spec.key)) {
         refused(`${row.operation} declares ${spec.key}, which the operation does not accept`)
+      }
+      // The kind agrees with Task 1.2's schema, through the one mapping that
+      // relates the two vocabularies. A row that emitted a `pr` as a string
+      // would otherwise pass every check here and refuse a real payload at run
+      // time -- in `argvFor`, on the way to a spawn that never happened.
+      const argument = operation.args.find((candidate) => candidate.key === spec.key)
+      const expected = argument === undefined ? undefined : SPAWN_KIND_FOR[argument.kind]
+      if (expected !== spec.kind) {
+        refused(
+          `${row.operation}'s ${spec.key} is declared ${String(expected)} in the spawn table, but the operation's schema says ${argument?.kind ?? 'nothing'}`,
+        )
       }
     }
     assertArgvFlags(row.operation, row.words)
@@ -875,7 +933,12 @@ export type BinaryResolution =
       readonly ok: true
       readonly path: string
       readonly version: string
-      readonly source: 'configured' | 'well-known' | 'path'
+      /** `configured` when the candidate is the path the installation named,
+       * `well-known` for every other candidate rule 4's list produced -- a
+       * prefix or a `PATH` entry, which is one set of "where else it can be"
+       * and stays one word so that no caller can read a distinction the
+       * resolution does not make. */
+      readonly source: 'configured' | 'well-known'
     }
   | { readonly ok: false; readonly path: string | null; readonly reason: string }
 
@@ -924,7 +987,7 @@ export async function resolveBinary(options: {
   }
 }
 
-function configuredSource(configuredPath: string | undefined, candidate: string): 'configured' | 'well-known' | 'path' {
+function configuredSource(configuredPath: string | undefined, candidate: string): 'configured' | 'well-known' {
   if (configuredPath !== undefined && configuredPath === candidate) return 'configured'
   return 'well-known'
 }
