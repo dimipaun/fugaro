@@ -2095,9 +2095,9 @@ Phase 1 of the project-centric design ([design/project-centric.md](design/projec
 
 **The order (design §5): rules deploy, then runner rollout, then `policy publish`.** The order is not a preference. The rules are what make the policy node readable at all. **Publishing refuses without the rules marker** (`internal/cli/project_cmd.go:211` `requirePolicyRules`), because a policy published before the rules are deployed is one the runs it bounds cannot read. And the runner is what reads the node, so a policy published before the runner carries the pointer governs nothing and is read by nobody. Publishing first would leave a window in which the owner believes a ceiling is in force and it is not.
 
-⚠ **Every `fugaro run` below carries a task, and it has to.** The launcher refuses a launch with no task — `pass the task as TEXT or with --task-file (- for stdin)` (`internal/cli/run.go:507`) — and it refuses it at `run.go:220`, **before** `openCloud` (`:229`) and long before the allow-list gate (`:449`). So a step 6(a) or step 7 written as a bare `fugaro run` would stop on the missing task and never reach the refusal it is there to produce, and steps 3, 5 and 8 would launch nothing at all. Every run below therefore carries the setup block's `TASK`, which is the sandbox's own **no-change task** — the one Check 43f uses: `Do not change any file and do not open a pull request. Reply with the single word ok.` It changes no file and opens no pull request, so **there is nothing to discard**; if a run opens one anyway, close it in the sandbox (`gh pr close <n> --delete-branch` in the sandbox checkout) and merge nothing from it.
+⚠ **Every `fugaro run` below carries a task, and it has to.** The launcher refuses a launch with no task — `pass the task as TEXT or with --task-file (- for stdin)` (`internal/cli/run.go:507`) — and it refuses it at `internal/cli/run.go:220`, **before** `openCloud` (`:229`) and long before the allow-list gate (`internal/cli/run.go:449`). So a step 6(a) or step 7 written as a bare `fugaro run` would stop on the missing task and never reach the refusal it is there to produce, and steps 3, 5 and 8 would launch nothing at all. Every run below therefore carries the setup block's `TASK`, which is the sandbox's own **no-change task** — the one Check 43f uses: `Do not change any file and do not open a pull request. Reply with the single word ok.` It changes no file and opens no pull request, so **there is nothing to discard**; if a run opens one anyway, close it in the sandbox (`gh pr close <n> --delete-branch` in the sandbox checkout) and merge nothing from it.
 
-⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every later step.** `P` is the installation's project, `L` its region, `JOB` the sandbox repository's Cloud Run job. The block is self-contained and idempotent, and **every step below (1 to 8) begins with it**: the restore runs in a later shell, where these variables are gone. An empty `$P` is the N1 trap itself: `gcloud` then falls back to its ambient `core/project`, which for the owner is a `*-prod` project, while the `fugaro` commands fall back to the checkout's `fugaro.yaml` (`internal/cli/cloud.go:54`) — and this check writes.
+⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every later step.** `P` is the installation's project, `L` its region, `JOB` the sandbox repository's Cloud Run job, `C` the operator's project config and `TASK` the no-change task every run carries. The block is self-contained and idempotent — **every variable a step below uses is set here, `C` included** — and **every step below (1 to 8) begins with it**: the restore runs in a later shell, where these variables are gone. An empty `$P` is the N1 trap itself: `gcloud` then falls back to its ambient `core/project`, which for the owner is a `*-prod` project, while the `fugaro` commands fall back to the checkout's `fugaro.yaml` (`internal/cli/cloud.go:54`) — and this check writes.
 
 ```bash
 # === Check 49: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
@@ -2106,6 +2106,12 @@ Phase 1 of the project-centric design ([design/project-centric.md](design/projec
 P=fugaro-dev                 # HARD-CODED, and never read from gcloud
 L=us-east5
 JOB=<the sandbox job's name> # from `gcloud run jobs list`, or `fugaro init --repo`'s output
+# The operator's project config. It is HERE and not in step 1 because step 8
+# runs in a later shell: it restores this file before `fugaro init --repo`
+# reads the job environment out of it, and a step-8 shell that never ran
+# step 1 has no C of its own — `cp "$C.before-49" "$C"` would expand to
+# `cp ".before-49" ""` and put nothing back.
+C=$HOME/.config/fugaro/projects/fugaro.yaml
 
 # The task every `fugaro run` below carries. It is the sandbox's own
 # no-change task (Check 43f's): no file is changed and no pull request is
@@ -2118,8 +2124,8 @@ TASK='Do not change any file and do not open a pull request. Reply with the sing
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument that gcloud would resolve from its ambient configuration.
 
-[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$TASK" ] \
-  || { echo "Check 49 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L and TASK=$TASK must not be empty)" >&2; exit 1; }
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$TASK" ] && [ -n "$C" ] \
+  || { echo "Check 49 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L, TASK=$TASK and C=$C must not be empty)" >&2; exit 1; }
 # fugaro doctor's project: line is the local config's project (no cloud call). A
 # doctor that refused the checkout (--project disagreeing with the checkout's
 # project:) prints no project: line at all, so the grep fails either way.
@@ -2156,7 +2162,6 @@ fugaro project show --json --project fugaro > /tmp/chk49-project-before.json
 git show HEAD:fugaro.yaml | grep -E '^(project|gcp_project):' | tee /tmp/chk49-sandbox-yaml-before.txt
 # the operator's project config, verbatim: step 4 publishes what it says, and
 # step 8's `fugaro init --repo` writes the job environment out of it
-C=$HOME/.config/fugaro/projects/fugaro.yaml
 cp "$C" "$C.before-49"
 grep -n 'per_run_usd' "$C"
 # `fugaro upgrade`'s pin step rewrites this one; `fugaro image refresh` does not
@@ -2184,7 +2189,7 @@ fugaro init --firebase fugaro-dev --project fugaro
 - `fugaro upgrade` only **reports** drift in the jobs' environment (`internal/cli/upgrade_cloud.go:166`, `jobConfigCopyNote`: "only fugaro init --repo does"); its `cloud` step is the third of three, and there is no `--cloud` flag — the command is plain `fugaro upgrade`;
 - `fugaro image refresh` patches a job's **image** through the API and nothing else (`internal/cli/image_refresh_steps.go:241`, `refreshCloneJobs`).
 
-⚠ **Use `fugaro image refresh` for the image half, not `fugaro upgrade`.** `fugaro upgrade` does three things, and only the third is this step's: besides the cloud step it **rewrites the checkout's `.claude/settings.json`** (its `pin` step — "pinned to this release's tag, shown as a diff and never committed") and **installs or updates the Fugaro plugin in Claude Code at user scope** (its `plugin` step, through the `claude` CLI) — `internal/cli/upgrade.go:84-88` names all three. `fugaro image refresh` is that third step alone, so it moves neither file and there is nothing to put back. If you run `fugaro upgrade` anyway, step 1's `/tmp/chk49-claude-settings-before.json` is what step 8 compares the checkout's `.claude/settings.json` against, and the plugin's own pin is yours to check by hand (`claude plugin list`, or the marketplace entry in `~/.claude`).
+⚠ **Use `fugaro image refresh` for the image half, not `fugaro upgrade`.** `fugaro upgrade` does three things, and only the third is this step's: besides the cloud step it **rewrites the checkout's `.claude/settings.json`** (its `pin` step — "pinned to this release's tag, shown as a diff and never committed") and **installs or updates the Fugaro plugin in Claude Code at user scope** (its `plugin` step, through the `claude` CLI) — `internal/cli/upgrade.go:85-110` is that command's own `Long` text, one paragraph per step: `pin` at `:85-89`, `plugin` at `:90-94`, `cloud` at `:95-110`. `fugaro image refresh` is that third step alone, so it moves neither file and there is nothing to put back. If you run `fugaro upgrade` anyway, step 1's `/tmp/chk49-claude-settings-before.json` is what step 8 compares the checkout's `.claude/settings.json` against, and the plugin's own pin is yours to check by hand (`claude plugin list`, or the marketplace entry in `~/.claude`).
 
 So the rollout is: **release** a runner image carrying Task 1.3, then **`fugaro init --repo`** in the sandbox checkout to write the env, then let the image land. A rollout that skips the middle step is a rollout whose runs never see the pointer at all — the job would carry the new image and no `FUGARO_RTDB_URL`, and every run would fall back to the ceiling in its environment, which is exactly the state step 5 is supposed to change.
 

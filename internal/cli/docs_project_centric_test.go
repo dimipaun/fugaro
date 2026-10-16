@@ -675,7 +675,12 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// the project pinning, not merely a ${P:?...}.
 	chk49MustContain(t, section, "section", []string{
 		"P=fugaro-dev",
-		`[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$TASK" ] \`,
+		`[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$TASK" ] && [ -n "$C" ] \`,
+		// C is the operator's project config, and it is the block's and not
+		// step 1's: step 8 restores it in a later shell, and a step-8 shell
+		// that never ran step 1 would expand `cp "$C.before-49" "$C"` to
+		// `cp ".before-49" ""` and put nothing back.
+		"C=$HOME/.config/fugaro/projects/fugaro.yaml",
 		`|| { echo "Check 49 stopped: re-run the whole setup block`,
 		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
 		`|| { echo "Check 49 stopped: this is not the fugaro-dev installation" >&2; exit 1; }`,
@@ -821,15 +826,24 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// `fugaro budget set` there would write a node the check never touched.
 	chk49MustContain(t, section, "section", []string{
 		"### 8. Restore",
+		"the sandbox still runs",
+	})
+	// The Restore's own COMMANDS, read in step 8's slice and not over the
+	// whole section: the section's prose also writes `cp "$C.before-49" "$C"`
+	// (the setup block's comment explains why C is the block's), and the FACT
+	// names `cmp "$C.before-49" "$C"` — so a section-wide Contains passes with
+	// the restore's own first line deleted, which is the line the whole
+	// ordering argument rests on.
+	chk49MustContain(t, chk49Step(t, section, "### 8."), "step 8", []string{
+		// The order, and the file it puts back first.
+		"the operator's project config: back first, because the next line reads it",
+		`cp "$C.before-49" "$C"`,
+		"fugaro init --repo . --project fugaro",
+		"git diff -- fugaro.yaml",
+		"git diff -- .claude/settings.json",
 		"fugaro budget show --json --project fugaro",
 		"fugaro project show --json --project fugaro",
 		"fugaro project policy publish --delete --project fugaro",
-		"the sandbox still runs",
-		// The two halves of the restore order and the operator config.
-		`cp "$C.before-49" "$C"`,
-		"C=$HOME/.config/fugaro/projects/fugaro.yaml",
-		"the operator's project config: back first, because the next line reads it",
-		"git diff -- .claude/settings.json",
 	})
 	// Read as a command line, not as a substring: the section SAYS it has no
 	// `fugaro budget set`, and that sentence is the point — it is running one
@@ -888,7 +902,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 	chk49MustContain(t, section, "section", []string{
 		"Use `fugaro image refresh` for the image half, not `fugaro upgrade`",
 		"**rewrites the checkout's `.claude/settings.json`**",
-		"`internal/cli/upgrade.go:84-88` names all three",
+		"`internal/cli/upgrade.go:85-110` is that command's own `Long` text, one paragraph per step: `pin` at `:85-89`, `plugin` at `:90-94`, `cloud` at `:95-110`",
 		// Both places the pin step's file is compared: step 8's block and
 		// step 8's FACT. One without the other is a restore that checks the
 		// file and a FACT that does not claim it.
@@ -926,9 +940,56 @@ func TestChecklistHasCheck49(t *testing.T) {
 		"internal/backend/gcp/run.go:82-98",
 		"internal/cli/upgrade_cloud.go:162",
 		"internal/cli/run.go:441",
+		// upgrade's Long text: :84 is blank, `pin` is :85-89, `plugin` is
+		// :90-94 and `cloud` is :95-110. A range that stops at :88 describes
+		// one of the three steps and claims all three.
+		"internal/cli/upgrade.go:84-88",
 	} {
 		if strings.Contains(section, dead) {
 			t.Errorf("the Check 49 section cites %q, which does not point at what it says on this tree", dead)
+		}
+	}
+
+	// Every variable the section's commands read is set by the block that is
+	// re-run at the start of every step, or is a step's own (the map below).
+	// The review found the first pass breaking exactly this: step 1 assigned
+	// `C` and step 8 — a later shell, where step 1's shell is gone — used it,
+	// so `cp "$C.before-49" "$C"` expanded to `cp ".before-49" ""`, the
+	// operator's config was never put back, and the `fugaro init --repo` that
+	// follows read the job environment out of a file that was still edited.
+	block := chk49FencedBlocks(section)[0]
+	assigned := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_]*)=`).FindAllStringSubmatch(block, -1) {
+		assigned[m[1]] = true
+	}
+	for _, name := range []string{"P", "L", "JOB", "C", "TASK"} {
+		if !assigned[name] {
+			t.Errorf("the Check 49 setup block does not set %s, and every step below runs in a shell that has only what the block sets: a step that reads it reads an empty string", name)
+		}
+	}
+	stepLocal := map[string]bool{
+		"RUN": true, // step 5's, from the launch's own output
+	}
+	// The shell's own, which no block has to set: $HOME is the operator's
+	// and is the same in every shell of the check.
+	shellOwn := map[string]bool{"HOME": true}
+	// Every command line in the section, not only the ones that act on a
+	// project: the review's own break was in a `cp`, which no verb list
+	// collects. Comment lines are skipped — they are prose, and `${VAR:?}`
+	// in a comment is a sentence about the convention, not a read.
+	ref := regexp.MustCompile(`\$\{?([A-Z][A-Z0-9_]*)`)
+	for _, b := range chk49FencedBlocks(section) {
+		for _, line := range strings.Split(b, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			for _, m := range ref.FindAllStringSubmatch(line, -1) {
+				if assigned[m[1]] || stepLocal[m[1]] || shellOwn[m[1]] {
+					continue
+				}
+				t.Errorf("the Check 49 section reads $%s in %q, and neither the setup block that every step re-runs nor a step's own assignment sets it: in the shell that runs this line it is empty", m[1], line)
+			}
 		}
 	}
 
@@ -996,6 +1057,18 @@ func TestChecklistHasCheck49(t *testing.T) {
 	if !sawDoctor {
 		t.Error("the Check 49 section's guard block is not read as a command, so nothing checks that it pins the installation")
 	}
+}
+
+// chk49FencedBlocks returns the Check 49 section's fenced code blocks, in
+// order. The first is the setup block every step re-runs, which is the one
+// whose assignments a step in a later shell can rely on.
+func chk49FencedBlocks(section string) []string {
+	parts := strings.Split(section, "```")
+	var out []string
+	for i := 1; i < len(parts); i += 2 {
+		out = append(out, parts[i])
+	}
+	return out
 }
 
 // chk49StepMarkers is the Check 49 section's steps in the order they appear,
