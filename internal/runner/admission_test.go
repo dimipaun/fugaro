@@ -243,6 +243,20 @@ func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 // job's environment after launch, exactly like the cross-provider case above.
 // The policy admits the repository the slug names, which is why this is the
 // remote's refusal and not the allow-list's.
+//
+// A remote whose path is not a repository name this Fugaro can read is refused
+// too (a review finding — it used to be admitted as "not a repository path"):
+// "acme/app/../other" and "acme//other" are resolved by the host into some
+// repository, and the run cannot tell which, so admitting them would risk
+// exactly the cross-repository work this check exists to stop. Nothing genuine
+// is lost — the deployer writes a canonical URL (internal/infra's repoURL), so
+// these arise only from a remote edited after launch, which is the case the
+// check is for.
+//
+// Mutation (run, restored): return "" for a path CanonicalRepo refuses, as the
+// first three rows did before this fix. The three rows below then run on: they
+// fail on the refusal they expect and, with the git rewrite in place, on the
+// clone.
 func TestRunnerRefusesARemoteOfAnotherRepositoryOnTheSameHost(t *testing.T) {
 	for _, tc := range []struct{ remote, display, quotedRepo string }{
 		// https, the form internal/infra writes into FUGARO_REMOTE.
@@ -253,6 +267,18 @@ func TestRunnerRefusesARemoteOfAnotherRepositoryOnTheSameHost(t *testing.T) {
 		{"git@github.com:evil/other.git", "github.com", "evil/other"},
 		// The same owner, another repository: the near miss worth naming.
 		{"https://github.com/acme/other.git", "https://github.com/acme/other.git", "acme/other"},
+		// A path the host resolves to another repository while CanonicalRepo
+		// refuses it as written (a review finding): the run cannot know which
+		// repository "acme/app/../other.git" fetches, so it refuses rather
+		// than admitting it. The refusal quotes the path it could not read.
+		{"https://github.com/acme/app/../other.git", "https://github.com/acme/app/../other.git", "acme/app/../other.git"},
+		// The same, with the empty segment a doubled slash makes: nothing in
+		// the path says "acme/other", and the host is the one that decides.
+		{"https://github.com/acme//other", "https://github.com/acme//other", "acme//other"},
+		// A path that is not a repository at all is refused for the same
+		// reason: the clone would go to the provider's host with a path the
+		// run cannot match against its own repository.
+		{"https://github.com/acme/app/tree/main", "https://github.com/acme/app/tree/main", "acme/app/tree/main"},
 	} {
 		t.Run(tc.remote, func(t *testing.T) {
 			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)

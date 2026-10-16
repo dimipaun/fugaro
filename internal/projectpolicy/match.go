@@ -161,6 +161,15 @@ func ValidPattern(pattern string) error {
 // of the pattern fails. That is at most len(pattern)*len(s) steps, where a
 // backtracking scan of every star is exponential in their number (a pattern is
 // attacker-chosen text on a node, so the cost must not be).
+//
+// The star case is tested *before* the literal case, and that order is the
+// whole correctness of a subject that contains a star: a "*" in the pattern is
+// never a literal character, so a subject "*ba" against the pattern "*" must be
+// a match (the star takes the subject's own "*", and everything after it),
+// while comparing them as equal bytes would consume the pattern's only star
+// literally and leave nothing to record a backtrack point with — "*ba" would
+// then not match "*" at all, and a subject that only a wildcard admits would be
+// refused. Every other character is unaffected: no case compares bytes twice.
 func matchSeg(pattern, s string) bool {
 	var (
 		p, i     int // the positions being compared
@@ -169,12 +178,12 @@ func matchSeg(pattern, s string) bool {
 	)
 	for i < len(s) {
 		switch {
-		case p < len(pattern) && pattern[p] == s[i]:
-			p++
-			i++
 		case p < len(pattern) && pattern[p] == '*':
 			star, at, has = p, i, true
 			p++
+		case p < len(pattern) && pattern[p] == s[i]:
+			p++
+			i++
 		case has:
 			// The last "*" takes one more character and the rest of the
 			// pattern is tried again from there.

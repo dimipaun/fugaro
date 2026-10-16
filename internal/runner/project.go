@@ -182,11 +182,12 @@ func remoteOfAnotherKind(derived, remote string) string {
 	return ""
 }
 
-// remoteOfAnotherRepo names the repository a remote on the derived kind's own
-// host actually is, when that is not the run's repository. "" is no
-// disagreement, and it is the answer for most remotes, including every remote
-// remoteOfAnotherKind already refuses and every remote that names no
-// repository path at all.
+// remoteOfAnotherRepo names what a remote on the derived kind's own host
+// points at, when that is not the run's repository: the canonical repository
+// the path names, or the path itself when it is not a canonical repository
+// name. "" is no disagreement, and it is the answer for most remotes,
+// including every remote remoteOfAnotherKind already refuses and every remote
+// that names no repository path at all.
 //
 // The kind alone is not enough (a review finding): a provider's host carries
 // every repository of that provider, so "https://github.com/evil/other.git" is
@@ -196,6 +197,15 @@ func remoteOfAnotherKind(derived, remote string) string {
 // would otherwise hand the run another repository while the run keeps the slug
 // of its own — and the slug is what keys its locks, its cache and its budget
 // session.
+//
+// A path on that host that CanonicalRepo refuses is a refusal too, and that is
+// deliberate (a review finding): "acme/app/../other" and "acme//other" are not
+// repository names, but what the host resolves them to is, and it is another
+// one — the run would clone, cache, lock and account under its own slug while
+// doing that repository's work, which is exactly what this function exists to
+// stop. A path this Fugaro cannot read is a path whose repository the run
+// cannot know, so it is refused rather than admitted ("fail closed"); the
+// returned value is then the raw path, which is what the refusal quotes.
 func remoteOfAnotherRepo(derived, repo, remote string) string {
 	if derived == "" || gitprov.KindForURL(remote) != derived {
 		return ""
@@ -209,11 +219,10 @@ func remoteOfAnotherRepo(derived, repo, remote string) string {
 		return "" // no canonical form to compare against; the slug check refuses it
 	}
 	got, err := task.CanonicalRepo(path)
-	if err != nil || got == want {
-		// Not a repository path at all ("/tree/main" of a web URL, say):
-		// whatever it is, it is not one the run's slug could name, and the
-		// kind's own host is where the clone would go, so the run is admitted
-		// as it always was.
+	if err != nil {
+		return path
+	}
+	if got == want {
 		return ""
 	}
 	return got
@@ -367,9 +376,11 @@ func (r *run) admissionCheck(ctx context.Context) error {
 			// this repository, not only this provider" — and the run refuses it
 			// here for the same reason: it clones, caches, locks and accounts under
 			// its slug, and another repository's URL under that slug is another
-			// repository's work.
-			return fmt.Errorf("the run would clone from %s, which is the repository %s on %s's host, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and it must be this repository, not only this provider, so the run stops before any git credential is requested",
-				remoteDisplay(remote), other, kind, slug, repo, kind, RemoteEnv)
+			// repository's work. other is a canonical repository name, or the path
+			// itself when the path is one CanonicalRepo refuses — the sentence
+			// names what the remote points at either way.
+			return fmt.Errorf("the run would clone from %s, which names %s on %s's host and is not this run's repository %s, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and it must be this repository, not only this provider, so the run stops before any git credential is requested",
+				remoteDisplay(remote), other, kind, repo, slug, repo, kind, RemoteEnv)
 		}
 	}
 	if want, err := task.Slug(kind, repo); err != nil || want != slug {

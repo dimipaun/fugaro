@@ -144,6 +144,35 @@ func TestMatchRepoWildcardSegmentsAreGreedy(t *testing.T) {
 	}
 }
 
+// TestMatchRepoAdmitsASubjectThatCarriesAStar: the second argument of MatchRepo
+// is read as a repository by the runner, but by the CLI's admittedBy it is a
+// pattern being removed ("github/acme/*" taken off the list), and a pattern can
+// hold a star of its own. A wildcard admits it — the entry github/acme/* admits
+// every repository in acme, so it admits the pattern for acme's repositories —
+// and the matcher has to say so: comparing the pattern's "*" to the subject's
+// "*" as equal bytes consumed the pattern's only star and recorded no backtrack
+// point, so github/acme/* did not admit github/acme/*, and `fugaro project
+// repos rm github/acme/*` read the removal as one that refuses runs when a
+// wildcard was still on the list.
+func TestMatchRepoAdmitsASubjectThatCarriesAStar(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, subject string
+		want             bool
+	}{
+		{"github/acme/*", "github/acme/*", true},
+		{"github/acme/*", "github/acme/*ba", true},
+		{"github/*/*", "github/*/*", true},
+		{"github/ac*/*", "github/acme/*", true},
+		{"github/acme/app", "github/acme/*", false},  // no wildcard in the entry
+		{"github/*/app", "github/acme/*", false},     // the middle segment must be the literal "*"
+		{"bitbucket/acme/*", "github/acme/*", false}, // another provider
+	} {
+		if got := MatchRepo(tc.pattern, tc.subject); got != tc.want {
+			t.Errorf("MatchRepo(%q, %q) = %v, want %v", tc.pattern, tc.subject, got, tc.want)
+		}
+	}
+}
+
 func TestValidPattern(t *testing.T) {
 	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*", "bitbucket/group/sub/app"} {
 		if err := ValidPattern(ok); err != nil {
@@ -231,6 +260,17 @@ func TestMatchSegmentIsLinear(t *testing.T) {
 		{"*", "", true},             // and against an empty name
 		{"*b", "ab", true},          // a star that must consume the prefix
 		{"*b", "ba", false},
+		// A "*" in the *subject* is an ordinary character to the pattern's
+		// star, but not to a literal comparison: the pattern's star is never
+		// literal, so it has to be recognized as a wildcard even when the
+		// byte it sits on is the subject's own star. Reading it literally
+		// instead consumed the pattern's only star and left no backtrack
+		// point, so "*" refused "*ba".
+		{"*", "*ba", true},
+		{"*", "*", true},
+		{"*a", "*ba", true},
+		{"*b", "*b", true},
+		{"a*b", "*ab", false}, // the subject's star is not the pattern's "a"
 	} {
 		if got := matchSeg(tc.pattern, tc.name); got != tc.want {
 			t.Errorf("matchSeg(%q, %q) = %v, want %v", tc.pattern, tc.name, got, tc.want)
