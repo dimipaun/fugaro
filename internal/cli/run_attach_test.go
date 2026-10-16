@@ -339,6 +339,36 @@ func TestAttachRefusesASetOverTheTotal(t *testing.T) {
 	wantRefused(t, f, "max_total_bytes", append(args, "Render the nightly bundle")...)
 }
 
+// TestAttachAllowsASetExactlyAtTheCaps is the other side of every cap: a
+// launch exactly AT max_files, at max_bytes and at max_total_bytes is
+// allowed. Without it, flipping one comparison to >= passes the whole suite
+// while refusing the owner's ordinary set — sixteen files by default, the
+// documented default max_files, is exactly the launch that would break.
+//
+// Mutation (change any of attachPrepared's three `>` comparisons to `>=`):
+// this test fails at that boundary — the launch is refused, or the second
+// file is missing from the bucket.
+func TestAttachAllowsASetExactlyAtTheCaps(t *testing.T) {
+	f := artifactAttachFixture(t)
+	attachCheckout(t, "{ max_files: 2, max_bytes: 6, max_total_bytes: 12 }")
+	id := "20261015-100000-abcd"
+	one := attachShot(t, "one.png", "aaaaaa")
+	two := attachShot(t, "two.png", "bbbbbb")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--workflow", "web", "--recipe", "sizzle", "--run-id", id,
+		"--attach", one, "--attach", two, "Render the nightly bundle"); err != nil {
+		t.Fatalf("a set exactly at all three caps was refused: %v", err)
+	}
+	spec := readSpec(t, f, id)
+	if len(spec.Inputs) != 2 {
+		t.Fatalf("task inputs = %+v, want both files recorded", spec.Inputs)
+	}
+	for name, body := range map[string]string{"one.png": "aaaaaa", "two.png": "bbbbbb"} {
+		if got := string(object(t, f, inputKey(id, name))); got != body {
+			t.Fatalf("input %s = %q, want %q", name, got, body)
+		}
+	}
+}
+
 // TestAttachRefusesDuplicateBaseNames: two attachments with one base name
 // would be one object and one entry, so the second is refused rather than
 // overwriting the first.

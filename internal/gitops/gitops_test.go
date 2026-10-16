@@ -161,6 +161,91 @@ func TestWorktreeAddsDetachedCopy(t *testing.T) {
 	}
 }
 
+// TestGitDirAsksGitForTheGitDirectory: GitDir exists so a caller that
+// writes git's own state -- an artifact run appends inputs/ to the exclude
+// file (design artifact-runs.md §4 step 5) -- can find the directory without
+// assuming it is <Dir>/.git, and a linked worktree is precisely where that
+// assumption breaks: there .git is a regular FILE naming a git directory
+// somewhere else entirely. The worktree half is the one a .git-join cannot
+// pass; the main-checkout half pins that GitDir is at least the same
+// directory, so a change that answered for worktrees and not the ordinary
+// case does not slip through on the interesting half alone.
+//
+// Note for the caller, not for this test: what git READS for the exclude is
+// $(git rev-parse --git-common-dir)/info/exclude, and in a worktree that is
+// the main repository's .git, not the directory GitDir answers with (checked
+// by hand: a line written to a worktree's own info/exclude leaves inputs/
+// untracked, the same line in the common dir's does not; git does not even
+// create info/ under the per-worktree directory). That is harmless here
+// because only review mode ever makes a worktree (internal/runner/
+// reviewmode.go) and an artifact run never runs in one, so the exclude
+// GitDir names is the one git consults -- see excludeInputsFromGit.
+//
+// Mutation (replace GitDir's body with filepath.Join(r.Dir, ".git")): the
+// worktree half fails -- it gets the .git file, which is not a directory.
+func TestGitDirAsksGitForTheGitDirectory(t *testing.T) {
+	repo, _ := setup(t)
+	got, err := repo.GitDir(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := realPath(t, filepath.Join(repo.Dir, ".git"))
+	if realPath(t, got) != want {
+		t.Fatalf("GitDir = %s, want the checkout's git directory %s", got, want)
+	}
+	if st, err := os.Stat(got); err != nil || !st.IsDir() {
+		t.Fatalf("GitDir %s: %v (dir=%v), want a directory", got, err, err == nil && st.IsDir())
+	}
+
+	sha := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	dir := filepath.Join(t.TempDir(), "review", "9")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Worktree(ctx, sha, dir); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Lstat(filepath.Join(dir, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Mode().IsRegular() {
+		t.Fatalf("a worktree's .git is %s, want a regular file naming the git directory", st.Mode())
+	}
+	wt, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotWT, err := wt.GitDir(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotWT == filepath.Join(dir, ".git") || gotWT == realPath(t, filepath.Join(dir, ".git")) {
+		t.Fatalf("GitDir = %s, want the git directory the .git file names, not .git itself", gotWT)
+	}
+	if gotWT == realPath(t, filepath.Join(repo.Dir, ".git")) {
+		t.Fatalf("GitDir = %s, want the worktree's own git directory, not the main repository's", gotWT)
+	}
+	if st, err := os.Stat(gotWT); err != nil || !st.IsDir() {
+		t.Fatalf("GitDir %s: %v, want a directory", gotWT, err)
+	}
+	if _, err := os.Stat(filepath.Join(gotWT, "HEAD")); err != nil {
+		t.Fatalf("GitDir %s holds no HEAD: %v", gotWT, err)
+	}
+}
+
+// realPath resolves symlinks, so a comparison of two names for one directory
+// does not fail on the temporary directories a test runs under (on macOS
+// /var is a symlink to /private/var).
+func realPath(t *testing.T, path string) string {
+	t.Helper()
+	out, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // TestWorktreeRefusesAnythingButAFullHash: the same rev-validation
 // TestCheckoutDetachedRefusesAnythingButAFullHash proves for the
 // single-pull-request case, for pick's per-pull-request worktree instead.

@@ -415,3 +415,54 @@ func TestInputsUnderAnImplementRecipeFailTheRun(t *testing.T) {
 		t.Fatal("an implement run downloaded the attached files")
 	}
 }
+
+// TestInputsExactlyAtTheCapsPass is the allowed side of the runner's three
+// caps: a spec exactly AT max_files, at max_bytes and at max_total_bytes
+// downloads and renders. It is the boundary the refusals beside it do not
+// reach — flipping any of checkInputCaps' three `>` comparisons to `>=` leaves
+// every refusal test in this package passing while a run at the cap, which is
+// the documented default of sixteen files, fails.
+//
+// Mutation (change any of checkInputCaps' three `>` comparisons to `>=`):
+// this test fails — the run is refused in bootstrap instead of rendering.
+func TestInputsExactlyAtTheCapsPass(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	one, oneBody := attachedInput("one.png", "aaaaaa")
+	two, twoBody := attachedInput("two.png", "bbbbbb")
+	spec.Inputs = []task.InputFile{one, two}
+	h := newHarnessFiles(t, inputsCfg(t, "{ max_files: 2, max_bytes: 6, max_total_bytes: 12 }"), spec, renderScript(sizzleScript))
+	seedInputs(t, h, runInputKey(h, "one.png"), oneBody)
+	seedInputs(t, h, runInputKey(h, "two.png"), twoBody)
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatalf("a set exactly at all three caps was refused: %v", err)
+	}
+	if rec.Outcome != runstore.OutcomeArtifacts || len(rec.Inputs) != 2 {
+		t.Fatalf("rec = %+v, want the two inputs downloaded and the render run", rec)
+	}
+	for name, want := range map[string]string{"one.png": "aaaaaa", "two.png": "bbbbbb"} {
+		data, err := os.ReadFile(filepath.Join(h.deps.WorkDir, runstore.InputsDir, name))
+		if err != nil || string(data) != want {
+			t.Fatalf("input %s = %q, %v", name, data, err)
+		}
+	}
+}
+
+// TestInputsNamedTwiceAreRefused is the runner's own duplicate-name arm, the
+// one a task.json the launcher did not write reaches: task.Validate is
+// deliberately structural and lets two identical names through (the name's
+// shape is checked where it becomes a path), and one name is one file under
+// inputs/ — the second entry would silently overwrite the first and be
+// recorded as though both came down.
+//
+// Mutation (drop the seen map from downloadInputs): the second entry
+// overwrites the first, the record claims two inputs where one file exists,
+// and this test fails on the missing refusal.
+func TestInputsNamedTwiceAreRefused(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	shot, body := attachedInput("shot.png", "png-bytes")
+	spec.Inputs = []task.InputFile{shot, shot}
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	seedInputs(t, h, runInputKey(h, "shot.png"), body)
+	wantBootstrapError(t, h, nil, "is named twice", "shot.png")
+}

@@ -98,12 +98,19 @@ func Open(dir string, env []string) (*Repo, error) {
 	return &Repo{Dir: dir, Env: env}, nil
 }
 
-// GitDir returns the checkout's own git directory, absolute: the directory
-// git keeps its refs, objects and per-repository state in. It is not always
-// <Dir>/.git — in a worktree .git is a file naming that directory — which is
-// why a caller that writes inside it (an artifact run excludes inputs/ in
-// <GitDir>/info/exclude, design artifact-runs.md §4 step 5) asks git rather
-// than joining a path.
+// GitDir returns the git directory git names for this checkout, absolute:
+// where the per-checkout state a caller writes to belongs. It is not always
+// <Dir>/.git — in a linked worktree .git is a FILE naming a directory
+// elsewhere (the main repository's .git/worktrees/<name>) — so a caller that
+// writes inside it asks git rather than joining a path.
+//
+// One caveat, for the artifact runner's exclude write (inputs/ in
+// <GitDir>/info/exclude, design artifact-runs.md §4 step 5): git reads that
+// file from the COMMON directory (`git rev-parse --git-common-dir`), which
+// in a worktree is not the directory returned here. The runner is unaffected
+// because only review mode makes a worktree (runner/reviewmode.go) and an
+// artifact run never runs in one; a future caller writing an exclude from
+// inside a worktree needs the common dir instead.
 func (r *Repo) GitDir(ctx context.Context) (string, error) {
 	return r.git(ctx, "rev-parse", "--absolute-git-dir")
 }

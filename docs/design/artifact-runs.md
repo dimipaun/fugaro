@@ -649,7 +649,14 @@ write:
    **and** no Anthropic path.
 
 3. **Upload each file to `runs/<slug>/<run>/inputs/<name>`**, hashing it as it
-   goes, recording `{name, bytes, sha256, content_type}` in the task spec.
+   goes, recording `{name, bytes, sha256}` in the task spec — the plan's
+   Interfaces block is authoritative for that record (Task 6), and the content
+   type is a property of the **object**, taken from the file's extension with
+   an `application/octet-stream` fallback when `blobx.PutFile` writes it: it is
+   a recorded hint no reader trusts (§8.1), not a spec field, and
+   `schemas/task.schema.json` closes the item (`TestTaskSchemaInputs` refuses a
+   `content_type` key). This line listed a fourth field while the slice was
+   built; the code is the authority.
    The launcher's own credentials suffice: a launcher holds `objectUser`
    under `runs/` (`docs/design/bucket-iam.md:126-128`) and an operator holds
    `objectAdmin` (`:88`) — **no new grant is needed to attach a file.**
