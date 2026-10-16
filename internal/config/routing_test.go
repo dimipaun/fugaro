@@ -258,8 +258,19 @@ func TestRoutingRefusesAModelTwoRoutesClaim(t *testing.T) {
 // green for a route ID built from the literal elsewhere, and for the same code
 // reached through an aliased import (the review finding on this change).
 //
+// The literal it looks for is the prefix at the *start* of a string, not the
+// exact four bytes, and the calls it reads are the whole formatting family
+// (Sprintf, Errorf, Sprint, Sprintln, Appendf; strings' Join, Repeat, Replace,
+// ReplaceAll) rather than Sprintf and Join alone. The fourth review finding on
+// this change is why: `fmt.Errorf("anthropic/%s", id)` — a format string that
+// *begins* with the prefix, assembled in an allowed file — was reported by
+// neither the writer case nor the builder case, and the test stayed green while
+// the route ID was built a second way.
+//
 // Hand mutations this fails on: writing `"anthropic/" + id` anywhere (a
 // concatenation of the prefix is a derivation, in an allowed file included);
+// writing `fmt.Errorf("anthropic/%s", id)` in an allowed file (the format
+// string is a literal that begins with the prefix, and Errorf assembles it);
 // and adding a fifth file that writes the prefix for a new reason.
 func TestRoutingHasOneResolver(t *testing.T) {
 	const prefix = "anthropic/"
@@ -274,25 +285,25 @@ func TestRoutingHasOneResolver(t *testing.T) {
 		ast.Inspect(f.file, func(n ast.Node) bool {
 			switch v := n.(type) {
 			case *ast.BasicLit:
-				if literal(v) == prefix {
+				if strings.HasPrefix(literal(v), prefix) {
 					if _, ok := may[f.path]; !ok {
 						writers = append(writers, f.path)
 					}
 				}
 			case *ast.BinaryExpr:
-				if v.Op == token.ADD && (containsLiteral(v, prefix)) {
+				if v.Op == token.ADD && startsWithPrefix(v, prefix) {
 					builders = append(builders, f.path+" concatenates it")
 				}
 			case *ast.AssignStmt:
 				if v.Tok == token.ADD_ASSIGN {
 					for _, r := range v.Rhs {
-						if containsLiteral(r, prefix) {
+						if startsWithPrefix(r, prefix) {
 							builders = append(builders, f.path+" appends it")
 						}
 					}
 				}
 			case *ast.CallExpr:
-				if buildsAString(f, v) && containsLiteral(v, prefix) {
+				if buildsAString(f, v) && startsWithPrefix(v, prefix) {
 					builders = append(builders, f.path+" formats it")
 				}
 			}
@@ -333,9 +344,30 @@ func containsLiteral(n ast.Node, s string) bool {
 	return found
 }
 
+// startsWithPrefix reports whether any basic string literal inside n begins
+// with s. It is containsLiteral's wider sibling, and the width is the point: a
+// route ID is assembled from a format string that begins with the prefix
+// ("anthropic/%s") as surely as from the bare four bytes, so a scan that only
+// recognised the exact literal read the second spelling as no spelling at all
+// (the fourth review finding on this change).
+func startsWithPrefix(n ast.Node, s string) bool {
+	found := false
+	ast.Inspect(n, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && strings.HasPrefix(literal(lit), s) {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
 // buildsAString reports whether call is a call that assembles a string from its
-// arguments — fmt.Sprintf and strings.Join — as opposed to a call that judges
-// one (HasPrefix, CutPrefix), which is not a derivation.
+// arguments — the fmt formatting family and strings' joining and replacing — as
+// opposed to a call that judges one (HasPrefix, CutPrefix, TrimPrefix), which is
+// not a derivation. Which family member is asked is not the question the test is
+// asking: a route ID built with Errorf is built, and the review finding on this
+// change is a format string it was assembled with that went unseen because this
+// list held Sprintf and Join alone.
 func buildsAString(f goSource, call *ast.CallExpr) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -347,9 +379,15 @@ func buildsAString(f goSource, call *ast.CallExpr) bool {
 	}
 	switch f.imports[id.Name] {
 	case "fmt":
-		return sel.Sel.Name == "Sprintf"
+		switch sel.Sel.Name {
+		case "Sprintf", "Errorf", "Sprint", "Sprintln", "Appendf", "Fprintf":
+			return true
+		}
 	case "strings":
-		return sel.Sel.Name == "Join"
+		switch sel.Sel.Name {
+		case "Join", "Repeat", "Replace", "ReplaceAll":
+			return true
+		}
 	}
 	return false
 }
