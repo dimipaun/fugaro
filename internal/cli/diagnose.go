@@ -48,6 +48,12 @@ type Diagnosis struct {
 	AgentMessage string           `json:"agent_message,omitempty"`
 	LogTail      []string         `json:"log_tail,omitempty"`
 	ReportPath   string           `json:"report_path"`
+	// ArtifactPaths are where the run's artifacts live in the runs bucket:
+	// the run prefix followed by artifacts/<name>, the same shape ReportPath
+	// has, so `gcloud storage cp` can take one directly. The record's own
+	// list, never a bucket listing (design artifact-runs.md §9), and every
+	// path is redacted and escaped before it is printed.
+	ArtifactPaths []string `json:"artifact_paths,omitempty"`
 	// DraftNote is a line about the run's draft PR when it needs one: left
 	// stale by a run that died, or an ordinary PR marked [DRAFT] because
 	// the host has no drafts. Computed against the time of the call.
@@ -177,6 +183,13 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.CommentsPath = s.Prefix() + "comments.json"
 	}
 	if rec != nil {
+		// An artifact run has no pull request, so its deliverable is named
+		// here: one bucket path per artifact the record lists, in the
+		// record's own order. A record that predates the field lists none,
+		// and a run that opens a pull request never has any.
+		for _, a := range rec.Artifacts {
+			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
+		}
 		d.Verify = rec.Verify
 		for i := range d.Verify {
 			v := &d.Verify[i]
@@ -516,6 +529,12 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "Logs:     %s\n", oneLine(r.LogURL))
 	}
 	fmt.Fprintf(&b, "Report:   %s\n", oneLine(d.ReportPath))
+	if len(d.ArtifactPaths) > 0 {
+		fmt.Fprintf(&b, "\nArtifacts\n")
+		for _, p := range d.ArtifactPaths {
+			fmt.Fprintf(&b, "  %s\n", oneLine(p))
+		}
+	}
 	if t, ok := lastTest(d.Verify); ok {
 		fmt.Fprintf(&b, "\nTests\n  %s\n", oneLine(t.Summary()))
 		for _, n := range d.Failed {

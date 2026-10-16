@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -222,6 +223,20 @@ type Record struct {
 	// run refused before its render step (a blank command, a bad recipe)
 	// records none.
 	Render *RenderRecord `json:"render,omitempty"`
+	// Inputs are the files the launcher attached to the run (fugaro run
+	// --attach, design artifact-runs.md §4 step 6): the task spec's own
+	// list, echoed onto the record once the runner downloaded and verified
+	// every one, so a reader can see exactly what the run was given — name,
+	// size and sha256. Absent for a run launched without an attachment, and
+	// in records from before this field existed.
+	Inputs []InputFile `json:"inputs,omitempty"`
+	// Artifacts is the files a mode: artifact run uploaded, in name order
+	// (design artifact-runs.md §3, §8): one entry per object under the
+	// run's artifacts/ prefix, each the account a reader verifies what it
+	// downloads against. Absent — never an empty array — for every run
+	// that delivered none, so a record written before this field existed
+	// is byte-for-byte the record an old reader saw.
+	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
 }
 
 // ReviewedPR is one pull request a mode: review run reviewed (design
@@ -431,6 +446,90 @@ func (s *Store) PutFile(ctx context.Context, name string, data []byte, contentTy
 	key := s.prefix + strings.TrimPrefix(name, "/")
 	if err := blobx.Wrap(s.bucket).Put(ctx, key, data, contentType); err != nil {
 		return fmt.Errorf("writing %s: %w", key, err)
+	}
+	return nil
+}
+
+// PutFileFrom writes the file at path under the run's prefix, streaming it
+// (blobx.PutFile), and returns the size and the lower-case hex sha256 of the
+// bytes that reached the bucket.
+//
+// want is the sha256 the caller already took of the same bytes, or "" for no
+// check. It is an argument and not something the caller checks afterwards
+// because of what a mismatch means here: the file was hashed in the staging
+// directory and uploaded from it, and on Cloud Run the agent that produced it
+// runs as the same user in the same container, so bytes that changed in
+// between are bytes no record of this run may attest to. A mismatch deletes
+// the object this call just wrote — it is this call's own key, written a
+// moment ago — and fails, so a run that fails here leaves nothing in the
+// bucket for its record to be wrong about.
+//
+// The write is create-only (blobx.PutFile's ifNotExist): a run's artifacts
+// are written once, and a second execution of the same run must not overwrite
+// what the first one recorded.
+func (s *Store) PutFileFrom(ctx context.Context, name, path, contentType, want string) (int64, string, error) {
+	key := s.prefix + strings.TrimPrefix(name, "/")
+	// The file was staged by this run a moment ago, so a symlink or a device
+	// at path is not the staged artifact: it is something that got between the
+	// two steps. This names that in the record's own words; what makes the
+	// upload itself safe is blobx.PutFile's own guards — the open
+	// (O_NOFOLLOW|O_NONBLOCK), the fstat on the fd it opened that refuses
+	// anything which is not a regular file before a byte is read, and the copy
+	// bounded by that size and by the context — which is why this check may be
+	// a check and not the guard.
+	if st, err := os.Lstat(path); err != nil {
+		return 0, "", fmt.Errorf("reading the staged artifact %s: %w", path, err)
+	} else if !st.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("the staged artifact %s is not a regular file (%s): %w (it was hashed as a regular file of %d bytes)",
+			path, st.Mode(), blobx.ErrChanged, st.Size())
+	}
+	b := &blobx.Bucket{Bucket: s.bucket}
+	size, sum, err := b.PutFile(ctx, key, path, contentType, true)
+	if err != nil {
+		return 0, "", fmt.Errorf("writing %s: %w", key, err)
+	}
+	if want != "" && sum != want {
+		// The delete is what keeps the bucket free of an object no record
+		// accounts for, and its failure is reported with the refusal rather
+		// than dropped: the run's reason is where a reader learns what is in
+		// the bucket. deleteDetached is what makes it happen at all — the
+		// caller's context is usually already cancelled or nearly out of time
+		// when an upload goes wrong, which is exactly when the cleanup has to
+		// work.
+		err := fmt.Errorf("%s: %w (this run staged %s and uploaded %s): the staged file changed before the upload", key, blobx.ErrMismatch, want, sum)
+		if derr := deleteDetached(ctx, s.bucket, key); derr != nil {
+			return 0, "", errors.Join(err, fmt.Errorf("removing the object this attempt wrote: %w", derr))
+		}
+		return 0, "", err
+	}
+	return size, sum, nil
+}
+
+// DeleteCleanupTimeout is the budget a cleanup delete gets when it runs
+// detached from its caller's context (deleteDetached): long enough for one
+// object, short enough that a run being finalised is not held past its
+// deadline by a bucket that is not answering.
+const DeleteCleanupTimeout = 30 * time.Second
+
+// deleteDetached removes key on a context of its own, so a delete that is
+// cleanup after a failure still happens when the caller's context has already
+// been cancelled — the reason the failure being cleaned up after happened.
+func deleteDetached(ctx context.Context, b *blob.Bucket, key string) error {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DeleteCleanupTimeout)
+	defer cancel()
+	return b.Delete(dctx, key)
+}
+
+// DeleteFile removes one of the run's own objects. It is what a failed upload
+// step cleans up after itself with: the writes are create-only, so an object
+// left behind by an attempt whose record says it uploaded nothing is both an
+// artifact no record accounts for and a key the next execution of the same run
+// would fail on. The delete is detached from ctx for the same reason
+// PutFileFrom's is.
+func (s *Store) DeleteFile(ctx context.Context, name string) error {
+	key := s.prefix + strings.TrimPrefix(name, "/")
+	if err := deleteDetached(ctx, s.bucket, key); err != nil {
+		return fmt.Errorf("deleting %s: %w", key, err)
 	}
 	return nil
 }
