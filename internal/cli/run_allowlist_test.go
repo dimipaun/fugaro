@@ -179,10 +179,15 @@ func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 // refuses is this gate.
 //
 // The remedy is the upgrading side's, and it is the only one this direction may
-// print: `fugaro init --firebase` is the wrong move here, because this release's
-// rules template would be redeployed over rules a newer Fugaro wrote (the same
-// reasoning requirePolicyRules uses for the marker, project_cmd.go). The
-// assertion below is what keeps the directions apart.
+// print: `fugaro init --firebase` is the wrong move here, and it is the deploy's
+// own plan that says so — a deployed rules marker above this binary's
+// RulesVersion stops the plan, "the rules this database runs under came from a
+// newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older
+// rules over them. Upgrade Fugaro first" (internal/infra's DB.Plan; doctor's
+// policy-rules-skew reports the same state, and requirePolicyRules reads a
+// marker at or above RulesVersion as one this Fugaro reads a policy under
+// rather than refusing it). The assertion below is what keeps the directions
+// apart.
 func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	publishPolicy(t, f, `{"version":99,"allow_repos":["*"]}`)
@@ -200,7 +205,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 	}
 	for _, bad := range []string{"re-run init", "init --firebase"} {
 		if strings.Contains(err.Error(), bad) {
-			t.Errorf("the refusal tells an older binary to %q: this release's rules template would be redeployed over newer ones; it is the operator's upgrade that is missing: %v", bad, err)
+			t.Errorf("the refusal tells an older binary to %q: the deploy's plan refuses to put this release's rules over a newer Fugaro's, so it is the operator's upgrade that is missing: %v", bad, err)
 		}
 	}
 	if n := len(f.run.Executions()); n != 0 {

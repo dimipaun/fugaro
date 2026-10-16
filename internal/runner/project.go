@@ -150,12 +150,26 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // CheckRepoURL: "the build would send its credential there"), so an unknown
 // host at run time is a job environment edited after launch, which is exactly
 // what this check is for (the review finding on this change).
+//
+// A remote that names a host the URL parser cannot read is one of the remotes
+// that names a host, not one that names none: git accepts spellings url.Parse
+// refuses and connects to the host in the authority all the same
+// (https://github.com\@evil.example/acme/app.git is evil.example's, and so is
+// https://evil.example/acme/app%ZZ.git), so gitprov.SplitRemoteRaw reads that
+// shape where SplitRemote answers "no host at all" — and the kind it derives is
+// "" for it (gitprov.KindForHost), which is the refusal above. Skipping it
+// instead is what the first shape of this check did, and it is a fail-open: the
+// remote git was handed names a host this binding never looked at, and the
+// run's git credential is scoped to that host (the review finding on this
+// change).
 func remoteHost(remote string) (host, kind string, named bool) {
-	h, _, ok := gitprov.SplitRemote(remote)
-	if !ok {
-		return "", "", false
+	if h, _, ok := gitprov.SplitRemote(remote); ok {
+		return h, gitprov.KindForURL(remote), true
 	}
-	return h, gitprov.KindForURL(remote), true
+	if h, _, ok := gitprov.SplitRemoteRaw(remote); ok {
+		return h, gitprov.KindForHost(h), true
+	}
+	return "", "", false
 }
 
 // remoteRepoPath is the path a git remote URL names — the part where the
@@ -187,10 +201,20 @@ func remoteHost(remote string) (host, kind string, named bool) {
 // the wrong answer for a userinfo-less scp remote — "github.com:attacker/malware.git"
 // came back as naming nothing, from both halves, while git ssh'd to github.com
 // and asked for attacker/malware.git (the review finding on this change).
+//
+// The URL shape SplitRemote cannot read is read here rather than skipped
+// (gitprov.SplitRemoteRaw): git reads its path the same way, so a path
+// canonicalization refuses on it — https://github.com/acme/app%ZZ.git names no
+// repository this check can compare — is a refusal, which is what the caller
+// does with the error. Skipping the whole remote because its URL parser
+// refused it left both halves of this binding unasked (the review finding on
+// this change).
 func remoteRepoPath(remote string) (string, bool) {
 	_, p, ok := gitprov.SplitRemote(remote)
 	if !ok {
-		return "", false
+		if _, p, ok = gitprov.SplitRemoteRaw(remote); !ok {
+			return "", false
+		}
 	}
 	// Exactly one leading and one trailing "/" is the URL's own punctuation,
 	// not a segment: "https://github.com/acme/app.git/" is the same remote as
@@ -264,6 +288,15 @@ func remoteDisplay(remote string) string {
 	// is what the refusal names. A remote with neither shape is quoted as it
 	// was written, minus any userinfo, query and fragment.
 	if host, _, ok := gitprov.SplitRemote(remote); ok {
+		return host
+	}
+	if host, _, ok := gitprov.SplitRemoteRaw(remote); ok {
+		// A URL authority url.Parse refuses: the host alone, as the scp-like
+		// branch quotes it, because that is the only part of it that is not a
+		// credential's to hold — everything before the authority's last "@" is
+		// userinfo as git and curl read it, and this branch is where the
+		// refusal that quotes such a remote gets a form that carries none of it
+		// (the review finding on this change).
 		return host
 	}
 	if err == nil {

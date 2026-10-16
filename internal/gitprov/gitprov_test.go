@@ -92,6 +92,79 @@ func TestSplitRemote(t *testing.T) {
 	}
 }
 
+// SplitRemote's "no host" and "a host this parser cannot read" are two
+// answers, and git accepts spellings url.Parse refuses: it connects to the host
+// in the authority all the same (libcurl reads a backslash before the "@" as
+// the end of the userinfo, and a percent escape it will not decode fails no
+// clone). SplitRemoteRaw is the reader of that shape, and the host it returns
+// is the one git would connect to — the text after the authority's last "@" —
+// so a caller that bounds what a remote may be refuses it instead of reading
+// "ok = false" as nothing to check.
+func TestSplitRemoteRaw(t *testing.T) {
+	for _, tc := range []struct {
+		remote, host, path string
+		ok                 bool
+	}{
+		// A backslash before the "@": url.Parse refuses the userinfo, and
+		// libcurl reads the host that follows the "@".
+		{"https://github.com\\@evil.example/acme/web.git", "evil.example", "/acme/web.git", true},
+		// An escape url.Parse will not decode: the host is github.com's and the
+		// path is what it could not read, so the path check is the one that
+		// refuses this remote.
+		{"https://github.com/acme/web%ZZ.git", "github.com", "/acme/web%ZZ.git", true},
+		{"https://evil.example/acme/web%ZZ.git", "evil.example", "/acme/web%ZZ.git", true},
+		// A credential's userinfo goes with the host: what comes back is the
+		// host alone, so a refusal quoting it quotes no token.
+		{"https://x:tok@evil.example\\acme/web.git", "evil.example\\acme", "/web.git", true},
+		// A "?" opens the path's end: what follows it is not the path, and the
+		// parse that failed is the reason this reader exists at all.
+		{"https://evil.example/acme/web%ZZ.git?x=%ZZ", "evil.example", "/acme/web%ZZ.git", true},
+		// Everything SplitRemote already answers for, and an authority with
+		// nothing in it: this reader's question is the failed parse alone.
+		{"https://github.com/acme/web.git", "", "", false},
+		{"ssh://git@github.com/acme/web.git", "", "", false},
+		{"github.com:acme/web.git", "", "", false},
+		{"git@github.com:acme/web.git", "", "", false},
+		{"file:/tmp/web.git", "", "", false},
+		{"/tmp/web.git", "", "", false},
+		{"https://?x", "", "", false}, // no host in the authority at all
+		{"https://evil.example#x=%ZZ", "evil.example", "", true},
+		{"", "", "", false},
+	} {
+		host, path, ok := SplitRemoteRaw(tc.remote)
+		if host != tc.host || path != tc.path || ok != tc.ok {
+			t.Errorf("SplitRemoteRaw(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.remote, host, path, ok, tc.host, tc.path, tc.ok)
+		}
+	}
+}
+
+// KindForHost is the half of KindForURL that reads a host on its own, for the
+// caller holding one SplitRemoteRaw read: the two must agree about which hosts
+// are a provider's, and anything else — another host, a host with a port, a
+// spelling that is not a host at all — is "" rather than a guess.
+func TestKindForHost(t *testing.T) {
+	for _, tc := range []struct{ host, want string }{
+		{"github.com", KindGitHub},
+		{"GitHub.com", KindGitHub},
+		{"bitbucket.org", KindBitbucket},
+		{"evil.example", ""},
+		{"github.com.evil.example", ""},
+		{"github.com:443", ""},
+		{"github.com\\acme", ""},
+		{"", ""},
+	} {
+		if got := KindForHost(tc.host); got != tc.want {
+			t.Errorf("KindForHost(%q) = %q, want %q", tc.host, got, tc.want)
+		}
+	}
+	for _, remote := range []string{"https://github.com/acme/web.git", "git@bitbucket.org:acme/web.git", "/tmp/web.git"} {
+		host, _, _ := SplitRemote(remote)
+		if got, want := KindForURL(remote), KindForHost(host); got != want {
+			t.Errorf("KindForURL(%q) = %q but KindForHost(%q) = %q: the two readers of a host must agree", remote, got, host, want)
+		}
+	}
+}
+
 func TestSplitRepo(t *testing.T) {
 	if o, n, ok := SplitRepo("acme/web"); !ok || o != "acme" || n != "web" {
 		t.Fatalf("SplitRepo = %q %q %v", o, n, ok)

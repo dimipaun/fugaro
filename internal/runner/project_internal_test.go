@@ -70,6 +70,17 @@ func TestRemoteHost(t *testing.T) {
 		{"", "", "", false},
 		{"https://github.com/", "github.com", "github", true},
 		{"file:///tmp/web.git", "", "", false},
+		// A URL git accepts and url.Parse refuses names a host too, so it is
+		// the second answer, not the third: gitprov.SplitRemoteRaw reads the
+		// host off the authority as written (the text after its last "@", where
+		// libcurl ends the userinfo), and no kind owns either of these hosts —
+		// the refusal. Skipping them is what the first shape of this check did,
+		// and it is fail-open: the host git connects to is the one the run
+		// scopes this repository's git credential to (the review finding on
+		// this change).
+		{"https://github.com\\@evil.example/acme/app.git", "evil.example", "", true},
+		{"https://evil.example/acme/app%ZZ.git", "evil.example", "", true},
+		{"https://evil.example/acme/app.git#x=%ZZ", "evil.example", "", true},
 	} {
 		host, kind, named := remoteHost(tc.remote)
 		if host != tc.host || kind != tc.kind || named != tc.named {
@@ -160,6 +171,13 @@ func TestRepoNamedByRemoteRefusesAPathItCannotRead(t *testing.T) {
 		"https://github.com/acme/app.git;x",
 		"https://github.com/acme/app%20x.git",
 		"https://github.com/acme/app.git%00",
+		// A URL url.Parse refuses and git does not: the host is this run's own,
+		// so the host half of the binding has nothing to refuse, and the path
+		// is read off the authority as written for exactly this check. An
+		// unreadable path is a refusal here too, never a remote that goes
+		// unasked (the review finding on this change).
+		"https://github.com/acme/app%ZZ.git",
+		"https://github.com\\@evil.example/acme/app%ZZ.git",
 	} {
 		got, named, err := repoNamedByRemote(remote)
 		if err == nil {
@@ -202,6 +220,14 @@ func TestRemoteRepoPath(t *testing.T) {
 		{"http://127.0.0.1:8080/", "", false},
 		{"/tmp/fixture.git", "", false},
 		{"", "", false},
+		// A URL url.Parse refuses is read, not skipped: git reads its path the
+		// same way, so handing it on is what lets the owner/name check refuse
+		// it (https://github.com/acme/app%ZZ.git names no repository this check
+		// can compare) instead of the whole remote going unasked (the review
+		// finding on this change).
+		{"https://github.com/acme/app%ZZ.git", "acme/app%ZZ.git", true},
+		{"https://evil.example/acme/app%ZZ.git", "acme/app%ZZ.git", true},
+		{"https://github.com\\@evil.example/acme/app.git", "acme/app.git", true},
 	} {
 		got, named := remoteRepoPath(tc.remote)
 		if got != tc.want || named != tc.named {
@@ -232,7 +258,18 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		{"https://bitbucket.org/acme/app.git?access_token=ATBBsecret", "https://bitbucket.org/acme/app.git"},
 		{"https://github.com/acme/app.git#glpat-secret", "https://github.com/acme/app.git"},
 		{"https://x:glpat-secret@github.com/acme/app.git?access_token=ATBBsecret#one", "https://github.com/acme/app.git"},
-		{"https://ho st/acme/app.git", "the remote"},
+		// A space in the host is a string url.Parse refuses and git never
+		// connects with: the authority is still read off it, so the display
+		// names it rather than falling back to "the remote" (and the admission
+		// refuses it as the unknown host it is).
+		{"https://ho st/acme/app.git", "ho st"},
+		// A URL url.Parse refuses is quoted as the host git would connect to,
+		// which is the text after the authority's last "@": the userinfo ahead
+		// of it is a token's place, and a display that quoted the string as
+		// written would put it in the refusal.
+		{"https://github.com\\@evil.example/acme/app.git", "evil.example"},
+		{"https://evil.example/acme/app%ZZ.git", "evil.example"},
+		{"https://x:glpat-secret@evil.example\\acme/app.git", "evil.example\\acme"},
 		// An escape url.Parse rejects does not make it fail: the query it
 		// cannot read is dropped like any other (u.Query() is what would
 		// report it, and addRemoteSecrets ignores that).
@@ -242,7 +279,7 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("remoteDisplay(%q) = %q, want %q", tc.in, got, tc.want)
 		}
-		for _, secret := range []string{"glpat-secret", "ATBBsecret"} {
+		for _, secret := range []string{"glpat-secret", "ATBBsecret", "tok", "x:glpat-secret"} {
 			if strings.Contains(got, secret) {
 				t.Errorf("remoteDisplay(%q) = %q quotes %q", tc.in, got, secret)
 			}

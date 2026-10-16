@@ -72,10 +72,16 @@ const (
 //     here can read it and the release that wrote the node is newer than the
 //     one calling this. `fugaro upgrade` is the whole remedy (for the image,
 //     "refresh the runner image" — it is not the CLI's binary), and neither of
-//     the other moves is one: `fugaro init --firebase` would redeploy this
-//     release's rules template over rules a newer Fugaro wrote (the reasoning
-//     requirePolicyRules and doctor's rules-newer-than-this-Fugaro warning both
-//     give), and there is nothing to delete either — `fugaro project policy
+//     the other moves is one: `fugaro init --firebase` deploys this release's
+//     rules and marker, and the deploy's own plan refuses to put them over a
+//     newer Fugaro's (internal/infra's DB.Plan: a marker above this binary's
+//     RulesVersion stops the plan there — "the rules this database runs under
+//     came from a newer Fugaro, and 'fugaro init --firebase' would deploy this
+//     binary's older rules over them. Upgrade Fugaro first" — which doctor's
+//     policy-rules-skew reports with the upgrade as its fix too, and which
+//     requirePolicyRules does *not* refuse: it reads a marker at or above
+//     RulesVersion as one this Fugaro reads a policy under), and there is
+//     nothing to delete either — `fugaro project policy
 //     publish` refuses a node written by a newer Fugaro and `--delete` goes
 //     through the same refusal (internal/cli's refuseNewerPolicy, which the
 //     publish path calls before the delete branch), which doctor reports as

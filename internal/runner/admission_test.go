@@ -369,6 +369,13 @@ func TestRunnerRefusesARemoteWhosePathIsNotAnOwnerName(t *testing.T) {
 		// because gitprov.KindForURL did (the review finding on this change).
 		{"an scp-like remote naming another repository", "github.com:attacker/malware.git"},
 		{"a colon-slash scp-like remote naming another repository", "github.com:/attacker/malware.git"},
+		// A path url.Parse will not decode, on this run's own host: the host
+		// half of the binding has nothing to refuse, so the path read off the
+		// authority as written is the whole check — and it is a refusal, where
+		// skipping the unreadable remote left it unasked (the review finding on
+		// this change).
+		{"a path url.Parse will not decode", "https://github.com/acme/app%ZZ.git"},
+		{"a backslash in the authority and an unreadable path", "https://github.com\\@evil.example/acme/app%ZZ.git"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := tc.remote
@@ -414,6 +421,16 @@ func TestRunnerRefusesARemoteOnAHostNoProviderOwns(t *testing.T) {
 		// The scp-like spelling of the same: git ssh's to that host, so the
 		// credential's scope is the same question.
 		{"an scp-like remote on an unknown host", "evil.example:acme/app.git", "evil.example", "evil.example"},
+		// Spellings git accepts and url.Parse refuses. git connects to the
+		// host in the authority all the same — libcurl reads a backslash before
+		// the "@" as the end of the userinfo, and an escape it will not decode
+		// fails no clone — so "this parser cannot read the remote" must not be
+		// the answer that skips the binding: it was, and both halves of the
+		// check went unasked while the run scoped this repository's git
+		// credential to the attacker's host (the review finding on this
+		// change).
+		{"a backslash before the authority's @", "https://github.com\\@evil.example/acme/app.git", "evil.example", "evil.example"},
+		{"an escape url.Parse will not decode", "https://evil.example/acme/app%ZZ.git", "evil.example", "evil.example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := tc.remote
