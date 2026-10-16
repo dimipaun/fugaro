@@ -10,7 +10,7 @@ This directory is the documentation of a **second artifact**: a public site for 
 |---|---|
 | [spec.md](spec.md) | **The owner's text, verbatim** — committed byte for byte and alone, before anything that answers it. It is the source document for the other three, and it is not edited when they disagree with it. |
 | [reconciliation.md](reconciliation.md) | What the spec asks for, checked against `origin/main` at `76f6c59`. Sixty-three numbered findings classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol; a concept-to-repo table; twenty decision rows **D90–D109**; the five things the reconciliation **refuses** to accept from the spec; and six **UNVERIFIED** items. |
-| [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: four parts, twenty-four tasks, ten PR groups, and a **Parallel execution** section of nine levels (L0–L8) with the critical path. Every task carries the files it touches, its tests, its command, its dependencies, its commit and its **red step**; every part carries its reviewer tier. |
+| [implementation-plan.md](implementation-plan.md) | The plan that executes the reconciliation: four parts, twenty-four tasks, ten PR groups, and a **Parallel execution** section of twelve levels (L0–L11) with the critical path, plus §7.1, which states once what can start under which of the owner's answers. Every task carries the files it touches, its tests, its command, its dependencies, its commit and its **red step**; every part carries its reviewer tier. |
 | this file | The index, and the status line above. |
 
 ## The short version
@@ -25,7 +25,7 @@ Three corrections the reconciliation makes, in one line each:
 
 ## What the owner has to answer
 
-Twenty rows, **D90–D109**, in the reconciliation's §4, each with this document's recommendation, the cost of the alternative, and an **empty Owner's answer column**. Seven are the owner's alone — **D90** where the site lives, **D91** hosting, **D92** domain and redirects, **D93** analytics, **D96** the aggregation's data policy, **D102** the tagline, **D104** the palette — and **D90 decides every path in the plan**, which is why the plan's §15 gate holds all of it.
+Twenty rows, **D90–D109**, in the reconciliation's §4, each with this document's recommendation, the cost of the alternative, and an **empty Owner's answer column**. Seven are the owner's alone — **D90** where the site lives, **D91** hosting, **D92** domain and redirects, **D93** analytics, **D96** the aggregation's data policy, **D102** the tagline, **D104** the palette — and **D90 decides every path in the plan** — the plan's §7.1 says what can start under which answer (the first wave needs D90 and nothing else; W0.3 needs only D96; Part 2 needs D91 and D92), and §15 is the gate that turns the owner's *"start as soon as we can"* into a go, one wave at a time.
 
 The plan takes **check 69 and up** (written as 69a–69c) for the site's live checks; the highest written section in [docs/gcp-live-checklist.md](../gcp-live-checklist.md) on `main` is 58, and 59–68 are reserved by the console, budget-token-channel, project-centric, console-v2, voice and managed-projects lines. **A reserved number is never reused or renumbered**; if 69 is taken before the plan's Part 2 lands, the owner reallocates and the plan follows.
 

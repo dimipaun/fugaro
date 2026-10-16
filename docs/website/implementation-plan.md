@@ -31,9 +31,7 @@ This is a plan for a second artifact that does not exist yet, in a repository wh
 | **69b** | **Nothing phones home.** Loading the live page with the network panel open shows **no request to an origin outside the allowed-host list** — no font, no script, no embed, no pixel — and, if D93 chose analytics, exactly the one endpoint the decision names and nothing else. | Owner | W2.2 |
 | **69c** | **The published ranges are real.** The caps-and-costs page's figures are re-derived from the aggregation command over the same window and match, the sample sizes are printed, and the "not a promise" line is present. | Owner | W2.3 |
 
-**The "67 onward" collision, and the reading this plan applies.** The sentence all three documents quote hands the register **"managed projects 67 onward"**, and the managed-projects plan reads that as an open-ended block (`docs/plans/2026-10-16-managed-projects.md` §2, step 5: *"a block is held for the work it was given"*). Read that way, 69 is inside another line of work's block and is not free — so this plan applies the **bounded** reading, records it here rather than letting the number speak for itself, and bounds its own claim: "onward" is spent on the numbers a line of work actually takes and writes (managed projects took 67 **and** 68), a clause that reached every number above 67 would leave no later line of work able to take one at all, and **if any document on `origin/main` writes 69, or the owner reads the clause as open-ended, then 69 is managed projects' and the owner allocates** — W2.2 stops rather than renumbering (U6), and §15 carries the question as a gate item.
-
-**How 69 was chosen, in the order the register reads.** (1) Read `origin/main`'s register and take its highest written section — 58. (2) Read `docs/plans/2026-10-15-desktop-console-v2.md`'s allocation sentence (*"this one 62 and 63, voice 64–66, managed projects 67 onward"*) and the sibling plans' own check sections, which account for 59 through 68. (3) Take the next free number, 69. **A reserved number is never reused or renumbered**, so if another line of work claims 69 before Part 2 lands, **this plan follows the allocation and does not renumber**: the check task (W2.2) re-reads the register first and stops if 69 is taken, and the owner reallocates (U6). As in every precedent, **this plan does not write the row or the section**: W2.2 owns both, so one writer owns the number and a rebase cannot produce two.
+**The "67 onward" collision, and the reading this plan applies.** The sentence all three documents quote hands the register **"managed projects 67 onward"**, and the managed-projects plan reads that as an open-ended block (`docs/plans/2026-10-16-managed-projects.md` §2, step 5: *"a block is held for the work it was given"*). Read that way, 69 is inside another line of work's block and is not free — so this plan applies the **bounded** reading and records it here rather than letting the number speak for itself: "onward" is spent on the numbers a line of work actually takes and writes (managed projects took 67 **and** 68), a clause that reached every number above 67 would leave no later line of work able to take one at all, and **if the owner reads the clause as open-ended, or any document on `origin/main` writes 69, then 69 is managed projects' and the owner allocates** — W2.2 re-reads the register *before* it writes anything and stops rather than renumbering (U6), and §15 carries the question as a gate item. **A reserved number is never reused or renumbered** either way, and as in every precedent **this plan does not write the row or the section**: W2.2 owns both, so one writer owns the number and a rebase cannot produce two.
 
 ## 3. Global Constraints
 
@@ -125,31 +123,48 @@ Each group is one pull request, each independently mergeable, each with its own 
 
 ## 7. Parallel execution
 
-**Edges, read off each task's `Depends on` line.** W0.1 → W0.2 → W1.1; W0.3 has no dependency at all and is on its own lane; W0.4, W0.5, W0.6 each depend only on W0.2; W1.1 → {W1.2, W1.3}; W1.3 → {W1.4, W1.5, W1.6, W1.7, W1.8, W1.9, W1.10}; {W1.4…W1.10} → W1.11; W1.11 → W2.1 → W2.2; W0.3 → W2.3 (the published figures); W1.3 → W2.4; {W2.2, W3.1's precondition} → W3.1; W3.2 → W3.3.
+**Edges, read off each task's `Depends on` line, and every one of them is a task that genuinely waits.** W0.1 has none. W0.3 has none (its own lane; it writes only inside the Go module). W0.2 ← W0.1. **W0.4, W0.5 and W0.6 have none either** — they generate into `website/content/` and `internal/clidoc/`, which no other task writes, and W0.2's boundary test is a rule over the tree rather than a gate in front of them. W1.1 ← {W0.2, W0.4, W0.5, W0.6} (the build reads `content/`). W1.1 → {W1.2, W1.3}. W1.3 → {W1.4, W1.5, W1.6, W1.7, W1.8, W1.9, W1.10}, with W1.5 ← W0.3 (the figures), W1.8 ← W0.5 and W1.9 ← W0.6. {W1.2, W1.4…W1.10} → W1.11. W1.11 → W2.1 → W2.2. W0.3 → W2.3, and W2.2 → W2.3 (the check number). W1.3 → W2.4, which also follows W1.4 (below). W3.1, W3.2 and W3.3 are gated on the owner's own events rather than on a task.
 
-**Shared files, and why they are not a reason to serialize.** `website/data/site.yaml` is written once (W0.2) and read by W1.3, W1.6, W1.9 and W2.4 — **readers, never writers**, so no two tasks in flight touch it. `website/src/styles/tokens.css` is W1.2's and every page reads it; a page task never edits it. `website/content/*` is written by Part 0's generators and read by Part 1's pages — the direction of the dependency is the whole point, and it is why Part 0 is not parallel with Part 1's *content* tasks but is parallel with Part 1's *shell*. `docs/gcp-live-checklist.md` has exactly one writer, W2.2.
+**The file conflicts that order tasks rather than dependencies.** `website/src/components/Hero.astro` is written by W1.4 and later by W2.4 (the video slot lives in the hero), so W2.4 follows W1.4 even though it depends only on W1.3. `website/data/site.yaml` has **five writers, each of them after the previous one has merged**: W0.2 creates it, W2.2 sets the canonical URL, W2.4 sets `features.video`, W3.2 sets `analytics` and W3.3 sets the video's URL — and no two of them share a level. `docs/gcp-live-checklist.md` has **two writers in two levels**: W2.2 writes the summary-table rows for 69a/69b and the `## Check 69a`/`## Check 69b` sections, and **W2.3 writes `## Check 69c` with its row** in the level after it, which is also the answer to "who owns check 69" — W2.2 owns 69a and 69b, W2.3 owns 69c, and no level ever has two writers of the file. Everything else that looks shared runs one way only: `site.yaml` is **read** by W1.3, W1.6, W1.9 and W2.4; `tokens.css` is W1.2's and every page reads it; `website/content/*` is written by Part 0 and read by Part 1 — that direction is the point of the order, and it is why Part 0 is parallel with Part 1's *shell* and serial with Part 1's *content*.
 
-**Levels.** A level's tasks can run concurrently; a level starts when the level before it is merged.
+**Levels.** A level's tasks can run concurrently — **no two tasks in a level write the same file** — and a level starts when the level before it has merged.
 
 | Level | Tasks | PR | Reviewer | Files touched |
 |---|---|---|---|---|
-| **L0** | W0.1, **W0.3** | P1, P2 | sonnet, **opus** | `website/data/install.yaml`; `internal/cli/docs_website_install_test.go`; `internal/stats/*`, `internal/cli/stats*.go` |
-| **L1** | W0.2, W0.4, W0.5, W0.6 | P1, P3 | sonnet | `website/data/site.yaml`; `internal/cli/docs_website_boundary_test.go`; `internal/clidoc/*`; `website/content/{cli-reference,security}.md`, `website/content/changelog.json` |
-| **L2** | W1.1 | P4 | sonnet | `website/{package.json,package-lock.json,astro.config.mjs,tsconfig.json,README.md}` |
-| **L3** | W1.2, W1.3 | P4 | sonnet | `website/src/styles/*`, `website/src/layouts/Base.astro` |
-| **L4** | W1.4, W1.5, W1.6, W1.7, W1.8, W1.9, W1.10, W2.4 | P5, P6, P9 | sonnet | `website/src/components/*`, `website/src/pages/*` |
-| **L5** | W1.11 | P7 | **opus** | `website/test/{linkcheck,a11y}.mjs` |
-| **L6** | W2.1 | P8 | **opus** | `docs/pending-workflows/website.yml`, `docs/pending-workflows/README.md` |
-| **L7** | W2.2, W2.3 | P8 | **opus** | `docs/gcp-live-checklist.md` |
-| **L8** | W3.1, W3.2, W3.3 | P10 | **opus** | `website/data/site.yaml`, `website/content/downloads.json`, `website/src/components/*` |
+| **L0** | W0.1, **W0.3**, W0.4, W0.5, W0.6 | P1, P2, P3 | sonnet, **opus** (W0.3) | `website/data/install.yaml`; `internal/cli/docs_website_install_test.go`; `internal/stats/*`, `internal/cli/stats*.go`; `internal/clidoc/*`; `website/content/{cli-reference,security}.md`, `website/content/changelog.json`; `internal/cli/docs_website_{cliref,security,changelog}_test.go` |
+| **L1** | W0.2 | P1 | sonnet | `website/data/site.yaml`, `internal/cli/docs_website_boundary_test.go` |
+| **L2** | W1.1 | P4 | sonnet | `website/{package.json,package-lock.json,astro.config.mjs,tsconfig.json,README.md,.gitignore}` |
+| **L3** | W1.2, W1.3 | P4 | sonnet | `website/src/styles/*`, `website/src/layouts/Base.astro`, `website/src/content.ts` |
+| **L4** | W1.4, W1.5, W1.6, W1.7, W1.8, W1.9, W1.10 | P5, P6 | sonnet | `website/src/components/*`, `website/src/pages/*`, `website/data/faq.yaml`, `website/content/{costs,downloads}.json` |
+| **L5** | W1.11 | P7 | **opus** | `website/test/{linkcheck,a11y,origins}.mjs`, `website/package.json`'s check script |
+| **L6** | W2.1, W2.2 | P8 | **opus** | `docs/pending-workflows/website.yml`, `docs/pending-workflows/README.md`; `website/data/site.yaml`, `docs/gcp-live-checklist.md` |
+| **L7** | W2.4 | P9 | sonnet | `website/src/components/Hero.astro`, `website/data/site.yaml`, `website/test/video.mjs` |
+| **L8** | W2.3 | P8 | **opus** | `website/content/costs.json`, `website/src/pages/caps-and-costs.astro`, `docs/gcp-live-checklist.md` |
+| **L9** | W3.1 | P10 | **opus** | `website/content/downloads.json`, `website/src/pages/console.astro`, `internal/cli/docs_website_boundary_test.go` |
+| **L10** | W3.2 | P10 | **opus** | `website/data/site.yaml`, `website/src/layouts/Base.astro`, `website/test/origins.mjs` |
+| **L11** | W3.3 | P10 | **opus** | `website/data/site.yaml`, `website/src/components/Hero.astro`, `website/content/` (the poster) |
 
-**The critical path** is the longest chain, and it is the owner's, not the agent's:
+**Part 3's three levels are not a schedule.** Each of L9, L10 and L11 waits on an owner event (the console's first release, D93's answer, the video), so they start in whatever order those arrive; the only pair that *cannot* run together is W3.2 and W3.3, because both write `site.yaml`.
 
-> **W0.1 → W0.2 → W1.1 → W1.3 → W1.4 → W1.11 → W2.1 → W2.2 → check 69a/69b → (W3.1, gated on the console's first release) → (W3.3, gated on the video)**
+**The critical path** is the longest chain, and its tail is the owner's, not the agent's:
 
-**Ten agent tasks plus three owner-run points** (the live check 69a/69b, the console's first release, and the video). **Everything else is a side branch and can land in any order**: W0.3 (the aggregation) is the largest single piece of work in the plan and is on no path to the site at all — it blocks only W2.3, the published figures, which is the one page that can wait. W0.4, W0.5 and W0.6 are three independent generators, and a reader benefits from each the day it merges. W1.5 through W1.10 are six independent pages behind one shell.
+> **W0.1 → W0.2 → W1.1 → W1.3 → W1.4 → W1.11 → W2.1 → W2.2 → check 69a/69b**
+> and off that chain, the owner-gated rest: **W2.2 → W2.3 → check 69c**, **W2.2 → (the console's first release) → W3.1**, and W3.2/W3.3 after the owner's own answers.
 
-**What the parallelism buys, stated honestly.** The plan's wall-clock is not the sum of its tasks: L0 and L1 are two agents, L4 is up to eight, and the only true serialization is the shell (W1.1 → W1.3) and the gates (W1.11, W2.1). The reason to cut it this way is not speed but **independence**: every level's PR is mergeable alone, and the owner's unanswered decisions (D90–D109) block exactly one thing — Part 2, which is why Parts 0 and 1 can start the day the gate opens even if the host, the domain and the palette are still open.
+**Eight agent tasks on the chain and three owner-run points at its end** (the live checks 69a/69b, the console's first release and the video). **Everything else is a side branch and can land in any order**: W0.3 (the aggregation) is the largest single piece of work in the plan and is on no path to the site at all — it blocks only W2.3, the published figures, which is the one page that can wait. W0.4, W0.5 and W0.6 are three independent generators, and a reader benefits from each the day it merges. W1.5 through W1.10 are six independent pages behind one shell.
+
+**What the parallelism buys, stated honestly.** The plan's wall-clock is not the sum of its tasks: L0 is five agents, L4 is seven, and the only true serialization is the shell (W1.1 → W1.3) and the gates (W1.11, W2.1). The reason to cut it this way is not speed but **independence**: every level's PR is mergeable alone, and what the owner's unanswered decisions block is bounded and known — §7.1 states it row by row.
+
+### 7.1 What can start, and under which answers
+
+**One statement, and §13 and §15 point here rather than restating it.** The owner's direction on this work (2026-10-16) is to **start as soon as we can**; that is a direction and not an approval — no row in the reconciliation's §4 is answered — so each wave needs the owner's go on the decisions it depends on. Concretely:
+
+- **Where the site lives decides Part 0's paths, and nothing else.** Every Part 0 task except W0.3 writes under `website/`, and that location is D90's question, so **D90's answer sets the output path** — as the recommendation (*this repository, under `website/`*) it is the paths §5 lists, and elsewhere it is the same tasks under a different prefix.
+- **The realistic first wave, all at once: W0.1, W0.2, W0.4, W0.5 and W0.6.** They write six files that share nothing, they depend on nothing (W0.2 on W0.1 alone), and each is worth merging on its own — the install facts and the rule that pins them, the site's facts and the boundary test, the CLI reference, the rendered `SECURITY.md`, the changelog's source.
+- **W0.3 joins that wave as soon as D96 is answered** (or the owner accepts Global Constraint 10's strict reading): it writes only inside the Go module, so it needs no path from D90 and no other decision, and it is the one task in the plan that a decision row can hold up on its own.
+- **Part 1 needs no answer beyond the defaults.** The palette (D104) ships as three files with the split one in force, the tagline (D102) is `README.md`'s own line, and analytics (D93) is off — each a one-line change later. It does need **all** of Part 0's content tasks (W0.2, W0.4, W0.5, W0.6), because the build reads `content/`.
+- **Part 2 needs D91 and D92** — a host and a domain for the deploy step and the canonical URL — and cannot start before them. **Part 3 needs the owner's own events**, not a decision about the site.
+- **Passing the gate at §15 is the go for a wave, not a blanket approval**, and it does not answer a row: §15 lists what the owner has to have decided for each wave to be startable.
 
 ## 8. Part 0 — The facts the site renders
 
@@ -158,9 +173,14 @@ Each group is one pull request, each independently mergeable, each with its own 
 **Files:** `website/data/install.yaml` (new), `internal/cli/docs_website_install_test.go` (new).
 
 **Steps.**
-1. Write `website/data/install.yaml` with one entry per install path: Homebrew (`brew install dimipaun/tap/fugaro`), the release archive (`fugaro_<version>_<os>_<arch>.tar.gz` from the GitHub release, with the exact `curl` + `tar` shape `README.md` uses), cosign verification (the command `docs/release.md` `## Verifying a release` prints), `go install` with its "development only" note, and the plugin path (marketplace add, plugin install, pinned to the release tag) — each with a `source:` field naming the file it came from.
-2. Write the test so that it reads **the repository**, not the YAML's own prose: every command string in the YAML must appear verbatim in `README.md`'s `## Getting started` **or** in `docs/release.md`; the OS/arch matrix must equal `.goreleaser.yaml`'s `builds[0].goos` × `builds[0].goarch`; the archive name template must equal `archives[0].name_template`; the Homebrew line must equal the `homebrew_casks[0].repository` owner and the cask name; and the `go install` entry must carry the "development only" marker that `README.md` carries.
-3. Add the negative half: the YAML must not name a platform that `.goreleaser.yaml` does not build (**this is F20's gate** — a future Windows build is the only way this test ever changes its answer), and must not carry a version number anywhere (the site renders `latest`, or the release's own tag).
+1. Write `website/data/install.yaml` with one entry per install path, each carrying a `source:` field naming the file its text came from, and **no command that is not in `README.md` or `docs/release.md`**. The five entries are what the repository really ships, not what a site would prefer to ship:
+   - **Homebrew** — `brew install dimipaun/tap/fugaro`, the cask `README.md` marks *"(tested on macOS)"*, resolving through `dimipaun/homebrew-tap`; `source: README.md`.
+   - **The release archive** — the sentence `README.md` actually prints: download an archive from the **Releases page** (`https://github.com/dimipaun/fugaro/releases`), *darwin and linux, amd64 and arm64*, and verify it with cosign. The site **links the Releases page**; it does not build a download URL, because `releases/download/` is exactly the string W0.2's test refuses and the archive's URL carries a version the site does not know. The name template — `fugaro_<version>_<os>_<arch>.tar.gz` — is recorded for the reader, pinned to `.goreleaser.yaml`; `source: README.md`.
+   - **cosign verification** — the block `docs/release.md` `## Verifying a release` prints, verbatim: `V=X.Y.Z`; `gh release download v$V -R dimipaun/fugaro -p checksums.txt -p checksums.txt.sigstore.json -p "fugaro_${V}_$(uname -s | tr A-Z a-z)_*"`; `cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/release.yml@refs/tags/v$V" --certificate-oidc-issuer https://token.actions.githubusercontent.com`; and the `shasum -a 256 -c -` / `sha256sum -c -` check against `checksums.txt`; `source: docs/release.md`.
+   - **`go install`** — `go install github.com/dimipaun/fugaro/cmd/fugaro@latest`, carrying `README.md`'s own note that it **is for development only** (it builds a `dev` version with no release images and no plugin pin); `source: README.md`.
+   - **The plugin** — the route `README.md`'s `## Getting started` prints and no other: `fugaro init` wires the Fugaro plugin into the checkout's `.claude/settings.json`, `/fugaro:setup` writes `fugaro.yaml`, a teammate who opens and trusts the folder gets the plugin installed, and when the `/fugaro:` skills are not listed the repair is `fugaro upgrade --local` (which installs it through the `claude` CLI). **The marketplace commands** (`/plugin marketplace add dimipaun/fugaro`, `/plugin install fugaro@fugaro`, `claude plugin install fugaro@fugaro --scope project`) are what a person runs inside Claude Code and are documented in `docs/design/upgrade.md` and `docs/design/m11-setup-and-skills.md` — **not** in `README.md` — so the YAML leaves them out rather than widening the test's source list to internal design documents.
+2. Write the test so that it reads **the repository**, not the YAML's own prose: the two files it reads are the two the product's own install text lives in. Every command string in the YAML must appear verbatim in `README.md`'s `## Getting started` **or** in `docs/release.md` — **a command neither file carries fails the test, which is what keeps an invented instruction (a `curl | tar` one-liner nobody ships, a marketplace command a reader cannot run) off the site**; the OS/arch matrix must equal `.goreleaser.yaml`'s `builds[0].goos` × `builds[0].goarch`; the archive name template must equal `archives[0].name_template`; the Homebrew line must equal the `homebrew_casks[0].repository` owner and the cask name; and the `go install` entry must carry the "development only" marker that `README.md` carries.
+3. Add the negative half: the YAML must not name a platform that `.goreleaser.yaml` does not build (**this is F20's gate** — a future Windows build is the only way this test ever changes its answer), must not carry a version number anywhere (the site renders `latest`, or the release's own tag), and must contain no `releases/download/` URL — the archive path is the Releases page, which is also the rule W0.2 enforces for the console.
 4. Run the red step, then the test, then the docs suite.
 
 **Tests:** `TestWebsiteInstallFactsMatchTheRepository`, `TestWebsiteInstallFactsNameNoUnbuiltPlatform`, `TestWebsiteInstallFactsCarryNoVersion`. All three read `website/data/install.yaml` plus `README.md`, `docs/release.md`, `.goreleaser.yaml`.
@@ -194,8 +214,8 @@ Each group is one pull request, each independently mergeable, each with its own 
 **Files:** `internal/stats/stats.go` (new), `internal/stats/stats_test.go` (new), `internal/cli/stats.go` (new), `internal/cli/stats_test.go` (new).
 
 **Steps.**
-1. In `internal/stats`, implement the statistics over `[]runstore.Record` (or over the narrower view the CLI passes in): **percentiles** (min, median, p90) of wall-clock duration and of `Cost.TotalUSD`, grouped by **recipe**, over a window; the **minimum-sample rule** (`MinRuns`, default 20) which suppresses a group rather than publishing it; and the count of runs whose compute cost is an **estimate** rather than a measurement (`Cost.ComputeEstimated`/`ComputeSource`), which the caller reports rather than folds in. No mean is published alone: the struct has no field for one.
-2. In `internal/cli`, add `newStatsCmd()` with one subcommand, `runs`: `--project` (required, one installation — the default is the sandbox `fugaro` and there is **no `--all`**), `--since` (default 90d, the runs lifecycle's own age), `--min-runs`, `--json`. It reads the run records **read-only** through the existing store client, and it **refuses to run when it detects a coding-agent session** (the marker the repository's other owner-only paths use).
+1. In `internal/stats`, implement the statistics over `[]runstore.Record` (or over the narrower view the CLI passes in): **percentiles** (min, median, p90) of wall-clock duration and of `Cost.TotalUSD`, grouped by **recipe**, over a window; the **minimum-sample rule** (`MinRuns`, default 20) which suppresses a group rather than publishing it; and the count of runs whose compute cost is an **estimate** rather than a measurement (`Cost.ComputeEstimated`/`ComputeSource`), which the caller reports rather than folds in. No mean is published alone: the struct has no field for one. **A record whose recipe is not one the tree ships (`internal/recipe`) is dropped rather than grouped**, so the output never carries a group key no reader can look up.
+2. In `internal/cli`, add `newStatsCmd()` with one subcommand, `runs`: `--project` (**required, with no default** — the command refuses to run until exactly one installation is named, the sandbox included, and there is **no `--all`**), `--since` (default 90d, the runs lifecycle's own age), `--min-runs`, `--json`. It reads the run records **read-only** through the existing store client, and it **refuses to run when it detects a coding-agent session** (the marker the repository's other owner-only paths use).
 3. Make the output shape the security property: group keys are **recipe names and the window**, every value is a number or a count, and there is no field for a repository slug, run ID, branch, PR URL, task text, person or commit. Print, as the command's own closing line, D97's disclaimer: what a cap is (`observe` counts, `enforce` halts), that these are percentiles over a window and not a promise, and the sample size behind every figure.
 4. Write the tests: a **golden `--json` test** asserting the exact key set, and an **identifier test** asserting that no string value in the output matches a repository-slug shape, a run-ID shape, a branch name or a person — over a fixture whose records deliberately contain all of them, so the test fails if a future field leaks one. Plus a test that `--min-runs` suppresses a group below the threshold, and one that the command's help names no other installation.
 5. Wire the subcommand into `NewRootCmd`, run the red step, then the full suite and `go vet`.
@@ -213,7 +233,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 **Files:** `internal/clidoc/cliref.go` (new), `internal/clidoc/cliref_test.go` (new), `website/content/cli-reference.md` (generated), `internal/cli/docs_website_cliref_test.go` (new).
 
 **Steps.**
-1. Write the generator: walk `internal/cli`'s `NewRootCmd()` and emit one Markdown section per command (path, short description, long description, usage line, flags with their defaults and required-ness, and the subcommand list), **skipping hidden commands** (F38) and skipping the internal commands that carry the forbidden marker — the hidden six are `history`, `git-credential`, `image`, `image record` and `exec` (`Hidden: true` in `internal/cli/history.go`, `gitcred.go`, `image.go`, `image_record.go` and `exec.go`; **there is no `token` command in the tree**) — with the skip list **derived from the tree** rather than hand-written where the tree already records it.
+1. Write the generator: walk `internal/cli`'s `NewRootCmd()` and emit one Markdown section per command (path, short description, long description, usage line, flags with their defaults and required-ness, and the subcommand list), **skipping hidden commands** (F38) and skipping the internal commands that carry the forbidden marker — **the hidden six are `history`, `git-credential`, `image`, `image record`, `image gate` and `exec`** (`Hidden: true` in `internal/cli/history.go`, `gitcred.go`, `image.go`, `image_record.go` — where `image record` and `image gate` are two separate commands — and `exec.go`; **there is no `token` command in the tree**) — with the skip list **derived from the tree** (`Hidden` read off each command) rather than hand-written where the tree already records it.
 2. Write the file with a header naming its source and the command that regenerates it: `<!-- generated by go run ./internal/clidoc; do not edit -->`.
 3. Write the two tests: **every** non-hidden command and flag reachable from `NewRootCmd()` appears in the file (the shape `TestDocsDesktopConsoleContractNamesEveryWatchField` uses), and the file names **no** hidden command and **no** flag that does not exist (the shape `TestDocsDesktopConsoleContractNamesNoInventedField` uses). A third test runs the generator into a buffer and asserts it equals the committed file, so a struct change cannot land without the reference changing.
 4. Run the red step, then the suite.
@@ -222,7 +242,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 
 **Command:** `go test ./internal/clidoc ./internal/cli -run 'CliRef|Website|Docs|Lint' -count=1`
 
-**Depends on:** W0.2 (the boundary test must know the site's tree exists). **Commit:** `feat(clidoc): generate the CLI reference from the command tree, pinned by a test`
+**Depends on:** nothing (it generates into `website/content/` and `internal/clidoc/`, which no other task writes; the boundary test W0.2 adds is a rule over the tree, not a gate in front of the generator). **Commit:** `feat(clidoc): generate the CLI reference from the command tree, pinned by a test`
 
 **Red step.** Write the two naming tests first, with the generator returning an empty document. `Expected: FAIL` — `cli-reference.md does not name command "fugaro budget set"`.
 
@@ -240,7 +260,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'SecurityMd|Website|Docs|Lint' -count=1`
 
-**Depends on:** W0.2. **Commit:** `feat(website): render SECURITY.md, byte for byte, with a test that refuses a paraphrase`
+**Depends on:** nothing (the generated page stands alone; W1.8 renders it). **Commit:** `feat(website): render SECURITY.md, byte for byte, with a test that refuses a paraphrase`
 
 **Red step.** Write the byte-identity test first, with the page absent. `Expected: FAIL` — `open website/content/security.md: no such file or directory`.
 
@@ -249,16 +269,17 @@ Each group is one pull request, each independently mergeable, each with its own 
 **Files:** `website/content/changelog.json` (generated), `internal/cli/docs_website_changelog_test.go` (new), generator `internal/clidoc/changelog.go`.
 
 **Steps.**
-1. Generate a JSON array from `docs/releases/vX.Y.Z.md`: `{tag, date, version, highlights: [lines], for_operators: [lines]}` — the **tag from the filename**, the **date from the tag's own commit** (`git log -1 --format=%cs <tag>`), the bullets as written, and nothing invented. **The release files carry neither a title nor a date** — `docs/releases/README.md` says "Plain Markdown, no title", and no date appears in any of the eleven files — so the date has to come from the repository's history. **`docs/releases/README.md` is not a release** and is skipped by name, not by pattern.
-2. Write the tests: the set of tags in the JSON equals the set of `v*.md` files in `docs/releases/` (so a release cannot land without the page following, and a page cannot list a release that is not there); the JSON is sorted newest first; every entry's `date` parses, is not in the future, and equals the commit date of the tag it names (`git log -1 --format=%cs` over the tag list, so the date's source is the repository's own history rather than a hand-kept file); and no entry carries a body sentence that is not in its file (the same no-invention rule as W0.5).
-3. Add the drift test the site's page will lean on: `README.md` still carries no changelog section, so the page remains the only index of those files (F44) — and if that ever changes, this test is where the duplicate is noticed.
-4. Run the red step, then the suite.
+1. Generate a JSON array from `docs/releases/vX.Y.Z.md`: `{tag, version, released, highlights: [lines], for_operators: [lines]}` — the **tag and the version from the filename**, the bullets and the optional `### For operators` block as written, and nothing invented. **There is no `date` field, and that is the design rather than an omission.** The release files carry neither a title nor a date (`docs/releases/README.md`: "Plain Markdown, no title", and no date appears in any of the eleven files), the file's own first line has none, the site's build is network-free (W1.1) so it cannot ask the releases API, and a date taken from a git tag is a date that **does not exist for the newest entry** — `docs/releases/README.md` requires the Highlights file to be committed to `main` **before** `scripts/release.sh` runs, which is the first entry a reader sees. So the page prints the tag and links the entry to its GitHub release, where the date is GitHub's, and the repository holds no second copy of it.
+2. **`released` is the one field that reads the checkout's tags, and no test pins it.** It is `true` when `git tag --list vX.Y.Z` finds the tag in the checkout the generator ran in and `false` otherwise; a **shallow CI checkout has no tags at all**, so every entry there is `false`, which is the page's **"not yet released"** state — the honest rendering for a file that is on `main` before its tag. **No test reads a tag and no test reads a commit date**, so this generator cannot hold a release or fail in CI for a reason that depends on clone depth or on the tag's existence.
+3. Write the tests, none of which reads a tag: the set of entries equals the set of `v*.md` files in `docs/releases/` (so a release cannot land without the entry following, and an entry cannot name a file that is gone); the entries are ordered newest first **by version parsed from the filename**, not from tags; every `highlights` and `for_operators` line appears in its file and no entry carries a sentence its file does not (the same no-invention rule as W0.5); and the committed file equals a fresh generation **except for `released`** — the one field that depends on the checkout, compared for shape only (a boolean) — so the test catches a stale or edited entry and still passes in a shallow clone. **`docs/releases/README.md` is not a release** and is skipped by name, not by pattern.
+4. Add the drift test the site's page will lean on: `README.md` still carries no changelog section, so the page remains the only index of those files (F44) — and if that ever changes, this test is where the duplicate is noticed.
+5. Run the red step, then the suite.
 
-**Tests:** `TestWebsiteChangelogCoversEveryReleaseFile`, `TestWebsiteChangelogListsNoReleaseThatIsNotAFile`, `TestWebsiteChangelogAddsNoSentenceOfItsOwn`.
+**Tests:** `TestWebsiteChangelogCoversEveryReleaseFile`, `TestWebsiteChangelogListsNoReleaseThatIsNotAFile`, `TestWebsiteChangelogAddsNoSentenceOfItsOwn`, `TestWebsiteChangelogIsCurrent`.
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Website|Docs|Lint' -count=1`
 
-**Depends on:** W0.2. **Commit:** `feat(website): generate the changelog from docs/releases, with a test that the sets match`
+**Depends on:** nothing. **Commit:** `feat(website): generate the changelog from docs/releases, with a test that the sets match`
 
 **Red step.** Write the set-equality test first, with the JSON absent. `Expected: FAIL` — `changelog.json lists 0 releases, docs/releases/ holds 11`.
 
@@ -410,7 +431,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 **Files:** `website/src/pages/changelog.astro`, `website/src/components/Changelog.astro` (new).
 
 **Steps.**
-1. Render `content/changelog.json` (W0.6): one entry per release, newest first, with the tag, the date, the bullets and the `### For operators` block where the file has one — and a link to the release on GitHub built from `site.yaml`.
+1. Render `content/changelog.json` (W0.6): one entry per release, newest first, with the tag, the bullets and the `### For operators` block where the file has one — **no date** (the file carries none and the repository holds none; the entry links to its GitHub release, which is where the date is stated), and an entry whose `released` is false rendered as **not yet released** rather than as a release that exists.
 2. Render **nothing of its own**: no summary, no "what's new" prose, no editorial. A test asserts every sentence on the page appears in `docs/releases/` (the page-level form of W0.6's file-level test).
 3. The entry count equals the JSON's, and the newest entry's tag equals the newest file's — the visible half of the drift test.
 
@@ -449,7 +470,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 2. **Origins check** over the built HTML: the `script`, `link[rel=stylesheet]`, `link[rel=preload]`, `img`, `iframe` and `font` origins are all first-party or on the allowed list — the mechanical form of "nothing phones home" (F55, D106, Global Constraint 8). A Google Fonts URL, a CDN icon set or an embedded player fails here.
 3. **Accessibility check**: the contrast pairs (W1.2), a `prefers-reduced-motion` path for every animated component (asserted by checking that each animation class is covered by the global reduce rule), every interactive element keyboard-reachable and focus-visible, a landmark structure and one `h1` per page, and alt text on every image.
 4. **Budget check**: the JavaScript shipped per page is under the stated kilobyte budget, and the total page weight is under its budget — the numbers written into `website/README.md` so the budget is a fact rather than an aspiration.
-5. Wire all four into `npm run check`, and note in the README that **Lighthouse is the owner-run check** (D105's targets) because there is no CI on pull requests and the repository's tests are hermetic (F3, F58).
+5. Wire all four into `npm run check` — the script runs **every `website/test/*.mjs`**, so a check a later task adds (W2.4's video slot, W3.2's analytics origin) is picked up without touching this task's files — and note in the README that **Lighthouse is the owner-run check** (D105's targets) because there is no CI on pull requests and the repository's tests are hermetic (F3, F58).
 
 **Tests:** the four checks themselves, each with a deliberate failing fixture asserted in the same run (a broken anchor, a `fonts.googleapis.com` link, a `motion-safe`-only animation, an over-budget island).
 
@@ -467,7 +488,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 
 **Steps.**
 1. Write the workflow **for the owner to copy into `.github/workflows/`**, following the procedure `docs/pending-workflows/README.md` describes (including the note that the staged file is removed in the same PR that copies it). It builds the site from `website/`, runs the site's own checks, and deploys to the host D91 chooses — with the host's deploy step written for **whichever of D91's answers the owner picks**, marked so that exactly one branch is active and the others are commented out with the reason.
-2. The credential rule (F14): the deploy token is a **GitHub Actions repository secret** named in the workflow and in the staged README, with a comment stating what it must never be — an installation's service account, a credential a Fugaro run holds, or a token with write access to anything but the site's own project. The workflow runs **no Fugaro run** and is not invoked by any Fugaro command.
+2. The credential rule (F14): the deploy token is a **GitHub Actions repository secret** named in the workflow and in the staged README, with a comment stating what it must never be — an installation's service account, a credential a Fugaro run holds, or a token with write access to anything but the site's own project. The workflow runs **no Fugaro run** and is not invoked by any Fugaro command. **It is written for a public repository, which is what this one is** (the module, the images and the release archives are all published): it declares an explicit **least-privilege `permissions:` block** — `contents: read` plus the host's deploy scope and nothing else, never `workflows: write` — the deploy job runs **only on `main`**, and the workflow is never triggered by `pull_request_target`, so a pull request from a fork (which gets no secrets at all) cannot reach the credential and cannot run a deploy step.
 3. The trigger is the site's own: a path filter on `website/**` on pushes to `main`, plus `workflow_dispatch` — **no release trigger and no tag**, which is D109's decoupling made mechanical.
 4. Update `docs/pending-workflows/README.md` — its staged-file list gains the site's workflow, and **its stale "One file is pending: `images.yml`" line is corrected in the same edit** (that file was copied in and removed in `6b57ba9`; the directory holds only the README today, F62) — and the copy procedure, and verify that the workflow's YAML parses (`actionlint` if present, otherwise a YAML parse test) — the file cannot be run, so parsing is the only hermetic check available.
 5. **Nothing under `.github/workflows/` is touched by this task** (Global Constraint 2). The copy is the owner's step, recorded in the staged README's checklist.
@@ -482,7 +503,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 
 ### Task W2.2: The canonical URL, the redirects, and check 69a/69b in the register
 
-**Files:** `website/data/site.yaml` (the canonical URL and the secondary domain), `docs/gcp-live-checklist.md` (the row and the section), the host's redirect configuration (wherever D91 puts it: a `_redirects` file for Cloudflare Pages, a CNAME plus a Pages setting for GitHub Pages, a `firebase.json` `redirects` block **only if the owner overrode D91**).
+**Files:** `website/data/site.yaml` (the canonical URL and the secondary domain), `docs/gcp-live-checklist.md` (the row and the section), the host's redirect configuration (wherever D91 puts it: a `_redirects` file for Cloudflare Pages, a CNAME plus a Pages setting for GitHub Pages, a `firebase.json` `redirects` block **only if the owner overrode D91 — and then only against a separate Firebase project created for the site, never the installation's**, because *"one Firebase project serves one installation"* and a public site deployed into an installation's project is the failure D91 rejects (F13).
 
 **Steps.**
 1. Set the canonical URL and the secondary domain in `site.yaml`, which every absolute link, the sitemap, the OpenGraph tag and the canonical `<link>` read (W1.3) — so the domain change is one line and a rebuild, and **the registration itself is not a task** (D92, F15).
@@ -519,7 +540,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 
 ### Task W2.4: The video slot's empty state
 
-**Files:** `website/src/components/Hero.astro` (the slot), `website/data/site.yaml`'s `features.video`.
+**Files:** `website/src/components/Hero.astro` (the slot), `website/data/site.yaml`'s `features.video`, `website/test/video.mjs` (new — W1.11's `npm run check` runs every `test/*.mjs`, so this file is picked up without editing W1.11's).
 
 **Steps.**
 1. Render the slot only when `features.video` is true; while it is false, the hero carries **no player, no iframe, no poster, no play button** — a test asserts all four are absent from the built HTML (F57, D107).
@@ -571,7 +592,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 | Task | Needs | Because |
 |---|---|---|
 | W0.2 | W0.1 | Same PR; the boundary walk assumes `website/data/` exists |
-| W0.4, W0.5, W0.6 | W0.2 | The generators write into the tree the boundary test protects |
+| W0.4, W0.5, W0.6 | nothing | They write `internal/clidoc/` and `website/content/`, which no other task writes; W0.2's boundary test is a rule over the tree, not a gate in front of them |
 | W1.1 | W0.2, W0.4–W0.6 | The build reads `content/`; the pipeline (W1.3) fails on a missing file |
 | W1.2, W1.3 | W1.1 | Tokens and layout need the toolchain |
 | W1.4–W1.10 | W1.3 | Every page needs the layout and the content pipeline |
@@ -582,7 +603,8 @@ Each group is one pull request, each independently mergeable, each with its own 
 | W2.1 | W1.11 | The workflow runs the site's own checks |
 | W2.2 | W2.1 | The live checks follow the deploy |
 | W2.3 | W0.3, W1.5, W2.2 | The figures need the command, the page and the check number |
-| W2.4 | W1.3 | The slot lives in the hero |
+| W2.4 | W1.3, W1.4 (a file, not a dependency) | The slot lives in `Hero.astro`, which W1.4 writes, and both it and W2.2 write `site.yaml` — so the two are ordered by their files rather than by their dependencies |
+| W2.2, W2.4, W3.2, W3.3 | each other, in that order | All four write `website/data/site.yaml`; no two of them share a level (§7) |
 | W3.1 | the console's first release | D95, F23 |
 | W3.2 | D93's answer | The owner's decision |
 | W3.3 | the owner's video | The spec's own open item |
@@ -601,7 +623,7 @@ Each group is one pull request, each independently mergeable, each with its own 
 | **D102** the tagline | W1.4's tagline test | The hero renders the line under `README.md`'s `# Fugaro` title, which is the tagline already. |
 | **D104** the palette | W1.2's default | The split palette (violet structure, orange cost) is the default; the owner's answer is a one-line change. |
 
-**Everything else in §4 is a finding with a stated resolution** (D94, D95, D97–D101, D103, D105–D109), and this plan implements the recommendation unless the owner overrides it. **The plan does not start before the gate below, and the gate is not a formality**: D90 alone changes every path in §5.
+**Everything else in §4 is a finding with a stated resolution** (D94, D95, D97–D101, D103, D105–D109), and this plan implements the recommendation unless the owner overrides it. **What can start, and under which of these answers, is stated once in §7.1 and not restated here** — the short version is that the first wave (W0.1, W0.2, W0.4, W0.5, W0.6) needs only D90's answer for its output path, W0.3 needs only D96, Part 1 needs no answer beyond the defaults, and Parts 2 and 3 need D91, D92 and the owner's own events. The gate at §15 is the go for a wave rather than a blanket approval, because D90 alone changes every path in §5.
 
 ## 14. Open items, listed rather than fixed
 
@@ -614,12 +636,13 @@ Each group is one pull request, each independently mergeable, each with its own 
 7. **No `CODEOWNERS` file exists** (F63), so this work routes no reviews and updates no routing file; the reviewer tiers in §1 are this plan's own.
 8. **The FAQ's comparison section is empty until the owner supplies sourced rows** (D103, F51). The section renders nothing rather than an unsourced claim.
 9. **The three palettes' gradient contrast is unverified until W1.2 runs** (U5); the owner should choose from the palettes that have passed rather than from a description.
+10. **The changelog page names a release before its tag exists** (W0.6). `docs/releases/README.md` requires the Highlights file to be merged to `main` **before** `scripts/release.sh` runs, so between that merge and the tag the newest entry is a release GitHub does not have yet: the entry renders as **not yet released**, and the flag is false wherever the generator ran in a checkout without the tag (a shallow CI clone always). The perpendicular fix — asking the releases API — is a network call the build deliberately does not make (W1.1), so the plan records the window rather than passing it off as a state.
 
 ## 15. OWNER APPROVAL GATE
 
 **Nothing in this plan starts until the owner has:**
 
-1. **Read [reconciliation.md](reconciliation.md) and answered §4's rows** — at minimum the seven OWNER-ONLY ones (**D90** where the site lives, **D91** hosting, **D92** domain, **D93** analytics, **D96** the aggregation's data policy, **D102** the tagline, **D104** the palette) — and confirmed or overridden the rest.
+1. **Read [reconciliation.md](reconciliation.md) and answered §4's rows** — at minimum the seven OWNER-ONLY ones (**D90** where the site lives, **D91** hosting, **D92** domain, **D93** analytics, **D96** the aggregation's data policy, **D102** the tagline, **D104** the palette) — and confirmed or overridden the rest. The owner's direction (2026-10-16) was to **start as soon as we can**; that is a direction and not an approval of any row, so this list is what turns it into a go — **and it is a go per wave, not for the plan as a whole**: §7.1 states which decisions each wave needs, and no row below is a substitute for one.
 2. **Approved the order**, which puts the generated facts and their drift tests (Part 0) and the aggregation command (W0.3) **before any site code**, and which is the recommendation rather than the only possibility.
 3. **Accepted the four refusals** in the reconciliation's §5: no console download link until the console is signed and released, no "~2 h" sentence until the aggregation produces it, no average published as a range, and no Windows support claim beyond what `.goreleaser.yaml` builds.
 4. **Accepted the two rules this plan cannot implement by itself**: that the deploy workflow is **staged** under `docs/pending-workflows/` for the owner to copy (no run may touch `.github/workflows/`), and that the site is **not** added to the release gate.
