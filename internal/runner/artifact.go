@@ -175,7 +175,12 @@ func (r *run) artifactMode(ctx context.Context) {
 				return
 			}
 			if r.isCancelled() {
-				r.endArtifactCancelled(ctx, "cancelled while uploading the artifacts")
+				// The window this branch is in is the whole artifact step,
+				// not the upload alone: staging, the probe (which can block
+				// for timeouts.verify plus its grace) and the upload all run
+				// inside collectArtifacts, so a cancel that landed during a
+				// slow probe is not reported as an upload cancellation.
+				r.endArtifactCancelled(ctx, "cancelled while collecting the artifacts")
 				return
 			}
 			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, r.redact(aerr.Error())
@@ -367,6 +372,8 @@ func probeFailure(err error, detail string) error {
 // environment, because a newline-separated list inside one variable cannot
 // survive a name that holds a newline (design §3) — and every shell reads a
 // file with `while IFS= read -r` without quoting rules in play.
+const artifactNamesFile = "artifact-names.txt"
+
 // probeGrace is how long the probe's process group gets between SIGTERM and
 // SIGKILL once its deadline has ended: internal/verify's commandGrace, the
 // grace verify.Run gives every command it runs (verify.go:35, 5s). The plan
@@ -379,8 +386,6 @@ func probeFailure(err error, detail string) error {
 // list); the value is the contract, and TestProbeGraceBoundsAProbeThat
 // IgnoresSIGTERM fails if it drifts back to procgroup's default.
 const probeGrace = 5 * time.Second
-
-const artifactNamesFile = "artifact-names.txt"
 
 // runProbe runs commands.probe once, after the render and before the upload,
 // over the whole staged set (design §3, plan Task 5). It is ONE invocation for

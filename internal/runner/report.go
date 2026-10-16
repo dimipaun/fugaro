@@ -169,19 +169,27 @@ func artifactsSection(rec *runstore.Record) string {
 	for _, a := range rec.Artifacts {
 		fmt.Fprintf(&b, "| %s | %d | `%s` | %s | %s |\n", tableCode(a.Name), a.Bytes, shortSum(a.SHA256), tableText(a.ContentType), probeCell(a))
 	}
-	b.WriteString("\nEach row is what the run's own record says the object at that name holds: download it and hash it to check the bytes arrived as rendered. `ok` in the Probe column is the recipe's own `commands.probe` having exited zero on the whole set.\n\n")
+	b.WriteString("\nEach row is what the run's own record says the object at that name holds: download it and hash it to check the bytes arrived as rendered. In the Probe column, `ok` is the recipe's own `commands.probe` having exited zero on the whole set, `none` is a recipe that asked for no probe, and `—` is a record written before the probe step existed, which carries no verdict to read.\n\n")
 	return b.String()
 }
 
 // probeCell is the table's probe column: what the probe step said about this
 // artifact. "none" is the recipe's own answer when it asked for no probe —
-// the record carries {ran: false}, and the column says so rather than leaving
-// a reader to infer it from an empty cell. A recorded non-zero exit code is
-// printed as such rather than folded into "ok": the table must never claim a
-// check passed when the record says it did not.
+// the record carries {ran: false, exit_code: -1}, and the column says so
+// rather than leaving a reader to infer it from an empty cell. A recorded
+// non-zero exit code is printed as such rather than folded into "ok": the
+// table must never claim a check passed when the record says it did not.
+//
+// A record with NO verdict is a third thing and gets a third answer. It is a
+// record written before the probe step existed (the schema's own description
+// of the absent key), and what the run knows about it is that nothing was
+// recorded — not that the recipe asked for no probe. Rendering it "none"
+// would put the recipe's intent into a record that cannot know it.
 func probeCell(a runstore.ArtifactFile) string {
 	switch {
-	case a.Probe == nil || !a.Probe.Ran:
+	case a.Probe == nil:
+		return "—"
+	case !a.Probe.Ran:
 		return "none"
 	case a.Probe.ExitCode == 0:
 		return "ok"

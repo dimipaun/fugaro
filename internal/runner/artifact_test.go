@@ -2583,6 +2583,16 @@ func TestProbeEnvironmentNamesTheStagedSet(t *testing.T) {
 	if probeEnv["FIXTURE_FAILS_FILE"] == "" {
 		t.Error("the probe does not have the workflow's secret the render has (design §8.6, D10)")
 	}
+	// And the report says the check passed, per file: this is the "ok" cell a
+	// real passing probe produces, end to end (probeCell's other arms are in
+	// TestReportProbeColumn).
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(report), "| image/png | ok |"); n != 2 {
+		t.Fatalf("the report's Probe column says %d files passed, want 2:\n%s", n, report)
+	}
 }
 
 // TestNoProbeIsRecordedAsRanFalse is Review Focus 6's second half: a recipe
@@ -2929,4 +2939,182 @@ func TestProbeTailKeepsAFinalLineWithoutANewline(t *testing.T) {
 		t.Fatalf("the probe's last line, which has no trailing newline, is not in the report:\n%s", report)
 	}
 	assertNoUpload(t, h)
+}
+
+// TestProbeReasonQuotesTheProbesLastLine: a run's reason is a sentence, so it
+// carries the probe's LAST non-empty line — the one a repository's own check
+// usually ends on, after whatever it printed while working — and the whole
+// output is in the report's log tail instead. A reason that quoted the first
+// line would send an owner to the top of a build log rather than to the line
+// that explains the exit code.
+//
+// Mutation (return the first line, or the first non-empty one, from
+// probeLastLine): the reason quotes "checking sizzle" and this test fails.
+func TestProbeReasonQuotesTheProbesLastLine(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\necho 'checking sizzle'\necho 'sizzle.png is 0 bytes, not a video'\nexit 5\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe exited 5: sizzle.png is 0 bytes, not a video") {
+		t.Fatalf("the reason does not quote the probe's last line: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "checking sizzle") {
+		t.Fatalf("the reason quotes the probe's first line: %q", rec.Reason)
+	}
+	// The whole output is still in the report, first line included: the
+	// reason is a sentence, the report is the account.
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"checking sizzle", "sizzle.png is 0 bytes, not a video"} {
+		if !strings.Contains(string(report), want) {
+			t.Errorf("the report does not hold %q:\n%s", want, report)
+		}
+	}
+}
+
+// TestProbeOverAnEmptyStagedSetFailsTheRun is the design's §8.4 headline: a
+// render that legitimately produces nothing is not an error by itself, and
+// the probe is what turns "nothing" into a failure when the recipe's owner
+// asked for one. So the probe runs over an empty set exactly as it runs over
+// a full one — one invocation, the same environment, the same deadline — and
+// its verdict decides the run: a check that exits non-zero over nothing fails
+// the run and uploads nothing (there is nothing to upload, and the record
+// claims no artifacts either way).
+//
+// Mutation (short-circuit the probe when the staged set is empty, skipping it
+// as if the recipe had asked for none): the run ends succeeded/artifacts with
+// no artifacts and a record that attests to nothing, and this test fails on
+// the status, on the reason and on the marker file the probe never wrote.
+func TestProbeOverAnEmptyStagedSetFailsTheRun(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderScript("#!/bin/sh\nmkdir -p out\n"),
+			probeScript("#!/bin/sh\ntouch \"$FUGARO_STATE_DIR/probe-ran.txt\"\necho 'the render produced nothing'\nexit 1\n")))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run", rec)
+	}
+	if !strings.Contains(rec.Reason, "commands.probe exited 1: the render produced nothing") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.StateDir, "probe-ran.txt")); err != nil {
+		t.Fatalf("the probe did not run over the empty set: %v", err)
+	}
+	// The set it was handed was empty, and it was told so: FUGARO_OUT_DIR is
+	// the staging directory, which exists and holds nothing.
+	if files := stagedFiles(t, h); len(files) != 0 {
+		t.Fatalf("the staging directory holds %v, want nothing", files)
+	}
+	assertNoUpload(t, h)
+}
+
+// TestReportProbeColumn pins every arm of the report's Probe column from a
+// record, including the two a run of this release cannot produce on its own:
+// a non-zero verdict (a failing probe refuses the upload, so no artifact ever
+// carries one) and no verdict at all (a record written before the probe step
+// existed). Those two are exactly where the column could lie to a reader —
+// "ok" for a check the record says failed, or "none" for a recipe whose
+// intent the record cannot know — so they are asserted from the record the
+// report is rendered from rather than left to whatever a run happens to make.
+//
+// Mutation (fold !Ran and nil together, or print "ok" for any recorded
+// verdict): this test fails on the unprobed and failed rows.
+func TestReportProbeColumn(t *testing.T) {
+	at := time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20261016-100000-abcd", Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeArtifacts,
+		StartedAt: at,
+		Artifacts: []runstore.ArtifactFile{
+			{Name: "legacy.png", Bytes: 6, SHA256: strings.Repeat("a", 64), ContentType: "image/png"},
+			{Name: "unprobed.png", Bytes: 6, SHA256: strings.Repeat("b", 64), ContentType: "image/png",
+				Probe: &runstore.ProbeResult{Ran: false, ExitCode: -1}},
+			{Name: "passed.png", Bytes: 6, SHA256: strings.Repeat("c", 64), ContentType: "image/png",
+				Probe: &runstore.ProbeResult{Ran: true, ExitCode: 0}},
+			{Name: "failed.png", Bytes: 6, SHA256: strings.Repeat("d", 64), ContentType: "image/png",
+				Probe: &runstore.ProbeResult{Ran: true, ExitCode: 3}},
+		},
+	}
+	report := runner.Report(&rec, "runs/acme-app/20261016-100000-abcd/", nil)
+	for _, tc := range []struct{ name, sum, cell string }{
+		{"legacy.png", "aaaaaaaaaaaa", "—"},
+		{"unprobed.png", "bbbbbbbbbbbb", "none"},
+		{"passed.png", "cccccccccccc", "ok"},
+		{"failed.png", "dddddddddddd", "exit 3"},
+	} {
+		row := fmt.Sprintf("| `%s` | 6 | `%s` | image/png | %s |", tc.name, tc.sum, tc.cell)
+		if !strings.Contains(report, row) {
+			t.Errorf("the report has no row %q:\n%s", row, report)
+		}
+	}
+}
+
+// TestCancelDuringTheProbeEndsTheRunCancelled is the cancel branch's probe
+// half. The branch reports one reason for the whole artifact step, and the
+// probe now sits inside it — it can block for timeouts.verify plus its grace
+// — so a run cancelled while a slow probe is checking the set must not be
+// told it was cancelled while uploading: nothing had been uploaded, and the
+// owner looking for what was running would be sent to the wrong step.
+//
+// Mutation (name the upload in the collect branch's reason again): the reason
+// reads "cancelled while uploading the artifacts" and this test fails.
+func TestCancelDuringTheProbeEndsTheRunCancelled(t *testing.T) {
+	h := newHarnessFiles(t, probeCfg(t, "sh probe.sh", ""),
+		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png], probe: probe }")),
+		mergeFiles(renderWrites(outFile{name: "sizzle.png", body: "sizzle"}),
+			probeScript("#!/bin/sh\ntouch probe-started\nsleep 30\n")))
+	stop := make(chan struct{})
+	var done sync.WaitGroup
+	done.Add(1)
+	go func() {
+		defer done.Done()
+		marker := filepath.Join(h.deps.WorkDir, "probe-started")
+		for i := 0; i < 1000; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := os.Stat(marker); err == nil {
+				_ = h.store.RequestCancel(context.Background())
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	pushes := countPushes(t, h)
+	rec, err := h.run(t)
+	close(stop)
+	done.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusCancelled || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Reason != "cancelled while collecting the artifacts" {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "upload") {
+		t.Fatalf("a run cancelled in its probe is reported as an upload cancellation: %q", rec.Reason)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	assertNoUpload(t, h)
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
 }
