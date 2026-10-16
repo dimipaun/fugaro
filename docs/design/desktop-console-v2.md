@@ -256,6 +256,7 @@ The v1 design's decisions D1–D20 are answered and unchanged; nothing below reo
 
 | Phase | What it adds | Gated on |
 |---|---|---|
+| **V2.0 — the gate** | nothing but the answers: D21–D38 recorded and pinned by a test, and the check-number re-read | the owner, for all eighteen |
 | **V2.1 — the reads the sidebar needs** | the installation list as a document (F1, D31); the run record's changed-file set (F17, D27) | D31, D27 |
 | **V2.2 — the graph** | the graph artifact and its schema (F6, D25); the footprint (F18, D28); the read that prints it; critical-path ranking (D26) | D25, D28, D26 |
 | **V2.3 — the graph on screen** | the graph view, the four colours (F7), the ready/blocked computation where the graph is read | V2.2 |
