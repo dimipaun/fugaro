@@ -26,6 +26,45 @@ func InputKey(prefix, name string) string { return prefix + InputsDir + "/" + na
 // artifact-runs.md §3).
 const OutcomeArtifacts Outcome = "artifacts"
 
+// ArtifactPrefix is where a run's artifacts live under its own prefix:
+// runs/<slug>/<run>/artifacts/<name>. One spelling, so the runner that
+// uploads and the CLI that fetches cannot disagree about it (design
+// artifact-runs.md §3).
+const ArtifactPrefix = "artifacts/"
+
+// ArtifactFile is one file an artifact run delivered: the record's own
+// account of it, written so a reader can verify what it downloads (design
+// artifact-runs.md §3, §8).
+//
+// Name is relative to artifacts/ and is the sanitiser's own output
+// (internal/runner's sanitiseName): a plain relative path, no `..` element,
+// no NUL or newline, no leading dot, at most 200 bytes. It is never a path
+// out of the prefix, and the object's key leaf is exactly it.
+//
+// Bytes and SHA256 are what the upload wrote — the bytes actually in the
+// bucket, hashed in the same pass that wrote them (blobx.PutFile) and
+// checked against the staged copy's hash, not the hash of a file that was
+// read earlier and could have changed since.
+//
+// ContentType is recorded, never trusted (§8.1): it comes from the name's
+// extension or a sniff of the first bytes, and it is what a reader sees,
+// not what the run decided the file is.
+type ArtifactFile struct {
+	Name        string       `json:"name"`
+	Bytes       int64        `json:"bytes"`
+	SHA256      string       `json:"sha256"`
+	ContentType string       `json:"content_type"`
+	Probe       *ProbeResult `json:"probe,omitempty"`
+}
+
+// ProbeResult is what the probe step said about one artifact (design §3,
+// plan Task 5). Warning is "" when the probe passed.
+type ProbeResult struct {
+	Ran      bool   `json:"ran"`
+	ExitCode int    `json:"exit_code"`
+	Warning  string `json:"warning,omitempty"`
+}
+
 // RenderRecord is what a mode: artifact run's render step did, recorded
 // into result.json (design §3, D8).
 //

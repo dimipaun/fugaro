@@ -83,6 +83,14 @@ func CheckRunExecution(name, region, slug, workflow string) error {
 // It returns once Cloud Run has accepted the execution; the operation it
 // returns completes only when the execution ends, so Launch never waits.
 func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
+	// Cloud Run has no Docker daemon and no way to give a run one: a job
+	// that asked for docker: true would start, run its stages, and fail
+	// stage by stage with nothing to talk to (design compute-backend.md
+	// §4.2/§4.3). The ask is the workflow's, so it is refused here, before
+	// the run exists, and nothing can have started.
+	if spec.Docker {
+		return backend.ExecutionRef{}, fmt.Errorf("launching %s/%s: this workflow asks for docker: true, and Cloud Run cannot give a run a Docker daemon: it has no VM to mount one from. Run it on a backend that has VMs, or drop docker: true: %w", spec.Repo.Slug, spec.Workflow, backend.ErrRejected)
+	}
 	job := b.JobPath(spec.Repo.Slug, spec.Workflow)
 	req := &run.GoogleCloudRunV2RunJobRequest{Overrides: &run.GoogleCloudRunV2Overrides{
 		ContainerOverrides: []*run.GoogleCloudRunV2ContainerOverride{{

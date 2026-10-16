@@ -7,9 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"mime"
+	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +28,63 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
+
+// artifactStageDir is the staging directory under the state directory:
+// <StateDir>/artifacts/, beside verify/ (P5). On Cloud Run that filesystem
+// is memory, which is what the caps and the memory rule in gate.go are
+// about.
+const artifactStageDir = "artifacts"
+
+// maxArtifactNameBytes caps an artifact's name: the leaf of an object key,
+// and the name a reader passes back to the retriever.
+const maxArtifactNameBytes = 200
+
+// contentSniffLen is how many of an artifact's first bytes the recorded
+// content type is sniffed from: what http.DetectContentType reads, taken from
+// the copy as it is written rather than from the staged file afterwards.
+const contentSniffLen = 512
+
+// artifactStagedSeam runs between the staging pass (which hashes every
+// staged file) and the upload, when a test sets it (export_test.go's
+// SetArtifactStagedSeam). It exists because the window it stands in is a real
+// one — the plan stage's agent is the same user in the same container and can
+// write the staging directory — and because nothing else can reach it.
+var artifactStagedSeam func()
+
+// artifactCheckedSeam runs between the pass that examines and sizes every
+// match and the pass that copies them, when a test sets it (export_test.go's
+// SetArtifactCheckedSeam). It is the same window as artifactStagedSeam's, one
+// step earlier: what has been checked is a name and a size, and what is copied
+// is read from the filesystem again.
+var artifactCheckedSeam func()
+
+// artifactCopiedSeam runs after one match has been copied into the staging
+// directory and before the recorded content type is taken, when a test sets it
+// (export_test.go's SetArtifactCopiedSeam). It is the window between the
+// staged file existing and the record describing it, which is the one a swap
+// at the staged path lands in: the type is sniffed from the bytes the copy
+// read, so nothing there is opened a second time — a FIFO planted in this
+// window must not be able to block the staging step.
+var artifactCopiedSeam func()
+
+// artifactSet is what the runner staged, in the order it will be uploaded:
+// the staging root and one entry per file.
+type artifactSet struct {
+	dir   string
+	files []staged
+}
+
+// staged is one artifact as the staging directory holds it: its sanitised
+// name (relative to the artifacts prefix), where it was copied to, and what
+// was hashed and read there. It carries no size of its own: the record's is
+// the size the upload measured on the bytes it wrote, which is the number the
+// record can be held to.
+type staged struct {
+	name        string
+	path        string
+	sha256      string
+	contentType string
+}
 
 // renderTree is the tree a render runs in: the working checkout, uncommitted
 // work included, which the plan stage shared. It is recorded in
@@ -103,6 +165,27 @@ func (r *run) artifactMode(ctx context.Context) {
 		if h := r.haltValue(); h != nil {
 			r.endArtifactHalted(ctx, h)
 			return
+		}
+		if aerr := r.collectArtifacts(ctx); aerr != nil {
+			// The same priority the render's own failure path follows: a
+			// halt or a cancel that landed while the set was staged and
+			// uploaded decides the run, and anything else is the run's own
+			// failure — a name the sanitiser refused, a cap the set broke,
+			// an upload the bucket refused. Failed/none, never
+			// infra_error: these are the recipe's and the render's own
+			// outcomes, judged by the runner, and there is no pull request
+			// to fall back to.
+			if h := r.haltValue(); h != nil {
+				r.endArtifactHalted(ctx, h)
+				return
+			}
+			if r.isCancelled() {
+				r.endArtifactCancelled(ctx, "cancelled while uploading the artifacts")
+				return
+			}
+			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, r.redact(aerr.Error())
+			r.d.Log.Warn("the artifact step failed", "err", r.rec.Reason)
+			break
 		}
 		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeArtifacts
 	case r.haltValue() != nil:
@@ -226,6 +309,640 @@ func (r *run) runRender(ctx context.Context) (runstore.RenderRecord, error) {
 		log.Info("render output", "line", l)
 	}
 	return rec, nil
+}
+
+// collectArtifacts is the step after a successful render: stage the set,
+// hash it in the staging directory, upload it, and record it (design §3, P5).
+// Nothing is staged until every refusal has been made, so a refused set
+// leaves the staging directory empty and the bucket untouched.
+func (r *run) collectArtifacts(ctx context.Context) error {
+	set, err := r.stageArtifacts(r.out)
+	if err != nil {
+		return err
+	}
+	if artifactStagedSeam != nil {
+		artifactStagedSeam()
+	}
+	files, err := r.uploadArtifacts(ctx, set)
+	if err != nil {
+		return err
+	}
+	// Left nil rather than set to an empty slice: the record writes no
+	// artifacts key at all when a run delivered none (runstore.Record), so
+	// "this run uploaded nothing" and "this record predates the field" are
+	// the same bytes on disk.
+	if len(files) > 0 {
+		r.rec.Artifacts = files
+	}
+	return nil
+}
+
+// stageArtifacts matches the recipe's globs against the checkout, refuses
+// what must not be uploaded, copies each match into <StateDir>/artifacts/ and
+// hashes it there.
+//
+// The order of the refusals is the order of their cost: the count against
+// max_files first (cheap, and it bounds everything after it), then the names
+// and their collisions, then each file's own size against max_bytes, then the
+// set's total against max_total_bytes. One cap means one thing: max_files
+// counts entries, max_bytes is ONE artifact, max_total_bytes is the whole set
+// and is not derived from the other two.
+//
+// Two kinds of refusal are deliberately not the same:
+//
+//   - a name that would escape the outputs root, be absolute, hold a NUL or
+//     a newline, be over-long, begin with a dot, or collide with another
+//     match's name after cleaning fails the RUN. Every one of them means the
+//     record would either name something outside the run's own prefix or
+//     claim an artifact the retriever cannot hand back, and a set that
+//     silently drops one is a record that lies about what the render
+//     produced.
+//   - a match whose bytes would come from outside the outputs root — a link to
+//     somewhere else, or a file reached through a symlinked directory — and a
+//     match that is not a regular file are skipped with a warning and the run
+//     goes on (the plan's own rule): the bytes would be a file the render never
+//     wrote, so they are not copied, but a repository whose outputs hold such a
+//     link has not thereby escaped anything — the file is simply not a
+//     deliverable. A glob that matched nothing is reported the same way, one
+//     line per glob (design §8.4), and is not a refusal at all.
+func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
+	set := artifactSet{dir: filepath.Join(r.d.StateDir, artifactStageDir)}
+	// Empty first, whatever the outcome. The staging directory is the runner's
+	// own, and the only writer besides this function is the plan stage's agent,
+	// which is the same user in the same container: a file left there by that
+	// agent — or by the run this state was resumed from — is not this run's set,
+	// and a run that stages nothing must leave nothing behind either. So the
+	// directory holds this run's set, exactly, or is not there at all.
+	if err := os.RemoveAll(set.dir); err != nil {
+		return set, fmt.Errorf("emptying the staging directory %s: %w", set.dir, err)
+	}
+	if out == nil || len(out.Globs) == 0 {
+		return set, errors.New("the recipe names no outputs.globs: an artifact run with nothing to select has nothing to upload")
+	}
+	root := outputsRoot(out.Globs)
+	matches, empty, err := matchOutputs(r.d.WorkDir, out.Globs)
+	if err != nil {
+		return set, err
+	}
+	if len(matches) == 0 {
+		// Not an error by itself: a render may legitimately produce nothing
+		// (design §8.4), and the probe step is what turns "nothing" into a
+		// failure when the recipe's owner wants one. It is reported rather
+		// than silent — this line, and the report's own "no files" line,
+		// which the record's empty artifacts carries — and nothing is
+		// staged, so the run leaves the bucket exactly as it found it. Every
+		// glob is in empty here, so the one line naming the list is exact.
+		r.d.Log.Warn("commands.render matched none of the recipe's outputs.globs", "globs", strings.Join(out.Globs, ", "))
+		return set, nil
+	}
+	// One line per glob that matched nothing, naming that glob and no other
+	// (design §8.4, "it is reported"): a set that came out of the other
+	// patterns is no reason for a typo in this one to go unsaid.
+	for _, g := range empty {
+		r.d.Log.Warn("commands.render matched nothing for one of the recipe's outputs.globs", "glob", g)
+	}
+	kept, err := r.usableOutputs(matches, root)
+	if err != nil {
+		return set, err
+	}
+	if len(kept) == 0 {
+		// Every match was refused above, each with its own warning saying why,
+		// so this line only marks the step as over: nothing is staged and the
+		// record carries no artifacts.
+		r.d.Log.Warn("commands.render left no usable file for the recipe's outputs.globs", "globs", strings.Join(out.Globs, ", "))
+		return set, nil
+	}
+	if len(kept) > out.FileCount() {
+		return set, fmt.Errorf("commands.render produced %d files matching %s, over outputs.max_files %d: narrow the globs or raise the cap",
+			len(kept), strings.Join(out.Globs, ", "), out.FileCount())
+	}
+	names := make([]string, len(kept))
+	// Keyed on the folded name: two names that differ only in case are one
+	// name on a filesystem that folds case, which is where `fugaro artifacts
+	// get` would have the second artifact overwrite the first.
+	taken := make(map[string]string, len(kept))
+	for i, o := range kept {
+		rel, err := relativeName(r.d.WorkDir, root, o.match)
+		if err != nil {
+			return set, err
+		}
+		name, err := sanitiseName(rel)
+		if err != nil {
+			return set, fmt.Errorf("the render's %s: %w", o.match, err)
+		}
+		if prev, dup := taken[strings.ToLower(name)]; dup {
+			return set, fmt.Errorf("two of the render's files clean to the same name %q: %s and %s (a name that differs only in case is the same name where the retriever writes it back)",
+				name, prev, o.match)
+		}
+		taken[strings.ToLower(name)] = o.match
+		names[i] = name
+	}
+	sizes := make([]int64, len(kept))
+	var total int64
+	for i, o := range kept {
+		// The size the caps are checked against, measured on the resolved
+		// target. It is a moment old by the time it is used, which is why the
+		// copy re-stats the file it opens and refuses a size that moved.
+		st, err := os.Stat(o.target)
+		if err != nil {
+			return set, fmt.Errorf("sizing the render's %s: %w", o.target, err)
+		}
+		if st.Size() > out.MaxFileBytes() {
+			return set, fmt.Errorf("the render's %s is %s, over outputs.max_bytes %s (the per-artifact cap): lower the file or raise the cap",
+				o.match, recipe.SizeText(st.Size()), recipe.SizeText(out.MaxFileBytes()))
+		}
+		sizes[i] = st.Size()
+		total += st.Size()
+	}
+	if total > out.MaxSetBytes() {
+		return set, fmt.Errorf("the render's %d files total %s, over outputs.max_total_bytes %s (every file is under outputs.max_bytes %s): raise the cap or narrow the globs",
+			len(kept), recipe.SizeText(total), recipe.SizeText(out.MaxSetBytes()), recipe.SizeText(out.MaxFileBytes()))
+	}
+	if artifactCheckedSeam != nil {
+		artifactCheckedSeam()
+	}
+	if err := os.MkdirAll(set.dir, 0o755); err != nil {
+		return set, fmt.Errorf("creating the staging directory: %w", err)
+	}
+	for i, o := range kept {
+		dst := filepath.Join(set.dir, filepath.FromSlash(names[i]))
+		// The resolved target, and copyFileHashed opens it without following a
+		// link and stats the file it opened: what is staged is the file the
+		// caps were checked against. It hands back the first bytes it read, so
+		// the type below is sniffed from the staged bytes with no second open
+		// of the staged path.
+		_, sum, head, err := copyFileHashed(o.target, dst, sizes[i])
+		if err != nil {
+			r.clearStaging(set, "after a copy failed")
+			return set, err
+		}
+		if artifactCopiedSeam != nil {
+			artifactCopiedSeam()
+		}
+		ct := artifactContentType(names[i], head)
+		set.files = append(set.files, staged{name: names[i], path: dst, sha256: sum, contentType: ct})
+	}
+	sort.Slice(set.files, func(i, j int) bool { return set.files[i].name < set.files[j].name })
+	return set, nil
+}
+
+// clearStaging takes the staging directory back to nothing after a failure
+// partway through a set. A half-staged set is worse than no set: the plan
+// stage's agent can read the state directory, and a retry in the same state
+// would find files that no record describes. Failure here is only logged —
+// the run is already failing for the reason that got it to this call.
+func (r *run) clearStaging(set artifactSet, why string) {
+	if set.dir == "" {
+		return
+	}
+	if err := os.RemoveAll(set.dir); err != nil {
+		r.d.Log.Warn("the staging directory could not be emptied", "dir", set.dir, "why", why, "err", err)
+	}
+}
+
+// uploadArtifacts writes the set to runs/<slug>/<run>/artifacts/, in name
+// order, and returns the record's own account of it. The hash each entry
+// carries is the one the upload measured on the bytes it wrote, checked
+// against the staged copy's: the record never attests to bytes that are not
+// in the bucket.
+//
+// An upload that fails partway leaves nothing of its own in the bucket. The
+// record for a run whose upload failed says it produced no artifacts, and a
+// bucket that holds the first few objects anyway is a set no record describes
+// — read back by `artifacts get` and never by result.json. The writes are
+// create-only, so a re-executed run in the same run directory would also stop
+// on the first key that was already there: the removal is what makes the
+// retry a retry.
+func (r *run) uploadArtifacts(ctx context.Context, set artifactSet) ([]runstore.ArtifactFile, error) {
+	if len(set.files) == 0 {
+		return nil, nil
+	}
+	files := make([]runstore.ArtifactFile, 0, len(set.files))
+	for _, f := range set.files {
+		size, sum, err := r.d.Store.PutFileFrom(ctx, runstore.ArtifactPrefix+f.name, f.path, f.contentType, f.sha256)
+		if err != nil {
+			r.removeUploaded(ctx, files)
+			return nil, err
+		}
+		files = append(files, runstore.ArtifactFile{Name: f.name, Bytes: size, SHA256: sum, ContentType: f.contentType})
+	}
+	return files, nil
+}
+
+// removeUploaded deletes the objects written before an upload failed, best
+// effort, and logs any it could not. A bucket that cannot be written to is
+// often one that cannot be deleted from either; the run's own failure is
+// reported either way, and this line says what was left behind. The delete
+// itself is detached from ctx (runstore.DeleteCleanupTimeout): the caller's
+// context is usually already cancelled or nearly out of time, which is the very
+// failure this is cleaning up after.
+func (r *run) removeUploaded(ctx context.Context, files []runstore.ArtifactFile) {
+	if len(files) == 0 {
+		return
+	}
+	for _, f := range files {
+		if err := r.d.Store.DeleteFile(ctx, runstore.ArtifactPrefix+f.Name); err != nil {
+			r.d.Log.Warn("an artifact from a failed upload could not be removed", "name", f.Name, "err", err)
+		}
+	}
+}
+
+// matchOutputs expands the recipe's globs against the checkout, in glob order,
+// and names the globs that matched nothing. A pattern that cannot be parsed is
+// refused rather than skipped: a glob nobody can match is a recipe bug, and
+// silently uploading less than the recipe asked for is the failure this whole
+// step exists to prevent.
+//
+// empty is per glob rather than per run because that is what design §8.4's "it
+// is reported" has to mean: a recipe whose second pattern is a typo is exactly
+// the case a reader needs to hear about, and it is invisible to a test that
+// only asks whether the whole set came out empty.
+func matchOutputs(workDir string, globs []string) (matches, empty []string, err error) {
+	for _, g := range globs {
+		if filepath.IsAbs(g) {
+			return nil, nil, fmt.Errorf("the outputs.globs entry %q is absolute: a glob is relative to the checkout", g)
+		}
+		m, err := filepath.Glob(filepath.Join(workDir, filepath.FromSlash(g)))
+		if err != nil {
+			return nil, nil, fmt.Errorf("the outputs.globs entry %q: %w", g, err)
+		}
+		if len(m) == 0 {
+			empty = append(empty, g)
+		}
+		matches = append(matches, m...)
+	}
+	return matches, empty, nil
+}
+
+// output is one of the render's files as the run will copy it: match is the
+// path the recipe's own glob produced, which is what the name, the caps and
+// the warnings are about, and target is the file its bytes come from with
+// every symlink resolved. The two are the same string unless something on the
+// way to the match is a link.
+type output struct {
+	match, target string
+}
+
+// usableOutputs drops the matches that must not be copied, with a warning
+// naming each one: anything whose bytes would come from outside the outputs
+// root (the bytes would be a file the render never wrote), and anything that
+// is not a regular file. A match that cannot be examined at all is an error:
+// that is the filesystem failing, not a refusal. The same file matched by two
+// globs is kept once.
+func (r *run) usableOutputs(matches []string, root string) ([]output, error) {
+	rootAbs, err := r.outputsRootAbs(root)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]output, 0, len(matches))
+	seen := make(map[string]bool, len(matches))
+	for _, m := range matches {
+		target, why, err := outputProblem(m, rootAbs)
+		if err != nil {
+			return nil, err
+		}
+		if why != "" {
+			r.d.Log.Warn("refusing one of the render's outputs", "path", m, "reason", why)
+			continue
+		}
+		if seen[target] {
+			// Two globs that match the same FILE are one artifact, not two:
+			// out/* and out/*.png side by side are how a recipe is naturally
+			// written, and a second copy of one file is not a name collision.
+			continue
+		}
+		seen[target] = true
+		kept = append(kept, output{match: m, target: target})
+	}
+	return kept, nil
+}
+
+// outputsRootAbs is the outputs root with every symlink resolved, refused when
+// it leaves the checkout. The root is what "inside the outputs root" is
+// measured against, so a root that is itself a link would move the question
+// with it: a render that leaves ../elsewhere and points out/ at it would have
+// every match resolve to a file the repository does not hold, and the run
+// would record bytes from anywhere the render can write as its own outputs.
+func (r *run) outputsRootAbs(root string) (string, error) {
+	workAbs, err := filepath.EvalSymlinks(r.d.WorkDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving the checkout %s: %w", r.d.WorkDir, err)
+	}
+	rootAbs := filepath.Join(r.d.WorkDir, filepath.FromSlash(root))
+	resolved, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		// A root that does not exist has matched nothing; the path under the
+		// checkout is what the per-match checks compare against.
+		return rootAbs, nil
+	}
+	if !withinDir(workAbs, resolved) {
+		return "", fmt.Errorf("the outputs root %s resolves to %s, outside the checkout %s: an artifact run's outputs are the repository's own", root, resolved, workAbs)
+	}
+	return resolved, nil
+}
+
+// outputProblem is why path must not be copied, or "" when it may be. root is
+// the outputs root with every symlink resolved.
+//
+// The question is about the file the bytes would come from, never about the
+// name that reaches it, so every element of the path is resolved:
+// filepath.EvalSymlinks turns out/evil/secret.png into the file behind a
+// symlinked DIRECTORY, and a match like that is refused exactly as a match that
+// is itself a link is. Lstat'ing the final component alone would see a plain
+// regular file there and copy bytes from outside the root — the one thing this
+// check exists to prevent — because the link is in the middle of the path, not
+// at its end.
+//
+// What the path resolves TO matters as well, not just where it is: a link to a
+// directory would fail the copy with EISDIR where the plain directory is
+// skipped with a warning, and a link to a FIFO would block the copy forever
+// (the staging copy takes no context, so nothing could interrupt it). Both get
+// the answer their unlinked selves get, from metadata that cannot block.
+func outputProblem(path, root string) (string, string, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return "", "", fmt.Errorf("examining the render's %s: %w", path, err)
+	}
+	link := st.Mode()&os.ModeSymlink != 0
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		if link {
+			return "", fmt.Sprintf("it is a symlink whose target cannot be resolved (%v)", err), nil
+		}
+		return "", "", fmt.Errorf("examining the render's %s: %w", path, err)
+	}
+	if !withinDir(root, target) {
+		if link {
+			return "", fmt.Sprintf("it is a symlink to %s, outside the outputs root %s", target, root), nil
+		}
+		return "", fmt.Sprintf("it reaches %s through a symlinked directory, outside the outputs root %s", target, root), nil
+	}
+	// target holds no symlink of its own, so Lstat answers about the file the
+	// copy would open — and answers it without the open, which is what keeps a
+	// FIFO from blocking here.
+	tst, err := os.Lstat(target)
+	if err != nil {
+		return "", "", fmt.Errorf("examining the render's %s: %w", path, err)
+	}
+	if !tst.Mode().IsRegular() {
+		return "", "it is not a regular file", nil
+	}
+	return target, "", nil
+}
+
+// withinDir reports whether path is dir or below it. Both are absolute and
+// already resolved (filepath.EvalSymlinks), which is what makes the answer
+// about the file the bytes would come from rather than about a name.
+func withinDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// relativeName is a match's path relative to the outputs root, slash
+// separated: "out/clips/a.png" under the root "out" is "clips/a.png". The
+// root is the deepest common root of the recipe's globs, so the names of a
+// one-glob recipe are the glob's own tail.
+func relativeName(workDir, root, match string) (string, error) {
+	rel, err := filepath.Rel(workDir, match)
+	if err != nil {
+		return "", fmt.Errorf("the render's %s: %w", match, err)
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("the render's %s is outside the checkout", match)
+	}
+	if root == "" || root == "." {
+		return rel, nil
+	}
+	if !strings.HasPrefix(rel, root+"/") {
+		return "", fmt.Errorf("the render's %s is not under the outputs root %s", match, root)
+	}
+	return strings.TrimPrefix(rel, root+"/"), nil
+}
+
+// outputsRoot is the deepest directory every one of the recipe's globs lives
+// under: the root the uploaded names are relative to. ["out/*.mp4"] is "out",
+// ["out/*.mp4", "out/clips/*.png"] is "out", ["*.mp4"] is "." (the checkout
+// itself, so a top-level match keeps its own name).
+func outputsRoot(globs []string) string {
+	var root []string
+	for i, g := range globs {
+		elems := rootElems(globRoot(g))
+		if i == 0 {
+			root = elems
+			continue
+		}
+		root = commonElems(root, elems)
+	}
+	return strings.Join(root, "/")
+}
+
+// globRoot is the directory part of one glob: everything before its first
+// meta character, taken as a directory.
+func globRoot(g string) string {
+	prefix := g
+	if i := strings.IndexAny(g, "*?["); i >= 0 {
+		prefix = g[:i]
+	}
+	return path.Dir(prefix)
+}
+
+// rootElems splits a root into path elements, dropping "." and "".
+func rootElems(root string) []string {
+	var out []string
+	for _, e := range strings.Split(root, "/") {
+		if e != "" && e != "." {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// commonElems is the longest common prefix of two element lists.
+func commonElems(a, b []string) []string {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	i := 0
+	for i < n && a[i] == b[i] {
+		i++
+	}
+	return a[:i]
+}
+
+// sanitiseName is the one refusal list every artifact name goes through
+// (design §8.2): the name is the match's path relative to the outputs root,
+// cleaned with path.Clean, and it must be non-empty, at most 200 bytes, not
+// absolute, not an escape out of the root, free of a NUL or a newline, and
+// not dot-named. It returns the cleaned name, so a caller that accepted
+// "clips/./a.png" uploads "clips/a.png".
+//
+// The dot rule is a matched pair with the retriever's (design §9): `fugaro
+// artifacts get` refuses a dot-named entry, and Go's filepath.Glob — unlike a
+// shell — matches a leading dot, so without this rule out/*.mp4 would upload
+// and record a .hidden.mp4 that can never be handed back. It is the NAME's
+// first character and nothing else, which is exactly how the retrieval path
+// words its own rule (design §9: "the refusal is only on a name whose first
+// character is `.`"), so the two sides cannot drift: a dot inside a name
+// (sizzle.v2.mp4) and a name inside a dot-named directory below the outputs
+// root (clips/.hidden/a.png) are both names this accepts, and both are names
+// `get` hands back.
+//
+// This function is about the NAME and nothing else. Whether a match is a file
+// whose bytes may be copied is stageArtifacts' question (outputProblem): a
+// symlink out of the root has a perfectly good name and must still not be
+// followed.
+func sanitiseName(name string) (string, error) {
+	if name == "" {
+		return "", errors.New("the name is empty")
+	}
+	if i, what := firstControl(name); i >= 0 {
+		return "", fmt.Errorf("the name %q holds %s at byte %d: a name is printed in the report and typed at a shell, and a control character is how a name reads as something other than what it is", name, what, i)
+	}
+	if len(name) > maxArtifactNameBytes {
+		return "", fmt.Errorf("the name is %d bytes, over the %d-byte cap", len(name), maxArtifactNameBytes)
+	}
+	if path.IsAbs(name) {
+		return "", fmt.Errorf("the name %q is absolute: an artifact's name is relative to the outputs root", name)
+	}
+	clean := path.Clean(name)
+	if clean == "." {
+		return "", fmt.Errorf("the name %q names no file", name)
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("the name %q escapes the outputs root", name)
+	}
+	if strings.HasPrefix(clean, ".") {
+		return "", fmt.Errorf("the name %q begins with a dot, which the retriever refuses: a file nobody can fetch back is not uploaded", clean)
+	}
+	return clean, nil
+}
+
+// firstControl returns the byte offset of the first character in name that
+// must not be an artifact's name, and what to call it, or -1 and "". It is
+// every C0 control, DEL, the C1 range, and the bidi overrides: the name is
+// printed in report.md and typed at a shell, and an escape sequence or a
+// U+202E is a name that reads as a different name — a reader cannot tell
+// sizzle.mp4 from sizzle‮gnp.exe. Punctuation is the render's to choose
+// (design §9 binds the name's first character and nothing else), so a pipe or
+// a backtick is allowed here and escaped where it is rendered
+// (report.go's tableText and tableCode). NUL and the line breaks are the same
+// rule as the rest of this table rather than a case of their own.
+func firstControl(name string) (int, string) {
+	for i, r := range name {
+		switch {
+		case r == 0x00:
+			return i, "a NUL"
+		case r == '\n':
+			return i, "a newline"
+		case r == '\r':
+			return i, "a carriage return"
+		case r == '\t':
+			return i, "a tab"
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			return i, fmt.Sprintf("the control character U+%04X", r)
+		case (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069):
+			return i, fmt.Sprintf("the control character U+%04X (a bidi override)", r)
+		}
+	}
+	return -1, ""
+}
+
+// copyFileHashed copies src to dst, creating dst's parents, and returns the
+// bytes written, their lower-case hex sha256 — the staged copy's own hash,
+// taken in the same pass that wrote it — and the first contentSniffLen bytes,
+// which is what the recorded content type is sniffed from. want is the size
+// the caller measured before the copy: a file that changed under the copy is
+// refused, because what would be uploaded is then neither the file that was
+// measured against the caps nor the one the record describes.
+//
+// dst is 0600: an artifact is data, never something a later step executes,
+// and the staging directory sits in a state directory the plan stage's agent
+// can write.
+func copyFileHashed(src, dst string, want int64) (int64, string, []byte, error) {
+	// The size that was checked against the caps is the size of a file that
+	// was examined a moment ago, and this is where it is used. So the open
+	// does not follow a symlink and does not block on a FIFO, the fstat is on
+	// the very file the bytes will come from, and the copy is bounded by the
+	// size that was checked plus one byte: whichever of the three the swap
+	// defeats, the record still describes bytes the caps approved or the run
+	// fails. (Before this, the copy read whatever was at the path to its end
+	// and only then compared the total with the size it had approved.)
+	in, err := openNoFollow(src)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
+	}
+	defer in.Close()
+	st, err := in.Stat()
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
+	}
+	if !st.Mode().IsRegular() {
+		return 0, "", nil, fmt.Errorf("staging %s: it is not a regular file (%s): what was checked was a regular file", src, st.Mode())
+	}
+	if st.Size() != want {
+		return 0, "", nil, fmt.Errorf("staging %s: it changed while it was copied (it is %d bytes, it was %d)", src, st.Size(), want)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
+	}
+	// O_EXCL|O_NOFOLLOW: the staging directory sits in a state directory the
+	// plan stage's agent can write, so a symlink planted at dst must fail the
+	// create rather than choose what this run writes through. O_TRUNC is gone
+	// with it: there is nothing here to truncate, because the directory was
+	// emptied before the set was staged into it.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o600)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
+	}
+	// The head is taken through the descriptor the copy reads from, as the
+	// bytes go past: the type the record carries is sniffed from the bytes
+	// that were staged, and there is no second open of the staged path left
+	// for a link planted there to be followed or a FIFO to block on.
+	head := &headBytes{}
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(out, h), io.LimitReader(io.TeeReader(in, head), want+1))
+	if cerr := out.Close(); err == nil && cerr != nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
+	}
+	if n != want {
+		return 0, "", nil, fmt.Errorf("staging %s: it changed while it was copied (read %d bytes, it said %d)", src, n, want)
+	}
+	return n, hex.EncodeToString(h.Sum(nil)), head.buf, nil
+}
+
+// headBytes keeps the first contentSniffLen bytes written to it and counts the
+// rest: it is the tee a copy sniffs through, so nothing but the write is asked
+// of it (a short write here would fail a copy that is otherwise fine).
+type headBytes struct{ buf []byte }
+
+func (h *headBytes) Write(p []byte) (int, error) {
+	if n := contentSniffLen - len(h.buf); n > 0 {
+		h.buf = append(h.buf, p[:min(n, len(p))]...)
+	}
+	return len(p), nil
+}
+
+// artifactContentType is the type recorded for a staged artifact: the name's
+// extension first, then a sniff of the first bytes the copy read. It is
+// recorded and never trusted (design §8.1) — a reader decides for itself what
+// to do with the bytes — and it is never a guess from the render's own
+// say-so. head is those first bytes, handed over by copyFileHashed rather than
+// read back from the staged path: the staged file is one the plan stage's
+// agent can reach, and the recorded type must describe the bytes this run
+// wrote, not whatever is at that path when the sniff happens.
+func artifactContentType(name string, head []byte) string {
+	if ct := mime.TypeByExtension(filepath.Ext(name)); ct != "" {
+		return ct
+	}
+	return http.DetectContentType(head)
 }
 
 // noteRenderTail keeps the render's last lines as the report's log tail: a

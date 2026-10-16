@@ -103,6 +103,28 @@ func TestLaunchMissingJob(t *testing.T) {
 	}
 }
 
+// TestLaunchRefusesDocker: Cloud Run cannot give a run a Docker daemon, so a
+// workflow that asks for one is refused before anything is created rather than
+// started without it (design compute-backend.md §4.2/§4.3).
+func TestLaunchRefusesDocker(t *testing.T) {
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	_, err := b.Launch(context.Background(), backend.LaunchSpec{
+		Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd", Docker: true})
+	if !errors.Is(err, backend.ErrRejected) || !strings.Contains(err.Error(), "docker") {
+		t.Fatalf("Launch(docker: true) = %v, want a refusal naming docker", err)
+	}
+	if got := fr.RunRequests(); len(got) != 0 {
+		t.Fatalf("a refused launch still ran %d execution(s): %+v", len(got), got)
+	}
+	// The same workflow without docker: true launches: the refusal is about
+	// the ask, not about the job.
+	if _, err := b.Launch(context.Background(), backend.LaunchSpec{
+		Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"}); err != nil {
+		t.Fatalf("Launch(no docker): %v", err)
+	}
+}
+
 func TestLaunchAmbiguousErrorsAreNotRejected(t *testing.T) {
 	b, fr, _ := newTestBackend(t)
 	fr.AddJob(webJob, "4", "8Gi")

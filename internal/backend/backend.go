@@ -70,6 +70,15 @@ type LaunchSpec struct {
 	// Timeout is the workflow's total time for this run; zero means the job's own.
 	// The backend adds TaskTimeoutSlack to it.
 	Timeout time.Duration
+	// Docker is what the workflow asked for: `docker: true` (design
+	// compute-backend.md §4.2, C16), a real Docker daemon for the run's own
+	// containers. It is the workflow's ask and not a capability, so a backend
+	// that cannot give a run a daemon must refuse the launch rather than run
+	// the job without one: the agent's `docker` commands would fail one by
+	// one, in the middle of a stage, with no daemon to talk to. On Batch it
+	// mounts the VM's socket and puts DOCKER_HOST in the job env (§2.2,
+	// §4.3); Cloud Run has no daemon at all and refuses it.
+	Docker bool
 }
 
 // ExecID is a run's identity, parsed from its resource name by the
@@ -183,9 +192,12 @@ const VMMinimumBilled = time.Minute
 // that priced it differently would change every Cloud Run estimate already
 // recorded.
 //
-// ok is false only for a VM-backed execution whose boot window the backend
-// has not reported (neither Scheduled nor Created is set, so nothing can be
-// priced). The estimate must then say "unknown", never "free".
+// ok is false for a VM-backed execution whose window cannot be bounded at
+// all: neither Scheduled nor Created is set (nothing can be priced), or the
+// execution has ended and no completion time was reported, so the window has
+// no end either. The estimate must then say "unknown", never "free" -- and
+// never a figure that grows: a caller re-reading a finished run must not
+// re-price it higher every time it looks.
 func (e Execution) BilledWindow(now time.Time) (time.Duration, bool) {
 	if e.MachineType == "" {
 		return e.Billed(now), true
@@ -199,6 +211,17 @@ func (e Execution) BilledWindow(now time.Time) (time.Duration, bool) {
 	}
 	end := e.Completed
 	if end.IsZero() {
+		if e.State.Terminal() {
+			// It has ended and the backend reported no completion time
+			// (the Batch backend leaves Completed zero: the job's status
+			// events are where it comes from and their shape is UNVERIFIED,
+			// design §2.3, §9). now is not the end of a window that is
+			// already over, and a job's record outlives it by 60 days
+			// (§2.4), so treating now as the end would read the same
+			// finished run as costing more and more the longer it is
+			// looked at.
+			return 0, false
+		}
 		end = now
 	}
 	return max(VMMinimumBilled, end.Sub(start)), true
