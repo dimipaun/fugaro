@@ -260,8 +260,10 @@ merged as `a1464c5`). **58 is the artifact-runs design's**
 `fd06635` — the first number past every reservation, its row and its
 `## Check 58` section written here and not yet run), and **59 is the desktop
 console plan's** (`docs/plans/2026-10-15-desktop-console.md`, whose own
-register yields 58 to #393 and takes 59 for itself, written as two sections
-59a and 59b because the second needs a published feed to run). The rows
+register yields 58 to #393 and takes 59 for itself, **reserved as two
+sections 59a and 59b** — the first its signed, notarised macOS build, the
+second the auto-update round trip, which needs a published feed — so its
+sections arrive with that plan, not here). The rows
 for a reservation appear when its plan lands, so the gap between 47 and 57 is
 deliberate, not a missing check.
 
