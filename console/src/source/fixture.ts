@@ -51,7 +51,7 @@ import { createHash } from 'node:crypto'
 import { FeedTracker, MAX_FEED_LINE_LENGTH } from '../main/spawn'
 import type { Notice, Timers } from '../main/spawn'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
-import { REDACTOR_VERSION, assertRedacted } from './redact'
+import { REDACTOR_VERSION, RedactionRefusal, assertRedacted } from './redact'
 import { SourceRefusal, refusalFrom } from './source'
 import type {
   FeedEnd,
@@ -347,15 +347,32 @@ function parseRecord(line: string, where: string, index: number): FixtureRecord 
   if (hasNotice) {
     const notice = record['notice']
     if (typeof notice !== 'string') throw new FixtureRefusal(`${at}'s notice is not a string`)
-    assertRedacted(notice, at)
+    auditOrRefuse(notice, at)
     return { at: stamp, notice }
   }
   const document = record['document']
   if (document === null || typeof document !== 'object' || Array.isArray(document)) {
     throw new FixtureRefusal(`${at}'s document is not a JSON object`)
   }
-  assertRedacted(document, at)
+  auditOrRefuse(document, at)
   return { at: stamp, document: document as JSONDoc }
+}
+
+/**
+ * auditOrRefuse runs the redaction audit over one record and refuses as a
+ * `FixtureRefusal`. The audit's own refusal already names the class and the path
+ * it found it at (`the frame at 12:00:01Z still holds an address`), and that
+ * sentence is kept verbatim -- what changes is the class, so that **a fixture
+ * which does not verify is one refusal to catch**, whether it failed its digest,
+ * its count, its order or its audit.
+ */
+function auditOrRefuse(value: unknown, where: string): void {
+  try {
+    assertRedacted(value, where)
+  } catch (error) {
+    if (error instanceof RedactionRefusal) throw new FixtureRefusal(error.message)
+    throw error
+  }
 }
 
 /**

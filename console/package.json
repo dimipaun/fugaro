@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.build.json",
     "test:unit": "vitest run --dir test/unit",
     "test:e2e": "npm run build && playwright test --pass-with-no-tests",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js"
   },
   "dependencies": {
     "electron-updater": "6.8.9"
