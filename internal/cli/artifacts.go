@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -577,6 +579,38 @@ func artifactDestRoot(parent, runID string) string {
 	return filepath.Join(parent, runID+artifactDirSuffix)
 }
 
+// artifactPathErr classifies an error from a filesystem call on one of the
+// operator's OWN destination paths.
+//
+// The distinction it draws is the one the repository's exit codes promise: exit
+// 1 is a bad local path or configuration, exit 2 is a remote failure a caller
+// may retry. Every one of these errnos is the operator's filesystem answering
+// about the operator's own path, so blaming the infrastructure for it tells a
+// script to retry something that will fail identically forever — and the raw
+// "lstat ...: not a directory" it would otherwise print says nothing about what
+// to change. The three that are reachable here are a component of the path
+// being a regular file (ENOTDIR, which is NOT os.IsNotExist: the Lstat that asks
+// "is the destination already there?" answers it for --out naming a file, and
+// parentUnderRoot's walk answers it for a record name whose intermediate
+// directory is a file), a directory the operator cannot read or write
+// (EACCES/EPERM), and a path longer than the filesystem takes
+// (ENAMETOOLONG) — each named and each with what to change.
+//
+// Anything else keeps remote(err)'s classification: an error this function does
+// not recognise is one whose cause is not this path's shape, and calling that a
+// user error would be the opposite mistake.
+func artifactPathErr(path string, err error) error {
+	switch {
+	case errors.Is(err, syscall.ENOTDIR):
+		return userErr("%s is not a directory: a component of this path is a regular file, and nothing can be downloaded under it (move it, or name another destination)", oneLine(path))
+	case errors.Is(err, fs.ErrPermission):
+		return userErr("%s: %v (this command needs to read and write the directory it downloads into)", oneLine(path), err)
+	case errors.Is(err, syscall.ENAMETOOLONG):
+		return userErr("%s: %v (the path is longer than this filesystem takes; pass --out naming a shorter one)", oneLine(path), err)
+	}
+	return remote(err)
+}
+
 // prepareArtifactRoot creates the destination directory. An existing entry at
 // that path is only usable when it is a real directory: a symlink there is a
 // path out of the directory the user named, and anything that is not a
@@ -591,7 +625,10 @@ func prepareArtifactRoot(root string) error {
 	case err == nil:
 		return nil
 	case !os.IsNotExist(err):
-		return remote(err)
+		// A component of the --out path that is not a directory answers
+		// ENOTDIR here, and it is as local as the entry-at-the-root case just
+		// above: the same answer to the same question, one level up.
+		return artifactPathErr(root, err)
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return userErr("creating %s: %v", oneLine(root), err)
@@ -634,7 +671,7 @@ func checkArtifactDest(root, name string, force bool) (string, error) {
 	case os.IsNotExist(err):
 		return dest, nil
 	case err != nil:
-		return "", remote(err)
+		return "", artifactPathErr(dest, err)
 	case fi.Mode()&os.ModeSymlink != 0:
 		// The write would replace the link (rename never follows the final
 		// component), but a link is not a file this command put there and
@@ -676,11 +713,11 @@ func prepareArtifactDest(root, dest string) error {
 func underArtifactRoot(root, dir string) error {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return remote(err)
+		return artifactPathErr(root, err)
 	}
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return remote(err)
+		return artifactPathErr(dir, err)
 	}
 	if real != realRoot && !strings.HasPrefix(real, realRoot+string(filepath.Separator)) {
 		return userErr("the artifact's directory resolves to %s, outside the destination %s: the name reached it through a link", oneLine(real), oneLine(root))
@@ -702,17 +739,30 @@ func underArtifactRoot(root, dir string) error {
 // the user through remote(err) — exit 2 for a local condition, telling a
 // script to retry and blaming the infrastructure for a name that cannot be
 // fetched into this directory.
+//
+// The same is true one level down, where the anchor is what the walk has to
+// step over: a file at root/frames while the name is frames/sub/a.png answers
+// ENOTDIR to the walk's first Lstat, which is not os.IsNotExist and so is not
+// "nothing there yet" — there is something there, and it is a file. Every
+// filesystem call here therefore reports through artifactPathErr, so the shape
+// of the operator's own path decides the exit code wherever it is noticed
+// rather than only where it happens to be looked at.
 func parentUnderRoot(root, dir string) error {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return remote(err)
+		return artifactPathErr(root, err)
 	}
 	dir = filepath.Clean(dir)
 	for {
 		if _, err := os.Lstat(dir); err == nil {
 			break
 		} else if !os.IsNotExist(err) {
-			return remote(err)
+			// ENOTDIR lands here: a regular file in the middle of the name is
+			// not "nothing there yet", so the walk stops on it — and stopping
+			// is right, because there is no anchor below it to look at. What
+			// the operator is told is what the walk now knows: the path cannot
+			// be used, and it is not the infrastructure's fault.
+			return artifactPathErr(dir, err)
 		}
 		up := filepath.Dir(dir)
 		if up == dir {
@@ -724,7 +774,7 @@ func parentUnderRoot(root, dir string) error {
 	if err != nil {
 		// The walk above stopped on something that existed a moment ago;
 		// whatever happened to it, there is no anchor to resolve.
-		return remote(err)
+		return artifactPathErr(dir, err)
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
 		// A link is resolved below and refused there if it leaves root; here
@@ -740,7 +790,7 @@ func parentUnderRoot(root, dir string) error {
 	}
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return remote(err)
+		return artifactPathErr(dir, err)
 	}
 	if real != realRoot && !strings.HasPrefix(real, realRoot+string(filepath.Separator)) {
 		return userErr("the artifact's directory resolves to %s, outside the destination %s: the name reached it through a link", oneLine(real), oneLine(root))

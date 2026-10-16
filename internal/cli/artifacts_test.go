@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1378,6 +1381,156 @@ func TestArtifactsGetCreatesNoDirectoriesWhileChecking(t *testing.T) {
 // parentUnderRoot accepting any existing entry as its anchor (root/frames is
 // Lstat-ed as existing, EvalSymlinks resolves it inside root, the prefix check
 // passes, and the failure only appears later, unclassified).
+// TestArtifactsGetRefusesADeepDirectoryComponentThatIsNotADirectory: the same
+// refusal as the one-component case, one level down. A name like
+// frames/sub/a.png whose root/frames is a regular file fails on the very first
+// Lstat of parentUnderRoot's walk, and ENOTDIR is not os.IsNotExist — so the
+// walk's own "not a remote failure" arm does not catch it either, and the
+// whole set of downloads exits 2 for a destination the operator's own
+// filesystem cannot hold. Mutation caught: that arm calling remote(err) for
+// every error that is not ENOENT.
+func TestArtifactsGetRefusesADeepDirectoryComponentThatIsNotADirectory(t *testing.T) {
+	body := []byte("hello")
+	for _, tc := range []struct {
+		name        string
+		artifact    string
+		entryInWay  string
+		wantsInText string
+	}{
+		{"a file where the first directory goes", "frames/sub/a.png", "frames", "frames"},
+		{"a file inside the first directory", "frames/sub/a.png", filepath.Join("frames", "sub"), "sub"},
+		{"a file three components deep", "a/b/c/d.png", filepath.Join("a", "b"), "b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			const id = "20261016-090000-abcd"
+			seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+				{Name: tc.artifact, Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+			}, map[string][]byte{tc.artifact: body})
+			root := filepath.Join(dir, artifactRunDir(id))
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			inWay := filepath.Join(root, tc.entryInWay)
+			if err := os.MkdirAll(filepath.Dir(inWay), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(inWay, []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+			if err == nil {
+				t.Fatalf("get wrote through the file at %s", tc.entryInWay)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d: a destination this filesystem cannot hold is the operator's error, not a remote failure (%v)", code, ExitUserError, err)
+			}
+			if !strings.Contains(err.Error(), tc.wantsInText) {
+				t.Errorf("the refusal does not name the entry in the way (%s): %v", tc.wantsInText, err)
+			}
+			if strings.Contains(err.Error(), "lstat") && strings.Contains(err.Error(), "not a directory") {
+				t.Errorf("the refusal is the raw filesystem error rather than a sentence about the path: %v", err)
+			}
+		})
+	}
+}
+
+// TestArtifactsGetRefusesAnOutThatIsNotADirectory: --out names the parent the
+// run's directory is made in, and an ordinary file there — or any non-directory
+// component of the --out path — is a local condition: the Lstat that asks
+// whether the destination already exists answers ENOTDIR, which is not
+// os.IsNotExist, so the arm written for "some other error" treats it as a
+// remote failure and the command exits 2 where the very next check (an entry AT
+// the root that is not a directory, exit 1) says the operator's path is wrong.
+// The message names the path, and nothing is created.
+// Mutation caught: prepareArtifactRoot's Lstat arm calling remote(err) for
+// anything that is not ENOENT.
+// TestArtifactPathErrClassifiesLocalConditions pins the whole mapping, not
+// only the errno a Linux test can reach: the two errnos the suite cannot
+// produce reliably — a directory it may not read (as root, chmod 000 still
+// opens) and a path over the filesystem's limit (the limit is the filesystem's
+// and the platform's) — are the ones a regression would silently turn back
+// into exit 2, and this is where they are checked. An error the mapping does
+// not recognise stays remote: guessing "the operator's path" for an error
+// whose cause is unknown is the opposite mistake.
+func TestArtifactPathErrClassifiesLocalConditions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"a component that is a regular file", syscall.ENOTDIR, ExitUserError},
+		{"a path the operator cannot read", fs.ErrPermission, ExitUserError},
+		{"a path over the filesystem's limit", syscall.ENAMETOOLONG, ExitUserError},
+		{"something else", errors.New("the disk went away"), ExitRemoteError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := artifactPathErr("out/the-run-artifacts", tc.err)
+			if code := ExitCode(err); code != tc.want {
+				t.Fatalf("exit code = %d, want %d (%v)", code, tc.want, err)
+			}
+			if tc.want == ExitUserError && !strings.Contains(err.Error(), "out/the-run-artifacts") {
+				t.Errorf("the message does not name the path: %v", err)
+			}
+			// The unrecognised error is passed through as it came: this
+			// function adds nothing to an error whose cause it does not know.
+			if tc.want == ExitRemoteError && !errors.Is(err, tc.err) {
+				t.Errorf("the error was not passed through: %v", err)
+			}
+		})
+	}
+}
+
+func TestArtifactsGetRefusesAnOutThatIsNotADirectory(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{"sizzle.mp4": body})
+	file := filepath.Join(dir, "an-out-file")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, out := range []string{file, filepath.Join(file, "under-it"), filepath.Join(file, "a", "b")} {
+		t.Run(out, func(t *testing.T) {
+			_, _, err := execute(t, "artifacts", "get", "--out", out, appSlug+"/"+id)
+			if err == nil {
+				t.Fatalf("get with --out %s was accepted", out)
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit code = %d, want %d: a --out this filesystem cannot hold is the operator's error, not a remote failure (%v)", code, ExitUserError, err)
+			}
+			if !strings.Contains(err.Error(), "an-out-file") {
+				t.Errorf("the refusal does not name the path in the way: %v", err)
+			}
+		})
+	}
+	// The file is still exactly what it was: a refusal creates nothing, and
+	// replaces nothing.
+	if got, err := os.ReadFile(file); err != nil || string(got) != "not a directory" {
+		t.Errorf("the file used as --out = %q, %v, want it untouched", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(file, "under-it")); err == nil {
+		t.Errorf("--out created something under a regular file")
+	}
+	// A --out that is a real directory still works, so the refusal is about
+	// what is there and not about --out being checked at all.
+	good := filepath.Join(dir, "an-out-dir")
+	if _, _, err := execute(t, "artifacts", "get", "--out", good, appSlug+"/"+id); err != nil {
+		t.Fatalf("get with --out naming a directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(good, artifactRunDir(id), "sizzle.mp4")); err != nil {
+		t.Errorf("the download did not land under the directory --out named: %v", err)
+	}
+}
+
 func TestArtifactsGetRefusesADirectoryComponentThatIsNotADirectory(t *testing.T) {
 	body := []byte("hello")
 	for _, tc := range []struct {
