@@ -203,7 +203,19 @@ func TestMatchRepoReadsAStarInTheSubject(t *testing.T) {
 }
 
 func TestValidPattern(t *testing.T) {
-	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*", "bitbucket/group/sub/app"} {
+	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*",
+		// A repository path may nest: Canonical admits "acme/group/app"
+		// (TestCanonical pins it), and MatchRepo compares segment against
+		// segment, so this entry admits exactly bitbucket/acme/group/app. It is
+		// not a longer spelling of "bitbucket/acme/group/*" — that is three
+		// segments and matches nothing of the four-segment canonical — which is
+		// why a cap of three was the wrong guard: it refused the entry that
+		// admits the repository and left the wildcard form as the only way to
+		// allow-list one (the review finding on this change).
+		"bitbucket/group/sub/app",
+		"bitbucket/acme/group/app",
+		"bitbucket/acme/group/*",
+	} {
 		if err := ValidPattern(ok); err != nil {
 			t.Errorf("ValidPattern(%q) = %v, want nil", ok, err)
 		}

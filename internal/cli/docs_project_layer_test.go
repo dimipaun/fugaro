@@ -262,3 +262,30 @@ func TestDocsProjectLayerShowsEveryFlagOfTheCommandsItShows(t *testing.T) {
 		t.Fatalf("read %d command rows out of §7: the table has moved, so this check saw nothing", rows)
 	}
 }
+
+// TestProjectPolicyPublishSaysTheDiffFollowsTheWrite: the publish prints its
+// +/~/- diff after the ETag-guarded write, not before it — the diff is a claim
+// about the node, and printing it first left an operator reading a change that
+// did not happen on a write that failed (the review finding on this change).
+// Both texts an operator reads still said "printing what changes first" after
+// that ordering changed, because nothing pinned either of them; this is the
+// pin, over the command's own Long and the §7 row that documents it.
+//
+// Mutation (verified, run and restored): put "printing what changes first" back
+// in either text and this fails naming it.
+func TestProjectPolicyPublishSaysTheDiffFollowsTheWrite(t *testing.T) {
+	for _, tc := range []struct{ what, text string }{
+		{"the publish command's help", newProjectPolicyPublishCmd().Long},
+		{"the publish row of docs/project-layer.md", readDoc(t, "docs/project-layer.md")},
+	} {
+		if strings.Contains(tc.text, "printing what changes first") {
+			t.Errorf("%s still says the diff is printed before the write: the diff follows the write, so a write that failed prints no diff", tc.what)
+		}
+		if !strings.Contains(tc.text, "diff follows the write") {
+			t.Errorf("%s does not say when the diff is printed: name that the diff follows the write, so a failed write prints none", tc.what)
+		}
+		if !strings.Contains(tc.text, "prints no diff") {
+			t.Errorf("%s does not say what a failed write prints: no diff at all, rather than a diff of a change that did not happen", tc.what)
+		}
+	}
+}

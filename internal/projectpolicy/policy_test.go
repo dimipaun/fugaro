@@ -862,3 +862,46 @@ func TestPolicyCarriesRouting(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeRefusesFoldEqualMemberNames: encoding/json does not fold a member
+// name with strings.ToLower — it folds it with unicode.SimpleFold (fold.go's
+// foldName, whose contract is bytes.EqualFold), and SimpleFold has orbits
+// ToLower does not reach. U+017F (ſ, LATIN SMALL LETTER LONG S) is the one that
+// costs: ToLower leaves it as ſ, while the decoder reads it as 's', so a block
+// naming allowed_models and allowed_modelſ was two names to a check built on
+// ToLower and one member to the decoder — which keeps the last of the two, so
+// the document's visible allow-list was not the one the run was bounded by.
+//
+// U+212A (K, KELVIN SIGN) is the same fold from the other side and is the
+// regression guard: it is fold-equal to 'k', and a folding built on an orbit
+// minimum must still refuse it.
+//
+// The routing switch is where it matters most: `{"via": "direct", "modelſ":
+// [...]}` reads as a switch with a model list, from a document that spells the
+// member as nothing this Fugaro documents.
+func TestDecodeRefusesFoldEqualMemberNames(t *testing.T) {
+	const longS = "ſ"  // ſ, fold-equal to s
+	const kelvin = "K" // K, fold-equal to k
+	for name, raw := range map[string]string{
+		"the long s in an allow-list member":       `{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"], "allowed_model` + longS + `": ["claude-opus-5-5"]}}`,
+		"the long s alone in an allow-list member": `{"version": 1, "budget": {"mode": "enforce", "allowed_model` + longS + `": ["claude-opus-5-5"]}}`,
+		"the long s in routing.claude.models":      `{"version": 1, "routing": {"claude": {"via": "direct", "model` + longS + `": ["claude-sonnet-5-5"]}}}`,
+		"the long s beside routing.claude.models":  `{"version": 1, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "model` + longS + `": ["claude-opus-5-5"]}}}`,
+		"the kelvin sign in a rate":                `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "web_search_per_1k": 0.01, "web_search_per_1` + kelvin + `": 9}}}`,
+		"the kelvin sign alone in a rate":          `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "web_search_per_1` + kelvin + `": 9}}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "fold") && !strings.Contains(err.Error(), "spells") && !strings.Contains(err.Error(), "unknown field") {
+			t.Errorf("%s: err = %v, want it to say why the name is refused", name, err)
+		}
+	}
+	// The documented spelling is still read, ſ nowhere in it.
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"]}, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"]}}}`))
+	if err != nil || !found || p == nil || len(p.Budget.AllowedModels) != 1 || len(p.Routing.Claude.Models) != 1 {
+		t.Fatalf("a correctly spelled node was refused: (%v, %v, %v)", p, found, err)
+	}
+}

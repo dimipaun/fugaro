@@ -90,7 +90,9 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 		Long: "Build the project's policy from this machine's project config — the budget\n" +
 			"block, the providers (their secrets by NAME, never a value), the model_prices\n" +
 			"overrides and the allow-list — and write it to config/policy/shared with an\n" +
-			"ETag-guarded write, printing what changes first. From then on the node is the\n" +
+			"ETag-guarded write. The diff follows the write: it is printed once the node\n" +
+			"holds the policy, and a write that failed prints no diff — the node is as it\n" +
+			"was, and the command says so. From then on the node is the\n" +
 			"ceiling for every key it names, and a key it leaves out keeps the value the\n" +
 			"job's environment was deployed with.\n\n" +
 			"Publishing refuses without the rules marker (config/limits/policyRules): a\n" +
@@ -194,17 +196,25 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err := checkPolicyBytes(body); err != nil {
 			return err
 		}
-		printPolicyDiff(out, old, pol, sources)
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
+			// The diff is printed after the write, not before it (the review
+			// finding on this change): it is a claim about the node as it now
+			// is, and a write that came back refused — the policy changed
+			// while this ran, or the credential may not write it — left the
+			// node exactly as it was, so a diff printed first would have the
+			// operator reading a change that did not happen.
+			printPolicyDiff(out, old, pol, sources)
 			fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
 			return nil
 		case errors.Is(err, rtdb.ErrPrecondition):
 			fmt.Fprintln(out, "changed by someone else meanwhile; reading it again")
 			continue
 		default:
-			return dbErr(lc, err, true)
+			// And because nothing was printed, the failure has to say what the
+			// operator is not seeing: the node is as it was.
+			return fmt.Errorf("%w; nothing was written: %s is as it was", dbErr(lc, err, true), projectpolicy.PathShared())
 		}
 	}
 	return remote(fmt.Errorf("the policy node kept changing under the write (%d attempts); nothing further was written; run it again", setAttempts))
@@ -236,18 +246,38 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	case gen >= projectpolicy.RulesVersion:
 		return nil
 	}
-	return userErr("%s", rulesSkewText())
+	return userErr("%s", rulesMarkerBelowText(gen))
 }
 
 // rulesSkewText is the one sentence for "the deployed rules are older than
-// the marker": `policy publish` refuses with it and doctor's
-// policy-rules-skew check prints it (plan task 1.6 step 4's fifth check),
-// so the state reads the same whether the operator met it as a refusal or
-// as a report. It is a plain sentence and not an error, because doctor has
-// no error to wrap it in.
+// the marker": the marker records this generation, and the *document* deployed
+// at .settings/rules is not the one this generation generates. `fugaro init
+// --firebase` redeploys over it (infra.DB.Plan compares the same way), and
+// doctor's policy-rules-skew check prints the sentence (plan task 1.6 step 4's
+// fifth check), so the state reads the same whether the operator met it as a
+// report or in the deploy's own words. It is a plain sentence and not an
+// error, because doctor has no error to wrap it in.
 func rulesSkewText() string {
 	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro init --firebase' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
 		projectpolicy.PathRulesMarker(), policySince)
+}
+
+// rulesMarkerBelowText is the one sentence for the marker-below state: the
+// marker is present and records a generation below this Fugaro's
+// RulesVersion. `fugaro project policy publish` refuses with it and doctor's
+// policy-rules-skew check prints it, so the state reads the same whether the
+// operator met it as a refusal or as a report.
+//
+// It cannot be rulesSkewText, which is the *other* state's sentence: that one
+// is about a *document* that disagrees with a marker ("the deployed rules are
+// older than the marker"), while here the marker is itself the value that is
+// wrong — the deployed rules may be anything at all and doctor never reads
+// them for this state, so the refusal told the operator about a comparison
+// nothing made (the review of PR #402 found the two texts disagreeing; this is
+// one text per state, shared by both readers).
+func rulesMarkerBelowText(gen int) string {
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro init --firebase' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
+		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, policySince, projectpolicy.RulesVersion)
 }
 
 // readPolicyNode reads the shared node with its ETag, the precondition the
@@ -343,12 +373,14 @@ func seedAllowRepos(ctx context.Context, lc *localcfg.Config) ([]string, map[str
 // strict is the writer's: an entry it cannot spell as a canonical name is
 // refused, because a seed that quietly leaves one out is a publish that
 // un-enrolls a repository which runs today, and the operator asked for that
-// list to be written. The readers (`allowSources`, for `project show` and
-// `project repos ls`) skip such an entry instead: they only label where an
+// list to be written. It holds for both sources of the seed — the operator's
+// own repos: map and the shared config's list, which ParseShared accepts with
+// a provider-less entry too. The readers (`allowSources`, for `project show`
+// and `project repos ls`) skip such an entry instead: they only label where an
 // allow-list entry came from, a `repos:` entry need not name a provider at all
 // (localcfg: the checkout's fugaro.yaml decides it), and a read-only command
-// must not abort on a config the tool accepts — the same reason repoBySlug and
-// the shared-config branch below skip these.
+// must not abort on a config the tool accepts — the same reason repoBySlug
+// skips these.
 func allowSourcesOf(ctx context.Context, lc *localcfg.Config, strict bool) (map[string]string, error) {
 	sources := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
@@ -375,10 +407,24 @@ func allowSourcesOf(ctx context.Context, lc *localcfg.Config, strict bool) (map[
 	for _, name := range slices.Sorted(maps.Keys(shared)) {
 		r := shared[name]
 		if r.Provider == "" {
-			continue // the shared config's own validation leaves these alone
+			// The same posture as the local loop above, for the same reason:
+			// the seed is what the writer writes, and an entry it cannot spell
+			// as a canonical name is a repository that drops out of the
+			// allow-list — here one this machine's own installation publishes,
+			// so it is not even in the local config the operator is editing.
+			// localcfg's validation leaves a provider-less repos entry alone
+			// (the checkout's fugaro.yaml decides it), so this is reachable
+			// through a document ParseShared accepts.
+			if strict {
+				return nil, userErr("the shared config's repos.%s names no git provider: the allow-list is canonical (provider/owner/name), so add provider: github or provider: bitbucket there (the document published to the project's runs bucket)", name)
+			}
+			continue // a reader only labels where an entry came from
 		}
 		c, err := projectpolicy.Canonical(r.Provider, name)
 		if err != nil {
+			if strict {
+				return nil, userErr("the shared config's repos.%s: %v", name, err)
+			}
 			continue
 		}
 		if _, ok := sources[c]; !ok {
@@ -1354,9 +1400,10 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 		}
 	}
 	for _, r := range doc.AllowRepos {
-		if !slices.Contains(running, r) {
-			doc.EnrolledNotRunning = append(doc.EnrolledNotRunning, r)
+		if entryHasARun(r, running) {
+			continue
 		}
+		doc.EnrolledNotRunning = append(doc.EnrolledNotRunning, r)
 	}
 	if o.json {
 		return writeJSON(out, doc)
@@ -1394,6 +1441,25 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 		fmt.Fprintf(out, "  %s is on the allow-list and has no run in flight here\n", r)
 	}
 	return nil
+}
+
+// entryHasARun reports whether any run in flight is of a repository this one
+// allow-list entry admits.
+//
+// The run registry holds repository names, and an entry is not one: an entry
+// that is a pattern (github/acme/*) or the wildcard "*" equals no name at all,
+// so a comparison by equality reported every pattern as "on the allow-list and
+// has no run in flight here" while the repositories it admits were running.
+// The question is admission — MatchRepo, which is what the runner's admission
+// check and the launcher's advisory check ask (projectpolicy.AdmitRepo is the
+// same matcher over a whole list, and this is one entry of a list).
+func entryHasARun(entry string, running []string) bool {
+	for _, r := range running {
+		if projectpolicy.MatchRepo(entry, r) {
+			return true
+		}
+	}
+	return false
 }
 
 // printCaps prints the ceiling the installation's nodes carry: what a run uses
@@ -1794,13 +1860,18 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	if err := checkPolicyBytes(patched); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "allow_repos: %v → %v\n", before, allow)
+	// The line is printed after the write, not before it: it is a claim about
+	// the node, and a PutIfMatch that comes back refused (the policy changed
+	// while this ran, or the credential may not write it) left the list
+	// exactly as it was — an operator who read "allow_repos: [a] → [a b]" on a
+	// failed write would take the entry for enrolled.
 	if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(patched)); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return userErr("the policy changed while this ran; nothing was written: run it again")
 		}
 		return dbErr(lc, err, true)
 	}
+	fmt.Fprintf(out, "allow_repos: %v → %v\n", before, allow)
 	fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
 	return nil
 }
@@ -1896,12 +1967,39 @@ func admittedBy(allow []string, arg string) (bool, string) {
 	return false, ""
 }
 
+// configRepo finds this machine's config entry for a bare owner/name, folding
+// case the way canonicalRepoArg does. The config's repos: map is keyed by the
+// operator's own spelling and the loader does not fold it, so the exact lookup
+// this used to be made `repos add Acme/App` refuse where
+// `repos add github/Acme/App` worked, although the doc above promises the
+// fold (the review finding on this change). The exact spelling is tried first,
+// so an entry the operator wrote with upper-case letters is read as written
+// where the argument is written the same way.
+func configRepo(lc *localcfg.Config, arg string) (localcfg.Repo, bool) {
+	if r, ok := lc.Repos[arg]; ok {
+		return r, true
+	}
+	folded := asciiLower(arg)
+	for name, r := range lc.Repos {
+		if asciiLower(name) == folded {
+			return r, true
+		}
+	}
+	return localcfg.Repo{}, false
+}
+
 // canonicalRepoArg is the operator's argument as a canonical allow-list
 // entry. A bare owner/name takes its provider from this machine's config
 // (repos: is keyed by owner/name); anything else must already be canonical,
-// which is what the allow-list matches. Upper-case letters are folded — ASCII
-// only, and a concrete name goes through projectpolicy.Canonical — so the
-// entry written is one the runner's own canonical form could have produced.
+// which is what the allow-list matches, at whatever depth the repository path
+// has (a nested group is a repository path like any other). Upper-case letters
+// are folded — ASCII only, and a concrete name goes through
+// projectpolicy.Canonical — so the entry written is one the runner's own
+// canonical form could have produced. The config lookup folds with the rest
+// (configRepo): the repos: map is keyed by the operator's own spelling, which
+// this does not require to be lower-case, so `acme/app` and `Acme/App` find
+// each other's entry instead of the second spelling refusing on a
+// case-sensitive lookup.
 func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	if arg == "*" {
 		// The allow-list's own entry for every repository — the design's
@@ -1918,16 +2016,25 @@ func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	}
 	parts := strings.Split(arg, "/")
 	if len(parts) == 2 {
-		r, ok := lc.Repos[arg]
+		r, ok := configRepo(lc, arg)
 		if !ok || r.Provider == "" {
 			return "", userErr("%q is not a repository this machine's config lists (its provider would come from there), so name it canonically: provider/owner/name, as in \"github/acme/app\" or \"bitbucket/acme/*\"", arg)
 		}
 		parts = []string{r.Provider, parts[0], parts[1]}
 	}
-	if len(parts) != 3 {
+	if len(parts) < 3 {
 		return "", userErr("%q is not a repository: write it as provider/owner/name (github/acme/app), or as owner/name for a repository this machine's config lists", arg)
 	}
-	provider, repo := asciiLower(parts[0]), asciiLower(parts[1])+"/"+asciiLower(parts[2])
+	// Everything after the provider is the repository path, whatever its depth:
+	// a repository may nest (task.CanonicalRepo admits "acme/group/app", and
+	// projectpolicy's own Canonical pins it as valid), so
+	// bitbucket/acme/group/app is the argument that allow-lists it — the form
+	// ValidPattern refuses to cap and MatchRepo matches segment against segment
+	// (the review finding on this change). Reading the path as exactly two
+	// segments refused it with "write it as provider/owner/name", the same way
+	// the cap did, and left the wildcard form as the only way to allow-list a
+	// nested repository.
+	provider, repo := asciiLower(parts[0]), asciiLower(strings.Join(parts[1:], "/"))
 	canonical := provider + "/" + repo
 	if !strings.Contains(canonical, "*") {
 		// A concrete repository goes through projectpolicy.Canonical, the one

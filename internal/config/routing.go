@@ -111,6 +111,16 @@ func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) [
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is named by the switch but no provider entry claims it: a route entry lists the models it serves, and only the owner can add one, in the project config (or through the layer's claude_models claim, which only adds to a route the config defines) — never in a repository's fugaro.yaml", m)})
 		case len(claims) > 1:
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by two provider entries, %s: two spellings of one model are one model, and a switch that resolved to whichever name sorts first would route by provider name. Leave the claim on one entry and remove it from the other", m, claimNames(claims))})
+		case reservedRouteName(claims[0].name):
+			// The entry's name is what the resolver hands back as the route,
+			// and "direct" is the resolver's own value for the direct route:
+			// its consumers tell "no route to take" from "the direct route" by
+			// comparing the route with RouteDirect (internal/runner's routing
+			// check, internal/config's pin admission), so this switch would be
+			// read as direct by some readers and as a provider by others, and
+			// every run of the project would halt with a cause that is not the
+			// real one (the review finding on this change).
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s resolves to the provider entry %s, and the switch's own name for the direct route is %s: the resolver returns a provider entry's name as the route (never the via word), so a provider entry named %s cannot be told from the direct route by the code that reads the resolution. Rename the provider entry (to any other name) and update the models it claims", m, claims[0].name, RouteDirect, RouteDirect)})
 		case !claims[0].p.AllowDataToWritten():
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s resolves to provider %s, whose allow_data_to is not written: name the repositories whose code may be sent there, or write [\"*\"] to mean every one of them on purpose (D1b; an absent allow_data_to already means every repository, which is why this one path requires it to be written)", m, claims[0].name)})
 		case !routeIDPair(m, claims[0].claim):
@@ -131,6 +141,22 @@ func routeIDPair(canonical, route string) bool {
 	_, ok := pricing.RouteIDFor(canonical, route)
 	return ok
 }
+
+// reservedRouteName reports whether a provider entry's name is one of the
+// switch's own route words, which no provider entry may be: RoutingClaudeFor
+// answers with the entry's *name* as the route, and its consumers tell the
+// direct route from a route by comparing that value with RouteDirect
+// (internal/runner's routing check, internal/config's pin admission) — so a
+// provider entry named direct is the same string as "the direct route" to
+// every reader of the resolution, and the run that resolves through it halts
+// naming a cause that is not the real one (the review finding on this change).
+//
+// Only the direct route is reserved, and not the other via words: the resolver
+// never returns a via word as the route, so "auto" and "openrouter" name a
+// provider entry like any other name — a fixture's own provider is called
+// openrouter — while RouteDirect is a value a caller compares the resolution
+// with.
+func reservedRouteName(name string) bool { return name == RouteDirect }
 
 // unmappedOrPair is the clause a switch problem carries for a model whose claim
 // is not the map's pair: the map's own reason when it has one (a row that is
@@ -219,13 +245,16 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 // that there is one.
 //
 //	route is RouteDirect, or the name of the provider entry the call is sent
-//	      to.
+//	      to. A provider entry named RouteDirect is refused rather than
+//	      answered with (reservedRouteName): the route and the direct route
+//	      would be one string.
 //	sent  is the model ID to send: the canonical ID on the direct route, and
 //	      on a provider route the ID that provider claims — the route's own
 //	      spelling of the same model.
 //	ok    is false when the switch asks for a route and there is none to
 //	      take: the ID is named but no provider entry claims it, the one that
-//	      does has no allow_data_to written, or more than one claims it (in
+//	      does has no allow_data_to written, it is named RouteDirect, or more
+//	      than one claims it (in
 //	      which case CheckRouting refuses the switch at load anyway, and the
 //	      resolver still fails closed rather than routing by provider name). A
 //	      caller must not print or use a resolution it did not resolve, and
@@ -243,6 +272,14 @@ func RoutingClaudeFor(c *RoutingClaude, model string, providers map[string]Model
 	}
 	claims := claudeClaimsFor(providers, model)
 	if len(claims) != 1 || !claims[0].p.AllowDataToWritten() {
+		return "", "", false
+	}
+	if reservedRouteName(claims[0].name) {
+		// The route would be the switch's own word for the direct route:
+		// CheckRouting refuses this configuration at load and on the node, and
+		// this is the resolver failing closed rather than answering a route no
+		// caller can tell from "direct" (it is what a caller that resolved
+		// without asking CheckRouting first would otherwise act on).
 		return "", "", false
 	}
 	// The route's own ID is the map's pair, never the spelling the entry

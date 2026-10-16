@@ -1010,10 +1010,24 @@ func TestReadinessImageHintNamesTheLogicalWorkflow(t *testing.T) {
 	}
 }
 
-// The check job mounts the provider credential at latest, which Cloud Run
-// checks when it creates the job, so like a workflow job it waits until
-// the credential has a version; the invoker grant and the Scheduler job
-// wait with it. A check job that exists stays, whatever its secrets.
+// TestReadinessGatesCheckJob: the check job's gate and the fix line the
+// operator is handed for its unversioned credential. The check job mounts the
+// provider credential at latest, which Cloud Run checks when it creates the
+// job, so like a workflow job it waits until the credential has a version;
+// the invoker grant and the Scheduler job wait with it. A check job that
+// exists stays, whatever its secrets.
+//
+// The assertion pins the whole command, not a prefix of it: the check job's
+// credential is the sandbox's git token, which is the one reserved name D2's
+// sweep does not take in (config.PerRepositorySecret, the owner's ruling of
+// 2026-10-15), so the fix is the repository-copy form — and the bare
+// project-scope spelling is a prefix of it, which is what a Contains test that
+// stopped at the prefix would accept while the sweep regressed.
+//
+// Mutation (verified, run and restored): make config.PerRepositorySecret
+// answer false for every name (the sweep taking bitbucket-token in, which is
+// the regression this test exists for): this test fails, reading
+// "fugaro secrets set bitbucket-token" with no --repo.
 func TestReadinessGatesCheckJob(t *testing.T) {
 	ctx := context.Background()
 	spec := sandboxSpec(t)
@@ -1051,12 +1065,20 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 	if got.Check.DeployJob || len(missing) != 1 || missing[0].Kind != MissingSecret || missing[0].Deployed {
 		t.Fatalf("an empty credential: deploy %v, missing %+v; want no check job, and the credential missing", got.Check.DeployJob, missing)
 	}
-	// D2: the credential is a swept-in reserved name, so the fix names the
-	// project-scope command -- what `secrets set <name>` stores by default --
-	// and the repository-copy form is the --repo variant of it.
-	want := "secret " + creds[0] + " has no version: fugaro secrets set " + creds[0]
+	// The credential is the sandbox's git token, and it is the one reserved
+	// name D2's sweep does not take in: a Bitbucket repository access token is
+	// issued for one repository (config.PerRepositorySecret, the owner's
+	// ruling of 2026-10-15), so the fix names the repository-copy command and
+	// not the bare one. The assertion is the whole command for that reason —
+	// "fugaro secrets set bitbucket-token" is a prefix of both spellings, so a
+	// sweep that regressed to include this name would print the project-scope
+	// command and pass a Contains test that stopped there (code review, low).
+	want := "secret " + creds[0] + " has no version: fugaro secrets set " + creds[0] + " --repo " + spec.Name
 	if s := missing[0].String(); !strings.Contains(s, "daily image check") || !strings.Contains(s, "not deployed yet") || !strings.Contains(s, want) {
-		t.Errorf("missing = %q", s)
+		t.Errorf("missing = %q\nwant it to contain %q", s, want)
+	}
+	if _, ok := spec.ProjectSecretCandidates[creds[0]]; ok {
+		t.Fatalf("the fixture's check credential %s has a project-wide candidate: this test asserts the repository-copy command", creds[0])
 	}
 	if !got.Check.Paused {
 		t.Error("the schedule must stay paused")
