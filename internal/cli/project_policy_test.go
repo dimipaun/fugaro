@@ -1450,6 +1450,14 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		// matches github/acme/app, and canonicalRepoArg accepts the entry, so
 		// claiming the runs stop here would be a stop that does not happen.
 		"pattern, a broader pattern remains": {[]string{"*/acme/*", "github/acme/*"}, "github/acme/*", true, "*/acme/*"},
+		// The removed argument is itself a pattern here, and its own last
+		// segment begins with the wildcard: github/acme/*app. The remaining
+		// entry's "*" lines up with the removed pattern's literal "*", which
+		// the matcher used to consume as that literal — so a wildcard that
+		// admits every repository github/acme/*app did was read as not covering
+		// it, and the confirmation claimed a stop that does not happen
+		// (TestMatchRepoWildcardIsNeverLiteral in internal/projectpolicy).
+		"pattern, a wildcard aligning with a literal star": {[]string{"github/acme/*", "github/acme/*app"}, "github/acme/*app", true, "github/acme/*"},
 		// A covering entry need not be written with bare "*" segments: github/ac*
 		// admits every owner whose name starts with "ac", which is every owner
 		// github/acme/* admitted, so the runs are not refused either. MatchRepo

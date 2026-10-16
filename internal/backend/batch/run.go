@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -10,6 +11,23 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 )
+
+// ErrJobEnvUnsupported is the refusal of a non-empty LaunchSpec.Env on this
+// backend. Cloud Run merges the spec's variables into the job's environment
+// (backend.LaunchSpec.Env), and the launcher puts one there: the budget marker
+// FUGARO_BUDGET_TOKEN=1 (internal/runner's BudgetTokenEnv, set by the launch
+// path in internal/cli), which is how a runner tells "the launcher minted this
+// run a budget token" from "this project published no policy". A Batch job
+// definition carries only the job's own deploy-time variables -- there is no
+// per-execution override -- so a non-empty Env has nowhere to go, and dropping
+// it would execute a run of a project with a policy unbudgeted. That is the
+// one outcome worse than refusing to launch, so jobDefinition refuses instead,
+// by name, rather than shipping the gap silently.
+//
+// The Batch backend is inert (not selectable) in this build. Whoever makes it
+// selectable has to merge these variables into the job's own environment
+// before this refusal can be lifted.
+var ErrJobEnvUnsupported = errors.New("the Batch backend cannot carry a launch's per-execution environment overrides into the job")
 
 // Launch creates the run's Batch job. One Batch job is one run -- a job is
 // single-use and there is no reusable definition to run, so this is a create
@@ -75,6 +93,14 @@ func (b *Backend) timeout(spec backend.LaunchSpec) (time.Duration, error) {
 // carry is Task 7's (the socket mount, the env allowlist beyond these names,
 // the resource quantities).
 func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeout time.Duration) (*batch.Job, error) {
+	// The job's environment below is the job's own, and there is no field here
+	// that merges a launch's variables into it (ErrJobEnvUnsupported). Refusing
+	// rather than ignoring them is deliberate: the marker the launcher sets is
+	// what stops a run of a project with a published policy from executing
+	// unbudgeted.
+	if len(spec.Env) > 0 {
+		return nil, fmt.Errorf("%w (got %v): the job definition carries only the job's own variables, so dropping them would run a project with a policy unbudgeted; this build cannot launch %s", ErrJobEnvUnsupported, spec.Env, full)
+	}
 	labels, err := Labels(spec.Repo.Slug, spec.Workflow, spec.RunID)
 	if err != nil {
 		return nil, fmt.Errorf("launching %s: %w", full, err)

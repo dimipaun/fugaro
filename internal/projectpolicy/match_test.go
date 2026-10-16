@@ -144,6 +144,65 @@ func TestMatchRepoWildcardSegmentsAreGreedy(t *testing.T) {
 	}
 }
 
+// TestMatchRepoWildcardIsNeverLiteral is the bug the allow-list matcher had:
+// matchSeg tested literal equality before it tested the "*", so a "*" in the
+// pattern that lined up with a "*" character in its second argument was
+// consumed as that literal and the wildcard was lost.
+//
+// That second argument is a repository to the runner's admission check, but it
+// need not be one to every caller: `project repos rm` asks the same matcher
+// whether a pattern being removed is still covered by an entry that remains
+// (internal/cli's admittedBy), and there the second argument can itself be a
+// pattern. MatchRepo("github/acme/*", "github/acme/*app") returned false, so
+// removing github/acme/*app from a list that also holds github/acme/* printed
+// "its runs are refused from now on" although the wildcard still admits every
+// repository the removed entry did. A "*" in the pattern is always a wildcard;
+// a literal comparison must not pre-empt it.
+func TestMatchRepoWildcardIsNeverLiteral(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, canonical string
+		want               bool
+	}{
+		// The reported case: the pattern's "*" must swallow the second
+		// argument's literal "*".
+		{"github/acme/*", "github/acme/*app", true},
+		{"github/acme/*", "github/acme/*", true},
+		{"github/acme/*", "github/acme/*/*", false}, // a wildcard never crosses a "/"
+		{"*/acme/*", "github/acme/*app", true},      // and it holds segment by segment
+		{"github/*", "github/acme*", true},
+		{"github/*/app", "github/*/app", true},
+		// A pattern whose literal "*" ... does not match a pattern that is
+		// wider: the removed entry did not admit every repository the
+		// remaining one does.
+		{"github/acme/*app", "github/acme/*", false},
+		{"github/acme/*app", "github/acme/*/app", false}, // nor does a "/" appear
+		// A literal "*" in the pattern (there is no escape in this syntax, so
+		// every "*" is a wildcard) still matches the same characters.
+		{"github/acme/*app", "github/acme/*app", true},
+	} {
+		if got := MatchRepo(tc.pattern, tc.canonical); got != tc.want {
+			t.Errorf("MatchRepo(%q, %q) = %v, want %v", tc.pattern, tc.canonical, got, tc.want)
+		}
+	}
+	// The same order inside one segment, where the star match lives. Literal
+	// stars on both sides must not be read as each other.
+	for _, tc := range []struct {
+		pattern, name string
+		want          bool
+	}{
+		{"*", "*", true},
+		{"a*", "a*", true},
+		{"*b", "*b", true},
+		{"*b", "*a", false},
+		{"a*b", "a*b", true},
+		{"*app", "*app", true},
+	} {
+		if got := matchSeg(tc.pattern, tc.name); got != tc.want {
+			t.Errorf("matchSeg(%q, %q) = %v, want %v", tc.pattern, tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestValidPattern(t *testing.T) {
 	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*", "bitbucket/group/sub/app"} {
 		if err := ValidPattern(ok); err != nil {

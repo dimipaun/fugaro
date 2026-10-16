@@ -169,12 +169,18 @@ func matchSeg(pattern, s string) bool {
 	)
 	for i < len(s) {
 		switch {
-		case p < len(pattern) && pattern[p] == s[i]:
-			p++
-			i++
+		// The "*" is tested before literal equality, and that order is the
+		// whole of it: s may itself carry a "*" (MatchRepo's second argument is
+		// a repository to the runner, but `repos rm` asks the same matcher
+		// whether a pattern that remains covers a pattern being removed), and
+		// equality-first would consume the pattern's wildcard as that literal
+		// star, losing it. A "*" in the pattern is always a wildcard.
 		case p < len(pattern) && pattern[p] == '*':
 			star, at, has = p, i, true
 			p++
+		case p < len(pattern) && pattern[p] == s[i]:
+			p++
+			i++
 		case has:
 			// The last "*" takes one more character and the rest of the
 			// pattern is tried again from there.

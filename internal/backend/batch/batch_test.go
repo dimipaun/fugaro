@@ -546,6 +546,44 @@ func TestLaunchNeedsARun(t *testing.T) {
 	}
 }
 
+// TestLaunchRefusesAPerExecutionEnv: the launcher sets the budget marker
+// FUGARO_BUDGET_TOKEN=1 in LaunchSpec.Env (internal/runner's BudgetTokenEnv),
+// and this backend's job definition has no field that merges a launch's
+// variables into the job's -- so a Batch execution would run a project with a
+// policy unbudgeted. The refusal is named (ErrJobEnvUnsupported) and happens
+// before any request, so the caller can correct and retry. The Batch backend
+// is inert in this build; this test is what keeps the gap from shipping
+// silently when it becomes selectable.
+func TestLaunchRefusesAPerExecutionEnv(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	s := spec()
+	s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
+	_, err := b.Launch(ctx, s)
+	if !errors.Is(err, ErrJobEnvUnsupported) {
+		t.Fatalf("Launch with a per-execution env = %v, want ErrJobEnvUnsupported", err)
+	}
+	// Nothing was created, so the refusal is definitive: the launcher may undo
+	// its own bookkeeping and go again at once.
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch with a per-execution env = %v, want it to wrap ErrRejected as well", err)
+	}
+	if !strings.Contains(err.Error(), "FUGARO_BUDGET_TOKEN=1") {
+		t.Errorf("the refusal does not name the variable it refuses: %v", err)
+	}
+	if got := bf.Creates(); len(got) != 0 {
+		t.Fatalf("a refused launch created a job: %v", got)
+	}
+	// An empty Env is the ordinary launch: the refusal is about the override
+	// and not about the field existing.
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch with no per-execution env: %v", err)
+	}
+	if got := bf.Creates(); len(got) != 1 {
+		t.Fatalf("jobs.create calls = %d, want 1", len(got))
+	}
+}
+
 // TestLaunchRefusalIsRejected: a 4xx other than 408, 429 and 499 created
 // nothing and says so, so the launcher may undo its own bookkeeping. A
 // conflict is the same run id launched twice: a Batch job is created per run
