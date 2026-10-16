@@ -391,9 +391,10 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 // command_sha256 that is not a hash, an unknown tree), and an outcome or a
 // stage the artifact mode never writes.
 //
-// Mutation (drop "artifacts" from the outcome enum, or the render property,
-// in schemas/result.schema.json): this test fails, the schema refusing the
-// success record it marshals.
+// Mutation (drop "artifacts" from the outcome enum, or the render property, or
+// the artifacts property's minItems, in schemas/result.schema.json): this test
+// fails — the first two on the success record it marshals, the last on the
+// present-but-empty array it builds.
 func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
@@ -418,6 +419,25 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 	}
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("schema rejects a succeeded artifact run: %v\n%s", err, data)
+	}
+	// A present-but-empty artifacts array is refused: the field is ABSENT when
+	// a run delivered none (it is omitempty on the record, and a run whose
+	// globs matched nothing fails before it stages anything), so a reader that
+	// finds the key knows there is at least one entry to read and does not
+	// have to fold "no artifacts" and "an empty list of them" together.
+	empty := map[string]any{}
+	if err := json.Unmarshal(data, &empty); err != nil {
+		t.Fatal(err)
+	}
+	empty["artifacts"] = []any{}
+	raw, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	} else if err := sch.Validate(inst); err == nil {
+		t.Fatalf("schema accepts an empty artifacts array; the field is absent when there are none: %s", raw)
 	}
 	timedOut := *render
 	timedOut.TimedOut, timedOut.ExitCode = true, -1
