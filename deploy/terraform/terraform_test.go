@@ -1681,6 +1681,15 @@ func TestComputePreloadRebuildsAStaleImage(t *testing.T) {
 	if describe < 0 || release < describe || del < release {
 		t.Errorf("the stale image's delete is not after the describe that decides it (describe %d, release %d, delete %d)", describe, release, del)
 	}
+	// The replacement needs the name, so the stale image cannot be deleted
+	// until the pull has finished -- a delete before a pull that then failed
+	// would leave the installation with no image at all, and this is the one
+	// delete the script makes outside its own prefix sweep.
+	pull := strings.Index(sh, "for _ in $(seq 1 60)")
+	keep := strings.Index(sh, `if [ -n "$BUILT" ]; then`)
+	if pull < 0 || keep < pull || del < keep {
+		t.Errorf("the stale image's delete is not inside the guard that follows the pull (pull %d, guard %d, delete %d)", pull, keep, del)
+	}
 	// The image is only touched when it is this build's own: the refusal names
 	// the label, and it comes before the delete.
 	refuse := strings.Index(sh, "is not fugaro=managed; refusing to touch it")
