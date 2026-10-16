@@ -263,10 +263,17 @@ func readAllowlist(path string) ([]allowEntry, error) {
 			return nil, fmt.Errorf("%s:%d: %s is a Claude row with no canonical ID: write the direct spelling of the same model beside it (%s claude-sonnet-5-5). A Claude model has a different ID per route and nothing derives one from the other, so a row without its pair could be neither claimed at a pin nor priced on the route", path, i+1, e.id, e.id)
 		case e.canonical != "" && !isClaude:
 			return nil, fmt.Errorf("%s:%d: %s carries a canonical ID, and only a Claude row does: the canonical ID is the direct spelling of a model this build routes to Anthropic, and a route's other models are priced under model_prices", path, i+1, e.id)
+		case e.canonical == e.id:
+			// Before the shape check below, which it would otherwise never
+			// reach: the key of a Claude row begins with "anthropic/", so a
+			// pair that repeats the key as its own canonical ID carries a "/"
+			// and was refused as "a route's ID is not a canonical ID" — true
+			// of the value, but not of what the line did, which is write one
+			// spelling where two are required. This case is the one that says
+			// so.
+			return nil, fmt.Errorf("%s:%d: %s is its own canonical ID: the key is the route's own ID (anthropic/claude-sonnet-5.5) and the canonical ID is the direct spelling (claude-sonnet-5-5)", path, i+1, e.id)
 		case e.canonical != "" && strings.ContainsAny(e.canonical, "/ *:"):
 			return nil, fmt.Errorf("%s:%d: %q is not a canonical ID: it is the direct spelling a pin carries (claude-sonnet-5-5), not the route's (%s)", path, i+1, e.canonical, e.id)
-		case e.canonical == e.id:
-			return nil, fmt.Errorf("%s:%d: %s is its own canonical ID: the key is the route's own ID (anthropic/claude-sonnet-5.5) and the canonical ID is the direct spelling (claude-sonnet-5-5)", path, i+1, e.id)
 		}
 		if seen[e.id] {
 			return nil, fmt.Errorf("%s:%d: %s appears twice", path, i+1, e.id)

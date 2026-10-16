@@ -770,6 +770,48 @@ func TestGeneratorRefusesAClaudeRowWithNoCanonicalID(t *testing.T) {
 	}
 }
 
+// TestGeneratorRefusesARowThatIsItsOwnCanonicalID: a line that writes one
+// spelling twice — "<route id> <same route id>" — is the mistake the pair
+// exists to make impossible, and it must be refused by the message that says
+// *that*. The shape check above it (a canonical ID carries no "/") is true of
+// the value but is not what the line did: a Claude key begins with "anthropic/",
+// so it matched that case first and this one could never be reached (the review
+// finding on this change). The row would otherwise load with canonical_id equal
+// to the key, which is exactly the "two spellings that look alike are two
+// answers" state the pair is checked in to prevent.
+//
+// Mutation (run, restored): move this case back below the
+// strings.ContainsAny case. The test still fails, on the message — the error
+// says the value is not a canonical ID rather than that the line wrote one
+// spelling where two are required.
+func TestGeneratorRefusesARowThatIsItsOwnCanonicalID(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	s := newSnapshots(t, id)
+	path := filepath.Join(s.dir, "allow.txt")
+	if err := os.WriteFile(path, []byte(id+" "+id+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(s.dir, "o.json")
+	_, err := generate(options{from: s.dir, allow: path, date: s.date, out: out})
+	if err == nil {
+		t.Fatal("a row that is its own canonical ID was written out")
+	}
+	if !strings.Contains(err.Error(), "its own canonical ID") {
+		t.Errorf("the error does not say the row wrote one spelling twice: %v", err)
+	}
+	for _, want := range []string{id, "claude-sonnet-5-5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name %s: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "is not a canonical ID") {
+		t.Errorf("the row was refused as a bad value rather than as one spelling written twice: %v", err)
+	}
+	if _, serr := os.Stat(out); serr == nil {
+		t.Error("the file was written anyway")
+	}
+}
+
 // TestGeneratorWritesTheCanonicalPair: the pair the allowlist writes reaches
 // the file and loads, and the key is the route's own ID while canonical_id is
 // the direct spelling a pin carries. The inverse mutation — writing the pair
