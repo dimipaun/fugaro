@@ -33,6 +33,11 @@ const artifactStageDir = "artifacts"
 // and the name a reader passes back to the retriever.
 const maxArtifactNameBytes = 200
 
+// contentSniffLen is how many of an artifact's first bytes the recorded
+// content type is sniffed from: what http.DetectContentType reads, taken from
+// the copy as it is written rather than from the staged file afterwards.
+const contentSniffLen = 512
+
 // artifactStagedSeam runs between the staging pass (which hashes every
 // staged file) and the upload, when a test sets it (export_test.go's
 // SetArtifactStagedSeam). It exists because the window it stands in is a real
@@ -56,11 +61,12 @@ type artifactSet struct {
 
 // staged is one artifact as the staging directory holds it: its sanitised
 // name (relative to the artifacts prefix), where it was copied to, and what
-// was measured and hashed there.
+// was hashed and read there. It carries no size of its own: the record's is
+// the size the upload measured on the bytes it wrote, which is the number the
+// record can be held to.
 type staged struct {
 	name        string
 	path        string
-	bytes       int64
 	sha256      string
 	contentType string
 }
@@ -447,18 +453,16 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error) {
 		dst := filepath.Join(set.dir, filepath.FromSlash(names[i]))
 		// The resolved target, and copyFileHashed opens it without following a
 		// link and stats the file it opened: what is staged is the file the
-		// caps were checked against.
-		size, sum, err := copyFileHashed(o.target, dst, sizes[i])
+		// caps were checked against. It hands back the first bytes it read, so
+		// the type below is sniffed from the staged bytes with no second open
+		// of the staged path.
+		_, sum, head, err := copyFileHashed(o.target, dst, sizes[i])
 		if err != nil {
 			r.clearStaging(set, "after a copy failed")
 			return set, err
 		}
-		ct, err := artifactContentType(names[i], dst)
-		if err != nil {
-			r.clearStaging(set, "after the content type of a staged file could not be read")
-			return set, err
-		}
-		set.files = append(set.files, staged{name: names[i], path: dst, bytes: size, sha256: sum, contentType: ct})
+		ct := artifactContentType(names[i], head)
+		set.files = append(set.files, staged{name: names[i], path: dst, sha256: sum, contentType: ct})
 	}
 	sort.Slice(set.files, func(i, j int) bool { return set.files[i].name < set.files[j].name })
 	return set, nil
@@ -507,25 +511,19 @@ func (r *run) uploadArtifacts(ctx context.Context, set artifactSet) ([]runstore.
 	return files, nil
 }
 
-// uploadCleanupTimeout is the budget the removals after a failed upload get.
-// They are best effort — the failure they clean up after is the one that
-// matters — but they must not run on the caller's context, which is usually
-// already cancelled or nearly out of time, because that is the failure they
-// are cleaning up after.
-const uploadCleanupTimeout = 30 * time.Second
-
 // removeUploaded deletes the objects written before an upload failed, best
 // effort, and logs any it could not. A bucket that cannot be written to is
 // often one that cannot be deleted from either; the run's own failure is
-// reported either way, and this line says what was left behind.
+// reported either way, and this line says what was left behind. The delete
+// itself is detached from ctx (runstore.DeleteCleanupTimeout): the caller's
+// context is usually already cancelled or nearly out of time, which is the very
+// failure this is cleaning up after.
 func (r *run) removeUploaded(ctx context.Context, files []runstore.ArtifactFile) {
 	if len(files) == 0 {
 		return
 	}
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadCleanupTimeout)
-	defer cancel()
 	for _, f := range files {
-		if err := r.d.Store.DeleteFile(dctx, runstore.ArtifactPrefix+f.Name); err != nil {
+		if err := r.d.Store.DeleteFile(ctx, runstore.ArtifactPrefix+f.Name); err != nil {
 			r.d.Log.Warn("an artifact from a failed upload could not be removed", "name", f.Name, "err", err)
 		}
 	}
@@ -814,8 +812,8 @@ func sanitiseName(name string) (string, error) {
 // sizzle.mp4 from sizzle‮gnp.exe. Punctuation is the render's to choose
 // (design §9 binds the name's first character and nothing else), so a pipe or
 // a backtick is allowed here and escaped where it is rendered
-// (report.go's tableCell). NUL and the line breaks are the same rule as the
-// rest of this table rather than a case of their own.
+// (report.go's tableText and tableCode). NUL and the line breaks are the same
+// rule as the rest of this table rather than a case of their own.
 func firstControl(name string) (int, string) {
 	for i, r := range name {
 		switch {
@@ -837,16 +835,17 @@ func firstControl(name string) (int, string) {
 }
 
 // copyFileHashed copies src to dst, creating dst's parents, and returns the
-// bytes written and their lower-case hex sha256 — the staged copy's own hash,
-// taken in the same pass that wrote it. want is the size the caller measured
-// before the copy: a file that changed under the copy is refused, because
-// what would be uploaded is then neither the file that was measured against
-// the caps nor the one the record describes.
+// bytes written, their lower-case hex sha256 — the staged copy's own hash,
+// taken in the same pass that wrote it — and the first contentSniffLen bytes,
+// which is what the recorded content type is sniffed from. want is the size
+// the caller measured before the copy: a file that changed under the copy is
+// refused, because what would be uploaded is then neither the file that was
+// measured against the caps nor the one the record describes.
 //
 // dst is 0600: an artifact is data, never something a later step executes,
 // and the staging directory sits in a state directory the plan stage's agent
 // can write.
-func copyFileHashed(src, dst string, want int64) (int64, string, error) {
+func copyFileHashed(src, dst string, want int64) (int64, string, []byte, error) {
 	// The size that was checked against the caps is the size of a file that
 	// was examined a moment ago, and this is where it is used. So the open
 	// does not follow a symlink and does not block on a FIFO, the fstat is on
@@ -857,21 +856,21 @@ func copyFileHashed(src, dst string, want int64) (int64, string, error) {
 	// and only then compared the total with the size it had approved.)
 	in, err := openNoFollow(src)
 	if err != nil {
-		return 0, "", fmt.Errorf("staging %s: %w", src, err)
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
 	}
 	defer in.Close()
 	st, err := in.Stat()
 	if err != nil {
-		return 0, "", fmt.Errorf("staging %s: %w", src, err)
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
 	}
 	if !st.Mode().IsRegular() {
-		return 0, "", fmt.Errorf("staging %s: it is not a regular file (%s): what was checked was a regular file", src, st.Mode())
+		return 0, "", nil, fmt.Errorf("staging %s: it is not a regular file (%s): what was checked was a regular file", src, st.Mode())
 	}
 	if st.Size() != want {
-		return 0, "", fmt.Errorf("staging %s: it changed while it was copied (it is %d bytes, it was %d)", src, st.Size(), want)
+		return 0, "", nil, fmt.Errorf("staging %s: it changed while it was copied (it is %d bytes, it was %d)", src, st.Size(), want)
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return 0, "", fmt.Errorf("staging %s: %w", src, err)
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
 	}
 	// O_EXCL|O_NOFOLLOW: the staging directory sits in a state directory the
 	// plan stage's agent can write, so a symlink planted at dst must fail the
@@ -880,41 +879,52 @@ func copyFileHashed(src, dst string, want int64) (int64, string, error) {
 	// emptied before the set was staged into it.
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o600)
 	if err != nil {
-		return 0, "", fmt.Errorf("staging %s: %w", src, err)
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
 	}
+	// The head is taken through the descriptor the copy reads from, as the
+	// bytes go past: the type the record carries is sniffed from the bytes
+	// that were staged, and there is no second open of the staged path left
+	// for a link planted there to be followed or a FIFO to block on.
+	head := &headBytes{}
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(out, h), io.LimitReader(in, want+1))
+	n, err := io.Copy(io.MultiWriter(out, h), io.LimitReader(io.TeeReader(in, head), want+1))
 	if cerr := out.Close(); err == nil && cerr != nil {
 		err = cerr
 	}
 	if err != nil {
-		return 0, "", fmt.Errorf("staging %s: %w", src, err)
+		return 0, "", nil, fmt.Errorf("staging %s: %w", src, err)
 	}
 	if n != want {
-		return 0, "", fmt.Errorf("staging %s: it changed while it was copied (read %d bytes, it said %d)", src, n, want)
+		return 0, "", nil, fmt.Errorf("staging %s: it changed while it was copied (read %d bytes, it said %d)", src, n, want)
 	}
-	return n, hex.EncodeToString(h.Sum(nil)), nil
+	return n, hex.EncodeToString(h.Sum(nil)), head.buf, nil
+}
+
+// headBytes keeps the first contentSniffLen bytes written to it and counts the
+// rest: it is the tee a copy sniffs through, so nothing but the write is asked
+// of it (a short write here would fail a copy that is otherwise fine).
+type headBytes struct{ buf []byte }
+
+func (h *headBytes) Write(p []byte) (int, error) {
+	if n := contentSniffLen - len(h.buf); n > 0 {
+		h.buf = append(h.buf, p[:min(n, len(p))]...)
+	}
+	return len(p), nil
 }
 
 // artifactContentType is the type recorded for a staged artifact: the name's
-// extension first, then a sniff of the file's first bytes. It is recorded and
-// never trusted (design §8.1) — a reader decides for itself what to do with
-// the bytes — and it is never a guess from the render's own say-so.
-func artifactContentType(name, path string) (string, error) {
+// extension first, then a sniff of the first bytes the copy read. It is
+// recorded and never trusted (design §8.1) — a reader decides for itself what
+// to do with the bytes — and it is never a guess from the render's own
+// say-so. head is those first bytes, handed over by copyFileHashed rather than
+// read back from the staged path: the staged file is one the plan stage's
+// agent can reach, and the recorded type must describe the bytes this run
+// wrote, not whatever is at that path when the sniff happens.
+func artifactContentType(name string, head []byte) string {
 	if ct := mime.TypeByExtension(filepath.Ext(name)); ct != "" {
-		return ct, nil
+		return ct
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("reading %s: %w", path, err)
-	}
-	defer f.Close()
-	buf := make([]byte, 512)
-	n, err := io.ReadFull(f, buf)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return "", fmt.Errorf("reading %s: %w", path, err)
-	}
-	return http.DetectContentType(buf[:n]), nil
+	return http.DetectContentType(head)
 }
 
 // noteRenderTail keeps the render's last lines as the report's log tail: a

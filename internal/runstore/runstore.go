@@ -478,20 +478,46 @@ func (s *Store) PutFileFrom(ctx context.Context, name, path, contentType, want s
 		return 0, "", fmt.Errorf("writing %s: %w", key, err)
 	}
 	if want != "" && sum != want {
-		_ = s.bucket.Delete(ctx, key)
-		return 0, "", fmt.Errorf("%s: %w (this run staged %s and uploaded %s): the staged file changed before the upload", key, blobx.ErrMismatch, want, sum)
+		// The delete is what keeps the bucket free of an object no record
+		// accounts for, and its failure is reported with the refusal rather
+		// than dropped: the run's reason is where a reader learns what is in
+		// the bucket. deleteDetached is what makes it happen at all — the
+		// caller's context is usually already cancelled or nearly out of time
+		// when an upload goes wrong, which is exactly when the cleanup has to
+		// work.
+		err := fmt.Errorf("%s: %w (this run staged %s and uploaded %s): the staged file changed before the upload", key, blobx.ErrMismatch, want, sum)
+		if derr := deleteDetached(ctx, s.bucket, key); derr != nil {
+			return 0, "", errors.Join(err, fmt.Errorf("removing the object this attempt wrote: %w", derr))
+		}
+		return 0, "", err
 	}
 	return size, sum, nil
+}
+
+// DeleteCleanupTimeout is the budget a cleanup delete gets when it runs
+// detached from its caller's context (deleteDetached): long enough for one
+// object, short enough that a run being finalised is not held past its
+// deadline by a bucket that is not answering.
+const DeleteCleanupTimeout = 30 * time.Second
+
+// deleteDetached removes key on a context of its own, so a delete that is
+// cleanup after a failure still happens when the caller's context has already
+// been cancelled — the reason the failure being cleaned up after happened.
+func deleteDetached(ctx context.Context, b *blob.Bucket, key string) error {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DeleteCleanupTimeout)
+	defer cancel()
+	return b.Delete(dctx, key)
 }
 
 // DeleteFile removes one of the run's own objects. It is what a failed upload
 // step cleans up after itself with: the writes are create-only, so an object
 // left behind by an attempt whose record says it uploaded nothing is both an
 // artifact no record accounts for and a key the next execution of the same run
-// would fail on.
+// would fail on. The delete is detached from ctx for the same reason
+// PutFileFrom's is.
 func (s *Store) DeleteFile(ctx context.Context, name string) error {
 	key := s.prefix + strings.TrimPrefix(name, "/")
-	if err := s.bucket.Delete(ctx, key); err != nil {
+	if err := deleteDetached(ctx, s.bucket, key); err != nil {
 		return fmt.Errorf("deleting %s: %w", key, err)
 	}
 	return nil

@@ -436,10 +436,12 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 	// symlink and without blocking on a FIFO, because between a caller's own
 	// check of this path and this line anything the same user runs may have
 	// replaced it — a link to /dev/zero would otherwise stream until the
-	// container is killed.
+	// container is killed. The refusal is reported as a source failure, the
+	// same as any other: it is the file the caller named that could not be
+	// read, and no bucket did anything.
 	f, err := openSource(path)
 	if err != nil {
-		return 0, "", err
+		return 0, "", fmt.Errorf("reading %s: %w", path, err)
 	}
 	defer f.Close()
 	st, err := f.Stat()

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -742,6 +743,88 @@ func TestPutFileAbortsOnAShortRead(t *testing.T) {
 	}
 	if _, _, err := b.Read(ctx, "artifacts/x.mp4"); !errors.Is(err, blobx.ErrNotExist) {
 		t.Fatalf("the aborted write left an object: %v", err)
+	}
+}
+
+// TestPutFileDoesNotFollowASymlinkSource: PutFile is given a path by a caller
+// that has decided a moment earlier that the path holds the file it wants, and
+// anything the same user is running can replace it in between. The open is
+// O_NOFOLLOW, so a link is refused rather than followed: what goes up is never
+// the bytes behind a link the caller did not choose, and the refusal names the
+// path the caller named like every other source failure.
+//
+// Mutation (open the source with os.Open): the link is followed, the object is
+// written from its target, and this test fails on the error and on the
+// object's absence.
+func TestPutFileDoesNotFollowASymlinkSource(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	target := writeSource(t, []byte("the bytes behind the link"))
+	link := filepath.Join(t.TempDir(), "src")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := b.PutFile(ctx, "artifacts/x.mp4", link, "video/mp4", false)
+	if err == nil {
+		t.Fatal("PutFile followed a symlink source")
+	}
+	if !strings.Contains(err.Error(), "reading "+link) {
+		t.Fatalf("the refusal does not name the file the caller named: %v", err)
+	}
+	if _, _, err := b.Read(ctx, "artifacts/x.mp4"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("the refused write left an object: %v", err)
+	}
+}
+
+// TestPutFileBoundsACopyOfASourceThatNeverEnds: a FIFO with a writer on the
+// other end is a source that keeps producing — the reader drains what was
+// written and then waits for more instead of reaching an end, and PutFile
+// takes no context into its copy, so nothing the caller does can interrupt it:
+// without a bound the run hangs until the container is killed. The copy is
+// bounded by the size the fstat reported plus one byte, and a FIFO's size is
+// zero, so the read stops after one byte and the count refuses it: ErrChanged,
+// no object, with the writer's fd open the whole time.
+//
+// The deadline is what makes this a failure rather than a hang: the mutation
+// (copy the source without bounding it) leaves the goroutine blocked in the
+// read and this test fails by name.
+func TestPutFileBoundsACopyOfASourceThatNeverEnds(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	fifo := filepath.Join(t.TempDir(), "src")
+	if out, err := exec.Command("mkfifo", fifo).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo %s: %v: %s", fifo, err, out)
+	}
+	// The test itself holds the FIFO open read-write, with bytes already in
+	// it: a plain write end would block until the reader's open, and a FIFO
+	// that no writer has ever opened reads as an empty file — an end of file,
+	// not a source that keeps producing. Holding both ends (which Linux
+	// allows, and is why the writer here is not a subprocess) is what makes
+	// the reader wait for more once the bytes are drained, and writing first
+	// is what keeps the first read from racing the writer.
+	w, err := os.OpenFile(fifo, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if _, err := w.Write([]byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := b.PutFile(ctx, "artifacts/x.mp4", fifo, "video/mp4", false)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, blobx.ErrChanged) {
+			t.Fatalf("PutFile of a source that never ends = %v, want ErrChanged", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the copy of a source that never ends did not return: it is not bounded")
+	}
+	if _, _, err := b.Read(ctx, "artifacts/x.mp4"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("the refused write left an object: %v", err)
 	}
 }
 

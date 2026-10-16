@@ -2049,12 +2049,21 @@ func TestOneEmptyGlobAmongSeveralIsReported(t *testing.T) {
 // extension when it means something, and the file's own first bytes when it
 // does not — an extension-less name, a name whose extension the mime table
 // does not know, a body shorter than the 512-byte sniff buffer and one longer
-// than it. Where the two disagree the extension wins, because the record says
-// what the artifact is called.
+// than it (the head stops at the buffer, so a longer body is sniffed by its
+// first 512 bytes). Where the two disagree the extension wins, because the
+// record says what the artifact is called.
+//
+// The bytes the type is sniffed from are the ones the staging copy produces —
+// the table copies each body through CopyFileHashed and hands over what it
+// returns — which is the property that matters: the recorded type describes
+// the bytes this run staged, and no second open of the staged path exists to
+// be pointed at another file or at a FIFO.
 //
 // Mutation (sniff before the extension): the GIF called sizzle.png is recorded
 // as image/gif and this test fails; mutation (drop the sniff): every
-// extension-less case is recorded as "" and fails.
+// extension-less case is recorded as ""; mutation (sniff the staged path again
+// after the copy): a link planted at the staged name is followed, which
+// TestTheStagedTypeIsNotSniffedFromTheStagedPath pins.
 func TestArtifactContentTypeIsTheExtensionThenTheSniff(t *testing.T) {
 	dir := t.TempDir()
 	gif := "GIF89a" + strings.Repeat("\x00", 32)
@@ -2064,18 +2073,78 @@ func TestArtifactContentTypeIsTheExtensionThenTheSniff(t *testing.T) {
 		{"sizzle", png, "image/png"},
 		{"sizzle", "sizzle", "text/plain; charset=utf-8"},
 		{"sizzle.fugaroart", strings.Repeat("a", 600), "text/plain; charset=utf-8"},
+		{"sizzle.fugaroart", strings.Repeat("a", 511) + "GIF89a", "text/plain; charset=utf-8"},
 	}
 	for i, c := range cases {
-		path := filepath.Join(dir, fmt.Sprintf("f%d", i))
-		if err := os.WriteFile(path, []byte(c.body), 0o600); err != nil {
+		src := filepath.Join(dir, fmt.Sprintf("src%d", i))
+		if err := os.WriteFile(src, []byte(c.body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		got, err := runner.ArtifactContentType(c.name, path)
+		dst := filepath.Join(dir, fmt.Sprintf("staged%d", i))
+		_, _, head, err := runner.CopyFileHashed(src, dst, int64(len(c.body)))
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		if got != c.want {
+		if got, want := len(head), min(len(c.body), 512); got != want {
+			t.Fatalf("the head is %d bytes for a %d-byte body, want %d", got, len(c.body), want)
+		}
+		if got := runner.ArtifactContentType(c.name, head); got != c.want {
 			t.Errorf("ArtifactContentType(%q, %d bytes) = %q, want %q", c.name, len(c.body), got, c.want)
+		}
+	}
+}
+
+// TestTheStagedTypeComesFromTheCopyNotFromTheStagedPath: the recorded type is
+// a function of the bytes the copy read, so the staged path is opened exactly
+// once — to create it — and never read back. That is what the two hazards at
+// the end of this test are about, both of them real at the staged path and
+// neither of them reachable from the render: a link to a GIF makes the record
+// describe a file this run never staged, and a writerless FIFO blocks the open
+// forever, which no context can interrupt, so the run hangs until the container
+// is killed and writes no result.json.
+//
+// The staged file is replaced by exactly those two things after the copy, and
+// the type still has to come back — from the head — at once. The deadline is
+// what makes the FIFO a failure instead of a hang.
+//
+// Mutation (read the staged file back to sniff it): the type is image/gif, or
+// the FIFO's open blocks and this test fails on its deadline.
+func TestTheStagedTypeComesFromTheCopyNotFromTheStagedPath(t *testing.T) {
+	dir := t.TempDir()
+	const body = "sizzle"
+	src := filepath.Join(dir, "source")
+	if err := os.WriteFile(src, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(dir, "sizzle.fugaroart")
+	_, _, head, err := runner.CopyFileHashed(src, staged, int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gif := filepath.Join(dir, "other.gif")
+	if err := os.WriteFile(gif, []byte("GIF89a"+strings.Repeat("\x00", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(staged); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(gif, staged); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "staged.fifo")
+	if out, err := exec.Command("mkfifo", fifo).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo %s: %v: %s", fifo, err, out)
+	}
+	for _, p := range []string{staged, fifo} {
+		done := make(chan string, 1)
+		go func() { done <- runner.ArtifactContentType("sizzle.fugaroart", head) }()
+		select {
+		case got := <-done:
+			if got != "text/plain; charset=utf-8" {
+				t.Fatalf("ArtifactContentType with %s at the staged path = %q, want the render's own bytes' type", filepath.Base(p), got)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatalf("the type was read from %s: reading the staged path blocked", filepath.Base(p))
 		}
 	}
 }

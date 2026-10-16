@@ -224,8 +224,15 @@ func SanitiseName(name string) (string, error) { return sanitiseName(name) }
 // ArtifactContentType exposes the recorded content type (artifact.go's
 // artifactContentType) to the runner_test package: the sniff fallback only
 // runs for a name whose extension the mime table does not know, which no
-// fixture artifact is, so the branch needs its own table.
-func ArtifactContentType(name, path string) (string, error) { return artifactContentType(name, path) }
+// fixture artifact is, so the branch needs its own table. The bytes it takes
+// are the head CopyFileHashed hands the staging step.
+func ArtifactContentType(name string, head []byte) string { return artifactContentType(name, head) }
+
+// CopyFileHashed exposes the staging copy (artifact.go's copyFileHashed): the
+// table for ArtifactContentType copies real files through it, so the head a
+// type is sniffed from is the one the staging step really takes — the first
+// contentSniffLen bytes of what was written — rather than bytes a test chose.
+var CopyFileHashed = copyFileHashed
 
 // SetArtifactCheckedSeam runs f in stageArtifacts after every match has been
 // examined and sized against the caps and before the first copy: it is how a
