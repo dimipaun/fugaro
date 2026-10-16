@@ -465,21 +465,31 @@ func classify(complaint string) error {
 
 // boundedBuffer keeps the first boundedMax bytes written to it and counts, but
 // drops, the rest: a runaway gh cannot grow this process's memory, and a write
-// never fails, so the child is never left blocked on a full pipe.
+// never fails, so the child is never left blocked on a full pipe. It has a
+// mutex of its own because the writer is not always done when the lookup is:
+// procgroup gives up on a child that escaped the process group after its own
+// drain timeout, and that child's copy goroutine may still be writing here.
 type boundedBuffer struct {
+	mu  sync.Mutex
 	buf []byte
 }
 
 const boundedMax = 4096
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if room := boundedMax - len(b.buf); room > 0 {
 		b.buf = append(b.buf, p[:min(room, len(p))]...)
 	}
 	return len(p), nil
 }
 
-func (b *boundedBuffer) String() string { return string(b.buf) }
+func (b *boundedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
+}
 
 // ghEnvKeep is the whole environment a gh of ours may inherit: what it needs
 // to find its configuration and its credentials — the two tokens, the
