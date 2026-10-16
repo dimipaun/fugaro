@@ -52,6 +52,15 @@ func TestMatchRepo(t *testing.T) {
 		{"*/acme/*", "github/other/app", false},
 		{"github/acme/service-*", "github/acme/service-web", true}, // the design's prefix glob (§4.3)
 		{"github/acme/service-*", "github/acme/web", false},
+		// The second argument is read as a repository, so a "*" in it is the
+		// literal character the pattern's own "*" has to match -- and a
+		// wildcard that aligns with it is still a wildcard: it stands for any
+		// run, "*app" included, and "*" admits "*app" whole. Reading the
+		// pattern's "*" as that literal consumes the wildcard, so
+		// github/acme/* stops admitting a name it does admit, which is what
+		// `repos rm github/acme/*app` reads when github/acme/* remains.
+		{"github/acme/*", "github/acme/*app", true},
+		{"github/*", "github/*app", true},
 		{"github/acme/*", "bitbucket/acme/app", false}, // cross-provider
 		{"github/acme/app", "github/acme/app-web", false},
 		{"github/acme", "github/acme/app", false}, // a bare acme/* is not a pattern
@@ -231,6 +240,12 @@ func TestMatchSegmentIsLinear(t *testing.T) {
 		{"*", "", true},             // and against an empty name
 		{"*b", "ab", true},          // a star that must consume the prefix
 		{"*b", "ba", false},
+		// A star is a star even where the name has a literal "*" under it:
+		// the segment "*" admits "*app" (the star takes the whole run), and
+		// "*b" admits "*ab" (it takes "*a"). Testing literal equality first
+		// spends the wildcard on one character and loses it.
+		{"*", "*app", true},
+		{"*b", "*ab", true},
 	} {
 		if got := matchSeg(tc.pattern, tc.name); got != tc.want {
 			t.Errorf("matchSeg(%q, %q) = %v, want %v", tc.pattern, tc.name, got, tc.want)

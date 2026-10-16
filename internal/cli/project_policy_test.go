@@ -1457,8 +1457,16 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		// claim a stop the removal does not make (the review of PR #402).
 		"pattern, a partial wildcard that covers it": {[]string{"github/ac*/*", "github/acme/*"}, "github/acme/*", true, "github/ac*/*"},
 		"pattern, another provider's remains":        {[]string{"gitlab/acme/*", "github/acme/*"}, "github/acme/*", false, ""},
-		"pattern, the same width narrower":           {[]string{"github/acme/*", "github/*/*"}, "github/*/*", false, ""},
-		"pattern, its own repo entry remains":        {[]string{"github/acme/app", "github/acme/*"}, "github/acme/*", false, ""},
+		// A removed entry is not a revocation when what remains admits every
+		// repository it did — and here what remains admits the entry itself:
+		// github/acme/*app is a pattern, and github/acme/* admits the string
+		// "*app" as the repository it reads, so every repository the removed
+		// entry admitted is still admitted. MatchRepo had the wildcard and
+		// the literal the wrong way round, so this read "refused from now
+		// on": the operator was told a stop happened that did not.
+		"pattern, a wildcard over a literal wildcard": {[]string{"github/acme/*", "github/acme/*app"}, "github/acme/*app", true, "github/acme/*"},
+		"pattern, the same width narrower":            {[]string{"github/acme/*", "github/*/*"}, "github/*/*", false, ""},
+		"pattern, its own repo entry remains":         {[]string{"github/acme/app", "github/acme/*"}, "github/acme/*", false, ""},
 		// The other direction: github/a*/app admits github/acme/app, but not
 		// github/acme/anything-else, which the removed pattern did admit — so the
 		// removal does refuse something and must say so.

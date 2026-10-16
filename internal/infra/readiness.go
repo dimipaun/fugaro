@@ -404,20 +404,22 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			}
 			if ok {
 				if logical == gitLogical {
-					gitSecretID = spec.Secrets[logical]
+					gitSecretID = out.MountSecretID(logical)
 				}
 				continue
 			}
 			// B4: the check job mounts a subset of the same logical names,
 			// and reads the same repo-wide local.secrets Terraform local, so
-			// it resolves precedence identically.
+			// it resolves precedence identically -- which is why the ID it
+			// names comes from MountSecretID, the one spelling of that
+			// precedence, rather than from the maps here.
 			resolved, fix, err := resolveProject(logical)
 			if err != nil {
 				return RepoSpec{}, nil, err
 			}
 			if resolved {
 				if logical == gitLogical {
-					gitSecretID = spec.ProjectSecretCandidates[logical]
+					gitSecretID = out.MountSecretID(logical)
 				}
 				continue
 			}
