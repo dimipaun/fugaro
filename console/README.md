@@ -58,8 +58,9 @@ What is here today: this file, the contract the console reads
 hold the pinning rule, the lockfile, and the typecheck's coverage of the root
 config files (`test/unit/{pinning,lockfile,tsconfig}.test.ts`); and the hardened
 window (plan Task 1.1, below): `src/main/window.ts`, `src/main/protocol.ts`,
-`src/main/index.ts`, `src/renderer/index.html`, `tsconfig.build.json`, and the
-two test files that try to leave it.
+`src/main/index.ts`, `src/renderer/index.html`, `tsconfig.build.json`, the
+two test files that try to leave it, and a third that holds the e2e harness's
+own premise (`test/unit/playwright.test.ts`).
 
 ## The toolchain, pinned (Task 1.0)
 
@@ -249,6 +250,21 @@ here: under `'none'` Blink refuses the fetch and dispatches a violation naming
 (the fetch still fails, because Chromium's `fetch()` does not support a custom
 scheme, so an assertion on the failure alone would pass under the mutation).
 That test fails under the red step, and the remote one does not.
+
+One more unit test holds a premise the e2e file depends on and cannot see:
+`test/unit/playwright.test.ts` asserts that `playwright.config.ts` keeps
+`fullyParallel` at Playwright's default, `false`. `security.spec.ts` launches
+Electron once in `beforeAll` and is written against that one instance — one app,
+one page, tests in order in a worker, the `activate` test last because it takes
+the window down — and with `fullyParallel: true` Playwright spreads one file's
+tests across workers and runs that file's `beforeAll` **once per worker**, so
+the file would launch one Electron per worker and the ordering would stop
+meaning anything. No assertion in the spec can notice that (measured on the
+pinned Playwright 1.64.1 with a scratch spec of four tests in one file: `false`
+ran all four in worker 0, `true` split them over two workers and would use more
+where more are free), so the flag is held where it can be: flipping it back to
+`true` fails `test/unit/playwright.test.ts`, which reads the config the way
+Playwright does and needs no display and no Electron runtime to do it.
 
 ### The pinning rule is a test, not a habit
 

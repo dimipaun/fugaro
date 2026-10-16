@@ -331,8 +331,24 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
       },
     } as unknown as Shell
 
-    await expect(openExternalValidated(shell, 'https://github.com/fugaro/fugaro')).resolves.toBe(true)
-    expect(opened).toEqual(['https://github.com/fugaro/fugaro'])
+    // The spelling is deliberately NOT its canonical form. This is the only
+    // test that watches the handover -- what actually reaches
+    // `shell.openExternal` -- and the two do not pin the same thing: the table
+    // above pins `validateExternalUrl`'s decision, and a canonical spelling
+    // here would leave `shell.openExternal(raw)` in the implementation green
+    // (measured: with that mutation and the canonical spelling, the whole suite
+    // still passed, which is how the handover went unpinned). The spelling
+    // `github.com/fugaro/console/../fugaro` resolves to
+    // `github.com/fugaro/fugaro` under the WHATWG parser, so the two strings
+    // differ exactly where a check that validates one and opens the other
+    // would let a spelling diverge from what was validated.
+    await expect(
+      openExternalValidated(shell, 'https://github.com/fugaro/console/../fugaro'),
+    ).resolves.toBe(true)
+    expect(
+      opened,
+      'shell.openExternal must be handed the URL validateExternalUrl returned (url.href), not the string the caller spelled: a spelling that resolves somewhere else would otherwise be opened unvalidated',
+    ).toEqual(['https://github.com/fugaro/fugaro'])
   })
 
   it('calls nothing at all for a refused link', async () => {

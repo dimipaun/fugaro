@@ -275,7 +275,11 @@ test.describe('the hardened window', () => {
   // The last test in the file, because it is the one that takes the shared
   // instance down to zero windows: the `page` the tests above use is gone after
   // it, and Playwright runs a file's tests in order inside a worker, so nothing
-  // after it is left without one.
+  // after it is left without one. That ordering -- and the one shared app and
+  // page the whole file is written against, this `beforeAll` included -- holds
+  // only because `fullyParallel` is false in playwright.config.ts; nothing in
+  // this file can see the flag, so `test/unit/playwright.test.ts` is what holds
+  // it at false.
   test('survives macOS activate: the window comes back, the scheme is not registered twice', async () => {
     // The premise, checked against the Electron this runs on rather than
     // assumed: registering the scheme a second time is an error, not a no-op.
