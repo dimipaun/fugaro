@@ -166,6 +166,65 @@ func appCheckout(t *testing.T) {
 	t.Chdir(dir)
 }
 
+// TestSecretsSetRefusesACheckoutWhoseOriginItCannotRead: the bare command
+// decides its scope with the repository in hand, and "the checkout's origin
+// does not name owner/name" was folded into "there is no checkout" — so the
+// decision fell to projectScopeName's repo-unaware branch, which answers for
+// the *list* rather than for the repository in hand: a D2-swept name, or a
+// project_secrets entry that lists someone, made the bare command write the
+// shared copy from a checkout it may not even read, over the value the
+// repositories the entry lists mount. Standing in a checkout and not being
+// able to read which one is a refusal, not an answer.
+//
+// Mutation (verified, run and restored): return "" for both cases again
+// (checkoutRepoOrEmpty as it was): this test fails, the project copy written.
+func TestSecretsSetRefusesACheckoutWhoseOriginItCannotRead(t *testing.T) {
+	sm := secretsFixture(t)
+	// The shared copy the repositories the entry lists mount, and an entry
+	// that does not list this checkout's repository: with a repository in hand
+	// the bare command stores acme/app's own copy (the test above), and with
+	// none it stored the shared one.
+	shared := gcp.ProjectSecretID("aurora", config.BitbucketSecret)
+	sm.Seed(shared, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora", gcp.LabelSecret: config.BitbucketSecret}, []byte("shared-token-EXAMPLE"))
+	projectSecretFixture(t, "project_secrets:\n  "+config.BitbucketSecret+": { allow_data_to: [acme/other] }\n")
+	// A nested path is not owner/name (repoFromOrigin's own rule): a real
+	// checkout, whose repository the bare command cannot name.
+	dir := t.TempDir()
+	testutil.IsolateGit(t)
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "https://bitbucket.org/group/sub/app.git")
+	t.Chdir(dir)
+	_, _, err := executeStdin(t, tokenValue, "secrets", "set", config.BitbucketSecret)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a bare set from a checkout whose origin names no owner/name = %v, want a refusal", err)
+	}
+	for _, want := range []string{"origin", "--repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q: %v", want, err)
+		}
+	}
+	if got := string(sm.Latest(shared)); got != "shared-token-EXAMPLE" {
+		t.Errorf("the shared copy = %q: a checkout whose repository is unknown overwrote it", got)
+	}
+	if sm.Latest(bitbucketSecret) != nil {
+		t.Error("a repository copy was written too")
+	}
+	// The explicit spelling still works: --repo needs no origin.
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", config.BitbucketSecret, "--repo", "acme/app"); err != nil {
+		t.Errorf("--repo from the same checkout: %v", err)
+	}
+	// And outside a checkout there is still no repository in hand, so the
+	// repo-unaware answer stands — a D2-swept name is still stored
+	// project-wide — and that is not a refusal.
+	t.Chdir(t.TempDir())
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", config.AnthropicSecret); err != nil {
+		t.Errorf("a bare set outside a checkout: %v", err)
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", config.AnthropicSecret))); got != tokenValue {
+		t.Errorf("the project copy of %s = %q, want the value just stored", config.AnthropicSecret, got)
+	}
+}
+
 // TestSecretsSetWorkflowSecretMustBeDeclared: reserved names work from
 // anywhere; a workflow secret only when the checkout's fugaro.yaml declares
 // it, so a typo or a value typed as NAME is refused, unquoted.
