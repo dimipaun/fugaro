@@ -36,4 +36,5 @@ An Expo (React Native) phone app giving a Fugaro Watch–style view of running j
 - Message retention and cleanup in RTDB
 - Phase 2 hosting choice for the orchestrator
 
+
 App should support multiple accounts with easy switching between them.
