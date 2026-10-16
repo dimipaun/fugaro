@@ -76,11 +76,19 @@ func TestChecklistHasCheck38(t *testing.T) {
 	// ("an earlier attempt did not finish its Restore") about an attempt that
 	// never changed anything.
 	for _, want := range []string{
-		"check38-state", "left over", "before the first change", "mktemp -d", `mv "$T" "$S"`,
+		"check38-state", "left over", "before the first change", "mktemp -d",
+		`mv "$T" "$S"`, "[ -s \"$T/$f\" ]",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Check 38 section's recorded state does not say %q", want)
 		}
+	}
+	// ... and the move happens after every read and its fail-closed check,
+	// not merely somewhere in the block: a record could carry the temp
+	// directory and still write or check the final path directly, which is
+	// the partial-record bug the temp directory is there to prevent.
+	if move, checked := strings.Index(section, `mv "$T" "$S"`), strings.Index(section, `[ -s "$T/$f" ]`); move < 0 || checked < 0 || move < checked {
+		t.Error("the Check 38 section's recorded state does not move the temp directory into place after the reads that fill it")
 	}
 
 	// The recorded base image is re-taken if the prerequisite move had to
@@ -109,11 +117,11 @@ func TestChecklistHasCheck38(t *testing.T) {
 	// section top to bottom would run it without the build and be refused.
 	for _, want := range []string{
 		"The order, once",
-		"(a) take the recorded state",
-		"(b) edit the sandbox workflow",
-		"(c) step 0's local build",
-		"(d) `fugaro init --repo .`",
-		"(e) step 1's run",
+		"**(a)** take the recorded state",
+		"**(b)** edit the sandbox workflow",
+		"**(c)** step 0's local build",
+		"**(d)** `fugaro init --repo .`",
+		"**(e)** step 1's run",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Check 38 section's ordering does not list %q", want)
