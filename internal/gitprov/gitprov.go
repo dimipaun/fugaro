@@ -397,9 +397,11 @@ func SplitRemote(remote string) (host, path string, ok bool) {
 // A remote whose scheme does not read as a scheme is not this shape either
 // (SplitRemoteURL): " https://github.com/acme/app.git", which a whitespace
 // slip produces, is "Malformed input" to libcurl and never a clone. And an
-// authority whose host holds a control byte — a newline, a NUL, a tab — names
-// no host here: no host can hold one, and a caller that quotes what this
-// returns must not be handed a string that is two lines long.
+// authority holding a control character — in its host or in its userinfo: a
+// newline, a NUL, a tab, an ESC, a C1 control, a line separator — names no
+// host here: git clones none of those (libcurl refuses the URL, and a
+// credential url holding one "cannot be parsed"), and a caller that quotes what
+// this returns must not be handed a string that is two lines long.
 //
 // ok is false for every remote SplitRemote already answers for (a readable URL,
 // the scp-like form, a local path, an empty string) and for an authority with
@@ -429,23 +431,37 @@ func SplitRemoteRaw(remote string) (host, path string, ok bool) {
 	if host == "" {
 		return "", "", false // an authority with nothing in it: no host, SplitRemote's answer
 	}
-	if strings.ContainsFunc(host, isControl) {
-		// A control byte is not a host name (a newline, a NUL, a tab): libcurl
-		// answers the whole URL "Malformed input to a URL function", so this
-		// reader names no host for it, and a caller that reads a refusal out of
-		// the host it gets does not get a string that is two lines long or that
-		// carries a byte no log can hold (the review finding on this change).
-		// A space is not control and is still read: the display quotes it, and
-		// KindForHost refuses it as the unknown host it is.
+	if strings.ContainsFunc(authority, isControl) {
+		// A control character is not a host name and not a userinfo either (a
+		// newline, a NUL, a tab, an ESC, a C1 control, a line separator):
+		// libcurl answers the whole URL "Malformed input to a URL function",
+		// and a credential URL holding one is one git refuses to parse at all
+		// (https://x\n@github.com/acme/web.git aborts with "credential url
+		// cannot be parsed"), so no clone happens for any of them. This reader
+		// exists to name the host git *uses*, so it names none for a spelling
+		// git does not use — and a caller that quotes what it gets is not
+		// handed a string that is two lines long or that carries a byte no log
+		// can hold. The check is over the whole authority and not the host
+		// alone because the userinfo is where an edited remote puts one
+		// (the review finding on this change). A space is not control and is
+		// still read: the display quotes it, and KindForHost refuses it as the
+		// unknown host it is.
 		return "", "", false
 	}
 	return host, path, true
 }
 
-// isControl reports whether r is a control character: any byte below the space,
-// and DEL. They are what a URL parser refuses outright ("Malformed input to a
-// URL function" is libcurl's answer to each of them).
-func isControl(r rune) bool { return r < ' ' || r == 0x7f }
+// isControl reports whether r is a character no host or userinfo can hold and
+// no one-line refusal may quote: the C0 controls (below the space) and DEL, the
+// C1 controls (U+0080 to U+009F, NEL among them), and the Unicode line and
+// paragraph separators (U+2028, U+2029) — the last three are not control
+// characters by Go's unicode.IsControl, and each of them is a line break to a
+// terminal or a log reader all the same. A URL parser refuses the first two
+// outright ("Malformed input to a URL function" is libcurl's answer to each),
+// and the separators are what a host name can never contain.
+func isControl(r rune) bool {
+	return r < ' ' || r == 0x7f || (r >= 0x80 && r <= 0x9f) || r == 0x2028 || r == 0x2029
+}
 
 // SplitRemoteURL separates a remote written as a URL — a scheme, ":" and "//",
 // then an authority and a path — into those three parts as written, and ok says

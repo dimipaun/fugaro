@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -798,5 +799,135 @@ func TestRemoteAdmissionErr(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// controlByteRemotes is every spelling an edited job environment can write a
+// control character into a remote with, each of them a string no host name can
+// hold and no log may carry: a newline and a carriage return (two lines in a
+// record), an ESC (an ANSI sequence a terminal obeys), a NUL and a tab, a C1
+// control (NEL, which may be one), and the Unicode line and paragraph
+// separators (U+2028, U+2029 — a line break to a log reader, no control
+// character to Go). The host, the userinfo, the port and the path are each
+// where one can sit, and the scp-like form is the shape that carries one into
+// the *host* remoteHost hands the refusal (gitprov.SplitRemote reads it as
+// written rather than answering "no host" for it: a spelling a refusal has to
+// quote is not one to answer "nothing to check" with).
+//
+// A tab is deliberately not here: it is not a line break and no terminal
+// sequence, safetext.OneLine keeps tabs by design (safetext.TableCell is the one
+// that escapes them, for a value sitting in a tabwriter cell), and a refusal is
+// the one string this package builds. One line is what this corpus is about.
+var controlByteRemotes = []string{
+	"git@github.com\n:acme/app.git",
+	"git@github.com\r:acme/app.git",
+	"evil.example\r\nX: y:acme/app.git",
+	"git@github.com\x1b[31m:acme/app.git",
+	"git@github.com\x00:acme/app.git",
+	"git@github.com\u0085:acme/app.git",
+	"git@github.com\u2028:acme/app.git",
+	"git@github.com\u2029:acme/app.git",
+	"https://x\n@github.com/acme/app.git",
+	"https://x\x1b[31m@github.com/acme/app.git",
+	"https://github.com:84\n43/acme/app.git",
+	"https://github.com/acme/app\n.git",
+	"https://github.com\u2028/acme/app.git",
+	"https://github.com/acme/app.git\x00",
+}
+
+// isRawControl reports whether r is a character a refusal may not carry: the
+// C0 controls and DEL, the C1 controls, and the Unicode line and paragraph
+// separators. A refusal is one line of a run's record and of the job's log, and
+// the remote it quotes is written by whoever can edit the job's environment —
+// so a newline in it writes a line the run did not write, and an ESC writes a
+// terminal sequence the reader's terminal obeys.
+func isRawControl(r rune) bool {
+	return r == '\n' || r == '\r' || r == 0x7f || r < ' ' ||
+		(r >= 0x80 && r <= 0x9f) || r == 0x2028 || r == 0x2029
+}
+
+// Every refusal is exactly one line, for every remote that can carry a control
+// character: the values a refusal quotes are the job's own strings (the remote,
+// its host, its port, the path it names), and one of them printed raw writes a
+// second line — or an ANSI escape — into the run's record, which is a job
+// environment's to write and no run's to obey. The whole refusal goes through
+// safetext.OneLine at the one place refusals are built (remoteAdmissionErr),
+// rather than each value at each %s: a value added later is covered by
+// construction, which is what this test's corpus is for (the review finding on
+// this change).
+//
+// Mutation (run, restored): return the refusal without the safetext.OneLine
+// pass. Every case below fails on the newline or on the ESC.
+func TestRemoteAdmissionRefusalsAreOneLine(t *testing.T) {
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, remote := range controlByteRemotes {
+		t.Run(strconv.Quote(remote), func(t *testing.T) {
+			err := remoteAdmissionErr(remote, "github", "acme/app", slug)
+			if err == nil {
+				t.Fatalf("remoteAdmissionErr(%s) admitted a remote holding a control character", strconv.Quote(remote))
+			}
+			got := err.Error()
+			if strings.ContainsAny(got, "\n\r") {
+				t.Errorf("remoteAdmissionErr(%s) is not one line: %s", strconv.Quote(remote), strconv.Quote(got))
+			}
+			for _, r := range got {
+				if isRawControl(r) {
+					t.Errorf("remoteAdmissionErr(%s) carries the control character %U: %s", strconv.Quote(remote), r, strconv.Quote(got))
+				}
+			}
+			// The display the refusal quotes is one line on its own too: it is
+			// the same guarantee one layer down, for the next caller that quotes
+			// a remote without going through remoteAdmissionErr.
+			if d := remoteDisplay(remote); strings.ContainsAny(d, "\n\r") || strings.ContainsFunc(d, isRawControl) {
+				t.Errorf("remoteDisplay(%s) = %s, want one line with no control character", strconv.Quote(remote), strconv.Quote(d))
+			}
+		})
+	}
+}
+
+// A remote written as a URL that names no repository at all is refused, not
+// admitted with the owner/name comparison skipped: https://github.com and
+// https://github.com?/attacker/malware.git name a host and no path, so git
+// asks that host for a repository that is not there (GET /?/info/refs — a 404,
+// or for the query-bearing spelling a request whose path the server does not
+// serve), and the run halts somewhere further down for a reason that names
+// neither the remote nor the edit that wrote it. The doc above says such a
+// remote is refused, never skipped; before this the comparison simply did not
+// run for these, which is the shape the bind exists to make impossible (the
+// review finding on this change). The rule is the *URL* shape's, because a
+// remote naming no path is not always a URL's to judge: a local path and an
+// scp-like remote are the checks' that were always there.
+func TestRemoteAdmissionRefusesAURLThatNamesNoRepository(t *testing.T) {
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, remote := range []string{
+		"https://github.com",
+		"https://github.com/",
+		"https://github.com?/attacker/malware.git",
+		"https://github.com?@evil.example/acme/app.git",
+		"https://github.com#acme/app.git",
+	} {
+		t.Run(strconv.Quote(remote), func(t *testing.T) {
+			err := remoteAdmissionErr(remote, "github", "acme/app", slug)
+			if err == nil {
+				t.Fatalf("remoteAdmissionErr(%s) admitted a URL that names no repository", strconv.Quote(remote))
+			}
+			if !strings.Contains(err.Error(), "names no repository") {
+				t.Errorf("remoteAdmissionErr(%s) = %v, want the refusal that says it names no repository", strconv.Quote(remote), err)
+			}
+		})
+	}
+	// The shape rule is the URL's: a remote naming no path that is not written
+	// as a URL keeps the answer it had (the checks that were always there judge
+	// it), which is what makes this a rule about URLs and not about paths.
+	for _, remote := range []string{"/tmp/fixture.git", "", "github.com:", "git@github.com:"} {
+		if err := remoteAdmissionErr(remote, "github", "acme/app", slug); err != nil {
+			t.Errorf("remoteAdmissionErr(%q) = %v, want it admitted: only a URL-shaped remote that names no repository is refused here", remote, err)
+		}
 	}
 }

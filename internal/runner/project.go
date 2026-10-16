@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -169,7 +171,12 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // authority (https:///github.com/attacker/malware.git, https:////github.com/a/b.git),
 // an authority git refuses outright (a userinfo holding a second "@", a
 // whitespace or control character, a scheme that is not a scheme), and a file
-// URL. None of them is the local path the first answer is for: git does not read
+// URL *with an empty authority* (file:///tmp/web.git, whose "file:" is a scheme
+// and whose authority is nothing) — not every file URL: "file://host/path"
+// names the host host as plainly as "https://host/path" does, and this reader
+// answers the same for it (SplitRemote reads its authority), so it is refused
+// for that host's kind and not as an unreadable shape. None of them is the
+// local path the first answer is for: git does not read
 // https:///github.com/a/b.git as a path — libcurl connects it to github.com and
 // clones github.com/a/b.git — and a spelling libcurl refuses
 // (https://a@b@github.com/a/b.git is "Bad hostname" to it) is no remote either.
@@ -187,37 +194,40 @@ func remoteHost(remote string) (host, kind string, named bool) {
 	if h, _, ok := gitprov.SplitRemoteRaw(remote); ok {
 		return h, gitprov.KindForHost(h), true
 	}
-	if _, _, _, shaped := gitprov.SplitRemoteURL(remote); shaped {
-		// Written as a URL, and neither reader would name a host for it: an
-		// authority git refuses outright (a userinfo holding a second "@"), a
-		// file URL, or an empty authority (SplitRemoteRaw and SplitRemoteURL
-		// both answer "no host" for that one).
+	if strings.Contains(remote, "://") {
+		// Written as a URL — a scheme's colon and an authority's "//", the
+		// shape git hands to a URL parser — and not one either reader will name
+		// a host for. Two spellings reach here, and both are refused:
+		//
+		//   - A URL whose authority yields no host: an empty authority
+		//     (https:///github.com/a/b.git, https:////github.com/a/b.git), an
+		//     authority git refuses outright (a userinfo holding a second "@"),
+		//     a file URL with an empty authority, and — since the authority is
+		//     what gitprov.SplitRemoteRaw checks — one holding a control
+		//     character in its host *or* its userinfo (https://x\n@github.com/a/b.git,
+		//     which git refuses to parse at all: "credential url cannot be
+		//     parsed").
+		//   - A scheme that is not a scheme: " https://github.com/acme/app.git",
+		//     a whitespace slip, is "Malformed input to a URL function" to
+		//     libcurl.
+		//
+		// This branch is the text alone because that is the whole of what the
+		// two shapes have in common: SplitRemoteURL answers "not a URL shape"
+		// for the second, so asking it first and falling through to a text test
+		// was one question asked twice (the review finding on this change).
 		//
 		// The third answer — a remote that names no host, which the checks that
-		// were always there are left to judge — is a local path and an scp-like
-		// remote whose userinfo is all there is in front of the colon ("@:path"),
-		// and it is *not* this shape: git does not read "https:///github.com/a/b.git"
-		// as a path, it reads a host out of it (libcurl connects
-		// https:///github.com/acme/app.git to github.com and clones
-		// github.com/acme/app.git). Reading it as "no host, nothing to check"
-		// skipped both halves of the binding — the host kind and the owner/name —
-		// while git cloned the repository the remote named, with this run's slug
-		// and this repository's git credential scoped to that host: the fail-open
-		// this branch closes (the review finding on this change). A URL this
-		// check cannot read is refused, never skipped.
-		return "", "", true
-	}
-	if strings.Contains(remote, "://") {
-		// Written as a URL by the text alone — a scheme's colon and an
-		// authority's "//", the shape git hands to a URL parser — and not one
-		// either reader will name a host for: the scheme is not a scheme
-		// (" https://github.com/acme/app.git", a whitespace slip, is "Malformed
-		// input" to libcurl) or the authority holds a byte no host can (a
-		// newline is not a host name). Skipping these was the same fail-open as
-		// the branch above, reached through a spelling the *shape* reader
-		// refuses: git never clones them either, and a run that admitted one
-		// would clone from wherever the edit that wrote it pointed, so they are
-		// refused too (the review finding on this change).
+		// were always there are left to judge — is a local path, an empty
+		// Deps.Remote, and an scp-like remote whose userinfo is all there is in
+		// front of the colon ("@:path"), and it is *not* this shape: git does
+		// not read "https:///github.com/a/b.git" as a path, it reads a host out
+		// of it (libcurl connects https:///github.com/acme/app.git to github.com
+		// and clones github.com/acme/app.git). Reading it as "no host, nothing
+		// to check" skipped both halves of the binding — the host kind and the
+		// owner/name — while git cloned the repository the remote named, with
+		// this run's slug and this repository's git credential scoped to that
+		// host: the fail-open this branch closes (the review finding on this
+		// change). A URL this check cannot read is refused, never skipped.
 		return "", "", true
 	}
 	return "", "", false
@@ -366,9 +376,13 @@ func remoteRepoPath(remote string) (string, bool) {
 // A remote path that is not canonicalizable is refused, not skipped: the
 // binding refuses every remote that names a repository other than this run's,
 // and a path git would resolve to one this check cannot read is exactly that.
-// A remote naming no path at all keeps the behaviour it had before this check
-// existed — the binding does not extend the launcher's URL rules to every
-// remote a local run may use.
+//
+// named is also false for a remote naming no path at all, and the caller
+// decides what that means: for a remote written as a URL it is a refusal
+// (remoteAdmissionErr — a URL always names where it clones from), while for a
+// local path or an scp-like remote it keeps the behaviour it had before this
+// check existed, because the binding does not extend the launcher's URL rules
+// to every remote a local run may use.
 func repoNamedByRemote(remote string) (string, bool, error) {
 	path, named := remoteRepoPath(remote)
 	if !named {
@@ -381,22 +395,57 @@ func repoNamedByRemote(remote string) (string, bool, error) {
 	return c, true, nil
 }
 
-// remoteAdmissionErr refuses a remote that is not exactly the repository this
-// run is for, cloned from exactly the endpoint the launcher writes: the half of
-// admissionCheck that reads the job's own environment (Deps.Remote, RemoteEnv)
-// or the origin of a checkout already in the work directory. It is one function
-// because the three refusals below are one question — is this remote the remote
-// this run was launched with? — asked of one string three ways, and because the
-// table of spellings a caller outside this package may hand it is the audit's
-// own test (project_internal_test.go's TestRemoteAdmissionErr): a remote that
-// does not parse to exactly (the derived kind's host, this run's owner/name) is
-// refused, never skipped, and the two older shapes of this check each skipped
-// one half of that (the review findings on this change).
+// remoteAdmissionErr is remoteAdmissionRefusal, one line: a refusal is a line
+// of the run's record, of the job's log and of the error bootstrap returns, and
+// every value the refusal quotes comes from the job's own environment — the
+// remote itself, the host it names, the port, the path — which is a string a
+// person can edit after the job is launched, so it can hold anything a string
+// can hold. A host with a newline in it (git@github.com\n:acme/app.git, which
+// gitprov.SplitRemote reads as written rather than answering "no host") wrote a
+// second line into the record, and an ESC in one (git@github.com\x1b[31m:...)
+// wrote a terminal sequence the reader's terminal obeys: a run's record is
+// where a job's environment must not be able to write lines of its own (the
+// review finding on this change).
+//
+// The pass is over the *whole refusal* at the one place every refusal is built,
+// rather than over each value at each "%s": the values are assembled into one
+// sentence by ten branches, and a branch that quotes a value this function does
+// not know about today is covered by construction. safetext.OneLine is the
+// package's one answer to "a string from an untrusted source, printed" — it
+// drops ESC/CSI/OSC sequences and turns every other control character, C1
+// control, bidi control and line separator into "?" — and this is the same
+// treatment every other line the run publishes gets.
+func remoteAdmissionErr(remote, kind, repo, slug string) error {
+	err := remoteAdmissionRefusal(remote, kind, repo, slug)
+	if err == nil {
+		return nil
+	}
+	// errors.New of the sanitized text: the refusals below carry no wrapped
+	// cause (every one of them is a sentence about this run's own
+	// environment), so there is nothing for a %w to preserve.
+	return errors.New(safetext.OneLine(err.Error()))
+}
+
+// remoteAdmissionRefusal refuses a remote that is not exactly the repository
+// this run is for, cloned from exactly the endpoint the launcher writes: the
+// half of admissionCheck that reads the job's own environment (Deps.Remote,
+// RemoteEnv) or the origin of a checkout already in the work directory. It is
+// one function because the refusals below are one question — is this remote the
+// remote this run was launched with? — asked of one string several ways, and
+// because the table of spellings a caller outside this package may hand it is
+// the audit's own test (project_internal_test.go's TestRemoteAdmissionErr): a
+// remote that does not parse to exactly (the derived kind's host, this run's
+// owner/name) is refused, never skipped, and the two older shapes of this check
+// each skipped one half of that (the review findings on this change).
+//
+// Its text is not one line by construction — it quotes the remote, its host,
+// its port and the path it names as they were written — which is why the caller
+// public in this package is remoteAdmissionErr, the one-line wrapper above.
 //
 // It is called before the provider is opened, so a refusal here means no git
 // credential exists and nothing was cloned: every sentence below ends the same
 // way for that reason.
-func remoteAdmissionErr(remote, kind, repo, slug string) error {
+func remoteAdmissionRefusal(remote, kind, repo, slug string) error {
 	// The endpoint the remote names comes first, and not only its host: what this
 	// run's git credential is scoped to is scheme://host[:port] (internal/gitops'
 	// CredentialURL, which has no allow-list of its own), so a remote on the
@@ -425,17 +474,28 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 	// Only the two schemes a credential is scoped to are this check's: gitops'
 	// CredentialURL answers "" for everything that is not http or https, so an
 	// ssh:// remote — the URL spelling of the scp-like form above, which this
-	// check passes (git@github.com:acme/app.git) — has no credential to send
-	// anywhere. It passes because the switch below names http and https and
-	// nothing else, not because remoteEndpoint answers endpoint = false for it:
-	// that function reports an endpoint for every scheme with an authority
-	// (ssh://git@github.com:22/acme/app.git is scheme "ssh", port "22",
-	// endpoint = true), which is what lets this refusal read the scheme off the
-	// string rather than off CredentialURL's own parse (so a spelling url.Parse
-	// refuses is still refused here). A reader who took the switch for "any
-	// endpoint must be https" would start refusing ssh remotes that pass today
-	// — and the port an ssh:// remote names is not this check's either, for the
-	// same reason: no credential is scoped to it.
+	// check passes when it names the provider's host as written
+	// (ssh://git@github.com/acme/app.git, and git@github.com:acme/app.git in its
+	// scp-like spelling) — has no credential to send anywhere. It passes because
+	// the switch below names http and https and nothing else, not because
+	// remoteEndpoint answers endpoint = false for it: that function reports an
+	// endpoint for every scheme with an authority (ssh://git@github.com/acme/app.git
+	// is scheme "ssh", endpoint = true), which is what lets this refusal read the
+	// scheme off the string rather than off CredentialURL's own parse (so a
+	// spelling url.Parse refuses is still refused here). A reader who took the
+	// switch for "any endpoint must be https" would start refusing ssh remotes
+	// that pass today.
+	//
+	// The port an ssh:// remote names is not this check's either — no credential
+	// is scoped to an ssh endpoint — but that does not make
+	// ssh://git@github.com:22/acme/app.git a remote that passes: git connects to
+	// the host and port as written, so the host is "github.com:22", which
+	// gitprov.KindForHost answers "" for ("a host with a port" is no kind's host)
+	// and the host comparison further down refuses. Refusing it is right — the
+	// launcher writes no ssh remote at all, and a port is not one it wrote — and
+	// it is this check's silence about an ssh port — the switch below is asked
+	// only of http and https — that leaves that refusal to the host comparison
+	// rather than to the port sentence below.
 	//
 	// The first shape of this check refused every other scheme, which read one
 	// remote two ways by the way it was written: an ssh spelling's pair got one
@@ -504,6 +564,27 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 			remoteDisplay(remote), hostKind, slug, repo, kind, RemoteEnv)
 	}
 	named, namedOK, namedErr := repoNamedByRemote(remote)
+	if !namedOK && namedErr == nil {
+		// A remote written as a URL that names no repository path at all:
+		// https://github.com and https://github.com?/attacker/malware.git are
+		// the two shapes (the query and the fragment are not a path, and a bare
+		// "/" trims to nothing), and git asks that host for a repository that is
+		// not there — GET /?/info/refs, a 404 the server answers for every one
+		// of them. The run halts further down for a reason that names neither
+		// the remote nor the edit that wrote it, and the binding's own doc says
+		// such a remote is refused, never skipped: the comparison simply not
+		// running is the shape this check exists to make impossible (the review
+		// finding on this change). The rule is the *URL* shape's, because
+		// naming no path is not always a URL's to judge: a local path, an empty
+		// Deps.Remote and an scp-like remote naming no path are the checks'
+		// that were always there (a local run clones from its local paths), and
+		// the launcher writes none of them for a cloud run
+		// (internal/infra's repoURL takes an https URL with an owner/name).
+		if _, _, _, shaped := gitprov.SplitRemoteURL(remote); shaped {
+			return fmt.Errorf("the run would clone from %s, which is written as a URL and names no repository at all: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, and this run is for %s (%s under %s) — the launcher writes the whole URL (https://%s/%s.git), so a URL naming no owner/name is a job environment edited after launch, and git would ask that host for the repository such a path names, which serves none — so the run stops before any git credential is requested",
+				remoteDisplay(remote), RemoteEnv, repo, slug, kind, host, repo)
+		}
+	}
 	if namedOK || namedErr != nil {
 		// The remote names a repository path, and reading it is what this
 		// check runs on: a path canonicalization refuses is a refusal, not a
@@ -532,8 +613,22 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 	return nil
 }
 
-// remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
-// its host alone, anything else as the URL without its userinfo, its query and
+// remoteDisplay is the remote as a refusal may quote it, and it is one line:
+// remoteDisplayLine reads the form off the remote as written, and this is that
+// form through safetext.OneLine, so a remote holding a control character —
+// "git@github.com\n:acme/app.git" is read as written (SplitRemote's scp-like
+// branch), and its host is what the display returns — cannot put a second line,
+// or an ESC sequence, into whatever quotes it. Refusals get the same treatment
+// once more as a whole (remoteAdmissionErr's own pass, which is the guarantee
+// for the values a refusal quotes without going through here: the host, the
+// port, the path); this one is for the next caller that quotes a remote, so the
+// display is safe to publish on its own (the review finding on this change).
+func remoteDisplay(remote string) string {
+	return safetext.OneLine(remoteDisplayLine(remote))
+}
+
+// remoteDisplayLine is the remote as a refusal may quote it: an scp-like remote
+// as its host alone, anything else as the URL without its userinfo, its query and
 // its fragment — including a remote url.Parse reads as a plain path, with no
 // scheme and no host, which is the shape a hand-written remote takes
 // (token@host/repo.git: the "@" is still where git and curl end the userinfo,
@@ -546,7 +641,7 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 // well (addRemoteSecrets), so that git's own messages about a remote it could
 // not reach are redacted too, but the display drops them rather than relying
 // on that.
-func remoteDisplay(remote string) string {
+func remoteDisplayLine(remote string) string {
 	u, err := url.Parse(remote)
 	if err == nil && u.Host != "" {
 		u.User = nil

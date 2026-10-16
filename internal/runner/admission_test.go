@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -733,5 +734,86 @@ func TestRunnerAdmitsTheScpLikeRemoteWhoseUserinfoHoldsTwoAts(t *testing.T) {
 	b.deps.Remote = remote
 	if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v: ssh ends this remote's userinfo at the last '@', so it is github.com/acme/app.git and must be admitted", rec, err)
+	}
+}
+
+// hasControlByte reports whether s holds a byte no line of plain text does:
+// C0 (below 0x20), DEL, C1 (0x80-0x9f) — each one an escape a terminal, a
+// logger or a JSON reader may act on rather than print.
+func hasControlByte(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool {
+		return r < ' ' || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+	})
+}
+
+// A refusal is one line of the run's record, and the record is what a person
+// reads: the remote it quotes is the job's environment to write, so a control
+// character in it — a newline in the host, a carriage return, an ESC — would
+// write a line of the environment's own into the record, or a terminal sequence
+// the reader's terminal obeys. The whole refusal goes through safetext.OneLine
+// (remoteAdmissionErr), and this is that guarantee at the far end: the error
+// bootstrap returns, the record it wrote, and every object in the bucket.
+//
+// The remotes are the shapes an edited environment writes one in: the scp-like
+// host (which gitprov.SplitRemote reads as written rather than answering "no
+// host", so the refusal has a host to quote), the userinfo of a URL, the
+// authority of a URL whose parse fails, and a port. GIT_SSH_COMMAND=false and
+// the https guard are the local walls: an scp-like remote with a newline in it
+// would ssh somewhere if this check regressed, and the guard's prefix is the
+// scheme alone (none of these starts with the provider's host).
+func TestRunnerRefusesARemoteWhoseRefusalIsOneLine(t *testing.T) {
+	for _, remote := range []string{
+		"git@github.com\n:acme/app.git",
+		"evil.example\r\nX: y:acme/app.git",
+		"git@github.com\x1b[31m:acme/app.git",
+		"git@github.com\u0085:acme/app.git",
+		"git@github.com\u2028:acme/app.git",
+		"https://x\n@github.com/acme/app.git",
+		"https://github.com:84\n43/acme/app.git",
+		"https://github.com/acme/app\n.git",
+	} {
+		t.Run(strconv.Quote(remote), func(t *testing.T) {
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			guardProviderHost(t, "https://")
+			t.Setenv("GIT_SSH_COMMAND", "false")
+			b.deps.Remote = remote
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, "FUGARO_REMOTE")
+			for _, s := range []string{err.Error(), rec.Reason} {
+				if strings.ContainsAny(s, "\n\r") || hasControlByte(s) {
+					t.Errorf("the refusal is not one line of plain text: %s", strconv.Quote(s))
+				}
+			}
+			// The remote as written — control bytes and all — is in no object
+			// under the run's prefix: the refusal names the host's *printable*
+			// text, and task.json holds the run's spec, not the environment.
+			if keys := objectsContaining(t, b.harness, remote); len(keys) > 0 {
+				t.Errorf("the remote as written is in %v", keys)
+			}
+		})
+	}
+}
+
+// A remote written as a URL that names no repository at all is refused before
+// anything is opened, not admitted with the owner/name comparison skipped:
+// https://github.com and https://github.com?/attacker/malware.git name a host
+// and no path, so git would ask that host for the repository such a path names
+// — the server serves none — and the run would halt further down for a reason
+// that names neither the remote nor the edit that wrote it. Nothing here may
+// reach the forge even if the check regresses, so the guard is the scheme.
+func TestRunnerRefusesAURLThatNamesNoRepository(t *testing.T) {
+	for _, remote := range []string{
+		"https://github.com",
+		"https://github.com/",
+		"https://github.com?/attacker/malware.git",
+		"https://github.com?@evil.example/acme/app.git",
+	} {
+		t.Run(remote, func(t *testing.T) {
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			guardProviderHost(t, "https://")
+			b.deps.Remote = remote
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, "names no repository", "FUGARO_REMOTE", "before any git credential")
+		})
 	}
 }

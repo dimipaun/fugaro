@@ -139,6 +139,20 @@ func TestSplitRemote(t *testing.T) {
 		{"@:web.git", "", "", false},
 		{"git@:web.git", "", "", false},
 		{"", "", "", false},
+		// An scp-like host holding a control byte is read *as written* rather
+		// than refused here: git never connects to it ("Malformed input to a
+		// URL function" is libcurl's answer to each of them), so the run refuses
+		// the remote for the host it names — KindForHost answers "" for
+		// "github.com\n" — and the caller that quotes the host makes the
+		// refusal one line (internal/runner's remoteAdmissionErr, over
+		// safetext.OneLine). Refusing it *here* would answer "names no
+		// host at all", which is the one answer this check may not give a
+		// spelling a refusal has to quote (the review finding on this change).
+		{"git@github.com\n:acme/web.git", "github.com\n", "acme/web.git", true},
+		{"git@github.com\x1b[31m:acme/web.git", "github.com\x1b[31m", "acme/web.git", true},
+		{"git@github.com\u0085:acme/web.git", "github.com\u0085", "acme/web.git", true},
+		{"git@github.com\u2028:acme/web.git", "github.com\u2028", "acme/web.git", true},
+		{"evil.example\r\nX: y:acme/web.git", "evil.example\r\nX", " y:acme/web.git", true},
 	} {
 		host, path, ok := SplitRemote(tc.remote)
 		if host != tc.host || path != tc.path || ok != tc.ok {
@@ -201,6 +215,21 @@ func TestSplitRemoteRaw(t *testing.T) {
 		{" https://evil.example/acme/web%ZZ.git", "", "", false},
 		{"https://evil.example\x00/acme/web%ZZ.git", "", "", false},
 		{"https://evil.example\n%ZZ/acme/web.git", "", "", false},
+		// The control byte is checked over the whole authority, not the host
+		// alone: a credential url git cannot parse is no clone either (git
+		// aborts with "credential url cannot be parsed" for
+		// https://x\n@github.com/acme/web.git), and this reader exists to name
+		// the host git *uses* — a userinfo holding a newline, an ESC or a C1
+		// control is a spelling url.Parse refuses (so SplitRemote is no help
+		// here) whose host it must not report as a host the run may clone from
+		// (the review finding on this change). A space is still read (the
+		// display quotes "ho st"), because a space is not a control byte and no
+		// spelling of a control byte is what makes this the safer answer.
+		{"https://x\n@github.com/acme/web.git", "", "", false},
+		{"https://x\x1b[31m@github.com/acme/web.git", "", "", false},
+		{"https://x\u0085@github.com/acme/web.git", "", "", false},
+		{"https://evil.example\n/acme/web%ZZ.git", "", "", false},
+		{"git@github.com\n:acme/web%ZZ.git", "", "", false},
 		// A port on the host this reader hands back, and an uppercase host: the
 		// kind is the caller's question, and the host is as written either way.
 		{"https://github.com:8443/acme/web%ZZ.git", "github.com:8443", "/acme/web%ZZ.git", true},
