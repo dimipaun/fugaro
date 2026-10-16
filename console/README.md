@@ -660,7 +660,7 @@ different jobs:
 ### The owner's one command
 
 ```
-npm run record-fixture -- --out test/fixtures/<name>.ndjson --project <project>
+npm run record-fixture -- --out test/fixtures/<name>.ndjson --project <project> --gcp-project <gcp-project-id>
 ```
 
 Run **by the owner**, from the sandbox checkout, with the **sandbox**
@@ -669,8 +669,11 @@ produce, and the plan attaches them to this task's pull request by hand or in a
 follow-up commit. `--project` is **required and never defaulted**: falling back
 to whatever the ambient selection happens to be is precisely how a recording of
 the wrong project gets made (design §3.4 rule 3), so its absence is a refusal
-that names the flag. The rest of the flags, and the refusals, are in
-`--help` / `USAGE`.
+that names the flag. `--gcp-project` is required too: the recorder reads no
+config, so it is told the GCP project ID, and the ID, its runs bucket
+(`fugaro-runs-<id>`), an optional `--project-number` and any `--literal`
+(repeatable) are handed to the redactor as literals. The rest of the flags,
+and the refusals, are in `--help` / `USAGE`.
 
 The script is `tsc -p tsconfig.record-fixture.json && node
 .record-fixture/tools/record-fixture/index.js`: the tool is TypeScript like
@@ -706,8 +709,8 @@ preceded by an edit to the suite. Until they land,
 `test/fixtures/` holds one file, and it is labelled for what it is:
 
 ```
-{"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/1","case":"synthetic",
- "project":"<project>","synthetic":true,"records":6,"sha256":"9c5effc8…",
+{"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/2","case":"synthetic",
+ "project":"<project>","synthetic":true,"records":6,"sha256":"2c8a636f…",
  "note":"synthetic: invented documents put through the same redaction path as a recording; never recorded from any installation or cloud"}}
 ```
 
@@ -736,11 +739,29 @@ None of that belongs in a commit. `src/source/redact.ts` is what stands between
 a recording and `test/fixtures/`, and it is written to be told nothing:
 
 - **Every string is hostile until a rule has passed over it.** Two kinds of rule.
-  *Field classes*, where the key names what the value is (`repo`, `slug`,
-  `pr_url`, `requested_by`, `by`, …), and *pattern classes*, which apply to
-  **every** string whatever its key is: an address, a token, a URL, an absolute
-  path, a branch name, a repository path, and one of the installation's own
-  literals. A document with a key nobody anticipated still cannot carry an
+  *Field classes*, where the key names what the value is and **the whole value
+  is replaced**: a repository (`repo`), a slug, a project (`project`,
+  `gcp_project`, `project_id`, `project_number`), a bucket, a path (`path`,
+  `dir`, `cwd`, `checkout`, `binary`, `config`, …), a host (`host`,
+  `hostname`, `ip`, …), a URL (`url`, `pr_url`, `log_url`, any `*_url`), a
+  credential (`token`, `secret`, `password`, `private_key_id`, any `*_token`,
+  `*_secret`, `*_password`, …), a person or account (`requested_by`,
+  `author`, `user`, `actor`, `owner`, `account`, `oauth_account`, any `*_by`,
+  `*_email`; `by` everywhere except a report's break-down dimension), a branch
+  (`branch`, `base_branch`, `ref`, any `*_branch`), an opaque identifier
+  (`execution`), and a digest (`sha256`, `pushed_head`, …, kept only when it
+  is hex). *Pattern classes* apply to **every** string whatever its key is, as
+  written **and in NFKC**: a URL; a token (GitHub, OpenAI/Anthropic, Slack,
+  GitLab, npm, AWS, Google API key, access and refresh token, JWT, bearer
+  header, PEM block, a percent- or base64-wrapped one decoded first, a
+  `name=value` assignment whose name says secret, and any long high-entropy
+  run, so a token split across two fields loses both halves); an address in
+  any script, IDN domains included; a branch by its prefix or `refs/`; an
+  absolute path, consumed whole with its spaces and non-ASCII characters; a
+  repository path; a GCP project or bucket named in a sentence and the runs
+  bucket by name; an IPv4 or IPv6 address; a hostname; and the installation's
+  own literals, matched case-insensitively with a host literal's stem
+  (`Dimis-MacBook-Pro.local` is also `Dimis-MacBook-Pro`). A document with a key nobody anticipated still cannot carry an
   address out of the room, and a test per class holds each one — a run title, a
   requester address, a repository name in the field *and* in a sentence, a
   branch name, a POSIX and a Windows path (including the `/usr`, `/etc`,
@@ -757,22 +778,29 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
   through an array index, so `{"kill":[{"by":"Ana Smith"}]}` is a person there
   as it is in the object form.
 - **Redaction is a marker, not a deletion, and the markers are a closed set**
-  (`<path>`, `<project>`, `<host>`, `<branch>`, `[redacted-token]`,
+  (`<path>`, `<project>`, `<bucket>`, `<host>`, `<branch>`, `[redacted-token]`,
   `[redacted-url]`, `redacted@example.invalid`, `[redacted]`). A marked value is
   unambiguous on sight, so nothing in a fixture can be mistaken for real data,
   and a value that is *already* marked is left alone — which is what makes the
   whole function **idempotent**, asserted as `redact(redact(x)) == redact(x)`.
-  Two classes keep a per-value pseudonym instead of a fixed marker — a
-  repository (`r-1a2b3c4d/r-5e6f7a8b`) and a slug (`slug-1a2b3c4d`) — because a
-  fixture with several repositories is only worth having if the rows stay
-  distinguishable. A pseudonym is a SHA-256 of the value with a fixed, public
-  domain separator: one-way, so it reveals nothing, and stable, so the same
-  repository is the same pseudonym in every fixture.
+  Three classes keep a per-value pseudonym instead of a fixed marker — a
+  repository (`r-1a2b3c4d/r-5e6f7a8b`), a slug (`slug-1a2b3c4d`) and a person
+  (`person-1a2b3c4d`) — because a fixture with several repositories is only
+  worth having if the rows stay distinguishable. **A pseudonym is an
+  HMAC-SHA-256 under a per-recording random key**, drawn when the recorder
+  builds its redactor, held in a closure and never written anywhere: the same
+  repository is the same pseudonym within one recording and a different one in
+  the next, and the loader never needs the key. (An earlier version used
+  SHA-256 with a public salt cut to 32 bits; for a guessable name — an
+  organisation, a product — that is a lookup table away from the name, so it
+  was not one-way in any sense that mattered.) The synthetic fixture uses a
+  fixed, public, synthetic-only key so its bytes are reproducible; its names
+  are invented.
 - **It fails closed, twice.** A line that is not a JSON object is refused rather
   than passed through, and every document is **audited** after redaction: if any
-  class is still present after the rules have run — an address, a token, a URL, a
-  path, a branch, a repository path, a literal, or a reserved key whose value is
-  not a marker — the call throws. A bug in a rule is therefore a failed
+  class is still present after the rules have run — any pattern class above, a
+  literal, or a reserved key whose value is not its class's marker — the call
+  throws. A bug in a rule is therefore a failed
   recording, not a leaked fixture. The refusal names the class it refused on, so
   a failed recording can be read rather than guessed at.
 - **It redacts identity, not hostility, and it does not invent data.** A
@@ -785,13 +813,15 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
 
 **And the same audit runs on the way back in.** `loadFixture` audits every
 document and every notice it loads, so a fixture edited by hand after it was
-written is refused too, with `FixtureRefusal` naming the class.
+written is refused too, with `FixtureRefusal` naming the class. The loader is
+told no literals, but every other class — addresses, hosts, IPs, GCP names,
+branch and person fields, tokens, paths — needs no list, and is checked.
 
 ### The format, and what the loader refuses
 
 A fixture is NDJSON: one header line and one line per record. The header is the
 file's paperwork — the format version, **the redactor that made it**
-(`redactor: "fugaro-console-redact/1"`), whether it is synthetic, which case it
+(`redactor: "fugaro-console-redact/2"`), whether it is synthetic, which case it
 is, the project *as redacted*, how many records follow, and **a SHA-256 of the
 body**. The records are what the console replays: an arrival stamp and either a
 document or a notice, which is exactly the pair `decodeFeedLine` produces from a
@@ -805,10 +835,15 @@ the header's; every record is a well-formed envelope with a non-decreasing
 timestamp; and every document and notice passes the redaction audit. The
 header's own audit is not decoration either: **the digest covers the body, not
 the header**, so a hand-edited `"project"` — a value `FixtureSource` hands a
-screen as the installation's name — would otherwise pass every check above it. The redactor check is not decoration: **a
-digest alone proves only that the file is the one the recorder wrote — it says
-nothing about whether the recorder was the one in this repository**, so a
-fixture stamped by an older or unknown redactor is refused rather than trusted.
+screen as the installation's name — would otherwise pass every check above it.
+**The digest is an unkeyed SHA-256 and proves nothing about who wrote the
+file**: anyone who edits a fixture can recompute it. It catches an accidental
+truncation or a partial edit, nothing more. What stands between a hand-edited
+fixture and a replay is the redaction audit, and, for the synthetic fixture
+only, the byte-identity test against `test/unit/synthetic.ts`. The redactor
+check is a version check: a fixture stamped by an older or unknown redactor is
+refused, because its contents were judged by rules that are not the ones in
+front of it.
 
 `FixtureSource` then implements the whole `FugaroSource` interface over one
 fixture, so every screen and every later test can be driven with no child
@@ -824,9 +859,12 @@ replayed stream" is what makes Task 3.1's `stale` tests mean anything.
 
 Everything the recorder does before it spawns is a refusal rather than a
 guess, and this is what makes it a tool an agent cannot be talked into
-misusing. `parseRecorderArgs` refuses, by name: a missing `--project`; the
-project `belong`; **any `--out` outside a `fixtures/` directory or not ending
-`.ndjson`**; an existing fixture without `--force`; an unknown flag; a
+misusing. `parseRecorderArgs` refuses, by name: a missing `--project` or
+`--gcp-project`; the project `belong`, however it is spaced or spelled (values
+are NFKC-normalised, stripped of whitespace and control characters and
+lower-cased before the check); **any `--out` outside this repository's
+`console/test/fixtures/`** (any directory merely *named* `fixtures` was
+accepted once) or not ending `.ndjson`; an existing fixture without `--force`; an unknown flag; a
 `--duration` that is not a positive number; and a `--case` outside
 `FIXTURE_CASES` — a `--case wibble` would write `test/fixtures/wibble.ndjson`, a
 file `fixture.test.ts` then refuses, so the refusal would land on whoever
@@ -839,14 +877,23 @@ rather than a failed run.
 
 The recorder never prints the child's documents, and it never echoes its
 stderr either — the operator's terminal is theirs, but a scrollback is a leak
-this tool will not create. The child's stderr is **drained and discarded**:
+this tool will not create. A stdout line longer than `MAX_FEED_LINE_LENGTH` —
+the loader's own bound — ends the recording before it reaches the redactor,
+so the buffer cannot grow without limit. The child's stderr is **drained and discarded**:
 drained, because `planFor` gives the child a pipe and a pipe nobody reads fills
 up and then blocks the child's write, which would stall a recording of a CLI
 that logs; discarded, because a stderr line is raw CLI text rather than a feed
 frame, and putting it in the fixture as a *notice* would make the fixture claim
 `watch --json` wrote something it did not. It writes exactly one file: the
 fixture `--out` names, and only after the text has gone back through the real
-`loadFixture`.
+`loadFixture`. **The write is safe against links** (`writeFixtureFile`): every
+component from the console package down to `test/fixtures/` is `lstat`ed and
+refused if it is a symbolic link, the target's parent must be that directory by
+real path, a symbolic link at the target — dangling or not — is refused, and so
+is anything that is not a regular file **even with `--force`**. The text goes
+to a temporary file created exclusively (`wx`) in the same directory, then is
+linked into place (a new fixture; fails if something appeared meanwhile) or
+renamed over the regular file `--force` names.
 
 ### The properties are tests, and each one fails under a mutation
 
@@ -863,7 +910,13 @@ fixture `--out` names, and only after the text has gone back through the real
 | `redactDocument` made non-idempotent | "redacting twice changes nothing" |
 | a frame that cannot be parsed passed through | "fails closed on a frame it cannot parse" |
 | the audit's throw turned into a return of the problems | "the audit accepts what redaction produces, and refuses what it does not" |
-| a repository pseudonym replaced by the value itself | "uses stable, one-way pseudonyms and never the value itself" |
+| a repository pseudonym replaced by the value itself | "uses pseudonyms that are stable within a recording, and never the value itself" |
+| the pseudonym key made fixed or public again | "are keyed per recording, so a name list cannot rebuild them" (`redact-hardening.test.ts`) |
+| any rule or field class the security review of `b65fff5` added, removed or narrowed back | the test named after its class in `redact-hardening.test.ts` (addresses in any script, branch and account fields, hosts and GCP names, folded literals, token families, people and paths, the loader with no literals) |
+| `--gcp-project` optional again, or `belong` with a leading space accepted | "requires the GCP project, …" / "normalises a value before the out-of-bounds check" |
+| an `--out` in any directory named `fixtures` | "refuses an --out outside this repository's console/test/fixtures" |
+| the write following a symbolic link, overwriting a non-file, or `stat` in place of `lstat` | the four tests under "the write" |
+| the line buffer unbounded | "refuses a line longer than a feed line can be, before it reaches the redactor" |
 | the header's `sha256` left unchecked on load | "refuses a fixture whose hash does not verify" |
 | the header's `redactor` left unchecked on load | "refuses a fixture whose redaction marker this build does not know" |
 | the header left out of the redaction audit, so an edited `project` passes the digest and every check above it | "refuses a header that carries what the redactor removes" |
