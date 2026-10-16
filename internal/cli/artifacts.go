@@ -61,14 +61,20 @@ import (
 //     to one file, and a name that is a directory of another are all refused
 //     before a byte is read (design §8.2);
 //   - the bytes are written by blobx.GetFileExactly into a temporary file in
-//     the destination's own directory and renamed into place only once the
+//     the destination's own directory and put in place only once the
 //     recorded size and sha256 both match — both verified on that temporary,
-//     before the rename, so a refusal cannot remove what the rename put there
-//     and never the operator's own file — and the download is bounded by the
-//     recorded size and by a deadline derived from it: a mismatch, an
+//     before the placement, so a refusal cannot remove what the placement put
+//     there and never the operator's own file — and the download is bounded by
+//     the recorded size and by a deadline derived from it: a mismatch, an
 //     over-cap object, a truncated one, a stalled read or a record whose
 //     bytes disagree with its hash leaves NOTHING at the destination path —
 //     not even a partial file;
+//   - without --force the placement itself does not replace anything (blobx
+//     places the file with a no-replace link, or an O_EXCL create), so a file
+//     that appears between the check above and the write, or one this
+//     filesystem folds the artifact's name onto, makes the download FAIL with
+//     a user error instead of being written over — the pre-check cannot see
+//     either of those, and it is not what the promise rests on;
 //   - and nothing downloaded is ever opened, executed or unpacked (§8.1): the
 //     recorded content type is printed as the record's claim and stops there.
 //
@@ -387,7 +393,7 @@ func runArtifactsGet(cmd *cobra.Command, o *artifactsGetOptions, ref, name strin
 		}
 	}
 	for i, a := range selected {
-		if err := getArtifact(ctx, env, s, a, root, dests[i], cmd.OutOrStdout()); err != nil {
+		if err := getArtifact(ctx, env, s, a, root, dests[i], o.force, cmd.OutOrStdout()); err != nil {
 			return err
 		}
 	}
@@ -759,7 +765,7 @@ func artifactObjectKey(prefix, name string) (string, error) {
 // getArtifact downloads one artifact into dest and prints what it wrote.
 //
 // blobx.GetFile streams the bytes into a temporary file in dest's own
-// directory, hashing as it goes, and renames it into place only once the
+// directory, hashing as it goes, and puts it in place only once the
 // sha256 matches: a mismatch, an over-cap object or a truncated one removes
 // the temporary and leaves NOTHING at dest (Review Focus 9), and limit is the
 // record's own byte count, so the download is bounded by what the run
@@ -770,17 +776,23 @@ func artifactObjectKey(prefix, name string) (string, error) {
 //
 // The recorded byte count is verified inside blobx, not here: GetFileExactly
 // takes the record's own size as the size the object must have, checks it on
-// the temporary file beside the hash, and refuses before the rename. Checking
-// it here instead — which a first version did, on the size GetFile returned —
-// means comparing AFTER the rename, when both ways out are wrong: leaving the
-// file breaks "nothing is written", and removing it removes whatever was at
-// that path before, which with --force is the operator's own file.
+// the temporary file beside the hash, and refuses before the file is put in
+// place. Checking it here instead — which a first version did, on the size
+// GetFile returned — means comparing AFTER the placement, when both ways out
+// are wrong: leaving the file breaks "nothing is written", and removing it
+// removes whatever was at that path before, which with --force is the
+// operator's own file.
+//
+// The placement is blobx's too, and it is what --force governs: without it the
+// file is put in place without replacing what is there, so the refusal covers
+// the two collisions checkArtifactDest's pre-check cannot — a file that
+// appears after it, and a path this filesystem folds the artifact's name onto.
 //
 // The record's own two fields therefore have to agree with each other and
 // with the bytes: two recorded fields that disagree are a reason to refuse
 // rather than to believe the hash (the record is untrusted text; design §9
 // "get verifies the byte count and the sha256 against the record").
-func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runstore.ArtifactFile, root, dest string, out io.Writer) error {
+func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runstore.ArtifactFile, root, dest string, force bool, out io.Writer) error {
 	key, err := artifactObjectKey(s.Prefix(), a.Name)
 	if err != nil {
 		return userErr("run %s recorded an artifact named %q, which cannot be retrieved: %v", s.Slug()+"/"+s.RunID(), a.Name, err)
@@ -794,8 +806,17 @@ func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runsto
 	// A bounded read: a stalled object must not hang the command forever.
 	ctx, cancel := artifactReadContext(ctx, a.Bytes)
 	defer cancel()
-	size, sum, err := env.bucket.GetFileExactly(ctx, key, dest, a.SHA256, a.Bytes, true)
+	// The last two arguments are the classification and the placement:
+	// strict, so a 403 is an access problem and not a missing artifact, and
+	// replace=force, so without --force the placement itself refuses to
+	// replace anything — the operator's own file is not written over, and
+	// neither is one this filesystem folds the artifact's name onto (the
+	// pre-check above can see neither a file that arrives in between nor what
+	// a folding filesystem makes of two different names).
+	size, sum, err := env.bucket.GetFileExactly(ctx, key, dest, a.SHA256, a.Bytes, true, force)
 	switch {
+	case errors.Is(err, blobx.ErrDestExists):
+		return userErr("%s already exists: pass --force to replace it", oneLine(dest))
 	case errors.Is(err, blobx.ErrNotExist):
 		return userErr("run %s/%s recorded %q, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s/%s shows the record's list", s.Slug(), s.RunID(), a.Name, s.Slug(), s.RunID())
 	case errors.Is(err, blobx.ErrForbidden):
@@ -804,13 +825,22 @@ func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runsto
 		// The bytes in the bucket are not the bytes the record describes: a
 		// different hash, a different size, or more of them than it recorded.
 		// Nothing was written — blobx verifies on its own temporary file,
-		// before the rename — and whatever was at the destination path is
+		// before the placement — and whatever was at the destination path is
 		// still there.
 		return userErr("run %s/%s recorded %q as %d bytes with sha256 %s, and the object in the runs bucket is not that: %v (nothing was written)", s.Slug(), s.RunID(), a.Name, a.Bytes, a.SHA256, err)
 	case err != nil:
 		return remote(err)
 	}
-	fmt.Fprintf(out, "%s -> %s (%s, sha256 %s, %s recorded)\n", oneLine(a.Name), oneLine(dest), byteSize(size), sum, oneLine(a.ContentType))
+	// The content type is a field a record may leave empty (nothing forces a
+	// render's file to have one — result.schema.json's content_type is
+	// optional), and an empty one interpolated into the parenthetical leaves
+	// a gap and two spaces where a value belongs. Saying so is what the line
+	// means: the run recorded none.
+	typeText := oneLine(a.ContentType)
+	if typeText == "" {
+		typeText = "no content type"
+	}
+	fmt.Fprintf(out, "%s -> %s (%s, sha256 %s, %s recorded)\n", oneLine(a.Name), oneLine(dest), byteSize(size), sum, typeText)
 	return nil
 }
 

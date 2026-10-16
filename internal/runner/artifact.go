@@ -15,8 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -856,59 +856,46 @@ func ArtifactName(name string) (clean, problem string) {
 }
 
 // ArtifactCollisionKey is the identity two artifact names share when one
-// filesystem would store them as one file: NFC-normalised, and then every rune
-// replaced by the smallest rune in its simple case-folding orbit.
+// filesystem would store them as one file: NFC-normalised, and then FULL case
+// folded (Unicode CaseFolding.txt, every 'C' and 'F' entry).
 //
-// Both halves are load-bearing, and neither is strings.ToLower:
+// Both halves are load-bearing:
 //
-//   - a lower-cased key is not EqualFold's equivalence. unicode.ToLower maps
-//     U+0130 (İ) to 'i', which strings.EqualFold does NOT equate with it, so a
-//     key like that collides two names that are two files — and, with one name
-//     per key, an entry like that evicts the entry it collided with and hides
-//     the real pair behind it (a set listing "I.png", "İ.png", "i.png" has a
-//     genuine collision between the first and the last). It misses real
-//     collisions on the other side as well: ToLower(U+017F) is U+017F, and the
-//     long s folds with "s" and "S" (U+212A, the Kelvin sign, is the same
-//     shape for k and K). The orbit minimum gets both cases right, in the
-//     direction EqualFold decides ("K" for k, K and U+212A; "S" for s, S and
-//     U+017F; "İ" stays "İ").
 //   - normalization is not case folding at all: EqualFold("café.png",
 //     "café.png") is false for the NFC and NFD spellings, and macOS — where
 //     the retriever runs — treats them as one file.
+//   - the fold has to be the FULL one, because that is the one the filesystem
+//     uses. Simple folding (strings.EqualFold, unicode.SimpleFold) equates a
+//     rune with a rune; full folding equates a rune with a SEQUENCE, and APFS
+//     — case-insensitive and normalization-insensitive — folds with it:
+//     "straße.png" and "strasse.png" are one file there (ß folds to ss, and ẞ
+//     to the same), and so are "ﬁ.png" and "fi.png", "ς.png" and "σ.png", and
+//     "K.png" (U+212A, the Kelvin sign) and "k.png" — while "İ.png" folds to
+//     "i" plus a combining dot above, which NFC puts back to "İ.png". A
+//     simple-folded key gives the pairs with a multi-rune fold different keys,
+//     so the uploader stages both and a download writes the second over the
+//     first while reporting both as arrived.
+//
+// It is not strings.ToLower either, in the other direction: ToLower maps
+// U+0130 (İ) to 'i', which is not what it folds to, so a lower-cased key
+// collides two names that are two files. Which way a wrong key errs — too
+// coarse and a legal record is refused, too fine and two names are one file
+// nobody saw — is why this is the one function both sides call.
 //
 // The uploader and the retriever ask the "are these two names one file"
 // question with this one function (sanitiseName's duplicate table and the
 // retriever's artifactSetConflict), the same "one rule, two callers" shape
 // ArtifactName has (design §9: "the upload path cannot produce what the
-// retrieval path refuses"). Keyed with a weaker rule — strings.ToLower was
-// one — the two drift, and a run that renders both K and U+212A, or a name in
-// both a mac's normalizations, stages cleanly while every download of the run
-// is then refused wholesale.
+// retrieval path refuses"). Keyed with a weaker rule — strings.ToLower, or
+// simple folding — the two drift, and a run stages a set its own download
+// then either refuses wholesale or writes over itself.
 //
 // The key is only ever a map key: nothing prints it, and nothing builds a
-// path from it.
+// path from it. And it is a second line, not the only one: the download
+// refuses to replace what is at a path unless the operator asked for it, so a
+// collision this key does not know about fails loudly instead of overwriting.
 func ArtifactCollisionKey(name string) string {
-	folded := norm.NFC.String(name)
-	var b strings.Builder
-	b.Grow(len(folded))
-	for _, r := range folded {
-		b.WriteRune(foldRune(r))
-	}
-	return b.String()
-}
-
-// foldRune is the smallest rune in r's simple case-folding orbit — the orbit
-// unicode.SimpleFold cycles through, over which strings.EqualFold considers
-// its members equal. The minimum is what makes the orbit a single key:
-// whichever member a name is written with, the key is the same rune.
-func foldRune(r rune) rune {
-	min := r
-	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
-		if f < min {
-			min = f
-		}
-	}
-	return min
+	return cases.Fold().String(norm.NFC.String(name))
 }
 
 // firstControl returns the byte offset of the first character in name that

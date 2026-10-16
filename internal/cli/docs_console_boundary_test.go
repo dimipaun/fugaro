@@ -196,7 +196,7 @@ var consoleGoModRequireBaseline = []string{
 	"golang.org/x/sync v0.23.0 // indirect",
 	"golang.org/x/sys v0.48.0",
 	"golang.org/x/term v0.46.0 // the hidden prompt of fugaro secrets set",
-	"golang.org/x/text v0.42.0 // the artifact-name collision rule normalizes with unicode/norm",
+	"golang.org/x/text v0.42.0 // the artifact-name collision rule normalizes and FULL folds with it",
 	"golang.org/x/time v0.16.0 // indirect",
 	"golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect",
 	"google.golang.org/api v0.299.0",

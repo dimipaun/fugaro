@@ -15,7 +15,7 @@ require (
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0 // the hidden prompt of fugaro secrets set
-	golang.org/x/text v0.42.0 // the artifact-name collision rule normalizes with unicode/norm
+	golang.org/x/text v0.42.0 // the artifact-name collision rule normalizes and FULL folds with it
 	google.golang.org/api v0.299.0
 	gopkg.in/yaml.v3 v3.0.1
 )

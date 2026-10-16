@@ -17,12 +17,31 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
 )
+
+// requireDistinctNames skips a test that needs two names its filesystem keeps
+// apart: a case-insensitive, normalization-insensitive one (APFS, where a mac
+// developer runs this suite) stores A.png and a.png as one file, so a fixture
+// that writes both into the file-backed runs bucket has one object where the
+// test means two. The skip says so instead of failing for the machine.
+func requireDistinctNames(t *testing.T, names ...string) {
+	t.Helper()
+	probe := t.TempDir()
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(probe, n), nil, 0o600); err != nil {
+			t.Skipf("this filesystem cannot hold %q and its folded twin: %v", names[0], err)
+		}
+	}
+	if ents, err := os.ReadDir(probe); err != nil || len(ents) != len(names) {
+		t.Skipf("this filesystem stores %q and %q as one file (%d entries, %v)", names[0], names[1], len(ents), err)
+	}
+}
 
 // sha256Hex is the hash of b, the shape a run record carries (lower-case hex).
 func sha256Hex(b []byte) string {
@@ -1063,6 +1082,13 @@ func TestArtifactsGetRefusesDuplicateNames(t *testing.T) {
 // refusal is about writing two artifacts to one path and not about the
 // record being unreadable.
 func TestArtifactsGetStillFetchesADuplicatedNameByName(t *testing.T) {
+	// Two names that differ only in case are one name on a case-insensitive
+	// filesystem, and this test writes them into a file-backed bucket, which
+	// APFS merges into one object: the record would then carry two entries
+	// with one object's bytes and the assertion would be about the machine.
+	// The point is the named fetch not being routed through the wholesale
+	// collision check, so the test needs a filesystem that keeps them apart.
+	requireDistinctNames(t, "A.png", "a.png")
 	f := newCloudFixture(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -1178,6 +1204,17 @@ func TestArtifactsGetRefusesEveryOneFileFoldCollision(t *testing.T) {
 		{"long s, listed the other way", []string{"\u017f.png", "s.png"}},
 		{"NFC and NFD, as macOS stores them", []string{"caf\u00e9.png", "cafe\u0301.png"}},
 		{"NFC and NFD, listed the other way", []string{"cafe\u0301.png", "caf\u00e9.png"}},
+		// FULL case folding, which is what a filesystem that folds at all
+		// does: one rune, two letters. Simple folding (strings.EqualFold)
+		// keeps each of these pairs apart, so a key built from it accepts
+		// the record and the download then writes the second artifact over
+		// the first while reporting both.
+		{"sharp s", []string{"stra\u00dfe.png", "strasse.png"}},
+		{"sharp s, listed the other way", []string{"strasse.png", "stra\u00dfe.png"}},
+		{"capital sharp s", []string{"STRA\u1e9eE.png", "STRASSE.png"}},
+		{"fi ligature", []string{"\ufb01le.png", "file.png"}},
+		{"fl ligature", []string{"\ufb02ag.png", "flag.png"}},
+		{"final sigma", []string{"\u03c2.png", "\u03c3.png"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
@@ -1631,6 +1668,141 @@ func TestArtifactsGetRefusesASymlinkedOrNonDirectoryRoot(t *testing.T) {
 	}
 }
 
+// TestArtifactsGetAsksForTheStrictClassification: a 403 on the artifact's read
+// is an access problem and must be reported as one — this account may not read
+// the run's artifacts — and not folded into "there is no such artifact", which
+// would send the operator looking for a run whose objects expired when the
+// truth is a missing objectViewer binding (design §3). The classification is
+// blobx's strict flag, and it is the only thing that tells the two apart on
+// GCS, where gocloud reports a refused read as NotFound. Mutation caught:
+// passing strict false (the message becomes the raw driver error, with no
+// mention of what to fix).
+//
+// The fake GCS is where a 403 can be produced at all — a file-backed bucket
+// has no 403 to give — so this calls getArtifact directly, as the drill-down
+// commands' tests call their run functions.
+func TestArtifactsGetAsksForTheStrictClassification(t *testing.T) {
+	f := newCloudFixture(t)
+	g := gcpfake.NewGCS(t)
+	env := envOn(t, f, g.Bucket(t, "runs"))
+	defer env.Close()
+	ctx := context.Background()
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	a := runstore.ArtifactFile{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body)}
+	s := runstore.Open(env.bucket.Bucket, appSlug, id)
+	key := s.Prefix() + runstore.ArtifactPrefix + a.Name
+	// The object is in the fake bucket (a file-backed bucket has no 403 to
+	// give), and every read of it answers 403, as a bucket without
+	// objectViewer does for this account.
+	g.Put("runs", key, body)
+	g.FailObjectGetsAfter("runs", key, 0)
+	dir := t.TempDir()
+	var out strings.Builder
+	err := getArtifact(ctx, env, s, a, dir, filepath.Join(dir, a.Name), false, &out)
+	if err == nil {
+		t.Fatal("get of an artifact the bucket refuses to read was accepted")
+	}
+	if code := ExitCode(err); code != ExitRemoteError {
+		t.Errorf("exit code = %d, want %d (a refused read is not the record's fault)", code, ExitRemoteError)
+	}
+	if !strings.Contains(err.Error(), "may not read the run's artifacts") {
+		t.Errorf("a 403 is not reported as an access problem: %v", err)
+	}
+	if strings.Contains(err.Error(), "no such artifact in the runs bucket") {
+		t.Errorf("a refused read is reported as a missing artifact: %v", err)
+	}
+	if entries := dirEntries(t, dir); len(entries) != 0 {
+		t.Errorf("a refused read wrote %q, want nothing", entries)
+	}
+}
+
+// TestArtifactsGetRefusesAHashThatIsNotASha256: the record's hash is what
+// makes the download checkable, and the check is that it is 64 lower-case hex
+// characters — not that it is non-empty. An upper-case digest is not what the
+// uploader records (it writes hex.EncodeToString, lower case) and is refused
+// by the same rule as a truncated or non-hex one, each with a reason that names
+// the field. Mutation caught: validSHA256 reduced to "not empty".
+func TestArtifactsGetRefusesAHashThatIsNotASha256(t *testing.T) {
+	body := []byte("hello")
+	for _, tc := range []struct {
+		name string
+		sum  string
+	}{
+		{"upper case hex", strings.ToUpper(sha256Hex(body))},
+		{"sixty-four characters that are not hex", strings.Repeat("g", 64)},
+		{"sixty-three characters", sha256Hex(body)[:63]},
+		{"sixty-five characters", sha256Hex(body) + "0"},
+		{"a sha1", strings.Repeat("a", 40)},
+		{"hex with a space", sha256Hex(body)[:63] + " "},
+		{"empty", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			const id = "20261016-090000-abcd"
+			seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+				{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: tc.sum},
+			}, map[string][]byte{"sizzle.mp4": body})
+			for _, args := range [][]string{
+				{"artifacts", "get", appSlug + "/" + id},
+				{"artifacts", "get", appSlug + "/" + id, "sizzle.mp4"},
+			} {
+				_, _, err := execute(t, args...)
+				if ExitCode(err) != ExitUserError {
+					t.Fatalf("%v with %s = %v, want a user error", args, tc.name, err)
+				}
+				if !strings.Contains(err.Error(), "sha256") {
+					t.Errorf("%v does not name the field it refused: %v", args, err)
+				}
+			}
+			if entries := dirEntries(t, filepath.Join(dir, artifactRunDir(id))); len(entries) != 0 {
+				t.Errorf("a record with %s wrote %q, want nothing", tc.name, entries)
+			}
+		})
+	}
+}
+
+// TestArtifactsGetPrintsNoContentTypeRatherThanAGap: content_type is optional
+// in a record, and the line that says what was written must not answer the
+// question with a gap — an empty field interpolated into the parenthetical
+// leaves ",  recorded)". Mutation caught: interpolating the recorded content
+// type unconditionally.
+func TestArtifactsGetPrintsNoContentTypeRatherThanAGap(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	body := []byte("hello")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	out, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if strings.Contains(out, ",  recorded)") {
+		t.Errorf("an empty content type printed a gap:\n%q", out)
+	}
+	if !strings.Contains(out, "no content type recorded)") {
+		t.Errorf("the line does not say the record carried no content type:\n%q", out)
+	}
+	// A record that does carry one prints it, unchanged.
+	ct := []byte("video/mp4")
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(ct)), SHA256: sha256Hex(ct), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": ct})
+	out, _, err = execute(t, "artifacts", "get", "--force", appSlug+"/"+id)
+	if err != nil {
+		t.Fatalf("get --force: %v", err)
+	}
+	if !strings.Contains(out, "video/mp4 recorded)") {
+		t.Errorf("the recorded content type is not printed:\n%q", out)
+	}
+}
+
 // TestArtifactsReadIsBounded: a read that stops producing bytes has to end the
 // command, and the bound is derived from the recorded size and clamped, so a
 // record's own byte count — or a value a caller passes without one — cannot
@@ -1687,8 +1859,11 @@ func TestArtifactsReadIsBounded(t *testing.T) {
 }
 
 // TestArtifactsGetStillRefusesANegativeRecordedSize: 0 is a size, a negative
-// one is not — there is no cap to bound a download by. Mutation caught:
-// dropping the size check entirely.
+// one is not — there is no cap to bound a download by, and the refusal says so
+// rather than reporting the count as an over-ceiling one (a negative number is
+// below every ceiling, so a check ordered the other way would let it through).
+// Mutation caught: dropping the size check entirely, and ordering the ceiling
+// check before it.
 func TestArtifactsGetStillRefusesANegativeRecordedSize(t *testing.T) {
 	f := newCloudFixture(t)
 	dir := t.TempDir()
@@ -1699,15 +1874,23 @@ func TestArtifactsGetStillRefusesANegativeRecordedSize(t *testing.T) {
 		{Name: "sizzle.mp4", Bytes: -1, SHA256: sha256Hex(empty), ContentType: "video/mp4"},
 	}, map[string][]byte{"sizzle.mp4": empty})
 
-	_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("get of a record with a negative size = %v, want a user error", err)
+	for _, args := range [][]string{
+		{"artifacts", "get", appSlug + "/" + id},
+		{"artifacts", "get", appSlug + "/" + id, "sizzle.mp4"},
+	} {
+		_, _, err := execute(t, args...)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("%v of a record with a negative size = %v, want a user error", args, err)
+		}
+		if !strings.Contains(err.Error(), "negative") {
+			t.Errorf("%v does not say the count is not a size: %v", args, err)
+		}
+		if strings.Contains(err.Error(), "ceiling") {
+			t.Errorf("%v reports a negative count as over the ceiling: %v", args, err)
+		}
 	}
 	if names := dirEntries(t, filepath.Join(dir, artifactRunDir(id))); len(names) != 0 {
 		t.Errorf("a negative recorded size wrote %q, want nothing", names)
-	}
-	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, "sizzle.mp4"); ExitCode(err) != ExitUserError {
-		t.Errorf("get of a negative-sized artifact by name = %v, want a user error", err)
 	}
 }
 
@@ -1787,6 +1970,37 @@ func TestDiagnoseNamesTheArtifacts(t *testing.T) {
 	}
 	if strings.Contains(text, "Artifacts") {
 		t.Errorf("a run with no artifacts printed an artifacts block:\n%s", text)
+	}
+}
+
+// TestDiagnoseEscapesAnArtifactName: the record is untrusted text (§8.3), and
+// the artifact block prints the record's names. A name carrying a control
+// character is printed escaped — an ANSI escape in a name would otherwise
+// reach the operator's terminal and paint or move what follows it, which is
+// how a record that a hostile run wrote turns into terminal output the
+// operator reads as the tool's own. Mutation caught: printing the path through
+// oneLine's own callers without it (fmt.Fprintf(w, "  %s\n", p)).
+func TestDiagnoseEscapesAnArtifactName(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20261016-090000-abcd"
+	name := "a\x1b[31mred\x1b[0m.mp4"
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: name, Bytes: 1, SHA256: sha256Hex([]byte("x")), ContentType: "video/mp4"},
+	}, nil)
+
+	text, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatalf("diagnose: %v", err)
+	}
+	if strings.ContainsRune(text, 0x1b) {
+		t.Errorf("the text diagnosis printed a raw escape from an artifact name:\n%q", text)
+	}
+	if !strings.Contains(text, "Artifacts") {
+		t.Fatalf("the artifacts block is missing:\n%s", text)
+	}
+	// The name is still readable: escaped, not dropped.
+	if !strings.Contains(text, "red.mp4") {
+		t.Errorf("the artifact name was not printed:\n%s", text)
 	}
 }
 

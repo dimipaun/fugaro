@@ -1455,6 +1455,12 @@ func TestArtifactsAreUploadedInNameOrder(t *testing.T) {
 // match overwrite the first): the record carries one artifact where the render
 // produced two.
 func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T) {
+	// Two names that differ only in case are one file on a case-insensitive
+	// filesystem, APFS among them, and the render's own write merges them
+	// there before any table can refuse two artifacts: the assertion is
+	// about the KEY, so it needs a filesystem that holds both. On Linux (CI)
+	// it does; on a mac this skips rather than fail for the machine.
+	requireDistinctNames(t, "Sizzle.png", "sizzle.png")
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
 		renderWrites(outFile{name: "Sizzle.png", body: "one"}, outFile{name: "sizzle.png", body: "two"}))
@@ -1469,6 +1475,26 @@ func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T) {
 		t.Fatalf("reason = %q", rec.Reason)
 	}
 	assertNothingUploaded(t, h)
+}
+
+// requireDistinctNames skips a test whose point needs two names this
+// filesystem keeps apart. A case-insensitive, normalization-insensitive one
+// (APFS, where a mac developer runs this suite) stores s.png and ſ.png as one
+// file, so the render's own write merges them and there is no collision left
+// for the uploader's table to refuse. The skip keeps the assertion about the
+// KEY rather than about the machine: on Linux (CI) it runs, and elsewhere it
+// says so instead of failing.
+func requireDistinctNames(t *testing.T, names ...string) {
+	t.Helper()
+	probe := t.TempDir()
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(probe, n), nil, 0o600); err != nil {
+			t.Skipf("this filesystem cannot hold %q and its folded twin: %v", names[0], err)
+		}
+	}
+	if ents, err := os.ReadDir(probe); err != nil || len(ents) != len(names) {
+		t.Skipf("this filesystem stores %q and %q as one file (%d entries, %v)", names[0], names[1], len(ents), err)
+	}
 }
 
 // TestArtifactCollisionKeyIsTheOneFoldedName pins the key itself, because two
@@ -1493,9 +1519,20 @@ func TestArtifactCollisionKeyIsTheOneFoldedName(t *testing.T) {
 		{"case", "sizzle.png", "SIZZLE.PNG", true},
 		{"the Kelvin sign", "K.png", "K.png", true},
 		{"long s", "s.png", "ſ.png", true},
+		{"final sigma", "ς.png", "σ.png", true},
 		{"NFC and NFD, as macOS stores them", "café.png", "café.png", true},
 		{"NFC and NFD, the other way round", "café.png", "café.png", true},
-		{"U+0130 is not I", "I.png", "İ.png", false},
+		// The full-folding half (CaseFolding.txt 'F' entries): one rune, two
+		// letters, one file on a filesystem that folds the way APFS does.
+		// A simple-folded key — strings.EqualFold, the orbit minimum — gives
+		// each pair two keys, so a record listing both downloads one file.
+		{"sharp s", "straße.png", "strasse.png", true},
+		{"sharp s, upper case", "STRAẞE.png", "STRASSE.png", true},
+		{"fi ligature", "ﬁle.png", "file.png", true},
+		{"fl ligature", "ﬂag.png", "flag.png", true},
+		{"ffi ligature", "oﬃce.png", "office.png", true},
+		{"ff ligature", "ﬀort.png", "ffort.png", true},
+		{"U+0130 folds to i plus a dot, not to i", "I.png", "İ.png", false},
 		{"U+0130 is not i either", "İ.png", "i.png", false},
 		{"a different name", "sizzle.png", "sizzle2.png", false},
 		{"a different path", "clips/a.png", "a.png", false},
@@ -1513,43 +1550,54 @@ func TestArtifactCollisionKeyIsTheOneFoldedName(t *testing.T) {
 // TestArtifactNameCollisionOnAFoldedNameIsRefused: the collision the uploader
 // refuses has to be the retriever's, or a run stages a set its own download
 // refuses wholesale (`fugaro artifacts get RUN` says the record's names are
-// one file, in artifactSetConflict). The pair here is the one a lower-cased
-// key misses — "s" and the long s U+017F, which unicode.ToLower leaves alone
-// while strings.EqualFold folds them together — so a table keyed on
-// strings.ToLower stages both artifacts and `get` can never write the record
-// back.
+// one file, in artifactSetConflict).
+//
+// The two pairs are the two keys that were wrong, one per direction:
+//
+//   - "s" and the long s U+017F, which unicode.ToLower leaves alone (so a
+//     lower-cased key stages both and the download then writes one file while
+//     reporting two).
+//   - "straße" and "strasse", which case folding equates only in its FULL
+//     form: one rune becomes two letters. strings.EqualFold and
+//     unicode.SimpleFold keep them apart, and APFS — the filesystem this key
+//     is about — does not: it folds both ways, which is why the uploader has
+//     to as well.
 //
 // The filesystem has to keep the two names apart for the collision to be the
 // table's rather than the render's own write, and a case-folding,
 // normalization-insensitive one (APFS) does not; where it does not, the test
 // skips rather than assert something the filesystem decided.
 //
-// Mutation (key the collision map on strings.ToLower, or on the name as
-// written): the run succeeds with two artifacts and this test fails.
+// Mutation (key the collision map on the name as written, on strings.ToLower,
+// or on simple folding): the run succeeds with two artifacts and this test
+// fails.
 func TestArtifactNameCollisionOnAFoldedNameIsRefused(t *testing.T) {
-	probe := t.TempDir()
-	for _, n := range []string{"s.png", "ſ.png"} {
-		if err := os.WriteFile(filepath.Join(probe, n), nil, 0o600); err != nil {
-			t.Skipf("this filesystem cannot hold both s.png and ſ.png: %v", err)
-		}
+	for _, tc := range []struct {
+		name  string
+		a, b  string
+		bytes int
+	}{
+		{"long s", "s.png", "ſ.png", 4},
+		{"sharp s (full folding: one rune, two letters)", "straße.png", "strasse.png", 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requireDistinctNames(t, tc.a, tc.b)
+			h := newHarnessFiles(t, renderCfg(t, "", ""),
+				artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
+				renderWrites(outFile{name: tc.a, size: tc.bytes}, outFile{name: tc.b, size: tc.bytes}))
+			rec, err := h.run(t)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+				t.Fatalf("record = %+v", rec)
+			}
+			if !strings.Contains(rec.Reason, "same name") {
+				t.Fatalf("reason = %q, want the collision refusal", rec.Reason)
+			}
+			assertNothingUploaded(t, h)
+		})
 	}
-	if ents, err := os.ReadDir(probe); err != nil || len(ents) != 2 {
-		t.Skipf("this filesystem stores s.png and ſ.png as one file (%d entries, %v)", len(ents), err)
-	}
-	h := newHarnessFiles(t, renderCfg(t, "", ""),
-		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
-		renderWrites(outFile{name: "s.png", body: "one"}, outFile{name: "ſ.png", body: "two"}))
-	rec, err := h.run(t)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
-		t.Fatalf("record = %+v", rec)
-	}
-	if !strings.Contains(rec.Reason, "same name") {
-		t.Fatalf("reason = %q, want the collision refusal", rec.Reason)
-	}
-	assertNothingUploaded(t, h)
 }
 
 // TestStageArtifactsRefusesADotNamedMatch is the paired rule: the retriever
