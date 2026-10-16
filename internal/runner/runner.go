@@ -1304,13 +1304,14 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
 	}
 	// The layer's claims are merged here, before anything reads a route:
-	// bootstrap reaches this at runner.go's own first step and asks planOf
-	// about the reviewer (FirstLineOn) a moment later, well before
-	// checkBudget and the gateway's routes. A merge any later leaves a
-	// layer-only claimed senior looking unclaimed and the derived recipe
-	// keeps its cheap first line. An overlap — a claim colliding with a
-	// route this run has — fails bootstrap here, as a config error naming
-	// the key, before any call.
+	// bootstrap reaches this at runner.go's own first step, and the plan that
+	// reads a claim — planOf's FirstLineOn about the reviewer, derived after
+	// resolvePolicy returns, which is also where the routing switch rewrites
+	// the pins it reads — is derived later still, well before checkBudget and
+	// the gateway's routes. A merge any later leaves a layer-only claimed
+	// senior looking unclaimed and the derived recipe keeps its cheap first
+	// line. An overlap — a claim colliding with a route this run has — fails
+	// bootstrap here, as a config error naming the key, before any call.
 	//
 	// ClaimsOnRoutes first, because the run's routes are the job's own
 	// FUGARO_MODEL_PROVIDERS: written per repository, holding only the
