@@ -195,11 +195,13 @@ handler's root is `src/renderer` under the app's own path
 (`app.getAppPath()`), not `dist/`. Packing the renderer into a packaged app is
 Task 4.1's, and this task builds no package.
 
-What is deliberately **not** here: the preload and its `contextBridge` surface
-(Task 1.2), the spawn allow-list (Task 2.1), and the Electron fuses (Task 4.1).
-The window is built so that each of those lands inside something already
-switched off — `consoleWebPreferences()` asserts the absence of a `preload`
-today precisely so that adding one is a decision rather than an oversight.
+What is deliberately **not** here: the preload attached to the window (Task
+1.2 writes `src/preload/index.ts` — see "The IPC allow-list" below — and
+deliberately does not wire it in), the spawn allow-list (Task 2.1), and the
+Electron fuses (Task 4.1). The window is built so that each of those lands
+inside something already switched off — `consoleWebPreferences()` asserts the
+absence of a `preload` today precisely so that adding one is a decision rather
+than an oversight.
 
 ### The security properties are tests, and each one fails under a mutation
 
@@ -310,3 +312,192 @@ is not an npm dependency** — npm carries the package, but the runtime comes fr
 Electron's download host, so its pin, download and checksum get the hand-bumped
 treatment the repository already gives the Trivy digest and the Dockerfile
 frontend digest (design section 5.2).
+
+## The IPC allow-list (Task 1.2)
+
+Design section 5.1 rule 5: "**an IPC allow-list, not an IPC bridge**". The
+console has no bridge. It has a fixed table of named operations, and three
+prohibitions that are the whole of the rule: **no `invoke(channel, ...)`**
+(nothing in the console takes a channel from a caller), **no channel name from
+the renderer** (the preload exposes one *method* per operation and the renderer
+passes arguments to a method, never a name), and **no dynamic `require`**.
+
+`src/main/ipc.ts` is the table and the gate. Twelve operations — the eleven CLI
+reads of design section 2.1 (`watch`, `budget show`, `report`, `runs ls`,
+`diagnose`, `logs` for the document, `logs` for the link, `secrets ls`,
+`accounts ls`, `version`, `doctor`) plus the one validated external link — each
+with the command it drives, the flags it fixes and a **closed argument schema**
+validated in the main process before any handler sees it. Closed means every key
+is declared (an extra key is refused by name), `__proto__`/`constructor`/
+`prototype` are refused by name and a payload whose prototype is not a plain
+object's is refused whole, every string is bounded and refused when it carries a
+control character, an invisible format character, an unpaired surrogate or
+anything outside its grammar, and the validated arguments are rebuilt into a
+frozen null-prototype object. What an operation may **not** take is the other
+half: no path (the installation's directory and `doctor --dir` are main-process
+state), no command (the verb is a constant in the table) and no URL beyond the
+one link, which is `validateExternalUrl` from `src/main/window.ts` — imported,
+not re-implemented, so the two cannot drift.
+
+**A kind belongs to a command, not to a flag name.** Two commands' `--since` are
+two grammars: `report --since` takes a UTC day, `30d` or `12w`, bounded by the
+CLI's own `reportMaxDays`, while `runs ls --since` takes `0`, `7d` or a Go
+duration in hours or minutes (`36h`, `90m`) and has no date branch at all. One
+kind shared between them was wrong in both directions at once — refusing `12w`,
+which `report`'s own help advertises, and admitting a calendar day that
+`parseSince` rejects — so each command has its own kind (`reportSince`,
+`runSince`), and `test/unit/ipc.test.ts` carries a table per command in which
+every row is a value that command's own parser accepts or refuses. Where a kind
+is narrower than its flag it says so in the kind's own doc comment (`runSince`
+does not carry `7s`, and no kind carries a path).
+
+**The sender is checked before the arguments are, and the check is not
+optional.** A registered channel is reachable by any frame the application has
+loaded, so arriving on the right channel is not a capability. Every listener
+refuses a message unless three things hold — the event has a sending frame at
+all, that frame *is* `event.sender.mainFrame` (identity, not equality of URL
+strings: a subframe inside a document the console did not write would otherwise
+pass an origin test by living in a frame that did), and the frame's URL is on
+the console's own origin `app://console` — and it answers one fixed sentence
+that repeats nothing the sender wrote. This is the Electron security
+checklist's item 17, "validate the sender of all IPC messages". The origin is
+not spelled again here: `APP_SCHEME` and `APP_HOST` come from `src/main/protocol.ts`,
+and the test builds its accepted event from `APP_ENTRY_URL`, so the origin the
+gate checks and the origin the console serves cannot drift apart. The
+webContents *id* is deliberately not a separate check — handlers are registered
+before any window exists and macOS `activate` builds a new one afterwards, so a
+captured id is stale by design, and the frame identity already decides the same
+thing: a frame is on `app://console` only if this process served it out of its
+own bundle.
+
+**A refusal's text is bounded, and the reason is a hostile `error.message`.**
+Design §6.3 wants the CLI's own sentence shown verbatim, and a CLI sentence is
+short and dull; a handler that threw with four megabytes in it, or with a
+newline, an escape sequence or `/home/you/.fugaro/secrets.yaml` in it, would put
+all of that in a renderer that is entitled to treat a reply as the console's own
+words. `replyReason` therefore flattens a message to one line, drops control
+characters, replaces absolute paths (POSIX, `~/`, drive-letter and UNC) with
+`<path>`, and cuts at 2 KB with an ellipsis. The test that an ordinary CLI
+sentence comes through byte for byte is what keeps those three from eating the
+case the design asks for. The same shape applies to what the console *accepts*:
+after the argument-count bound, a payload's own width (every key plus every
+scalar value) is bounded at `MAX_PAYLOAD_WIDTH`, set deliberately above what the
+per-kind bounds can add up to, so it can only refuse what no screen would send.
+It cannot bound Electron's own deserialisation of the message, which happens
+before the listener runs; that limit is stated where the constant is declared.
+
+`src/preload/index.ts` puts **one frozen, versioned object** on `window.fugaro`,
+one method per operation. It is deliberately a phone book and not a switch: the
+channel a method calls is a constant concatenated from that operation's name,
+the argument object is forwarded untouched (there is one validating gate and it
+is in main), and the reply is checked for the promised envelope before a screen
+sees it.
+
+**The surface is closed twice, and the second half is the compiler's.** The
+table is declared `as const`, with **no type annotation**, so its twelve rows
+stay literal types: `ExposedName` and `ExposedMethod` are unions of twelve
+literals rather than `string`, `ConsoleBridge` is twelve *named* methods rather
+than a string index signature, and `bridge.showBudgte(...)` is a compile error
+instead of an `undefined` call somewhere inside a screen's render. Nothing at
+runtime can see this — the object is built *from* the table and the suite pins
+the same two sets against `CONSOLE_OPERATIONS`, which is exactly why an
+annotated table was silent. So the claim is held where it is decided:
+`test/unit/ipc.test.ts` carries `assertClosedSurface`, whose `@ts-expect-error`
+directives *become* `Unused '@ts-expect-error' directive` errors — a red
+`npm run typecheck` — the moment the table is widened again. Re-adding the
+annotation on 2026-10-16 produced eight errors. `satisfies readonly (readonly
+[string, string])[]` checks each row's shape without widening anything, and is
+load-bearing in its own right: with it removed, a row carrying a third element
+typechecks clean, because only `[number][0]` and `[number][1]` are ever read.
+
+### Why the preload writes the surface out a second time
+
+The window runs `sandbox: true`, and in a sandboxed preload Electron replaces
+`require` with a polyfill that resolves `electron`, `events`, `timers` and `url`
+and **nothing else** — a relative `require('../main/ipc')`, which is what `tsc`
+emits for a value import, would fail the moment Electron ran the file. The
+alternatives were a bundler (a dependency this task may not add: `package.json`'s
+dependency set is exact and `test/unit/pinning.test.ts` asserts it) or writing
+the list twice. So it is written twice, and `test/unit/ipc.test.ts` closes the
+duplication in both directions: the methods on the frozen object must be exactly
+the table's methods, each must `invoke` the channel `channelForOperation(name)`
+computes for that same operation, and the version in the bridge must be the
+table's. **Types are imported from the table; values are not** — a type-only
+import is erased, which is why the preload can still be typed against
+`ConsoleReply` and `RendererLike` shape-checked against Electron's own types.
+
+### The never-reachable table, and the mutation-proof half
+
+`NEVER_REACHABLE` names what the console must never reach, read off the code
+rather than off a paragraph — every `where` columns names the `internal/cli`
+file and line each entry was grepped from on 2026-10-16. It carries every
+command the CLI has that writes (including `verify`, which runs a workflow's own
+build/test/lint commands in the checkout, and `image build`/`gate`/`record`/
+`refresh`), the `secrets` commands, `init`, `upgrade` and the hidden `exec`, the
+hidden `budget history` job, `image git-credential` (it prints a credential),
+the project-centric phase 1 commands that write or publish (which do not exist
+on this tree yet, and are listed anyway so that the day one appears the
+allow-list is already closed to it), and the flags that turn a read into
+something else: `--follow`, `--check-github-app`, `--strict`, `--csv`,
+`--watch`, and the watch renderer's `--plain`/`--poll`/`--ascii`/`--no-color`.
+
+Two things read that table. `assertReachableSurface` — called by
+`registerConsoleHandlers` before it registers anything — throws at startup if an
+operation drives a row of it, fixes a flag the surface may not fix, or shares a
+name; a console that cannot be built with `budget kill` in it cannot be talked
+into running it later. And the test names **one test per row**: nothing in the
+allow-list drives `budget kill`, or `--follow`, or any other row.
+
+| Mutation | What fails |
+|---|---|
+| `budget kill` (or any row) added to `CONSOLE_OPERATIONS` | the test named for that row, the "argv for argv" test, and `assertReachableSurface` at registration — the plan's red step |
+| a command the snapshot does not classify as one the allow-list admits | "drives *command* only because the design's allow-list admits it" |
+| a writer missing from `NEVER_REACHABLE` | "knows that *command* is on the never table, or is simply unused" |
+| `--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch` or a watch-renderer flag fixed by an operation | the never-table test named for the flag, and the "fixes only the two flags" test |
+| `--url` and `--json` on one operation | "never --url with --json" (the CLI refuses that argv: `internal/cli/logs.go:63`) |
+| an operation with no preload method, or a preload method with no operation | the two-way surface test |
+| a method invoking anything but `channelForOperation(name)` | the channel-routing test |
+| a schema accepting an extra key, a prototype-pollution key, a path, a command, a control or format character, an oversize string or a wrong type | the table entry that names it |
+| one kind shared by two commands whose flags are not one grammar | the per-command window table, row by row, and "gives each command its own window kind" |
+| the sender check removed, or any of its three checks (frame present, frame *is* the main frame, frame URL on the console's origin) | the "sender gate" tests: 12 failures for the check as a whole, and the row named for each individual check |
+| a handler's message left unbounded, or its control characters or absolute paths left in | "bounds a handler's own message", "keeps a refusal to one line", "takes an absolute path out of a handler's message" |
+| `assertReachableSurface(CONSOLE_OPERATIONS)` removed from registration, or moved after the channels are on | "checks the surface before it registers anything" |
+| the allowed-flags half of `assertReachableSurface` removed (a flag the never table does not even list) | "refuses a table with a flag the never table does not even list" |
+| a never-table *flag* row renamed away | "carries a never-table row for *flag*", one test per flag |
+| the `PROTOTYPE_KEYS` branch removed | "names the protection key it refused" |
+| the payload-width bound removed | "refuses a payload wider than the width bound" |
+| a schema that refuses *everything* (the way to pass every refusal test vacuously) | the well-formed-payload table, one row per operation |
+| an unfrozen bridge, a wrong version, a `length > 1` method, an `invoke`/`send`/`on` property | the surface-shape tests |
+| `EXPOSED_OPERATIONS` given a type annotation, which widens `ExposedName`, `ExposedMethod` and `ConsoleBridge` back to `string` | `tsc --noEmit`: eight errors — seven unused `@ts-expect-error` directives in `assertClosedSurface` and the bridge no longer matching `ConsoleBridge` — plus "declares the table with literal types" |
+| `as const`, or the `satisfies` clause, dropped from the table | the same directives, and the same source scan |
+| a row of the table given a third element (with `satisfies` removed to permit it) | nothing — which is why the `satisfies` clause is itself asserted by the scan |
+| a second `invoke`, a computed `require`, an `eval`, a `child_process`, or a value import in the preload | the source scans |
+
+The red step was run as the plan writes it: `budget kill` added to the
+allow-list fails 21 tests, three of them named for it — "nothing in the
+allow-list drives budget kill", "drives budget kill only because the design's
+allow-list admits it", and the registration throw, which surfaces as "accepts
+the table the console actually has" reporting `budget.kill drives budget kill,
+which the console must never reach`. It also found a real weakness in the test
+file, which is why it is recorded here: the "throws on an operation name that is
+not in the table" test used `budget.kill` as its unknown name, so adding
+`budget.kill` to the table made *that* test pass and hid one of the failures
+behind it. It now uses a name no screen would ever add.
+
+### What is deliberately not here (Task 1.2)
+
+The **handler implementations** — Task 1.3 spawns the CLI; this task defines
+what a handler may be asked for and nothing about how it answers.
+`registerConsoleHandlers` takes the handlers as an argument, so the surface is
+complete and testable today and gains its one implementation without an edit to
+the allow-list. And the **window's `preload` option**: `test/unit/window.test.ts`
+asserts its absence by name, and attaching a bridge over handlers that do not
+exist yet would be the one edit that makes this surface reachable before there
+is anything behind it.
+
+Nothing here loads Electron, and nothing here spawns anything. The whole section
+is driven by `test/unit/ipc.test.ts` under plain Node — a fake `ipcMain` that
+records the channels it was given, a fake `ipcRenderer` that delivers each
+`invoke` to the listener for that channel, and a `codeOnly` helper that strips
+comments before the source scans, so a scan cannot be satisfied by prose that
+happens to name the thing it is looking for.
