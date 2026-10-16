@@ -289,3 +289,49 @@ func TestProjectPolicyPublishSaysTheDiffFollowsTheWrite(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsProjectLayerStatesTheFailClosedAdmission: the two sentences of
+// docs/project-layer.md that describe the phase-1 review's fail-closed
+// behaviour, which the code implements and the prose did not.
+//
+// §5 said "A run with no Cloud Run execution — a local `fugaro exec --provider
+// fake` — has no job identity to bind to, so neither check applies to it", and
+// that is the fail-open reading the follow-up review of the phase-1 code
+// removed: `Local`'s zero value means the cloud (internal/backend's
+// platform.go), and a job whose environment was edited after launch carries no
+// execution name either, so a process **no backend claims** was exempted from
+// the slug↔task binding, the remote's host and the allow-list while its git
+// credential stayed scoped to whatever remote that environment named.
+// `admissionCheck` skips the checks for a run the CLI resolved as *local*
+// (`r.d.Local && r.d.Execution == ""`) and for nothing else; a run the operator
+// cannot name that way fails closed.
+//
+// §7's doctor paragraph said the opposite skew — deployed rules newer than this
+// Fugaro — meant the binary "cannot read a policy written under them", which is
+// the opposite of `projectpolicy.Read` (a marker at or above `RulesVersion`
+// reads as deployed, so a run under newer rules *does* read the published
+// policy) and of the sentence `doctorRulesSkew` prints for that state. An
+// operator told the policy is unreadable looks for a node that is being read.
+//
+// Mutation (verified, run and restored): restore either old sentence and this
+// test fails naming it.
+func TestDocsProjectLayerStatesTheFailClosedAdmission(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"Only a local invocation",
+		"a process in the cloud that no backend claims",
+		"a policy published under them **is** read",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q: the doc must state the fail-closed admission and what Read does with newer rules", want)
+		}
+	}
+	for _, notWant := range []string{
+		"A run with no Cloud Run execution",
+		"cannot read a policy written under them",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q, which is the fail-open reading the code does not implement", notWant)
+		}
+	}
+}
