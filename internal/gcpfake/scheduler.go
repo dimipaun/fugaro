@@ -18,6 +18,13 @@ type Scheduler struct {
 	// It counts down with each run call.
 	RefuseRuns int
 
+	// RefuseRunMessage replaces the refusal's message. A permanent denial --
+	// the caller does not hold cloudscheduler.jobs.run -- and a propagated one
+	// arrive as the same status, and the retry is keyed on the status alone
+	// (infra.propagating), so a test can set this to the permanent wording and
+	// see that it is retried the same way.
+	RefuseRunMessage string
+
 	mu   sync.Mutex
 	jobs map[string]map[string]any // projects/<p>/locations/<r>/jobs/<name> → fields
 	runs []string
@@ -62,7 +69,11 @@ func (f *Scheduler) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 	if m := schedulerRunRE.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodPost {
 		if f.RefuseRuns > 0 {
 			f.RefuseRuns--
-			writeErrorInfo(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission to act as the job's service account.", "IAM_PERMISSION_DENIED", nil)
+			msg := "The caller does not have permission to act as the job's service account."
+			if f.RefuseRunMessage != "" {
+				msg = f.RefuseRunMessage
+			}
+			writeErrorInfo(w, http.StatusForbidden, "PERMISSION_DENIED", msg, "IAM_PERMISSION_DENIED", nil)
 			return
 		}
 		if f.jobs[m[1]] == nil {

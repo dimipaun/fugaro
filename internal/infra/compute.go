@@ -348,10 +348,18 @@ func RunSchedulerJob(ctx context.Context, c *Clients, project, region, job strin
 // whose identity's bindings may not have propagated yet. Tests replace them.
 var runJobRetries = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second}
 
-// propagating reports whether err is the refusal a just-created binding
-// gets: a 403 whose detail is a PERMISSION_DENIED about the caller or the
-// identity it acts as. Only a 403 counts — a 404 (the job is not there) and
-// an unreadable answer must fail at once, not be retried into a delay.
+// propagating reports whether err is worth another attempt: any 403. The
+// refusal a binding that is seconds old gets and a permanent one -- the
+// operator does not hold cloudscheduler.jobs.run, or the caller may not act as
+// the account the job's OAuth token is minted from -- arrive as the same
+// status, and nothing in the answer tells the two apart reliably, so this
+// does NOT try: retrying a permanent refusal costs the whole ladder (67 s)
+// once, on a call the stage makes once per installation, and then the error
+// is returned exactly as the API worded it. Not retrying a real propagation
+// gap would fail a fresh installation's first rebuild instead, which is the
+// case the retry exists for (design §8.1 Task 6, "a 403 is retried for about
+// a minute"). Only a 403 counts — a 404 (the job is not there) and an
+// unreadable answer must fail at once, not be retried into a delay.
 func propagating(err error) bool {
 	var ae *googleapi.Error
 	return errors.As(err, &ae) && ae.Code == http.StatusForbidden

@@ -262,7 +262,9 @@ func TestJobPrefixIsTheModulesInput(t *testing.T) {
 // moments before is not readable everywhere at once), and a refusal that
 // outlasts the retries is returned as it is, so the caller can name the one
 // command that starts the job by hand. A job that is not there is NOT
-// retried: it is a 404, not a propagated 403.
+// retried: it is a 404, not a propagated 403. What IS retried is any 403
+// whatever its wording — see the permission-worded case at the end, which is
+// the shape a permanent denial comes in.
 func TestRunSchedulerJobRetriesPropagation(t *testing.T) {
 	restore := runJobRetries
 	runJobRetries = []time.Duration{0, 0}
@@ -285,6 +287,26 @@ func TestRunSchedulerJobRetriesPropagation(t *testing.T) {
 		t.Fatalf("a run that stays refused: %v", err)
 	}
 
+	// The retry is keyed on the STATUS, not on the refusal's wording: a
+	// permanent denial -- the caller does not hold cloudscheduler.jobs.run,
+	// worded nothing like a propagated one -- is retried through the same
+	// ladder and then reported as the API worded it. That is deliberate
+	// (infra.propagating): nothing in a 403 tells the two apart reliably, and
+	// not retrying a real propagation gap would fail a fresh installation's
+	// first rebuild. The cost is bounded and paid once per installation.
+	f.sched.RefuseRunMessage = "Permission 'cloudscheduler.jobs.run' denied on resource 'projects/proj-1234/locations/us-east5/jobs/fugaro-preload' (or it may not exist)."
+	f.sched.RefuseRuns = len(runJobRetries)
+	if err := RunSchedulerJob(ctx, f.c, "proj-1234", "us-east5", PreloadSchedulerJob); err != nil {
+		t.Fatalf("a permission-worded 403 was not retried like a propagated one: %v", err)
+	}
+	// And one that outlasts the ladder surfaces with its OWN wording, not with
+	// a retry-shaped excuse.
+	f.sched.RefuseRuns = len(runJobRetries) + 1
+	err = RunSchedulerJob(ctx, f.c, "proj-1234", "us-east5", PreloadSchedulerJob)
+	if err == nil || !strings.Contains(err.Error(), "cloudscheduler.jobs.run") {
+		t.Fatalf("the permanent refusal's own wording was not what surfaced: %v", err)
+	}
+	f.sched.RefuseRunMessage = ""
 	// A job that does not exist fails at once: retrying a 404 would only
 	// delay the real answer.
 	if err := RunSchedulerJob(ctx, f.c, "proj-1234", "us-east5", "no-such-job"); err == nil {
