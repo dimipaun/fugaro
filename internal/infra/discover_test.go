@@ -1010,12 +1010,12 @@ func TestReadinessImageHintNamesTheLogicalWorkflow(t *testing.T) {
 	}
 }
 
-// The check job mounts the provider credential at latest, which Cloud Run
-// checks when it creates the job, so like a workflow job it waits until
-// the credential has a version; the invoker grant and the Scheduler job
-// wait with it. A check job that exists stays, whatever its secrets.
 // TestReadinessGatesCheckJob: the check job's gate and the fix line the
-// operator is handed for its unversioned credential.
+// operator is handed for its unversioned credential. The check job mounts the
+// provider credential at latest, which Cloud Run checks when it creates the
+// job, so like a workflow job it waits until the credential has a version;
+// the invoker grant and the Scheduler job wait with it. A check job that
+// exists stays, whatever its secrets.
 //
 // The assertion pins the whole command, not a prefix of it: the check job's
 // credential is the sandbox's git token, which is the one reserved name D2's
