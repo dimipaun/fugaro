@@ -144,6 +144,55 @@ func TestMatchRepoWildcardSegmentsAreGreedy(t *testing.T) {
 	}
 }
 
+// MatchRepo's second argument is a repository, and `repos rm` reads an
+// allow-list *pattern* with it (internal/cli's admittedBy) to ask whether the
+// list left by a removal still admits everything that entry admitted. A
+// pattern is not a repository (no canonical repository carries a "*"), but as
+// a string it is all letters, "-", "." and "*", so the matcher meets a "*" in
+// the subject as well as in the pattern — and a "*" in the *subject* is a
+// character like any other.
+//
+// matchSeg tested literal equality before its wildcard case, so when both
+// positions held "*" it consumed them as a matching pair and never opened the
+// wildcard: matchSeg("a*", "a*b") was false, and MatchRepo("github/*/*",
+// "github/acme/*-web") with it. An operator removing github/acme/*-web while
+// github/*/* was on the list was told "its runs are refused from now on" —
+// about a security control the removal did not take away (the review of this
+// change).
+//
+// Nothing here is an admission bypass: a canonical repository can never
+// contain "*" (task.CanonicalRepo's own rule), so the cases below are the
+// removal warning's reading and no run's admission.
+func TestMatchRepoReadsAStarInTheSubject(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, subject string
+		want             bool
+	}{
+		{"github/*/*", "github/acme/*-web", true},
+		{"github/ac*/*", "github/acme/*-web", true},
+		{"github/acme/*-web", "github/acme/*-web", true}, // the entry admits itself
+		{"github/*/*", "github/*/*", true},
+		{"github/a*", "github/a*b", true}, // the segment case in the small
+		{"github/*-web/*", "github/acme/*-web", false},
+		{"github/*/app", "github/acme/*-web", false},
+		{"github/acme/*", "github/acme/*-web", true},
+	} {
+		if got := MatchRepo(tc.pattern, tc.subject); got != tc.want {
+			t.Errorf("MatchRepo(%q, %q) = %v, want %v", tc.pattern, tc.subject, got, tc.want)
+		}
+	}
+	for _, tc := range []struct{ pattern, subject string }{
+		{"a*", "a*b"},
+		{"*", "*"},
+		{"a*b", "a*b"},
+		{"*b", "a*b"},
+	} {
+		if !matchSeg(tc.pattern, tc.subject) {
+			t.Errorf("matchSeg(%q, %q) = false, want true: a \"*\" in the subject is a character, not the pattern's wildcard", tc.pattern, tc.subject)
+		}
+	}
+}
+
 func TestValidPattern(t *testing.T) {
 	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*", "bitbucket/group/sub/app"} {
 		if err := ValidPattern(ok); err != nil {

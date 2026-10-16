@@ -161,6 +161,17 @@ func ValidPattern(pattern string) error {
 // of the pattern fails. That is at most len(pattern)*len(s) steps, where a
 // backtracking scan of every star is exponential in their number (a pattern is
 // attacker-chosen text on a node, so the cost must not be).
+//
+// The pattern's "*" is tested before literal equality, in that order and not
+// the reverse. The subject is usually a canonical repository, which never
+// contains a "*" — but MatchRepo's second argument is also read as a *pattern*
+// by the removal warning (internal/cli's admittedBy), where "*" is ordinary
+// text that the pattern's wildcard must still be able to match. Comparing the
+// two positions first made a "*" in the subject consume a "*" in the pattern
+// literally, so matchSeg("a*", "a*b") was false and the warning could claim a
+// security control was removed when a broader entry still admitted the same
+// repositories (the review of this change). For a subject with no "*" the two
+// orders agree exactly, so this decides nothing about any run's admission.
 func matchSeg(pattern, s string) bool {
 	var (
 		p, i     int // the positions being compared
@@ -169,12 +180,12 @@ func matchSeg(pattern, s string) bool {
 	)
 	for i < len(s) {
 		switch {
-		case p < len(pattern) && pattern[p] == s[i]:
-			p++
-			i++
 		case p < len(pattern) && pattern[p] == '*':
 			star, at, has = p, i, true
 			p++
+		case p < len(pattern) && pattern[p] == s[i]:
+			p++
+			i++
 		case has:
 			// The last "*" takes one more character and the rest of the
 			// pattern is tried again from there.
