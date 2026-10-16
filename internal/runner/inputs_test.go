@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -57,7 +58,7 @@ func runInputKey(h *harness, name string) string {
 
 // wantBootstrapError runs the harness and requires the run to have failed in
 // bootstrap with a reason containing every want.
-func wantBootstrapError(t *testing.T, h *harness, steps []step, want ...string) {
+func wantBootstrapError(t *testing.T, h *harness, steps []step, want ...string) *runstore.Record {
 	t.Helper()
 	rec, err := h.run(t, steps...)
 	if err == nil {
@@ -71,6 +72,7 @@ func wantBootstrapError(t *testing.T, h *harness, steps []step, want ...string) 
 			t.Errorf("reason = %q, want it to contain %q", rec.Reason, w)
 		}
 	}
+	return rec
 }
 
 // TestInputsAreDownloadedHashedAndExcludedFromGit is the runner's half of the
@@ -137,22 +139,45 @@ func TestInputsAreDownloadedHashedAndExcludedFromGit(t *testing.T) {
 	}
 }
 
-// TestInputsMissingFromTheBucketFailWithAMissingInput is the runner-account
-// semantics (design §4 step 5, P5): the job's own service account cannot read
-// a runs bucket it was not given, so a missing object must be reported as a
-// missing object — never folded into an IAM problem the owner cannot act on.
-// blobx.GetFile is called with strict=false, which is what turns a 403 into
-// ErrNotExist; with strict=true the same read is a permission error.
+// TestInputsMissingFromTheBucketFailWithAMissingInput pins what the runner
+// does with an object that is not there (design §4 step 5, P5): the run fails
+// in bootstrap, the reason names the input and the key it looked for, nothing
+// is written into the checkout, and the failure is NOT dressed up as an IAM
+// problem the owner cannot act on. The last clause is the one an owner sees:
+// a job whose service account was never granted the runs bucket reports a
+// permission error, and the runner must not add to that confusion by calling
+// a plain absence one.
 //
-// Mutation (pass strict=true): the reason reads as a permission failure
-// ("forbidden"/"permission") and this test fails.
+// What this test does NOT pin, and cannot with this fake: that the runner
+// passes strict=false to blobx.GetFile. memblob answers a missing key with
+// NotFound, and blobx.GetFile turns NotFound into ErrNotExist whatever strict
+// says — the two values differ only for an HTTP 403, which needs a driver
+// that can answer one. That is pinned in blobx's own package, where the fake
+// is a real gcsblob bucket over an HTTP server that answers 403
+// (internal/blobx/blobx_test.go: forbiddenBucket, with
+// TestReadTreatsForbiddenAsAbsent and TestStrictReadsReportAForbiddenObject).
+// So the strict argument here is a convention this test cannot see through;
+// the IAM-shaped-message assertion below is the part of it that is observable
+// from the runner at all.
+//
+// Mutation (drop the errors.Is(err, blobx.ErrNotExist) arm of downloadInputs):
+// the reason becomes "downloading attached input ...: <driver error>" and this
+// test fails on the sentence the runner writes.
 func TestInputsMissingFromTheBucketFailWithAMissingInput(t *testing.T) {
 	spec := artifactSpec(sizzleRenderOnlyYAML)
 	shot, _ := attachedInput("shot.png", "png-bytes")
 	spec.Inputs = []task.InputFile{shot}
 	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
 	h.deps.Bucket = blobx.Wrap(h.bucket)
-	wantBootstrapError(t, h, nil, "not in this run's bucket", "shot.png")
+	rec := wantBootstrapError(t, h, nil, "not in this run's bucket", "shot.png", runInputKey(h, "shot.png"))
+	for _, never := range []string{"forbidden", "permission", "denied", "IAM", "403"} {
+		if strings.Contains(strings.ToLower(rec.Reason), strings.ToLower(never)) {
+			t.Fatalf("a missing input is reported as %q: %s", never, rec.Reason)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, runstore.InputsDir, "shot.png")); err == nil {
+		t.Fatal("an input that never came down was written into the checkout")
+	}
 }
 
 // TestAnInputWhoseHashDoesNotMatchFailsTheRun is what the expected-hash
@@ -359,5 +384,34 @@ func TestThePlanPromptNamesTheInputsDirectory(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the plan prompt does not name %q:\n%s", want, prompt)
 		}
+	}
+}
+
+// TestInputsUnderAnImplementRecipeFailTheRun is the deferred cross-check arm
+// (design §8.2, plan Task 6): a task that attached files under a resolved
+// recipe of another mode fails the run before its first step. The launcher
+// refuses this for every launch that resolves a recipe, so what reaches this
+// arm is the launch the CLI could not decide — a recipe the runner chose, or
+// a hand-written task.json — where the inputs would otherwise be downloaded
+// into a run that commits a diff and opens a pull request, and nothing in its
+// steps reads inputs/.
+//
+// The arm is keyed on the RESOLVED mode, not on spec.Mode: a spec is allowed
+// to carry none (design §8.2's empty-Mode rule), and this spec carries none —
+// it leaves the recipe to the runner, which resolves the catalog's default,
+// mode: implement.
+//
+// Mutation (drop the `len(spec.Inputs) > 0 && !r.artifact` refusal from
+// bootstrap): the implement run starts and this test fails on the missing
+// bootstrap error; the inputs directory is then never created either, since
+// nothing downloads into a run of this mode.
+func TestInputsUnderAnImplementRecipeFailTheRun(t *testing.T) {
+	shot, _ := attachedInput("shot.png", "png-bytes")
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature", Inputs: []task.InputFile{shot}}
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	h.deps.Bucket = blobx.Wrap(h.bucket)
+	wantBootstrapError(t, h, nil, "only read by a mode: artifact run", "mode: "+recipe.ModeImplement, "1 file(s)")
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, runstore.InputsDir)); err == nil {
+		t.Fatal("an implement run downloaded the attached files")
 	}
 }

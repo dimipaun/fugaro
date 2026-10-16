@@ -111,6 +111,16 @@ func attachPrepared(paths []string, caps config.Inputs) ([]preparedInput, error)
 			return nil, userErr("--attach %s: %v", p, err)
 		case st.IsDir():
 			return nil, userErr("--attach %s is a directory; attach files, one path each", p)
+		case !st.Mode().IsRegular():
+			// A device, a FIFO, a socket: os.Stat describes it, and the size
+			// it reports (0 for /dev/zero, as for most of them) is a lie about
+			// what uploading it would read. Attaching one would stream an
+			// unbounded, non-file stream into the run's bucket and record the
+			// size the stat claimed, so it is refused here, before anything is
+			// read or written — the same rule the directory above follows, and
+			// the one blobx.PutFile's own stat cannot make for us: it never
+			// sees the path's mode until it has opened it.
+			return nil, userErr("--attach %s is %s, not a regular file; --attach uploads files, one path each", p, st.Mode())
 		}
 		if st.Size() > perFile {
 			return nil, userErr("--attach %s is %s, and workflows.inputs.max_bytes allows %s per file (of %d attached)", p, attachBytes(st.Size()), attachBytes(perFile), len(paths))

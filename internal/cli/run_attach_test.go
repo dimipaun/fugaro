@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -77,6 +80,37 @@ func guardAttach(t *testing.T) *int {
 	}
 	t.Cleanup(func() { attachInputsFn = old })
 	return &n
+}
+
+// wantNoUpload asserts that a refused launch put nothing in the bucket: the
+// uploader was never called, and no object lives under any run's inputs/.
+// The keys are listed rather than guessed, so a launch that minted its own
+// run id — the ones --attach refuses before it is even resolved — is covered
+// too. Asserting only that the run never started would miss the failure this
+// guards: an object uploaded under a run id that never gets a task.
+func wantNoUpload(t *testing.T, f *cloudFixture, calls *int) {
+	t.Helper()
+	if *calls != 0 {
+		t.Fatalf("the uploader ran %d time(s), want none", *calls)
+	}
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	it := b.List(nil)
+	for {
+		obj, err := it.Next(context.Background())
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(obj.Key, "/"+runstore.InputsDir+"/") {
+			t.Fatalf("a refused launch left %s in the bucket", obj.Key)
+		}
+	}
 }
 
 // attachCheckout is a checkout of acme/app whose single workflow declares
@@ -372,19 +406,57 @@ func TestAttachGatesOnTheImageThatKnowsInputs(t *testing.T) {
 		"run", "--repo", "acme/app", "--recipe", "sizzle", "--run-id", "20261015-100000-abcd", "--attach", shot, "Render the nightly bundle")
 }
 
+// TestAttachRefusesADevice: --attach uploads FILES, and a path that is not a
+// regular file — a device, a FIFO, a socket — is refused for the same reason a
+// directory is, one step further on: os.Stat describes it, and the size it
+// reports is not the size of anything that could be uploaded (/dev/zero
+// reports 0 and reads forever). The refusal is made from the same stat, before
+// the caps, before the image gate and before the first read or write.
+//
+// Mutation (drop the !st.Mode().IsRegular() arm of attachPrepared): the
+// launch streams /dev/zero into the run's bucket and this test fails on the
+// missing refusal and on the object.
+func TestAttachRefusesADevice(t *testing.T) {
+	if _, err := os.Stat("/dev/zero"); err != nil {
+		t.Skip("/dev/zero is not here")
+	}
+	// The refusal is attachPrepared's, made from the stat alone — no read of
+	// the path happens, which is why the endless /dev/zero is safe to name
+	// here at all (and why the red step for this arm can be run without
+	// streaming a device into a bucket).
+	if _, err := attachPrepared([]string{"/dev/zero"}, config.Inputs{}); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("attachPrepared(/dev/zero) = %v, want a refusal naming its mode", err)
+	}
+	f := artifactAttachFixture(t)
+	n := guardAttach(t)
+	wantRefused(t, f, "not a regular file", "run", "--repo", "acme/app", "--recipe", "sizzle",
+		"--run-id", "20261015-100000-abcd", "--attach", "/dev/zero", "Render the nightly bundle")
+	if *n != 0 {
+		t.Fatalf("%d uploads, want none", *n)
+	}
+	if hasObject(t, f, inputKey("20261015-100000-abcd", "zero")) {
+		t.Fatal("a device was uploaded into the run")
+	}
+}
+
 // TestAttachRefusesANonArtifactRecipe: an attachment is only meaningful to a
 // run that produces files rather than a pull request, and the refusal names
 // the recipe and its mode. It is the launcher's, and it comes before the caps
 // and before the first byte, so an attachment never reaches the bucket on a
-// launch that cannot use it.
+// launch that cannot use it — asserted on the bucket itself and on the
+// uploader, not just on the run never starting: an object left under a run id
+// that never gets a task is exactly what this ordering exists to prevent
+// (design §4 step 1).
 //
 // Mutation (drop checkAttachRecipe from attachLaunch): the implement launch
-// uploads and starts a job.
+// uploads the file into inputs/ and this test fails on the object.
 func TestAttachRefusesANonArtifactRecipe(t *testing.T) {
 	f := artifactAttachFixture(t)
+	n := guardAttach(t)
 	shot := attachShot(t, "shot.png", "png")
 	wantRefused(t, f, "--attach needs an artifact recipe; default is mode: "+recipe.ModeImplement,
 		"run", "--repo", "acme/app", "--recipe", "default", "--run-id", "20261015-100000-abcd", "--attach", shot, "Add a feature")
+	wantNoUpload(t, f, n)
 }
 
 // TestAttachRefusesARecipeTheRunnerChooses: the arm a launcher-side refusal
@@ -392,16 +464,19 @@ func TestAttachRefusesANonArtifactRecipe(t *testing.T) {
 // follow-up and no checkout here, the runner picks the recipe itself
 // (agent.recipe at the ref, else default), so this CLI cannot promise an
 // artifact run — and being unable to prove it is not a reason to upload the
-// files anyway. The refusal names the fix.
+// files anyway. The refusal names the fix, and nothing reached the bucket.
 //
 // Mutation (drop the runnerChooses arm of checkAttachRecipe): the launch
-// uploads the file and starts a run whose mode nobody checked.
+// uploads the file and starts a run whose mode nobody checked; this test then
+// fails on the missing refusal and on the object.
 func TestAttachRefusesARecipeTheRunnerChooses(t *testing.T) {
 	f := artifactAttachFixture(t)
 	t.Chdir(t.TempDir())
+	n := guardAttach(t)
 	shot := attachShot(t, "shot.png", "png")
 	wantRefused(t, f, "leaves the recipe to the runner",
 		"run", "--repo", "acme/app", "--attach", shot, "Render the nightly bundle")
+	wantNoUpload(t, f, n)
 }
 
 // TestAttachAllowsAnArtifactRecipeWithNoModeStamped: the recipe refusal's
