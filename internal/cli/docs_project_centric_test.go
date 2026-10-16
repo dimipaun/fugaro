@@ -763,7 +763,12 @@ func TestChecklistHasCheck49(t *testing.T) {
 			"**FACT:** the state as recorded — `fugaro runs ls --all --project fugaro` shows **no run in flight**",
 		}},
 		{"### 2.", []string{
-			"**FACT:** the plan's two lines verbatim",
+			// The two act lines are the SECOND command's, not the --plan-only
+			// one's: --plan-only with --firebase stops after the installation
+			// root (init_firebase.go:290) and never reaches deployDatabase, so
+			// a FACT the owner reads off the plan-only line above it is a FACT
+			// the owner cannot produce.
+			"**FACT:** the two act lines printed by the **second** command",
 			"**FACT:** the read-back —",
 		}},
 		{"### 3.", []string{
@@ -879,9 +884,20 @@ func TestChecklistHasCheck49(t *testing.T) {
 	chk49MustContain(t, section, "section", []string{
 		"TASK='Do not change any file and do not open a pull request. Reply with the single word ok.'",
 		"Every `fugaro run` below carries a task, and it has to",
-		`fugaro run "$TASK" --workflow <the sandbox's workflow> --ref main --json --project fugaro`,
-		`fugaro run "$TASK" --workflow <the sandbox's workflow> --ref main --project fugaro`,
+		// The runs' ref, and why it is master: the sandbox has no `main`, and
+		// --ref is not cross-checked against the remote at launch.
+		"Every `fugaro run` below passes `--ref master`, and it is `master` because the sandbox repository has no `main`",
+		"`internal/gitops/gitops.go:239`",
+		`fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --json --project fugaro`,
+		`fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --project fugaro`,
 	})
+	// Every run names the sandbox's base branch, and it is `master`: the
+	// sandbox repository has no `main` (deploy/sandbox/fugaro.yaml), and --ref
+	// is carried into the job verbatim (run.go:817-823) and fetched by the
+	// runner (gitops.go:239), so a run pointed at a branch that does not exist
+	// halts on the fetch. Checked as a property of every `fugaro run` line
+	// rather than as `--ref main` asserted absent, so any other wrong branch is
+	// caught too.
 	var runs int
 	for _, line := range fugaroCommands(section) {
 		if strings.HasPrefix(line, "fugaro run ") {
@@ -889,10 +905,13 @@ func TestChecklistHasCheck49(t *testing.T) {
 			if !strings.Contains(line, `"$TASK"`) {
 				t.Errorf("the Check 49 section has a `fugaro run` with no task: %q — the launcher refuses a taskless launch before the allow-list gate, so this step never reaches its own refusal", line)
 			}
+			if !strings.Contains(line, "--ref master") {
+				t.Errorf("the Check 49 section has a `fugaro run` that does not pass `--ref master`: %q — the sandbox's base branch is master, --ref is not checked against the remote at launch, and the runner's fetch of a branch that does not exist fails the run", line)
+			}
 		}
 	}
 	if runs < 5 {
-		t.Errorf("the Check 49 section has %d `fugaro run` lines, want at least 5 (steps 3, 5, 6(a), 7 and 8), so the TASK rule above is checked over all of them", runs)
+		t.Errorf("the Check 49 section has %d `fugaro run` lines, want at least 5 (steps 3, 5, 6(a), 7 and 8), so the TASK and --ref rules above are checked over all of them", runs)
 	}
 
 	// `fugaro image refresh` is the image half, not `fugaro upgrade`: upgrade

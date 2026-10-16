@@ -2097,6 +2097,8 @@ Phase 1 of the project-centric design ([design/project-centric.md](design/projec
 
 ⚠ **Every `fugaro run` below carries a task, and it has to.** The launcher refuses a launch with no task — `pass the task as TEXT or with --task-file (- for stdin)` (`internal/cli/run.go:507`) — and it refuses it at `internal/cli/run.go:220`, **before** `openCloud` (`:229`) and long before the allow-list gate (`internal/cli/run.go:449`). So a step 6(a) or step 7 written as a bare `fugaro run` would stop on the missing task and never reach the refusal it is there to produce, and steps 3, 5 and 8 would launch nothing at all. Every run below therefore carries the setup block's `TASK`, which is the sandbox's own **no-change task** — the one Check 43f uses: `Do not change any file and do not open a pull request. Reply with the single word ok.` It changes no file and opens no pull request, so **there is nothing to discard**; if a run opens one anyway, close it in the sandbox (`gh pr close <n> --delete-branch` in the sandbox checkout) and merge nothing from it.
 
+⚠ **Every `fugaro run` below passes `--ref master`, and it is `master` because the sandbox repository has no `main`.** The sandbox's base branch is `master` (`deploy/sandbox/fugaro.yaml`: `git: { provider: bitbucket, base_branch: master }`, and this document says so of the sandbox at line 97), which is why every other sandbox run in it uses `--ref master` — Check 43f's run, the one this check's `TASK` comes from, is one of them. The flag is **not** cross-checked against the remote at launch: `--ref` is carried into the job verbatim (`internal/cli/run.go:817-823`; an empty `--ref` is the one case that falls back to the checkout's `base_branch`), and the runner is what fetches it (`internal/gitops/gitops.go:239`, `CheckoutNewBranch` → `git fetch --quiet origin <ref>`, reached from `internal/runner/runner.go:932`). So a run pointed at a branch the sandbox does not have **halts on that fetch**, and it halts the three FACTs that depend on a run — step 3's, step 5's, and step 8's, the last of which is this check's whole observable, `result.json`'s `policy.sources.per_run_usd` reading `"policy"`.
+
 ⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every later step.** `P` is the installation's project, `L` its region, `JOB` the sandbox repository's Cloud Run job, `C` the operator's project config and `TASK` the no-change task every run carries. The block is self-contained and idempotent — **every variable a step below uses is set here, `C` included** — and **every step below (1 to 8) begins with it**: the restore runs in a later shell, where these variables are gone. An empty `$P` is the N1 trap itself: `gcloud` then falls back to its ambient `core/project`, which for the owner is a `*-prod` project, while the `fugaro` commands fall back to the checkout's `fugaro.yaml` (`internal/cli/cloud.go:54`) — and this check writes.
 
 ```bash
@@ -2185,7 +2187,7 @@ fugaro init --firebase fugaro-dev --project fugaro --plan-only
 fugaro init --firebase fugaro-dev --project fugaro
 ```
 
-**FACT:** the plan's two lines verbatim — `rules: deploys the security rules (<N> bytes, generated)` with its byte count, and `config/limits/policyRules: records the rules generation (config/limits/policyRules = 1)`. **FACT:** the read-back — re-running `fugaro init --firebase fugaro-dev --project fugaro` prints `The database already has the rules, mark, project name and mode.` and writes nothing (`internal/cli/init_firebase.go:474`; the comparison is a JSON read-back of the deployed rules, `internal/infra/firebasedb.go` `SameJSON`), and `fugaro project show --project fugaro` **still says no policy is published** — the rules deploy creates no `config/policy/shared` node, so nothing governs yet.
+**FACT:** the two act lines printed by the **second** command, verbatim, before its typed confirmation — `rules: deploys the security rules (<N> bytes, generated)` with its byte count, and `config/limits/policyRules: records the rules generation (config/limits/policyRules = 1)`. **They are not the `--plan-only` command's**: `--plan-only` with `--firebase` plans the installation root and stops there, never reaching the Firebase root (`internal/cli/init_firebase.go:290` returns on `applyRoot`'s stop, so `deployDatabase` is never called) — the same thing Check 29 records, and the reason Check 29 has no read-only form. The lines come from `deployDatabase`'s own acts (`internal/infra/firebasedb.go:222` and `:247`), printed by `internal/cli/init_firebase.go:477-480` on the real run. **FACT:** the read-back — re-running `fugaro init --firebase fugaro-dev --project fugaro` prints `The database already has the rules, mark, project name and mode.` and writes nothing (`internal/cli/init_firebase.go:474`; the comparison is a JSON read-back of the deployed rules, `internal/infra/firebasedb.go` `SameJSON`), and `fugaro project show --project fugaro` **still says no policy is published** — the rules deploy creates no `config/policy/shared` node, so nothing governs yet.
 
 ### 3. The runner rollout, and the two halves it actually needs (finding 15)
 
@@ -2227,7 +2229,7 @@ PY
 **FACT:** the job's environment carries `FUGARO_RTDB_URL` naming the installation's database, `FUGARO_BUDGET_MODE` and `FUGARO_MAX_RUN_USD` — the ceiling being the number step 1 recorded from `$C`, which is what makes step 4's publish a no-op in value — and `FUGARO_FIREBASE_API_KEY` **present**, with a non-zero length; say "present", never its value. **FACT:** one ordinary sandbox run with the policy still unpublished — the run below — whose `policy.sources` names the **ceiling from the env** for every key, and which **succeeds**. This is the "nothing changes until you publish" half of P3, and it is the step that fails if Task 1.4's pointer regressed the mode-off path.
 
 ```bash
-fugaro run "$TASK" --workflow <the sandbox's workflow> --ref main --json --project fugaro
+fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --json --project fugaro
 ```
 
 ### 4. Publish
@@ -2245,7 +2247,7 @@ fugaro project policy publish --project fugaro
 Re-run the block. One ordinary sandbox run, with the task like every other run in this check.
 
 ```bash
-fugaro run "$TASK" --workflow <the sandbox's workflow> --ref main --json --project fugaro
+fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --json --project fugaro
 ```
 
 Take the `<slug>/<run-id>` the launch prints, then read the run's own record:
@@ -2265,7 +2267,7 @@ Re-run the block. Two refusals, and they are different refusals from two differe
 
 ```bash
 fugaro project repos rm bitbucket/edgeappinc/fugarosandbox --project fugaro
-fugaro run "$TASK" --workflow <the sandbox's workflow> --ref main --project fugaro
+fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --project fugaro
 ```
 
 The launch refuses before it starts anything: **`The launch stops before any execution exists`** (`internal/cli/run_allowlist.go`, appended to the policy's own sentence). **FACT:** the launcher's refusal verbatim, naming `bitbucket/edgeappinc/fugarosandbox` and the allow-list it is not on. The sentence about what stops is the launcher's own: the run's own refusal ends `The run stops before any lease exists` instead, and step 6(b) is where that one is reached. Then re-enroll it — step 8's restore expects the list as step 1 recorded it:
@@ -2295,7 +2297,7 @@ Re-run the block. With the sandbox un-enrolled as in step 6(a), run it again and
 
 ```bash
 fugaro project repos rm bitbucket/edgeappinc/fugarosandbox --project fugaro
-fugaro run "$TASK" --workflow <the sandbox's workflow> --ref main --project fugaro
+fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --project fugaro
 fugaro project repos add bitbucket/edgeappinc/fugarosandbox --project fugaro
 ```
 
@@ -2335,7 +2337,7 @@ fugaro project policy publish --delete --project fugaro
 and one ordinary sandbox task to confirm the env ceiling governs again:
 
 ```bash
-fugaro run "$TASK" --workflow <the sandbox's workflow> --ref main --json --project fugaro
+fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --json --project fugaro
 ```
 
 **FACT:** the restore is complete — `fugaro project show --json --project fugaro` matches step 1's recorded file key for key (or reports no policy at all, if `--delete` was run), `fugaro budget show --json --project fugaro` matches step 1's recorded caps and mode, `git diff -- fugaro.yaml` is empty, `git diff -- .claude/settings.json` is empty with the plugin pin where step 3 found it, and the operator's config is byte-for-byte the copy step 1 made (`cmp "$C.before-49" "$C"`). **FACT:** the sandbox still runs — one ordinary sandbox task succeeds, with `policy.sources` naming the ceiling from the env again if the policy was deleted.
