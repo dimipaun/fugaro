@@ -140,26 +140,44 @@ func TestWriteMarkerRoundTrip(t *testing.T) {
 }
 
 // A run that created no project records nothing, whatever else it did, and
-// writes nothing at all into the bucket — not the object, not anything
-// else. This is the property the task exists for: the marker is what turns
-// the confirmations off, so a write that does not read the fact would mark
-// every project init touches, belong and the owner's own included.
+// touches nothing at all: created is "" in every row here, the call returns
+// before it reads the bucket, and the object, the bucket's labels and its
+// number are never looked at. This is the property the task exists for: the
+// marker is what turns the confirmations off, so a write that does not read
+// the fact would mark every project init touches, belong and the owner's own
+// included.
+//
+// The rows are therefore the arguments that would otherwise decide, each one
+// wrong a different way, with the first row the call that would succeed if
+// the fact were set: the project's own runs bucket, labelled and numbered as
+// WriteMarker demands, the project and the created project the same value.
+// That none of them writes anything is the point — with the fact set, the
+// same arguments on the same bucket are the two tests below, where a bucket
+// or a number that is not the project's own is a refusal.
 func TestWriteMarkerWritesNothingWithoutTheFact(t *testing.T) {
 	ctx := context.Background()
 	for name, tc := range map[string]struct {
-		bucket, created, project string
-		number                   uint64
+		bucket, project string
+		number          uint64
 	}{
-		"the project this run did not create": {testBucket, "", testProject, testProjectNumber},
-		"a bucket that is not there":          {"fugaro-runs-elsewhere", "", testProject, testProjectNumber},
-		"another project named":               {testBucket, "", "belong", testProjectNumber},
-		"no bucket named and no number":       {"", "", testProject, 0},
+		"everything the write would need, but the fact": {testBucket, testProject, testProjectNumber},
+		"a bucket that is not there":                    {"fugaro-runs-elsewhere", testProject, testProjectNumber},
+		"the project's own bucket, numbered wrong":      {testBucket, testProject, 999},
+		"another project named":                         {testBucket, "belong", testProjectNumber},
+		"no bucket named and no number":                 {"", testProject, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, f := newStorage(t)
 			f.AddBucket(testBucket, testProjectNumber, testManaged)
-			if err := WriteMarker(ctx, s, tc.bucket, tc.created, tc.project, tc.number); err != nil {
+			// created is "" here: the project this run installs into.
+			if err := WriteMarker(ctx, s, tc.bucket, "", tc.project, tc.number); err != nil {
 				t.Fatalf("err = %v, want a silent no-op", err)
+			}
+			// Not one request, before the reads below make their own: a run
+			// that created nothing does not read the bucket to find out
+			// whether it may write to it.
+			if reqs := f.Requests(); len(reqs) != 0 {
+				t.Errorf("the call touched the API: %v", reqs)
 			}
 			if _, ok := readMarker(t, s, testBucket); ok {
 				t.Error("the object was written")
@@ -189,8 +207,13 @@ func TestWriteMarkerRefusesAProjectThisRunDidNotCreate(t *testing.T) {
 			if err == nil {
 				t.Fatal("want a refusal")
 			}
-			if tc.created != "" && !strings.Contains(err.Error(), tc.project) {
-				t.Errorf("err = %v, want it to name %s", err, tc.project)
+			// Both names, quoted, in every row including the one that names
+			// nothing: the refusal is about the fact this run holds, so it
+			// says what that was — and what it was asked to write instead.
+			for _, want := range []string{tc.created, tc.project} {
+				if !strings.Contains(err.Error(), fmt.Sprintf("%q", want)) {
+					t.Errorf("err = %v, want it to name %q", err, want)
+				}
 			}
 			if names := objects(t, s, testBucket); len(names) != 0 {
 				t.Errorf("a refused call wrote %v", names)
@@ -393,6 +416,33 @@ resource "google_storage_bucket_iam_policy" "job" {
 }
 `
 		},
+		// A bucket this test cannot identify used to be skipped instead of
+		// reported: a literal name that is the runs bucket — or any name the
+		// scan does not know — must be a finding, or the one shape it cannot
+		// read is the one shape that passes.
+		"a bucket named by a literal": func(f map[string]string) {
+			f["workflow/sa.tf"] += `
+resource "google_storage_bucket_iam_member" "job_literal" {
+  bucket = "fugaro-runs-proj-1234"
+  role   = "roles/storage.objectAdmin"
+  member = google_service_account.job.member
+}
+`
+		},
+		// A for_each that is a set of people and a literal service account:
+		// each.value is whichever member the grant is for, and the literals
+		// in the expression used to be ignored.
+		"a for_each mixing people with a literal member": func(f map[string]string) {
+			f["workflow/sa.tf"] += `
+resource "google_storage_bucket_iam_member" "job_mixed" {
+  for_each = setunion(toset(var.operators), toset(["serviceAccount:job@example.iam.gserviceaccount.com"]))
+
+  bucket = var.runs_bucket
+  role   = "roles/storage.objectAdmin"
+  member = each.value
+}
+`
+		},
 		// A condition that is not narrowing: "true" is a condition and
 		// narrows nothing, and a variable this test does not recognise is no
 		// better — the job grant's own two are the ones the Go side builds.
@@ -561,6 +611,16 @@ var runsBucketSources = map[string]bool{
 	"var.installation.runs_bucket":    true,
 }
 
+// otherBucketSources are the bucket-level grants' other buckets, named one by
+// one so that the runs bucket is not the only expression this test knows
+// what to do with: the installation's Terraform state bucket, which holds no
+// object at a fugaro/ root (the creation fact and the delete list are in the
+// runs bucket alone). Any other expression is a bucket this test cannot
+// identify, which is a finding: a grant on the runs bucket under a name the
+// scan does not know — a literal, a local, a new variable — would otherwise
+// be the one shape that passes the assertion by being unreadable.
+var otherBucketSources = map[string]bool{"var.state_bucket": true}
+
 // customRolePermissions maps every custom role the modules define to its
 // permissions, under two names: the resource it is (the modules refer to it
 // as google_project_iam_custom_role.launcher.name, say) and the last segment
@@ -617,6 +677,15 @@ func peopleSet(expr string, locals map[string]string) bool { return peopleSetDep
 
 func peopleSetDepth(expr string, locals map[string]string, depth int) bool {
 	expr = strings.TrimSpace(expr)
+	// A quoted member anywhere in the expression makes it not a set of
+	// people, whatever variables it also names: setunion(toset(var.operators),
+	// toset(["serviceAccount:job@…"])) is the operators and a service
+	// account, and each.value over it is whichever member the grant is for.
+	// Every set of people in the modules is built from variables and locals
+	// alone.
+	if strings.Contains(expr, `"`) {
+		return false
+	}
 	refs := tfRefRE.FindAllString(expr, -1)
 	if len(refs) == 0 || depth > 8 {
 		return false
@@ -736,8 +805,15 @@ func lastSegment(s string) string {
 // checkBucketGrant is one grant on the runs bucket's own policy: who it is
 // to, and whether what they are given can reach the bucket's root.
 func (s *iamScan) checkBucketGrant(r tfResource, roles map[string][]string, locals map[string]string) {
-	if !runsBucketSources[field(r.body, "bucket")] {
-		return // another bucket: the state bucket's and the registry's own grants
+	bucket := field(r.body, "bucket")
+	switch {
+	case runsBucketSources[bucket]:
+	case otherBucketSources[bucket]:
+		return // another bucket, named above: it holds no fugaro/ root
+	default:
+		s.failf("%s: %s is a grant on %q, a bucket this test cannot identify: if it is not the runs bucket, name it in otherBucketSources, and if it is, a write grant here may reach %s",
+			r.path, r.name, bucket, MarkerObject)
+		return
 	}
 	members, ok := grantMembers(r)
 	if !ok {
