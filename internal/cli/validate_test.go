@@ -662,6 +662,19 @@ func inCheckoutOf(t *testing.T, repo string) {
 	t.Chdir(dir)
 }
 
+// inCheckoutWithNoOrigin makes the working directory a checkout git can read
+// whose origin remote is not there: the state originRepo refuses and
+// providerProblems reads as "the repository is unknown here".
+func inCheckoutWithNoOrigin(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	c := exec.Command("git", "-C", dir, "init", "-q")
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	t.Chdir(dir)
+}
+
 // TestValidateDoesNotRefuseWhatTheRunnerPrices pins the failure this design
 // exists to prevent (Review Focus 10): for one fixture route and model,
 // `validate` has no problem while the run's own table charges the catalog's
@@ -1359,6 +1372,53 @@ func TestValidateJudgesTheSwitchOverTheModelsItNames(t *testing.T) {
 				t.Fatalf("the halt is one of %d problems, want the only one:\n%s", len(lines), out)
 			}
 		})
+	}
+}
+
+// TestValidateDoesNotJudgeTheSwitchOverARepositoryNobodyNamed pins the state
+// this rule learned to leave alone. With no origin remote there is no repository
+// to filter the routes by, and runner.ProvidersFor keeps only the entries
+// written for every repository — so judging the switch's own list over that
+// table read a model served by a repository-scoped entry as unresolvable, and
+// the same project config and file that exit 0 in an acme/sandbox checkout
+// exited 1 here, asserting a halt no run necessarily makes, in a run whose
+// provider lines say allow_data_to was not checked at all.
+func TestValidateDoesNotJudgeTheSwitchOverARepositoryNobodyNamed(t *testing.T) {
+	// The switch's route is written for acme/sandbox, and the pins are another
+	// Claude model, so the switch's own list is the whole of the question.
+	const project = "budget: { mode: enforce, per_run_usd: 5 }\n" + `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["anthropic/claude-sonnet-5.5"]
+    allow_data_to: ["acme/sandbox"]
+` + "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n"
+	const agent = "agent:\n  auth: api-key\n  model: claude-opus-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+
+	run := func(t *testing.T, checkout func(*testing.T)) (string, string, error) {
+		t.Helper()
+		isolateProjects(t, t.TempDir())
+		projectRouting(t, project)
+		checkout(t)
+		return execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", agent, 1)))
+	}
+	// In the checkout the route is written for, the switch resolves: valid.
+	if out, errOut, err := run(t, func(t *testing.T) { inCheckoutOf(t, "acme/sandbox") }); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("validate refused the configuration in the checkout its route is written for: %v\n%s%s", err, out, errOut)
+	}
+	// Without an origin the repository is unknown, so the switch's list is not
+	// judged: the line is a note, and the file stays valid.
+	out, errOut, err := run(t, inCheckoutWithNoOrigin)
+	if err != nil {
+		t.Fatalf("validate refused a configuration whose repository it cannot read: %v\n%s%s", err, out, errOut)
+	}
+	if strings.Contains(out+errOut, "the project's routing switch is not usable") {
+		t.Fatalf("validate claimed a halt no run necessarily makes:\n%s%s", out, errOut)
+	}
+	if !strings.Contains(errOut, "unresolved") || !strings.Contains(errOut, "no origin remote") {
+		t.Fatalf("want an unresolved note naming the origin:\n%s%s", out, errOut)
 	}
 }
 

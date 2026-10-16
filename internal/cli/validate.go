@@ -458,27 +458,53 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	// The path is CheckRouting's own ("routing.claude.models[i]"), which is
 	// what the loader writes for the same rule at load, so the owner edits the
 	// key the same sentence names on both sides.
+	//
+	// With no repository there is no such judgement to make. Which routes a run
+	// carries is a question about the repository (allow_data_to names them), and
+	// the table an unknown repository leaves — runner.ProvidersFor's filter over
+	// "" — keeps only the entries written for every repository, so a model served
+	// by a repository-scoped entry read as unresolvable there: the same file
+	// exited 0 in an acme/sandbox checkout and 1 in a directory with no origin,
+	// asserting a halt no run necessarily makes, in a run whose provider lines
+	// say allow_data_to was not checked at all (providerProblems takes the same
+	// branch on rerr). The pin loop answers that state with an unresolved note
+	// (its own `case rerr != nil`), and the switch's list gets one here — the
+	// list the loader already held to CheckRouting over the operator's own
+	// unfiltered table, so it is a route this repository may not carry rather
+	// than a claim nobody wrote.
 	if sw != nil {
 		pinned := make(map[string]bool, len(pins))
 		for _, p := range pins {
 			pinned[p.model] = true
 		}
-		for _, q := range config.CheckRouting(&config.Routing{Claude: sw}, routes, "routing") {
-			if m, ok := switchListModel(sw, q.Path); ok && pinned[m] {
-				// The pin rule below judges this model itself, in the sentence
-				// a pin needs ("a call the switch names has no direct
-				// fall-back") and with the same verdict attached. One model
-				// said twice is the repetition dedupeLines exists to drop.
-				continue
+		if rerr != nil && sw.ViaValue() != config.RouteDirect {
+			for i, m := range sw.Models {
+				if pinned[m] {
+					// The pin loop says this one unresolved in the sentence a
+					// pin needs, from the same state and the same reason.
+					continue
+				}
+				notes = append(notes, config.Problem{Path: switchListPath(i), Message: fmt.Sprintf(
+					"%s unresolved: the switch names it, and whether a route a run of this repository carries claims it with allow_data_to written is a question about the repository, which this checkout's origin does not name (%v); run validate in the checkout, or from one whose origin names owner/name", m, rerr)})
 			}
-			msg := q.Message
-			verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth, mode)
-			msg += verdict
-			if halt {
-				problems = append(problems, config.Problem{Path: q.Path, Message: msg})
-				continue
+		} else {
+			for _, q := range config.CheckRouting(&config.Routing{Claude: sw}, routes, "routing") {
+				if m, ok := switchListModel(sw, q.Path); ok && pinned[m] {
+					// The pin rule below judges this model itself, in the sentence
+					// a pin needs ("a call the switch names has no direct
+					// fall-back") and with the same verdict attached. One model
+					// said twice is the repetition dedupeLines exists to drop.
+					continue
+				}
+				msg := q.Message
+				verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth, mode)
+				msg += verdict
+				if halt {
+					problems = append(problems, config.Problem{Path: q.Path, Message: msg})
+					continue
+				}
+				notes = append(notes, config.Problem{Path: q.Path, Message: msg})
 			}
-			notes = append(notes, config.Problem{Path: q.Path, Message: msg})
 		}
 	}
 	// The pins the switch rewrote, which are the ones the run's own rules judge
@@ -749,6 +775,15 @@ func switchVerdict(reach routingReach, why runner.RoutingInert, auth, mode strin
 	}
 }
 
+// switchListPrefix is config.CheckRouting's own path for one entry of the
+// switch's list, with the "routing" path validate passes it: the key the owner
+// edits, spelled the same on both sides of the rule.
+const switchListPrefix = "routing.claude.models["
+
+// switchListPath is that path for the i-th entry of the switch's list, for the
+// lines validate writes itself rather than out of CheckRouting's problems.
+func switchListPath(i int) string { return switchListPrefix + strconv.Itoa(i) + "]" }
+
 // switchListModel is the model a problem from config.CheckRouting is about,
 // where it is about one entry of the switch's list: CheckRouting's path for
 // those is "<path>.claude.models[i]", and a caller that drops a line it has
@@ -756,7 +791,7 @@ func switchVerdict(reach routingReach, why runner.RoutingInert, auth, mode strin
 // about the block itself — the via, the list — names no model, and ok is false
 // for it.
 func switchListModel(sw *config.RoutingClaude, path string) (string, bool) {
-	rest, ok := strings.CutPrefix(path, "routing.claude.models[")
+	rest, ok := strings.CutPrefix(path, switchListPrefix)
 	if !ok {
 		return "", false
 	}
