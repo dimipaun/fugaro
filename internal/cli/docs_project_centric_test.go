@@ -888,7 +888,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 		t.Errorf("step 8's restore block has %q at command %d of its own block, want 0: the operator's config goes back before anything reads it, and the step's FACT prose repeats the string so only the block's own order can be checked", restoreConfig, i)
 	}
 	if i := at(writeEnv); i != 1 {
-		t.Errorf("step 8's restore block has %q at command %d, want 1 — immediately after the config restore: `init --repo` writes the job environment out of that file (`internal/infra/spec.go:747`), so running it first writes whatever the config says now into the job, which is the inversion the step calls out", writeEnv, i)
+		t.Errorf("step 8's restore block has %q at command %d, want 1 — immediately after the config restore: `init --repo` writes the job environment out of that file (`internal/infra/spec.go:753`), so running it first writes whatever the config says now into the job, which is the inversion the step calls out", writeEnv, i)
 	}
 	for _, want := range []string{
 		"git diff -- fugaro.yaml",
@@ -1014,10 +1014,12 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// :90-94 and `cloud` is :95-110. A range that stops at :88 describes
 		// one of the three steps and claims all three.
 		"internal/cli/upgrade.go:84-88",
-		// allowSourcesOf is declared at :345 (doc comment from :332); :352 is
-		// a line inside the for loop, so a reader following the citation lands
-		// on a statement that has nothing to do with the seed's sources.
-		"internal/cli/project_cmd.go:352",
+		// NOT listed here: `internal/cli/project_cmd.go:352`. It was the wrong
+		// number when it was added — :345 was the declaration then — but the
+		// merge with next moved the whole function down and :352 is now where
+		// `allowSourcesOf` is declared, which is what the section cites. A line
+		// number in this list is only true until the next merge; it is kept off
+		// so the test does not fail on a citation that is now correct.
 		// The Firebase root's applyRoot at init_firebase.go:289 is what
 		// --plan-only never reaches: the run has already returned at :210-213
 		// on installRoot's plan-only stop (init.go:1285-1287). Citing :290 as

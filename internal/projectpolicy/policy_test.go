@@ -36,9 +36,13 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	// not know (P8): unknown keys at the TOP LEVEL are ignored. Version gates
 	// a newer policy; the budget block is strict
 	// (TestDecodeRefusesABudgetWhoseKeysAllMiss), and so is a providers entry
-	// and routing (TestDecodeRefusesAMisspeltProviderKey,
-	// TestDecodeValidatesRouting) — see the package doc for why the shape of
-	// a known block is not the same case as a key this binary cannot name.
+	// (TestDecodeRefusesAMisspeltProviderKey). `routing` is neither: a member
+	// this Fugaro does not model is ignored beside a written `claude`, the way
+	// an unknown top-level key is, but a block that names no `claude` switch is
+	// refused (validRoutingMembers, TestRoutingCommentsMatchTheCode), and the
+	// switch's own values are checked (TestDecodeRefusesAnUnknownVia) — see the
+	// package doc for why the shape of a known block is not the same case as a
+	// key this binary cannot name.
 	p, found, err := Decode([]byte(`{
 		"version": 1,
 		"budget": {"mode": "observe"},
@@ -179,6 +183,37 @@ func TestDecodeRefusesABudgetWhoseKeysAllMiss(t *testing.T) {
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want an error on an existing node", name, raw, p, found, err)
 		}
+	}
+}
+
+// The strict decode above refuses a budget key no field answers to, and passes
+// one that answers to a field in another case: encoding/json matches a member
+// name case-insensitively, so {"mode": "enforce", "MODE": "off"} decodes to
+// Mode "off" with no error at all — the last key the document writes wins —
+// and {"mode": "enforce", "mode": "observe"} is the same document order
+// deciding the same way. The block is enforced, not advisory (validBudget), and
+// internal/config refuses the same spelling in fugaro.yaml, so the names are
+// held to the documented ones here too.
+func TestDecodeRefusesCaseFoldedBudgetMembers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"a case-folded mode beside the real one": `{"version": 1, "budget": {"mode": "enforce", "MODE": "off"}}`,
+		"mode written twice":                     `{"version": 1, "budget": {"mode": "enforce", "mode": "observe"}}`,
+		"a case-folded allowed_models":           `{"version": 1, "budget": {"mode": "enforce", "ALLOWED_MODELS": ["claude-sonnet-5"]}}`,
+		"a case-folded per_run_usd":              `{"version": 1, "budget": {"mode": "enforce", "PER_RUN_USD": 5}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "budget") {
+			t.Errorf("%s: err = %v, want it to name the block", name, err)
+		}
+	}
+	// The documented spelling is read as before, values and all.
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"]}}`))
+	if err != nil || !found || p == nil || p.Budget.Mode != "enforce" || p.Budget.PerRunUSD != 12.5 {
+		t.Fatalf("a correctly spelled budget was refused: (%v, %v, %v)", p, found, err)
 	}
 }
 
@@ -615,5 +650,85 @@ func TestVersionErrorCarriesBothVersions(t *testing.T) {
 	}
 	if got := fmt.Sprintf(CLISkew, ve.Found, ve.Understood); !strings.Contains(got, "upgrade Fugaro") || strings.Contains(got, "runner image") {
 		t.Errorf("CLISkew = %q, want the CLI's remedy only", got)
+	}
+}
+
+// TestPolicyCarriesRouting: the switch is delivered by the node — `project
+// policy publish` copies the operator's routing block into config/policy/shared
+// and a run reads it back byte for byte — and the node is held to the same
+// shape rule the operator's own config is: an explicit list of Claude IDs,
+// never a pattern (D1a). An absent block stays absent, which is direct (D1b).
+func TestPolicyCarriesRouting(t *testing.T) {
+	// The node carries the route entry the switch resolves through: one
+	// explicit "anthropic/<id>" per Claude ID, with allow_data_to written
+	// (D1b) — without them the switch names a route nothing claims, which the
+	// decoder refuses below.
+	pol := &Policy{
+		Version: Version,
+		Budget:  Budget{Mode: "enforce", PerRunUSD: 5},
+		Providers: map[string]Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api/v1", Auth: "bearer",
+			Secret: "openrouter-key", Models: []string{"anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"},
+			AllowDataTo: []string{"*"}, PricePolicy: PricePolicyHighest,
+		}}},
+		Routing: &Routing{Claude: &ClaudeRoute{Via: RouteOpenRouter, Models: []string{"claude-sonnet-5-5", "claude-opus-5-5"}}},
+	}
+	// The delivery path: the CLI marshals the policy onto the node, exactly as
+	// project policy publish writes it.
+	raw, err := json.Marshal(pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"claude-sonnet-5-5"`) {
+		t.Fatalf("the node does not carry the IDs: %s", raw)
+	}
+	got, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v)", got, found, err)
+	}
+	if got.Routing == nil || got.Routing.Claude == nil {
+		t.Fatalf("the routing block did not survive the node: %+v", got.Routing)
+	}
+	if got.Routing.Claude.Via != RouteOpenRouter || len(got.Routing.Claude.Models) != 2 || got.Routing.Claude.Models[0] != "claude-sonnet-5-5" {
+		t.Errorf("routing = %+v", got.Routing.Claude)
+	}
+	// A node without one decodes to no block: direct (D1b).
+	if p, _, err := Decode([]byte(`{"version": 1}`)); err != nil || p.Routing != nil {
+		t.Errorf("an absent block = (%+v, %v), want nil and no error", p.Routing, err)
+	}
+	// And the shapes D1a refuses are refused on the node too, with the key
+	// named: a pattern, an empty list under via: openrouter, and a via this
+	// Fugaro cannot act on.
+	routes := `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}`
+	for _, tc := range []struct{ name, routing, want string }{
+		{"a glob", `{"claude": {"via": "openrouter", "models": ["claude-*"]}}`, "explicit list"},
+		{"an empty list", `{"claude": {"via": "openrouter"}}`, "routing.claude.models"},
+		{"an empty via", `{"claude": {"via": ""}}`, "routing.claude.via"},
+	} {
+		raw := []byte(`{"version": 1, "providers": ` + routes + `, "routing": ` + tc.routing + `}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+		} else if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to name %q", tc.name, err, tc.want)
+		}
+	}
+	// D1b is D1b on the node too (the security review of this slice): a node
+	// that routes a Claude ID through a provider which does not claim it, or
+	// which claims it without allow_data_to written, is refused — the node is
+	// the artifact every run reads, and "the switch is there but inert" is not
+	// a state a run reports.
+	for _, tc := range []struct{ name, providers, want string }{
+		{"no provider claims the ID", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["*"]}}`, "no provider entry claims it"},
+		{"the claim has no allow_data_to", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"]}}`, "allow_data_to"},
+		{"no providers block at all", `{}`, "no provider entry claims it"},
+	} {
+		raw := []byte(`{"version": 1, "providers": ` + tc.providers + `, "routing": {"claude": {"via": "openrouter", "models": ["claude-sonnet-5-5"]}}}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+		} else if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to name %q", tc.name, err, tc.want)
+		}
 	}
 }

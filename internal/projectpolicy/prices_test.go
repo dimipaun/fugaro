@@ -152,4 +152,36 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 	}
 }
 
+// A price entry's member names are held to the documented spelling, like the
+// budget block's: DisallowUnknownFields refuses a rate written "input_perm",
+// and encoding/json matches "INPUT_PER_M" to the same field as input_per_m, so
+// the rate a run is priced by would otherwise depend on the order the keys were
+// written in. The long_context tier is an object of its own and reads the same
+// way.
+func TestModelPricesRefusesCaseFoldedMembers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"a case-folded rate beside the real one": `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "INPUT_PER_M": 1000, "output_per_m": 1}}}`,
+		"a rate written twice":                   `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "input_per_m": 1000, "output_per_m": 1}}}`,
+		"a case-folded tier member":              `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "long_context": {"above_input_tokens": 100000, "input_per_m": 2, "INPUT_PER_M": 3, "output_per_m": 4}}}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "model_prices") {
+			t.Errorf("%s: err = %v, want it to name the block", name, err)
+		}
+	}
+	// The documented spelling, tier and all, is read as before.
+	p, found, err := Decode([]byte(`{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "long_context": {"above_input_tokens": 100000, "input_per_m": 2, "output_per_m": 4}}}}`))
+	if err != nil || !found || p == nil {
+		t.Fatalf("a correctly spelled price entry was refused: (%v, %v, %v)", p, found, err)
+	}
+	price, ok := p.Prices["deepseek/deepseek-v4-flash"]
+	if !ok || price.InputPerM == nil || *price.InputPerM != 5 || price.LongContext == nil || *price.LongContext.InputPerM != 2 {
+		t.Errorf("Prices = %+v, want the entry as written", p.Prices)
+	}
+}
+
 func rate(v float64) *float64 { return &v }

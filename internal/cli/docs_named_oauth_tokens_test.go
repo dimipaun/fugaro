@@ -91,9 +91,17 @@ func TestDocsNamedOAuthTokensSetupSkill(t *testing.T) {
 			t.Errorf("setup skill text no longer says %q", want)
 		}
 	}
-	namedSecretCmd := "fugaro secrets set " + config.ClaudeOAuthTokenPrefix + "<name> --repo"
+	// D2: the skill gives the command with no --repo, so the scope is the one
+	// the name has by default (project-wide when the account lists this
+	// repository). A --repo copy would win over the project copy from then on
+	// (design project-secrets.md §5), which is the state the default exists to
+	// make unnecessary.
+	namedSecretCmd := "fugaro secrets set " + config.ClaudeOAuthTokenPrefix + "<name>"
 	if !strings.Contains(string(skill), namedSecretCmd) {
 		t.Errorf("SKILL.md no longer shows %q (config.ClaudeOAuthTokenPrefix changed, or the command was dropped)", namedSecretCmd)
+	}
+	if strings.Contains(string(skill), namedSecretCmd+" --repo") {
+		t.Errorf("SKILL.md passes --repo to %q, which stores a repository copy that overrides the project copy for this repository", namedSecretCmd)
 	}
 	// U2 (the exact claude-setup-token multi-account sequence) is not
 	// answered yet (docs/gcp-live-checklist.md Check 35): the skill must

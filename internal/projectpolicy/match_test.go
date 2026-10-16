@@ -52,6 +52,15 @@ func TestMatchRepo(t *testing.T) {
 		{"*/acme/*", "github/other/app", false},
 		{"github/acme/service-*", "github/acme/service-web", true}, // the design's prefix glob (§4.3)
 		{"github/acme/service-*", "github/acme/web", false},
+		// The second argument is read as a repository, so a "*" in it is the
+		// literal character the pattern's own "*" has to match -- and a
+		// wildcard that aligns with it is still a wildcard: it stands for any
+		// run, "*app" included, and "*" admits "*app" whole. Reading the
+		// pattern's "*" as that literal consumes the wildcard, so
+		// github/acme/* stops admitting a name it does admit, which is what
+		// `repos rm github/acme/*app` reads when github/acme/* remains.
+		{"github/acme/*", "github/acme/*app", true},
+		{"github/*", "github/*app", true},
 		{"github/acme/*", "bitbucket/acme/app", false}, // cross-provider
 		{"github/acme/app", "github/acme/app-web", false},
 		{"github/acme", "github/acme/app", false}, // a bare acme/* is not a pattern
@@ -231,18 +240,23 @@ func TestMatchSegmentIsLinear(t *testing.T) {
 		{"*", "", true},             // and against an empty name
 		{"*b", "ab", true},          // a star that must consume the prefix
 		{"*b", "ba", false},
-		// A "*" in s is an ordinary character, not a wildcard: admittedBy
-		// (internal/cli/project_cmd.go) reads a *pattern* being removed against
-		// the entries a removal leaves, so s is sometimes a pattern too. The
-		// wildcard case must therefore be tested before the literal one — with
-		// equality first, the pattern's "*" is consumed as a literal and lost,
-		// and both of these answered false.
+		// A "*" in the name is an ordinary character, not a wildcard: s is
+		// not always a repository name. MatchRepo's callers read a pattern as
+		// its second argument too — admittedBy (internal/cli/project_cmd.go)
+		// asks whether the runs of a removed entry are still admitted — so the
+		// wildcard case must be tested before the literal one. A star is a star
+		// even where the name has a literal "*" under it: "*" admits "*app"
+		// (the star takes the whole run) and "*b" admits "*ab" (it takes "*a").
+		// Testing equality first spends the wildcard on one character and
+		// loses it, and every one of these answered false.
 		{"*", "*b", true},
 		{"a*", "a*b", true},
 		{"a*b", "a*b", true},
 		{"*a", "*a", true},
 		{"a*", "a*bc", true},
 		{"a*", "ab*c", true},
+		{"*", "*app", true},
+		{"*b", "*ab", true},
 	} {
 		if got := matchSeg(tc.pattern, tc.name); got != tc.want {
 			t.Errorf("matchSeg(%q, %q) = %v, want %v", tc.pattern, tc.name, got, tc.want)

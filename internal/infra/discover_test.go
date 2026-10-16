@@ -343,7 +343,7 @@ func TestDiscoverAcceptsLegacySADisplayName(t *testing.T) {
 	if ex.DisplayNames["web"] != legacy {
 		t.Errorf("kept display name = %q, want %q", ex.DisplayNames["web"], legacy)
 	}
-	got, _, err := Readiness(context.Background(), f.c, spec, ex)
+	got, _, err := Readiness(context.Background(), f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,7 +799,7 @@ func TestReadinessKeepsExistingJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(ctx, f.c, spec, ex)
+	got, missing, err := Readiness(ctx, f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,7 +829,7 @@ func TestReadinessKeepsImageUntilBuilt(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := spec.Workflows["web"]
-	got, _, err := Readiness(ctx, f.c, spec, ex)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -841,7 +841,7 @@ func TestReadinessKeepsImageUntilBuilt(t *testing.T) {
 	}
 	f.ar.AddRepository("proj-1234", "us-east5", spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
 	f.ar.SetTag("proj-1234", "us-east5", spec.Registry.RepositoryID, strings.TrimSuffix(strings.TrimPrefix(web.Image, spec.RegistryPath+"/"), ":latest"), "latest")
-	got, missing, err := Readiness(ctx, f.c, spec, ex)
+	got, missing, err := Readiness(ctx, f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -867,7 +867,7 @@ func TestReadinessWaitsForImageAndSecrets(t *testing.T) {
 	}
 	ready := func() (bool, []string) {
 		t.Helper()
-		got, missing, err := Readiness(ctx, f.c, spec, ex)
+		got, missing, err := Readiness(ctx, f.c, spec, ex, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -928,7 +928,7 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(ctx, f.c, rs, ex)
+	got, missing, err := Readiness(ctx, f.c, rs, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -936,9 +936,22 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 		t.Errorf("web (checkout: clone) not ready: missing = %v", missing)
 	}
 	for _, m := range missing {
-		// A note gates nothing (MissingNote): it reports what the project
-		// will need one day, not something holding this job back.
-		if m.Workflow == "web" && m.Kind != MissingNote {
+		if m.Workflow != "web" {
+			continue
+		}
+		// web waits for no build of its own: its image is the installation's
+		// base. A note would not hold it back either (MissingNote gates
+		// nothing, readiness.go), and the one web could carry is D11's budget
+		// note -- its job's budget is on and it carries no Firebase backend,
+		// so a run could not read a project policy -- which is why it is
+		// named by its own constants here rather than tolerated as "any note"
+		// (code review, low). Every other kind, or a note about anything
+		// else, is a reason web is not deployable.
+		//
+		// This fixture's local config names no budget, so that note does not
+		// appear for web here today; the check is what keeps a note from
+		// passing as a reason if one ever does.
+		if m.Kind != MissingNote || !strings.Contains(m.Reason, BudgetModeEnv) || !strings.Contains(m.Reason, RTDBURLEnv) {
 			t.Errorf("web (checkout: clone) has a missing reason: %v", m)
 		}
 	}
@@ -951,7 +964,7 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, missing, err = Readiness(ctx, f.c, rs, ex)
+	_, missing, err = Readiness(ctx, f.c, rs, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -978,7 +991,7 @@ func TestReadinessImageHintNamesTheLogicalWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, missing, err := Readiness(ctx, f.c, spec, ex)
+	_, missing, err := Readiness(ctx, f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1017,7 +1030,7 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, missing, err := Readiness(ctx, f.c, spec, ex)
+		got, missing, err := Readiness(ctx, f.c, spec, ex, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1038,7 +1051,10 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 	if got.Check.DeployJob || len(missing) != 1 || missing[0].Kind != MissingSecret || missing[0].Deployed {
 		t.Fatalf("an empty credential: deploy %v, missing %+v; want no check job, and the credential missing", got.Check.DeployJob, missing)
 	}
-	want := "secret " + creds[0] + " has no version: fugaro secrets set " + creds[0] + " --repo acme/sandbox"
+	// D2: the credential is a swept-in reserved name, so the fix names the
+	// project-scope command -- what `secrets set <name>` stores by default --
+	// and the repository-copy form is the --repo variant of it.
+	want := "secret " + creds[0] + " has no version: fugaro secrets set " + creds[0]
 	if s := missing[0].String(); !strings.Contains(s, "daily image check") || !strings.Contains(s, "not deployed yet") || !strings.Contains(s, want) {
 		t.Errorf("missing = %q", s)
 	}
@@ -1074,7 +1090,7 @@ func TestScheduleOnlyWithRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := Readiness(ctx, f.c, spec, ex)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1085,7 +1101,7 @@ func TestScheduleOnlyWithRecord(t *testing.T) {
 	if err := b.WriteAll(ctx, imagecheck.RecordKey(spec.Slug, "web"), []byte("{}"), nil); err != nil {
 		t.Fatal(err)
 	}
-	got, _, err = Readiness(ctx, f.c, spec, ex)
+	got, _, err = Readiness(ctx, f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1174,7 +1190,7 @@ func TestLookupsFailClosed(t *testing.T) {
 					t.Fatal(err)
 				}
 				ft.match, ft.code = tc.match, code
-				_, _, err = Readiness(ctx, c, spec, ex)
+				_, _, err = Readiness(ctx, c, spec, ex, false)
 				check(err)
 			})
 		}
@@ -1193,7 +1209,7 @@ func TestReadinessRefusesJobWithoutImage(t *testing.T) {
 	}
 	// The spec's image isn't built, and the job has none to keep: switching
 	// to the spec's would point the job at a missing image.
-	got, _, err := Readiness(ctx, f.c, spec, ex)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false)
 	if err == nil {
 		t.Fatalf("readiness pointed a job with no image at %q", got.Workflows["web"].Image)
 	}
@@ -1243,7 +1259,7 @@ func TestReadinessCloneJobWithoutImageNamesTheConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = Readiness(ctx, f.c, rs, ex)
+	_, _, err = Readiness(ctx, f.c, rs, ex, false)
 	var ue *UserError
 	if !errors.As(err, &ue) {
 		t.Fatalf("err = %v, want a user error", err)
@@ -1267,7 +1283,7 @@ func TestReadinessOutputSharesNoMaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := mustJSON(t, spec)
-	got, _, err := Readiness(ctx, f.c, spec, ex)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1297,7 +1313,7 @@ func TestScheduleStaysPausedWithoutWorkflows(t *testing.T) {
 	check := *spec.Check
 	check.Workflows = nil
 	spec.Check = &check
-	got, _, err := Readiness(ctx, f.c, spec, ex)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1350,7 +1366,7 @@ func readinessOf(t *testing.T, f *cloud, spec RepoSpec) (RepoSpec, []Missing, Ex
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1417,6 +1433,11 @@ func TestReadinessOmitsProjectSecretForUnlistedRepo(t *testing.T) {
 	}
 }
 
+// D2 (plan Task 2.1 step 3): the fix for a name the plan would resolve to
+// the project copy is `fugaro secrets set <name>` -- the form that stores
+// project-wide by default -- and never the repository-copy form, which would
+// store a copy that then wins over the project one forever, nor the
+// --project-wide synonym a person no longer has to know.
 func TestReadinessMissingNamesProjectWideFix(t *testing.T) {
 	f := newCloud(t)
 	spec := projectSpec(t, projectSecretLC)
@@ -1427,9 +1448,9 @@ func TestReadinessMissingNamesProjectWideFix(t *testing.T) {
 		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want no entry: nothing resolves yet", id)
 	}
 	if !slices.ContainsFunc(missing, func(m Missing) bool {
-		return strings.Contains(m.Reason, "fugaro secrets set bitbucket-token --project-wide")
+		return strings.Contains(m.Reason, "fugaro secrets set bitbucket-token") && !strings.Contains(m.Reason, "--repo")
 	}) {
-		t.Errorf("missing = %v, want the fix to name --project-wide", missing)
+		t.Errorf("missing = %v, want the project-scope fix (secrets set, no --repo)", missing)
 	}
 }
 
@@ -1495,6 +1516,39 @@ func TestReadinessProviderListedExcludesUnlistedRepo(t *testing.T) {
 // everything: SecretMounts never asks about a name the repository cannot
 // mount. A mutation to `eligible = lc.Providers[name].Secret != ""` is what
 // this test exists to kill.
+// D2 (plan Task 2.1 step 3b, finding 13): a reserved name is a project-wide
+// candidate with no project_secrets entry at all, which is the case this
+// function refused before -- only an entry reached it, and that is exactly
+// the set D2 sweeps in. The bare claude-oauth-token (the default account's
+// own, phase 5's) and a repository's own application secret are not swept in,
+// and an entry the owner wrote still decides.
+// bitbucket-token is the reserved name the sweep deliberately leaves out: its
+// credential is issued for one repository, so it needs the owner's entry
+// (config.PerRepositorySecret, owner ruling of 2026-10-15).
+func TestProjectSecretCandidateAcceptsAReservedNameWithNoList(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions) // no project_secrets, no providers, no claude_accounts
+	for _, name := range []string{"anthropic-api-key", "github-app-key"} {
+		id, ok := ProjectSecretCandidate(lc, name, "acme/sandbox")
+		if !ok || id != gcp.ProjectSecretID(lc.Name, name) {
+			t.Errorf("ProjectSecretCandidate(%q) = %q, %v; want %q, true", name, id, ok, gcp.ProjectSecretID(lc.Name, name))
+		}
+	}
+	for _, name := range []string{"bitbucket-token", "claude-oauth-token", "sandbox-probe"} {
+		if id, ok := ProjectSecretCandidate(lc, name, "acme/sandbox"); ok {
+			t.Errorf("ProjectSecretCandidate(%q) = %q, true; want not a candidate", name, id)
+		}
+	}
+	// An entry the owner wrote is still the owner's answer: a reserved name
+	// allow-listed for another repository is not a candidate for this one.
+	listed := parseLC(t, m4LocalConfig+m5Additions+"project_secrets:\n  bitbucket-token: { allow_data_to: [acme/other] }\n")
+	if id, ok := ProjectSecretCandidate(listed, "bitbucket-token", "acme/sandbox"); ok {
+		t.Errorf("ProjectSecretCandidate = %q, true; want not a candidate: the entry names acme/other", id)
+	}
+	if _, ok := ProjectSecretCandidate(listed, "bitbucket-token", "acme/other"); !ok {
+		t.Error("the entry's own repository is not a candidate")
+	}
+}
+
 func TestProjectSecretCandidateGate(t *testing.T) {
 	const accounts = `claude_accounts:
   acme-personal:

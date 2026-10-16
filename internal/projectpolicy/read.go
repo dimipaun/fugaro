@@ -64,6 +64,12 @@ func (e *MarkerError) Error() string {
 // marker is generation 0: the pre-policy rules, under which the policy nodes
 // do not exist (the owner's rules deploy has not happened yet, and nothing
 // may halt on that).
+//
+// A negative value is not a generation either: it is an integer, so it would
+// fall through the caller's "< RulesVersion" test and read as that same
+// legacy path, and a hand-edited -1 would silently take a project-centric
+// installation's policy out of every run's reach. It is refused as the
+// MarkerError any other non-generation is.
 func rulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
 	var raw json.RawMessage
 	found, err := db.Get(ctx, PathRulesMarker(), &raw)
@@ -75,6 +81,9 @@ func rulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil {
+		return 0, &MarkerError{Value: nodeText(raw)}
+	}
+	if gen < 0 {
 		return 0, &MarkerError{Value: nodeText(raw)}
 	}
 	return gen, nil

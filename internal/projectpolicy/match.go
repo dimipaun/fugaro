@@ -162,17 +162,17 @@ func ValidPattern(pattern string) error {
 // backtracking scan of every star is exponential in their number (a pattern is
 // attacker-chosen text on a node, so the cost must not be).
 //
-// The wildcard case is tested BEFORE the literal one, and that order is
-// load-bearing: s is not always a concrete repository name. admittedBy
-// (internal/cli/project_cmd.go) reads a *pattern* being removed against the
-// entries the removal leaves, so a "*" in s is an ordinary character there —
-// and a pattern whose "*" is aligned with one in s must still be read as a
-// wildcard. Testing equality first consumes the pattern's "*" as a literal and
-// loses it: matchSeg of the one-star pattern against a two-character name whose
-// first character is a star, and of "a*" against "a" followed by a star, both
-// answered false — which made `fugaro project repos rm` of a wildcard entry
-// report "its runs are refused from now on" while a broader remaining entry
-// still admitted every expansion of it.
+// The "*" case must come before the literal one, and that order is
+// load-bearing: s is not always a concrete repository name. MatchRepo's callers
+// read a pattern as its second argument too — cli's admittedBy asks whether the
+// runs of a *removed* entry are still admitted — and there s carries "*"
+// characters of its own, which must be read as ordinary characters. Testing
+// equality first spends the pattern's star on that single character and loses
+// it, so "*" would not admit "*app" and "a*" would not admit "a*b": a matcher
+// that refuses a string its pattern does match. In `fugaro project repos rm`
+// that read as a revocation which did not happen — the confirmation said "its
+// runs are refused from now on" while a broader remaining entry still admitted
+// every expansion of what was removed.
 func matchSeg(pattern, s string) bool {
 	var (
 		p, i     int // the positions being compared
