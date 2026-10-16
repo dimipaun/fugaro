@@ -264,6 +264,32 @@
         "duration_s": { "type": "number", "minimum": 0 },
         "started_at": { "type": "string", "format": "date-time" }
       }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "The files a mode: artifact run uploaded, in name order (design artifact-runs.md §3, §8): one entry per object under this run's artifacts/ prefix. Absent — never an empty array — for every run that delivered none, including every record written before this field existed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bytes", "sha256", "content_type"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The object's key leaf, relative to artifacts/: the sanitiser's own output, never a path out of the prefix, with no .. element, no leading dot, no NUL and no newline." },
+          "bytes": { "type": "integer", "minimum": 0, "description": "The size of the bytes in the bucket, as the upload measured them." },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The sha256 of the bytes in the bucket, hashed in the same pass that wrote them and checked against the staged copy's hash." },
+          "content_type": { "type": "string", "minLength": 1, "description": "Recorded, never trusted (§8.1): from the name's extension or a sniff of the first bytes." },
+          "probe": {
+            "type": "object",
+            "description": "What commands.probe said about this artifact. Absent when no probe ran for it.",
+            "additionalProperties": false,
+            "required": ["ran", "exit_code"],
+            "properties": {
+              "ran": { "type": "boolean" },
+              "exit_code": { "type": "integer" },
+              "warning": { "type": "string", "description": "Empty when the probe passed." }
+            }
+          }
+        }
+      }
     }
   }
 }

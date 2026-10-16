@@ -342,6 +342,13 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Stages:    []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, Model: "claude-sonnet-5-5"}},
 		StartedAt: at, Deadline: &deadline, FinishedAt: &finished,
 		FinalizeReserveS: 90,
+		// The artifact fields ride along on the fully-populated record so a
+		// new one that is not in the schema fails this test: that is what
+		// keeps runstore.Record and result.schema.json in step.
+		Render: &runstore.RenderRecord{Command: "sh render.sh", CommandSHA256: strings.Repeat("a", 64),
+			Tree: "working", ExitCode: 0, DurationS: 12.5, StartedAt: at.Format(time.RFC3339)},
+		Artifacts: []runstore.ArtifactFile{{Name: "sizzle.mp4", Bytes: 4096, SHA256: strings.Repeat("b", 64),
+			ContentType: "video/mp4", Probe: &runstore.ProbeResult{Ran: true, ExitCode: 1, Warning: "w"}}},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -398,6 +405,8 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Workflow: "app",
 		Status: runstore.StatusSucceeded, Stage: "render", Outcome: runstore.OutcomeArtifacts,
 		StartedAt: at, Render: render,
+		Artifacts: []runstore.ArtifactFile{{Name: "sizzle.png", Bytes: 6, SHA256: strings.Repeat("b", 64),
+			ContentType: "image/png", Probe: &runstore.ProbeResult{Ran: true, ExitCode: 0}}},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -426,11 +435,19 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 	}
 	// The render object is closed and its hash is a hash: a hand-edited
 	// result.json cannot smuggle a free-form command_sha256 into the one
-	// field a reviewer is meant to be able to recompute.
+	// field a reviewer is meant to be able to recompute. The artifact
+	// entries and their probes are closed the same way, and an entry
+	// without a name, a size or a hash is not an artifact a reader could
+	// verify what it downloads against.
 	for _, tc := range []struct{ name, old, new string }{
 		{"bad hash", strings.Repeat("a", 64), "not-a-hash"},
 		{"bad tree", `"tree":"working"`, `"tree":"head"`},
 		{"unknown key", `"exit_code":-1`, `"exit_code":-1,"extra":1`},
+		{"artifact without a name", `"name":"sizzle.png"`, `"nope":"sizzle.png"`},
+		{"artifact unknown key", `"bytes":6`, `"bytes":6,"extra":1`},
+		{"artifact bad content type", `"content_type":"image/png"`, `"content_type":7`},
+		{"probe with no exit code", `"probe":{"ran":true,"exit_code":0}`, `"probe":{"ran":true}`},
+		{"probe that is not a probe", `"exit_code":0`, `"exit_code":"zero"`},
 	} {
 		raw := strings.Replace(string(data), tc.old, tc.new, 1)
 		if raw == string(data) {
@@ -443,6 +460,45 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		if err := sch.Validate(inst); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, raw)
 		}
+	}
+}
+
+// TestResultSchemaAcceptsARecordWithoutArtifacts is Review Focus 8's schema
+// half: a result.json written before this change validates without an
+// artifacts key at all, so an old record is never refused for a field that
+// did not exist when it was written, and the new field is not in the
+// schema's required list.
+//
+// Mutation (add artifacts to the schema's required list): this test fails,
+// the schema refusing the pre-change record.
+func TestResultSchemaAcceptsARecordWithoutArtifacts(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	const pre = `{
+	  "version": 1,
+	  "run_id": "20260926-221530-abcd",
+	  "repo": "acme/app",
+	  "workflow": "app",
+	  "status": "succeeded",
+	  "stage": "writeback",
+	  "outcome": "ready",
+	  "branch": "fugaro/add-a-feature",
+	  "head_sha": "abcdef1234567",
+	  "cost_usd": 4.12,
+	  "started_at": "2026-09-26T22:15:30Z"
+	}`
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(pre))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a pre-change record: %v", err)
+	}
+	var rec runstore.Record
+	if err := json.Unmarshal([]byte(pre), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Artifacts != nil || rec.Render != nil {
+		t.Fatalf("a pre-change record gained fields: %+v", rec)
 	}
 }
 

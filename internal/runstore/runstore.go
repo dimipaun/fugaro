@@ -222,6 +222,13 @@ type Record struct {
 	// run refused before its render step (a blank command, a bad recipe)
 	// records none.
 	Render *RenderRecord `json:"render,omitempty"`
+	// Artifacts is the files a mode: artifact run uploaded, in name order
+	// (design artifact-runs.md §3, §8): one entry per object under the
+	// run's artifacts/ prefix, each the account a reader verifies what it
+	// downloads against. Absent — never an empty array — for every run
+	// that delivered none, so a record written before this field existed
+	// is byte-for-byte the record an old reader saw.
+	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
 }
 
 // ReviewedPR is one pull request a mode: review run reviewed (design
@@ -431,6 +438,37 @@ func (s *Store) PutFile(ctx context.Context, name string, data []byte, contentTy
 		return fmt.Errorf("writing %s: %w", key, err)
 	}
 	return nil
+}
+
+// PutFileFrom writes the file at path under the run's prefix, streaming it
+// (blobx.PutFile), and returns the size and the lower-case hex sha256 of the
+// bytes that reached the bucket.
+//
+// want is the sha256 the caller already took of the same bytes, or "" for no
+// check. It is an argument and not something the caller checks afterwards
+// because of what a mismatch means here: the file was hashed in the staging
+// directory and uploaded from it, and on Cloud Run the agent that produced it
+// runs as the same user in the same container, so bytes that changed in
+// between are bytes no record of this run may attest to. A mismatch deletes
+// the object this call just wrote — it is this call's own key, written a
+// moment ago — and fails, so a run that fails here leaves nothing in the
+// bucket for its record to be wrong about.
+//
+// The write is create-only (blobx.PutFile's ifNotExist): a run's artifacts
+// are written once, and a second execution of the same run must not overwrite
+// what the first one recorded.
+func (s *Store) PutFileFrom(ctx context.Context, name, path, contentType, want string) (int64, string, error) {
+	key := s.prefix + strings.TrimPrefix(name, "/")
+	b := &blobx.Bucket{Bucket: s.bucket}
+	size, sum, err := b.PutFile(ctx, key, path, contentType, true)
+	if err != nil {
+		return 0, "", fmt.Errorf("writing %s: %w", key, err)
+	}
+	if want != "" && sum != want {
+		_ = s.bucket.Delete(ctx, key)
+		return 0, "", fmt.Errorf("%s: %w (this run staged %s and uploaded %s): the staged file changed before the upload", key, blobx.ErrMismatch, want, sum)
+	}
+	return size, sum, nil
 }
 
 // read reads one of the run's objects, refusing one larger than max.

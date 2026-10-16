@@ -215,3 +215,18 @@ func SetPrefetchFetch(t *testing.T, f func(repo *gitops.Repo, ctx context.Contex
 	prefetchFetch = f
 	t.Cleanup(func() { prefetchFetch = prev })
 }
+
+// SanitiseName exposes the artifact name sanitiser (artifact.go's
+// sanitiseName) to the runner_test package: Review Focus 3's refusal table is
+// a table over it.
+func SanitiseName(name string) (string, error) { return sanitiseName(name) }
+
+// SetArtifactStagedSeam runs f in collectArtifacts after the set is staged
+// and hashed and before anything is uploaded, for the rest of t: it is how a
+// test replaces a staged file between the hash and the upload (Review Focus
+// 5).
+func SetArtifactStagedSeam(t *testing.T, f func()) {
+	prev := artifactStagedSeam
+	artifactStagedSeam = f
+	t.Cleanup(func() { artifactStagedSeam = prev })
+}

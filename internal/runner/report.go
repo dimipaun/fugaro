@@ -131,12 +131,12 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 }
 
 // artifactsSection is the report's Artifacts section (design §9) for a
-// mode: artifact run: what the render step did, and the compute estimate the
-// run's wall clock priced. The per-file table — name, size, short sha256,
-// recorded content type and the probe's verdict — is deliberately not here:
-// it renders the upload step's and the probe step's own types, so a release
-// without them says the record carries none rather than printing a header
-// over nothing.
+// mode: artifact run: what the render step did, the files the run uploaded
+// and the compute estimate the run's wall clock priced. The per-file table is
+// written from the record's own artifacts, so a record that carries none (a
+// release without the upload step, or a run that ended before it) says so
+// rather than printing a header over nothing. The probe's verdict is the
+// probe step's column and is not here yet (plan Task 5).
 func artifactsSection(rec *runstore.Record) string {
 	var b strings.Builder
 	b.WriteString("#### Artifacts\n\n")
@@ -153,11 +153,35 @@ func artifactsSection(rec *runstore.Record) string {
 			// on a long run would otherwise read as its own price.
 			fmt.Fprintf(&b, "- **Compute:** $%.4f estimated from the run's wall clock, of which the render is %s\n", c.ComputeUSD, secsText(r.DurationS))
 		}
-		b.WriteString("\nThe render's files are uploaded by the run's own step; this record carries the render alone.\n\n")
+	} else {
+		b.WriteString("- **Render:** none recorded: the run ended before its render step ran.\n")
+	}
+	if len(rec.Artifacts) == 0 {
+		if rec.Render != nil {
+			b.WriteString("\nThe render's files are uploaded by the run's own step; this record carries the render alone.\n\n")
+		} else {
+			b.WriteString("\n")
+		}
 		return b.String()
 	}
-	b.WriteString("- **Render:** none recorded: the run ended before its render step ran.\n\n")
+	fmt.Fprintf(&b, "\n%d files, uploaded to this run's bucket under `%s`:\n\n", len(rec.Artifacts), runstore.ArtifactPrefix)
+	b.WriteString("| Artifact | Bytes | sha256 | Type |\n|---|---|---|---|\n")
+	for _, a := range rec.Artifacts {
+		fmt.Fprintf(&b, "| `%s` | %d | `%s` | %s |\n", a.Name, a.Bytes, shortSum(a.SHA256), a.ContentType)
+	}
+	b.WriteString("\nEach row is what the run's own record says the object at that name holds: download it and hash it to check the bytes arrived as rendered.\n\n")
 	return b.String()
+}
+
+// shortSum is a sha256 as a report row shows it: the first twelve hex
+// characters, which is what a reader compares by eye. The full hash is in
+// result.json, which is what a reader verifies with.
+func shortSum(sum string) string {
+	const n = 12
+	if len(sum) > n {
+		return sum[:n]
+	}
+	return sum
 }
 
 // secsText is a recorded duration in seconds for a report line.
