@@ -1143,10 +1143,11 @@ func ArtifactName(name string) (clean, problem string) {
 }
 
 // ArtifactCollisionKey is the identity two artifact names share when one
-// filesystem would store them as one file: NFC-normalised, and then FULL case
-// folded (Unicode CaseFolding.txt, every 'C' and 'F' entry).
+// filesystem would store them as one file: the standard's canonical caseless
+// form (Unicode D145, "canonical caseless match") — NFD, then FULL case folding
+// (CaseFolding.txt, every 'C' and 'F' entry), then NFD again.
 //
-// Both halves are load-bearing:
+// Each of the three steps is there for a reason:
 //
 //   - normalization is not case folding at all: EqualFold("café.png",
 //     "café.png") is false for the NFC and NFD spellings, and macOS — where
@@ -1173,10 +1174,34 @@ func ArtifactName(name string) (clean, problem string) {
 //     cherokeeTarget settles each pair on the standard's target, which is what
 //     makes the key a point the fold leaves alone.
 //
+// Normalization is on both sides of the fold, which is the half a name's
+// combining marks need:
+//
+//   - before it, so that two spellings differing only in the ORDER of their
+//     marks — which is no difference at all to the filesystem — fold from the
+//     same input, and so that a precomposed letter is broken into the pieces
+//     the fold then maps. This is the pass that does the work: with
+//     normalization after the fold only, or with NFC before it, one name's two
+//     spellings fold apart and the collision is missed.
+//   - after it, because D145's form is NFD(fold(NFD(x))) and the fold is a
+//     library's tables rather than a promise: a sweep over every code point,
+//     alone and with a mark, found no input whose fold of an NFD string is not
+//     itself NFD, so this pass usually copies — it is here so that the key is
+//     the standard's form by construction rather than by the tables' good
+//     behaviour.
+//
+// The miss without the first pass is not one pair but a family: NFC-then-fold
+// gave "ǰ̣.png" (U+01F0 plus a dot below) and "J̣̌.png" two keys, and the
+// same to the Greek "ᾼ͂.png" and "ᾶι.png", where the ypogegrammeni folds to a
+// standalone iota — one file each on APFS, two keys each here. The sweep in
+// the test over the blocks that hold such letters found 26 pairs of this shape
+// (the reviewer's wider one about 31k), which is why it is a sweep over blocks
+// and not three rows.
+//
 // It is not strings.ToLower either, in the other direction: ToLower maps
 // U+0130 (İ) to a bare 'i', which is not what it folds to — folding U+0130
-// gives 'i' plus U+0307, a combining dot above, and NFC has no composition for
-// that pair, so the key keeps İ.png apart from i.png, which are two files.
+// gives 'i' plus U+0307, a combining dot above, which NFC does not compose
+// back (there is no precomposed letter for it), so the key keeps İ.png apart from i.png, which are two files.
 // (The key is coarser than a filesystem here in one spot: İ.png and
 // "i"+U+0307.png share it. That is the direction this function is allowed to
 // err in — a legal record refused — and the download's own no-replace rule is
@@ -1197,16 +1222,26 @@ func ArtifactName(name string) (clean, problem string) {
 // refuses to replace what is at a path unless the operator asked for it, so a
 // collision this key does not know about fails loudly instead of overwriting.
 func ArtifactCollisionKey(name string) string {
-	folded := cases.Fold().String(norm.NFC.String(name))
-	// The fold is applied rune by rune and settles each Cherokee pair with
-	// cherokeeTarget; for every other code point it already returns one value,
-	// so this loop is a copy of the fold and nothing more.
-	var key strings.Builder
-	key.Grow(len(folded))
+	// NFD, fold, NFD: the standard's canonical caseless form (Unicode D145,
+	// "canonical caseless match"), which is what a filesystem that folds case
+	// and ignores normalization compares. The first NFD pass is the one that
+	// does the work: it puts a name's combining marks in canonical order and
+	// breaks a precomposed letter into the pieces the fold maps, so every
+	// spelling of one name folds from the same input — "ǰ̣.png" and
+	// "J̣̌.png" are one file on APFS, and with NFC-then-fold alone they were
+	// two keys, the fold of the first being the precomposed letter and of the
+	// second a j and two marks. The trailing pass is the standard's own
+	// spelling of the form and in practice a copy (see the comment above).
+	decomposed := norm.NFD.String(name)
+	folded := cases.Fold().String(decomposed)
+	// The fold is applied rune by rune, and settles each Cherokee pair with
+	// cherokeeTarget; for every other code point it already returns one value.
+	var settled strings.Builder
+	settled.Grow(len(folded))
 	for _, r := range folded {
-		key.WriteRune(cherokeeTarget(r))
+		settled.WriteRune(cherokeeTarget(r))
 	}
-	return key.String()
+	return norm.NFD.String(settled.String())
 }
 
 // cherokeeTarget is the code point CaseFolding.txt folds r to for the Cherokee

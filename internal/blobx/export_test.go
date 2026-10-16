@@ -6,3 +6,13 @@ package blobx
 // context — are only reachable, with a source that stalls or never ends, at
 // the helper itself.
 var CopyBounded = copyBounded
+
+// SetLinkFile replaces the hard link placeVerified places a download with, and
+// returns the function that puts os.Link back. It is how a test reaches the
+// fallback for a filesystem without hard links — an O_EXCL create plus a copy,
+// which carries the same no-replace promise — without such a filesystem.
+func SetLinkFile(fn func(oldname, newname string) error) (restore func()) {
+	old := linkFile
+	linkFile = fn
+	return func() { linkFile = old }
+}

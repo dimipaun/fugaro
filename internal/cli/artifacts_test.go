@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,9 +18,12 @@ import (
 	"time"
 
 	"gocloud.dev/blob"
+	"gocloud.dev/blob/driver"
+	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -1056,6 +1060,18 @@ func TestArtifactsGetRefusesDuplicateNames(t *testing.T) {
 			},
 			quote: []string{`"Ꭰ.png"`, `"ꭰ.png"`},
 		},
+		{
+			// The mark-order half: a precomposed letter plus a mark, and the
+			// same name spelled with the marks the other way round and the
+			// letter in the other case. One file on APFS, and a key that
+			// normalizes only before the fold gave them two.
+			name: "names that differ only in the order of their marks",
+			files: []runstore.ArtifactFile{
+				{Name: "ǰ̣.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+				{Name: "J̣̌.png", Bytes: int64(len(body)), SHA256: sha256Hex(body)},
+			},
+			quote: []string{"ǰ̣.png", "J̣̌.png"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
@@ -1880,6 +1896,125 @@ func TestArtifactsGetAsksForTheStrictClassification(t *testing.T) {
 	}
 	if entries := dirEntries(t, dir); len(entries) != 0 {
 		t.Errorf("a refused read wrote %q, want nothing", entries)
+	}
+}
+
+// appearDriver serves one object and creates a file at a path on the first
+// read of its body: the destination arriving in the window between the
+// command's pre-check and the placement. No file-backed bucket can open that
+// window — nothing the command does between the check and the first byte of
+// the read is a point a test can hang a write on — so this is what a race with
+// another process looks like from inside `artifacts get`.
+type appearDriver struct {
+	driver.Bucket
+	data   []byte
+	appear string // the path a file appears at
+	at     string // what that file holds
+	done   bool
+}
+
+func (d *appearDriver) ErrorCode(error) gcerrors.ErrorCode { return gcerrors.Unknown }
+func (d *appearDriver) As(any) bool                        { return false }
+func (d *appearDriver) ErrorAs(error, any) bool            { return false }
+func (d *appearDriver) Close() error                       { return nil }
+
+func (d *appearDriver) NewRangeReader(context.Context, string, int64, int64, *driver.ReaderOptions) (driver.Reader, error) {
+	return &appearReader{Reader: bytes.NewReader(d.data), d: d}, nil
+}
+
+type appearReader struct {
+	*bytes.Reader
+	d *appearDriver
+}
+
+func (r *appearReader) Read(p []byte) (int, error) {
+	if !r.d.done {
+		r.d.done = true
+		if err := os.WriteFile(r.d.appear, []byte(r.d.at), 0o600); err != nil {
+			return 0, err
+		}
+	}
+	return r.Reader.Read(p)
+}
+
+func (r *appearReader) Close() error { return nil }
+func (r *appearReader) Attributes() *driver.ReaderAttributes {
+	return &driver.ReaderAttributes{Size: int64(len(r.d.data))}
+}
+func (r *appearReader) As(any) bool { return false }
+
+// TestArtifactsGetRefusesAFileThatAppearedAfterThePreCheck: `artifacts get`
+// keeps its no-replace promise twice over — the pre-check of every destination
+// before the first byte is read, and the placement itself — and every other
+// test reaches one of the two and not both: a file that is already there is
+// refused by the pre-check, so deleting --force's wiring into the placement
+// (the replace argument of GetFileExactly, through getArtifact) failed
+// nothing. The window between them is the one this test opens, with the file
+// arriving during the read of the object, and both --force answers are
+// asserted against it.
+//
+// The three steps are runArtifactsGet's own, in its order — prepareArtifactRoot,
+// checkArtifactDest for the name, getArtifact — because the bucket has to be
+// the in-process one the driver is behind, which the command's own
+// openCloud-from-config path cannot be given.
+//
+// Mutation caught: getArtifact passing replace=true regardless of force (the
+// no-force case downloads and overwrites the file that appeared), or replace
+// false regardless of force (the --force case is refused).
+func TestArtifactsGetRefusesAFileThatAppearedAfterThePreCheck(t *testing.T) {
+	ctx := context.Background()
+	const id = "20261016-090000-abcd"
+	body := []byte("the run's file")
+	a := runstore.ArtifactFile{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body)}
+	const theirs = "the operator's own file"
+
+	for name, force := range map[string]bool{"without --force": false, "with --force": true} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "out")
+			dest := filepath.Join(root, a.Name)
+			env := &cloudEnv{bucket: blobx.Wrap(blob.NewBucket(&appearDriver{data: body, appear: dest, at: theirs}))}
+			defer env.Close()
+			s := runstore.Open(env.bucket.Bucket, appSlug, id)
+
+			if err := prepareArtifactRoot(root); err != nil {
+				t.Fatal(err)
+			}
+			got, err := checkArtifactDest(root, a.Name, force)
+			if err != nil || got != dest {
+				t.Fatalf("checkArtifactDest(%q, force=%v) = %q, %v: the file is not there yet, so the pre-check has nothing to refuse", a.Name, force, got, err)
+			}
+			var out strings.Builder
+			err = getArtifact(ctx, env, s, a, root, got, force, &out)
+
+			// Whatever the outcome, the tree holds one file and it is the
+			// destination: no leftover temporary beside it.
+			if got := dirEntries(t, root); len(got) != 1 || got[0] != a.Name {
+				t.Errorf("the destination directory holds %v, want just %s", got, a.Name)
+			}
+			back, rerr := os.ReadFile(dest)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			if !force {
+				if code := ExitCode(err); code != ExitUserError {
+					t.Errorf("get of a file that appeared mid-read exit code = %d, want %d (the destination is the operator's to change)", code, ExitUserError)
+				}
+				if err == nil || !strings.Contains(err.Error(), "already exists") {
+					t.Errorf("get of a file that appeared mid-read = %v, want a refusal naming the destination", err)
+				}
+				if string(back) != theirs {
+					t.Errorf("the file that appeared mid-read was replaced by %q, and the command reported %v", back, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("get --force of a file that appeared mid-read = %v, want the download (the flag is what permits replacing it)", err)
+			}
+			if !bytes.Equal(back, body) {
+				t.Errorf("get --force left %q at the destination, want the object's bytes", back)
+			}
+		})
 	}
 }
 

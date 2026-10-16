@@ -751,6 +751,12 @@ func (b *Bucket) getFile(ctx context.Context, key, path, sum string, limit, exac
 	return n, got, nil
 }
 
+// linkFile is os.Link, and a test replaces it (see export_test.go) to reach
+// the fallback below: a filesystem without hard links is the one thing this
+// path cannot be given by a test on the machine it runs on, and dropping the
+// O_EXCL from the fallback would then fail nothing.
+var linkFile = os.Link
+
 // placeVerified moves the verified temporary file to path, replacing what is
 // at path only when replace says so.
 //
@@ -774,7 +780,7 @@ func placeVerified(tmp, path string, replace bool) error {
 	if replace {
 		return os.Rename(tmp, path)
 	}
-	switch err := os.Link(tmp, path); {
+	switch err := linkFile(tmp, path); {
 	case err == nil:
 		_ = os.Remove(tmp)
 		return nil

@@ -20,8 +20,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"gocloud.dev/blob"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -1772,6 +1775,12 @@ func TestArtifactCollisionKeyIsTheOneFoldedName(t *testing.T) {
 		{"Cherokee case (U+13A0 / U+AB70)", "Ꭰ.png", "ꭰ.png", true},
 		{"Cherokee small letter ye (U+13F0 / U+13F8)", "Ᏸ.png", "ᏸ.png", true},
 		{"Cherokee inside a longer name", "aᎥb.png", "aꭵb.png", true},
+		// Normalization on both sides of the fold: the order of combining
+		// marks, and the pieces a precomposed letter folds into. NFC-then-fold
+		// gave each of these pairs two keys, and APFS — one file for each pair
+		// — is where the collision would have been written over.
+		{"mark order, and a precomposed letter", "ǰ̣.png", "J̣̌.png", true},
+		{"Greek with ypogegrammeni", "ᾼ͂.png", "ᾶι.png", true},
 		{"a different name", "sizzle.png", "sizzle2.png", false},
 		{"a different path", "clips/a.png", "a.png", false},
 	} {
@@ -1829,6 +1838,73 @@ func TestArtifactCollisionKeySettlesEveryCherokeePair(t *testing.T) {
 	// — so a range that quietly stops short cannot pass as full coverage.
 	if pairs != 86 {
 		t.Errorf("checked %d Cherokee pairs, want 86 (the 172 code points of U+13A0–U+13F5, U+13F8–U+13FD and U+AB70–U+ABBF)", pairs)
+	}
+}
+
+// TestArtifactCollisionKeyIsCanonicalForEveryCaseVariant sweeps the blocks
+// that hold letters a combining mark can be attached to — every code point in
+// them, each with a mark, in both cases — rather than the handful of pairs the
+// table names: the mark-order miss the key had was not one pair but a family of
+// them (a sweep of this shape found 26 at the time, and the reviewer's wider
+// one about 31k), and a key that is right on the two famous pairs and wrong on
+// the rest is a key that still writes one file twice.
+//
+// The reference form is the standard's own definition (Unicode D145, canonical
+// caseless match), written out here a second time. That is deliberate: the
+// question this sweep asks is whether a spelling the standard calls equivalent
+// gets one key, and the answer used to be no.
+//
+// Every key is also asserted to be in NFD, which is a property of the key
+// alone: a key with a precomposed letter in it is a key that has not been
+// normalized after the fold, however the pairs happen to fall.
+//
+// Mutation caught: NFC before the fold (26 of these pairs get two keys),
+// normalizing only after the fold (6 of them do), and any key that is not NFD.
+// Dropping the second NFD pass after an NFD input is NOT caught, because the
+// fold of an NFD string is itself NFD at this version of x/text — the pass is
+// the standard's form, not a load-bearing one, and the comment on the function
+// says so.
+func TestArtifactCollisionKeyIsCanonicalForEveryCaseVariant(t *testing.T) {
+	// The standard's canonical caseless form, for the sweep's own use.
+	caseless := func(s string) string {
+		return norm.NFD.String(cases.Fold().String(norm.NFD.String(s)))
+	}
+	marks := []rune{0x0300, 0x030c, 0x0323, 0x0342}
+	blocks := []struct {
+		lo, hi rune
+		what   string
+	}{
+		{0x00c0, 0x02ff, "Latin-1 letters, Latin Extended-A and -B, IPA"},
+		{0x0300, 0x03ff, "combining marks, Greek and Coptic"},
+		{0x1e00, 0x1fff, "Latin Extended Additional, Greek Extended"},
+		{0xfb00, 0xfb4f, "the ligatures, which fold to sequences"},
+	}
+	checked := 0
+	for _, b := range blocks {
+		for r := b.lo; r <= b.hi; r++ {
+			for _, m := range marks {
+				for _, flip := range []func(rune) rune{unicode.ToUpper, unicode.ToLower} {
+					x := norm.NFC.String(string(r) + string(m))
+					y := norm.NFC.String(string(flip(r)) + string(m))
+					if x == y || caseless(x) != caseless(y) {
+						continue
+					}
+					checked++
+					kx, ky := runner.ArtifactCollisionKey(x), runner.ArtifactCollisionKey(y)
+					if kx != ky {
+						t.Errorf("in %s: ArtifactCollisionKey(%q) = %q, ArtifactCollisionKey(%q) = %q: the standard calls these one name", b.what, x, kx, y, ky)
+					}
+					if nfd := norm.NFD.String(kx); nfd != kx {
+						t.Errorf("in %s: ArtifactCollisionKey(%q) = %q is not its own NFD (%q): the key has to be normalized after the fold", b.what, x, kx, nfd)
+					}
+				}
+			}
+		}
+	}
+	// A sweep that quietly stops checking anything passes just as well as a
+	// sweep that checks everything, so the count is asserted too.
+	if checked < 1000 {
+		t.Errorf("sweep checked %d case-variant pairs, want at least 1000: the blocks or the marks have gone missing", checked)
 	}
 }
 

@@ -1073,13 +1073,24 @@ produced (out), and files an operator handed to a model-driven job (in).
    is two different paths depending on the machine that reads it — and
    `path.Clean`, which this rule cleans with, reads `frames\a.png` as one
    element while `filepath.Join`, which `get` builds its destination with,
-   reads it as two on Windows); **no duplicate — decided by NFC normalisation
-   followed by FULL Unicode case folding** (`ArtifactCollisionKey`, the same
-   key both sides ask for: `ß` folds to `ss`, `ﬁ` to `fi`, `ς` to `σ`, so
-   `straße.png` and `strasse.png` are one name, as `café.png`'s two
-   normalisations already were — a *simple* fold, or `strings.ToLower`, gives
-   those pairs two keys and lets a run stage a set no download of it can hand
-   back, or hand back one file where the record names two); no name beginning
+   reads it as two on Windows); **no duplicate — decided by the standard's
+   canonical caseless form, NFD of the full case fold of NFD** (Unicode D145;
+   `ArtifactCollisionKey`, the same key both sides ask for: `ß` folds to `ss`,
+   `ﬁ` to `fi`, `ς` to `σ`, so `straße.png` and `strasse.png` are one name, as
+   `café.png`'s two normalisations already were — a *simple* fold, or
+   `strings.ToLower`, gives those pairs two keys and lets a run stage a set no
+   download of it can hand back, or hand back one file where the record names
+   two). **Both normalization passes are there for a reason**: the marks a name
+   carries are ordered by the one before the fold, so two spellings differing
+   only in *that* order — no difference at all to the filesystem — fold from
+   the same input (`ǰ̣.png` and `J̣̌.png` are one file on APFS), and
+   folding a precomposed letter yields its pieces, which the one after the fold
+   settles (`ᾼ͂.png` and `ᾶι.png`, the ypogegrammeni folding to a standalone
+   iota, are one file too). The fold is also **settled to one target**: the 172
+   Cherokee code points (U+13A0–U+13F5, U+13F8–U+13FD, U+AB70–U+ABBF) fold to
+   *each other* in the Go library's tables where CaseFolding.txt names a single
+   target, and a key that took that as it came would give the two spellings of
+   one Cherokee name two keys; no name beginning
    with a dot (see below); and an explicit length limit. The leaf is always
    `runs/<slug>/<run>/artifacts/<name>` — a **fixed** leaf under a **fixed**
    run prefix, so no artifact name (however crafted) can be made to write
@@ -1121,8 +1132,8 @@ produced (out), and files an operator handed to a model-driven job (in).
    it and the runner's `ReadTask` refused the task at bootstrap.
 
    **"No repeated name" is the collision question, and it is asked with the
-   artifact rule's own key** (`ArtifactCollisionKey`: NFC plus full Unicode
-   case folding), in `downloadInputs` and in the launcher's `--attach` check
+   artifact rule's own key** (`ArtifactCollisionKey`: NFD of the full case fold
+   of NFD), in `downloadInputs` and in the launcher's `--attach` check
    alike — not with `strings.ToLower` and not with the exact spelling. The
    inputs of one run are downloaded into **one directory**, on the operator's
    own filesystem when the run is local, and a name that differs only in case
@@ -1413,10 +1424,22 @@ produced (out), and files an operator handed to a model-driven job (in).
   has a `..` element, begins with a dot or escapes that root is refused — a
   checkout's `.git/hooks/`, `.claude/` or `.envrc` is what an untrusted record
   would otherwise be able to write (§8.2, §8.3). **Two record names that fold
-  to one** — the same NFC-plus-full-case-fold key (§8.2), so `straße.png` with
-  `strasse.png` — **are refused as the duplicate they are**, before a byte is
-  read: two downloads into one directory, on a filesystem that folds, would
-  leave one file and print two success lines.
+  to one** — the same key as §8.2's duplicate rule (NFD of the full case fold
+  of NFD), so `straße.png` with `strasse.png` — **are refused as the duplicate
+  they are**, before a byte is read: two downloads into one directory, on a
+  filesystem that folds, would leave one file and print two success lines.
+  **And the refusal to replace is enforced twice, at two different moments**
+  (§8.2's "it refuses to overwrite an existing file without `--force`"): once
+  as a pre-check of every destination before the first byte is read, and once
+  **by the placement itself, which is what makes the promise race-proof** — the
+  pre-check cannot see a file that arrives while the object is being read, nor
+  what a folding filesystem makes of two different names, so without `--force`
+  the verified temporary is put in place in a way that **fails rather than
+  replaces** (`blobx.GetFileExactly`'s `replace` argument: a hard link, or an
+  `O_EXCL` create plus a copy where the filesystem has no hard links, and
+  `ErrDestExists` either way). The operator's file survives, the download is
+  refused, and the same `--force` wiring is what permits the replace when it is
+  given.
 
   **The two sides are one rule, and the design states it once so the upload
   path cannot produce what the retrieval path refuses.** The upload sanitiser
