@@ -710,6 +710,18 @@ compares the image build record's `FugaroVersion` (`internal/imagecheck/record.g
 "jobs still carry the old image" message is the same idea in prose. Whichever form it takes, it is
 two ordered halves of the seal's own deployment, and neither half is a Terraform change.
 
+**Which release the seal ships in is an owner decision, and not a ruling of the 0.8.0 split.** Left
+unsaid until the release ruling of 2026-10-15 made it a question, it is now stated here and in the
+plan (Phase 3b) so the two agree: **the seal ships with phase 3, in 0.9.0 — unless the owner pulls
+Slice A earlier.** *Slice A is the runner's half* of §7.1 above: the runner that refuses to echo the
+marker's value, registers the key with its redactor as soon as it holds it, unseals before
+`checkNames`, and parses the value strictly in `BackendFromEnv`. It is **runner-first and safe to
+release on its own**, which is why it is the only half that may come earlier: the envelope's version
+byte keeps a plaintext object from a launcher that does not seal yet readable, and no grant changes
+with it. **The launcher-seals half** (the mint writing a sealed object, and the marker's value
+becoming the key) **and the `tokens/` move** — with its prefix condition, in the same change as the
+grant that reads it, Task 3.2's, per D18 and D19 above — are **not earlier than 0.9.0**.
+
 ## The check outline: Check 60, owner-run, sandbox only
 
 None of this is run by this task, and none of it may be run by an agent: every owner-run step in the

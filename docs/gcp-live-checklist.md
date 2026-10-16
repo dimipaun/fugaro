@@ -259,6 +259,31 @@ merged as `a1464c5`). The rows
 for a reservation appear when its plan lands, so the gap between 47 and 57 is
 deliberate, not a missing check.
 
+**Re-read on 2026-10-15, because the project-centric plan's phase 6 changed and
+took one more number.** The **project-centric plan also holds 61** — the folder
+export's own fence (its phase 6, Task 6.5): **a scratch repository the owner
+creates for themselves** — a local bare repository, or one under the owner's own
+personal account, **never the `edgeappinc` workspace the sandbox repository lives
+in** — carries unrelated files, is exported into, and the check asserts they are
+untouched, that a branch which moved is followed onto its new tip without a
+**force**, and that an edit made inside the folder is refused by name. It is
+the first number free past every reservation above it, and the four between 56
+and it are all spoken for: **57 is the compute-backend design's** (above, and
+not this plan's to write), and the other three are other plans': **58 is the
+artifact-runs plan's** (PR #393, **merged to `main` as `fd06635`**, whose row
+and section its own Task 9 writes — this
+register, on `next`, does not carry it yet), **59 is the desktop-console plan's**
+(PR #401, **merged to `main` as `411fc18`** on 2026-10-15 — its own Task 4.3
+writes the number's rows and sections when that plan's phase 4 ships, so `main`'s
+register does not carry it either) and **60 is the budget-token channel's**
+(PR #399, open, and based on `next`). A claim is not settled by being written
+here: the rule
+above stands — **a number is chosen at the moment of merge, and whichever of two
+open claims merges second renumbers itself**, never a number an earlier plan has
+already written. **61's row and section are not written yet either** — the
+project-centric plan's Task 6.5 writes them when phase 6 ships, with its own
+`TestChecklistHasCheck61`; this paragraph reserves the number and nothing else.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
