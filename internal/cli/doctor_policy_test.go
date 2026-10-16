@@ -469,6 +469,40 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Errorf("the marker-below body is not the text requirePolicyRules refuses with:\n got %q\nwant %q", c.Problem, rulesMarkerBelowText(projectpolicy.RulesVersion-1))
 		}
 	})
+
+	t.Run("a marker that is a negative generation", func(t *testing.T) {
+		// A negative marker is an integer, so this check's gen < RulesVersion
+		// branch took it as an old deployment and printed
+		// rulesMarkerBelowText — whose sentence says the installation's rules
+		// predate the policy nodes — while projectpolicy.Read reads the same
+		// node as the hand edit it is (a MarkerError; a launcher's -1 would
+		// otherwise take a published policy out of every run's reach). The
+		// operator told "re-run init --firebase" would redeploy rules that are
+		// not what is wrong and come back to the same marker, and doctor's own
+		// report would contradict the publish refusal on the very same node
+		// (the review finding on this change). One predicate
+		// (projectpolicy.MarkerHandEdited), and the hand edit's own text, which
+		// is what this check already prints for a value that is not an integer.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), -1)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Problem, "cannot be told apart") || !strings.Contains(c.Problem, projectpolicy.PathRulesMarker()) {
+			t.Errorf("the check does not report the hand-edited marker as the MarkerError projectpolicy.Read refuses it as: %+v", c)
+		}
+		if strings.Contains(c.Problem, "below the generation") || strings.Contains(c.Problem, "records generation -1") {
+			t.Errorf("the check reports a hand-edited -1 as an old deployment, a claim about rules nothing read: %+v", c)
+		}
+		if strings.Contains(c.Problem, "older than the marker") {
+			t.Errorf("the hand-edited-marker body reuses the document state's sentence: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+			t.Errorf("the check does not name the fix that writes the marker: %+v", c)
+		}
+	})
 }
 
 // TestDoctorPolicyChecksAreReadOnly: the five checks read the database and

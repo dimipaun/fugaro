@@ -89,11 +89,29 @@ func rulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
 	if err := json.Unmarshal(raw, &gen); err != nil {
 		return 0, &MarkerError{Value: nodeText(raw)}
 	}
-	if gen < 0 {
+	if MarkerHandEdited(gen) {
 		return 0, &MarkerError{Value: nodeText(raw)}
 	}
 	return gen, nil
 }
+
+// MarkerHandEdited reports whether the generation a caller has read off
+// config/limits/policyRules is one no deploy writes, which is the value Read
+// refuses as a MarkerError (rulesGeneration's doc has the argument: a negative
+// generation would otherwise answer "no policy here" and take a project-centric
+// installation's published policy out of every run's reach).
+//
+// It is exported because the marker has three readers, and all three must agree
+// about what a negative generation is: Read, which refuses it, `fugaro project
+// policy publish` (internal/cli's requirePolicyRules), which refuses to publish
+// under it, and doctor's policy-rules-skew check, which reports it. Both of the
+// latter branched on "below RulesVersion" and printed rulesMarkerBelowText —
+// whose sentence claims the installation's rules predate the policy nodes, and
+// sends the operator to redeploy rules that are not what is wrong — while Read
+// read the same node as the hand edit it is (the review finding on this
+// change). One predicate, so a marker cannot be one state to the run and
+// another to the two commands that talk about it.
+func MarkerHandEdited(gen int) bool { return gen < 0 }
 
 // nodeText renders a node for an error message: one line, bounded, so a
 // hand-edited node cannot paste a document into a log.

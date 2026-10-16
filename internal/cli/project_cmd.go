@@ -243,6 +243,16 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	switch {
 	case json.Unmarshal(raw, &gen) != nil:
 		return userErr("%v", &projectpolicy.MarkerError{Value: oneLine(string(raw))})
+	case projectpolicy.MarkerHandEdited(gen):
+		// A negative generation is a hand edit and not an old deployment, and
+		// it is the state Read refuses as a MarkerError (projectpolicy's
+		// MarkerHandEdited): the sentence below says this installation's rules
+		// predate the policy nodes, which a hand-edited -1 does not support —
+		// the rules may be perfectly current, and the operator it sends to
+		// redeploy them would come back to the same node. The one hand edit's
+		// own text, then, from the one predicate (the review finding on this
+		// change).
+		return userErr("%v", &projectpolicy.MarkerError{Value: oneLine(string(raw))})
 	case gen >= projectpolicy.RulesVersion:
 		return nil
 	}

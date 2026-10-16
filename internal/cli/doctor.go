@@ -1678,11 +1678,13 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // A warning, not an error: the fix is the owner's `fugaro init --firebase`
 // and doctor cannot perform it.
 //
-// The same check reports the marker's other wrong value: present and *below*
-// this generation's (see the gen < RulesVersion branch). An absent marker is
-// not one of them — it is generation 0 without a claim, and there is nothing
-// for the rules to be older than; what an absent marker does to a node is
-// doctorPolicyChecks's line to draw.
+// The same check reports the marker's other wrong values: a value that is not a
+// generation this Fugaro may read at all (not an integer, or the negative one no
+// deploy writes — both are Read's MarkerError, and both report its text here)
+// and present-and-*below* this generation's (see the gen < RulesVersion
+// branch). An absent marker is not one of them — it is generation 0 without a
+// claim, and there is nothing for the rules to be older than; what an absent
+// marker does to a node is doctorPolicyChecks's line to draw.
 func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	marker := projectpolicy.PathRulesMarker()
 	var raw json.RawMessage
@@ -1695,7 +1697,16 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		return nil
 	}
 	var gen int
-	if err := json.Unmarshal(raw, &gen); err != nil {
+	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+		// Two values, one state: a node that is not an integer at all, and one
+		// that is a negative integer no deploy writes. Read reads both as a
+		// MarkerError (projectpolicy's MarkerHandEdited carries the argument),
+		// so the report of a marker's wrong value is one text for both here
+		// too. The marker-below branch below is the other state, and its
+		// sentence says the installation's rules predate the policy nodes —
+		// true of an old generation and not of a hand edit, which would send
+		// the operator to redeploy rules that are not what is wrong (the
+		// review finding on this change).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
 			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
