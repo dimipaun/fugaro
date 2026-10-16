@@ -97,6 +97,8 @@ So:
 - `builds/<slug>/` is written by operators and that repository's own build account, which keeps L6's copy rule.
 - `cache/` and `locks/` are written by operators and each repository's own job account.
 
+**Update 2026-10-16 — the project job's account is not the "Job account" row above (phase 3, D4).** The table describes the per-repository job. Phase 3 adds a second kind: one Cloud Run job and one job service account per (profile, provider, Claude account) (`deploy/terraform/gcp/modules/project/`, [project-centric.md](project-centric.md) §4.1), which every repository admitted to that profile runs on. Such an account cannot have a per-slug condition — it is not a repository's account — so its grant is `roles/storage.objectUser` with the whole of `runs/`, `cache/` and `locks/` (`gcp.ProjectBucketCondition`), one clause per prefix and no slug. §10 states what that reaches, in the words of the design's accepted decision D4. An installation whose local config names no profile gets no project job.
+
 ## 4. How to express it (H1 to H5)
 
 **H1: IAM Conditions on the existing bucket (recommended).** Launchers get two grants:
@@ -313,6 +315,19 @@ So the stealth paths of layered-config §11 (items 1, 2 and 6 across repositorie
 
 **A compromised agent inside a run** (the job account) is unchanged. It can write its own repository's `runs/`, `cache/` and `locks/`. So it can poison that repository's cache and plant session files for that repository's follow-ups (existing residuals, [v1.md](v1.md) §6).
 
+**A run of a shared project job reaches the whole profile (phase 3, D4) — a regression of a 0.7.0 property, accepted and documented.** One account serves every repository admitted to its profile, so its grant names no slug and one run's agent can act on another repository's objects, not only its own:
+
+- **Poison another repository's cache** (`cache/<other-slug>/`), which that repository's next run restores into its workspace: cross-repository code execution there, under that repository's secrets.
+- **Forge or steal a lock** (`locks/<other-slug>/`), which is exactly what this document credits 0.7.0 with removing from a launcher's reach (above, "What it can no longer do").
+- **Rewrite another repository's queued `task.json`** before its job reads it: the task, ref and workflow a run executes are read from it.
+
+Two more objects under the same prefixes, which D4's accepted list does not name on its own and which this document states separately:
+
+- **Another queued run's budget token** (`runs/<slug>/<run>/budget-token`, `internal/budget/token/object.go`). It is that run's Realtime Database identity, not a cache entry: a run that reads it can spend against that run's budget record. This is **D13**, ruled by the owner on 2026-10-15: **accepted**, documented beside D4 in [SECURITY.md](../../SECURITY.md), with [budget-token-channel.md](budget-token-channel.md) designing the channel that removes the exposure (still awaiting the owner's approval to implement) and separate profiles as the interim boundary. There is no gate on this task.
+- **Another run's `launch.json` and `result.json`**, which `ls`, `report` and the history rollover read: a run can rewrite what another run is recorded to have been. `CheckRunExecution` (`internal/backend/gcp/run.go`) exists for that reason, and plan Task 3.4 is where it is applied to project jobs.
+
+**The mitigation is the profile.** Repositories that must stay apart — including repositories that must not share a budget identity — are put on different profiles, and a profile is a job, so a profile boundary is a job-service-account boundary. A launcher's own reach is not the measure of this one (D4): a launcher is a person trusted with the installation's jobs, while a run is a coding agent executing a task and a repository's code, and one repository's run is not trusted with its neighbours'. An installation whose config names no profile has no project job and keeps the per-slug grants.
+
 **A compromised build** (a repository's Dockerfile or `image.setup` running in Cloud Build as the build account) is unchanged. It can rewrite its own `builds/<slug>/`, its layer copy included. That copy then steers its own next rebuild, where it already runs code (L6's argument).
 
 **A stolen operator credential is full control of the installation.** Bucket IAM does not limit it. It can:
@@ -379,7 +394,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 
 - Per-repository launcher lists, or per-repository `runs/<slug>/` grants for people.
 - Signing or verifying the project layer, recipes or `task.json` content (a possible later layer of defence against L3).
-- Changing the job, build, history or scheduler accounts' grants.
+- Changing the job, build, history or scheduler accounts' grants. Phase 3's project job accounts are new accounts of a new kind, not a change to these: §10 states their widened grant and D4 accepts it.
 - Changing the state bucket.
 - Any live apply by Claude.
 
