@@ -7,6 +7,11 @@
 // version and nothing else, in `dependencies` and `devDependencies` alike
 // (design section 5.2).
 //
+// It holds one more pin that is not a specifier: `engines.node`, which is the
+// version CI installs for the console job (Task 1.4) and is therefore an exact
+// version here too, with its own table of refusals ("*", "latest", ">=0",
+// ">=22.12.0"). A range there would have been the one float left.
+//
 // The runtime `dependencies` section is one entry long and that entry is
 // asserted by name below: electron-updater, the main process's auto-update
 // client, whose pin Task 4.4 assigns to this task. It is not a renderer
@@ -70,6 +75,64 @@ export function pinViolation(specifier: string): string | null {
   return null
 }
 
+// enginesNodeRE is an exact Node version and nothing else: three dotted numbers,
+// no operator, no wildcard, no tag, no whitespace. It is deliberately narrower
+// than the semver `engines.node` normally carries -- ">=22.12.0" is a perfectly
+// ordinary engines field -- because this field is what CI's `actions/setup-node`
+// installs from (Task 1.4) and a range there means the tests run on whichever
+// Node the range happened to resolve to, which is the float this whole task
+// exists to refuse.
+const enginesNodeRE = /^\d+\.\d+\.\d+$/
+
+/**
+ * enginesNodeViolation says why engines.node is not an exact pin, or null when
+ * it is one. A non-empty string is not enough: "*", "latest", ">=0" and ">=20"
+ * are all non-empty strings, and all four are exactly what a pinned toolchain
+ * must refuse.
+ */
+export function enginesNodeViolation(value: unknown): string | null {
+  if (typeof value !== 'string' || value === '') return 'not a non-empty string'
+  if (value.trim() !== value) return 'padded with whitespace'
+  if (value.includes('*')) return 'a wildcard'
+  if (/(^|[^0-9A-Za-z-])latest([^0-9A-Za-z-]|$)/.test(value)) return 'the "latest" tag'
+  if (!enginesNodeRE.test(value)) return 'not an exact dotted version'
+  return null
+}
+
+describe('the engines.node rule itself', () => {
+  // The probe, mutation by mutation, because the assertion it guards used to be
+  // "engines.node is a non-empty string" -- which "*", "latest" and ">=0" all
+  // satisfied inside the suite whose subject is refusing floats.
+  const refused: ReadonlyArray<readonly [string, string]> = [
+    ['*', 'a wildcard'],
+    ['latest', 'the "latest" tag'],
+    ['>=0', 'not an exact dotted version'],
+    ['>=20', 'not an exact dotted version'],
+    ['>=22.12.0', 'not an exact dotted version'],
+    ['^22.12.0', 'not an exact dotted version'],
+    ['~22.23.3', 'not an exact dotted version'],
+    ['22.x', 'not an exact dotted version'],
+    ['22', 'not an exact dotted version'],
+    ['22.23', 'not an exact dotted version'],
+    ['22.23.3 || 24.0.0', 'not an exact dotted version'],
+    [' 22.23.3', 'padded with whitespace'],
+    ['', 'not a non-empty string'],
+  ]
+
+  it.each(refused)('refuses %s', (value, why) => {
+    expect(enginesNodeViolation(value)).toBe(why)
+  })
+
+  it.each(['22.23.3', '20.0.0', '24.1.0'])('accepts the exact version %s', (value) => {
+    expect(enginesNodeViolation(value)).toBeNull()
+  })
+
+  it('refuses a field that is not a string at all', () => {
+    expect(enginesNodeViolation(undefined)).toBe('not a non-empty string')
+    expect(enginesNodeViolation(22)).toBe('not a non-empty string')
+  })
+})
+
 describe('the pinning rule itself', () => {
   // The probe: a checker that refuses nothing would make the package.json half
   // below pass on a tree of floating ranges, so the checker is shown a table it
@@ -119,17 +182,40 @@ describe('console/package.json', () => {
     expect(pkg.private).toBe(true)
   })
 
-  it('declares the Node the toolchain is pinned to', () => {
+  it('pins the Node the toolchain runs on, exactly', () => {
     // Design section 5.2 and Task 1.4: the console job takes its Node version
-    // from this field, so an absent or empty one is a job that runs on whatever
-    // the runner happens to ship.
-    expect(typeof pkg.engines?.node).toBe('string')
-    expect(String(pkg.engines?.node).trim()).not.toBe('')
+    // from this field, so a field that says "anything" would be a job that runs
+    // on whatever the runner happens to ship -- and this is the one field in
+    // the manifest a reader expects to be a range. It is an exact version here
+    // like every other pin, which the table above proves the checker can tell
+    // apart from a range.
+    const why = enginesNodeViolation(pkg.engines?.node)
+    expect(why, `engines.node is ${JSON.stringify(pkg.engines?.node)}: ${why}`).toBeNull()
   })
 
-  it('carries the two scripts every later task runs', () => {
-    expect(pkg.scripts?.['test:unit']).toBeTruthy()
-    expect(pkg.scripts?.['test:e2e']).toBeTruthy()
+  it('carries the two scripts every later task runs, flags and all', () => {
+    // The commands themselves, not `toBeTruthy()`: the flags ARE the contract.
+    // `playwright test` without `--pass-with-no-tests` exits 1 with "Error: No
+    // tests found" on a tree with no e2e spec -- the state Task 1.4's staged
+    // console workflow runs this script in before Task 1.1 lands the first spec
+    // -- so the flag is what makes the e2e step green rather than red. And
+    // `test:unit` has to be the unit runner over test/unit (the directory vitest
+    // is pointed at), not whatever else a truthy string could be. A later task
+    // that needs a different invocation edits this test deliberately, which is
+    // the point of asserting the string.
+    //
+    // Task 1.1 edits the second string, deliberately: the e2e spec launches the
+    // app Electron loads from package.json's `main` (`dist/main/index.js`), and
+    // `npm run build` is what puts it there, so the script builds first. The
+    // flag stays: a tree with no spec yet is still green.
+    expect(
+      pkg.scripts?.['test:unit'],
+      'test:unit must run vitest over test/unit: it is the command the plan names (Task 1.0) and the one the staged console workflow calls (Task 1.4)',
+    ).toBe('vitest run --dir test/unit')
+    expect(
+      pkg.scripts?.['test:e2e'],
+      'test:e2e must build first (the spec runs what `main` points at, which only `npm run build` writes) and must still pass --pass-with-no-tests, so a tree with no e2e spec stays green',
+    ).toBe('npm run build && playwright test --pass-with-no-tests')
   })
 
   // The runtime dependency set, as an allow-list rather than a prohibition.
