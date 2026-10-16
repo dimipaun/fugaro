@@ -443,8 +443,15 @@ func (r *run) runProbe(ctx context.Context, set artifactSet) (runstore.ProbeResu
 	if err != nil {
 		return skipped, "", err
 	}
-	r.rec.Stage = "probe"
-	r.save(ctx)
+	// The record's stage is deliberately left where the render step saved it
+	// ("render"). The probe is not a stage — no model turn, no timeout of its
+	// own; design §3 says exactly that about the render, and the probe stands
+	// in the same place — and result.json's stage enum is a contract the
+	// schema owns: a value a schema-conformant reader has never heard of
+	// would make a probe that crashed the run a record the reader rejects.
+	// What names the probe in a failed run is the reason ("commands.probe
+	// timed out after 20s"), which is the reader's account of the step.
+	//
 	// A fresh slice rather than append(r.env, …): append writes into r.env's
 	// own backing array when it has room, and the probe's two names would then
 	// be sitting in the array the next caller appends to.

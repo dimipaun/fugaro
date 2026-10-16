@@ -2202,12 +2202,17 @@ func TestTheStagedTypeIsAFunctionOfTheHead(t *testing.T) {
 
 // TestResultJSONCarriesRenderAndArtifacts: the stored record is the whole
 // account of an artifact run — the render step and the files it uploaded,
-// each with the name, size, hash and recorded content type — and carries no
-// probe key, which is the probe step's own field (Task 5).
+// each with the name, size, hash, recorded content type and the probe
+// verdict the run recorded for it. This recipe asks for no probe
+// (outputs.probe is absent, and its default is none), so every artifact
+// carries {"ran": false, "exit_code": -1}: "no probe ran" is stated in the
+// record rather than left as a key a reader would have to interpret
+// (Task 5, plan Review Focus 6 — the earlier shape of this test asserted the
+// opposite, that the key is absent, and moved with the contract).
 //
 // Mutation (write the record before the upload): the artifacts array is
-// empty and this test fails; mutation (record the probe as a false verdict
-// here): the probe key appears.
+// empty and this test fails; mutation (leave the probe key off an artifact
+// when no probe ran): the verdict assertion fails.
 func TestResultJSONCarriesRenderAndArtifacts(t *testing.T) {
 	h := newHarnessFiles(t, renderCfg(t, "", ""),
 		artifactSpec(artifactRecipeYAML("{ globs: [out/*.png] }")),
@@ -2241,8 +2246,12 @@ func TestResultJSONCarriesRenderAndArtifacts(t *testing.T) {
 	if sum, _ := a["sha256"].(string); len(sum) != 64 {
 		t.Fatalf("artifact sha256 = %v", a["sha256"])
 	}
-	if _, ok := a["probe"]; ok {
-		t.Fatalf("the record carries a probe the probe step has not run: %v", a)
+	p, ok := a["probe"].(map[string]any)
+	if !ok {
+		t.Fatalf("the record carries no probe verdict for the artifact: %v", a)
+	}
+	if p["ran"] != false || p["exit_code"] != float64(-1) {
+		t.Fatalf("a recipe that asks for no probe must record {ran: false, exit_code: -1}, got %v", p)
 	}
 	stored, err := h.store.ReadRecord(context.Background())
 	if err != nil {
@@ -2471,6 +2480,17 @@ func TestProbeFailureFailsTheRunAndUploadsNothing(t *testing.T) {
 	}
 	if len(rec.Artifacts) != 0 {
 		t.Fatalf("the record claims %+v", rec.Artifacts)
+	}
+	// The stage a probe failure ends on is the run's own last step, not one
+	// the probe made up: the probe is not a stage (no model turn, no timeout
+	// of its own — design §3's rule about the render), result.json's stage
+	// enum is a contract a schema-conformant reader validates, and what names
+	// the probe is the reason asserted above. The property is enforced in
+	// runProbe's shape — it assigns no stage at all — which is why there is
+	// no mutation to pin here; this line is the guard that keeps it that way
+	// from the record's side.
+	if rec.Stage != "writeback" {
+		t.Fatalf("stage = %q, want the artifact run's own writeback: a failed probe names itself in the reason, never in the stage", rec.Stage)
 	}
 	assertNoUpload(t, h)
 	// The staged file was there to be inspected: the probe's refusal is about
