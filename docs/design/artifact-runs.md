@@ -1574,15 +1574,22 @@ argument, a `fugaro doctor` check, the checkout's git origin as a hard stop,
 **never the `belong` project** (`:1431`), and **every step run by the owner,
 none by an agent** — plus a Restore block. **Seven numbered steps**, each
 preceded by a re-run of the guard block: (1) the sandbox's prerequisites —
-ffmpeg in the image through `image.apt`, one `fugaro image refresh`, and the
-fixture artifact recipe, render script and probe committed to the sandbox;
+ffmpeg in the image through `image.apt`, one `fugaro image build`, and the
+fixture artifact recipe, render script and probe committed to the sandbox
+(`image build` and not `image refresh`: refresh decides on the build record's
+base alone — `refreshVerdict`, `internal/cli/image_refresh_rules.go` — so a
+workflow already built from the pinned base would submit no Cloud Build for a
+config-only change, which is the whole of this step);
 (2) three tiny PNGs in, generated locally, and the launch with three
 `--attach`; (3) a five-second video out — the `render` record, the counters,
 the absence of any push or pull request; (4) `ffprobe` verification through
 `commands.probe` **and** an independent local `ffprobe` of the downloaded
 file; (5) the recorded content type against the object's own (U5); (6) the
 artifact retrieved with a **sha256 match**, and the upload's wall clock
-against `finalize_reserve` (U6); (7) the failure direction, in three
+against `finalize_reserve` (U6, with its own step **6b** for the near-cap
+size: a render-only recipe whose two artifacts are written at exactly
+`outputs.max_bytes`, since step 6's own set is a few megabytes per file and
+never reaches the size U6 asks about); (7) the failure direction, in three
 halves — a probe that must fail the run and upload nothing; an over-*cap* set
 that must refuse cleanly and leave the container alive; and an over-*memory*
 render, which is the one that decides how a killed container looks from outside,

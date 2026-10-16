@@ -56,6 +56,84 @@ func bashBlocks(section string) [][]string {
 	return blocks
 }
 
+// bashFunc returns the body of the shell function name declared in section,
+// from its `name() {` line to the first `}` at column 0 (the way this file's
+// blocks close one). It is how the tests below read one helper's own rules
+// rather than the section at large.
+func bashFunc(t *testing.T, section, name string) string {
+	t.Helper()
+	start := strings.Index(section, "\n"+name+"()")
+	if start < 0 {
+		t.Fatalf("Check 58 does not declare %s()", name)
+	}
+	rest := section[start+1:]
+	if end := strings.Index(rest, "\n}\n"); end >= 0 {
+		return rest[:end+1]
+	}
+	t.Fatalf("Check 58's %s() is never closed by a `}` at column 0", name)
+	return ""
+}
+
+// TestChecklistCheck58PrefixOfFailsClosed pins the one helper the Restore
+// *deletes* with. prefix_of used to be a one-line printf around a command
+// substitution, and that shape has two ways to delete everything:
+//
+//   - `$(ref_of "$1")` swallows ref_of's refusal — a failing substitution
+//     leaves an empty string, and the printf around it still exits 0, so the
+//     caller's `|| continue` never fires;
+//   - an empty run id then makes the prefix `${BUCKET}/runs/`, which is the
+//     whole runs tree of every repository in the bucket, and the Restore's
+//     `gcloud storage rm --recursive` deletes exactly what it is given.
+//
+// Each clause asserted below closes one of those, and each is a mutation that
+// puts the hazard back: drop `|| return 1` and the refusal is swallowed again;
+// drop the run-ID `case` and an empty id builds the whole-tree prefix; drop the
+// ref `case` and only ref_of's own slug check stands between a stray id and a
+// delete.
+func TestChecklistCheck58PrefixOfFailsClosed(t *testing.T) {
+	const path = "../../docs/gcp-live-checklist.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := docSection(t, path, string(data), "## Check 58:")
+	body := bashFunc(t, section, "prefix_of")
+
+	for _, want := range []string{
+		// An empty id is a case this REFUSES, not one that kills the shell
+		// mid-Restore, so the parameter is taken plainly and judged below.
+		"local id=$1 ref",
+		// The id must have task.ValidRunID's exact form — 8 digits, a dash,
+		// 6 digits, a dash, four hex digits. This is the clause an empty id
+		// dies on.
+		"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;",
+		// ref_of's own refusal is CHECKED rather than swallowed.
+		`ref=$(ref_of "$id") || return 1`,
+		// And what comes back must still be a whole `<slug>/<run-id>` under
+		// the sandbox's slug before it becomes a path.
+		`case "$ref" in "${S:?}"-*/"$id") ;;`,
+		`printf '%s/runs/%s/' "${BUCKET:?}" "$ref"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("prefix_of does not carry %q:\n%s", want, body)
+		}
+	}
+	for _, bad := range []string{
+		// The old shape, in either of its spellings: a bare substitution, or
+		// one with no status check.
+		`"$(ref_of`,
+		`$(ref_of "$1")`,
+	} {
+		if strings.Contains(body, bad) {
+			t.Errorf("prefix_of builds its path from an unchecked substitution (%q): a refusal inside one is swallowed and the printf still exits 0", bad)
+		}
+	}
+	// The Restore must still look at prefix_of's status, or the fix is moot.
+	if !strings.Contains(section, `p=$(prefix_of "$id") ||`) {
+		t.Error("Check 58's Restore does not check prefix_of's exit status, so a refusal there cannot stop a delete")
+	}
+}
+
 // TestChecklistHasCheck58 pins Check 58 of docs/gcp-live-checklist.md (the
 // artifact-runs check, design docs/design/artifact-runs.md §3–§9): the row and
 // the heading say it is the owner's to run and never against `belong`, the
@@ -298,9 +376,17 @@ func TestChecklistHasCheck58(t *testing.T) {
 	for i, block := range blocks {
 		for _, line := range block {
 			s := strings.TrimSpace(line)
-			if strings.Contains(s, "gcloud storage rm") {
+			// A comment about deleting is not a delete, and a line that PRINTS
+			// a command for the operator (the leftover-runs branch) spells the
+			// same quotes escaped — `\"${p:?}\"` — so both are read here in
+			// the form they would have when run.
+			probe := strings.ReplaceAll(s, `\"`, `"`)
+			if strings.HasPrefix(probe, "#") {
+				continue
+			}
+			if strings.Contains(probe, "gcloud storage rm") {
 				for _, want := range []string{`"${p:?}"`, `--project="${P:?}"`, "--recursive"} {
-					if !strings.Contains(s, want) {
+					if !strings.Contains(probe, want) {
 						t.Errorf("block %d: %q deletes without %s", i, s, want)
 					}
 				}
@@ -351,6 +437,137 @@ func TestChecklistHasCheck58(t *testing.T) {
 	if !strings.Contains(rows["U6"], "6b") {
 		t.Error("the design's U6 row does not name step 6b, the near-cap upload that settles it")
 	}
+
+	// 9. Guard FIRST, before any side effect. A re-run of a half that already
+	// ran must find that out before it stages, commits and pushes again: with
+	// `step_guard` after the commit, a dirty tree is committed and pushed a
+	// second time before the refusal can fire. Every block that both guards
+	// and writes therefore has to put the guard first, and step 1's own commit
+	// block — guarded by the fresh-attempt rule, in its own block above — has
+	// to say so.
+	guarded := 0
+	for i, block := range blocks {
+		joined := strings.Join(block, "\n")
+		if !strings.Contains(joined, "step_guard ") {
+			continue
+		}
+		guard := strings.Index(joined, "step_guard ")
+		for _, after := range []string{"git add ", "git commit", "git push"} {
+			if j := strings.Index(joined, after); j >= 0 && j < guard {
+				t.Errorf("block %d %ss before `step_guard`: a re-run commits and pushes again before the guard can refuse", i, after)
+			}
+		}
+		if strings.Contains(joined, "git commit") {
+			guarded++
+		}
+	}
+	if guarded == 0 {
+		t.Error("no block in Check 58 both guards a step and commits: the ordering rule above has no subject")
+	}
+	if !strings.Contains(section, "This step's guard is the fresh-attempt rule just above") {
+		t.Error("step 1's commit block does not say which guard precedes it (the fresh-attempt rule)")
+	}
+
+	// 10. The leftover-runs branch. The fresh-attempt rule and step_guard both
+	// send the operator to the Restore for a batch an earlier attempt left
+	// behind — and that is the one case that cannot reach the Restore's own
+	// deletion loop, because the record it would need is gone and the
+	// `rec_has commit_5801` refusal stops the run first. So the branch has to
+	// exist, has to come BEFORE that refusal, and must delete nothing itself:
+	// it lists every run of the batch with the exact one-run command, and the
+	// operator runs those by hand.
+	if !strings.Contains(section, "if ! rec_has commit_5801; then") {
+		t.Error("Check 58's Restore has no leftover-runs branch for a batch whose record is gone")
+	}
+	if branch, refusal := strings.Index(section, "if ! rec_has commit_5801; then"), strings.Index(section, "rec_has commit_5801 ||"); branch < 0 || refusal < 0 || branch > refusal {
+		t.Error("the leftover-runs branch does not come before the `rec_has commit_5801` refusal, so the case it exists for exits before reaching it")
+	}
+	if !strings.Contains(section, "NOTHING IS DELETED BY THIS BLOCK") {
+		t.Error("the leftover-runs branch does not say that it deletes nothing itself")
+	}
+	if rest := blocks[restore]; !strings.Contains(strings.Join(rest, "\n"), `echo "    gcloud storage rm --recursive \"${p:?}\" --project=\"${P:?}\""`) {
+		t.Error("the leftover-runs branch does not print the exact one-run delete command")
+	}
+	// Exactly ONE executed delete in the whole Restore. Every other
+	// `gcloud storage rm` is inside an `echo` — a line for the operator to
+	// read and run deliberately, never a batch-wide delete by guess.
+	executed := 0
+	for _, line := range blocks[restore] {
+		s := strings.TrimSpace(line)
+		if !strings.Contains(s, "gcloud storage rm") || strings.HasPrefix(s, "echo ") {
+			continue
+		}
+		executed++
+	}
+	if executed != 1 {
+		t.Errorf("Check 58's Restore %d `gcloud storage rm` commands, want exactly one (the loop over this attempt's own runs): any other delete must be printed for the operator, not run", executed)
+	}
+
+	// 11. Every block that reads `${p:?}` builds it, and every block that
+	// reads `${REF_OK:?}` recovers it from the record or mints it. This is the
+	// rule step 5 broke: its block expanded `${p:?}` three times with nothing
+	// in the block — or in the blocks it is re-run with — setting `p`.
+	for i, block := range blocks {
+		joined := strings.Join(block, "\n")
+		if strings.Contains(joined, "${p:?}") && !strings.Contains(joined, "p=$(prefix_of") {
+			t.Errorf("block %d reads ${p:?} without building it (`p=$(prefix_of …)`) in the same block", i)
+		}
+	}
+
+	// 12. 7c's caps have to pass the launch gate, which is an arithmetic rule
+	// against the job's memory — not the design's §5.2 prose. The old numbers
+	// (2 GiB of outputs) needed 5 GiB of memory and would have been refused at
+	// launch on the sandbox's own 2Gi job, so the section names the rule, the
+	// function it lives in and the arithmetic of the numbers it uses.
+	for _, want := range []string{
+		"2 × outputs.max_total_bytes + inputs.max_total_bytes",
+		"outputsMemoryProblem",
+		"internal/runner/gate.go",
+		"DefaultInputTotalBytes",
+		"2 × 256 MiB + 1 GiB = 1.5 GiB",
+		"512 MiB at 2Gi",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 58's 7c does not carry %q, so the caps it commits are not shown to pass the memory gate", want)
+		}
+	}
+	if strings.Contains(section, "2147483648` and `max_total_bytes: 2147483648") {
+		t.Error("7c still declares 2 GiB caps, which need 5 GiB of memory and are refused at launch by the sandbox's 2Gi job")
+	}
+
+	// 13. The NOT RUN banner the section opens with, and the design's own
+	// outline of it saying `image build` rather than the `image refresh` the
+	// section no longer uses.
+	if !strings.Contains(section, "**NOT RUN.** Its blocks have been through several review rounds; read the guard and the Restore once more before running it, and run it after 0.8.0 is tagged.") {
+		t.Error("Check 58 does not open with the NOT RUN banner")
+	}
+	outline := designSection(t, "../../docs/design/artifact-runs.md", "## 11. Check 58, in outline")
+	if !strings.Contains(outline, "`fugaro image build`") {
+		t.Error("the design's §11 outline does not name `fugaro image build` as Check 58's step-1 rebuild")
+	}
+	if strings.Contains(outline, "one `fugaro image refresh`") {
+		t.Error("the design's §11 outline still sends Check 58's step 1 to `image refresh`, which never reads the image config")
+	}
+}
+
+// designSection returns the text of doc from the heading that starts with
+// marker up to the next `## ` heading.
+func designSection(t *testing.T, path, marker string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	start := strings.Index(doc, marker)
+	if start < 0 {
+		t.Fatalf("%s has no %q", path, marker)
+	}
+	rest := doc[start:]
+	if end := strings.Index(rest[1:], "\n## "); end >= 0 {
+		return rest[:end+1]
+	}
+	return rest
 }
 
 // TestArtifactRunsDesignSecurityText keeps the design's §8.9 block quote equal
