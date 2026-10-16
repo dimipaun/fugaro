@@ -370,8 +370,16 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 		"a case-variant member name":    `{"Kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
 		"a bad data entry":              `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme"]}`,
 		"an absurd route fee":           `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "route_fee_pct": 51}`,
-		"an alias pattern":              `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
-		"a misspelt policy":             `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
+		// A repeated member name: encoding/json keeps the last one it reads, so
+		// the second allow_data_to decided the entry — ["acme/app"] then ["*"]
+		// decoded as ["*"], every repository, with nothing left in the map to
+		// refuse. The name is read off the document as written
+		// (objectMemberNames) so the repetition is visible, exactly as it is in
+		// `budget`, in a model_prices entry and in the routing switch.
+		"a repeated data list": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"], "allow_data_to": ["*"]}`,
+		"a repeated kind":      `{"kind": "anthropic-compat", "kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"an alias pattern":     `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
+		"a misspelt policy":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
 	} {
 		p, found, err := Decode(providerPolicy(entry))
 		if err == nil || p != nil || !found {
@@ -386,6 +394,13 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 	if _, _, err := Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "Allow_Data_To": null}`)); err == nil ||
 		!strings.Contains(err.Error(), "Allow_Data_To") || !strings.Contains(err.Error(), "allow_data_to") {
 		t.Errorf("the case-variant null list = %v, want a refusal naming both the spelling written and the one to write", err)
+	}
+	// The refusal of a repeated member names the member and says which value
+	// was read: the row above is about the hole (["*"] out of a narrower first
+	// write), this one is about the operator being able to find it.
+	if _, _, err := Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"], "allow_data_to": ["*"]}`)); err == nil ||
+		!strings.Contains(err.Error(), "providers.openrouter") || !strings.Contains(err.Error(), `"allow_data_to"`) || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("a repeated allow_data_to = %v, want a refusal naming the entry and the member written twice", err)
 	}
 	// Two providers may not claim the same model: the run would route to one of
 	// them arbitrarily, and the charge would be whichever one it was.

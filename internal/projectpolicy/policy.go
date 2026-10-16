@@ -456,16 +456,6 @@ var providerMembers = func() []string {
 	return out
 }()
 
-// memberNames is a stable order for error messages (a map's range is random).
-func memberNames(fields map[string]json.RawMessage) []string {
-	names := make([]string, 0, len(fields))
-	for name := range fields {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // spelledMember is the member of a provider entry name is a spelling of: name
 // itself when it is spelled as this Fugaro spells it, the documented spelling
 // when it differs only in case, and "" when no member is known by that name at
@@ -507,32 +497,52 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 			return err
 		}
 		if entry := entries[name]; entry != nil {
+			// The member names are read off the document as written, in its own
+			// order and with a repeated key still visible (objectMemberNames):
+			// decoding the entry into a map keeps only the last of two members
+			// with the same name, so {"allow_data_to": ["acme/app"],
+			// "allow_data_to": ["*"]} decoded as ["*"] — every repository may
+			// send code — and nothing refused it, while the same spelling in
+			// `budget`, in a model_prices entry and in the routing switch is
+			// refused by checkMemberNames. The entry is the block a run is
+			// routed and metered by, and a member this Fugaro reads must not
+			// depend on the order the keys were written in (the review finding
+			// on this change); fugaro.yaml refuses the repeated key too.
+			names, err := objectMemberNames(entry)
+			if err != nil {
+				return fmt.Errorf("projectpolicy: providers.%s: %w", name, err)
+			}
+			seen := map[string]bool{}
+			for _, member := range names {
+				if seen[member] {
+					return fmt.Errorf("projectpolicy: providers.%s names %q twice: encoding/json keeps the last one it reads, so which value this Fugaro reads would depend on the order the keys were written in — write the member once", name, member)
+				}
+				seen[member] = true
+				known := spelledMember(member)
+				if known == member {
+					continue
+				}
+				if known == "" {
+					// Unreachable through Decode: decodeProviders decodes
+					// the entry with DisallowUnknownFields first, so a name
+					// no member answers to is refused there. Kept so this
+					// function holds on its own too.
+					return fmt.Errorf("projectpolicy: providers.%s: unknown field %q", name, member)
+				}
+				// A member name has to be the documented one, because the
+				// checks here read it off the raw document: encoding/json
+				// matches a member to its field case-insensitively, so
+				// "Allow_Data_To": null decoded into the field the tag
+				// names while the null check just below — which looks the
+				// name up as written — never saw it, and the nil slice a
+				// null leaves behind is "every repository". fugaro.yaml
+				// refuses the same spelling (ModelProvider.UnmarshalYAML
+				// compares names exactly), and the node is held to the
+				// config's rules.
+				return fmt.Errorf("projectpolicy: providers.%s.%s: a provider entry's members are spelled as fugaro.yaml spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, and the null spelling of allow_data_to would publish as every repository", name, member, known)
+			}
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(entry, &fields); err == nil {
-				for _, member := range memberNames(fields) {
-					known := spelledMember(member)
-					if known == member {
-						continue
-					}
-					if known == "" {
-						// Unreachable through Decode: decodeProviders decodes
-						// the entry with DisallowUnknownFields first, so a name
-						// no member answers to is refused there. Kept so this
-						// function holds on its own too.
-						return fmt.Errorf("projectpolicy: providers.%s: unknown field %q", name, member)
-					}
-					// A member name has to be the documented one, because the
-					// checks here read it off the raw document: encoding/json
-					// matches a member to its field case-insensitively, so
-					// "Allow_Data_To": null decoded into the field the tag
-					// names while the null check just below — which looks the
-					// name up as written — never saw it, and the nil slice a
-					// null leaves behind is "every repository". fugaro.yaml
-					// refuses the same spelling (ModelProvider.UnmarshalYAML
-					// compares names exactly), and the node is held to the
-					// config's rules.
-					return fmt.Errorf("projectpolicy: providers.%s.%s: a provider entry's members are spelled as fugaro.yaml spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, and the null spelling of allow_data_to would publish as every repository", name, member, known)
-				}
 				if data, ok := fields["allow_data_to"]; ok && IsNull(data) {
 					return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
 				}

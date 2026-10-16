@@ -37,28 +37,43 @@ func TestProviderForSlugDerivesEachKind(t *testing.T) {
 	}
 }
 
-// The remote the run clones from is a launcher's to set, so a remote on
-// another provider's host — the same owner and name is the interesting case —
-// is the one disagreement the run refuses. A remote that names no host this
-// Fugaro knows is not a disagreement: the end-to-end and unit test remotes are
-// local paths or an httptest URL, self-hosted installations are theirs, and
-// any of them is the derived kind's by the launcher's own refusals
-// (internal/infra's repoURL).
-func TestRemoteOfAnotherKind(t *testing.T) {
-	for _, tc := range []struct{ kind, remote, want string }{
-		{"bitbucket", "https://github.com/acme/app.git", "github"},
-		{"github", "https://bitbucket.org/acme/app.git", "bitbucket"},
-		{"github", "git@bitbucket.org:acme/app.git", "bitbucket"},
-		{"github", "https://github.com/acme/app.git", ""},
-		{"github", "git@github.com:acme/app.git", ""},
-		{"github", "/tmp/fixture.git", ""},
-		{"github", "/srv/git/acme/app", ""},
-		{"github", "http://127.0.0.1:8080/acme/app.git", ""},
-		{"github", "https://git.example.com/acme/app.git", ""},
-		{"github", "https://github.com.evil.example/acme/app.git", ""},
+// The host half of the remote binding: the host a remote names, the provider
+// kind that host belongs to, and whether it names a host at all. Three answers,
+// not two, and that is the point: a remote naming no host (a local path, the
+// empty string, a bare "/") is left to the checks that were always there, while
+// a remote naming a host must name the derived kind's — a host no kind owns at
+// all (https://git.example.com/..., https://github.com.evil.example/..., and the
+// httptest URL the fixture would use if it ever carried an execution) is a
+// refusal, not "no disagreement", because the run scopes this repository's git
+// credential to the remote's host (the review finding on this change; the first
+// shape of this check read KindForURL's "" as "unknown, therefore fine").
+func TestRemoteHost(t *testing.T) {
+	for _, tc := range []struct {
+		remote, host, kind string
+		named              bool
+	}{
+		{"https://github.com/acme/app.git", "github.com", "github", true},
+		{"https://bitbucket.org/acme/app.git", "bitbucket.org", "bitbucket", true},
+		{"git@bitbucket.org:acme/app.git", "bitbucket.org", "bitbucket", true},
+		{"git@github.com:acme/app.git", "github.com", "github", true},
+		{"github.com:acme/app.git", "github.com", "github", true},
+		// A host no provider kind owns: another forge, a name that only looks
+		// like github.com, and a loopback address — a real host either way, so
+		// the credential would go to it.
+		{"https://git.example.com/acme/app.git", "git.example.com", "", true},
+		{"https://github.com.evil.example/acme/app.git", "github.com.evil.example", "", true},
+		{"http://127.0.0.1:8080/acme/app.git", "127.0.0.1", "", true},
+		// No host: a local path, an empty remote, a bare "/", and a file URL
+		// (whose "file:/" is a scheme, not an scp-like host and path).
+		{"/tmp/fixture.git", "", "", false},
+		{"/srv/git/acme/app", "", "", false},
+		{"", "", "", false},
+		{"https://github.com/", "github.com", "github", true},
+		{"file:///tmp/web.git", "", "", false},
 	} {
-		if got := remoteOfAnotherKind(tc.kind, tc.remote); got != tc.want {
-			t.Errorf("remoteOfAnotherKind(%q, %q) = %q, want %q", tc.kind, tc.remote, got, tc.want)
+		host, kind, named := remoteHost(tc.remote)
+		if host != tc.host || kind != tc.kind || named != tc.named {
+			t.Errorf("remoteHost(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.remote, host, kind, named, tc.host, tc.kind, tc.named)
 		}
 	}
 }
