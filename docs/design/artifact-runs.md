@@ -579,6 +579,19 @@ write:
    happens **before the caps are checked and before the first byte is
    uploaded**, so a mistyped `--run-id` costs nothing and changes nothing.
 
+   **The round-4 correction: a run id that has already gone is refused too,
+   stored task or not.** The run-id rule above reads `task.json`; a run that
+   started and wrote `task.json` under a checked-in placeholder — or whose task
+   the launcher never got to write — leaves a `launch.json` and no task, and
+   that run is exactly as gone as the adopted one. A launch that then found
+   `prior != nil` (`existingLaunch`) skipped both the attach checks and the
+   upload, and `createTask` wrote a task with no inputs: the user's `--attach`
+   silently did nothing, and the run would run without the files it was
+   promised. So `--attach` refuses whenever the run id already has a
+   `launch.json`, naming the run, whether or not a task was stored: an
+   attachment is uploaded before a run starts, and a run that already started
+   is not one this launch can give files to.
+
    (The upload itself is create-only, and it is create-only on **every**
    backend: `blobx.PutFile` takes an `ifNotExist` argument carrying `Create`'s
    own condition into the streaming write (`internal/blobx/blobx.go:107-127`,
@@ -673,6 +686,25 @@ write:
    The *local* wording is for the case where nothing receives the bytes at all —
    no claiming provider **and** no auth route.
 
+   **The round-4 correction: the launcher opens each path exactly once.**
+   Judging a path (`os.Stat`) and then uploading that path (`PutFile(path)`) are
+   two opens of a name, and a name can be a different file at the second one —
+   the file swapped for a FIFO, a device, or something grown past the cap in the
+   instant between. So `--attach` opens the path once (`blobx.OpenSource`, the
+   `O_NOFOLLOW` open the merged `blobx` grew for exactly this), `fstat`s the
+   **held handle** for every judgement — regular file, per-file cap, set total —
+   and hands **that same handle** to the upload, which bounds the copy by the
+   size it was judged at (`PutFileOpened`, whose copy takes the judged size and
+   refuses a source that no longer matches it). The handle survives a rename or
+   removal of its path, so what was judged is what is uploaded. `--attach` is
+   therefore also the place a **symlink** is refused: `Lstat`, not `Stat`, so a
+   link to a file elsewhere is not silently read and stored under the link's own
+   name — the launch would be uploading a file it never named. And two names
+   that differ only in case are refused here too, on the same rule Task 4
+   applies to a render's outputs (`strings.ToLower`): the runner writes the set
+   into one directory, where `A.png` and `a.png` are one name, so one of the two
+   would be refused — or overwrite the other — only after the bytes were up.
+
 3. **Upload each file to `runs/<slug>/<run>/inputs/<name>`**, hashing it as it
    goes, recording `{name, bytes, sha256}` in the task spec — the plan's
    Interfaces block is authoritative for that record (Task 6), and the content
@@ -691,7 +723,17 @@ write:
    caps **and the same name refusals** again (§8.2), because the task spec is
    text a launcher wrote: a spec that claims 3 files cannot cause 300
    downloads, and a spec whose name is `../../.git/hooks/pre-commit` cannot
-   write one byte outside `inputs/`.
+   write one byte outside `inputs/`. **The name refusals include the case-fold
+   rule** (round 4): a spec naming both `A.png` and `a.png` is refused, because
+   both land in one directory where that is one name.
+   **And `inputs/` is not reused when the checkout already has one** (round 4):
+   the runner writes its files into a directory the repository must not have
+   committed, and a committed non-empty `inputs/` is refused by name rather than
+   merged into or written over — an attached file landing on top of a file the
+   repository committed is the repository's own content being replaced by an
+   attachment, silently, in the directory the run is told to read. (An empty
+   `inputs/` cannot be committed — git does not track empty directories — so a
+   local re-run that left one behind still works.)
 5. **`inputs/` is excluded from git** — the runner writes it into
    `.git/info/exclude` — because an artifact run must never commit a
    screenshot. The plan step's prompt names it, and the environment gains
