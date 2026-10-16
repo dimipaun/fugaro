@@ -18,7 +18,17 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: 'test/e2e',
   testMatch: /\.spec\.ts$/,
-  fullyParallel: true,
+  // `false` is Playwright's default, and it is named here because it is a
+  // contract with the specs rather than a tuning knob: with `true`, Playwright
+  // spreads ONE file's tests across workers, which runs that file's
+  // `beforeAll` once per worker. `test/e2e/security.spec.ts` launches Electron
+  // in `beforeAll` and states the opposite invariant -- one shared app and page
+  // for the file, tests in order in a worker, the `activate` test last because
+  // it is the one that takes the window down -- so `true` would launch one
+  // Electron per worker and quietly break that ordering. Parallelism across
+  // files is unaffected: it is workers, not this flag, that decides how many
+  // spec files run at once.
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'line' : 'list',

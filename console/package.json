@@ -6,9 +6,11 @@
   "engines": {
     "node": "22.23.3"
   },
+  "main": "dist/main/index.js",
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "test:unit": "vitest run --dir test/unit",
-    "test:e2e": "playwright test --pass-with-no-tests",
+    "test:e2e": "npm run build && playwright test --pass-with-no-tests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

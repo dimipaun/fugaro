@@ -196,21 +196,26 @@ describe('console/package.json', () => {
   it('carries the two scripts every later task runs, flags and all', () => {
     // The commands themselves, not `toBeTruthy()`: the flags ARE the contract.
     // `playwright test` without `--pass-with-no-tests` exits 1 with "Error: No
-    // tests found" on a tree with no e2e spec -- which is this tree, and the
-    // state Task 1.4's staged console workflow runs this script in before Task
-    // 1.1 lands the first spec -- so the flag is what makes the e2e step green
-    // rather than red. And `test:unit` has to be the unit runner over test/unit
-    // (the directory vitest is pointed at), not whatever else a truthy string
-    // could be. A later task that needs a different invocation edits this test
-    // deliberately, which is the point of asserting the string.
+    // tests found" on a tree with no e2e spec -- the state Task 1.4's staged
+    // console workflow runs this script in before Task 1.1 lands the first spec
+    // -- so the flag is what makes the e2e step green rather than red. And
+    // `test:unit` has to be the unit runner over test/unit (the directory vitest
+    // is pointed at), not whatever else a truthy string could be. A later task
+    // that needs a different invocation edits this test deliberately, which is
+    // the point of asserting the string.
+    //
+    // Task 1.1 edits the second string, deliberately: the e2e spec launches the
+    // app Electron loads from package.json's `main` (`dist/main/index.js`), and
+    // `npm run build` is what puts it there, so the script builds first. The
+    // flag stays: a tree with no spec yet is still green.
     expect(
       pkg.scripts?.['test:unit'],
       'test:unit must run vitest over test/unit: it is the command the plan names (Task 1.0) and the one the staged console workflow calls (Task 1.4)',
     ).toBe('vitest run --dir test/unit')
     expect(
       pkg.scripts?.['test:e2e'],
-      'test:e2e must pass --pass-with-no-tests: plain `playwright test` exits 1 with "Error: No tests found" until Task 1.1 adds the first spec, and the staged console workflow runs this script on every pull request',
-    ).toBe('playwright test --pass-with-no-tests')
+      'test:e2e must build first (the spec runs what `main` points at, which only `npm run build` writes) and must still pass --pass-with-no-tests, so a tree with no e2e spec stays green',
+    ).toBe('npm run build && playwright test --pass-with-no-tests')
   })
 
   // The runtime dependency set, as an allow-list rather than a prohibition.
