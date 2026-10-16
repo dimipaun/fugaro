@@ -83,6 +83,13 @@ func TestSplitRemote(t *testing.T) {
 		{"file:/tmp/web.git", "file", "/tmp/web.git", true},
 		{"/tmp/web.git", "", "", false},
 		{"/tmp/acme:web.git", "", "", false},
+		// The userinfo is optional and may be the whole of what is in front
+		// of the colon: "@:path" and "git@:path" name no host at all, and
+		// "no host" is the answer here — the same one a URL without an
+		// authority gets, which is what this function's doc promises (the
+		// review finding on this change).
+		{"@:web.git", "", "", false},
+		{"git@:web.git", "", "", false},
 		{"", "", "", false},
 	} {
 		host, path, ok := SplitRemote(tc.remote)

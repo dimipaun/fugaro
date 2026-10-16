@@ -285,7 +285,10 @@ func DraftTitle(title string, draft bool) string {
 // ("git@github.com:acme/app.git").
 //
 // ok is false for a remote that names no host at all: a local path, an empty
-// string, a URL with an empty authority.
+// string, a URL with an empty authority, and the scp-like forms whose
+// userinfo is the whole of what stands in front of the colon ("@:path",
+// "git@:path") — every one of them answers this function's own question the
+// same way, rather than leaving an empty host for a caller to notice.
 //
 // ok is *also* false for a URL with an authority this parser cannot read,
 // because url.Parse refuses the string in a spelling git accepts — a backslash
@@ -320,8 +323,16 @@ func SplitRemote(remote string) (host, path string, ok bool) {
 	if host, rest, ok := strings.Cut(remote, ":"); ok && host != "" &&
 		!strings.Contains(host, "/") && !strings.HasPrefix(rest, "//") {
 		if _, h, ok := strings.Cut(host, "@"); ok {
-			// scp-like with userinfo: user@host:path.
+			// scp-like with userinfo: user@host:path. The userinfo may be the
+			// whole of it ("@host:path", and "git@:path"), which names no host
+			// at all: ok is false for that, as it is for a URL without an
+			// authority, rather than true with an empty host a caller has to
+			// remember to refuse for itself (the review finding on this
+			// change).
 			host = h
+		}
+		if host == "" {
+			return "", "", false
 		}
 		return host, rest, true
 	}
