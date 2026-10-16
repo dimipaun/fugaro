@@ -1531,3 +1531,50 @@ func TestValidateResolvesARouteIDTheSameWayARunDoes(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateTellsAViaDirectSwitchFromAnUnnamedModel is the review of this
+// task's resolution line. `routing.claude` with `via: direct` and a model in
+// its list is a legal spelling of the switch — "this ID stays direct while the
+// ones I route go through a provider" — and the resolver answers RouteDirect
+// for it exactly as it does for a model the list does not name (D1b's default).
+// validate printed "no switch names it: D1b's default" for both, which is
+// untrue of the first: the switch does name it, and it says so. doctor already
+// tells the two apart ("-> direct (via: ...)"), and both commands read one
+// switch, so the two lines cannot say different things about it.
+//
+// The pin here is claude-sonnet-5-5 with a claude-haiku-4-5 background pin, so
+// one run of validate carries both states at once and each line is asserted
+// against the model it is about.
+func TestValidateTellsAViaDirectSwitchFromAnUnnamedModel(t *testing.T) {
+	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
+	pinned := func() string {
+		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
+	}
+	// The switch names the coder pin and says it stays direct.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, "routing:\n  claude:\n    via: direct\n    models: [claude-sonnet-5-5]\n")
+	_, errOut, err := execute(t, "validate", pinned())
+	if err != nil {
+		t.Fatalf("validate: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> direct (via: direct)") {
+		t.Errorf("a switch naming the pin with via: direct is not printed as the switch's own line:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "claude-sonnet-5-5 -> direct (no switch names it") {
+		t.Errorf("the switch names claude-sonnet-5-5, and the line says it does not:\n%s", errOut)
+	}
+	// The switch names one pin and not the other: each line is about its own
+	// model, and the state each one is in.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, "routing:\n  claude:\n    via: direct\n    models: [claude-haiku-4-5]\n")
+	_, errOut, err = execute(t, "validate", pinned())
+	if err != nil {
+		t.Fatalf("validate: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-haiku-4-5 -> direct (via: direct)") {
+		t.Errorf("the named pin's line is missing or wrong:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> direct (no switch names it: D1b's default)") {
+		t.Errorf("the unnamed pin's line is missing or wrong:\n%s", errOut)
+	}
+}

@@ -374,13 +374,25 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 				"%s unresolved offline: the switch is the operator's project config for %s and this command has none selected (design §11), so a resolution it cannot read is not printed as one; `fugaro doctor` reads the published policy and prints it", p.model, cfg.Project)})
 			continue
 		}
-		route, sent, ok := config.RoutingClaudeFor(claudeSwitchOf(lc.Routing), p.model, claimed)
+		sw := claudeSwitchOf(lc.Routing)
+		route, sent, ok := config.RoutingClaudeFor(sw, p.model, claimed)
 		switch {
 		case !ok:
 			problems = append(problems, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
 				"%s is named by routing.claude.models and does not resolve: no single provider entry claims it with allow_data_to written, and a call the switch names has no direct fall-back (D1b, design §6.2). config.CheckRouting refuses that switch at load; fix the list or the claim", p.model)})
 		case route == config.RouteDirect:
-			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
+			// Two states resolve to direct and they are not the same sentence:
+			// the switch may name this model with via: direct — a legal
+			// spelling, and the one way to say "this ID stays direct" while
+			// routing others — or it may not name the model at all, which is
+			// D1b's default. This printed "no switch names it" for both, which
+			// is wrong about the first: doctor prints the named case as
+			// "-> direct (via: %s)", and the two commands read one switch.
+			if sw.Names(p.model) {
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (via: %s)", p.model, sw.ViaValue())})
+			} else {
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
+			}
 			if why := claudeDirectRefusal(cfg.Agent, p, claimed, lc.Providers, repo, mode); why != "" {
 				problems = append(problems, config.Problem{Path: p.path, Message: why})
 			}
