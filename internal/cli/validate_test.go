@@ -1355,3 +1355,65 @@ func TestNeedsAnthropicKeySeesTheLayerClaim(t *testing.T) {
 		t.Error("the layer claims every pin: the run never calls Anthropic, so init must not ask for a key")
 	}
 }
+
+// claudeRouteYAML is a project config that routes one Claude model through an
+// OpenRouter entry: the allow-list names the canonical ID (claude-sonnet-5-5),
+// the route claims the route's own IDs, and the route's row is priced under
+// model_prices (the shipped catalog has no Claude row).
+const claudeRouteYAML = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"]
+    allow_data_to: ["acme/app"]
+model_prices:
+  "anthropic/claude-sonnet-5.5": { input_per_m: 1, output_per_m: 2 }
+  "anthropic/claude-opus-5.5": { input_per_m: 1, output_per_m: 2 }
+`
+
+// TestValidateResolvesARouteIDTheSameWayARunDoes (review finding on this
+// change): a repository's pin written as the route's own ID
+// (anthropic/claude-sonnet-5.5) is admitted by the owner's allow-list only when
+// the routing switch actually routes that canonical ID. The allow-list names
+// claude-sonnet-5-5, so admitting the route's spelling on its own would let a
+// repository pin a model the owner never routed — past both the list and the
+// switch — and charge the direct Anthropic table for it.
+//
+// validate resolves the route exactly as the run does (config.CheckAllowed
+// takes the switch and the routes), which is the wiring this asserts: the
+// switch is the operator's own local config, read offline.
+//
+// Hand mutation this fails on: dropping the switch argument at the validate
+// call site (passing nil), which admits every anthropic/<id> pin.
+func TestValidateResolvesARouteIDTheSameWayARunDoes(t *testing.T) {
+	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+	agent := "  auth: api-key\n  model: " + routed
+	for _, tc := range []struct {
+		name    string
+		routing string
+		ok      bool
+	}{
+		{"the switch routes the canonical ID", "routing: { claude: { via: openrouter, models: [" + canonical + "] } }\n", true},
+		{"the switch routes another model", "routing: { claude: { via: openrouter, models: [claude-opus-5-5] } }\n", false},
+		{"no switch at all", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := budgetProject(t, "budget: { mode: enforce, per_run_usd: 5, allowed_models: ["+canonical+"] }\n"+claudeRouteYAML+tc.routing, agent)
+			out, err := validateProblems(t, path)
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("a routed Claude pin was refused: %v\n%s", err, out)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d (%v), want %d: a route ID the switch does not route was admitted\n%s", ExitCode(err), err, ExitUserError, out)
+			}
+			if !strings.Contains(out, "agent.models.coder") || !strings.Contains(out, routed) {
+				t.Fatalf("the refusal does not name the pin the switch did not route:\n%s", out)
+			}
+		})
+	}
+}
