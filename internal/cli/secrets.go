@@ -367,8 +367,25 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	// over the shared copy -- the copy other repositories mount and this one
 	// may not.
 	repo := ""
-	if !cmd.Flags().Changed("repo") {
-		repo = checkoutRepoOrEmpty(ctx)
+	if !o.projectWide && !cmd.Flags().Changed("repo") {
+		// A checkout whose origin cannot be read is a refusal here rather than
+		// a "" (checkoutRepoOrEmpty): the scope decision below must be made
+		// with the repository in hand, and "" is the answer for having none.
+		//
+		// The checkout is consulted only when it decides something (code
+		// review, medium): --project-wide names the container outright — the
+		// project's own, which no repository owns — and --repo names the
+		// repository, so neither wants the checkout's answer, and asking for it
+		// anyway refused `--project-wide` for a repository the flag never
+		// needed from a checkout with no origin (or one whose origin names no
+		// owner/name, an ssh mirror or a nested path). A person in that
+		// checkout still has both explicit spellings, which is what the
+		// refusal below tells them.
+		r, err := checkoutRepoOrEmpty(ctx)
+		if err != nil {
+			return err
+		}
+		repo = r
 	}
 	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name, repo)) {
 		return secretsSetProjectWide(cmd, env, o, name)
@@ -502,19 +519,41 @@ func projectScopeName(lc *localcfg.Config, name, repo string) bool {
 	return false
 }
 
-// checkoutRepoOrEmpty is the checkout's repository for a decision that must
-// not fail outside one: checkoutRepo's answer, or "" when there is no
-// checkout, or when its origin does not name owner/name. It is the repository
-// argument the scope decision is made with, best effort: a command with a
-// repository in hand must decide with it, and one without must not fail here --
-// resolveSecretRepo is what reports a missing repository, and only on the path
-// that needs one.
-func checkoutRepoOrEmpty(ctx context.Context) string {
+// checkoutRepoOrEmpty is the checkout's repository for the scope decision:
+// checkoutRepo's answer when the working directory is inside a checkout, and
+// "" when it is not one at all. The two are not the same case, and folding
+// them together was the bug (code review, high): with no checkout there is no
+// repository whose own copy the person could have meant, so the repo-unaware
+// answer is the honest one; standing *in* a checkout whose origin cannot be
+// read is a repository in hand that this command failed to name — the
+// repo-unaware branch of projectScopeName answers for the list rather than for
+// that repository, and the bare command then wrote the shared copy (a D2-swept
+// name, or a project_secrets entry listing someone) from a checkout the entry
+// may exclude, over the value the repositories it lists mount. That case
+// refuses, and names both spellings that say where the value goes without a
+// checkout's help: --repo OWNER/NAME, and --project-wide for the project's own
+// copy (an explicit scope statement, which needs no repository at all — the
+// caller consults the checkout only where it decides something).
+//
+// resolveSecretRepo reports a missing repository too, and only on the path that
+// needs one.
+func checkoutRepoOrEmpty(ctx context.Context) (string, error) {
+	if !inCheckout(ctx) {
+		return "", nil
+	}
 	repo, err := checkoutRepo(ctx, ".")
 	if err != nil {
-		return ""
+		return "", userErr("this is a checkout whose origin cannot be read (%v), so which repository the value is stored for is unknown: pass --repo <owner/name>, or store the project's copy instead with --project-wide, both of which say where the value goes without the checkout's help — or add an origin here with 'git remote add origin <url>'", err)
 	}
-	return repo
+	return repo, nil
+}
+
+// inCheckout reports whether the working directory is inside a git checkout at
+// all, which is what tells "no repository in hand" from "a repository this
+// command cannot name". A git that is missing or refused fails it too, and that
+// is the same answer: nothing here can name a repository.
+func inCheckout(ctx context.Context) bool {
+	return gitCmd(ctx, ".", "rev-parse", "--show-toplevel").Run() == nil
 }
 
 // projectSecretRefusal is the one message every --project-wide eligibility

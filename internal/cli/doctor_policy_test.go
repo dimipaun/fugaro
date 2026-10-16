@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -325,6 +326,67 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 	})
 
+	t.Run("the deployed rules cannot be read", func(t *testing.T) {
+		// A read that failed is not "the rules are current". doctorRulesSkew
+		// returned nothing when db.Rules errored, so an installation whose
+		// deployed rules the credentials cannot read was reported as one with
+		// no skew at all — and the policy-published line went on to say that
+		// a policy is published, with the document that carries it never read.
+		// Every other unreadable read in this file is a note (doctorPolicyChecks's
+		// "the project policy could not be read"), never silence.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.DenyRead(".settings/rules")
+		checks := doctorChecksByID(t)
+		c, ok := checks["policy-rules-skew"]
+		if !ok {
+			t.Fatalf("policy-rules-skew did not fire though the deployed rules could not be read, so doctor reported the installation as having no skew: %+v", checks)
+		}
+		if c.Severity != "info" {
+			t.Errorf("policy-rules-skew carries severity %q for an unreadable read, want the info note this file's other unreadable reads carry: %+v", c.Severity, c)
+		}
+		if !strings.Contains(c.Problem, "could not be read") || !strings.Contains(c.Problem, "whether") {
+			t.Errorf("the note does not say that the deployed rules were not read and what that leaves unknown: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "credentials") {
+			t.Errorf("the note does not name what to check: %+v", c)
+		}
+		// The note is about the read that failed, not a claim that the rules
+		// are stale: doctor cannot tell the two apart here, and sending the
+		// operator to redeploy on a credential problem would be a guess.
+		if strings.Contains(c.Problem, "older than the marker") {
+			t.Errorf("the unreadable-rules note claims the deployed rules are stale: %+v", c)
+		}
+	})
+
+	t.Run("this Fugaro cannot generate its own rules", func(t *testing.T) {
+		// The comparison needs the rules this binary would write, and
+		// doctorRulesSkew folded a failure to generate them into its no-skew
+		// branch: nothing was reported, which is indistinguishable from a check
+		// that was made and found the deployed rules current, while
+		// internal/infra (firebasedb.go) propagates the same error. The
+		// template is embedded, so no test can break it from the outside —
+		// rulesGenerate is the seam.
+		doctorPolicyRig(t, doctorPolicy(nil), "")
+		rulesGenerate = func() ([]byte, error) { return nil, errors.New("the template is not JSON") }
+		t.Cleanup(func() { rulesGenerate = rules.Generate })
+		checks := doctorChecksByID(t)
+		c, ok := checks["policy-rules-skew"]
+		if !ok {
+			t.Fatalf("policy-rules-skew did not fire though this Fugaro could not generate the rules it would compare against, so doctor reported the installation as having no skew: %+v", checks)
+		}
+		if c.Severity != "info" {
+			t.Errorf("policy-rules-skew carries severity %q, want the info note this file's other checks-that-could-not-be-made carry: %+v", c.Severity, c)
+		}
+		if !strings.Contains(c.Problem, "could not be generated") || !strings.Contains(c.Problem, "whether") {
+			t.Errorf("the note does not say that the rules could not be generated and what that leaves unknown: %+v", c)
+		}
+		// It is not the skew: the deployed rules were read and were not
+		// compared, so the operator must not be sent to redeploy them.
+		if strings.Contains(c.Problem, "older than the marker") {
+			t.Errorf("the note claims the deployed rules are stale: %+v", c)
+		}
+	})
+
 	t.Run("rules newer than this Fugaro", func(t *testing.T) {
 		// The other direction, and the review of PR #402's point: a marker above
 		// this binary's RulesVersion was written by a *newer* Fugaro, so the
@@ -340,8 +402,20 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
 		}
 		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion+1)) ||
-			!strings.Contains(c.Problem, "newer than this Fugaro") {
-			t.Errorf("the check does not say the deployed rules are newer than this binary: %+v", c)
+			!strings.Contains(c.Problem, "a newer Fugaro deployed them") {
+			t.Errorf("the check does not say the deployed rules are a newer Fugaro's: %+v", c)
+		}
+		// Not the claim this check used to make. "the deployed rules are newer
+		// than this Fugaro, which cannot read a project policy written under
+		// them" is the opposite of projectpolicy.Read, which takes a marker at
+		// or above its own generation as deployed — so a run under these rules
+		// does read the published policy, and the operator told otherwise looks
+		// for a node that is being read.
+		if strings.Contains(c.Problem, "cannot read a project policy") {
+			t.Errorf("the check says the policy under newer rules is unreadable, which is the opposite of what projectpolicy.Read does: %+v", c)
+		}
+		if !strings.Contains(c.Problem, "is read") {
+			t.Errorf("the check does not say the policy under newer rules is read: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "upgrade Fugaro") {
 			t.Errorf("the check does not name the fix that does not downgrade: %+v", c)
@@ -373,6 +447,9 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion-1)) {
 			t.Errorf("the check does not name the generation the marker records: %+v", c)
 		}
+		if !strings.Contains(c.Problem, "below the generation") || !strings.Contains(c.Problem, "publishing one is refused") {
+			t.Errorf("the check does not say the marker is below the generation a policy is read under: %+v", c)
+		}
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
@@ -383,6 +460,13 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// contradiction (the review of PR #402).
 		if strings.Contains(c.Problem, "the deployed rules are older than the marker") {
 			t.Errorf("the marker-below body reuses the marker-current state's sentence: %+v", c)
+		}
+		// And it is the very sentence the publish refuses with, not a second
+		// wording of the same state: doctor reporting one text while the
+		// refusal prints another is how the two drifted apart in the first
+		// place.
+		if c.Problem != rulesMarkerBelowText(projectpolicy.RulesVersion-1) {
+			t.Errorf("the marker-below body is not the text requirePolicyRules refuses with:\n got %q\nwant %q", c.Problem, rulesMarkerBelowText(projectpolicy.RulesVersion-1))
 		}
 	})
 }

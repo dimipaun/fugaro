@@ -120,6 +120,15 @@ func ValidPattern(pattern string) error {
 	if len(segs) < 3 {
 		return fmt.Errorf("pattern %q must name a provider, an owner and a repository (as in \"github/acme/app\" or \"github/acme/*\")", pattern)
 	}
+	// There is deliberately no cap on the segment count above that floor: a
+	// repository path may nest (task.CanonicalRepo admits "acme/group/app", and
+	// this package's TestCanonical pins Canonical("bitbucket", "acme/group/app")
+	// as valid), and MatchRepo compares segment against segment, so
+	// "bitbucket/acme/group/app" admits exactly that repository. A cap of three
+	// refused an entry that does admit one, and Decode applies this function to
+	// a node the run reads: a published entry of that shape would have become
+	// unreadable and halted every run of the project (the review finding on
+	// this change).
 	stars := 0
 	for i, s := range segs {
 		if s == "" {

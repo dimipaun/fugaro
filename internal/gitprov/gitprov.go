@@ -285,7 +285,10 @@ func DraftTitle(title string, draft bool) string {
 // ("git@github.com:acme/app.git").
 //
 // ok is false for a remote that names no host at all: a local path, an empty
-// string, a URL with an empty authority.
+// string, a URL with an empty authority, and the scp-like forms whose
+// userinfo is the whole of what stands in front of the colon ("@:path",
+// "git@:path") — every one of them answers this function's own question the
+// same way, rather than leaving an empty host for a caller to notice.
 //
 // ok is *also* false for a URL with an authority this parser cannot read,
 // because url.Parse refuses the string in a spelling git accepts — a backslash
@@ -320,8 +323,16 @@ func SplitRemote(remote string) (host, path string, ok bool) {
 	if host, rest, ok := strings.Cut(remote, ":"); ok && host != "" &&
 		!strings.Contains(host, "/") && !strings.HasPrefix(rest, "//") {
 		if _, h, ok := strings.Cut(host, "@"); ok {
-			// scp-like with userinfo: user@host:path.
+			// scp-like with userinfo: user@host:path. The userinfo may be the
+			// whole of it ("@host:path", and "git@:path"), which names no host
+			// at all: ok is false for that, as it is for a URL without an
+			// authority, rather than true with an empty host a caller has to
+			// remember to refuse for itself (the review finding on this
+			// change).
 			host = h
+		}
+		if host == "" {
+			return "", "", false
 		}
 		return host, rest, true
 	}
@@ -402,6 +413,22 @@ func KindForHost(host string) string {
 func KindForURL(remote string) string {
 	host, _, _ := SplitRemote(remote)
 	return KindForHost(host)
+}
+
+// TrimRepoPath trims the punctuation a remote path carries for being part of a
+// URL off the path SplitRemote or SplitRemoteRaw returned: exactly one leading
+// and one trailing "/", never more. "https://github.com/acme/app.git/" is the
+// same remote as the path without the last "/", and the leading one is the
+// URL's own separator. Anything else is left exactly as written: an empty
+// segment (https://github.com//acme/app.git) is not punctuation, and it is
+// what the launcher's rule (internal/infra's repoURL) and the run's admission
+// (internal/runner's remoteRepoPath) both compare their repository against —
+// one function, so the two cannot read one remote two ways, which they did
+// (the review finding on this change): the launcher trimmed every leading and
+// trailing "/" and accepted a URL the admission's one-per-side trim refused,
+// deploying a job that refused every run.
+func TrimRepoPath(p string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
 }
 
 // SplitRepo splits "owner/name" into its two parts.

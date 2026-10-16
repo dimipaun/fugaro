@@ -172,6 +172,54 @@ func remoteHost(remote string) (host, kind string, named bool) {
 	return "", "", false
 }
 
+// remoteEndpoint reads the scheme and the port off a remote written as a URL —
+// a scheme, "//" and an authority — as written rather than as url.Parse reads
+// it, so this and the helpers above read one remote one way (SplitRemoteRaw
+// makes the same cut, for the same reason). endpoint is false for every other
+// remote: the scp-like form ("git@host:owner/name"), a local path, a bare host,
+// and a "scheme://" with nothing after it, none of which names an http(s)
+// endpoint for a credential to be scoped to at all.
+//
+// The two answers are the half of a run's git credential scope that is not the
+// host: internal/gitops' CredentialURL scopes the credential to scheme + "://" +
+// the authority, with no allow-list of its own, so these are where the token
+// goes. The launcher's rule about a repository URL is the same three clauses
+// (internal/infra's repoURL refuses one that is not https, off the provider's
+// host, with a port), and what was compared before this was the host alone
+// (remoteHost, above) — an http:// remote on the provider's own host, and an
+// https:// one naming a port, were admitted, with the credential sent in
+// cleartext or to an endpoint the provider does not serve (the review finding
+// on this change).
+func remoteEndpoint(remote string) (scheme, port string, endpoint bool) {
+	scheme, rest, cut := strings.Cut(remote, ":")
+	if !cut || scheme == "" || strings.ContainsAny(scheme, "/\\") || !strings.HasPrefix(rest, "//") {
+		return "", "", false
+	}
+	authority := rest[2:]
+	if i := strings.IndexAny(authority, "/?#"); i >= 0 {
+		authority = authority[:i]
+	}
+	if i := strings.LastIndex(authority, "@"); i >= 0 {
+		// The userinfo, where one is written: git and curl end it at the last
+		// "@" of the authority, so what follows is the host and the port.
+		authority = authority[i+1:]
+	}
+	if authority == "" {
+		return "", "", false
+	}
+	host := authority
+	if strings.HasPrefix(authority, "[") {
+		// An IPv6 literal: its own colons are the address's, and a port is
+		// what follows the "]".
+		if i := strings.Index(authority, "]"); i >= 0 {
+			host = authority[:i+1]
+		}
+	} else if i := strings.LastIndex(authority, ":"); i >= 0 {
+		host = authority[:i]
+	}
+	return scheme, strings.TrimPrefix(authority[len(host):], ":"), true
+}
+
 // remoteRepoPath is the path a git remote URL names — the part where the
 // repository goes — and whether the remote names one at all: named is false
 // for a local path, a bare host, and a path with nothing in it (a bare "/"),
@@ -221,8 +269,11 @@ func remoteRepoPath(remote string) (string, bool) {
 	// without the last one. Anything else is left exactly as written, so an
 	// empty segment ("github.com//acme/app") reaches the refusal below instead
 	// of being normalized away — normalizing is what a reader of the URL would
-	// do and git may not.
-	p = strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
+	// do and git may not. The trim is gitprov.TrimRepoPath, which the
+	// launcher's rule for a repository URL asks too (internal/infra's repoURL):
+	// one function, or the launcher accepts a URL the run then refuses (the
+	// review finding on this change).
+	p = gitprov.TrimRepoPath(p)
 	if p == "" {
 		return "", false
 	}
@@ -268,7 +319,11 @@ func repoNamedByRemote(remote string) (string, bool, error) {
 
 // remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
 // its host alone, anything else as the URL without its userinfo, its query and
-// its fragment. Deps.Remote is a launcher's to set and a remote URL may carry a
+// its fragment — including a remote url.Parse reads as a plain path, with no
+// scheme and no host, which is the shape a hand-written remote takes
+// (token@host/repo.git: the "@" is still where git and curl end the userinfo,
+// whether or not there is a scheme in front of it). Deps.Remote is a launcher's
+// to set and a remote URL may carry a
 // credential in any of the three — https://user:token@host/repo.git,
 // https://host/repo.git?access_token=SECRET (the shape Bitbucket's forge URLs
 // use), and the same in a fragment — and what a refusal quotes should carry
@@ -300,11 +355,63 @@ func remoteDisplay(remote string) string {
 		return host
 	}
 	if err == nil {
-		u.User = nil
-		u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
-		return u.String()
+		// A string url.Parse read and found no host in, and that neither split
+		// branch answers for: a plain path as far as the parse is concerned,
+		// which is what a remote written without a scheme looks like
+		// (token@host/repo.git, or pw@host). u.String() returns such a string
+		// verbatim — u.User is nil, because the parse never saw an authority —
+		// so quoting it here is exactly the refusal this function exists to
+		// prevent. The "@" that ends the userinfo is the authority's last
+		// (remoteSplitUserinfo says why), and what follows it is what may be
+		// quoted; the query and the fragment go with the userinfo, for the
+		// reason the URL branch drops them.
+		head, _, _ := strings.Cut(remote, "#")
+		head, _, _ = strings.Cut(head, "?")
+		_, rest, ok := remoteSplitUserinfo(head)
+		if ok {
+			if rest == "" {
+				return "the remote"
+			}
+			return rest
+		}
+		return head
 	}
 	return "the remote"
+}
+
+// remoteSplitUserinfo splits a remote with its query and fragment already cut
+// off at the end of its userinfo: userinfo is what the authority's start and
+// its last "@" enclose, rest is everything after that "@", and ok says whether
+// there was one at all. The "@" is the authority's last because that is where
+// git and curl end the userinfo — a password may hold one, and
+// https://user:a@b@host/repo.git is a credential whose halves a cut at the
+// first "@" splits into a registered fragment and a quoted tail (the review
+// finding on this change). The authority ends at the first "/", so an "@" in
+// the path is no authority's: read from the first "@" of
+// https://host/p@x, the authority looked like "host/p@x" and registered
+// "host/p", which is the host and the head of the path, a credential in
+// neither spelling.
+//
+// A remote with no "//" has its authority at the start of the string: the
+// scp-like form (git@host:owner/name.git) and the scheme-less one
+// (token@host/repo.git) both write the userinfo in front of the whole thing.
+func remoteSplitUserinfo(head string) (userinfo, rest string, ok bool) {
+	off := 0
+	if i := strings.Index(head, "//"); i >= 0 {
+		off = i + 2
+	}
+	authority := head[off:]
+	if i := strings.Index(authority, "/"); i >= 0 {
+		authority = authority[:i]
+	}
+	i := strings.LastIndex(authority, "@")
+	if i < 0 {
+		return "", "", false
+	}
+	// The rest keeps whatever followed the authority — the path, usually —
+	// because the display quotes the host's own string (host/repo.git for a
+	// remote written without a scheme), not the host alone.
+	return authority[:i], authority[i+1:] + head[off+len(authority):], true
 }
 
 // remoteSecretParams are the query parameters a git remote URL carries a
@@ -376,29 +483,38 @@ func (r *run) addRemoteSecrets(remote string) {
 	if u.RawFragment != u.Fragment {
 		r.addRemoteSecretParams(u.Fragment)
 	}
+	// And the userinfo as the remote was written, because the parse above is
+	// lossy in exactly the place a credential sits: url.Parse decodes what it
+	// read, and u.User.String() re-encodes it — https://x-token-auth:t%6fk@host
+	// comes back as x-token-auth:tok — while git prints the URL it was handed,
+	// escapes and all. The decoded spelling alone leaves "t%6fk" in every line
+	// git writes about that remote (the review finding on this change); this
+	// path, the one an unparseable remote already took, is the raw spelling.
+	r.addRemoteSecretUserinfoRaw(remote)
 }
 
 // addRemoteSecretRaw reads the three places off a remote url.Parse refuses, as
 // the string was written: the fragment, the query, and the userinfo ahead of
-// the first "@". The cuts are the ones a URL is written with — "?" opens the
+// the last "@". The cuts are the ones a URL is written with — "?" opens the
 // query, "#" the fragment — and both parts are handed to the same parameter
 // parsing the parsed path uses, so a credential-named parameter and a bare
 // token are registered the same way either way.
 //
-// The userinfo is everything in front of the first "@" of the authority, with
-// the "//" of a scheme cut off when there is one; a remote with no "@" has no
-// userinfo to register. An unparseable remote may hold an "@" in its path as
-// well (https://host/acme@app.git), and that part is registered too: the
-// parse that would have told the two apart is the one that failed, and
-// registering a substring that was never a credential costs a redaction while
-// missing one costs the credential. An scp-like remote's "git@" is the
+// The userinfo is read as git reads it rather than as an authority is
+// delimited (addRemoteSecretUserinfoGitRaw has the reading and the shapes that
+// made it a separate one); a remote with no "@" has no userinfo to register.
+// An unparseable remote may hold an "@" in its path as well
+// (https://host/acme@app.git), and that part is registered too: the parse that
+// would have told the two apart is the one that failed, and registering a
+// substring that was never a credential costs a redaction while missing one
+// costs the credential. An scp-like remote's "git@" is the
 // anonymous user every forge writes, and is skipped as it is on the parsed
 // path; a "name:value" userinfo registers the value and the pair, for the
 // reason the parsed path does.
 //
-// Only the spelling as written is registered here: this path exists because
-// url.Parse refused the string, so there is no decoded spelling to be had, and
-// the spelling git echoes back is the one the remote was written with.
+// Only the spelling as written is registered here: the parse that would have
+// given the decoded one is the one that failed, and the spelling git echoes
+// back is the one the remote was written with.
 func (r *run) addRemoteSecretRaw(remote string) {
 	head, frag, hasFrag := strings.Cut(remote, "#")
 	head, query, hasQuery := strings.Cut(head, "?")
@@ -408,15 +524,41 @@ func (r *run) addRemoteSecretRaw(remote string) {
 	if hasFrag {
 		r.addRemoteSecretParams(frag)
 	}
-	authority := head
-	if i := strings.Index(authority, "//"); i >= 0 {
-		authority = authority[i+2:]
+	r.addRemoteSecretUserinfoGitRaw(head)
+}
+
+// addRemoteSecretUserinfoGitRaw registers the userinfo the way git reads it
+// off a remote url.Parse refused: the text in front of the last "@" of the
+// string, with the query and the fragment already cut off and the "//" of a
+// scheme removed — no other cut, because the shape that defeated the parse is
+// the one where the authority ends somewhere else than the first "/" says. A
+// password holding a "/" is exactly that shape
+// (https://user:ghp_a/b@github.com/acme/app.git: git connects to github.com
+// and hands over the whole password), and the authority-scoped cut
+// (remoteSplitUserinfo) ends the authority inside it, which would leave a
+// credential git is still handed in no list at all. Reading the whole head
+// registers the path as userinfo for the shapes that are not that one
+// (https://host/acme@app.git), which is the trade addRemoteSecretRaw's doc
+// makes: a redaction too many costs nothing, a credential missed costs
+// everything.
+func (r *run) addRemoteSecretUserinfoGitRaw(head string) {
+	rest := head
+	if i := strings.Index(rest, "//"); i >= 0 {
+		rest = rest[i+2:]
 	}
-	at := strings.Index(authority, "@")
+	at := strings.LastIndex(rest, "@")
 	if at < 0 {
 		return
 	}
-	userinfo := authority[:at]
+	r.addUserinfoSecret(rest[:at])
+}
+
+// addUserinfoSecret registers one userinfo as a credential: the password
+// alone and the "name:value" pair for a userinfo that carries one, and the
+// whole of it for one that does not, unless it is a name the forges put in
+// front of a token (remoteAnonymousUsers) — none of those is a secret, and
+// registering one would redact it out of every line the run publishes.
+func (r *run) addUserinfoSecret(userinfo string) {
 	if _, pw, ok := strings.Cut(userinfo, ":"); ok {
 		r.addSecret(pw)
 		r.addSecret(userinfo)
@@ -425,6 +567,26 @@ func (r *run) addRemoteSecretRaw(remote string) {
 	if userinfo != "" && !remoteAnonymousUsers[strings.ToLower(userinfo)] {
 		r.addSecret(userinfo)
 	}
+}
+
+// addRemoteSecretUserinfoRaw registers the userinfo of remote as it was
+// written, for the paths that hold the string rather than a parse of it: the
+// one url.Parse refused, and the one it read but decoded (its u.User.String()
+// re-encodes what it read, so a password written with escapes comes back
+// spelled differently — addRemoteSecrets's own call says why that matters).
+// remote is the whole string here or the query- and fragment-less head of one;
+// cutting the two off is what keeps a token in a query from being read as a
+// password in front of an "@" that is not an authority's. The authority and
+// the "@" that ends its userinfo are remoteSplitUserinfo's to find, so this
+// registers the same text remoteDisplay drops from the same string.
+func (r *run) addRemoteSecretUserinfoRaw(remote string) {
+	head, _, _ := strings.Cut(remote, "#")
+	head, _, _ = strings.Cut(head, "?")
+	userinfo, _, ok := remoteSplitUserinfo(head)
+	if !ok {
+		return
+	}
+	r.addUserinfoSecret(userinfo)
 }
 
 // addRemoteSecretParams registers the value of every parameter in raw — a
@@ -489,9 +651,13 @@ func (r *run) addBareRemoteSecret(field string) {
 // admissionCheck admits the repository this run was launched for, before any
 // git credential exists and before the clone (plan task 1.5): the run's slug
 // and its repository must agree, and the project's policy, when it has
-// published one, must have the repository on its allow-list. A run with no
-// Cloud Run execution is not checked: the binding exists because a job's
-// identity is what an admission rests on (R2-9).
+// published one, must have the repository on its allow-list. A local
+// invocation is not checked: the binding exists because a job's identity is
+// what an admission rests on (R2-9), and `fugaro exec --task-file` has none to
+// bind. Deps.Local is what says so, and it is the invocation's own answer, not
+// a missing marker: a process that carries no Cloud Run execution and is not
+// local either — one no backend claims, the shape an edited job environment
+// takes — is in the cloud and is checked.
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
 // provider is opened, so no git credential is requested and nothing has been
@@ -534,10 +700,24 @@ func (r *run) addBareRemoteSecret(field string) {
 // "empty means deny": an installation that has not published a policy admits
 // exactly what it always did.
 func (r *run) admissionCheck(ctx context.Context) error {
-	if r.d.Execution == "" {
-		// No Cloud Run execution: no job identity to bind to, so no binding
-		// (R2-9). fugaro exec --provider fake, a local run and the end-to-end
-		// tests keep the path they have always had.
+	if r.d.Local && r.d.Execution == "" {
+		// A local invocation is the one platform this binding does not apply
+		// to (R2-9): `fugaro exec --task-file`, the file-backed fake provider
+		// and the end-to-end tests keep the path they have always had. The
+		// skip needs *both* halves, and the second is what the first shape of
+		// this guard got wrong (the review finding on this change): reading
+		// the absence of a Cloud Run execution name as "local" exempted a
+		// process no backend claims — Local's zero value means the cloud
+		// (runner.go), and a job whose environment was edited after launch
+		// carries no execution name either — from everything below, the
+		// slug↔task binding, the remote's host and the policy's allow-list,
+		// with the git credential still scoped to whatever remote that
+		// environment named. A process the invocation did not name local does
+		// not reach here whatever its Execution says: the two are resolved
+		// together by the CLI (exec.go's execPlatform, Local only where no
+		// platform claims the process), so the pair Local = true with an
+		// execution name is a contradiction of the fixtures' making, and
+		// checking it is the fail-closed direction.
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)
@@ -596,6 +776,47 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		}
 		return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 			remoteDisplay(remote), hostKind, slug, repo, kind, RemoteEnv)
+	}
+	// The endpoint the remote names, and not only its host: what this run's git
+	// credential is scoped to is scheme://host[:port] (internal/gitops'
+	// CredentialURL, which has no allow-list of its own), so a remote on the
+	// provider's own host over http has this repository's credential sent in
+	// cleartext, and one naming a port has it sent to an endpoint the provider
+	// does not serve. Both agree with the slug by host and by owner/name —
+	// gitprov.KindForURL reads the host and nothing else — so nothing above
+	// sees them (the review finding on this change). The launcher writes
+	// neither: internal/infra's repoURL refuses a repository URL that is not
+	// https, on the provider's host, with no port, before it deploys anything,
+	// and internal/backend/gcp's CheckRepoURL the same for a build. So a
+	// launcher-deployed job cannot carry one and a job environment edited after
+	// launch — the case this whole check exists for — can, which is why this
+	// refuses rather than skipping. A remote naming no URL at all (the
+	// scp-like form, a local path) is not this check's: it names no endpoint
+	// for a credential to be scoped to.
+	//
+	// Only the two schemes a credential is scoped to are this check's: gitops'
+	// CredentialURL answers "" for everything that is not http or https, so an
+	// ssh:// remote — the URL spelling of the scp-like form above, which this
+	// check passes because remoteEndpoint answers endpoint = false for it
+	// (git@github.com:acme/app.git) — has no credential to send anywhere. The
+	// first shape of this check refused every other scheme, which read one
+	// remote two ways by the way it was written: an ssh spellings' pair got one
+	// answer from the scp-like branch and the opposite from this one, on a
+	// premise ("the credential sent in cleartext") that does not hold where no
+	// credential is scoped at all (the review finding on this change). The
+	// refusal reads the scheme off the string rather than off CredentialURL's
+	// own parse, so a spelling url.Parse refuses is still refused here.
+	if scheme, port, endpoint := remoteEndpoint(remote); endpoint {
+		switch strings.ToLower(scheme) {
+		case "http":
+			return fmt.Errorf("the run would clone from %s, which is written over %s and not https: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change where its git credential is sent — and the run scopes this repository's git credential to the remote's endpoint (internal/gitops' CredentialURL, which has no allow-list of its own), so an http:// remote has the provider's credential for %s sent in cleartext over a connection nothing authenticates, while the launcher writes no other scheme (internal/infra's repoURL refuses one before it deploys anything) — so the run stops before any git credential is requested",
+				remoteDisplay(remote), scheme, RemoteEnv, repo)
+		case "https":
+			if port != "" {
+				return fmt.Errorf("the run would clone from %s, whose authority names the port %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change where its git credential is sent — and the run scopes this repository's git credential to the remote's endpoint (internal/gitops' CredentialURL, which has no allow-list of its own), so the credential for %s would go to the endpoint that port names and not to the one the launcher wrote, while the launcher writes no port at all (internal/infra's repoURL refuses a repository URL with one before it deploys anything) — so the run stops before any git credential is requested",
+					remoteDisplay(remote), port, RemoteEnv, repo)
+			}
+		}
 	}
 	named, namedOK, namedErr := repoNamedByRemote(remote)
 	if namedOK || namedErr != nil {

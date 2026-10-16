@@ -1,10 +1,16 @@
 package runner
 
 import (
+	"context"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
 
+	"gocloud.dev/blob/memblob"
+
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -85,6 +91,58 @@ func TestRemoteHost(t *testing.T) {
 		host, kind, named := remoteHost(tc.remote)
 		if host != tc.host || kind != tc.kind || named != tc.named {
 			t.Errorf("remoteHost(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.remote, host, kind, named, tc.host, tc.kind, tc.named)
+		}
+	}
+}
+
+// The endpoint half of the remote binding: the scheme and the port a run's git
+// credential would be scoped to (internal/gitops' CredentialURL is scheme +
+// "://" + the authority), read off the remote as git hands it to the
+// credential helper rather than as url.Parse reads it. A remote that names no
+// URL at all answers false: it names no endpoint for a credential to go to, and
+// the shape it does name is gitprov's question, read the same way here as in
+// SplitRemoteRaw (the cut at "//", the userinfo ending at the last "@" of the
+// authority).
+func TestRemoteEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		remote, scheme, port string
+		endpoint             bool
+	}{
+		{"https://github.com/acme/app.git", "https", "", true},
+		{"https://github.com/", "https", "", true},
+		// The two the check exists for: the credential's endpoint is not the
+		// launcher's.
+		{"http://github.com/acme/app.git", "http", "", true},
+		{"https://github.com:8443/acme/app.git", "https", "8443", true},
+		{"http://github.com:80/acme/app.git", "http", "80", true},
+		// The userinfo is not the host, and it is not the port: what is read
+		// off here is what follows the last "@", where git and curl end it.
+		{"https://x:token@github.com/acme/app.git", "https", "", true},
+		{"https://x:token@github.com:8443/acme/app.git", "https", "8443", true},
+		{"https://x-token-auth:t%6fk@github.com/repo.git", "https", "", true},
+		// An IPv6 literal's own colons are the address's; a port is what
+		// follows the "]".
+		{"https://[2001:db8::1]/acme/app.git", "https", "", true},
+		{"https://[2001:db8::1]:8443/acme/app.git", "https", "8443", true},
+		// The query and the fragment are not the authority, and the path is
+		// where the authority ends.
+		{"https://github.com/acme/app.git?access_token=x", "https", "", true},
+		{"https://github.com:8443", "https", "8443", true},
+		{"https://github.com", "https", "", true},
+		// No URL: the scp-like form (its colon is git's separator, and what
+		// follows is not "//"), a local path, a bare host, an empty remote, a
+		// file URL (nothing after its "//"), and a Windows path.
+		{"git@github.com:acme/app.git", "", "", false},
+		{"github.com:acme/app.git", "", "", false},
+		{"/tmp/fixture.git", "", "", false},
+		{"", "", "", false},
+		{"github.com", "", "", false},
+		{"file:///tmp/web.git", "", "", false},
+		{"C:\\src\\app", "", "", false},
+	} {
+		scheme, port, endpoint := remoteEndpoint(tc.remote)
+		if scheme != tc.scheme || port != tc.port || endpoint != tc.endpoint {
+			t.Errorf("remoteEndpoint(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.remote, scheme, port, endpoint, tc.scheme, tc.port, tc.endpoint)
 		}
 	}
 }
@@ -274,12 +332,36 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		// cannot read is dropped like any other (u.Query() is what would
 		// report it, and addRemoteSecrets ignores that).
 		{"https://github.com/acme/app.git?access_token=%zz", "https://github.com/acme/app.git"},
+		// A remote with no scheme and no host as url.Parse reads it — a plain
+		// path — where the "@" is still where git and curl end the userinfo:
+		// a launcher that wrote a token in front of a host without a scheme
+		// (the shape a hand-written remote takes) must not have it quoted back
+		// in a refusal. The scp-like form's own userinfo is already gone (the
+		// branches above quote the host alone), and this is the one shape that
+		// fell through them.
+		{"tok@host/repo.git", "host/repo.git"},
+		{"glpat-secret@host/repo.git?access_token=ATBBsecret", "host/repo.git"},
+		{"glpat-secret@host", "host"},
+		// The userinfo ends at the last "@" of the authority, where git and
+		// curl end it, and the authority ends at the first "/": a password
+		// that itself holds an "@" is quoted back in full by a display that
+		// cut at the first one (the tail of the credential, "en@host/repo.git"
+		// here), and an "@" in the path is not the userinfo's to begin with
+		// (the review finding on this change). The path stays in the display
+		// of a remote written without a scheme, so the last "@" is what this
+		// cuts at rather than the host alone.
+		{"tok@en@host/repo.git", "host/repo.git"},
+		{"tok@en@host", "host"},
+		{"https://host/p@x", "https://host/p@x"},
 	} {
 		got := remoteDisplay(tc.in)
 		if got != tc.want {
 			t.Errorf("remoteDisplay(%q) = %q, want %q", tc.in, got, tc.want)
 		}
-		for _, secret := range []string{"glpat-secret", "ATBBsecret", "tok", "x:glpat-secret"} {
+		// "en" is the tail of the credential in the "tok@en@host/repo.git"
+		// case below: the part a display that cut the userinfo at the first
+		// "@" would still quote.
+		for _, secret := range []string{"glpat-secret", "ATBBsecret", "tok", "en", "x:glpat-secret"} {
 			if strings.Contains(got, secret) {
 				t.Errorf("remoteDisplay(%q) = %q quotes %q", tc.in, got, secret)
 			}
@@ -315,6 +397,27 @@ func TestAddRemoteSecretsRegistersWhatARemoteCanCarryACredentialIn(t *testing.T)
 		{remote: "git@github.com:acme/app.git#glpat-secret", want: []string{"glpat-secret"}, absent: []string{"git"}},
 		{remote: "https://user:ghp_a/b@github.com/acme/app.git", want: []string{"ghp_a/b", "user:ghp_a/b"}, absent: []string{"user"}},
 		{remote: "https://user:pa%zz@github.com/acme/app.git", want: []string{"pa%zz"}},
+		// A password whose escapes url.Parse decodes happily: the parsed path
+		// registers the decoded spelling (Go re-encodes the userinfo it read),
+		// and git prints the URL it was handed, escapes and all, so the raw
+		// spelling is registered too — "%6f" is "o", and a redactor holding
+		// only "tok" would leave "t%6fk" in the line verbatim.
+		{remote: "https://x-token-auth:t%6fk@github.com/acme/app.git", want: []string{"tok", "t%6fk", "x-token-auth:tok", "x-token-auth:t%6fk"}, absent: []string{"x-token-auth"}},
+		// The same credential without a scheme: url.Parse reads the whole
+		// remote as a path, so the parsed path registers nothing at all and
+		// the userinfo is only there as written.
+		{remote: "tok@host/repo.git", want: []string{"tok"}, absent: []string{"host", "repo.git"}},
+		// The userinfo is the text between the authority's start and its last
+		// "@", as curl and git read it, so a credential holding one is
+		// registered whole: cutting at the first "@" registered the head of it
+		// ("tok") and left "en" of "tok@en" in every line git writes about the
+		// remote (the review finding on this change). The authority ends at
+		// the first "/", so an "@" in the path is no authority's: reading
+		// https://host/p@x from the first "@" registered "host/p", which is
+		// the host and the head of the path, a credential in neither spelling.
+		{remote: "tok@en@host/repo.git", want: []string{"tok@en"}, absent: []string{"host", "repo.git"}},
+		{remote: "https://host/p@x", absent: []string{"host/p", "p@x"}},
+		{remote: "x-token-auth:t%6fk@bitbucket.org/acme/app.git", want: []string{"t%6fk", "x-token-auth:t%6fk"}, absent: []string{"x-token-auth", "acme/app"}},
 		{remote: "https://git@github.com/acme/app.git", absent: []string{"git"}},
 		{remote: "https://x-access-token@bitbucket.org/acme/app.git", absent: []string{"x-access-token"}},
 		{remote: "git@github.com:acme/app.git", absent: []string{"git", "acme/app"}},
@@ -386,6 +489,54 @@ func TestProviderForSlugRefusesNoMatchAndAmbiguity(t *testing.T) {
 		jobProviderKinds = []string{"github", "github"}
 		if got, ok := providerForSlug(slug, "acme/app"); ok {
 			t.Fatalf("a slug two kinds produce was admitted as %q", got)
+		}
+	})
+}
+
+// The admission check's scope is the run's platform, not the presence of an
+// execution name: Deps.Local's zero value means the cloud (runner.go), so a
+// process whose environment carries no Cloud Run execution and no local
+// provenance is the one case a launcher can produce by editing a job — and it
+// is the case the check exists for, not an exemption from it. Reading the
+// absent execution as "local" let a process no backend claims skip the whole
+// binding: the slug↔repository agreement, the remote's host and the policy's
+// allow-list, with the git credential still handed to whatever remote the
+// environment named.
+func TestAdmissionCheckRefusesARunNoBackendClaims(t *testing.T) {
+	ctx := context.Background()
+	b := memblob.OpenBucket(nil)
+	defer b.Close()
+	slug, err := task.Slug("bitbucket", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := runstore.Open(b, slug, "20260926-221530-abcd")
+	newRun := func(d Deps) *run {
+		d.Store, d.Bucket = store, blobx.Wrap(b)
+		if d.Log == nil {
+			d.Log = slog.New(slog.DiscardHandler)
+		}
+		return &run{d: d, spec: &task.Spec{Version: 1, RunID: "20260926-221530-abcd", Repo: "acme/app", Ref: "main", Task: "Add a feature"}}
+	}
+
+	t.Run("in the cloud, no execution", func(t *testing.T) {
+		// Deps.Local unset: the cloud. Execution empty: the job environment
+		// cannot say which execution this is. The slug is another
+		// repository's, so the binding has something to refuse.
+		err := newRun(Deps{}).admissionCheck(ctx)
+		if err == nil {
+			t.Fatal("a run no backend claims passed the admission check")
+		}
+		if !strings.Contains(err.Error(), "not the slug of the repository") {
+			t.Fatalf("err = %v, want the slug/repository refusal", err)
+		}
+	})
+
+	t.Run("local", func(t *testing.T) {
+		// A local invocation is the one platform the binding does not apply
+		// to (R2-9): fugaro exec --task-file keeps the path it always had.
+		if err := newRun(Deps{Local: true}).admissionCheck(ctx); err != nil {
+			t.Fatalf("a local run was refused: %v", err)
 		}
 	})
 }

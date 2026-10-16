@@ -691,6 +691,17 @@ func (f *RTDB) settingsRules(w http.ResponseWriter, r *http.Request, body []byte
 	defer f.mu.Unlock()
 	switch r.Method {
 	case http.MethodGet:
+		// DenyRead is honored here too. The rules document is not part of the
+		// data tree, so a read of it is served before the branch above that
+		// consults the deny list — but a real rule can refuse it (reading
+		// /.settings/rules is what the admin credential is for), and doctor
+		// has a state for a rules read that fails.
+		for _, d := range f.denyRead {
+			if touches(".settings/rules", d) {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
+				return
+			}
+		}
 		if f.rules == nil {
 			writeJSON(w, http.StatusOK, map[string]any{"rules": map[string]any{".read": false, ".write": false}})
 			return

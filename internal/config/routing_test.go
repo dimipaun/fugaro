@@ -253,6 +253,54 @@ func TestRoutingRefusesAModelTwoRoutesClaim(t *testing.T) {
 	}
 }
 
+// TestRoutingRefusesAProviderNamedDirect: the resolver answers with a provider
+// entry's own name as the route, and RouteDirect ("direct") is the resolver's
+// value for the direct route — so an entry named direct makes "the route this
+// call takes" and "calls go direct" one string, and the consumers that tell the
+// two apart by comparing the route with RouteDirect (internal/runner's routing
+// check, internal/config's pin admission, allowed) read a routed model as
+// unrouted: the run halts at bootstrap with "this run cannot resolve its
+// route", naming a cause that is not the real one. The name passed every check
+// there was — providerNameRE accepts it, the loader has no reserved-name rule,
+// CheckRouting judged the switch by the claim alone — so nothing refused it
+// before this (the review finding on this change).
+func TestRoutingRefusesAProviderNamedDirect(t *testing.T) {
+	switchOn := &Routing{Claude: &RoutingClaude{Via: RouteOpenRouter, Models: []string{canonicalClaude}}}
+	named := map[string]ModelProvider{RouteDirect: claudeRoute([]string{"*"})}
+	got := problemsText(CheckRouting(switchOn, named, "routing"))
+	for _, want := range []string{"routing.claude.models", canonicalClaude, RouteDirect, "Rename the provider entry"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("problems = %q, want %q: the refusal has to name the entry and the remedy", got, want)
+		}
+	}
+	if route, sent, ok := RoutingClaudeFor(switchOn.Claude, canonicalClaude, named); ok || route != "" || sent != "" {
+		t.Errorf("RoutingClaudeFor = (%q, %q, %v), want no resolution: a route that is the direct route's own name must not be answered with", route, sent, ok)
+	}
+	// The other via words are not reserved: the resolver never returns one as
+	// the route, so a provider entry may be called openrouter (a fixture's own
+	// provider is) or auto, and a route by either name is a route.
+	for _, name := range []string{RouteOpenRouter, RouteAuto} {
+		one := map[string]ModelProvider{name: claudeRoute([]string{"*"})}
+		if ps := CheckRouting(switchOn, one, "routing"); len(ps) != 0 {
+			t.Errorf("a provider named %s: problems = %s, want none", name, problemsText(ps))
+		}
+		if route, _, ok := RoutingClaudeFor(switchOn.Claude, canonicalClaude, one); !ok || route != name {
+			t.Errorf("a provider named %s: RoutingClaudeFor route = %q, ok = %v, want %q", name, route, ok, name)
+		}
+	}
+	// The name is refused where it would be a call's route, not everywhere: a
+	// switch that routes nothing (via: direct) is untouched by an entry by that
+	// name, and so is a switch whose list does not name the model the entry
+	// claims.
+	direct := &Routing{Claude: &RoutingClaude{Via: RouteDirect, Models: []string{canonicalClaude}}}
+	if ps := CheckRouting(direct, named, "routing"); len(ps) != 0 {
+		t.Errorf("via: direct beside a provider named %s: problems = %s, want none — nothing is routed through it", RouteDirect, problemsText(ps))
+	}
+	if route, sent, ok := RoutingClaudeFor(direct.Claude, canonicalClaude, named); !ok || route != RouteDirect || sent != canonicalClaude {
+		t.Errorf("via: direct beside a provider named %s: RoutingClaudeFor = (%q, %q, %v), want the direct route", RouteDirect, route, sent, ok)
+	}
+}
+
 // TestRoutingHasOneResolver: the spelling that answers "which route does this
 // Claude model take?" — the "anthropic/" vendor prefix a route entry's claim
 // carries — is written in code in exactly four files, each of which uses it as
