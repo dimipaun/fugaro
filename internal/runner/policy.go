@@ -153,11 +153,12 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// decides whether the switch has anything to act on at all — is read off
 	// r.spend: applied before it, every run would look like a run with the
 	// gateway off, and the switch would silently never take effect (the
-	// critical finding of this PR's review). The gap between here and
-	// checkBudget (runner.go, right after this returns) is the window in
-	// which nothing has read a pin yet: planOf above took no model, and the
-	// price table this function built is keyed by the routes and the catalog
-	// rather than by the pins.
+	// critical finding of this PR's review). Nothing between here and the
+	// loop reads a pin: the price table this function built is keyed by the
+	// routes and the catalog rather than by the pins, and the plan — the one
+	// decision that *is* read off a pin, through Agent.FirstLineOn — is
+	// derived by the caller after this returns, so it sees the pins the
+	// switch produced rather than the ones it replaced.
 	if err := r.applyRouting(pp, found); err != nil {
 		return err
 	}

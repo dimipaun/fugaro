@@ -971,11 +971,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
-	plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
-	if err := checkPlan(plan); err != nil {
-		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
-	}
-	r.plan = plan
 	r.gateSteps = checkGateSteps(rcp)
 	if err := checkGateCommands(r.gateSteps, wf.Commands, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
@@ -1026,6 +1021,23 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
 	}
+	// The plan is derived here, *after* the policy: the routing switch is
+	// applied inside resolvePolicy and rewrites the pins the plan's
+	// first-line decision is read off — Agent.FirstLineOn asks whether the
+	// coder's model is claimed by a route and the reviewer's is not — so a
+	// plan derived before it would answer from the pins the switch replaced.
+	// Concretely, with `agent.first_line_review: auto` and a switch that
+	// routes only the coder, the canonical coder pin is unclaimed before the
+	// rewrite and claimed after it, and the earlier order silently dropped the
+	// cheap first-line loop of exactly the runs a switch routed (the review
+	// finding on this change). Nothing between here and the loop reads the
+	// plan, so deriving it here changes nothing else, and the steps' rounds
+	// and the trailing-review check are the same derivation as before.
+	plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
+	if err := checkPlan(plan); err != nil {
+		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+	}
+	r.plan = plan
 	// The run's Firebase identity, the shared caps and the kill switches:
 	// a halt here is outcome none (nothing is locked, pushed or opened).
 	if err := r.startBudgetBackend(ctx); err != nil {

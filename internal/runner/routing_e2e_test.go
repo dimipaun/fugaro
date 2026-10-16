@@ -183,6 +183,65 @@ func TestRoutedClaudePinEndToEnd(t *testing.T) {
 	}
 }
 
+// TestRoutedSwitchKeepsTheFirstLineLoop: the case the two fixtures above hid.
+// Both set first_line_review: off, so neither could see that the run's plan is
+// derived from the pins *before* the routing switch rewrites them
+// (internal/runner/runner.go), and that the cheap first-line loop is therefore
+// decided by an Agent.FirstLineOn answer about models the switch had not
+// touched yet.
+//
+// With first_line_review: auto, FirstLineOn is "the coder's model is claimed by
+// a route and the reviewer's is not" (Agent.FirstLineOn). Here the switch names
+// the coder's Claude ID alone: the reviewer keeps an ID no route claims, so the
+// answer is true — but only after the rewrite. Before it the coder still carries
+// the canonical claude-sonnet-5-5, which no route entry claims (the claim is
+// anthropic/claude-sonnet-5.5), so the derived plan dropped the first-line step
+// and exactly the runs a switch routed lost their cheap loop.
+//
+// Hand mutation this fails on: deriving the plan where it used to be derived —
+// beside `derived`, before resolvePolicy — which drops review_first from the
+// stages below (and leaves the fixture's four steps for a two-step plan).
+func TestRoutedSwitchKeepsTheFirstLineLoop(t *testing.T) {
+	const routed = claimedSenior
+	use := pricing.Usage{Input: 1000, Output: 500}
+	// gwConfig pins coder and reviewer to sonnet; the reviewer moves to opus,
+	// a Claude ID the route below does not claim, so `auto` has one claimed pin
+	// and one unclaimed one — the state FirstLineOn reads as "on".
+	cfg := strings.Replace(gwConfig(t, "  first_line_review: auto\n"), "reviewer: "+sonnet, "reviewer: "+opus, 1)
+	if !strings.Contains(cfg, "reviewer: "+opus) {
+		t.Fatal("the fixture did not take the reviewer model: this test's premise is gone")
+	}
+	g := routeRun(t, cfg, "enforce", "50", []string{routed}, claimPricesJSON,
+		[]anthropicfake.Reply{
+			anthropicfake.Compat{}.MessageOK(routed, use),
+			anthropicfake.Compat{}.MessageOK(routed, use),
+			anthropicfake.Compat{}.MessageOK(routed, use),
+		}, "acme/app")
+	// The reviewer's stage is not routed: its pin is a Claude ID no route
+	// claims, so it reaches Anthropic directly, and the senior call is answered
+	// by Anthropic's fake (the three coder stages answer from the provider's).
+	g.fake.Script = append(g.fake.Script, anthropicfake.Compat{}.MessageOK(opus, use))
+	b := publishPolicy(t, g, routedPolicyNode("openrouter", sonnet))
+
+	rec, err := b.run(t,
+		routedCall(routed, "ANTHROPIC_DEFAULT_SONNET_MODEL", new(int), new(string), implement("feature")),
+		routedCall(routed, "ANTHROPIC_DEFAULT_SONNET_MODEL", new(int), new(string), review("changes", 1)),
+		routedCall(routed, "ANTHROPIC_DEFAULT_SONNET_MODEL", new(int), new(string), fixStep),
+		routedCall(opus, "ANTHROPIC_DEFAULT_OPUS_MODEL", new(int), new(string), review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "fix", "review") {
+		t.Fatalf("stages = %v: the routed run lost the first-line loop its auto switch turned on", got)
+	}
+	if n := g.compat.Count(); n != 3 {
+		t.Errorf("the provider saw %d calls, want the three coder stages': %+v", n, g.compat.Seen())
+	}
+	if n := g.fake.Count(); n != 1 {
+		t.Errorf("Anthropic saw %d calls, want the senior review alone: an unrouted pin must keep its Claude ID", n)
+	}
+}
+
 // callLines is the log's model-call lines, so a failure prints the record
 // rather than the whole run's log.
 func callLines(logs string) string {
