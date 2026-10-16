@@ -86,6 +86,12 @@ func computeCalls(t *testing.T, r *initRig) [][]string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Both sides resolved: faketerraform records os.Getwd(), which answers a
+	// path with every symlink followed, and the workdir is built from
+	// $XDG_STATE_HOME (under $TMPDIR in the rig). On macOS those differ --
+	// /var is a symlink to /private/var -- so an unresolved comparison finds
+	// none of this root's calls.
+	dir = resolvedPath(dir)
 	b, err := os.ReadFile(r.log)
 	if os.IsNotExist(err) {
 		return nil
@@ -105,11 +111,21 @@ func computeCalls(t *testing.T, r *initRig) [][]string {
 		if err := json.Unmarshal([]byte(line), &c); err != nil {
 			t.Fatal(err)
 		}
-		if c.Dir == dir || strings.HasPrefix(c.Dir, dir+string(filepath.Separator)) {
+		if d := resolvedPath(c.Dir); d == dir || strings.HasPrefix(d, dir+string(filepath.Separator)) {
 			out = append(out, c.Args)
 		}
 	}
 	return out
+}
+
+// resolvedPath is path with the symlinks in it followed. A path that does not
+// exist is returned as it is: only the comparison needs it resolved, not the
+// caller.
+func resolvedPath(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	return path
 }
 
 // subcommands are the subcommands of calls, in order.
@@ -170,6 +186,34 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 		if got := vars[k]; !equalJSON(got, want) {
 			t.Errorf("tfvars[%q] = %v, want %v", k, got, want)
 		}
+	}
+}
+
+// The workdir rig logs is the one os.Getwd() answers, and that path has every
+// symlink in it followed, while the workdir this test computes is built from
+// $XDG_STATE_HOME. On macOS those differ -- $TMPDIR is /var/..., which is a
+// symlink to /private/var -- so an unresolved comparison finds none of this
+// root's calls and the stage's own calls read as the installation's.
+func TestComputeStageFindsItsWorkdirThroughASymlink(t *testing.T) {
+	typedThroughYes(t)
+	r := computeRig(t)
+	// The same case on any platform: the rig's own state home, reached
+	// through a link. mkdir through it creates the real directory, and the
+	// path the stage computes keeps the link while the rig records what
+	// os.Getwd() answers.
+	link := filepath.Join(t.TempDir(), "state-root")
+	if err := os.Symlink(r.dir, link); err != nil {
+		t.Skipf("this host makes no symlink: %v", err)
+	}
+	t.Setenv("XDG_STATE_HOME", filepath.Join(link, "xdg_state_home"))
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	calls := computeCalls(t, r)
+	if got := subcommands(calls); !slices.Contains(got, "apply") {
+		t.Errorf("the compute root's calls are not found through a symlinked state home: %q\n%s", got, out)
 	}
 }
 
