@@ -1726,7 +1726,18 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	}
 	live, err := db.Rules(ctx)
 	if err != nil {
-		return nil
+		// A read that failed is not "the rules are current", and it is not the
+		// skew either: doctor cannot tell a document it was refused from one
+		// that matches what this generation generates, so it says what it
+		// knows. Silence here let the policy-published line say that a policy
+		// is published while the document that carries it was never read, and
+		// said nothing about the read that failed. An unreadable read is a
+		// note, never a failure, which is what the rest of the policy checks
+		// do with one (doctorPolicyChecks's "the project policy could not be
+		// read"): the remedy is a credential, not the owner's rules deploy.
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
+			Problem: fmt.Sprintf("the deployed rules could not be read (%v), so whether %s is the generation this Fugaro reads a project policy under, and whether the policy it carries is the one deployed, is unknown", err, marker),
+			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}
 	want, err := rules.Generate()
 	if err != nil || infra.SameJSON(live, want) {

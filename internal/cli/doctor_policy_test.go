@@ -325,6 +325,38 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 	})
 
+	t.Run("the deployed rules cannot be read", func(t *testing.T) {
+		// A read that failed is not "the rules are current". doctorRulesSkew
+		// returned nothing when db.Rules errored, so an installation whose
+		// deployed rules the credentials cannot read was reported as one with
+		// no skew at all — and the policy-published line went on to say that
+		// a policy is published, with the document that carries it never read.
+		// Every other unreadable read in this file is a note (doctorPolicyChecks's
+		// "the project policy could not be read"), never silence.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.DenyRead(".settings/rules")
+		checks := doctorChecksByID(t)
+		c, ok := checks["policy-rules-skew"]
+		if !ok {
+			t.Fatalf("policy-rules-skew did not fire though the deployed rules could not be read, so doctor reported the installation as having no skew: %+v", checks)
+		}
+		if c.Severity != "info" {
+			t.Errorf("policy-rules-skew carries severity %q for an unreadable read, want the info note this file's other unreadable reads carry: %+v", c.Severity, c)
+		}
+		if !strings.Contains(c.Problem, "could not be read") || !strings.Contains(c.Problem, "whether") {
+			t.Errorf("the note does not say that the deployed rules were not read and what that leaves unknown: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "credentials") {
+			t.Errorf("the note does not name what to check: %+v", c)
+		}
+		// The note is about the read that failed, not a claim that the rules
+		// are stale: doctor cannot tell the two apart here, and sending the
+		// operator to redeploy on a credential problem would be a guess.
+		if strings.Contains(c.Problem, "older than the marker") {
+			t.Errorf("the unreadable-rules note claims the deployed rules are stale: %+v", c)
+		}
+	})
+
 	t.Run("rules newer than this Fugaro", func(t *testing.T) {
 		// The other direction, and the review of PR #402's point: a marker above
 		// this binary's RulesVersion was written by a *newer* Fugaro, so the
