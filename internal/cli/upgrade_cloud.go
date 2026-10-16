@@ -293,9 +293,15 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 
 // jobConfigCopyMountNote is the drift note's mount clause (plan Task 2.3
 // step 2): after D2 a name stored at project scope changes what a job
-// mounts when the project's copy is created or deleted, and that is the
-// half of the job's configuration the policy does not carry.
-func jobConfigCopyMountNote() string { return "" }
+// mounts when the project's copy is created or deleted, so the mounts are
+// the half of the job's configuration the policy does not carry and the
+// note has to keep sending the operator to init --repo for. Phase 3 moves
+// the mounts to a shared profile, which is the release that removes the
+// step, and saying so here is what keeps this note from reading as a
+// permanent tax.
+func jobConfigCopyMountNote() string {
+	return "; what a job mounts is still decided here: a name stored at project scope (`fugaro secrets set NAME`, which is D2's default) changes the copy this repository's job mounts when the project's copy is created or deleted, and the job picks the change up on the next `fugaro init --repo .` in your own terminal — until phase 3 gives the mounts to a shared profile"
+}
 
 // jobConfigCopyPolicyNote is the drift note's policy clause: what a
 // published policy now governs, and what a job's environment still has to be
