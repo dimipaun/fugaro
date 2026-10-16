@@ -1240,6 +1240,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, Gateway: r.gateway(),
+		// Docker stays false here, so the agent's environment has no
+		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
+		// for `docker: true` (the workflow field and the runner's copy of it
+		// are compute-backend Task 8's config plumbing). It fails closed: a
+		// run with no socket mounted is a run with no daemon to point at,
+		// and an operator's own exported DOCKER_HOST must not follow an
+		// agent into one (design compute-backend.md §4.4 check 6).
+		Docker: false,
 	})
 	if err != nil {
 		return fmt.Errorf("building agent environment: %w", err)

@@ -472,8 +472,16 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 		"HTTPS_PROXY=http://proxy.invalid:3128", "https_proxy=http://proxy.invalid:3128", "NO_PROXY=localhost",
 		"NODE_EXTRA_CA_CERTS=/etc/ssl/extra.pem", "SSL_CERT_FILE=/etc/ssl/extra.pem", "GIT_SSL_CAINFO=/etc/ssl/extra.pem",
 		"DISABLE_AUTOUPDATER=1", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0", "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright",
+		// The VM backend's one addition to the allowlist since M9 (design
+		// compute-backend.md §4.3), gated on the run's own ask and asserted
+		// below rather than here: a run whose workflow asked for Docker
+		// reaches the VM's daemon through this, and only such a run gets it.
 	}
-	parent := append([]string{"ANTHROPIC_API_KEY=key-123", "VERTEX_REGION_CLAUDE_4_5_SONNET=europe-west1"}, pass...)
+	parent := append([]string{"ANTHROPIC_API_KEY=key-123", "VERTEX_REGION_CLAUDE_4_5_SONNET=europe-west1",
+		// The operator's own shell, or the job env of a Docker run: the
+		// variable is in the runner's environment either way, and which run
+		// this is is what decides whether it reaches the agent.
+		"DOCKER_HOST=unix:///var/run/docker.sock"}, pass...)
 	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key"})
 	if err != nil {
 		t.Fatal(err)
@@ -485,6 +493,22 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 	}
 	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "VERTEX_REGION_") }) {
 		t.Errorf("a Vertex region override passed without auth: vertex: %v", env)
+	}
+	// DOCKER_HOST reaches the agent only for a run that asked for Docker,
+	// and the ask is the one the runner passes in, not the presence of the
+	// variable in its own environment: an operator with DOCKER_HOST exported
+	// who hand-starts a runner, or a local run, must not hand the agent an
+	// address to a daemon its container was never given a socket for (design
+	// compute-backend.md §2.2, §4.3, §4.4 check 6).
+	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "DOCKER_HOST=") }) {
+		t.Errorf("DOCKER_HOST passed to a run that did not ask for Docker: %v", env)
+	}
+	dockerEnv, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Docker: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(dockerEnv, "DOCKER_HOST=unix:///var/run/docker.sock") {
+		t.Errorf("a run that asked for Docker lacks DOCKER_HOST: %v", dockerEnv)
 	}
 }
 
