@@ -40,7 +40,7 @@
 // of its argv, cwd and environment, which is what makes these tests about what a
 // real machine would see rather than about the console's self-consistency.
 
-import { mkdirSync, mkdtempSync, statSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -710,6 +710,53 @@ describe('the child’s working directory', () => {
   it('creates the private directory with owner-only mode and reuses it', () => {
     expect(privateWorkingDirectory()).toBe(privateWorkingDirectory())
     expect(statSync(privateWorkingDirectory()).mode & 0o777).toBe(0o700)
+  })
+})
+
+describe('the private working directory', () => {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null
+  const name = uid === null ? 'cwd' : `cwd-${uid}`
+
+  it('refuses a symbolic link where the directory should be, even to a directory it would accept', () => {
+    // mkdirSync({ recursive: true }) succeeds silently on an existing path and
+    // statSync follows the link, so a link planted at this name used to be
+    // where every child ran.
+    const base = freshDirectory()
+    const elsewhere = freshDirectory()
+    chmodSync(elsewhere, 0o700)
+    symlinkSync(elsewhere, join(base, name))
+    expect(() => privateWorkingDirectory({ base })).toThrow(/symbolic link/)
+  })
+
+  it('refuses a file where the directory should be', () => {
+    const base = freshDirectory()
+    writeFileSync(join(base, name), '')
+    expect(() => privateWorkingDirectory({ base })).toThrow(/not a directory/)
+  })
+
+  it.skipIf(uid === null)('refuses a directory another user owns', () => {
+    // The directory is created by this process, so asking for it as another uid
+    // is the one way a test can present a directory whose owner is not the
+    // expected one without root.
+    const base = freshDirectory()
+    expect(() => privateWorkingDirectory({ base, uid: (uid ?? 0) + 1 })).toThrow(/owned by uid/)
+  })
+
+  it('takes an existing directory of its own back to 0700, and refuses a base that is a link', () => {
+    const base = freshDirectory()
+    mkdirSync(join(base, name), { mode: 0o755 })
+    chmodSync(join(base, name), 0o755)
+    const path = privateWorkingDirectory({ base })
+    expect(lstatSync(path).mode & 0o777).toBe(0o700)
+    const linked = join(freshDirectory(), 'linked-base')
+    symlinkSync(base, linked)
+    expect(() => privateWorkingDirectory({ base: linked })).toThrow(/symbolic link/)
+  })
+
+  it('returns the canonical path, so --dir and the child’s own cwd agree', () => {
+    const base = freshDirectory()
+    const path = privateWorkingDirectory({ base })
+    expect(realpathSync(path)).toBe(path)
   })
 })
 

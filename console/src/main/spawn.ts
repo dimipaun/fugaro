@@ -82,7 +82,7 @@
 // read.
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, statSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { dirname, join } from 'node:path'
@@ -788,12 +788,52 @@ export function privateWorkingDirectory(options: {
   readonly uid?: number | null
 } = {}): string {
   const base = options.base ?? join(tmpdir(), 'fugaro-console')
-  const uid = options.uid ?? (typeof process.getuid === 'function' ? process.getuid() : null)
+  const ownUid = typeof process.getuid === 'function' ? process.getuid() : null
+  const uid = options.uid === undefined ? ownUid : options.uid
   const path = join(base, uid === null ? 'cwd' : `cwd-${uid}`)
-  mkdirSync(path, { recursive: true, mode: PRIVATE_DIR_MODE })
-  const stat = statSync(path)
+  // Each level is created only if it is missing, and then *checked* rather than
+  // trusted: `mkdirSync({ recursive: true })` succeeds silently on a path that
+  // already exists, so a directory -- or a symbolic link -- someone else put at
+  // this name would otherwise be where every child runs. `lstat` does not follow
+  // a link, so a link is seen as a link and refused.
+  mkdirSync(base, { recursive: true, mode: PRIVATE_DIR_MODE })
+  assertSafeParent(base, uid)
+  try {
+    mkdirSync(path, { mode: PRIVATE_DIR_MODE })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  const stat = lstatSync(path)
+  if (stat.isSymbolicLink()) refused(`${path} is a symbolic link: the console will not spawn from it`)
   if (!stat.isDirectory()) refused(`${path} is not a directory: the console has nowhere to spawn from`)
-  return path
+  if (uid !== null && stat.uid !== uid) {
+    refused(`${path} is owned by uid ${stat.uid}, not ${uid}: the console will not spawn from it`)
+  }
+  // A directory of our own with a wider mode (an older build, a umask) is taken
+  // back to owner-only; one that still is not 0700 afterwards is refused.
+  if ((stat.mode & 0o777) !== PRIVATE_DIR_MODE) chmodSync(path, PRIVATE_DIR_MODE)
+  if ((lstatSync(path).mode & 0o777) !== PRIVATE_DIR_MODE) {
+    refused(`${path} is not mode 0700: the console will not spawn from it`)
+  }
+  // The canonical spelling (`/private/var/...` on macOS), so the `--dir` the
+  // child is given and the working directory it reports are one path.
+  return realpathSync(path)
+}
+
+/** assertSafeParent refuses a base directory another user could rename the
+ * private directory out of: a link, a non-directory, one owned by anyone but
+ * this user or root, or one others may write to without the sticky bit. */
+function assertSafeParent(base: string, uid: number | null): void {
+  const stat = lstatSync(base)
+  if (stat.isSymbolicLink()) refused(`${base} is a symbolic link: the console will not spawn under it`)
+  if (!stat.isDirectory()) refused(`${base} is not a directory: the console has nowhere to spawn from`)
+  if (uid === null) return
+  if (stat.uid !== uid && stat.uid !== 0) {
+    refused(`${base} is owned by uid ${stat.uid}, not ${uid}: the console will not spawn under it`)
+  }
+  if ((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0) {
+    refused(`${base} is writable by others without the sticky bit: the console will not spawn under it`)
+  }
 }
 
 /** SpawnOptionsLike is the slice of `node:child_process`'s options this module
