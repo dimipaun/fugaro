@@ -18,6 +18,26 @@
 #
 # No account here is the default Compute Engine service account, and none is
 # the installation's history account.
+#
+# THE TWO CUSTOM ROLES (the reaper's and the preload builder's) have a
+# teardown property this module cannot express and an operator has to know:
+# `terraform destroy` (or dropping this root) deletes them, and a deleted
+# custom role is NOT gone — "You have 7 days to undelete the custom role.
+# After 7 days ... The custom role is permanently deleted and cannot be
+# recovered", and until then "A deleted custom role still counts toward the
+# custom role limit"
+# (cloud.google.com/iam/docs/reference/rest/v1/projects.roles/delete, checked
+# 2026-10-16). So a destroy-then-re-apply inside those 7 days is a re-apply
+# against a role id that still exists, which is a plan-time or apply-time
+# failure rather than a fresh create — and the fix is either
+# `gcloud iam roles undelete <role_id> --project=<project>` (documented on
+# cloud.google.com/iam/docs/creating-custom-roles, same date) or a different
+# role id. Whether a create with the SAME id inside the window is refused
+# (ALREADY_EXISTS) is **UNVERIFIED**: the pages this run read state that the
+# role still exists and counts, and do not state the create's answer. The
+# module deletes nothing itself and has no `prevent_destroy`, deliberately:
+# the roles are re-creatable, and a root that refuses to be destroyed is worse
+# for an operator than this note is.
 
 locals {
   # The preload account's email, as the rebuild's Cloud Build spec and the
@@ -31,7 +51,20 @@ locals {
   # Cloud Scheduler calls the Cloud Build API as it. Both are Google's own
   # per-project agents, named from the project NUMBER, and both grants are
   # actAs on one named account rather than a role on the project.
-  cloud_build_agent     = "serviceAccount:service-${var.project_number}@cloudbuild.gserviceaccount.com"
+  #
+  # The Cloud Build principal is its SERVICE AGENT, service-<number>@gcp-sa-
+  # cloudbuild.iam.gserviceaccount.com (cloud.google.com/build/docs/securing-
+  # builds/configure-access-for-cloud-build-service-account, checked
+  # 2026-10-16). It is NOT service-<number>@cloudbuild.gserviceaccount.com:
+  # that is no principal at all. The bare-number form that does exist,
+  # <number>@cloudbuild.gserviceaccount.com, is the LEGACY default build
+  # service account -- a build identity an organization may choose, not the
+  # agent that acts for Cloud Build, and granting actAs to it would hand a
+  # build identity this module never uses the power to run as the preload
+  # account (cloud.google.com/build/docs/cloud-build-service-account, checked
+  # 2026-10-16). The agent is created when the Cloud Build API is enabled,
+  # which apis.tf does, so it exists by the time this binding is applied.
+  cloud_build_agent     = "serviceAccount:service-${var.project_number}@gcp-sa-cloudbuild.iam.gserviceaccount.com"
   cloud_scheduler_agent = "serviceAccount:service-${var.project_number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
   job_name_prefix       = "projects/${var.project}/locations/${var.region}/jobs/${var.names.job_prefix}"
 }
@@ -268,11 +301,34 @@ resource "google_service_account_iam_member" "preload_scheduler_agent" {
 
 # The build runs as the preload account — not as the default Cloud Build
 # account, which would bring whatever the project granted it — so Cloud
-# Build's own agent needs actAs on it.
+# Build's own agent needs actAs on it: the agent is what Cloud Build acts as
+# for the project, and it is the principal that starts the step running as
+# the build's service account.
 resource "google_service_account_iam_member" "preload_cloud_build_agent" {
   service_account_id = google_service_account.preload.name
   role               = "roles/iam.serviceAccountUser"
   member             = local.cloud_build_agent
+}
+
+# The preload account holds actAs on ITSELF, and that is what makes the
+# scheduled call work at all: Cloud Scheduler calls the Cloud Build API with
+# an OAuth token minted from the preload account (preload.tf), and the build
+# it creates names the preload account as its `serviceAccount`, so the caller
+# and the build's identity are the same account. Google's note on that case
+# is that the account "must still have the iam.serviceAccounts.actAs
+# permission" (cloud.google.com/build/docs/cloud-build-service-account,
+# checked 2026-10-16), and a service account does not hold actAs on itself by
+# default. Without it both the weekly rebuild and the first build the stage
+# starts fail with PERMISSION_DENIED before any step runs.
+#
+# Narrow by construction: it is actAs on this one account, held by that same
+# account, so it grants no one anything they did not already have. It is not
+# the actAs-through-the-agent chain the run-account comment below states;
+# this is the account's own.
+resource "google_service_account_iam_member" "preload_self_user" {
+  service_account_id = google_service_account.preload.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = google_service_account.preload.member
 }
 
 # The builder VM the build boots runs as a run-class account: that is the
@@ -280,9 +336,18 @@ resource "google_service_account_iam_member" "preload_cloud_build_agent" {
 # that names an account needs actAs on it, and the caller here is the BUILD
 # STEP — which runs as the preload account, not as Cloud Build's own agent —
 # so the preload account is who holds it. actAs on each named account, never a
-# role on the project, and never on the Cloud Build agent: that agent is
-# reachable by anyone who can submit a build in this project, and actAs on a
-# run account is the power to run code as it.
+# role on the project, and never on the Cloud Build agent.
+#
+# The "never on the Cloud Build agent" above is about THIS grant, not a claim
+# that no build path reaches a run account: naming the preload account as a
+# build's `serviceAccount` takes actAs on that account — which the operators
+# hold (preload_operator) and the account holds on itself (preload_self_user)
+# — and such a build boots a builder VM as a run account. So an operator can
+# run code as a run account through one build and one VM, which is the chain
+# §3.7's separation of launcher and operator is about and why that grant is
+# actAs on the preload account and never a role on the project. What this
+# binding refuses is the shorter path: the agent acting on a run account
+# directly, with no build step and no operator in between.
 resource "google_service_account_iam_member" "preload_run_account_user" {
   for_each = var.run_accounts
 

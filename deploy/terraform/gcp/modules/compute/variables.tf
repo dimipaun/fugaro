@@ -136,12 +136,27 @@ variable "registry_repository" {
 }
 
 variable "base_image" {
-  description = "The installation's pinned base image, the thing the preload bakes into the boot image. Its repository is registry_repository."
+  description = "The installation's pinned base image, the thing the preload bakes into the boot image. Its host, project and repository are the installation's own and are checked against region, project and registry_repository below."
   type        = string
 
   validation {
     condition     = can(regex("^[a-z0-9.-]+-docker\\.pkg\\.dev/[a-z][a-z0-9-]{4,28}[a-z0-9]/[a-z][a-z0-9-]{2,62}/.+$", var.base_image))
     error_message = "base_image must be a pinned Artifact Registry image path: <region>-docker.pkg.dev/<project>/<repository>/<image>:<version>."
+  }
+
+  # The image the preload pulls must be one a run could pull, which is what
+  # makes the three parts of the path this installation's own: the run
+  # accounts' reader grant is on registry_repository, in region, in project
+  # (iam.tf's run_registry_reader), and the builder VM's
+  # docker-credential-gcr is configured for "<region>-docker.pkg.dev" and no
+  # other host (preload.tf's REGISTRY_HOST, which was built from var.region
+  # before this check existed). A pin whose host, project or repository
+  # disagrees with those is refused at plan time instead of failing the build
+  # that pulls it, and the message names the three variables rather than a
+  # regex.
+  validation {
+    condition     = can(regex("^${var.region}-docker\\.pkg\\.dev/${var.project}/${var.registry_repository}/", var.base_image))
+    error_message = "base_image must be in this installation's own registry: its host must be <region>-docker.pkg.dev for this root's region, its project must be this root's project, and its repository must be registry_repository. The run accounts' reader grant is on that one repository, in that region, in that project (iam.tf), so an image pinned from anywhere else is one no run could pull."
   }
 }
 
@@ -180,7 +195,7 @@ variable "preload_schedule" {
 }
 
 variable "preload_refresh_days" {
-  description = "How old the preloaded image may be before a scheduled rebuild replaces it. A Batch custom image's supported lifetime can end 60 days after its starting date, so the window must be inside that (§1.2, C19); the schedule is weekly, so an image is replaced at the first weekly run past the window. The name is the pin's hash and does not move when Google's family rolls, so this window -- not the name -- is what keeps an image from outliving its support."
+  description = "How old the preloaded image may be before a scheduled rebuild replaces it. A Batch custom image's supported lifetime can end 60 days after its starting date, so the window must be inside that (§1.2, C19); the schedule is weekly, so an image is replaced at the first weekly run past the window. The family's name is the pin's hash and does not move when Google's family rolls, so this window -- not the name -- is what keeps an image from outliving its support."
   type        = number
   default     = 30
 

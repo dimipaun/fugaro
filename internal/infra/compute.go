@@ -68,14 +68,16 @@ const (
 	// from); it holds no instance or image admin role, and no permission to
 	// create a job or a second VM.
 	PreloadRoleID = "fugaroPreloadBuilder"
-	// PreloadImage is the prefix of the preloaded boot image's name in the
-	// installation's project. The module appends the hash of the pinned
-	// base version (PreloadedImage), so one pin is one image; a new pin is a
-	// new name and the old image is swept. Google rolling the base family
-	// does NOT move it — the pin does not move with it — which is why the
-	// release an image was built from is recorded on the image itself
-	// (preload.sh's base-release label) and why the scheduled rebuild
-	// replaces an image that is stale or past its window.
+	// PreloadImage is the prefix of the preloaded boot image family in the
+	// installation's project. The module appends the hash of the pinned base
+	// version (PreloadedImage), so one pin is one family; the scheduled build
+	// adds a GENERATION to it and the runs boot the family, so a rebuild never
+	// leaves the installation without an image and a job's reference never
+	// moves. A new pin is a new family and the old families are swept. Google
+	// rolling the base family does NOT move it — the pin does not move with it
+	// — which is why the release a generation was built from is recorded on
+	// the image itself (preload.sh's base-release label) and why the scheduled
+	// rebuild replaces one that is stale or past its window.
 	PreloadImage = "fugaro-preload"
 	// PreloadSchedulerJob is the Cloud Scheduler job that rebuilds it: a
 	// Batch custom image's supported lifetime can end 60 days after its
@@ -234,6 +236,8 @@ func ComputeWorkdir(getenv func(string) string, project string) (string, error) 
 // reports and a later `doctor` check reads (§8.1 tasks 6 and 8). Nothing here
 // is a secret, and nothing here is a permission.
 type ComputeOutputs struct {
+	// PreloadImage is the image FAMILY a job's VM boots, as the module's
+	// output: projects/<project>/global/images/family/<PreloadImage>.
 	PreloadImage     string `json:"preload_image"`
 	ReaperAccount    string `json:"reaper_account"`
 	ReaperRole       string `json:"reaper_role"`
@@ -353,15 +357,16 @@ func propagating(err error) bool {
 	return errors.As(err, &ae) && ae.Code == http.StatusForbidden
 }
 
-// PreloadedImage is the preloaded boot image's name for one pinned base
-// image: the module's own derivation (preload.tf), restated here so the Go
-// side and the module cannot disagree about what the runs boot and with
-// TestPreloadedImageMatchesTheModule holding the two together. The eight hex
+// PreloadedImage is the preloaded boot image FAMILY's name for one pinned
+// base image: the module's own derivation (preload.tf), restated here so the
+// Go side and the module cannot disagree about what the runs boot and with
+// TestPreloadedImageMatchesTheModule holding the two together. What a job's
+// VM boots is projects/<project>/global/images/family/<this>. The eight hex
 // digits are the first of sha256(base), which is what the module's
 // substr(sha256(var.base_image), 0, 8) computes. The name says nothing about
-// Google's side of the image: the family's release is recorded on the image
-// (its base-release label) and how old it is is its creation date, which is
-// what the scheduled rebuild reads (preload.sh).
+// Google's side of the image: the family's release is recorded on each
+// generation (its base-release label) and how old a generation is is its
+// creation date, which is what the scheduled rebuild reads (preload.sh).
 func PreloadedImage(base string) string {
 	sum := sha256.Sum256([]byte(base))
 	return PreloadImage + "-" + hex.EncodeToString(sum[:])[:8]

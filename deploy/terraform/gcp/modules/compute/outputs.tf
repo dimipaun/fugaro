@@ -10,8 +10,14 @@ output "reaper_role" {
   value = google_project_iam_custom_role.reaper.name
 }
 
+# The preloaded boot image a job's VM boots: the FAMILY the pin derives, not
+# one image, so what a job names is
+# projects/<project>/global/images/family/<this> and the scheduled rebuild can
+# create a new generation inside it without the job's reference changing
+# (preload.tf, preload.sh). The name is the family and not a full path because
+# the project is the caller's, and it is what the stage reports.
 output "preload_image" {
-  value = local.preload_image
+  value = local.preload_family
 }
 
 output "preload_account" {

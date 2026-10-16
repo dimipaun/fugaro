@@ -92,7 +92,7 @@ run "root_passes_inputs" {
 
   assert {
     condition     = output.preload_image == "fugaro-preload-a0b6aca0"
-    error_message = "the root must output the preloaded image's name, which carries a hash of the pinned base image"
+    error_message = "the root must output the preloaded image's family name, which carries a hash of the pinned base image"
   }
   assert {
     condition     = output.reaper_account == "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
@@ -272,8 +272,17 @@ run "TestThePreloadBuildActsAsTheRunAccountsOnly" {
     error_message = "actAs on a run account is held by the preload account, never by the Cloud Build agent"
   }
   assert {
-    condition     = google_service_account_iam_member.preload_cloud_build_agent.member == "serviceAccount:service-123456789012@cloudbuild.gserviceaccount.com"
-    error_message = "Cloud Build's own agent holds actAs on the PRELOAD account, which is what running the build as it needs"
+    condition     = google_service_account_iam_member.preload_cloud_build_agent.member == "serviceAccount:service-123456789012@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+    error_message = "Cloud Build's own agent holds actAs on the PRELOAD account, which is what running the build as it needs. The principal is the SERVICE AGENT, service-<number>@gcp-sa-cloudbuild.iam.gserviceaccount.com, not service-<number>@cloudbuild.gserviceaccount.com, which is no principal at all, and not the bare <number>@cloudbuild.gserviceaccount.com, which is the legacy default BUILD account."
+  }
+  # The build's submitter and its identity are the same account, and Google's
+  # note on that case is that the account "must still have the
+  # iam.serviceAccounts.actAs permission" -- which a service account does not
+  # hold on itself by default (cloud.google.com/build/docs/cloud-build-service-account,
+  # checked 2026-10-16).
+  assert {
+    condition     = google_service_account_iam_member.preload_self_user.member == "serviceAccount:fugaro-preload@proj-1234.iam.gserviceaccount.com" && google_service_account_iam_member.preload_self_user.role == "roles/iam.serviceAccountUser"
+    error_message = "the preload account holds actAs on itself: the scheduled call and the build it creates are the same account, and without it both fail with PERMISSION_DENIED before any step runs"
   }
   assert {
     condition     = google_service_account_iam_member.preload_scheduler_agent.member == "serviceAccount:service-123456789012@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
@@ -322,6 +331,37 @@ run "TestTheNATIsOnTheJobsNetwork" {
   assert {
     condition     = google_compute_router_nat.this.router == google_compute_router.this.name && google_compute_router_nat.this.region == "us-east5"
     error_message = "the NAT hangs off this router, in the installation's region"
+  }
+}
+
+# A run's VM is a Docker HOST, and a default network arrives with
+# default-allow-internal (priority 65534, 10.128.0.0/9, all protocols): without
+# this rule any VM in the project could open every port on a run's VM, which
+# §3.2's control does not assume (§3.2, §3.7).
+run "TestTheRunVMsTakeNoIngress" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  assert {
+    condition     = google_compute_firewall.run_deny_ingress.direction == "INGRESS" && google_compute_firewall.run_deny_ingress.priority == 1000
+    error_message = "the run VMs' rule is an INGRESS rule at priority 1000, which is a lower number than default-allow-internal's 65534 and therefore wins"
+  }
+  assert {
+    condition     = [for d in google_compute_firewall.run_deny_ingress.deny : d.protocol] == ["all"]
+    error_message = "every inbound protocol is denied, not just ssh: what the rule closes is every port on a run's VM"
+  }
+  assert {
+    condition     = google_compute_firewall.run_deny_ingress.network == "projects/proj-1234/global/networks/default"
+    error_message = "the rule is on the network the job's VMs are placed on"
+  }
+  assert {
+    condition = google_compute_firewall.run_deny_ingress.target_service_accounts == toset([
+      "fugaro-acme-web@proj-1234.iam.gserviceaccount.com"
+    ])
+    error_message = "the rule is targeted by the run accounts themselves: a network tag would have to be written by the launcher (Task 7), and a rule that silently matches nothing is worse than no rule"
   }
 }
 
@@ -374,14 +414,38 @@ run "TestThePreloadRebuildIsScheduled" {
     condition     = google_project_iam_member.preload_build_submitter.role == "projects/proj-1234/roles/fugaroBuildSubmitter"
     error_message = "creating a build needs the installation's own build-submitter role, passed by reference"
   }
-  # The rebuild is not a no-op on an image that is already there, so the
-  # window the script replaces a stale image inside has to reach it: the
-  # build's own spec carries it, and the job retries a build that could not
-  # finish (a run's VM still holding the image, a pull that failed) rather
-  # than waiting a week for its next attempt.
+  # The rebuild is not a no-op on an image that is already current, so the
+  # window the script replaces a stale one inside has to reach it: the build's
+  # own spec carries it, and the job retries a build that could not finish (a
+  # pull that failed, an API error) rather than waiting a week for its next
+  # attempt.
   assert {
     condition     = strcontains(base64decode(google_cloud_scheduler_job.preload_rebuild.http_target[0].body), "REFRESH_DAYS=30")
     error_message = "the build's spec does not carry the refresh window to preload.sh: the scheduled rebuild could never replace a stale image"
+  }
+  # CLOUD_LOGGING_ONLY, not CLOUD_LOGGING: with a user-specified service
+  # account the logs go to a Cloud Storage or Cloud Logging bucket in the
+  # project, and the latter is CLOUD_LOGGING_ONLY. CLOUD_LOGGING is not a value
+  # of the enum at all, and the API rejects the build for it
+  # (cloud.google.com/build/docs/securing-builds/configure-user-specified-service-accounts,
+  # checked 2026-10-16).
+  assert {
+    condition     = strcontains(base64decode(google_cloud_scheduler_job.preload_rebuild.http_target[0].body), "\"logging\":\"CLOUD_LOGGING_ONLY\"")
+    error_message = "the build's logging option must be CLOUD_LOGGING_ONLY: the build runs as a user-specified service account, and CLOUD_LOGGING is not a value of that enum"
+  }
+  # The whole build config is substitution-processed before any step runs, so
+  # every `$` in the inlined script has to be doubled: one unescaped `$VAR`
+  # that is not a built-in substitution makes the API reject the build with
+  # INVALID_ARGUMENT, and the build never starts
+  # (cloud.google.com/build/docs/configuring-builds/substitute-variable-values,
+  # checked 2026-10-16).
+  assert {
+    condition     = strcontains(base64decode(google_cloud_scheduler_job.preload_rebuild.http_target[0].body), "$$${IMAGE_FAMILY:?}")
+    error_message = "preload.sh reaches the build with an unescaped $: every $ in the inlined script must be $$ in the build config, or Cloud Build reads it as a substitution and rejects the build"
+  }
+  assert {
+    condition     = !strcontains(base64decode(google_cloud_scheduler_job.preload_rebuild.http_target[0].body), "\"$PROJECT\"")
+    error_message = "the build config carries a bare $PROJECT: Cloud Build would read it as its own substitution"
   }
   assert {
     condition     = google_cloud_scheduler_job.preload_rebuild.retry_config[0].retry_count == 3
@@ -418,4 +482,39 @@ run "no_run_account_is_refused" {
   }
 
   expect_failures = [var.run_accounts]
+}
+
+# The image the preload pulls has to be one a run could pull: the run accounts'
+# reader grant is on registry_repository, in region, in project (iam.tf), so a
+# pin whose host, project or repository disagrees with those is refused at plan
+# time instead of failing the build that pulls it. This one is the same image
+# one region over -- the shape a copy-paste between installations produces.
+run "a_base_image_from_another_registry_is_refused" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    base_image = "us-east1-docker.pkg.dev/proj-1234/fugaro-ghcr/acme/fugaro-base:1.2.3"
+  }
+
+  expect_failures = [var.base_image]
+}
+
+# And the repository in the path is registry_repository, not a sibling in the
+# same project and region: the reader grant is on exactly one repository.
+run "a_base_image_from_another_repository_is_refused" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    base_image = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/acme/fugaro-base:1.2.3"
+  }
+
+  expect_failures = [var.base_image]
 }

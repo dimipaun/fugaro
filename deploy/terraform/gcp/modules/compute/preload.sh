@@ -20,23 +20,34 @@
 # it (it is also how SSH keys reach a VM) and it cannot be dropped: a VM with
 # no startup script pulls nothing.
 #
+# WHAT IT BUILDS, and why it is a family rather than one name. The runs boot
+# the image FAMILY the pin derives (projects/<project>/global/images/family/
+# <IMAGE_FAMILY>), and every build makes a NEW generation inside it. That is
+# what makes a rebuild safe: an image's name is not interchangeable with
+# another's, so replacing a name in place would mean deleting the image before
+# its replacement exists, and a create that then failed would leave the
+# installation with no image at all. In a family the previous generation keeps
+# serving until the new one exists, and the family switches over the moment it
+# does (cloud.google.com/compute/docs/images/image-families-best-practices,
+# checked 2026-10-16).
+#
+# WHY IT RUNS ON A SCHEDULE: the image it makes goes stale two ways and it
+# must leave neither in place (design §1.2, C4, C19). The base family in
+# Google's own project rolls -- the pinned base_image does not move with it,
+# and neither does the family name this build owns, so the release an image
+# was built from is recorded in its base-release label and read back here --
+# and a Batch custom image's supported lifetime can end 60 days after its
+# starting date, whatever it was built from, so age alone replaces it. A
+# newest image that is this build's own, built from the family's current
+# release and younger than REFRESH_DAYS is the only thing left alone.
+#
 # What it must never do: delete a VM or an image it did not create. Every
 # delete below is guarded by the fugaro=managed label AND by the name, so a
 # project's own VM or image that happens to carry this name is left alone --
 # and the build fails loudly instead of clearing the way.
-#
-# This build RUNS ON A SCHEDULE because its image goes stale two ways, and it
-# must leave neither in place (design §1.2, C4, C19): the base family in
-# Google's own project rolls (the pinned base_image does not move with it, and
-# the image's name -- the pin's hash -- cannot say which release it holds, so
-# the release is recorded in the image's base-release label at build time),
-# and a Batch custom image's supported lifetime can end 60 days after its
-# starting date, whatever it was built from (so age alone replaces it). An
-# image that is this build's own, built from the family's current release and
-# younger than REFRESH_DAYS, is the only thing this build leaves alone.
 set -euo pipefail
 
-: "${PROJECT:?}" "${ZONE:?}" "${IMAGE:?}" "${BASE_IMAGE:?}" "${BASE_PROJECT:?}" "${BASE_FAMILY:?}"
+: "${PROJECT:?}" "${ZONE:?}" "${IMAGE_FAMILY:?}" "${BASE_IMAGE:?}" "${BASE_PROJECT:?}" "${BASE_FAMILY:?}"
 : "${REGISTRY_HOST:?}" "${RUN_ACCOUNT:?}" "${MACHINE_TYPE:?}" "${IMAGE_PREFIX:?}"
 : "${NETWORK:?}" "${SUBNETWORK:?}" "${REFRESH_DAYS:?}"
 
@@ -44,6 +55,22 @@ BUILDER="fugaro-preload-build"
 MARKER="fugaro-preload-built"
 
 say() { printf 'fugaro-preload: %s\n' "$*"; }
+
+# 0. The builder VM never outlives the build, whatever ends it. set -e aborts
+#    on the first failing call, and an abort between the create and step 6's
+#    delete would leave a RUNNING VM and its disk behind -- money, and a name
+#    the next build then has to clear. The trap is the backstop; step 6 is the
+#    ordinary path and clears the flag so this stays quiet.
+BUILDER_UP=""
+cleanup() {
+  rc=$?
+  if [ -n "$BUILDER_UP" ]; then
+    say "deleting the builder VM $BUILDER (the build exited $rc)"
+    gcloud compute instances delete "$BUILDER" --project="$PROJECT" --zone="$ZONE" --quiet >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
 
 # 1. The base family is GOOGLE's, not the installation's: measured 2026-10-15,
 #    batch-cos resolves to the family batch-cos-stable-official in project
@@ -59,39 +86,44 @@ say "base release: $BASE_RELEASE"
 # 63 of them, and a family can hand out a longer release name than that.
 RELEASE_LABEL="$(printf '%s' "$BASE_RELEASE" | tr '[:upper:]' '[:lower:]' | cut -c1-63)"
 
-# 2. The image this build owns. One image per pinned base version: the name
-#    carries a hash of the pin, so a run's boot disk is the image that
-#    contains the image the job pulls. API answer by API answer, from here on:
-#    the release the image holds (its base-release label -- the name cannot
-#    carry it, because the pin does not move when Google rolls the family) and
-#    its age (the creation date a Batch image's 60-day lifetime runs from).
-#    Only an image that is this build's own, current and inside the window is
-#    left alone; a family roll, an image that predates this label, and an
-#    image past the window all mean this build replaces it.
+# 2. What the family holds now, API answer by answer: the newest image in this
+#    build's own family, the release it was built from (its base-release
+#    label -- the name cannot carry it, because neither the pin nor this
+#    family name moves when Google rolls the family) and its age (the creation
+#    date a Batch image's 60-day lifetime runs from). Only an image that is
+#    this build's own, current and inside the window is left alone; a family
+#    roll, an image that predates this label, and an image past the window all
+#    mean this build makes a new generation.
 BUILD=yes
-REPLACE=""
-if gcloud compute images describe "$IMAGE" --project="$PROJECT" >/dev/null 2>&1; then
+if gcloud compute images describe-from-family "$IMAGE_FAMILY" --project="$PROJECT" >/dev/null 2>&1; then
   # csv[no-heading] rather than value(): a value() row leaves an absent field
-  # out, and the three answers here have to stay in their columns -- an image
-  # with no base-release label is a fact this build acts on, not a shift.
-  read -r IMG_OWNER IMG_RELEASE IMG_CREATED < <(gcloud compute images describe "$IMAGE" \
-    --project="$PROJECT" --format='csv[no-heading](labels.fugaro,labels.base-release,creationTimestamp)')
-  # An image under this name that this build did not make is left alone and
-  # said so: the delete below is the one this script makes outside its own
-  # prefix sweep, and it needs the label to be sure.
-  [ "$IMG_OWNER" = "managed" ] || { say "the image $IMAGE exists and is not fugaro=managed; refusing to touch it"; exit 1; }
+  # out, and the four answers here have to stay in their columns -- an image
+  # with no base-release label is a fact this build acts on, not a shift. And
+  # IFS=,: without it `read` splits on whitespace only, so the whole
+  # comma-joined line lands in the first variable and every existing image
+  # reads as one that is not fugaro=managed.
+  IFS=, read -r IMG_NAME IMG_OWNER IMG_RELEASE IMG_CREATED < <(gcloud compute images describe-from-family "$IMAGE_FAMILY" \
+    --project="$PROJECT" --format='csv[no-heading](name,labels.fugaro,labels.base-release,creationTimestamp)')
+  # An image under this family that this build did not make is left alone and
+  # said so: the build fails rather than building beside it or clearing it.
+  [ "$IMG_OWNER" = "managed" ] || { say "the newest image in $IMAGE_FAMILY is $IMG_NAME and is not fugaro=managed; refusing to touch it"; exit 1; }
   # A stamp the parser cannot read is read as 0, i.e. as old as possible: an
   # image whose age is unknown is replaced rather than kept.
   IMG_EPOCH="$(date -u -d "$IMG_CREATED" +%s 2>/dev/null || echo 0)"
   IMG_AGE_DAYS="$(( ( $(date -u +%s) - IMG_EPOCH ) / 86400 ))"
   if [ "$IMG_RELEASE" = "$RELEASE_LABEL" ] && [ "$IMG_AGE_DAYS" -lt "$REFRESH_DAYS" ]; then
-    say "image $IMAGE was built from $BASE_RELEASE and is $IMG_AGE_DAYS days old (the window is $REFRESH_DAYS); nothing to build"
+    say "$IMG_NAME is built from $BASE_RELEASE and is $IMG_AGE_DAYS days old (the window is $REFRESH_DAYS); nothing to build"
     BUILD=""
   else
-    REPLACE=yes
-    say "image $IMAGE is stale (built from ${IMG_RELEASE:-a release this build never recorded}, $IMG_AGE_DAYS days old) and $BASE_FAMILY is now $BASE_RELEASE; this build replaces it"
+    say "$IMG_NAME is built from ${IMG_RELEASE:-a release this build never recorded} and is $IMG_AGE_DAYS days old; $BASE_FAMILY is now $BASE_RELEASE, so this build makes a new generation"
   fi
 fi
+
+# The new generation's name. It ends in the build's UTC second, so the family
+# has a total order by name -- newest is greatest -- and two builds that
+# overlap sort the way they ran. Two builds inside the same second collide on
+# the name instead, and the loser fails loudly rather than racing.
+NEW_IMAGE=""
 
 if [ -n "$BUILD" ]; then
   # 3. A leftover builder from an interrupted build. It is deleted only when
@@ -127,6 +159,7 @@ if [ -n "$BUILD" ]; then
         "docker pull '${BASE_IMAGE}'" \
         "docker image inspect '${BASE_IMAGE}' >/dev/null" \
         "echo ${MARKER}")"
+  BUILDER_UP=yes
 
   # 5. The pull is what this waits for. Bounded: a pull that fails never
   #    prints the marker, and this loop has to end anyway.
@@ -144,40 +177,64 @@ if [ -n "$BUILD" ]; then
   # The instance must be stopped before its disk is imaged.
   gcloud compute instances stop "$BUILDER" --project="$PROJECT" --zone="$ZONE" --quiet >/dev/null 2>&1 || true
 
-  # The stale image goes HERE, and only once the pull has finished: its
-  # replacement needs the name, so the two cannot sit side by side, and a
-  # delete before the pull would leave an installation with no image at all
-  # when the pull failed. GCE refuses to delete an image whose bytes a disk
-  # still references and a run's boot disk is such a reference: that refusal
-  # ends this build with the old image untouched (the runs keep booting it)
-  # and the next scheduled rebuild tries again, rather than the schedule being
-  # a no-op for as long as the image is in use.
+  # 6. The new generation, and only once the pull has finished: an image taken
+  #    from a disk whose pull has not finished is an image with nothing in it,
+  #    and the runs would silently pay the pull the preload exists to remove.
+  #    Creating BEFORE deleting anything is what keeps the family serving: a
+  #    failure here leaves the previous generation as the newest, and the
+  #    build fails with the runs' boot reference intact.
   if [ -n "$BUILT" ]; then
-    if [ -n "$REPLACE" ]; then
-      say "deleting the stale image $IMAGE"
-      gcloud compute images delete "$IMAGE" --project="$PROJECT" --quiet
-    fi
-    say "creating the image $IMAGE"
-    gcloud compute images create "$IMAGE" --project="$PROJECT" \
+    NEW_IMAGE="${IMAGE_FAMILY}-$(date -u +%Y%m%d%H%M%S)"
+    say "creating the image $NEW_IMAGE in family $IMAGE_FAMILY"
+    gcloud compute images create "$NEW_IMAGE" --project="$PROJECT" \
       --source-disk="$BUILDER" --source-disk-zone="$ZONE" \
+      --family="$IMAGE_FAMILY" \
       --labels=fugaro=managed,base-release="$RELEASE_LABEL"
   fi
 
-  # 6. The builder is this build's, and always goes -- built or not.
-  gcloud compute instances delete "$BUILDER" --project="$PROJECT" --zone="$ZONE" --quiet >/dev/null 2>&1 || true
+  # 7. The builder is this build's, and always goes -- built or not. The flag
+  #    stays set until the delete has returned, so one that fails is tried
+  #    again by the trap rather than leaking the VM and its disk.
+  if ! gcloud compute instances delete "$BUILDER" --project="$PROJECT" \
+      --zone="$ZONE" --quiet >/dev/null 2>&1; then
+    say "the builder VM $BUILDER could not be deleted; the next build clears it"
+  fi
+  BUILDER_UP=""
   [ -n "$BUILT" ] || exit 1
 fi
 
-# 7. Stale preloads: images of this installation's own name prefix that carry
-#    fugaro=managed and are not the one the pin resolves to. They are images
-#    THIS module's builds made, and a base image past its version is dead
-#    weight; anything else is left alone.
-STALE="$(gcloud compute images list --project="$PROJECT" \
-  --filter="labels.fugaro=managed AND name~^${IMAGE_PREFIX}-" --format='value(name)' 2>/dev/null || true)"
-for img in $STALE; do
-  [ "$img" = "$IMAGE" ] && continue
-  say "deleting the stale preload image $img"
-  gcloud compute images delete "$img" --project="$PROJECT" --quiet || true
-done
+# 8. Superseded images: every image of this installation's own name prefix
+#    that carries fugaro=managed and is neither the generation this build just
+#    made nor the newest of the family the runs boot. That is the previous
+#    generation, and the whole family of a pin that has moved on -- and an
+#    image that predates families and carries none. The newest of a family is
+#    never deleted, and neither is this build's own, so two builds that
+#    overlap cannot delete each other's work; a delete that fails (an image
+#    still held, a permission Google changes) leaves the image for the next
+#    run of the schedule rather than failing the build.
+#
+#    Anything else is left alone: an image that is not fugaro=managed is not
+#    this module's to delete, whatever its name.
+IMAGES="$(gcloud compute images list --project="$PROJECT" \
+  --filter="labels.fugaro=managed AND name~^${IMAGE_PREFIX}-" \
+  --format='csv[no-heading](name,family)' 2>/dev/null || true)"
+if [ -n "$IMAGES" ]; then
+  DOOMED="$(printf '%s\n' "$IMAGES" | awk -F, -v keep="$NEW_IMAGE" -v fam="$IMAGE_FAMILY" '
+    NF >= 1 && $1 != "" {
+      n++; name[n] = $1; family[n] = $2
+      if ($2 == fam && $1 > best) best = $1
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        if (name[i] == keep) continue
+        if (family[i] == fam && name[i] == best) continue
+        print name[i]
+      }
+    }')"
+  for img in $DOOMED; do
+    say "deleting the superseded preload image $img"
+    gcloud compute images delete "$img" --project="$PROJECT" --quiet || true
+  done
+fi
 
-say "done: $IMAGE"
+say "done: family $IMAGE_FAMILY"

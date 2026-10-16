@@ -9,20 +9,40 @@
 # account it runs as, and the build is a script with a marker on the serial
 # port to wait for (57a-3b's procedure, measured).
 #
-# The name carries a hash of the installation's pinned base image, so the
-# boot image is the one that contains the image a run pulls: one image per
-# pinned version. A new pin makes a new name, and the build deletes the
-# older images of this module's own prefix and label. What the name CANNOT
-# carry is Google's side of it: the pin does not move when the base family
-# rolls, so the release an image was built from is recorded in its
-# base-release label (preload.sh) and the rebuild reads it back together with
-# the image's age -- an image that is current and inside
+# The name carries a hash of the installation's pinned base image, and it
+# names an image FAMILY rather than one image: the runs boot
+# projects/<project>/global/images/family/<this name> (Task 7's job
+# allocation policy), and every build makes a new GENERATION inside that
+# family. That is what makes a rebuild safe -- a family keeps serving its
+# previous generation until the new one exists, and switches over the moment
+# it does, so no build ever leaves the installation without an image
+# (cloud.google.com/compute/docs/images/image-families-best-practices,
+# checked 2026-10-16; preload.sh). A new pin is a new family, and the build
+# deletes the older generations of this module's own prefix and label, and the
+# whole family of a pin that has moved on.
+#
+# What the name CANNOT carry is Google's side of it: the pin does not move
+# when the base family rolls, so the release a generation was built from is
+# recorded in its base-release label (preload.sh) and the rebuild reads it back
+# together with the generation's age -- one that is current and inside
 # preload_refresh_days is the only one it leaves alone, which is what the
 # schedule is for (design §1.2, C19: a Batch image's supported lifetime can
 # end 60 days after its starting date).
 locals {
   preload_prefix = var.names.preload_image
-  preload_image  = "${local.preload_prefix}-${substr(sha256(var.base_image), 0, 8)}"
+  preload_family = "${local.preload_prefix}-${substr(sha256(var.base_image), 0, 8)}"
+
+  # The script, as Cloud Build will read it. The build config is
+  # substitution-processed BEFORE any step runs: every `$VAR` in it is read as
+  # a substitution, and one that is not a built-in makes the API reject the
+  # whole build with INVALID_ARGUMENT -- while `$$` is the literal `$`
+  # (cloud.google.com/build/docs/configuring-builds/substitute-variable-values,
+  # checked 2026-10-16: "To use an expression starting with $ you must use
+  # $$", and `$FOO` is invalid since it is not a built-in substitution).
+  # preload.sh is shell, so it is full of $PROJECT, ${...:?} and $(...) that
+  # are NOT Cloud Build's; every `$` is therefore doubled here, and the step
+  # receives the script unchanged. Without this the build never starts.
+  preload_script = replace(file("${path.module}/preload.sh"), "$", "$$")
 
   # The build's own spec. It names the builder account and the Cloud Build
   # regions the installation is in, and it is one step: a script, not a
@@ -30,15 +50,24 @@ locals {
   preload_build = {
     serviceAccount = local.preload_email
     timeout        = "1800s"
-    options        = { logging = "CLOUD_LOGGING" }
+    # CLOUD_LOGGING_ONLY, not CLOUD_LOGGING: with a user-specified service
+    # account the build's logs must go to a Cloud Storage bucket or a Cloud
+    # Logging bucket in the project, and the value that names the latter is
+    # CLOUD_LOGGING_ONLY. CLOUD_LOGGING is not a value of this enum at all
+    # (cloud.google.com/build/docs/securing-builds/configure-user-specified-service-accounts,
+    # checked 2026-10-16); the preload account holds roles/logging.logWriter
+    # (iam.tf), which is what writing them takes.
+    options = { logging = "CLOUD_LOGGING_ONLY" }
     steps = [{
       name       = "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
       entrypoint = "bash"
-      args       = ["-c", file("${path.module}/preload.sh")]
+      args       = ["-c", local.preload_script]
       env = [
         "PROJECT=${var.project}",
         "ZONE=${var.preload_zone}",
-        "IMAGE=${local.preload_image}",
+        # The FAMILY the runs boot, not an image name: the name of a
+        # generation inside it is the build's own business (preload.sh).
+        "IMAGE_FAMILY=${local.preload_family}",
         "IMAGE_PREFIX=${local.preload_prefix}",
         "BASE_IMAGE=${var.base_image}",
         "BASE_PROJECT=${var.base_project}",
@@ -55,6 +84,9 @@ locals {
         # be a VM with no egress at all.
         "NETWORK=${var.network}",
         "SUBNETWORK=${var.subnetwork}",
+        # The host REGISTRY_HOST is checked against in variables.tf: it is the
+        # region's, and a base_image pinned from another region's host is
+        # refused there rather than pulled here.
         "REGISTRY_HOST=${var.region}-docker.pkg.dev",
         # The builder VM's own identity: a run-class account, whose reader
         # grant lets the pull happen. It is passed as the EMAIL a VM's
@@ -70,11 +102,11 @@ locals {
 # account, which is what the build-submitter role it holds is for, and the
 # API is Google's own: there is no trigger to host and no repository to
 # connect. The call itself is retried (the schedule is weekly, and a rebuild
-# that could not replace an image a run's VM still held would otherwise wait
-# a week for its next attempt), and the script decides what to do from the
-# image the API describes: an image that is already there, current and inside
-# preload_refresh_days costs one API call and nothing else, and anything else
-# is built and replaces it.
+# that failed on a transient -- a pull that never finished, an API error --
+# would otherwise wait a week for its next attempt), and the script decides
+# what to do from the family the API describes: a newest generation that is
+# current and inside preload_refresh_days costs one API call and nothing
+# else, and anything else is built beside it, in the same family.
 resource "google_cloud_scheduler_job" "preload_rebuild" {
   project     = var.project
   name        = var.names.preload_scheduler_job
@@ -84,8 +116,9 @@ resource "google_cloud_scheduler_job" "preload_rebuild" {
   description = "Rebuilds fugaro's preloaded Batch boot image: a Batch image's supported lifetime can end 60 days after its starting date (design compute-backend §1.2)."
 
   # A build that could not finish -- a pull that never printed its marker, an
-  # image a run's VM still holds -- leaves what is there in place, so retrying
-  # it within the hour is safe and is what keeps the image inside its window.
+  # API error mid-rebuild -- leaves the family's previous generation serving,
+  # so retrying it within the hour is safe and is what keeps the image inside
+  # its window.
   retry_config {
     retry_count          = 3
     min_backoff_duration = "600s"

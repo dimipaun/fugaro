@@ -2,6 +2,9 @@
 # image a Batch job's definition names, and the accounts and network the
 # stage reports (design §8.1 task 6).
 
+# The image FAMILY a job's VM boots, as projects/<project>/global/images/
+# family/<preload_image>: Task 7 names it in the job's allocation policy, and
+# the weekly rebuild adds generations to it without that reference moving.
 output "preload_image" {
   value = module.compute.preload_image
 }
