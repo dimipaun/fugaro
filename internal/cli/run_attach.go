@@ -246,8 +246,18 @@ func attachUpload(ctx context.Context, env *cloudEnv, spec *task.Spec, prefix st
 // downloaded into a run that commits a diff and opens a PR, and nothing in
 // its steps reads inputs/.
 //
-// Three arms, all fail-closed. A resolved recipe of another mode is refused
-// with its name and its mode. A launch that leaves the recipe to the runner
+// Every arm fails closed, and the two ways a launch can be an artifact run
+// are ALLOWED for a first run only. A follow-up is never one: it continues a
+// pull request, and the runner refuses every follow-up whose recipe is
+// mode: artifact (runner.go, `r.follow != nil && rcp.Mode ==
+// recipe.ModeArtifact`), whatever resolved that recipe — including the
+// repository's own .fugaro/recipes/default.yaml, which a follow-up that
+// inherited nothing falls back to. So both allow arms here are gated on
+// !spec.IsFollowUp(), and a follow-up that reaches either of them is refused
+// with the reason, before the caps and before the first byte.
+//
+// The rest are fail-closed. A resolved recipe of another mode is refused with
+// its name and its mode. A launch that leaves the recipe to the runner
 // (runnerChooses: no recipe in the task, not a follow-up, no checkout here)
 // is refused too, because this CLI cannot prove the mode the runner will
 // pick — it takes agent.recipe from fugaro.yaml at the ref, else the catalog
@@ -256,7 +266,7 @@ func attachUpload(ctx context.Context, env *cloudEnv, spec *task.Spec, prefix st
 // recipe for is refused with the recipe the runner will really use, since it
 // never reads agent.recipe for one (recipeForLaunch's follow-up arm).
 func checkAttachRecipe(ctx context.Context, spec *task.Spec) error {
-	if spec.Mode == recipe.ModeArtifact {
+	if spec.Mode == recipe.ModeArtifact && !spec.IsFollowUp() {
 		return nil
 	}
 	if runnerChooses(ctx, spec) {
@@ -264,7 +274,26 @@ func checkAttachRecipe(ctx context.Context, spec *task.Spec) error {
 	}
 	rcp := recipeForLaunch(ctx, checkoutConfig(ctx, spec.Repo), spec)
 	switch {
-	case rcp != nil && rcp.Mode == recipe.ModeArtifact:
+	case spec.IsFollowUp() && rcp != nil && rcp.Mode == recipe.ModeArtifact:
+		// The allow arm below must never fire for a follow-up, so it is
+		// gated on !spec.IsFollowUp() and this arm says why: a follow-up
+		// inherits the recipe it resolves rather than choosing one, and the
+		// runner refuses EVERY follow-up whose recipe is mode: artifact
+		// (runner.go, `r.follow != nil && rcp.Mode == recipe.ModeArtifact`),
+		// because an artifact run opens no pull request for one to continue.
+		// The recipe here need not be one anyone asked for: a follow-up that
+		// inherited nothing resolves the repository's own
+		// .fugaro/recipes/default.yaml at this task's base, and a repository
+		// may commit a mode: artifact one there. Uploading then writing the
+		// task would put the bytes in the bucket for a run that cannot start.
+		return userErr("--attach needs an artifact recipe, and %s is one, but this is a follow-up: a follow-up inherits the recipe it resolves rather than choosing one, and the runner refuses every follow-up whose recipe is mode: artifact, because an artifact run opens no pull request for one to continue — so this launch is refused here rather than uploading files the run cannot use", rcp.Name)
+	case spec.IsFollowUp() && spec.Mode == recipe.ModeArtifact:
+		// The same rule for a task that CARRIES the mode rather than
+		// resolving to it: no follow-up is ever an artifact run, and the
+		// runner refuses the pair as well — on the resolved recipe, which
+		// agrees with this stamp or is refused for disagreeing with it.
+		return userErr("--attach needs an artifact recipe, but a follow-up is never an artifact run: it continues a pull request, and the runner refuses any follow-up whose recipe is mode: artifact")
+	case !spec.IsFollowUp() && rcp != nil && rcp.Mode == recipe.ModeArtifact:
 		// An artifact recipe the CLI resolved is exactly what --attach needs,
 		// whatever spec.Mode says: the first arm above is keyed on the task's
 		// own mode, and design §8.2 lets a task carry none (the runner

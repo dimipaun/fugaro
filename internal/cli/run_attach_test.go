@@ -587,6 +587,77 @@ func TestAttachOnAFollowUpResolvesTheRecipeTheRunnerWill(t *testing.T) {
 	wantNoUpload(t, f, calls)
 }
 
+// TestAttachOnAFollowUpWithAnArtifactDefaultRecipeIsRefused: the other half
+// of the follow-up hole. The refusal above keys on the recipe the runner will
+// really run, and that recipe can itself be mode: artifact — for a follow-up
+// that inherited nothing, the runner resolves the repository's own
+// .fugaro/recipes/default.yaml at this task's base, and a repository may
+// commit an artifact one there. The launcher's ALLOW arm (a resolved mode:
+// artifact recipe is what --attach needs) then fired for a follow-up, and
+// gateAttachRecipe's follow-up arm below it never ran: the files were
+// uploaded, the task written, and the run refused at bootstrap — the runner
+// refuses EVERY follow-up whose recipe is mode: artifact, whatever resolved
+// it (runner.go, `r.follow != nil && rcp.Mode == recipe.ModeArtifact`),
+// because a follow-up inherits its recipe rather than choosing one and an
+// artifact run opens no pull request for one to continue.
+//
+// So an allow arm for mode: artifact is only ever right off a follow-up:
+// a launch that continues a pull request can never be an artifact run.
+// The sentence is asserted rather than the two words "follow-up" and "mode:
+// artifact" the generic follow-up arm further down also prints, so that
+// dropping THIS arm is not silently covered by that one.
+//
+// Mutation (drop the `spec.IsFollowUp() && rcp.Mode == recipe.ModeArtifact`
+// arm): the launch reaches the allow arm — which is what the review's
+// `!spec.IsFollowUp()` guard on it defends, the arm here being the one that
+// fires first — and this test fails on the missing sentence, on the
+// execution count and on the object that is already in the bucket.
+func TestAttachOnAFollowUpWithAnArtifactDefaultRecipeIsRefused(t *testing.T) {
+	f := newCloudFixture(t)
+	appRepoCheckout(t, map[string]string{
+		"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+			"workflows:\n  web: { commands: { build: sh build.sh, render: sh render.sh, test: sh test.sh } }\n",
+		recipe.RepoPath(recipe.DefaultName): projectSizzle,
+	})
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	seedSpec(t, f, firstRunSpec(rootID), false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+	calls := guardAttach(t)
+	shot := attachShot(t, "shot.png", "png-bytes")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--attach", shot, "Render the bundle")
+	if ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "the runner refuses every follow-up whose recipe is mode: artifact") {
+		t.Fatalf("err = %v, want a refusal saying a follow-up can never run an artifact recipe", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	wantNoUpload(t, f, calls)
+}
+
+// TestAttachOnAFollowUpThatCarriesArtifactModeIsRefused: the allow arm keyed
+// on the task's OWN mode is gated the same way, and for the same reason — no
+// follow-up is ever an artifact run. The mode is only reachable here from a
+// spec this CLI did not build (a stored task re-launched, or a forged one:
+// resolveFollowUp writes no mode, and both ways a follow-up could pick one are
+// refused by refuseFollowUpArtifactMode and refuseFollowUpRepoRecipe), which
+// is exactly why the gate has to be on the check and not on the writer.
+//
+// Mutation (restore `spec.Mode == recipe.ModeArtifact` as the early return,
+// without `&& !spec.IsFollowUp()`): this spec is allowed and the test fails.
+func TestAttachOnAFollowUpThatCarriesArtifactModeIsRefused(t *testing.T) {
+	t.Chdir(t.TempDir())
+	spec := &task.Spec{Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Ref: "main",
+		Branch: "fugaro/20261015-090000-aaaa", PR: 7, PreviousRun: "20261015-090000-aaaa",
+		Task: "Render the nightly bundle", Mode: recipe.ModeArtifact}
+	err := checkAttachRecipe(context.Background(), spec)
+	if err == nil || !strings.Contains(err.Error(), "a follow-up is never an artifact run") {
+		t.Fatalf("checkAttachRecipe = %v, want a refusal of an artifact mode on a follow-up", err)
+	}
+}
+
 // TestAttachNeverReadsADefaultRecipeFromTheWorkingDirectory: the repository
 // layer is read from a checkout OF THE TASK'S REPOSITORY, and with no such
 // checkout there is no root to read it from — an empty root handed to

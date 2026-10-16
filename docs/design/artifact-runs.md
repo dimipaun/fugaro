@@ -598,8 +598,12 @@ write:
    Task 6, with its own test). An attachment is only meaningful to a run that
    will produce files rather than a pull request: on an implement or review
    recipe the inputs would be downloaded into a run that commits a diff and
-   opens a PR, and nothing in its steps reads `inputs/`. Three arms, all
-   fail-closed:
+   opens a PR, and nothing in its steps reads `inputs/`. Every arm fails
+   closed, and **no follow-up is ever an artifact run** (the runner refuses
+   every follow-up whose *resolved* recipe is `mode: artifact`,
+   `internal/runner/runner.go`): the two ways a launch can be an artifact run
+   are allowed for a first run only, and a follow-up that reaches either is
+   refused with the reason. So:
 
    - **A resolved recipe whose mode is not `artifact` is refused**, naming the
      recipe and its mode — "`--attach` needs an artifact recipe; <name> is
@@ -612,6 +616,16 @@ write:
      an artifact run. The refusal says so and names the fix: pass the artifact
      recipe explicitly. Being unable to *prove* the recipe is artifact mode is
      not a reason to upload the files anyway.
+   - **A follow-up whose resolved recipe is `mode: artifact` is refused**, and
+     this is not the arm below: a follow-up inherits the recipe it resolves
+     rather than choosing one, so an artifact recipe can arrive without anyone
+     asking for one — a repository may commit `.fugaro/recipes/default.yaml` as
+     an artifact recipe, which is what a follow-up that inherited nothing runs.
+     The runner refuses it unconditionally, at bootstrap; the launcher refuses
+     it before the first byte, rather than uploading files for a run that
+     cannot start. A follow-up's task *carrying* `mode: artifact` is refused
+     the same way, since that mode is only reachable from a spec the launcher
+     did not build (a stored task re-launched, or a forged one).
    - **A follow-up whose previous run left no recipe behind is refused.** A
      follow-up runs the recipe of the run it continues — the previous task's,
      else that run's record's — and when both are silent the runner runs its
