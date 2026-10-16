@@ -765,9 +765,11 @@ func TestChecklistHasCheck49(t *testing.T) {
 		{"### 2.", []string{
 			// The two act lines are the SECOND command's, not the --plan-only
 			// one's: --plan-only with --firebase stops after the installation
-			// root (init_firebase.go:290) and never reaches deployDatabase, so
-			// a FACT the owner reads off the plan-only line above it is a FACT
-			// the owner cannot produce.
+			// root and never reaches deployDatabase, so a FACT the owner reads
+			// off the plan-only line above it is a FACT the owner cannot
+			// produce. The stop is installRoot's plan-only return
+			// (init.go:1285-1287), taken at init_firebase.go:210-213 — NOT the
+			// Firebase root's applyRoot at :289, which the run never reaches.
 			"**FACT:** the two act lines printed by the **second** command",
 			"**FACT:** the read-back —",
 		}},
@@ -950,8 +952,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// The citations the review found drifted. Asserted ABSENT rather than
 	// pinned present: a line number that moved under a legitimate change is
 	// not this test's to freeze, but a number that points at something else
-	// today is a citation a reader cannot follow, which is what these five
-	// were.
+	// today is a citation a reader cannot follow, which is what these were.
 	for _, dead := range []string{
 		"internal/cli/doctor.go:748",
 		"internal/cli/cloud.go:53",
@@ -967,11 +968,27 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// a line inside the for loop, so a reader following the citation lands
 		// on a statement that has nothing to do with the seed's sources.
 		"internal/cli/project_cmd.go:352",
+		// The Firebase root's applyRoot at init_firebase.go:289 is what
+		// --plan-only never reaches: the run has already returned at :210-213
+		// on installRoot's plan-only stop (init.go:1285-1287). Citing :290 as
+		// the stop points at code a --plan-only run cannot execute.
+		"internal/cli/init_firebase.go:290",
 	} {
 		if strings.Contains(section, dead) {
 			t.Errorf("the Check 49 section cites %q, which does not point at what it says on this tree", dead)
 		}
 	}
+
+	// Step 2's plan-only claim, pinned present as well as its wrong citation
+	// asserted absent: what stops a `--plan-only` run is installRoot's own
+	// plan-only return, taken at init_firebase.go:210-213 — not the Firebase
+	// root's applyRoot, which that run never reaches. The substantive claim
+	// (the act lines are the second command's) is unchanged and pinned above.
+	chk49MustContain(t, chk49Step(t, section, "### 2."), "step 2", []string{
+		"`internal/cli/init.go:1285-1287`, inside `installRoot` (declared at `:1171`)",
+		"`internal/cli/init_firebase.go:210-213` (`if err != nil || stop { return err }`)",
+		"`internal/cli/init_firebase.go:289`, the one whose stop this is **not**",
+	})
 
 	// Step 1's backup keeps the FIRST copy, and the guard paragraph names every
 	// variable the first hard stop asserts. The unguarded `cp` was the review's
