@@ -624,8 +624,9 @@ func runInit(r *initRun) error {
 // The fact is the project this run created, and nothing else (D73: adding
 // Firebase to an existing project is not creating one, so init --firebase
 // writes nothing). The write itself refuses anything but that fact
-// (managed.WriteMarker); what is here is the rest: which bucket, which
-// project number, and what to say when it cannot be written.
+// (managed.WriteMarker); what is here is the rest: which bucket — the
+// project's own, under the name the read of Task 0.2 looks in and no other —
+// which project number, and what to say when it cannot be written.
 //
 // It runs after the converge and never changes its outcome. A run that
 // created the project and then failed later still records the fact — the
@@ -637,8 +638,15 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	r := e.r
 	// Created is set by the project stage alone, inside its create branch
 	// (init_project.go:421): "" means this run created no project, whatever
-	// else it did, and then there is no fact to record.
-	if r.res.Created == "" || e.c == nil {
+	// else it did, and then there is no fact to record. This is the gate the
+	// task's own test at the call site pins (init_managed_test.go): every
+	// ordinary run of an existing installation — fugaro's own, belong, the
+	// owner's — comes through here with it empty.
+	if r.res.Created == "" {
+		return
+	}
+	if e.c == nil {
+		r.warn(fmt.Sprintf("project %s was created by this run but no Google client was built for the run: it is not marked as managed, so nothing is skipped for it until it is", r.res.Created))
 		return
 	}
 	if r.res.Created != r.gcpProject {
@@ -651,6 +659,18 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	}
 	if bucket == "" {
 		r.warn(fmt.Sprintf("project %s was created but the runs bucket it would be marked in is not known in this run (the installation did not finish): it is not marked, so nothing is skipped for it until it is", r.res.Created))
+		return
+	}
+	// The bucket must be the project's own, under the default name, for the
+	// same reason init's owner() refuses any other (init_review.go:183): a
+	// custom --runs-bucket would take the marker where the read of Task 0.2
+	// does not look — owner() reads fugaro-runs-<project>, and Task 0.2's
+	// IsManaged locates the bucket the same way. A marker in a custom bucket
+	// is the fail-closed direction and still a silently unmanaged project,
+	// so this writes only into the name the read knows and says which name
+	// it found instead.
+	if want := "fugaro-runs-" + r.res.Created; bucket != want {
+		r.warn(fmt.Sprintf("project %s was created but its runs bucket is %s, not %s: it is not marked as managed, because the marker is only read from the default bucket name", r.res.Created, bucket, want))
 		return
 	}
 	// The number is what makes the marker about this project and not about a
