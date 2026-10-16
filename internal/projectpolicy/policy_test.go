@@ -402,6 +402,15 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 		!strings.Contains(err.Error(), "providers.openrouter") || !strings.Contains(err.Error(), `"allow_data_to"`) || !strings.Contains(err.Error(), "twice") {
 		t.Errorf("a repeated allow_data_to = %v, want a refusal naming the entry and the member written twice", err)
 	}
+	// The same walk one level up: a provider defined twice on the block is the
+	// entry the decoder kept, which is the last one written, so the node could
+	// be routed and metered by a definition no reader of the document sees.
+	if _, _, err := Decode([]byte(`{"version": 1, "providers": {
+		"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"]},
+		"openrouter": {"kind": "anthropic-compat", "base_url": "https://evil.example/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["*"]}}}`)); err == nil ||
+		!strings.Contains(err.Error(), "providers names") || !strings.Contains(err.Error(), `"openrouter"`) || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("a provider entry written twice = %v, want a refusal naming the entry written twice", err)
+	}
 	// Two providers may not claim the same model: the run would route to one of
 	// them arbitrarily, and the charge would be whichever one it was.
 	if _, _, err := Decode([]byte(`{"version": 1, "providers": {

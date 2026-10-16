@@ -490,6 +490,24 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return fmt.Errorf("projectpolicy: providers: %w", err)
 	}
+	// The block's own member names are read the same way, and for the same
+	// reason: `{"openrouter": {...}, "openrouter": {...}}` decoded into the map
+	// above as whichever entry was written last, so a node could carry two
+	// definitions of one provider and be routed and metered by the invisible
+	// one. fugaro.yaml refuses the repeated key (yaml.v3's own duplicate-key
+	// error), and so does internal/config's decoder; this is the node being
+	// held to the same rule.
+	blockNames, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: providers: %w", err)
+	}
+	seenProvider := map[string]bool{}
+	for _, n := range blockNames {
+		if seenProvider[n] {
+			return fmt.Errorf("projectpolicy: providers names %q twice: encoding/json keeps the last entry it reads, so which provider this Fugaro routes through would depend on the order the keys were written in — write the entry once", n)
+		}
+		seenProvider[n] = true
+	}
 	carrier := providerCarrier(providers)
 	for _, name := range providerNames(providers) {
 		p := providers[name]
