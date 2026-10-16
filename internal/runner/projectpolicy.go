@@ -224,12 +224,16 @@ func (r *run) unreadablePolicy(err error) error {
 		// node, or one a release before this shape wrote — a node below
 		// Version is not the legacy path, that is the marker's job). Both
 		// stop the run the same way, because the ceiling a policy sets is not
-		// something a run may fall back from, and RunnerSkew is worded for
-		// both: refreshing the image is the remedy for the first, publishing
-		// a policy this runner understands for the second — the runner cannot
-		// do either mid-run, so the operator does, which is why the message
-		// is the shared sentence plus the runner's own remedy (P8).
-		return fmt.Errorf("%s: %s", fmt.Sprintf(projectpolicy.RunnerSkew, ve.Found, ve.Understood), projectpolicy.PathShared())
+		// something a run may fall back from — and each is worded for its own
+		// direction, by projectpolicy.SkewSentence with ReaderRunner: a
+		// refresh of the image for the first, a policy published again from a
+		// release this image understands for the second. Telling the operator
+		// of a node that is merely behind to refresh the image would send
+		// them to a move that changes nothing (the review finding on this
+		// change); the runner can make neither move mid-run, so the operator
+		// does, which is why the message is the shared sentence plus the
+		// remedy for this direction (P8).
+		return fmt.Errorf("%s: %s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderRunner), projectpolicy.PathShared())
 	}
 	return fmt.Errorf("the project's policy at %s could not be read (%s, which marks the deployed rules at generation %d): the run does not start on a ceiling the policy did not set: %s",
 		projectpolicy.PathShared(), marker, projectpolicy.RulesVersion, r.redact(err.Error()))

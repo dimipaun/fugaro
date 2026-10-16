@@ -65,11 +65,17 @@ func (e *MarkerError) Error() string {
 // do not exist (the owner's rules deploy has not happened yet, and nothing
 // may halt on that).
 //
-// A negative value is not a generation either: it is an integer, so it would
-// fall through the caller's "< RulesVersion" test and read as that same
+// A *negative* generation is a MarkerError and not a small one. Read asks this
+// function only whether the generation is at least RulesVersion, so a marker of
+// -1 would answer "no": the whole node would read as "not found", which is the
 // legacy path, and a hand-edited -1 would silently take a project-centric
-// installation's policy out of every run's reach. It is refused as the
-// MarkerError any other non-generation is.
+// installation's policy out of every run's reach — the fail-open MarkerError's
+// own doc forbids, on the one node that decides whether a published policy is
+// read at all. No deploy writes a negative generation (RulesVersion is 1 and
+// only goes up), so a negative one is a hand edit, and it is named rather than
+// guessed at. The same reading applies to a generation far above RulesVersion:
+// that is a newer installation's marker, and it is at least this one's, so it
+// reads as deployed.
 func rulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
 	var raw json.RawMessage
 	found, err := db.Get(ctx, PathRulesMarker(), &raw)

@@ -1098,18 +1098,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
-	if !r.artifact {
-		// An artifact run has no implement/fix/review loop: planOf builds
-		// the ordinary loop's plan and checkPlan demands a trailing review
-		// step, neither of which an artifact recipe's [plan], render shape
-		// has. Its own stage list is read directly (artifactHasPlan), and
-		// the render is the runner's (artifact.go).
-		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
-		if err := checkPlan(plan); err != nil {
-			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
-		}
-		r.plan = plan
-	}
 	r.gateSteps = checkGateSteps(rcp)
 	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
@@ -1159,6 +1147,30 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
+	}
+	// The plan is derived here, *after* the policy: the routing switch is
+	// applied inside resolvePolicy and rewrites the pins the plan's
+	// first-line decision is read off — Agent.FirstLineOn asks whether the
+	// coder's model is claimed by a route and the reviewer's is not — so a
+	// plan derived before it would answer from the pins the switch replaced.
+	// Concretely, with `agent.first_line_review: auto` and a switch that
+	// routes only the coder, the canonical coder pin is unclaimed before the
+	// rewrite and claimed after it, and the earlier order silently dropped the
+	// cheap first-line loop of exactly the runs a switch routed (the review
+	// finding on this change). Nothing between here and the loop reads the
+	// plan, so deriving it here changes nothing else, and the steps' rounds
+	// and the trailing-review check are the same derivation as before.
+	if !r.artifact {
+		// An artifact run has no implement/fix/review loop: planOf builds
+		// the ordinary loop's plan and checkPlan demands a trailing review
+		// step, neither of which an artifact recipe's [plan], render shape
+		// has. Its own stage list is read directly (artifactHasPlan), and
+		// the render is the runner's (artifact.go).
+		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
+		if err := checkPlan(plan); err != nil {
+			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+		}
+		r.plan = plan
 	}
 	// The run's Firebase identity, the shared caps and the kill switches:
 	// a halt here is outcome none (nothing is locked, pushed or opened).
@@ -1436,13 +1448,14 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
 	}
 	// The layer's claims are merged here, before anything reads a route:
-	// bootstrap reaches this at runner.go's own first step and asks planOf
-	// about the reviewer (FirstLineOn) a moment later, well before
-	// checkBudget and the gateway's routes. A merge any later leaves a
-	// layer-only claimed senior looking unclaimed and the derived recipe
-	// keeps its cheap first line. An overlap — a claim colliding with a
-	// route this run has — fails bootstrap here, as a config error naming
-	// the key, before any call.
+	// bootstrap reaches this at runner.go's own first step, and the plan that
+	// reads a claim — planOf's FirstLineOn about the reviewer, derived after
+	// resolvePolicy returns, which is also where the routing switch rewrites
+	// the pins it reads — is derived later still, well before checkBudget and
+	// the gateway's routes. A merge any later leaves a layer-only claimed
+	// senior looking unclaimed and the derived recipe keeps its cheap first
+	// line. An overlap — a claim colliding with a route this run has — fails
+	// bootstrap here, as a config error naming the key, before any call.
 	//
 	// ClaimsOnRoutes first, because the run's routes are the job's own
 	// FUGARO_MODEL_PROVIDERS: written per repository, holding only the

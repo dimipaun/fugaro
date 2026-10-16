@@ -37,77 +37,202 @@ func TestProviderForSlugDerivesEachKind(t *testing.T) {
 	}
 }
 
-// The remote the run clones from is a launcher's to set, so a remote on
-// another provider's host — the same owner and name is the interesting case —
-// is the one disagreement the run refuses. A remote that names no host this
-// Fugaro knows is not a disagreement: the end-to-end and unit test remotes are
-// local paths or an httptest URL, self-hosted installations are theirs, and
-// any of them is the derived kind's by the launcher's own refusals
-// (internal/infra's repoURL).
-func TestRemoteOfAnotherKind(t *testing.T) {
-	for _, tc := range []struct{ kind, remote, want string }{
-		{"bitbucket", "https://github.com/acme/app.git", "github"},
-		{"github", "https://bitbucket.org/acme/app.git", "bitbucket"},
-		{"github", "git@bitbucket.org:acme/app.git", "bitbucket"},
-		{"github", "https://github.com/acme/app.git", ""},
-		{"github", "git@github.com:acme/app.git", ""},
-		{"github", "/tmp/fixture.git", ""},
-		{"github", "/srv/git/acme/app", ""},
-		{"github", "http://127.0.0.1:8080/acme/app.git", ""},
-		{"github", "https://git.example.com/acme/app.git", ""},
-		{"github", "https://github.com.evil.example/acme/app.git", ""},
+// The host half of the remote binding: the host a remote names, the provider
+// kind that host belongs to, and whether it names a host at all. Three answers,
+// not two, and that is the point: a remote naming no host (a local path, the
+// empty string, a bare "/") is left to the checks that were always there, while
+// a remote naming a host must name the derived kind's — a host no kind owns at
+// all (https://git.example.com/..., https://github.com.evil.example/..., and the
+// httptest URL the fixture would use if it ever carried an execution) is a
+// refusal, not "no disagreement", because the run scopes this repository's git
+// credential to the remote's host (the review finding on this change; the first
+// shape of this check read KindForURL's "" as "unknown, therefore fine").
+func TestRemoteHost(t *testing.T) {
+	for _, tc := range []struct {
+		remote, host, kind string
+		named              bool
+	}{
+		{"https://github.com/acme/app.git", "github.com", "github", true},
+		{"https://bitbucket.org/acme/app.git", "bitbucket.org", "bitbucket", true},
+		{"git@bitbucket.org:acme/app.git", "bitbucket.org", "bitbucket", true},
+		{"git@github.com:acme/app.git", "github.com", "github", true},
+		{"github.com:acme/app.git", "github.com", "github", true},
+		// A host no provider kind owns: another forge, a name that only looks
+		// like github.com, and a loopback address — a real host either way, so
+		// the credential would go to it.
+		{"https://git.example.com/acme/app.git", "git.example.com", "", true},
+		{"https://github.com.evil.example/acme/app.git", "github.com.evil.example", "", true},
+		{"http://127.0.0.1:8080/acme/app.git", "127.0.0.1", "", true},
+		// No host: a local path, an empty remote, a bare "/", and a file URL
+		// (whose "file:/" is a scheme, not an scp-like host and path).
+		{"/tmp/fixture.git", "", "", false},
+		{"/srv/git/acme/app", "", "", false},
+		{"", "", "", false},
+		{"https://github.com/", "github.com", "github", true},
+		{"file:///tmp/web.git", "", "", false},
+		// A URL git accepts and url.Parse refuses names a host too, so it is
+		// the second answer, not the third: gitprov.SplitRemoteRaw reads the
+		// host off the authority as written (the text after its last "@", where
+		// libcurl ends the userinfo), and no kind owns either of these hosts —
+		// the refusal. Skipping them is what the first shape of this check did,
+		// and it is fail-open: the host git connects to is the one the run
+		// scopes this repository's git credential to (the review finding on
+		// this change).
+		{"https://github.com\\@evil.example/acme/app.git", "evil.example", "", true},
+		{"https://evil.example/acme/app%ZZ.git", "evil.example", "", true},
+		{"https://evil.example/acme/app.git#x=%ZZ", "evil.example", "", true},
 	} {
-		if got := remoteOfAnotherKind(tc.kind, tc.remote); got != tc.want {
-			t.Errorf("remoteOfAnotherKind(%q, %q) = %q, want %q", tc.kind, tc.remote, got, tc.want)
+		host, kind, named := remoteHost(tc.remote)
+		if host != tc.host || kind != tc.kind || named != tc.named {
+			t.Errorf("remoteHost(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.remote, host, kind, named, tc.host, tc.kind, tc.named)
 		}
 	}
 }
 
-// The other half of the same guard, and the half the host cannot see:
-// gitprov.KindForURL reads a host and nothing else, so another repository of
-// the same forge — another owner, another name, or the same name under another
-// case — is a remote on the derived kind's own host and agrees with it by kind.
-// FUGARO_REMOTE is a launcher's to set, and the run's slug (its locks, its
-// cache, its budget session, and which repository the policy admitted) names
-// one repository, so the repository in the remote's path is what is compared.
-// A remote this Fugaro cannot place keeps the reading it had: a local path, an
-// httptest URL and a self-hosted installation are the launcher's own business
-// (internal/infra's repoURL), not a claim about another repository.
-func TestRemoteOfAnotherRepository(t *testing.T) {
-	for _, tc := range []struct{ name, kind, repo, remote, want string }{
-		{"https, another owner", "github", "acme/app", "https://github.com/other/app.git", "other/app"},
-		{"https, another name", "github", "acme/app", "https://github.com/acme/other.git", "acme/other"},
-		{"scp-like, another name", "github", "acme/app", "git@github.com:acme/other.git", "acme/other"},
-		{"ssh, another name", "github", "acme/app", "ssh://git@github.com/acme/other.git", "acme/other"},
-		{"another case of another name", "github", "acme/app", "https://github.com/acme/Other.git", "acme/other"},
-		{"a credential and a query", "github", "acme/app", "https://x:tok@github.com/acme/other.git?ref=main", "acme/other"},
-		{"bitbucket, another name", "bitbucket", "acme/app", "https://bitbucket.org/acme/other.git", "acme/other"},
-
-		{"the same repository", "github", "acme/app", "https://github.com/acme/app.git", ""},
-		{"the same repository, scp-like", "github", "acme/app", "git@github.com:acme/app.git", ""},
-		{"the same repository, no .git", "github", "acme/app", "https://github.com/acme/app", ""},
-		{"the same repository in another case", "github", "acme/app", "https://github.com/ACME/App.git", ""},
-		{"the task's own spelling", "github", "ACME/App.git", "https://github.com/acme/app", ""},
-
-		{"another provider's host", "github", "acme/app", "https://bitbucket.org/acme/other.git", ""},
-		{"no host this Fugaro knows", "github", "acme/app", "https://git.example.com/acme/other.git", ""},
-		{"a look-alike host", "github", "acme/app", "https://github.com.evil.example/acme/other.git", ""},
-		{"a local path", "github", "acme/app", "/srv/git/acme/other", ""},
-		{"an httptest URL", "github", "acme/app", "http://127.0.0.1:8080/acme/other.git", ""},
-		{"a path with more than owner and name", "github", "acme/app", "https://github.com/group/sub/app.git", ""},
-		{"no repository in the path at all", "github", "acme/app", "https://github.com/", ""},
-		{"no kind derived", "", "acme/app", "https://github.com/acme/other.git", ""},
+// The owner/name half of the remote binding: the same repository written the
+// ways git writes it — .git or not, mixed case, an scp-like remote, a userinfo
+// — is one repository, and a remote that names no repository path at all is
+// left to the checks that were always there rather than refused here. A remote
+// that names a repository is what admissionCheck compares with the task's own.
+func TestRepoNamedByRemote(t *testing.T) {
+	for _, tc := range []struct {
+		remote, want string
+		named        bool
+	}{
+		{"https://github.com/acme/app.git", "acme/app", true},
+		{"https://github.com/acme/app", "acme/app", true},
+		{"https://github.com/Acme/App.git", "acme/app", true},
+		{"git@github.com:acme/app.git", "acme/app", true},
+		// The same scp-like remote without the userinfo git makes optional,
+		// and its colon-slash spelling: git ssh's to github.com and asks for
+		// the same repository either way, so both name one here too (the
+		// review finding on this change).
+		{"github.com:acme/app.git", "acme/app", true},
+		{"github.com:/acme/app.git", "acme/app", true},
+		{"github.com:attacker/malware.git", "attacker/malware", true},
+		{"ssh://git@github.com/acme/app.git", "acme/app", true},
+		{"https://x:token@github.com/acme/app.git", "acme/app", true},
+		{"https://github.com/attacker/malware.git", "attacker/malware", true},
+		// A GitLab subgroup path is what a task's own Repo may be (repoRE
+		// admits more than one "/"), so it is a name this check compares like
+		// any other rather than one it refuses.
+		{"https://gitlab.example.com/group/sub/app.git", "group/sub/app", true},
+		// A remote that names no path: a local path, a bare host, an empty
+		// string. Nothing to compare, and the checks that were always there
+		// still run.
+		{"/tmp/fixture.git", "", false},
+		{"/srv/git/acme/app", "", false},
+		{"http://127.0.0.1:8080/", "", false},
+		{"https://github.com/", "", false},
+		{"", "", false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := remoteOfAnotherRepository(tc.kind, tc.repo, tc.remote); got != tc.want {
-				t.Errorf("remoteOfAnotherRepository(%q, %q, %q) = %q, want %q", tc.kind, tc.repo, tc.remote, got, tc.want)
-			}
-		})
+		got, named, err := repoNamedByRemote(tc.remote)
+		if err != nil {
+			t.Errorf("repoNamedByRemote(%q) = error %v, want (%q, %v, nil)", tc.remote, err, tc.want, tc.named)
+			continue
+		}
+		if got != tc.want || named != tc.named {
+			t.Errorf("repoNamedByRemote(%q) = (%q, %v), want (%q, %v)", tc.remote, got, named, tc.want, tc.named)
+		}
 	}
-	// A repository the task cannot name is not this check's to refuse: there is
-	// no slug to derive, and the binding above stops that run on its own.
-	if got := remoteOfAnotherRepository("github", "not a repository", "https://github.com/acme/other.git"); got != "" {
-		t.Errorf("a task repository CanonicalRepo refuses was compared anyway: got %q", got)
+}
+
+// A remote that names a repository path canonicalization refuses is an error,
+// never a "nothing to compare": skipping it is what let
+// https://github.com/acme/app.git/../../attacker/malware — which git's HTTP
+// transport resolves to github.com/attacker/malware — through the owner/name
+// binding, and the run cloned it under acme/app's slug. Every path here is one
+// git or the server may read differently from this check, so every one of them
+// must come back as a refusal (the review finding on this change).
+func TestRepoNamedByRemoteRefusesAPathItCannotRead(t *testing.T) {
+	for _, remote := range []string{
+		// Dot segments: RFC 3986 §5.2.4 removes them, so this is
+		// github.com/attacker/malware.
+		"https://github.com/acme/app.git/../../attacker/malware",
+		"https://github.com/acme/app.git/../../../attacker/malware",
+		"https://github.com/acme/../attacker/malware.git",
+		"https://github.com/./acme/app.git",
+		"https://github.com/acme/app/..",
+		"git@github.com:acme/../attacker/malware.git",
+		"github.com:acme/../attacker/malware.git",
+		"github.com:/acme/../attacker/malware.git",
+		"github.com:/acme%2F..%2Fattacker/malware.git",
+		// Encoded separators and encoded dots: url.Parse decodes "%2F" into a
+		// separator, so reading Path instead of EscapedPath would compare a
+		// repository the remote does not plainly name.
+		"https://github.com/acme%2Fapp.git",
+		"https://github.com/acme%2F..%2Fattacker/malware.git",
+		"https://github.com/%2e%2e/attacker/malware.git",
+		// An empty segment: two separators where a segment must be.
+		"https://github.com//attacker/malware.git",
+		"https://github.com/acme//app.git",
+		// A segment a repository name cannot hold (task's repoRE): the
+		// remote is not an owner/name, whatever the server makes of it.
+		"https://github.com/acme/app.git;x",
+		"https://github.com/acme/app%20x.git",
+		"https://github.com/acme/app.git%00",
+		// A URL url.Parse refuses and git does not: the host is this run's own,
+		// so the host half of the binding has nothing to refuse, and the path
+		// is read off the authority as written for exactly this check. An
+		// unreadable path is a refusal here too, never a remote that goes
+		// unasked (the review finding on this change).
+		"https://github.com/acme/app%ZZ.git",
+		"https://github.com\\@evil.example/acme/app%ZZ.git",
+	} {
+		got, named, err := repoNamedByRemote(remote)
+		if err == nil {
+			t.Errorf("repoNamedByRemote(%q) = (%q, %v, nil), want a refusal: a path this check cannot read is one git may resolve to another repository", remote, got, named)
+			continue
+		}
+		if named {
+			t.Errorf("repoNamedByRemote(%q) reported a name beside its refusal", remote)
+		}
+	}
+}
+
+// The path half on its own: what counts as "the remote names a repository
+// path", and what the path is before canonicalization (which is the caller's
+// refusal to make). EscapedPath is the source, so an encoded separator stays
+// visible instead of decoding into one.
+func TestRemoteRepoPath(t *testing.T) {
+	for _, tc := range []struct {
+		remote, want string
+		named        bool
+	}{
+		{"https://github.com/acme/app.git", "acme/app.git", true},
+		{"https://github.com/acme/app.git/", "acme/app.git", true},
+		{"https://github.com/acme/app.git/../../attacker/malware", "acme/app.git/../../attacker/malware", true},
+		{"https://github.com/acme%2Fapp.git", "acme%2Fapp.git", true},
+		{"git@github.com:acme/app.git", "acme/app.git", true},
+		{"github.com:acme/app.git", "acme/app.git", true},
+		{"github.com:/acme/app.git", "acme/app.git", true},
+		{"github.com:acme/app.git/", "acme/app.git", true},
+		// Not scp-like: a URL's authority is "//" and a local path has no
+		// colon before its first "/", so neither names a host and a path.
+		{"file:///tmp/remote.git", "", false},
+		{"/tmp/acme:web.git", "", false},
+		// A query or a fragment is not part of the path git clones, so a
+		// remote carrying one is still the repository its path names.
+		{"https://github.com/acme/app.git?ref=x", "acme/app.git", true},
+		{"https://github.com/acme/app.git#main", "acme/app.git", true},
+		{"https://github.com/", "", false},
+		{"https://github.com", "", false},
+		{"http://127.0.0.1:8080/", "", false},
+		{"/tmp/fixture.git", "", false},
+		{"", "", false},
+		// A URL url.Parse refuses is read, not skipped: git reads its path the
+		// same way, so handing it on is what lets the owner/name check refuse
+		// it (https://github.com/acme/app%ZZ.git names no repository this check
+		// can compare) instead of the whole remote going unasked (the review
+		// finding on this change).
+		{"https://github.com/acme/app%ZZ.git", "acme/app%ZZ.git", true},
+		{"https://evil.example/acme/app%ZZ.git", "acme/app%ZZ.git", true},
+		{"https://github.com\\@evil.example/acme/app.git", "acme/app.git", true},
+	} {
+		got, named := remoteRepoPath(tc.remote)
+		if got != tc.want || named != tc.named {
+			t.Errorf("remoteRepoPath(%q) = (%q, %v), want (%q, %v)", tc.remote, got, named, tc.want, tc.named)
+		}
 	}
 }
 
@@ -123,10 +248,28 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		{"https://x-token-auth@bitbucket.org/acme/app.git", "https://bitbucket.org/acme/app.git"},
 		{"git@github.com:acme/app.git", "github.com"},
 		{"x-token-auth@bitbucket.org:acme/app.git", "bitbucket.org"},
+		// The scp-like form without userinfo is still ssh's host and path, so
+		// its display is the host alone like its userinfo-bearing sibling's.
+		{"github.com:acme/app.git", "github.com"},
+		{"github.com:/acme/app.git", "github.com"},
+		// Neither shape: quoted as written.
+		{"/tmp/fixture.git", "/tmp/fixture.git"},
+		{"file:///tmp/fixture.git", "file:///tmp/fixture.git"},
 		{"https://bitbucket.org/acme/app.git?access_token=ATBBsecret", "https://bitbucket.org/acme/app.git"},
 		{"https://github.com/acme/app.git#glpat-secret", "https://github.com/acme/app.git"},
 		{"https://x:glpat-secret@github.com/acme/app.git?access_token=ATBBsecret#one", "https://github.com/acme/app.git"},
-		{"https://ho st/acme/app.git", "the remote"},
+		// A space in the host is a string url.Parse refuses and git never
+		// connects with: the authority is still read off it, so the display
+		// names it rather than falling back to "the remote" (and the admission
+		// refuses it as the unknown host it is).
+		{"https://ho st/acme/app.git", "ho st"},
+		// A URL url.Parse refuses is quoted as the host git would connect to,
+		// which is the text after the authority's last "@": the userinfo ahead
+		// of it is a token's place, and a display that quoted the string as
+		// written would put it in the refusal.
+		{"https://github.com\\@evil.example/acme/app.git", "evil.example"},
+		{"https://evil.example/acme/app%ZZ.git", "evil.example"},
+		{"https://x:glpat-secret@evil.example\\acme/app.git", "evil.example\\acme"},
 		// An escape url.Parse rejects does not make it fail: the query it
 		// cannot read is dropped like any other (u.Query() is what would
 		// report it, and addRemoteSecrets ignores that).
@@ -136,7 +279,7 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("remoteDisplay(%q) = %q, want %q", tc.in, got, tc.want)
 		}
-		for _, secret := range []string{"glpat-secret", "ATBBsecret"} {
+		for _, secret := range []string{"glpat-secret", "ATBBsecret", "tok", "x:glpat-secret"} {
 			if strings.Contains(got, secret) {
 				t.Errorf("remoteDisplay(%q) = %q quotes %q", tc.in, got, secret)
 			}

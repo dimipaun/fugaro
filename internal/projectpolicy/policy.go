@@ -265,7 +265,7 @@ const MaxPolicyBytes = 64 << 10
 // Unknown JSON keys are ignored; version is not (see VersionError), and the
 // budget block is strict (see the package comment).
 func Decode(raw []byte) (*Policy, bool, error) {
-	if isNull(raw) {
+	if IsNull(raw) {
 		return nil, false, nil
 	}
 	if len(raw) > MaxPolicyBytes {
@@ -308,7 +308,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		return nil, true, &VersionError{Found: p.Version, Understood: Version}
 	}
 
-	if braw, ok := doc["budget"]; ok && !isNull(braw) {
+	if braw, ok := doc["budget"]; ok && !IsNull(braw) {
 		dec := json.NewDecoder(bytes.NewReader(braw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&p.Budget); err != nil {
@@ -319,7 +319,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 
-	if araw, ok := doc["allow_repos"]; ok && !isNull(araw) {
+	if araw, ok := doc["allow_repos"]; ok && !IsNull(araw) {
 		if err := json.Unmarshal(araw, &p.AllowRepos); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: allow_repos: %w", err)
 		}
@@ -330,7 +330,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 
-	if rraw, ok := doc["model_prices"]; ok && !isNull(rraw) {
+	if rraw, ok := doc["model_prices"]; ok && !IsNull(rraw) {
 		// Prices' own UnmarshalJSON does the strict part: each entry is
 		// decoded with DisallowUnknownFields, and each member name is
 		// unescaped back into the model ID the block is keyed by.
@@ -360,7 +360,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 
-	if praw, ok := doc["providers"]; ok && !isNull(praw) {
+	if praw, ok := doc["providers"]; ok && !IsNull(praw) {
 		ps, err := decodeProviders(praw)
 		if err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: providers: %w", err)
@@ -376,7 +376,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	// the node is the document a run is routed by. Decoding them in the other
 	// order would hold the switch to its shape alone and accept a node that
 	// names a route nothing in it claims.
-	if rraw, ok := doc["routing"]; ok && !isNull(rraw) {
+	if rraw, ok := doc["routing"]; ok && !IsNull(rraw) {
 		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
 		}
@@ -570,7 +570,7 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 					// config's rules.
 					return fmt.Errorf("projectpolicy: providers.%s.%s: a provider entry's members are spelled as fugaro.yaml spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, and the null spelling of allow_data_to would publish as every repository", name, member, known)
 				}
-				if data, ok := fields["allow_data_to"]; ok && isNull(data) {
+				if data, ok := fields["allow_data_to"]; ok && IsNull(data) {
 					return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
 				}
 				// route_fee_pct is the other member JSON spells a written key
@@ -583,7 +583,7 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 				// auth, secret or models is refused by ValidateModelProviders
 				// just below, and a null require_zdr or price_policy is the
 				// default the key being absent gives.)
-				if fee, ok := fields["route_fee_pct"]; ok && isNull(fee) {
+				if fee, ok := fields["route_fee_pct"]; ok && IsNull(fee) {
 					return fmt.Errorf("projectpolicy: providers.%s.route_fee_pct: a written null is read as 0, which is no surcharge at all — write the percentage this route adds to every charge, or remove the key entirely", name)
 				}
 			}
@@ -649,7 +649,7 @@ func CheckRoutingMemberNames(raw json.RawMessage) error {
 		return fmt.Errorf("projectpolicy: routing: %w", err)
 	}
 	claude, ok := members["claude"]
-	if !ok || isNull(claude) {
+	if !ok || IsNull(claude) {
 		return nil
 	}
 	cnames, err := objectMemberNames(claude)
@@ -955,9 +955,13 @@ func validBudget(raw json.RawMessage, b Budget) error {
 	return nil
 }
 
-// isNull reports whether a value is absent: an empty body, or the JSON null
-// RTDB reads a missing node as.
-func isNull(raw []byte) bool {
+// IsNull reports whether a value is absent: an empty body, or the JSON null
+// RTDB reads a missing node as. Exported because the write path asks the same
+// question of a member it is about to replace (internal/cli's
+// policyNodeBytes): a `routing` member written as null is an absent one there
+// exactly as it is here, and a member the two packages read differently is a
+// member one of them gets wrong.
+func IsNull(raw []byte) bool {
 	t := bytes.TrimSpace(raw)
 	return len(t) == 0 || string(t) == "null"
 }

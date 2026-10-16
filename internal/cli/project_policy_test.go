@@ -1521,6 +1521,14 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, a wildcard over a literal wildcard": {[]string{"github/acme/*", "github/acme/*app"}, "github/acme/*app", true, "github/acme/*"},
 		"pattern, the same width narrower":            {[]string{"github/acme/*", "github/*/*"}, "github/*/*", false, ""},
 		"pattern, its own repo entry remains":         {[]string{"github/acme/app", "github/acme/*"}, "github/acme/*", false, ""},
+		// The removed entry carries a "*" in its *name* (its last segment is
+		// "*-web", not "*"), and github/*/* admits every repository that entry
+		// admitted. MatchRepo meets that "*" as a character of the subject
+		// while the pattern's own "*" is the wildcard — the case a matcher
+		// that compared the two positions first got wrong, reading this as
+		// "refused from now on" for a control the removal did not take away
+		// (the review of this change).
+		"pattern with a star in its name, a broader pattern": {[]string{"github/*/*", "github/acme/*-web"}, "github/acme/*-web", true, "github/*/*"},
 		// The other direction: github/a*/app admits github/acme/app, but not
 		// github/acme/anything-else, which the removed pattern did admit — so the
 		// removal does refuse something and must say so.
@@ -1666,6 +1674,57 @@ func TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns(t *testing.T)
 	}
 }
 
+// TestProjectReposRmTheWildcardSaysWhatIsLeft: `repos rm '*'` refuses the
+// repositories nothing else admits — the command's own help states that rule —
+// so over a list that still holds github/acme/* the confirmation must not claim
+// every run stops. The wildcard is the one entry the "still admits it" sentence
+// does not fit, because admittedBy asks whether a *string* is admitted and no
+// pattern matches the string "*": without the branch that reads the rest of the
+// list, "*" fell through to the concrete sentence.
+//
+// Mutation (verified, run and restored): let the wildcard fall through to
+// removalWarning's last sentence: this test fails, reading "its runs are
+// refused from now on" while github/acme/* is on the list.
+func TestProjectReposRmTheWildcardSaysWhatIsLeft(t *testing.T) {
+	if got := removalWarning([]string{"*"}, "*"); !strings.Contains(got, "refused from now on") || !strings.Contains(got, "only entry") {
+		t.Errorf("removing the only entry = %q, want it to say every run is refused", got)
+	}
+	if got := removalWarning([]string{"*", "github/acme/*"}, "*"); strings.Contains(got, "refused from now on") {
+		t.Errorf("removing the wildcard with a pattern left = %q, want no claim that runs stop", got)
+	} else if !strings.Contains(got, "github/acme/*") {
+		t.Errorf("the confirmation does not name the entry that still admits its own: %q", got)
+	}
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/acme/*", "*"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation claims every run stops though github/acme/* is on the list:\n%s", out)
+	}
+	if !strings.Contains(out, "github/acme/*") {
+		t.Errorf("the confirmation does not name the entry that still admits its own:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "*") {
+		t.Errorf("allow_repos = %v, want the wildcard removed", allow)
+	}
+	// The point of the sentence: a repository the remaining entry covers is
+	// still admitted, which is why the runs are not refused.
+	if !projectpolicy.AdmitRepo(allow, "github/acme/app") {
+		t.Errorf("allow_repos = %v no longer admits github/acme/app, which the confirmation said it keeps", allow)
+	}
+}
+
 // TestProjectReposEditTheWildcard: "*" is an allow-list entry like any other —
 // the design's explicit every-repository choice (§4.3), which MatchRepo reads
 // as admitting anything, which ValidPattern accepts, and which the rules
@@ -1715,8 +1774,20 @@ func TestProjectReposEditTheWildcard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repos rm '*' = %v", err)
 	}
-	if !strings.Contains(out, `removes * from the allow-list`) || !strings.Contains(out, "refused from now on") {
+	// What removing the wildcard does is a set, not one repository's end: the
+	// repositories the rest of the list still admits keep running, so the
+	// sentence is the help text's rule — "refuses every repository the rest of
+	// the list does not admit" — and it names the entries that stay (the review
+	// of PR #414's branch: this said "its runs are refused from now on" over a
+	// list that still admitted both of them).
+	if !strings.Contains(out, `removes * from the allow-list`) || !strings.Contains(out, "refused only if no other entry admits it") {
 		t.Errorf("the confirmation does not say what removing the wildcard does:\n%s", out)
+	}
+	if !strings.Contains(out, "bitbucket/acme/other") || !strings.Contains(out, "github/acme/app") {
+		t.Errorf("the confirmation does not name the entries that still admit their own:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation claims every run stops though concrete entries remain:\n%s", out)
 	}
 	allow = publishedPolicy(t, f).AllowRepos
 	if slices.Contains(allow, "*") {
@@ -2190,6 +2261,68 @@ func TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting(t *testing.
 	}
 }
 
+// TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent: a document can carry
+// `"routing": null`, and a null member inside the block. The read path reads
+// both as the absent thing they are — jsonMember returns the four bytes,
+// projectpolicy's IsNull calls that absent, and validRoutingMembers skips a null
+// block without a word — but the write path judged the member by its bytes, so
+// policyNodeBytes refused such a node with "carries a routing block this Fugaro
+// cannot read the way it is written", and mergeRoutingClaude refused the null
+// `claude` inside it the same way. One member read two ways by the two halves of
+// one release (review finding on this change).
+//
+// It is exercised where it stands rather than through the command surface, for
+// the reason TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers gives: RTDB
+// writes a null as a delete, so the service never serves such a document, which
+// is exactly why the half that only *writes* documents must not be the half that
+// gets this wrong. The null is what this reader already allows for a document
+// that arrived by another route (a hand-written node, an import).
+func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
+	quiet := &projectpolicy.Policy{Version: projectpolicy.Version}
+	switchOn := &projectpolicy.Policy{Version: projectpolicy.Version, Routing: &config.Routing{
+		Claude: &projectpolicy.ClaudeRoute{Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}},
+	}}
+	for _, tc := range []struct {
+		name, old string
+		pol       *projectpolicy.Policy
+		keep      bool
+	}{
+		{"a null routing member, kept", `{"version": 1, "routing": null}`, quiet, true},
+		{"a null routing member, replaced by the config's switch", `{"version": 1, "routing": null}`, switchOn, false},
+		{"a null claude member, replaced by the config's switch", `{"version": 1, "routing": {"claude": null}}`, switchOn, false},
+	} {
+		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep)
+		if err != nil {
+			t.Errorf("%s: policyNodeBytes = %v, want the node written", tc.name, err)
+			continue
+		}
+		var got map[string]any
+		if err := json.Unmarshal(node, &got); err != nil {
+			t.Errorf("%s: the node is not a document: %v", tc.name, err)
+			continue
+		}
+		routing, ok := nodeAt(got, "routing")
+		if !tc.keep {
+			// The config's switch is what the node now says, over the null it
+			// found.
+			if !ok {
+				t.Errorf("%s: the node carries no routing block: %s", tc.name, node)
+				continue
+			}
+			if v, _ := nodeAt(got, "routing", "claude", "via"); v != string(config.RouteOpenRouter) {
+				t.Errorf("%s: routing.claude.via = %v, want the config's %q (routing %v)",
+					tc.name, v, config.RouteOpenRouter, routing)
+			}
+			continue
+		}
+		// Kept, with nothing to keep: a null member is not a block to carry
+		// over, and the node is the policy the publisher built.
+		if ok && routing != nil {
+			t.Errorf("%s: the node carries routing %v, want none", tc.name, routing)
+		}
+	}
+}
+
 // TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers: the publish path's own gate
 // on the member names it is about to patch into. It is not reachable through the
 // command surface — Decode refuses such a node first (validRoutingMembers calls
@@ -2329,6 +2462,47 @@ func TestProjectReposRmOfAPatternWithABroaderPatternLeftSaysSo(t *testing.T) {
 	// The point of the sentence: every repository the removed pattern admitted
 	// is still admitted, by the entry the confirmation named.
 	for _, r := range []string{"github/acme/app", "github/acme/anything", "github/other/thing"} {
+		if !projectpolicy.AdmitRepo(allow, r) {
+			t.Errorf("allow_repos = %v no longer admits %s, which the confirmation said it keeps", allow, r)
+		}
+	}
+}
+
+// TestProjectReposRmOfAPatternWhoseNameCarriesAStarSaysSo: the same sentence
+// through the command, for the entry whose *name* carries a "*" rather than
+// being one (github/acme/*-web). github/*/* still admits every repository that
+// entry admitted — its third segment is "*-web", which the pattern's "*"
+// matches — so the confirmation must not claim otherwise.
+//
+// Mutation (verified, run and restored): test the two positions for equality
+// before the pattern's "*" in matchSeg (the order this test was written
+// against) — this fails, reading "its runs are refused from now on".
+func TestProjectReposRmOfAPatternWhoseNameCarriesAStarSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/*/*", "github/acme/*-web"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/*-web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/*/* still admits it") {
+		t.Errorf("the confirmation does not name the broader pattern that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/*/* is on the list:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "github/acme/*-web") {
+		t.Errorf("allow_repos = %v, want the entry removed", allow)
+	}
+	for _, r := range []string{"github/acme/app-web", "github/acme/-web", "github/other/-web"} {
 		if !projectpolicy.AdmitRepo(allow, r) {
 			t.Errorf("allow_repos = %v no longer admits %s, which the confirmation said it keeps", allow, r)
 		}

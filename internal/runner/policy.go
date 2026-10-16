@@ -144,6 +144,24 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// configuration: it carries the merged limits from here on.
 	cfg.Agent.MaxOutputTokens = config.RoleTokens{Coder: e.MaxOutputCoder, Reviewer: e.MaxOutputReviewer}
 	r.spend, r.policy = s, e
+	// The routing switch is applied here, once, after r.spend and before
+	// anything reads the run's pins: the policy is where D1a delivers it, and
+	// the pins it rewrites are what the pins renderer renders, the gateway
+	// routes and prices, and the record names (Task 1b.2).
+	//
+	// It comes *after* the assignment above because `gatewayOn` — which
+	// decides whether the switch has anything to act on at all — is read off
+	// r.spend: applied before it, every run would look like a run with the
+	// gateway off, and the switch would silently never take effect (the
+	// critical finding of this PR's review). Nothing between here and the
+	// loop reads a pin: the price table this function built is keyed by the
+	// routes and the catalog rather than by the pins, and the plan — the one
+	// decision that *is* read off a pin, through Agent.FirstLineOn — is
+	// derived by the caller after this returns, so it sees the pins the
+	// switch produced rather than the ones it replaced.
+	if err := r.applyRouting(pp, found); err != nil {
+		return err
+	}
 	r.rec.Policy = r.recordPolicy(nDef)
 	return nil
 }

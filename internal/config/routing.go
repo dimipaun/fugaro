@@ -113,9 +113,37 @@ func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) [
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by two provider entries, %s: two spellings of one model are one model, and a switch that resolved to whichever name sorts first would route by provider name. Leave the claim on one entry and remove it from the other", m, claimNames(claims))})
 		case !claims[0].p.AllowDataToWritten():
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s resolves to provider %s, whose allow_data_to is not written: name the repositories whose code may be sent there, or write [\"*\"] to mean every one of them on purpose (D1b; an absent allow_data_to already means every repository, which is why this one path requires it to be written)", m, claims[0].name)})
+		case !routeIDPair(m, claims[0].claim):
+			// The route entry claims a spelling of this model that the
+			// checked-in map does not pair with it: two spellings that look
+			// alike are two answers to where the call goes and what it costs,
+			// and the switch does not choose between them (Task 1b.2).
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by provider %s as %s, which is not the route's own ID for it in the canonical-to-route map (internal/pricing, read through RouteIDFor): %s", m, claims[0].name, claims[0].claim, unmappedOrPair(m))})
 		}
 	}
 	return ps
+}
+
+// routeIDPair reports whether canonical and route are the pair the checked-in
+// map holds (pricing.RouteIDFor): the one translation from a pin's Claude ID to
+// what a route is sent and charged.
+func routeIDPair(canonical, route string) bool {
+	_, ok := pricing.RouteIDFor(canonical, route)
+	return ok
+}
+
+// unmappedOrPair is the clause a switch problem carries for a model whose claim
+// is not the map's pair: the map's own reason when it has one (a row that is
+// explicitly unmapped), else what the map does hold for it, so a typo in a route
+// entry reads as a typo.
+func unmappedOrPair(canonical string) string {
+	if why, ok := pricing.UnmappedReason(canonical); ok {
+		return why
+	}
+	if id, ok := pricing.RouteIDFor(canonical, ""); ok {
+		return fmt.Sprintf("the map pairs it with %s", id)
+	}
+	return "the map carries no row for it: add one, with the route's ID measured, before the switch may name this model"
 }
 
 // claimNames spells the entries claiming one model for a problem message:
@@ -178,13 +206,14 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 }
 
 // RoutingClaudeFor resolves one Claude model's route: the route its calls take
-// and the model ID that is sent on it. It is the one resolver of the switch,
-// and phase 1b's later tasks are its consumers: the pins renderer and the price
-// lookup (Task 1b.2: stagePins renders the route's ID, and serving_model /
-// priced_as are recorded with the same resolved ID) and validate (Task 1b.3,
-// which prints the resolution or says it cannot resolve it offline). None of
-// them ships in this slice, which is why nothing in this release calls it in
-// production — and why TestRoutingHasOneResolver fails if any other file starts
+// and the model ID that is sent on it. It is the one resolver of the switch, and
+// phase 1b's later tasks are its consumers: validate (Task 1b.3, which prints
+// the resolution or says it cannot resolve it offline), and the pins renderer
+// and the price lookup, which are served by the run applying this resolver once
+// to its own configuration (internal/runner/routing.go, Task 1b.2): every pin
+// the agent is given, every route the gateway registers and every row a call is
+// priced from then names the route's own ID, so serving_model and priced_as are
+// the ID this returned. TestRoutingHasOneResolver fails if any other file starts
 // comparing the canonical ID with a route's spelling: two derivations of the
 // route are two answers to where a call goes, and the channel's whole point is
 // that there is one.
@@ -216,7 +245,14 @@ func RoutingClaudeFor(c *RoutingClaude, model string, providers map[string]Model
 	if len(claims) != 1 || !claims[0].p.AllowDataToWritten() {
 		return "", "", false
 	}
-	return claims[0].name, claims[0].claim, true
+	// The route's own ID is the map's pair, never the spelling the entry
+	// happens to carry: two spellings that look alike are two routes and two
+	// prices (Task 1b.2).
+	sent, ok = pricing.RouteIDFor(model, claims[0].claim)
+	if !ok {
+		return "", "", false
+	}
+	return claims[0].name, sent, true
 }
 
 // routeClaim is one provider entry claiming a model's route ID: the entry's
@@ -234,27 +270,48 @@ type routeClaim struct {
 // The two spellings are the same model on two routes — the canonical
 // claude-sonnet-5-5 of the price table and a pin, and OpenRouter's
 // anthropic/claude-sonnet-5.5 — and the comparison is by the only difference
-// between them: case, and "." where the canonical ID has "-". The catalogue's
-// own map (phase 1b.2's canonical_id column, pricing.RouteIDFor) is the
-// authority on the pair; until it lands this comparison is what locates the
-// claim, and it can only ever *find* a claim the operator wrote: nothing here
-// invents an ID, and a claim it does not recognise resolves to nothing, which
-// is the fail-closed direction.
+// between them: case, and "." where the canonical ID has "-". It only *locates*
+// a claim: whether the claim it found is the route's own ID for this model is
+// the map's answer (pricing.RouteIDFor), and a claim the map does not pair with
+// the model resolves to nothing — the fold must not decide a route, which is
+// what phase 1b.2 removed.
 //
 // The whole list, not the first: two entries claiming the same model under
 // different spellings are an ambiguity the caller has to refuse (CheckRouting
 // does, naming both), and picking one by sort order would answer a routing
 // question with an alphabetical accident (the review of PR #414).
+//
+// Within one entry, the claim is the map's pair when the entry writes it, and
+// the first claim it writes otherwise. One entry spells this model twice only
+// when it writes both the route's own ID and the canonical-looking one
+// (anthropic/claude-sonnet-5.5 and anthropic/claude-sonnet-5-5 are one model),
+// and which of the two the entry is judged and sent by must not depend on the
+// order the two are listed in: taking the first match made
+// [anthropic/claude-sonnet-5.5, anthropic/claude-sonnet-5-5] resolve and the
+// same two in the other order a refusal (review finding on this change). The
+// preference is not a second derivation — it selects between spellings the
+// entry itself wrote, and the map still answers which one a route is sent.
 func claudeClaimsFor(providers map[string]ModelProvider, model string) []routeClaim {
 	var out []routeClaim
 	for _, n := range sortedKeys(providers) {
 		pv := providers[n]
+		var matched []string
 		for _, pat := range pv.Models {
 			if tail := claudeRouteID(pat); tail != "" && sameClaudeID(tail, model) {
-				out = append(out, routeClaim{name: n, claim: pat, p: pv})
+				matched = append(matched, pat)
+			}
+		}
+		if len(matched) == 0 {
+			continue
+		}
+		claim := matched[0]
+		for _, pat := range matched {
+			if routeIDPair(model, pat) {
+				claim = pat
 				break
 			}
 		}
+		out = append(out, routeClaim{name: n, claim: claim, p: pv})
 	}
 	return out
 }

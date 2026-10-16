@@ -123,83 +123,147 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 	return found[0], true
 }
 
-// remoteOfAnotherKind names the provider kind the remote this run would clone
-// from belongs to, when that is not the kind its slug derives. "" is no
-// disagreement, and it is the answer for most remotes: a local path, a
-// self-hosted installation and every test remote name no host this Fugaro
-// knows (gitprov.KindForURL), and the ones that do name the derived kind. A
-// remote on the derived kind's host is no disagreement *here* whatever
-// repository it names — that is the other half of the guard, on the host being
-// the only thing this function reads: remoteOfAnotherRepository, which the
-// admission check asks beside this one.
-func remoteOfAnotherKind(derived, remote string) string {
-	if derived == "" {
-		return ""
-	}
-	if kind := gitprov.KindForURL(remote); kind != "" && kind != derived {
-		return kind
-	}
-	return ""
-}
-
-// remoteOfAnotherRepository names the repository a remote points at, when the
-// remote is on the derived kind's own host and points at a repository other
-// than the one the run's task names. It is the same disagreement as
-// remoteOfAnotherKind's one host over: the kind check catches acme/app on
-// another provider's host, and this catches another owner or name — or another
-// case of it — on the same one, which is what editing FUGARO_REMOTE to a
-// second repository of the same forge looks like. Both are the slug naming one
-// repository while the clone comes from another, and the slug keys the run's
-// locks, its cache, its budget session and (through the policy's allow-list)
-// whether it runs at all.
+// remoteHost reports the host a git remote names, the provider kind that host
+// belongs to (gitprov.KindForURL; "" is a host no kind of this Fugaro's owns)
+// and whether the remote names a host at all.
 //
-// "" is no disagreement: the remote names this repository, the task's
-// repository cannot be named (the check above refuses that run already), or
-// the remote names no repository this parser can pick out of it. Only a remote
-// whose host is the derived kind's reaches the comparison at all, so a local
-// path, an httptest URL and a self-hosted installation keep the reading they
-// had: a remote this Fugaro cannot place is the launcher's own business
-// (internal/infra's repoURL), not a claim about another repository.
-func remoteOfAnotherRepository(derived, repo, remote string) string {
-	if derived == "" || gitprov.KindForURL(remote) != derived {
-		return ""
+// The three answers are deliberately three, not two. A remote that names no
+// host — a local path, an empty Deps.Remote, a bare "/" — is left to the checks
+// that were always there: the binding does not extend the launcher's URL rules
+// to every remote a local run may use. A remote that names a host is refused by
+// the caller unless that host is the derived kind's, which is one answer for
+// both of the ways it can differ: another provider's host (github.com for a
+// bitbucket job) and a host no kind owns at all
+// (https://github.com.evil.example/acme/app.git, https://evil.example.com/...).
+//
+// Collapsing the second into the first is what the first shape of this check
+// did: remoteOfAnotherKind answered "" ("no disagreement") for every host
+// gitprov.KindForURL does not know, so a tampered FUGARO_REMOTE on an unknown
+// host was admitted on the owner/name comparison alone, and the run then scoped
+// this repository's git credential to that host (internal/gitops'
+// CredentialURL, which has no allow-list of its own) and cloned from it: the
+// provider's credential went to the attacker's server and attacker-supplied
+// code ran under the repository's slug — its locks, its cache, its budget
+// session and its allow_repos admission. A deployed job cannot meet this: the
+// launcher writes the remote from the provider's own host and refuses any other
+// URL before it deploys anything (internal/infra's repoURL, and the build's own
+// CheckRepoURL: "the build would send its credential there"), so an unknown
+// host at run time is a job environment edited after launch, which is exactly
+// what this check is for (the review finding on this change).
+//
+// A remote that names a host the URL parser cannot read is one of the remotes
+// that names a host, not one that names none: git accepts spellings url.Parse
+// refuses and connects to the host in the authority all the same
+// (https://github.com\@evil.example/acme/app.git is evil.example's, and so is
+// https://evil.example/acme/app%ZZ.git), so gitprov.SplitRemoteRaw reads that
+// shape where SplitRemote answers "no host at all" — and the kind it derives is
+// "" for it (gitprov.KindForHost), which is the refusal above. Skipping it
+// instead is what the first shape of this check did, and it is a fail-open: the
+// remote git was handed names a host this binding never looked at, and the
+// run's git credential is scoped to that host (the review finding on this
+// change).
+func remoteHost(remote string) (host, kind string, named bool) {
+	if h, _, ok := gitprov.SplitRemote(remote); ok {
+		return h, gitprov.KindForURL(remote), true
 	}
-	got := repoOfRemote(remote)
-	if got == "" {
-		return ""
+	if h, _, ok := gitprov.SplitRemoteRaw(remote); ok {
+		return h, gitprov.KindForHost(h), true
 	}
-	want, err := task.CanonicalRepo(repo)
-	if err != nil || got == want {
-		return ""
-	}
-	return got
+	return "", "", false
 }
 
-// repoOfRemote names the repository a remote URL points at, as owner/name in
-// task.CanonicalRepo's spelling, or "" when the URL does not say it. The three
-// shapes a remote is written in are read: https://host/owner/repo.git (any
-// scheme, a credential in the userinfo, a query and a fragment dropped),
-// git@host:owner/repo.git and ssh://git@host/owner/repo.git. A path with
-// anything but one owner and one name — a group or a project path, as a
-// self-hosted forge or a GitLab-style host uses — is left "" rather than
-// guessed at: the caller compares this to a repository, and half of a path
-// compared to a whole one would refuse a run that clones exactly what it says.
-func repoOfRemote(remote string) string {
-	var path string
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		path = u.Path
-	} else if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		_, path, _ = strings.Cut(rest, ":") // scp-like: git@host:owner/repo.git, and the path is what follows the colon
-	}
-	owner, name, ok := gitprov.SplitRepo(strings.Trim(path, "/"))
+// remoteRepoPath is the path a git remote URL names — the part where the
+// repository goes — and whether the remote names one at all: named is false
+// for a local path, a bare host, and a path with nothing in it (a bare "/"),
+// the remotes that name no repository for a check to compare.
+//
+// It is deliberately *not* a canonicalization. Whether the path is an
+// owner/name is task.CanonicalRepo's question, and its answer is the
+// admission's: this function hands the path over unread (as git will) and
+// callers must refuse rather than skip when canonicalization fails.
+// Skipping is the hole this split closed — a remote whose path contains a
+// dot segment, an empty segment, an encoded separator or anything else outside
+// the segment alphabet came back "names nothing to compare" and was admitted,
+// and git (over HTTP, where libcurl resolves dot segments per RFC 3986 §5.2.4;
+// or through a server that does) then fetched the repository the path resolves
+// to: https://github.com/acme/app.git/../../attacker/malware is
+// https://github.com/attacker/malware, and the run cloned it under acme/app's
+// slug — the same hole as naming another owner/name plainly, reached through a
+// path that only *looks* like this run's (the review finding on this change).
+// The path is read from EscapedPath, not Path: url.Parse decodes "%2F" into a
+// separator, so a remote that encodes one would otherwise be compared as a
+// repository it does not plainly name.
+//
+// The shape is gitprov.SplitRemote's question, not a second copy of it: the
+// host half of this binding (remoteHost, through gitprov.KindForURL) reads the
+// same remote, and the two must not disagree
+// about what it names. Keying the scp-like form on "@" here made them agree on
+// the wrong answer for a userinfo-less scp remote — "github.com:attacker/malware.git"
+// came back as naming nothing, from both halves, while git ssh'd to github.com
+// and asked for attacker/malware.git (the review finding on this change).
+//
+// The URL shape SplitRemote cannot read is read here rather than skipped
+// (gitprov.SplitRemoteRaw): git reads its path the same way, so a path
+// canonicalization refuses on it — https://github.com/acme/app%ZZ.git names no
+// repository this check can compare — is a refusal, which is what the caller
+// does with the error. Skipping the whole remote because its URL parser
+// refused it left both halves of this binding unasked (the review finding on
+// this change).
+func remoteRepoPath(remote string) (string, bool) {
+	_, p, ok := gitprov.SplitRemote(remote)
 	if !ok {
-		return ""
+		if _, p, ok = gitprov.SplitRemoteRaw(remote); !ok {
+			return "", false
+		}
 	}
-	canonical, err := task.CanonicalRepo(owner + "/" + name)
+	// Exactly one leading and one trailing "/" is the URL's own punctuation,
+	// not a segment: "https://github.com/acme/app.git/" is the same remote as
+	// without the last one. Anything else is left exactly as written, so an
+	// empty segment ("github.com//acme/app") reaches the refusal below instead
+	// of being normalized away — normalizing is what a reader of the URL would
+	// do and git may not.
+	p = strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
+	if p == "" {
+		return "", false
+	}
+	return p, true
+}
+
+// repoNamedByRemote is the repository a git remote URL names, canonicalized
+// exactly as task.CanonicalRepo canonicalizes a task's own repository (ASCII
+// lower case, no ".git"). named is false for a remote that names no repository
+// path at all (remoteRepoPath); err is task.CanonicalRepo's refusal of a path
+// that does name one but is not an owner/name, which is a *refusal* for the
+// admission check and never a reason to skip the comparison.
+//
+// It is the second half of the remote binding. remoteHost compares the
+// remote's *host* alone, which binds the provider and nothing else: a
+// job for slug(github, acme/app) whose FUGARO_REMOTE is
+// https://github.com/attacker/malware.git is on the derived kind's host and was
+// admitted, and the run then cloned and ran attacker/malware under acme/app's
+// slug — its locks, its cache, its budget session and the policy's allow_repos
+// admission all naming a repository whose work was not the work being run (the
+// review finding on this change). The launcher already refuses that URL
+// (internal/infra's repoURL compares the canonical owner/name, D1a's own rule),
+// so a run only meets it when the job's environment was edited after launch,
+// which is exactly what this check is for.
+//
+// A remote path that is not canonicalizable is refused, not skipped: the
+// binding refuses every remote that names a repository other than this run's,
+// and a path git would resolve to one this check cannot read is exactly that.
+// A remote naming no path at all keeps the behaviour it had before this check
+// existed — the binding does not extend the launcher's URL rules to every
+// remote a local run may use.
+func repoNamedByRemote(remote string) (string, bool, error) {
+	path, named := remoteRepoPath(remote)
+	if !named {
+		return "", false, nil
+	}
+	c, err := task.CanonicalRepo(path)
 	if err != nil {
-		return ""
+		return "", false, fmt.Errorf("%q is not a repository as owner/name", path)
 	}
-	return canonical
+	return c, true, nil
 }
 
 // remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
@@ -213,18 +277,34 @@ func repoOfRemote(remote string) string {
 // not reach are redacted too, but the display drops them rather than relying
 // on that.
 func remoteDisplay(remote string) string {
-	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		if host, _, ok := strings.Cut(rest, ":"); ok {
-			return host
-		}
-	}
 	u, err := url.Parse(remote)
-	if err != nil {
-		return "the remote"
+	if err == nil && u.Host != "" {
+		u.User = nil
+		u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
+		return u.String()
 	}
-	u.User = nil
-	u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
-	return u.String()
+	// Not a URL with a host: the scp-like form git reads as ssh, whose display
+	// is the host alone — the userinfo before it may be a token, and the path
+	// is what the refusal names. A remote with neither shape is quoted as it
+	// was written, minus any userinfo, query and fragment.
+	if host, _, ok := gitprov.SplitRemote(remote); ok {
+		return host
+	}
+	if host, _, ok := gitprov.SplitRemoteRaw(remote); ok {
+		// A URL authority url.Parse refuses: the host alone, as the scp-like
+		// branch quotes it, because that is the only part of it that is not a
+		// credential's to hold — everything before the authority's last "@" is
+		// userinfo as git and curl read it, and this branch is where the
+		// refusal that quotes such a remote gets a form that carries none of it
+		// (the review finding on this change).
+		return host
+	}
+	if err == nil {
+		u.User = nil
+		u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
+		return u.String()
+	}
+	return "the remote"
 }
 
 // remoteSecretParams are the query parameters a git remote URL carries a
@@ -485,30 +565,62 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and the run's slug %s is the slug of %s under %s: the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 			envKind, GitProviderEnv, slug, repo, kind)
 	}
-	if remote := r.originURL(ctx); remote != "" {
+	remote := r.originURL(ctx)
+	host, hostKind, hostNamed := remoteHost(remote)
+	if hostNamed && hostKind != kind {
 		// The remote is where the clone comes from, and it is the job's own
 		// environment (Deps.Remote, RemoteEnv) or the origin of a checkout
 		// already in the work directory — a launcher's to set, both of them.
 		// The launcher refuses a repository URL off the provider's host before
 		// it deploys anything (internal/infra's repoURL, and the build's own
-		// CheckRepoURL), so a run meets either of these when the job's
-		// environment was edited after launch: a repository of the same owner
-		// and name on another provider's host is another repository, and so is
-		// another repository on the same host, and the run's slug — which keys
-		// its locks, its cache and its budget — would not name either of them.
-		//
-		// The kind is what the check can name a remote *by* (gitprov.KindForURL
-		// reads a host and nothing else), so a remote on the derived kind's own
-		// host is the second refusal, on the repository the remote's path
-		// names. Both are asked of the same remote, so the one URL is read
-		// once (originURL runs git).
-		if other := remoteOfAnotherKind(kind, remote); other != "" {
-			return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
-				remoteDisplay(remote), other, slug, repo, kind, RemoteEnv)
+		// CheckRepoURL), so a run meets this when the job's environment was
+		// edited after launch: a repository of the same owner and name on
+		// another provider's host is another repository, and the run's slug —
+		// which keys its locks, its cache and its budget — would not name it.
+		if hostKind == "" {
+			// Not another provider's host but no provider's at all. The
+			// refusal is not the owner/name comparison's: the run scopes this
+			// repository's git credential to the remote's host
+			// (internal/gitops' CredentialURL, with no allow-list of its own),
+			// so a remote on an unknown host hands the provider's credential
+			// to that host and runs whatever it serves, under this slug. A
+			// deployed job cannot carry one — the launcher writes the remote
+			// from the provider's own host and the build refuses any other URL
+			// before it deploys — so this is a job environment edited after
+			// launch, the case this check exists for (the review finding on
+			// this change; the first shape of it read this as "no
+			// disagreement", because gitprov.KindForURL answers "" for a host
+			// no kind owns and for no host at all alike).
+			return fmt.Errorf("the run would clone from %s, whose host %s is not a host any git provider kind this Fugaro uses owns, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for — and the git credential for this repository is scoped to the remote's host, so a remote on another host is where %s's credential would be sent, which is what the launcher refuses before it deploys anything (internal/infra's repoURL, internal/backend/gcp's CheckRepoURL) — so the run stops before any git credential is requested",
+				remoteDisplay(remote), host, slug, repo, kind, RemoteEnv, kind)
 		}
-		if otherRepo := remoteOfAnotherRepository(kind, repo, remote); otherRepo != "" {
+		return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
+			remoteDisplay(remote), hostKind, slug, repo, kind, RemoteEnv)
+	}
+	named, namedOK, namedErr := repoNamedByRemote(remote)
+	if namedOK || namedErr != nil {
+		// The remote names a repository path, and reading it is what this
+		// check runs on: a path canonicalization refuses is a refusal, not a
+		// reason to skip the comparison. A remote whose path is not an
+		// owner/name (dot segments, empty segments, an encoded separator) is
+		// one git may well resolve to a repository this run is not for —
+		// https://github.com/acme/app.git/../../attacker/malware is
+		// attacker/malware — so it stops here rather than passing unchecked,
+		// which is what the first shape of this check did (the review finding
+		// on this change).
+		if namedErr != nil {
+			return fmt.Errorf("the run would clone from %s, and %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, and this run is for %s (%s under %s) — dot segments, empty segments, an encoded separator and any character a repository name cannot hold are a path git or the server may resolve to a repository this run is not for — so the run stops before any git credential is requested",
+				remoteDisplay(remote), namedErr, RemoteEnv, repo, slug, kind)
+		}
+		// The remote names a repository, and that repository must be this
+		// run's. Same owner and name on another host is another repository,
+		// and a different owner or name on the *same* host — the case the
+		// host-kind check above cannot see — is one too: the slug keys the
+		// run's locks, its cache and its budget session, and it names the
+		// repository this run's task does.
+		if want, err := task.CanonicalRepo(repo); err == nil && named != want {
 			return fmt.Errorf("the run would clone from %s, which is the repository %s, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
-				remoteDisplay(remote), otherRepo, slug, repo, kind, RemoteEnv)
+				remoteDisplay(remote), named, slug, repo, kind, RemoteEnv)
 		}
 	}
 	if want, err := task.Slug(kind, repo); err != nil || want != slug {

@@ -153,6 +153,35 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	if err := d.RequireCapsForEnforce(ctx); err != nil {
 		return nil, nil, err
 	}
+	// The deployed rules' generation is read first, and a marker *above* this
+	// binary's RulesVersion stops the whole plan here.
+	//
+	// The rules below are the ones this binary carries, generated from its own
+	// template, so on a database whose rules came from a newer Fugaro the
+	// deploy would put an older document over the newer one and the marker
+	// write at the end would record this generation over the newer number:
+	// exactly the downgrade `fugaro doctor` warns about and tells the owner not
+	// to cause ("do not re-run 'fugaro init --firebase' with this binary",
+	// doctorRulesSkew). A warning the deploy path then ignores is not a
+	// boundary, so the deploy path refuses — before anything is planned, so
+	// nothing is written and the newer installation's rules, marker and
+	// configuration are left as they are.
+	//
+	// RulesVersion is 1 today, so a marker above it needs a marker written by a
+	// *future* release; the boundary is enforced before it can be crossed. The
+	// other direction is not a refusal: a marker *below* this generation (or
+	// absent, generation 0) is an installation whose rules predate these, and
+	// deploying this binary's rules over them is the upgrade the doctor sends
+	// the owner here to do.
+	var markerGen int
+	markerEtag, markerFound, err := d.c.GetETag(ctx, projectpolicy.PathRulesMarker(), &markerGen)
+	if err != nil {
+		return nil, nil, dbErr("reading "+projectpolicy.PathRulesMarker(), err)
+	}
+	if markerFound && markerGen > projectpolicy.RulesVersion {
+		return nil, nil, userErr("the deployed security rules are generation %d (%s = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade') and re-run init with the newer binary; 'fugaro doctor' reports this as policy-rules-skew",
+			markerGen, projectpolicy.PathRulesMarker(), markerGen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	d.acts = nil
 	var warnings []string
 	mark := dbMark{By: markBy, Project: d.project, GCPProject: d.gcpProject, Version: markVersion}
@@ -237,13 +266,13 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	// are byte-for-byte the generated ones (SameJSON, above), so recording
 	// this generation is true in that case too — and it is what writes the
 	// marker on a database whose rules were deployed before this code existed.
-	var marker int
-	etag, found, err = d.c.GetETag(ctx, projectpolicy.PathRulesMarker(), &marker)
-	if err != nil {
-		return nil, nil, dbErr("reading "+projectpolicy.PathRulesMarker(), err)
-	}
-	if !found || marker != projectpolicy.RulesVersion {
-		d.put(projectpolicy.PathRulesMarker(), etag, projectpolicy.RulesVersion,
+	//
+	// The generation was read at the top of this function, where a marker above
+	// this binary's RulesVersion refuses the plan outright; here it is only the
+	// write that is left, and the etag is that same read, so a marker changed
+	// since is a 412 at Apply rather than a blind overwrite.
+	if !markerFound || markerGen != projectpolicy.RulesVersion {
+		d.put(projectpolicy.PathRulesMarker(), markerEtag, projectpolicy.RulesVersion,
 			fmt.Sprintf("records the rules generation (%s = %d)", projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion))
 	}
 	return d.acts, warnings, nil

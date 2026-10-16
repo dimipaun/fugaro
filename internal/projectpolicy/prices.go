@@ -142,7 +142,7 @@ func checkPriceMemberNames(entry json.RawMessage) error {
 		return err
 	}
 	tier, ok := members["long_context"]
-	if !ok || isNull(tier) {
+	if !ok || IsNull(tier) {
 		return nil
 	}
 	tnames, err := objectMemberNames(tier)

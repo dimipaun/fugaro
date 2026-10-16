@@ -172,9 +172,13 @@ func TestReadRefusesANonIntegerMarker(t *testing.T) {
 // project-centric installation silently legacy: every run of it would keep the
 // ceiling its job environment was deployed with, with the policy it was meant
 // to be bound by unread, and a launcher could publish one that never governs.
-// No deploy writes a negative generation, so the node is refused as the
-// MarkerError it is, exactly as a value that is not an integer at all is: the
-// caller must halt on a node a person edited, never guess what it meant.
+// No deploy writes a negative generation (RulesVersion is 1 and only goes up),
+// so the node is refused as the MarkerError it is, exactly as a value that is
+// not an integer at all is: the caller must halt on a node a person edited,
+// never guess what it meant.
+//
+// Hand mutation this fails on: dropping the `gen < 0` check (or widening it to
+// `gen < -1`), which turns the negative marker back into (nil, false, nil).
 func TestReadRefusesANegativeMarker(t *testing.T) {
 	for _, gen := range []any{-1, -RulesVersion, -1000} {
 		f, db := readDB(t)
@@ -188,6 +192,14 @@ func TestReadRefusesANegativeMarker(t *testing.T) {
 		if !errors.As(err, &me) || !strings.Contains(err.Error(), PathRulesMarker()) {
 			t.Errorf("marker %v: err = %v, want a MarkerError naming the node (a user error, not an outage)", gen, err)
 		}
+	}
+	// A generation above this one is at least this one's: it reads as deployed
+	// rather than as an error, so the check above refuses negatives alone.
+	f, db := readDB(t)
+	f.Set(PathRulesMarker(), RulesVersion+1)
+	f.Set(PathShared(), json.RawMessage(readPolicy))
+	if p, found, err := Read(context.Background(), db); err != nil || !found || p == nil {
+		t.Errorf("marker above this generation: Read = (%v, %v, %v), want the policy", p, found, err)
 	}
 }
 

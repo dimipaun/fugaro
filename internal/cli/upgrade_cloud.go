@@ -362,8 +362,12 @@ func jobConfigCopyMountNote(names []string) string {
 // database to read one from, or a read that failed: the note is advisory,
 // and the STALE sentence it would qualify stands on its own.
 //
-// The keys named as still needing init --repo are the ones the policy does
-// not carry and a run cannot do without: the pointer that makes the policy
+// The keys named as still needing init --repo are the ones a run cannot do
+// without and does not read from the node: `providers`, which the node carries
+// and a run routes by the job's own copy of (the one cut to this repository's
+// allow_data_to, whose key name is the mounted secret — so a provider change
+// still reaches every repository through init --repo, and the routing switch
+// resolves against the copy the job has), the pointer that makes the policy
 // reachable at all (RTDBURLEnv, FirebaseAPIKeyEnv — task 1.4), the mounts
 // (a workflow's committed secrets and agent.auth, which come from the
 // repository's own fugaro.yaml), and the platform-side settings
@@ -373,7 +377,7 @@ func jobConfigCopyPolicyNote(ctx context.Context, lc *localcfg.Config) string {
 	if err != nil || !found {
 		return ""
 	}
-	return fmt.Sprintf("; the policy published at %s now governs providers, model_prices, the budget mode, the per-run ceiling, the allowed models, the token limit and the allow-list, and runs read those from the node: drift in them is not a reason to re-run fugaro init --repo, while the keys the policy does not carry still are (%s and %s, without which a run never finds the policy; the repository's mounted secrets and agent.auth; the region's compute price and the GitHub App ID)",
+	return fmt.Sprintf("; the policy published at %s now governs model_prices, the budget mode, the per-run ceiling, the allowed models, the token limit, the allow-list and the routing switch, and runs read those from the node: drift in them is not a reason to re-run fugaro init --repo. The providers block is the part the node carries that a run does not read from it — a run routes by the copy in its own job's environment, cut to this repository with the key's mount, so a changed provider (its base URL, models, allow_data_to or route_fee_pct) is still a reason to re-run it, as are the keys the policy does not carry (%s and %s, without which a run never finds the policy; the repository's mounted secrets and agent.auth; the region's compute price and the GitHub App ID)",
 		projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv)
 }
 

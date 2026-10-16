@@ -314,6 +314,146 @@ func TestRunnerRefusesARemoteWithoutQuotingItsCredential(t *testing.T) {
 	}
 }
 
+// A remote on the *derived* kind's host is still another repository when it
+// names another owner or name: the host-kind check cannot see this one, and
+// without the owner/name comparison the run cloned and ran attacker/malware
+// under acme/app's slug, with acme/app's locks, cache, budget session and
+// allow_repos admission naming work that was not the work being run. The
+// launcher refuses such a URL before it deploys anything, so a run meets this
+// only when the job's environment was edited after launch — the environment
+// may only tighten, never change which repository this run is for.
+func TestRunnerRefusesARemoteNamingAnotherRepository(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b.deps.Remote = "https://github.com/attacker/malware.git"
+	// Nothing here may reach github.com even if this check regresses: the same
+	// local rewrite TestRunnerRefusesARemoteOnAnotherProvidersHost uses.
+	gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "attacker/malware", "acme/app", "FUGARO_REMOTE", "before any git credential")
+}
+
+// A remote whose path is not an owner/name is refused, not skipped. Skipping it
+// was the first shape of the check: repoNamedByRemote answered "names no
+// repository" for any path task.CanonicalRepo refuses, so the comparison never
+// ran, and git's HTTP transport resolves dot segments before it asks the
+// server (RFC 3986 §5.2.4), which made
+// https://github.com/acme/app.git/../../attacker/malware a clone of
+// github.com/attacker/malware under acme/app's slug — its locks, its cache, its
+// budget session and the policy's admission all naming a repository whose work
+// was not the work being run. A remote may only tighten the run's admission,
+// never change which repository it is for, so every one of these stops before
+// any git credential is requested.
+//
+// Mutation (run, restored): make repoNamedByRemote return ok=false on
+// task.CanonicalRepo's error (the shape this test was written against). Every
+// case below is admitted — the run goes on to clone — and no other test fails.
+func TestRunnerRefusesARemoteWhosePathIsNotAnOwnerName(t *testing.T) {
+	for _, tc := range []struct{ name, remote string }{
+		{"dot segments to another repository", "https://github.com/acme/app.git/../../attacker/malware"},
+		{"three dot segments", "https://github.com/acme/app.git/../../../attacker/malware"},
+		{"a dot segment in the owner", "https://github.com/acme/../attacker/malware.git"},
+		{"a trailing dot segment", "https://github.com/acme/app/.."},
+		{"an encoded separator", "https://github.com/acme%2Fapp.git"},
+		{"encoded separators around an encoded dot segment", "https://github.com/acme%2F..%2Fattacker/malware.git"},
+		{"an encoded dot segment", "https://github.com/%2e%2e/attacker/malware.git"},
+		{"an empty segment", "https://github.com//attacker/malware.git"},
+		{"a character a repository name cannot hold", "https://github.com/acme/app.git;x"},
+		// The scp-like form without userinfo, which git honors: it ssh's to
+		// github.com and asks for attacker/malware.git, and both halves of the
+		// binding read it as "nothing to compare" — the owner/name comparison
+		// because remoteRepoPath keyed the shape on "@", the host-kind half
+		// because gitprov.KindForURL did (the review finding on this change).
+		{"an scp-like remote naming another repository", "github.com:attacker/malware.git"},
+		{"a colon-slash scp-like remote naming another repository", "github.com:/attacker/malware.git"},
+		// A path url.Parse will not decode, on this run's own host: the host
+		// half of the binding has nothing to refuse, so the path read off the
+		// authority as written is the whole check — and it is a refusal, where
+		// skipping the unreadable remote left it unasked (the review finding on
+		// this change).
+		{"a path url.Parse will not decode", "https://github.com/acme/app%ZZ.git"},
+		{"a backslash in the authority and an unreadable path", "https://github.com\\@evil.example/acme/app%ZZ.git"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			remote := tc.remote
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b.deps.Remote = remote
+			// Nothing here may reach github.com even if this check regresses:
+			// the same local rewrite the sibling remote tests use, plus an ssh
+			// command that fails at once for the scp-like shapes, which the
+			// rewrite does not cover.
+			gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+			if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+			t.Setenv("GIT_SSH_COMMAND", "false")
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, "acme/app", "FUGARO_REMOTE", "before any git credential")
+		})
+	}
+}
+
+// A remote on a host no provider kind owns is refused too, and for a reason of
+// its own: the run scopes this repository's git credential to the remote's host
+// (internal/gitops' CredentialURL has no allow-list of its own), so a tampered
+// FUGARO_REMOTE on the attacker's host would be handed github/acme/app's
+// credential and would run whatever that host serves under acme/app's slug —
+// its locks, its cache, its budget session and the policy's allow_repos
+// admission. The first shape of this check admitted every such host, because
+// gitprov.KindForURL answers "" both for a host no kind owns and for a remote
+// that names no host at all, and the two were read alike (the review finding on
+// this change). A deployed job cannot carry one: the launcher writes the remote
+// from the provider's own host and refuses any other URL before it deploys
+// (internal/infra's repoURL, internal/backend/gcp's CheckRepoURL).
+//
+// Mutation (run, restored): read the two alike again — treat an unknown host as
+// "no disagreement" — and every case here is admitted, the run going on to
+// clone from the attacker's host.
+func TestRunnerRefusesARemoteOnAHostNoProviderOwns(t *testing.T) {
+	for _, tc := range []struct{ name, remote, want, host string }{
+		{"another forge's host", "https://git.example.com/acme/app.git", "https://git.example.com/acme/app.git", "git.example.com"},
+		{"a name that only looks like github.com", "https://github.com.evil.example/acme/app.git", "https://github.com.evil.example/acme/app.git", "github.com.evil.example"},
+		{"the attacker's own domain", "https://evil.example/acme/app.git", "https://evil.example/acme/app.git", "evil.example"},
+		// The scp-like spelling of the same: git ssh's to that host, so the
+		// credential's scope is the same question.
+		{"an scp-like remote on an unknown host", "evil.example:acme/app.git", "evil.example", "evil.example"},
+		// Spellings git accepts and url.Parse refuses. git connects to the
+		// host in the authority all the same — libcurl reads a backslash before
+		// the "@" as the end of the userinfo, and an escape it will not decode
+		// fails no clone — so "this parser cannot read the remote" must not be
+		// the answer that skips the binding: it was, and both halves of the
+		// check went unasked while the run scoped this repository's git
+		// credential to the attacker's host (the review finding on this
+		// change).
+		{"a backslash before the authority's @", "https://github.com\\@evil.example/acme/app.git", "evil.example", "evil.example"},
+		{"an escape url.Parse will not decode", "https://evil.example/acme/app%ZZ.git", "evil.example", "evil.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			remote := tc.remote
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b.deps.Remote = remote
+			// Nothing here may reach that host even if this check regresses:
+			// the https rewrite for the URL shapes, and an ssh command that
+			// fails at once for the scp-like one.
+			gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+			if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://"+tc.host+"/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+			t.Setenv("GIT_SSH_COMMAND", "false")
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, tc.want, tc.host, "FUGARO_REMOTE", "before any git credential")
+			if !strings.Contains(err.Error(), "may only tighten") {
+				t.Errorf("the refusal does not say the remote may only tighten the admission: %v", err)
+			}
+		})
+	}
+}
+
 // The slug the run was launched for and the repository its task names must
 // agree: FUGARO_RUN is what keys the locks, the cache and the budget session,
 // and a job launched for one repository must not run another repository's

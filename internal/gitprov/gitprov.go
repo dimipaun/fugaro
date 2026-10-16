@@ -278,16 +278,112 @@ func DraftTitle(title string, draft bool) string {
 	return title
 }
 
-// KindForURL names the provider hosting a git remote URL: KindGitHub for
-// github.com, KindBitbucket for bitbucket.org, and "" for anything else
-// (a local path, or another host).
-func KindForURL(remote string) string {
-	var host string
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		host = u.Hostname()
-	} else if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		host, _, _ = strings.Cut(rest, ":") // scp-like: git@host:owner/repo.git
+// SplitRemote splits a git remote into the host it points at and the path
+// that names the repository there, in the two shapes git accepts: a URL
+// ("https://github.com/acme/app.git", "ssh://git@github.com/acme/app.git"),
+// and the scp-like form git reads as ssh, which is a host, a colon and a path
+// ("git@github.com:acme/app.git").
+//
+// ok is false for a remote that names no host at all: a local path, an empty
+// string, a URL with an empty authority.
+//
+// ok is *also* false for a URL with an authority this parser cannot read,
+// because url.Parse refuses the string in a spelling git accepts — a backslash
+// before the authority's "@" (https://github.com\@evil.example/acme/app.git,
+// which libcurl reads as the userinfo "github.com\" and the host
+// evil.example) and an escape it will not decode
+// (https://evil.example/acme/app%ZZ.git) are two (the review finding on this
+// change). The two answers are not the same question, and a caller that bounds
+// what a remote may be must not read this one as "nothing to check": git
+// accepts the spelling and connects to the host the authority names, so
+// SplitRemoteRaw reads that shape instead.
+//
+// The scp-like form is recognised by a colon *before the first "/"* and not
+// followed by "//" (which is a URL's authority, not a separator). It is not
+// recognised by an "@": git makes the userinfo optional — it ssh's to
+// github.com and asks for the same repository in "github.com:owner/name.git"
+// and in "git@github.com:owner/name.git" alike — and keying on the "@" read
+// both spellings as a URL whose *scheme* is "github.com", with no host and no
+// path, so both halves of the run's remote binding skipped them (the review
+// finding on this change). Both halves of the run's remote binding — the host
+// kind here and the owner/name in internal/runner — ask this one question
+// rather than each keeping its own copy of it.
+func SplitRemote(remote string) (host, path string, ok bool) {
+	if remote == "" {
+		return "", "", false
 	}
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		// EscapedPath, not Path: url.Parse decodes "%2F" into a separator, and
+		// a caller comparing the path must see the remote as git will send it.
+		return u.Hostname(), u.EscapedPath(), true
+	}
+	if host, rest, ok := strings.Cut(remote, ":"); ok && host != "" &&
+		!strings.Contains(host, "/") && !strings.HasPrefix(rest, "//") {
+		if _, h, ok := strings.Cut(host, "@"); ok {
+			// scp-like with userinfo: user@host:path.
+			host = h
+		}
+		return host, rest, true
+	}
+	return "", "", false
+}
+
+// SplitRemoteRaw splits the URL shape SplitRemote refuses to read: a remote
+// written with a scheme, "//" and an authority that url.Parse will not parse,
+// which git accepts and connects to all the same. host is the authority's host
+// as written — the text after its last "@", which is where curl and git end the
+// userinfo, so it may carry a port and it is never parsed further — and path is
+// what follows the authority, up to a "?" or a "#". Both are as written, not
+// decoded: the parse that would have decoded them is the one that failed.
+//
+// ok is false for every remote SplitRemote already answers for (a readable URL,
+// the scp-like form, a local path, an empty string) and for an authority with
+// nothing in it, so a caller asks this only after SplitRemote said no and gets
+// ok = true only for the shape whose parse failed. The one thing a caller may
+// do with the host is compare it to the host it expects: a spelling this
+// package could not read can only be the expected host when it *is* that text
+// (https://github.com/acme/app%ZZ.git names github.com and git clones from
+// there), and a refusal that quotes it quotes the host alone — everything
+// before it, userinfo included, is dropped here rather than left for the
+// caller to forget (the review finding on this change).
+func SplitRemoteRaw(remote string) (host, path string, ok bool) {
+	if remote == "" {
+		return "", "", false
+	}
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		return "", "", false // readable: SplitRemote's question, not this one
+	}
+	scheme, rest, cut := strings.Cut(remote, ":")
+	if !cut || scheme == "" || strings.ContainsAny(scheme, "/\\") || !strings.HasPrefix(rest, "//") {
+		return "", "", false // not a URL with an authority: the scp-like form's shape, or no host at all
+	}
+	authority := rest[2:]
+	if i := strings.IndexAny(authority, "/?#"); i >= 0 {
+		authority, path = authority[:i], authority[i:]
+	}
+	// The query and the fragment are not the path git clones (SplitRemote's
+	// EscapedPath excludes them too), and a "?" or "#" that opens the
+	// authority's remainder means the remote names no path at all.
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = ""
+	}
+	if i := strings.LastIndex(authority, "@"); i >= 0 {
+		authority = authority[i+1:] // the userinfo ends at the last "@": where curl ends it
+	}
+	if authority == "" {
+		return "", "", false
+	}
+	return authority, path, true
+}
+
+// KindForHost names the provider hosting a git host: KindGitHub for github.com,
+// KindBitbucket for bitbucket.org, and "" for anything else (another host, a
+// host with a port, or nothing). It is the half of KindForURL that reads a host
+// on its own, for the caller holding one SplitRemoteRaw read.
+func KindForHost(host string) string {
 	switch strings.ToLower(host) {
 	case "github.com":
 		return KindGitHub
@@ -295,6 +391,17 @@ func KindForURL(remote string) string {
 		return KindBitbucket
 	}
 	return ""
+}
+
+// KindForURL names the provider hosting a git remote URL: KindGitHub for
+// github.com, KindBitbucket for bitbucket.org, and "" for anything else
+// (a local path, or another host). A URL SplitRemote refuses reads as "" too,
+// which for a caller that refuses an unknown host is the refusal it wants and
+// for one that would admit "" is not: SplitRemoteRaw is what tells the two
+// apart.
+func KindForURL(remote string) string {
+	host, _, _ := SplitRemote(remote)
+	return KindForHost(host)
 }
 
 // SplitRepo splits "owner/name" into its two parts.

@@ -167,6 +167,13 @@ func TestUpgradeNoteSaysTheEnvCopyIsInert(t *testing.T) {
 		"the deployed job's copy of the local project config is STALE",
 		"the policy published at " + projectpolicy.PathShared() + " now governs",
 		"not a reason to re-run fugaro init --repo",
+		// The providers block is the part of the node a run does not read:
+		// routing by the job's own copy is what the gateway's allow_data_to
+		// gate and the routing switch resolve against, so a changed provider
+		// still needs init --repo, and the note has to say so rather than call
+		// the whole copy inert.
+		"providers block is the part the node carries that a run does not read from it",
+		"still a reason to re-run it",
 		infra.RTDBURLEnv,
 		infra.FirebaseAPIKeyEnv,
 	} {

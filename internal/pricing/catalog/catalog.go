@@ -88,8 +88,33 @@ func (f *File) validate() error {
 	if len(f.Models) == 0 {
 		errs = append(errs, errors.New("models is empty"))
 	}
+	canonical := map[string]string{} // canonical ID -> the row that claims it
 	for _, id := range sortedIDs(f.Models) {
 		e := f.Models[id]
+		if e.CanonicalID != "" {
+			// The row's key is a route's own ID and the canonical one is the
+			// direct spelling of the same model, so a row may not claim its own
+			// key, and two rows may not claim one canonical ID: two spellings of
+			// one model are one model, and the price charged would depend on map
+			// iteration order (plan Task 1b.2 step 1).
+			switch prev, dup := canonical[e.CanonicalID]; {
+			case e.CanonicalID == id:
+				errs = append(errs, fmt.Errorf("%s: canonical_id is its own key: the canonical ID is the direct spelling (claude-sonnet-5-5) and the key is the route's (anthropic/claude-sonnet-5.5)", id))
+			case strings.Contains(e.CanonicalID, "/"):
+				// A canonical ID is the direct spelling a pin carries and the
+				// price table keys, and that spelling carries no vendor
+				// prefix: a value with one is another route's own ID, which
+				// would pair a model with a second route and leave the map
+				// (pricing's canonical-to-route table) with two answers to
+				// where a call goes and what it costs. Refused here, at the
+				// loader, so no shipped or generated row can say it.
+				errs = append(errs, fmt.Errorf("%s: canonical_id %s is a route ID, not the canonical one: the canonical ID is the direct spelling (claude-sonnet-5-5), which carries no provider prefix", id, e.CanonicalID))
+			case dup:
+				errs = append(errs, fmt.Errorf("%s and %s both claim canonical_id %s: one canonical ID identifies one model", prev, id, e.CanonicalID))
+			default:
+				canonical[e.CanonicalID] = id
+			}
+		}
 		if e.Endpoints <= 0 {
 			errs = append(errs, fmt.Errorf("%s: endpoints is %d", id, e.Endpoints))
 		}
@@ -224,6 +249,15 @@ type Entry struct {
 	// served by; ZDREndpoints is how many of them are ZDR-eligible.
 	Endpoints    int `json:"endpoints"`
 	ZDREndpoints int `json:"zdr_endpoints"`
+	// CanonicalID is the direct spelling of the same model — the Claude ID a
+	// pin carries and the price table keys (claude-sonnet-5-5) — beside the
+	// row's own key, which is the route's ID (anthropic/claude-sonnet-5.5).
+	// The canonical-to-route map is internal/pricing's own (read through
+	// pricing.RouteIDFor), checked in and exhaustive; this field is the
+	// catalog's claim about the pair, and the map is the authority on it
+	// (design §6.2, plan Task 1b.2). Empty on a row whose key is not another
+	// spelling of a differently named model, which is every non-Claude row.
+	CanonicalID string `json:"canonical_id,omitempty"`
 	// All is every endpoint; ZDR is the ZDR-eligible subset. Each maps a
 	// dimension name (input_per_m, output_per_m, cache_read_per_m,
 	// cache_write_5m_per_m, cache_write_1h_per_m, web_search_per_1k) to

@@ -349,8 +349,12 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if strings.Contains(c.Fix, "re-run 'fugaro init --firebase' with fugaro") {
 			t.Errorf("the fix tells this binary to redeploy its own template over newer rules: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "would redeploy generation") {
-			t.Errorf("the fix does not say what running init --firebase here would do: %+v", c)
+		// The deploy path refuses this state itself (internal/infra's DB.Plan,
+		// added by the same change), so the fix must say what running init here
+		// does now — refuses — rather than warn about a redeploy the operator
+		// would have to avoid by reading a warning.
+		if !strings.Contains(c.Fix, "refuses this state rather than redeploying generation") {
+			t.Errorf("the fix does not say that init --firebase refuses this state: %+v", c)
 		}
 	})
 

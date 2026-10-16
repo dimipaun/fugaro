@@ -156,7 +156,13 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config, claimed map[string]
 		}
 		ef.Sources[k] = v
 	}
-	allowed := config.CheckAllowed(agentPins, ef, ceilingLayer(lc).AllowedModels)
+	// The switch and the routes the run will have: validate resolves a route ID
+	// the same way the run does, so a pin that names one is admitted here
+	// exactly when the run would route it (config.CheckAllowed's `allowed`).
+	// The switch is the operator's own — the policy node is published from it,
+	// and this command reads no node (design §11: offline) — which is the same
+	// reading the rest of this function gives the providers.
+	allowed := config.CheckAllowed(agentPins, ef, ceilingLayer(lc).AllowedModels, lc.Routing, claimed)
 	problems = append(problems, allowed...)
 	// A role with no model already has its problem: not a second one, from
 	// the pins, saying much the same.
