@@ -40,8 +40,12 @@ import (
 //     list — runner.ArtifactName, called by both sides — which is no absolute
 //     path, no ".." element, no control character, no leading dot and an
 //     explicit length limit (design §8.2, §9);
-//   - a name the record gives no sha256 and no positive size for is refused,
-//     not downloaded: those two are what make the bytes checkable at all;
+//   - a name the record gives no sha256, or a size that is not a size (a
+//     negative one), is refused and not downloaded: those two are what make
+//     the bytes checkable at all. A recorded size of 0 is a size — a render
+//     that writes an empty file matched by a glob records bytes 0 with the
+//     digest of "" (result.schema.json: {"minimum": 0}) — and is fetched
+//     like any other artifact;
 //   - the destination is a fresh directory this command creates
 //     (./<run>-artifacts/, with --out naming its PARENT), never the directory
 //     the user happens to stand in, so a record cannot drop
@@ -405,8 +409,14 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 			// to: the record's own hash is what makes the download
 			// checkable, so a record without one is refused.
 			return nil, userErr("run %s recorded %s without a sha256: there is nothing to verify the download against", s.Slug()+"/"+s.RunID(), a.Name)
-		case a.Bytes <= 0:
-			return nil, userErr("run %s recorded %s as %d bytes: there is no size to bound the download by", s.Slug()+"/"+s.RunID(), a.Name, a.Bytes)
+		case a.Bytes < 0:
+			// 0 is a size a run records — result.schema.json's "bytes" has
+			// {"minimum": 0}, and a render that writes an empty file matched
+			// by a glob records bytes 0 with the digest of "" — so an empty
+			// artifact is downloaded like any other, with a cap of 0 bytes.
+			// A negative count is not a size, and there is then no cap to
+			// bound the download by at all.
+			return nil, userErr("run %s recorded %s as %d bytes: a negative count is not a size, and there is no size to bound the download by", s.Slug()+"/"+s.RunID(), a.Name, a.Bytes)
 		case a.Bytes > recipe.MaxOutputBytes:
 			// The record's own byte count is the cap, and the cap itself has
 			// a ceiling: no runner can upload an artifact larger than the

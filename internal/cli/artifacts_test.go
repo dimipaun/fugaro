@@ -845,6 +845,94 @@ func TestArtifactsGetRefusesARecordedSizeTheObjectDoesNotHave(t *testing.T) {
 	}
 }
 
+// TestArtifactsGetFetchesAnEmptyArtifact: bytes == 0 is a size a run records
+// (result.schema.json: "bytes": {"minimum": 0}), and a render that writes an
+// empty file matched by a glob records exactly that — {bytes: 0, sha256: the
+// digest of ""} — so refusing it would make a file the run delivered
+// impossible to fetch. ls lists it like any other (not flagged, 0 B) and get
+// writes a 0-byte file, verified against the record's digest of nothing.
+// Mutation caught: refusing bytes <= 0 instead of bytes < 0.
+func TestArtifactsGetFetchesAnEmptyArtifact(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	body := []byte("rendered")
+	empty := []byte{}
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "frames/empty.png", Bytes: 0, SHA256: sha256Hex(empty), ContentType: "image/png"},
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"frames/empty.png": empty, "sizzle.mp4": body})
+
+	// ls prints the record as it is: an empty artifact is an artifact, not an
+	// entry this command cannot retrieve.
+	out, _, err := execute(t, "artifacts", "ls", appSlug+"/"+id)
+	if err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	if !strings.Contains(out, "frames/empty.png") || strings.Contains(out, "cannot be retrieved") {
+		t.Errorf("ls does not list an empty artifact as an ordinary one:\n%s", out)
+	}
+	if !strings.Contains(out, "2 artifacts recorded") {
+		t.Errorf("ls does not count the empty artifact:\n%s", out)
+	}
+	// And get hands it back, empty, beside the one with bytes in it.
+	getOut, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+	if err != nil {
+		t.Fatalf("get: %v (%s)", err, getOut)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, artifactRunDir(id), "frames", "empty.png"))
+	if err != nil {
+		t.Fatalf("the empty artifact was not written: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("the empty artifact = %q, want no bytes", got)
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, artifactRunDir(id), "frames", "empty.png")); err != nil || fi.Size() != 0 {
+		t.Errorf("the empty artifact's size = %v, %v; want a 0-byte file", fi, err)
+	}
+	if !strings.Contains(getOut, "0 B") {
+		t.Errorf("get does not print the empty artifact's size:\n%s", getOut)
+	}
+	// The empty artifact alone, by name, is retrievable too — into a
+	// destination of its own, since the two files above are already there.
+	alone := t.TempDir()
+	if _, _, err := execute(t, "artifacts", "get", "--out", alone, appSlug+"/"+id, "frames/empty.png"); err != nil {
+		t.Errorf("get of an empty artifact by name: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(alone, artifactRunDir(id), "frames", "empty.png")); err != nil || len(got) != 0 {
+		t.Errorf("the empty artifact fetched by name = %q, %v; want no bytes", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(alone, artifactRunDir(id), "sizzle.mp4")); err == nil {
+		t.Error("get NAME downloaded an artifact the user did not name")
+	}
+}
+
+// TestArtifactsGetStillRefusesANegativeRecordedSize: 0 is a size, a negative
+// one is not — there is no cap to bound a download by. Mutation caught:
+// dropping the size check entirely.
+func TestArtifactsGetStillRefusesANegativeRecordedSize(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	const id = "20261016-090000-abcd"
+	empty := []byte{}
+	seedArtifactRun(t, f, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: -1, SHA256: sha256Hex(empty), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": empty})
+
+	_, _, err := execute(t, "artifacts", "get", appSlug+"/"+id)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("get of a record with a negative size = %v, want a user error", err)
+	}
+	if names := dirEntries(t, filepath.Join(dir, artifactRunDir(id))); len(names) != 0 {
+		t.Errorf("a negative recorded size wrote %q, want nothing", names)
+	}
+	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, "sizzle.mp4"); ExitCode(err) != ExitUserError {
+		t.Errorf("get of a negative-sized artifact by name = %v, want a user error", err)
+	}
+}
+
 // TestArtifactsObjectKeyStaysUnderTheRunsPrefix: the key a download reads is
 // built from the run's own prefix, artifacts/ and the name, and a name that
 // would resolve out of that prefix is refused rather than read — the last
