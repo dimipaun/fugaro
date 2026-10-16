@@ -381,19 +381,19 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	// "" and only the routes written for every repository survive — the reading
 	// the rest of this file already gives that state (providerProblems passes ""
 	// to CheckProviderPolicy for the same reason).
-	var routes, ownRoutes map[string]config.ModelProvider
+	var routes, ownProviders map[string]config.ModelProvider
 	if readable {
 		// Only a readable project config has an operator's table to filter;
 		// without one nothing is resolved at all (the note below), so there is
 		// no table to build.
 		routes = runner.ProvidersFor(claimed, repo)
-		// ownRoutes is the same table before the filter: the operator's own
+		// ownProviders is the same table before the filter: the operator's own
 		// providers exactly as the operator wrote them, which is the only table
 		// that can answer whether an entry's allow_data_to was *written*
 		// (claudeDirectRefusal). runner.ProvidersFor rewrites every entry it
 		// keeps to `allow_data_to: [repo]` and so answers "written" for one that
 		// never wrote the key at all.
-		ownRoutes = lc.Providers
+		ownProviders = lc.Providers
 	}
 	for _, p := range pins {
 		if !readable {
@@ -423,7 +423,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			} else {
 				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
 			}
-			if why := claudeDirectRefusal(cfg.Agent, p, routes, ownRoutes, repo, mode); why != "" {
+			if why := claudeDirectRefusal(cfg.Agent, p, routes, ownProviders, repo, mode); why != "" {
 				problems = append(problems, config.Problem{Path: p.path, Message: why})
 			}
 		case rerr != nil:
@@ -436,7 +436,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			// for the same reason).
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
 				"%s unresolved: the routes a run carries are the ones its repository may send code to (allow_data_to), and this checkout's origin could not be read (%v), so no repository can be said to carry the switch's route; run validate in the checkout, or from one whose origin names owner/name", p.model, rerr)})
-			if why := claudeDirectRefusal(cfg.Agent, p, routes, ownRoutes, repo, mode); why != "" {
+			if why := claudeDirectRefusal(cfg.Agent, p, routes, ownProviders, repo, mode); why != "" {
 				problems = append(problems, config.Problem{Path: p.path, Message: why})
 			}
 		case !ok:
