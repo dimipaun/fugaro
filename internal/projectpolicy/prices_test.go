@@ -152,6 +152,50 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 	}
 }
 
+// TestModelPricesRefusesOneModelUnderTwoKeys: unescaping is not one-to-one,
+// so a hand-written node can spell one model ID both ways — the catalogue's
+// "anthropic/claude-sonnet-5.5" beside the escaped form this package writes,
+// "anthropic/claude-sonnet-5%2E5". Both members unescape to the same ID and
+// the old loop left whichever price it wrote last, decided by map iteration
+// order, so the same node priced a run differently from read to read. The
+// block is refused instead, and both keys are named.
+func TestModelPricesRefusesOneModelUnderTwoKeys(t *testing.T) {
+	const raw = `{"version": 1, "model_prices": {` +
+		`"anthropic/claude-sonnet-5.5": {"input_per_m": 5, "output_per_m": 1},` +
+		`"anthropic/claude-sonnet-5%2E5": {"input_per_m": 500, "output_per_m": 100}}}`
+	p, found, err := Decode([]byte(raw))
+	if err == nil || p != nil {
+		t.Fatalf("Decode(%s) = (%v, %v), want a refusal", raw, p, err)
+	}
+	if !found {
+		t.Error("the block is there: the refusal is about its contents, not about a missing block")
+	}
+	for _, w := range []string{"model_prices", `"anthropic/claude-sonnet-5.5"`, `"anthropic/claude-sonnet-5%2E5"`} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("err = %v, want it to name %s", err, w)
+		}
+	}
+	// The same model under one key is what every writer produces, escaped or
+	// not, and stays readable.
+	for _, key := range []string{"anthropic/claude-sonnet-5.5", escKey("anthropic/claude-sonnet-5.5")} {
+		one, found, err := Decode([]byte(`{"version": 1, "model_prices": {"` + key + `": {"input_per_m": 5, "output_per_m": 1}}}`))
+		if err != nil || !found || one == nil {
+			t.Fatalf("one key %q was refused: %v", key, err)
+		}
+		if _, ok := one.Prices["anthropic/claude-sonnet-5.5"]; !ok {
+			t.Errorf("key %q: Prices = %v, want the model ID", key, one.Prices)
+		}
+	}
+	// Two different models that share a key spelling are not a collision:
+	// only the keys that unescape to the same ID are.
+	two, _, err := Decode([]byte(`{"version": 1, "model_prices": {` +
+		`"anthropic/claude-sonnet-5.5": {"input_per_m": 5, "output_per_m": 1},` +
+		`"anthropic/claude-opus-5.5": {"input_per_m": 5, "output_per_m": 1}}}`))
+	if err != nil || len(two.Prices) != 2 {
+		t.Errorf("two distinct models = (%v, %v), want both", two, err)
+	}
+}
+
 // A price entry's member names are held to the documented spelling, like the
 // budget block's: DisallowUnknownFields refuses a rate written "input_perm",
 // and encoding/json matches "INPUT_PER_M" to the same field as input_per_m, so
