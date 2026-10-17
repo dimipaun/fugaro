@@ -140,7 +140,7 @@ func (s Spec) read(ctx context.Context, planPath string) (*tf.Plan, error) {
 	}
 	p, err := s.TF.Show(ctx, planPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading the saved plan %s: %w", planPath, err)
+		return nil, fmt.Errorf("reading the saved plan %s of %s: %w", planPath, s.what(), err)
 	}
 	return p, nil
 }
