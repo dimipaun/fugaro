@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -55,8 +56,16 @@ import (
 // money-or-permanent one, through initRun.conditions and canConfirmTyped),
 // with every agent marker really set, unset and empty in the environment.
 // The rule itself (initflow.CanConfirm / CanConfirmRun) is checked against
-// the same table, and every other inline agent-marker decision of init is
-// checked to refuse under each marker.
+// the same table, the stage loop's options (initEngine.options().Agent) carry
+// the marker, the plugin stage driven through the real loop is refused under
+// each marker, and every other inline agent-marker decision of init is
+// checked to refuse under each marker; a source scan requires a case for every
+// agent-marker site in init*.go.
+//
+// managedMode is a predicate defined in this TEST, standing in for the apply
+// path's wiring, which does not exist yet: Task 3.1 must replace it with the
+// production predicate (or make these tests run the production one), else the
+// property tests a copy.
 //
 // What it does NOT cover: the managed direction (Task 3.1: a managed project
 // may apply only what the gate admitted), D58's flagging, the deployer
@@ -537,6 +546,15 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 			if got := r.conditions(); got != want {
 				t.Errorf("%s, %s: initRun.conditions() = %+v, want %+v", row, env.name, got, want)
 			}
+			// The stage loop's options carry the same marker: Options.Agent is
+			// the loop's only agent gate before a stage's Apply (the plugin
+			// stage has none of its own), so init must feed it the marker.
+			e := &initEngine{r: r, lc: &localcfg.Config{}}
+			o := e.options()
+			if o.Agent != env.agent || o.Yes != row.yes || o.PlanOnly != row.planOnly || o.NonInteractive != row.nonInteractive || o.JSON != row.json || o.Terminal != row.terminal {
+				t.Errorf("%s, %s: initEngine.options() has Agent=%q Yes=%v PlanOnly=%v NonInteractive=%v JSON=%v Terminal=%v, want Agent=%q and the row's flags",
+					row, env.name, o.Agent, o.Yes, o.PlanOnly, o.NonInteractive, o.JSON, o.Terminal, env.agent)
+			}
 			if row.planOnly {
 				continue
 			}
@@ -568,20 +586,24 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 // flag but what the site needs, the project's name typed): allowed reports
 // whether the site let the step through.
 type inlineAgentSite struct {
+	site    string // the call site, "file function", as agentSitesInInit names it
 	where   string
 	allowed func(t *testing.T, r *initRun, e *initEngine, marker string) bool
 }
 
-// inlineAgentSites lists every inline agentMarker/agentEnv decision on
-// init's paths (`grep -n 'agentMarker(\|agentEnv(' internal/cli/init*.go`),
-// beyond ask and conditions, which the property drives.
+// inlineAgentSites holds the agent-marker decisions of init that are run here
+// one by one. Every agentMarker(, agentEnv( and Agent: site in init's non-test
+// files is listed either here, in propertyAgentSites (driven by the property
+// and the loop tests) or in outsideAgentSites with a reason:
+// TestManagedEveryAgentSiteInInitHasACase scans the source and fails on a site
+// with no entry, so this list is complete by construction, not by grep.
 var inlineAgentSites = []inlineAgentSite{
-	{"init_review.go runCovers (the run's one confirmation)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"init_review.go runCovers", "init_review.go runCovers (the run's one confirmation)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		r.review = &runReview{state: reviewTaken}
 		ok, err := r.runCovers()
 		return ok && err == nil
 	}},
-	{"init_review.go askOrdinary", func(t *testing.T, r *initRun, e *initEngine, marker string) bool {
+	{"init_review.go askOrdinary", "init_review.go askOrdinary", func(t *testing.T, r *initRun, e *initEngine, marker string) bool {
 		r.review = &runReview{state: reviewTaken}
 		ok, err := r.askOrdinary("an ordinary step", "")
 		var ae *initflow.AgentError
@@ -590,29 +612,29 @@ var inlineAgentSites = []inlineAgentSite{
 		}
 		return ok && err == nil
 	}},
-	{"init_project.go canType", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"init_project.go canType", "init_project.go canType", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		return (&projectStage{e: e}).canType()
 	}},
-	{"initsecrets.go canPrompt", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"initsecrets.go canPrompt", "initsecrets.go canPrompt", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		return (&secretsStage{e: e}).canPrompt()
 	}},
-	{"init_repo_gate.go canConfirmRepo", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"init_repo_gate.go canConfirmRepo", "init_repo_gate.go canConfirmRepo", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		return e.canConfirmRepo()
 	}},
-	{"init_repo_gate.go authState's --onboard-repo opt-in", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"init_repo_gate.go authState", "init_repo_gate.go authState's --onboard-repo opt-in", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		r.o.onboardRepo = "acme/app"
 		a, err := e.authState(originInfo{Repo: "acme/app", Host: "github.com"})
 		return a == authOK && err == nil
 	}},
-	{"init_repo_gate.go onboardLeft (the flag offered as the route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"init_repo_gate.go onboardLeft", "init_repo_gate.go onboardLeft (the flag offered as the route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		l := onboardLeft(originInfo{Repo: "acme/app", Host: "github.com"})
 		return l.Kind == initflow.LeftCommand && strings.Contains(l.Text, "--onboard-repo")
 	}},
-	{"initsecrets.go Left (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"initsecrets.go Left", "initsecrets.go Left (the wording of the secrets route)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		l := (&secretsStage{e: e, tg: &secretTarget{repo: "acme/app", wanted: []string{"API_KEY"}}}).Left()
 		return !strings.Contains(l.Text, "not through a coding agent")
 	}},
-	{"init_retire.go retireConfirm", func(t *testing.T, r *initRun, e *initEngine, marker string) bool {
+	{"init_retire.go retireConfirm", "init_retire.go retireConfirm", func(t *testing.T, r *initRun, e *initEngine, marker string) bool {
 		err := r.retireConfirm(nil, infra.RepoSpec{}, "nothing was retired")
 		var ae *initflow.AgentError
 		if marker != "" && (!errors.As(err, &ae) || ae.Marker != marker) {
@@ -620,10 +642,27 @@ var inlineAgentSites = []inlineAgentSite{
 		}
 		return err == nil
 	}},
-	{"init.go checkOnboardRepo", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+	{"init.go checkOnboardRepo", "init.go checkOnboardRepo", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		r.o.onboardRepo = "acme/app"
 		return r.o.checkOnboardRepo() == nil
 	}},
+}
+
+// propertyAgentSites are the agent-marker sites the other ManagedXxx tests
+// drive, with the test that does.
+var propertyAgentSites = map[string]string{
+	"init.go ask":            "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class)",
+	"init.go conditions":     "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
+	"init_stages.go options": "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker (the stage loop's agent gate)",
+}
+
+// outsideAgentSites are the agent-marker sites the property does not cover,
+// each with the reason.
+var outsideAgentSites = map[string]string{
+	"init.go runInit":             "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
+	"init.go publishSharedConfig": "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
+	"initsecrets.go agentEnv":     "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
+	"initsecrets.go Check":        "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:
@@ -795,4 +834,190 @@ func TestManagedConfirmClassEnumerationIsComplete(t *testing.T) {
 			t.Errorf("the product's %s is value %d, want %d", c.name, int(c.class), i)
 		}
 	}
+}
+
+// agentSitesInInit scans init's non-test source (init*.go) for every
+// agentMarker( and agentEnv( call and every Agent: field, and names each by
+// its file and enclosing function ("init.go ask"). A site outside any
+// function is named "file (package level)".
+func agentSitesInInit(t *testing.T) map[string]bool {
+	t.Helper()
+	files, err := filepath.Glob("init*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites := map[string]bool{}
+	fset := token.NewFileSet()
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", path, err)
+		}
+		for _, decl := range f.Decls {
+			name := path + " (package level)"
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				name = path + " " + fd.Name.Name
+			}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.CallExpr:
+					if id, ok := x.Fun.(*ast.Ident); ok && (id.Name == "agentMarker" || id.Name == "agentEnv") {
+						sites[name] = true
+					}
+				case *ast.KeyValueExpr:
+					if id, ok := x.Key.(*ast.Ident); ok && id.Name == "Agent" {
+						sites[name] = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	if len(files) == 0 || len(sites) == 0 {
+		t.Fatalf("no agent-marker site found in %v: the scan is not reading init's source", files)
+	}
+	return sites
+}
+
+// Every agent-marker site of init has a case: run inline, driven by the
+// property or the loop test, or OUTSIDE with a reason. A new call site, or an
+// Agent: field filled anywhere in init, fails here until someone covers it;
+// and an entry whose site is gone fails too, so the lists do not rot.
+func TestManagedEveryAgentSiteInInitHasACase(t *testing.T) {
+	sites := agentSitesInInit(t)
+	listed := map[string]string{}
+	add := func(site, how string) {
+		if prev, dup := listed[site]; dup {
+			t.Errorf("%s is listed twice (%s; %s)", site, prev, how)
+		}
+		listed[site] = how
+	}
+	for _, s := range inlineAgentSites {
+		add(s.site, "inline: "+s.where)
+	}
+	for site, how := range propertyAgentSites {
+		add(site, how)
+	}
+	for site, why := range outsideAgentSites {
+		if !strings.HasPrefix(why, "OUTSIDE: ") || len(why) < len("OUTSIDE: ")+10 {
+			t.Errorf("outsideAgentSites[%q] = %q: an OUTSIDE entry says why", site, why)
+		}
+		add(site, why)
+	}
+	for site := range sites {
+		if _, ok := listed[site]; !ok {
+			t.Errorf("%s decides on the agent marker and has no case: add it to inlineAgentSites (and run it), to propertyAgentSites with the test that drives it, or to outsideAgentSites with the reason", site)
+		}
+	}
+	for site := range listed {
+		if !sites[site] {
+			t.Errorf("%s is listed, and the scan of init*.go finds no agent-marker site there", site)
+		}
+	}
+}
+
+// The failing combination the stage loop's gate stops: `fugaro init --yes` (or
+// a typed "y" at a terminal) in a coding agent's session, on a project that
+// is not managed whose checkout's plugin wiring is out of date. The plugin
+// stage is driven through the real loop with the options init builds
+// (initEngine.options), under every environment state: under a marker the
+// stage is the user's and the file is untouched; with none, or one present
+// but empty, the same run writes it, so the refusal is the marker's.
+func TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	for _, how := range []struct {
+		name     string
+		stdin    string
+		o        initOptions
+		terminal bool
+	}{
+		{"--yes without a terminal", "", initOptions{yes: true}, false},
+		{"--yes at a terminal", "", initOptions{yes: true}, true},
+		{"y typed at a terminal", "y\n", initOptions{}, true},
+	} {
+		for _, env := range agentEnvStates() {
+			t.Run(how.name+"/"+env.name, func(t *testing.T) {
+				settings := wiringCheckout(t, settingsWithOthers)
+				withTerminal(t, how.terminal)
+				o := how.o
+				e, out := stageEngine(t, how.stdin, &o)
+				env.apply(t) // after stageEngine, which blanks the markers
+				res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e)}, e.options())
+				if err != nil {
+					t.Fatalf("the loop: %v\n%s", err, out.String())
+				}
+				got, _ := os.ReadFile(settings)
+				written := string(got) != settingsWithOthers
+				if env.agent != "" {
+					if written || stateOf(res, initflow.Plugin) != initflow.NeedsYou || strings.Contains(out.String(), "confirmed by --yes") || strings.Contains(out.String(), "[y/N]") {
+						t.Fatalf("under %s the plugin stage was not refused: written=%v stages %+v\n%s", env.agent, written, res.Stages, out.String())
+					}
+					if d := res.Stages[0].Detail; !strings.Contains(d, initflow.AgentRefusal(env.agent)) {
+						t.Errorf("the refusal %q does not name %s", d, env.agent)
+					}
+					return
+				}
+				if !written || stateOf(res, initflow.Plugin) != initflow.Changed {
+					t.Fatalf("with %s the same run did not wire the plugin: written=%v stages %+v\n%s", env.name, written, res.Stages, out.String())
+				}
+			})
+		}
+	}
+}
+
+// pluginStage.Apply has no agent check of its own, by design: it reads
+// initflow.Env, which carries no marker, and its only caller is the stage
+// loop (newPluginStage is built in initEngine.converge alone and handed to
+// initflow.Run with initEngine.options), which never calls Apply on a stage
+// that is not SelfConfirming under Options.Agent (initflow's agentStage
+// leaves it for the user). That gate is pinned by
+// TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker and the
+// options().Agent case of TestManagedConfirmRuleMatchesTheTable. This test
+// records the fact the gate is load-bearing: Apply called directly with
+// Env.Yes writes under every marker. If Apply gains a refusal of its own, this
+// test is the one to turn around.
+func TestManagedPluginStageApplyReliesOnTheLoopGate(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	for _, env := range agentEnvStates() {
+		t.Run(env.name, func(t *testing.T) {
+			settings := wiringCheckout(t, settingsWithOthers)
+			e, out := stageEngine(t, "", &initOptions{yes: true})
+			env.apply(t)
+			s := newPluginStage(e)
+			if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
+				t.Fatalf("Apply: %v\n%s", err, out.String())
+			}
+			if got, _ := os.ReadFile(settings); string(got) == settingsWithOthers {
+				t.Errorf("Apply under %s did not write: it has gained a gate of its own; update this test and the comment above", env.name)
+			}
+		})
+	}
+	// The only construction of the stage outside the tests is the loop's.
+	src, err := os.ReadFile("init_stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "newPluginStage(e), e.repo)") || !strings.Contains(string(src), "initflow.Run(ctx, stages, e.options())") {
+		t.Error("init_stages.go no longer hands the plugin stage to initflow.Run with e.options(): re-check what gates its Apply")
+	}
+	for _, path := range mustGlob(t, "*.go") {
+		if strings.HasSuffix(path, "_test.go") || path == "init_stages.go" || path == "init_plugin_stage.go" {
+			continue
+		}
+		if b, _ := os.ReadFile(path); strings.Contains(string(b), "newPluginStage(") || strings.Contains(string(b), "pluginStage{") {
+			t.Errorf("%s builds a plugin stage outside the loop: its Apply has no agent gate of its own", path)
+		}
+	}
+}
+
+func mustGlob(t *testing.T, pattern string) []string {
+	t.Helper()
+	m, err := filepath.Glob(pattern)
+	if err != nil || len(m) == 0 {
+		t.Fatalf("glob %s: %v %v", pattern, m, err)
+	}
+	return m
 }
