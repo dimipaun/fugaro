@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -45,6 +46,14 @@ const (
 	allowDeleteMaxBytes = 64 << 10
 )
 
+// ErrRefused is what this package's own refusals wrap: the caller was asked
+// to write the list somewhere this package will not write it, or with
+// arguments that do not identify the project's bucket. It says nothing about
+// the cloud's answer — a 403 is not one of these — so a caller can tell "the
+// operator named the wrong project" (their own error to fix) from "the
+// operator's credentials were refused" (an operator's or IAM's).
+var ErrRefused = errors.New("refused")
+
 // DeleteList is what AllowDeleteObject holds: the addresses, the version of
 // the format, and the project the list is about. Nothing else — no note, no
 // reason, no comment field. A free-text field in a file a run reads is text
@@ -57,24 +66,30 @@ type DeleteList struct {
 }
 
 // Bytes is the object's content. A list this package would not read back is
-// refused rather than written: the read is fail-closed, so a list it cannot
-// parse would refuse every delete while looking, to whoever wrote it, like an
-// approval.
+// refused (ErrRefused) rather than written: the read is fail-closed, so a
+// list it cannot parse would refuse every delete while looking, to whoever
+// wrote it, like an approval.
 func (d DeleteList) Bytes() ([]byte, error) {
 	switch {
 	case d.Version != AllowDeleteVersion:
-		return nil, fmt.Errorf("%s: version %d is not the one this package writes (%d)", AllowDeleteObject, d.Version, AllowDeleteVersion)
+		return nil, refusedf("%s: version %d is not the one this package writes (%d)", AllowDeleteObject, d.Version, AllowDeleteVersion)
 	case d.GCPProject == "":
-		return nil, fmt.Errorf("%s: no GCP project, so nothing says which installation's list this is", AllowDeleteObject)
+		return nil, refusedf("%s: no GCP project, so nothing says which installation's list this is", AllowDeleteObject)
 	case len(d.Addresses) == 0:
-		return nil, fmt.Errorf("%s: no addresses: an empty list is what an absent one already means, and writing it would refuse every delete under the appearance of an approval", AllowDeleteObject)
+		return nil, refusedf("%s: no addresses: an empty list is what an absent one already means, and writing it would refuse every delete under the appearance of an approval", AllowDeleteObject)
 	}
 	for _, a := range d.Addresses {
 		if strings.TrimSpace(a) == "" {
-			return nil, fmt.Errorf("%s: an empty address: every entry names a resource to delete or replace", AllowDeleteObject)
+			return nil, refusedf("%s: an empty address: every entry names a resource to delete or replace", AllowDeleteObject)
 		}
 	}
 	return json.Marshal(d)
+}
+
+// refusedf is a refusal of this package's own (ErrRefused): the caller's
+// arguments or the bucket they named, never the cloud's answer.
+func refusedf(format string, a ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{ErrRefused}, a...)...)
 }
 
 // WriteDeleteList records the owner's whole approval in the runs bucket of
@@ -101,9 +116,9 @@ func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject
 	}
 	switch {
 	case bucket == "" || number == 0:
-		return fmt.Errorf("refusing to write %s for %s: no runs bucket, or no project number to check it against", AllowDeleteObject, gcpProject)
+		return refusedf("to write %s for %s: no runs bucket, or no project number to check it against", AllowDeleteObject, gcpProject)
 	case s == nil:
-		return fmt.Errorf("refusing to write %s for %s: no storage client", AllowDeleteObject, gcpProject)
+		return refusedf("to write %s for %s: no storage client", AllowDeleteObject, gcpProject)
 	}
 	if err := proveRunsBucket(ctx, s, bucket, gcpProject, number); err != nil {
 		return err
@@ -213,7 +228,7 @@ func proveRunsBucket(ctx context.Context, s *storage.Service, bucket, gcpProject
 		return fmt.Errorf("reading gs://%s before reading %s for %s: %w", bucket, AllowDeleteObject, gcpProject, err)
 	}
 	if b.ProjectNumber != number || b.Labels[gcp.LabelManaged] != gcp.ManagedValue {
-		return fmt.Errorf("refusing gs://%s for %s: it is not that project's own runs bucket (project number %d, label %s=%s)",
+		return refusedf("gs://%s is not %s's own runs bucket (project number %d, label %s=%s)",
 			bucket, gcpProject, number, gcp.LabelManaged, gcp.ManagedValue)
 	}
 	return nil
