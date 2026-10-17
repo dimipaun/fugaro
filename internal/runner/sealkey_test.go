@@ -107,21 +107,39 @@ func TestSealKeyMarkerIsParsedStrictlyAndNeverEchoed(t *testing.T) {
 	}
 }
 
-// sealTokenObject replaces the plaintext object the launcher's fixture minted
-// with a copy sealed under key, as a launcher that seals will write it.
+// sealTokenObject re-seals the object the fixture minted under key, as a
+// launcher that drew key would have written it.
 func sealTokenObject(t *testing.T, b *bk, key []byte) {
 	t.Helper()
 	ctx := context.Background()
-	data, _, err := b.bucket.Read(ctx, token.ObjectKey(repoSlug, runID))
+	tok, err := token.TakeObject(ctx, b.bucket, repoSlug, runID, b.key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := token.DeleteObject(ctx, b.bucket, repoSlug, runID); err != nil {
 		t.Fatal(err)
 	}
-	if err := token.PutObject(ctx, b.bucket, repoSlug, runID, string(data), key); err != nil {
+	if err := token.PutObject(ctx, b.bucket, repoSlug, runID, tok, key); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// plantPlaintext replaces the fixture's sealed object with the token in the
+// clear: nothing Fugaro writes, and nothing a run may read.
+func plantPlaintext(t *testing.T, b *bk) string {
+	t.Helper()
+	ctx := context.Background()
+	tok, err := token.TakeObject(ctx, b.bucket, repoSlug, runID, b.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := token.DeleteObject(ctx, b.bucket, repoSlug, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.bucket.Create(ctx, token.ObjectKey(repoSlug, runID), []byte(tok), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	return tok
 }
 
 // TestASealedTokenBootstrapsAndTheKeyIsNeverPublished: the runner's half of
@@ -150,8 +168,8 @@ func TestASealedTokenBootstrapsAndTheKeyIsNeverPublished(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("a sealed token did not run: rec = %+v, err = %v", rec, err)
 	}
-	if !b.tokenObjectGone() {
-		t.Fatal("the sealed object was not taken")
+	if !b.tokenObjectKept() {
+		t.Fatal("the run removed the sealed object: its grant on tokens/ is read-only")
 	}
 	// The registration is the *encoded* key, and that is the spelling the
 	// channel's parse now accepts alone (token.ParseKey is strict, and the
@@ -190,7 +208,7 @@ func TestAPlaintextTokenIsRefusedWhenTheMarkerCarriesAKey(t *testing.T) {
 	key := sealKeyFor(0x33)
 	enc := token.EncodeKey(key)
 	b.deps.Backend.TokenMarked, b.deps.Backend.TokenKey = true, key
-	// The fixture's object is the plaintext one the launcher writes today.
+	plantPlaintext(t, b)
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError {
 		t.Fatalf("a plaintext object with a key ran: rec = %+v, err = %v", rec, err)
@@ -203,20 +221,20 @@ func TestAPlaintextTokenIsRefusedWhenTheMarkerCarriesAKey(t *testing.T) {
 			t.Fatal("the key reaches what the run publishes")
 		}
 	}
-	// The take consumed the object before it refused it, which is TakeObject's
-	// shipped order: the object is deleted before the token is checked, so a
-	// refusal never leaves bytes behind for the next attempt to read.
-	if !b.tokenObjectGone() {
-		t.Fatal("the refused object was left in the bucket")
+	// The take is read-only: a refused object is left where it was, and no
+	// later take reads it either, because it is never read as a token.
+	if !b.tokenObjectKept() {
+		t.Fatal("the run removed the object: its grant on tokens/ is read-only")
 	}
 }
 
-// TestASealedObjectWithNoKeyIsRefused: with no key presented — a marker of
-// "1", which is today's launcher — a sealed object is the theft case and not a
-// plaintext token, so the run refuses instead of reading the bytes.
+// TestASealedObjectWithNoKeyIsRefused: with no key presented — a budget-on
+// job with no marker — a sealed object is the theft case and not a plaintext
+// token, so the run refuses instead of reading the bytes.
 func TestASealedObjectWithNoKeyIsRefused(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "50", capScript(3)...)
 	sealTokenObject(t, b, sealKeyFor(0x44))
+	b.unmarked()
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError {
 		t.Fatalf("a sealed object with no key ran: rec = %+v, err = %v", rec, err)

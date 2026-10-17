@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"math/rand/v2"
 	"os"
 	"regexp"
@@ -309,9 +310,11 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{BucketConditionTitle("fugaro-x-12345678"), "fugaro-fugaro-x-12345678"},
 		{BucketCondition("b", []string{"runs", "cache"}, "s"),
 			`resource.name.startsWith("projects/_/buckets/b/objects/runs/s/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/s/")`},
-		{LauncherBucketConditionTitle, "fugaro-launchers-runs"},
+		{LauncherBucketConditionTitle, "fugaro-launchers-runs-tokens"},
 		{LauncherBucketCondition("fugaro-runs-proj-1234"),
-			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/")`},
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
+		{TokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-tokens-fugaro-x-12345678"},
+		{TokenBucketCondition("b", "s"), `resource.name.startsWith("projects/_/buckets/b/objects/tokens/s/")`},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
@@ -828,5 +831,22 @@ func TestProjectSecretIDDistinctFromRepoSecretID(t *testing.T) {
 	// (the domain separation this function's own comment names).
 	if ProjectSecretID("acme/app", "x") == SecretID("acme/app", "x") {
 		t.Fatal("ProjectSecretID collided with SecretID for a slug-shaped project name")
+	}
+}
+
+// TestTheTokenPrefixIsTheTokenPackages: the grants name the prefix the token
+// objects live under (token.ObjectKey), and the job's prefixes never include
+// it: the job's objectUser on tokens/ would let a peer run delete a queued
+// run's token (docs/design/budget-token-channel.md §7.2, D16). The prefix is
+// one constant on both sides, so a move of the object without the grants (or
+// the reverse) fails here.
+func TestTheTokenPrefixIsTheTokenPackages(t *testing.T) {
+	if TokenBucketPrefix != token.ObjectPrefix || !strings.HasPrefix(token.ObjectKey("s", "r"), TokenBucketPrefix+"/s/") {
+		t.Fatalf("TokenBucketPrefix = %q, token.ObjectKey = %q", TokenBucketPrefix, token.ObjectKey("s", "r"))
+	}
+	for _, p := range append(append([]string{}, JobBucketPrefixes...), BuildBucketPrefixes...) {
+		if p == TokenBucketPrefix {
+			t.Fatalf("%q is a prefix an account may write", p)
+		}
 	}
 }

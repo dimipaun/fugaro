@@ -162,6 +162,7 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 	})
 	t.Run("the bucket holds no token", func(t *testing.T) {
 		b := newBK(t, gwConfig(t, ""), "off", "")
+		b.unmarked()
 		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
@@ -187,6 +188,7 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 		// gate, and a run that halts here is halting on a credential it was
 		// never given (B1).
 		b := newBK(t, gwConfig(t, ""), "off", "")
+		b.unmarked()
 		b.deps.Backend.APIKey = ""
 		rec, err := b.run(t, implement("feature"), review("ship", 0))
 		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
@@ -198,8 +200,8 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 		if b.itk.Exchanges() != 0 {
 			t.Fatal("a run with its budget off and no key exchanged a token")
 		}
-		// The key is checked before the bucket read, so the take that would
-		// delete the token object never happened: the run did not even look.
+		// The key is checked before the bucket read: the run did not even
+		// look at the token object.
 		if ok, err := b.bucket.Exists(context.Background(), token.ObjectKey(repoSlug, runID)); err != nil || !ok {
 			t.Fatalf("the run's token object is gone (exists = %v, err = %v)", ok, err)
 		}
@@ -226,8 +228,8 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 
 // M2's regression test (security review of PR #379): the launcher that minted
 // this run's token says so in the execution's environment, and the marker
-// outranks the job's own mode. A mode-off job whose token object was deleted —
-// any run of the same repository can take it — must not read that as "this
+// outranks the job's own mode. A mode-off job whose token object cannot be
+// read — gone, or behind a grant the job account lacks — must not read that as "this
 // project has published no policy" and go on with the environment ceiling while
 // the launcher minted a token precisely because a policy exists.
 func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
@@ -239,8 +241,24 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec, err := b.run(t, implement("feature"))
-		if err == nil || !strings.Contains(err.Error(), "not in the runs bucket") {
+		if err == nil || !strings.Contains(err.Error(), "could not be read") {
 			t.Fatalf("err = %v, want the missing-token refusal", err)
+		}
+		// The take is read-only (D16), so "already taken" is never the
+		// cause; a job account not re-applied since the token moved to
+		// tokens/ is the likely one, and gocloud reports its 403 exactly as
+		// a missing object. The refusal names that cause and its cure.
+		for _, want := range []string{"tokens/", "read grant", "fugaro init --repo", "start a new run (fugaro run with the same task)"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+		if strings.Contains(err.Error(), "already taken") {
+			t.Errorf("the refusal blames a take that no longer deletes: %v", err)
+		}
+		// The run has launched, so --retry would only report it.
+		if strings.Contains(err.Error(), "--retry") {
+			t.Errorf("the refusal names --retry, which never relaunches a launched run: %v", err)
 		}
 		if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 			t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
@@ -251,6 +269,7 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 		// never minted (an installation with nothing published, or a local
 		// run), and it keeps today's behaviour exactly.
 		b := policyRun(t, gwConfig(t, ""), "off", "", policy)
+		b.unmarked()
 		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
@@ -355,8 +374,8 @@ func TestRunnerWithTheModeOnAndNoTokenHalts(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, err := b.run(t, implement("feature"))
-	if err == nil || !strings.Contains(err.Error(), "not in the runs bucket") {
-		t.Fatalf("err = %v, want the missing-token refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "fugaro init --repo") || strings.Contains(err.Error(), "already taken") || strings.Contains(err.Error(), "--retry") {
+		t.Fatalf("err = %v, want the missing-token refusal naming the tokens/ grant", err)
 	}
 	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 		t.Fatalf("the run proceeded without its budget token: calls = %d, rec = %+v", len(b.agent.calls), rec)
@@ -546,8 +565,8 @@ func TestTokenIsTakenOnce(t *testing.T) {
 	if s := sourceOf(t, rec, "mode"); s != "policy" {
 		t.Fatalf("mode source = %q: the policy was not read", s)
 	}
-	if !b.tokenObjectGone() {
-		t.Fatal("the token object is still in the bucket")
+	if !b.tokenObjectKept() {
+		t.Fatal("the run removed the token object: its grant on tokens/ is read-only")
 	}
 	if n := b.itk.Exchanges(); n != 2 {
 		t.Fatalf("%d exchanges, want 2 (the policy read's and the session's)", n)

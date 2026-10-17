@@ -254,7 +254,7 @@ func TestAttachRefusesAnExistingRunIdBeforeUploading(t *testing.T) {
 func TestARefusedLaunchLeavesNoInputsInTheBucket(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	projectRecipesFixture(t, f.cloudFixture, map[string]string{"sizzle": projectSizzle})
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release080)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal) // past artifactsSince and the seal's gate
 	f.db.Set("config/kill/global", map[string]any{"on": true})
 	id := "20261015-100000-abcd"
 	shot := attachShot(t, "shot.png", "png")

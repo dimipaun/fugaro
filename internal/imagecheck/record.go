@@ -52,7 +52,18 @@ type Record struct {
 	ImageDigest string `json:"image_digest"` // sha256:… that latest was promoted to
 
 	FugaroVersion string `json:"fugaro_version"`
-	TemplateSalt  string `json:"template_salt"`
+	// SealedBudgetToken is true when the fugaro that rendered this record
+	// reads the sealed budget token (docs/design/budget-token-channel.md
+	// §7.1). That fugaro is the BASE image's own binary, which runs the image
+	// build's render step (images/derived/cloudbuild.yaml): the field says
+	// only that the base image's own build step recorded it. It does not say
+	// which fugaro the launched image runs: a dockerfile: workflow's image is
+	// the repository's to build, its fugaro included, and a job runs the
+	// repository's :latest, which no launch compares with ImageDigest (nor
+	// does base_ref's release gate). The launcher's seal gate trusts it as
+	// far as that goes; a record without it says nothing either way.
+	SealedBudgetToken bool   `json:"sealed_budget_token,omitempty"`
+	TemplateSalt      string `json:"template_salt"`
 	// Adopted is reserved for a record written for an image the build
 	// did not make; builds always write false.
 	Adopted bool `json:"adopted"`

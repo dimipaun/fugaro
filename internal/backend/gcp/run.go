@@ -94,6 +94,10 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	job := b.JobPath(spec.Repo.Slug, spec.Workflow)
 	// The spec's own variables (the launcher's budget marker) go in the same
 	// override as FUGARO_RUN: the API merges these into the job's environment.
+	// A secret entry (the marker of a launch that sealed its token, whose
+	// value is the seal key, D15) goes there too: the execution's override is
+	// the carrier docs/design/budget-token-channel.md §7.1 accepts and prices
+	// (the project's readers, not a peer run of the job).
 	// backend.LaunchEnv is where both backends read them, so an entry this one
 	// refuses (a malformed one, or one naming a variable the environment
 	// already holds) is refused on Cloud Batch too.
