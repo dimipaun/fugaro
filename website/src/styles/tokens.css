@@ -1,0 +1,98 @@
+/* website/src/styles/tokens.css — the site's semantic token layer (website plan, W1.2).
+ *
+ * This file is the one place the site names a spacing step, a radius, a type size or a
+ * motion duration, and it is deliberately the one place that names **no colour at all**:
+ * every colour the site paints comes from the palette file imported below, so the palette
+ * is a value set for a fixed vocabulary rather than a second copy of it, and changing the
+ * owner's mind about D104 is the one line at the bottom of this comment block.
+ *
+ * The split between the two layers is what makes the contrast check in
+ * `website/test/a11y.mjs` possible: a component asks for `--text` on `--surface`, and the
+ * test can compute that pair's ratio for every palette because both names resolve to an
+ * opaque literal in a palette file. A colour written here instead would be a pair the test
+ * cannot see, which is the defect this file's shape exists to prevent.
+ *
+ * Nothing here is a colour, and nothing here is a URL: the fonts are a system stack (the
+ * self-hosted face W1.1 preloads is prepended to `--font-sans` by the layout when it
+ * lands), so the page fetches no font from anywhere (D106, Global Constraint 8).
+ *
+ * `prefers-reduced-motion` is not here: the global reduce rule that neutralises the
+ * animation utilities is W1.3's, written once in the layout rather than per component
+ * (D105). The durations below are what that rule neutralises.
+ */
+
+/* The palette in force. D104 was answered on 2026-10-16 with palette C — violet for
+ * structure and links, orange for warnings and cost — so `palette-split.css` is the file
+ * imported, and `palette-violet.css` and `palette-orange.css` ship beside it as the two
+ * documented alternatives the owner chose between. The import is the whole of the
+ * selection: `website/test/a11y.mjs` asserts that exactly one palette is imported, that it
+ * is this one, and that the other two are complete value sets for the same vocabulary, so
+ * changing the palette is this line and nothing else (the plan's step 4).
+ *
+ * It is an `@import` and not a `site.yaml` key on purpose: a palette is a stylesheet, the
+ * bundler resolves it at build time, and a value that decided which of three files the
+ * build reads would be a fact about the build rather than about the site's text. */
+@import "./palette-split.css";
+
+:root {
+  /* ---- spacing: a 4px-based scale, so a gap is a step and not a number ---- */
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3rem;
+  --space-2xl: 4.5rem;
+  --space-3xl: 7rem;
+
+  /* ---- radius ---- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* ---- type: families, then sizes, then the leading and weights that go with them ---- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* The sizes are named `--font-size-*` rather than `--text-*` so that no type token can
+   * be mistaken for the palette's `--text`, which is a colour. */
+  --font-size-xs: 0.8125rem;
+  --font-size-sm: 0.9375rem;
+  --font-size-base: 1.0625rem;
+  --font-size-lg: 1.25rem;
+  --font-size-xl: 1.5rem;
+  --font-size-2xl: 2rem;
+  --font-size-3xl: 2.75rem;
+  --font-size-4xl: 3.5rem;
+
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.6;
+  --tracking-tight: -0.02em;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* ---- layout ---- */
+  --measure: 68ch;
+  --page-max: 72rem;
+  --border-width: 1px;
+
+  /* The focus ring is the accent (a palette colour) with a width and an offset, so
+   * `:focus-visible` is one rule rather than a number per component, and the ring is a
+   * pair the contrast check already covers — the accent against the ground (W1.11 asserts
+   * the ring is reachable and visible). */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* ---- motion ---- */
+  --duration-fast: 120ms;
+  --duration-base: 240ms;
+  --duration-slow: 600ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
