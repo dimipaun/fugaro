@@ -788,7 +788,9 @@ function readEvent(event) {
   // a float, a negative zero or a value past the exact-double line is refused
   // here rather than compared against the state's own now and reported as an
   // ordering problem it is not.
-  if (!isIntegerInRange(values.now, 1, AT_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  if (!isIntegerInRange(values.now, 1, AT_MAX)) {
+    return refuse(REFUSAL.INVALID_NOW, 'now');
+  }
 
   const hasMessage = values.message !== undefined;
   if (values.type === EVENT.DELIVER && !hasMessage) {

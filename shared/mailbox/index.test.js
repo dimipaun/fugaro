@@ -450,6 +450,7 @@ test('a delivery that is still in flight is never evicted', () => {
 test('the ledger stays bounded over a long mixed sequence', () => {
   let state = newMailbox({ maxSeen: 3 });
   let refusals = 0;
+  let accepted = 0;
   let now = NOW;
 
   for (let i = 0; i < 200; i++) {
@@ -457,21 +458,24 @@ test('the ledger stays bounded over a long mixed sequence', () => {
     const id = `m-${String(i).padStart(4, '0')}`;
     const delivered = step(state, deliver(message({ id, at: now - 500 }), { now }));
     if (!delivered.ok) {
+      // The only refusal this sequence can produce: the cap is reached and
+      // nothing is evictable yet.
       assert.equal(delivered.code, REFUSAL.DEDUPE_FULL);
       refusals++;
       continue;
     }
+    accepted++;
     state = delivered.state;
-    if (i % 2 === 0) state = stepped(state, act()).state;
-    if (i % 3 === 0) {
-      const acked = step(state, ack());
-      if (acked.ok) state = acked.state;
-    }
+    state = stepped(state, act(now)).state;
+    state = stepped(state, ack(now)).state;
     assert.ok(state.seen.length <= 3, `the ledger grew to ${state.seen.length}`);
   }
 
-  // The sequence is not all refusals: the window keeps making room.
-  assert.ok(refusals < 200, `${refusals} of 200 deliveries were refused`);
+  // Both happen, and that is the point: the cap refuses, and the window keeps
+  // making room. A cap that refused everything, or an eviction that dropped
+  // everything, would pass a test that checked the bound alone.
+  assert.ok(accepted > 0, 'no delivery was ever accepted');
+  assert.ok(refusals > 0, 'the cap never refused a delivery');
   assert.ok(state.seen.length <= 3);
 });
 
@@ -486,6 +490,10 @@ test('the transition table is total: every state x every event has a defined out
   assert.deepEqual(Object.keys(TRANSITIONS).sort(), [...states].sort(), 'a state has no row');
 
   const outcomes = new Set();
+  // The delivery cells refuse with the schema's codes as well as this module's
+  // own: a message the schema will not accept is not a delivery, and pretending
+  // otherwise here would be a second, weaker schema.
+  const vocabulary = new Set([...Object.values(REFUSAL), ...Object.values(REFUSALS)]);
   for (const state of states) {
     assert.deepEqual(Object.keys(TRANSITIONS[state]).sort(), [...events].sort(), `${state} has no full row`);
     for (const event of events) {
@@ -496,7 +504,9 @@ test('the transition table is total: every state x every event has a defined out
       );
       assert.ok(cell.next.length > 0, `${state} x ${event} names no next phase`);
       for (const outcome of cell.ok) outcomes.add(outcome);
-      for (const code of cell.no) assert.ok(Object.values(REFUSAL).includes(code), `${code} is not a refusal`);
+      for (const code of cell.no) {
+        assert.ok(vocabulary.has(code), `${code} is neither this module's refusal nor the schema's`);
+      }
     }
   }
 
@@ -601,6 +611,9 @@ test('a ledger that is not a ledger is refused, each way with its own code', () 
   refused({ ...state, seen: [{ ...entry, extra: 1 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, at: 1.5 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, sender: '' }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  refused({ ...state, seen: [{ ...entry, sender: 's'.repeat(201) }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  refused({ ...state, seen: [{ ...entry, id: 'i'.repeat(101) }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  refused({ ...state, seen: [{ ...entry, at: -0 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [entry, { ...entry }] }, act(), REFUSAL.DUPLICATE_SEEN_ENTRY);
   refused({ ...state, seen: [other, entry] }, act(), REFUSAL.UNSORTED_SEEN);
   // A ledger longer than the state's own cap is not a state either.
@@ -694,6 +707,20 @@ test('a step mutates nothing it was handed, and everything it answers with is fr
   assert.ok(Object.isFrozen(result.state.seen));
   assert.ok(Object.isFrozen(result.state.seen[0]));
   assert.notEqual(result.state, state, 'the step returns a new state, not the old one');
+});
+
+test('the state a step returns shares no structure with what the caller handed in', () => {
+  // A state is a value, not a view: a caller that keeps hold of the ledger it
+  // built and writes to it later must not be able to change an answer the
+  // machine has already given.
+  const ledger = [{ sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, status: STATUS.ACKED }];
+  const state = { ...newMailbox(), seen: ledger };
+
+  const closed = stepped(state, close());
+  assert.deepEqual(ids(closed.state), ['m-0001']);
+
+  ledger.push({ sender: 'phone-b', id: 'm-0002', at: NOW - 900, status: STATUS.ACCEPTED });
+  assert.deepEqual(ids(closed.state), ['m-0001'], 'the returned state followed the caller\'s array');
 });
 
 test('a refusal never echoes the value it refused', () => {
