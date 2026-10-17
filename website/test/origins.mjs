@@ -27,19 +27,23 @@
 //      `http:`, protocol-relative `//host`, `javascript:` and (for anything executable)
 //      `data:` URLs are refused outright, and so are `<base>`, `<meta http-equiv=refresh>`,
 //      `ping`, `iframe[srcdoc]` and every inline `on*=` handler.
-//   2. Every inline executable `<script>` is on an allow-list by its SHA-256 (below). The list
-//      is empty today because the site ships no script at all; a task that adds one (W1.12's
-//      consent banner) adds its hash here, in the same commit, as a decision someone reads.
+//   2. Every inline executable `<script>` is on an allow-list by the SHA-256 of its exact text
+//      (below). One entry today: the consent banner's controller (W1.12). The analytics
+//      loader is deliberately not on the list — it is admitted by the analytics contract in
+//      point 4, which holds its shape rather than its bytes, because its `define:vars` prelude
+//      carries the measurement id W3.2 sets. The list is also the mechanism the deployed
+//      policy uses: the same base64 digest is what a `script-src 'sha256-…'` names, so W3.2
+//      copies these entries into `firebase.json` in the commit that turns analytics on.
 //   3. Every absolute URL inside a shipped `.js` file is first-party.
 //   4. The analytics exception, in two states (D93, D106). With `site.yaml`'s
 //      `analytics.enabled` false — today — no page names an analytics origin or carries the
-//      loader at all. With it true (a build of a temp copy with the flag flipped), the one
-//      admitted third-party origin is Google's tag origin, it appears ONLY inside the base
-//      layout's consent-gated inline loader (never as a `script[src]`, a preload or a
-//      preconnect), no second analytics origin appears, and the loader reads the consent
-//      decision before it creates anything. W1.12 owns the banner and the gate's behaviour
-//      and widens this file; this file holds the layout's contract: one origin, one gated
-//      loader, nothing fetched by markup.
+//      loader at all, and no page carries a script of any kind. With it true (a build of a
+//      temp copy with the flag flipped), the one admitted third-party origin is Google's tag
+//      origin, it appears ONLY inside the base layout's consent-gated inline loader (never as
+//      a `script[src]`, a preload or a preconnect), no second analytics origin appears, the
+//      loader reads the consent decision before it creates anything, and the page's other
+//      script — the banner's controller, which is what writes that decision — is admitted by
+//      the allow-list above and by nothing else.
 //
 // The red step this file was written against: the check, run over a page carrying a Google
 // Fonts stylesheet, has to report `fonts.googleapis.com is not on the allowed-host list` —
@@ -74,11 +78,20 @@ import { buildCopy } from './lib/build.mjs'
 
 // Inline executable scripts the site is allowed to ship, by the base64 SHA-256 of their
 // exact text (the same digest a Content-Security-Policy `script-src 'sha256-…'` names), each
-// with the reason it exists. Empty: the site ships no script today. The analytics loader is
-// not listed here — it is admitted by the analytics contract below, which holds its shape
-// rather than its bytes, because W1.12 rewrites it and W3.2 changes its measurement id.
+// with the reason it exists. One entry: the consent banner's controller, which W1.12 added
+// here in the same commit as the component, which is what this list is for — a script the
+// site runs is a decision someone reads, not a side effect of a template. The analytics
+// loader is NOT listed: it is admitted by the analytics contract below, which holds its shape
+// rather than its bytes, because W3.2 changes its measurement id.
+//
+// Nothing ships these digests today: with `analytics.enabled` false the site emits no script
+// at all, so the only build in which they appear is the flag-on one below. W3.2 is the task
+// that copies them into `firebase.json`'s `script-src`, in the commit that turns analytics on.
 export const INLINE_SCRIPTS = new Map([
-  // ['sha256-…', 'what it is, and the task that added it'],
+  [
+    'sha256-7l2pFFWWCcUSll8vIeHQWoCNRK7+zMwiyv8DrPaFgVs=',
+    "the consent banner's controller (W1.12, website/src/components/ConsentBanner.astro): it reveals the banner when no decision is stored, writes the visitor's answer to localStorage under the consent key, dispatches `fugaro:consent` — which is what the layout's gated loader waits for — and moves focus to <main>. It names no origin, fetches nothing, writes no cookie. The digest is the exact text the build emits, so an edit inside that script re-derives it: build with the flag on, read the page's second <script>, and hash its text.",
+  ],
 ])
 
 // The one third-party origin D93 admits, and the analytics origins that are NOT admitted:
@@ -375,9 +388,43 @@ test('with analytics switched on, the one admitted third-party origin is loaded 
 
   // And the loader is actually there on every page — a contract nothing satisfies would pass.
   for (const page of builtPages(built.dist)) {
-    const loaders = [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.name === 'script' && (t.raw ?? '').includes(ANALYTICS_HOST))
+    const scripts = [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.name === 'script')
+    const loaders = scripts.filter((t) => (t.raw ?? '').includes(ANALYTICS_HOST))
     assert.equal(loaders.length, 1, `${page.rel}: expected exactly one consent-gated analytics loader with the flag on, found ${loaders.length}`)
     assert.ok(!/<script[^>]*\bsrc=["']?https:\/\/www\.googletagmanager/i.test(page.html), `${page.rel}: emits the Google script as markup, which loads before any consent`)
+
+    // The page's scripts, all of them: the gated loader, and the consent banner's controller
+    // — which is the only thing that can write the decision the loader reads, so a page
+    // without it is a gate that can never open (W1.12).
+    assert.equal(scripts.length, 2, `${page.rel}: the site ships ${scripts.length} scripts with analytics on; it has two, the gated loader and the consent banner`)
+    const banner = scripts.find((token) => token !== loaders[0])
+    const body = banner.raw ?? ''
+    // The key is written once — in the banner's own markup — and the script reads it from
+    // there. These two assertions are the banner's half of the key: it carries the same
+    // literal the loader is held to by `loaderFailures`, and it does not carry a second one.
+    // (That is why the script's text has no key in it, and why the digest above is stable.)
+    assert.ok(
+      page.html.includes(`data-consent-key="${CONSENT_KEY}"`),
+      `${page.rel}: the banner's markup does not carry the consent key (${CONSENT_KEY}) the loader reads`,
+    )
+    assert.ok(body.includes('data-consent-key'), `${page.rel}: the banner's script does not read the consent key out of its own markup`)
+    assert.ok(/setItem/.test(body), `${page.rel}: the banner's script never stores a decision`)
+    assert.ok(!/https?:|document\.cookie/.test(body), `${page.rel}: the banner's script names an origin or a cookie`)
+
+    const digest = `sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}`
+    assert.ok(
+      INLINE_SCRIPTS.has(digest),
+      `${page.rel}: the banner's script is not on the allow-list (${digest}); the allow-list is what admits a script the site runs, and what W3.2 copies into the policy`,
+    )
+
+    // The allow-list is exact, not a prefix and not a pattern: one edited character in the
+    // script the build emits is refused, which is what makes the entry a decision rather
+    // than a formality.
+    const tampered = page.html.replace(body, `${body}\n;window.tampered = true`)
+    assert.ok(
+      pageOriginFailures(tampered, page.rel, facts).some((f) => /not on the allow-list/.test(f)),
+      `${page.rel}: an edited copy of the banner's script is still admitted, so the allow-list does not hold the bytes it claims to`,
+    )
   }
 })
 
@@ -460,6 +507,11 @@ test('the analytics loader contract refuses a second origin, an ungated loader a
 
   const markup = page({ head: `<script async src="${ANALYTICS_ORIGIN}/gtag/js?id=G-0000000000"></script>` })
   assert.ok(failuresOf(markup, on).some((f) => /www\.googletagmanager\.com is not on the allowed-host list/.test(f)))
+
+  // Two gated loaders is one too many: the site has exactly one thing that may name the
+  // analytics origin, and W1.12's banner is not it (it names no origin at all).
+  const twice = page({ head: `<script>${gated}</script>`, body: `<script>${gated}</script>` })
+  assert.ok(failuresOf(twice, on).some((f) => /carries 2 inline scripts naming/.test(f)), failuresOf(twice, on).join('\n'))
 })
 
 test('a shipped stylesheet or script file naming another host is refused', () => {
