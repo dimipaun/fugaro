@@ -320,7 +320,23 @@ func providerPlan(t *testing.T, fields map[string]any) *Plan {
 	}
 	cfg := config(nil, []map[string]any{bucketConfig()}, nil)
 	cfg["provider_config"] = map[string]any{"google": pc}
-	return jsonPlan(t, []map[string]any{bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)}, cfg)
+	// The root variables the rows read, with the values terraform writes for
+	// every root variable of a real plan: Task 1.2 reads var.p's value as the
+	// project the block lands its resources in, and refuses a project the plan
+	// does not prove is this run's.
+	doc := map[string]any{"format_version": "1.2",
+		"resource_changes": []map[string]any{bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)},
+		"configuration":    cfg,
+		"variables":        map[string]any{"p": map[string]any{"value": "proj-1"}}}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsePlan(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 func constant(v any) map[string]any { return map[string]any{"constant_value": v} }
