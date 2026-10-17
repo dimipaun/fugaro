@@ -21,7 +21,7 @@ const { ok, state } = evaluatePresence({ heartbeat, now: serverNow, intervalMs: 
 | at or past N intervals, short of the offline band | `stale` | it may be busy or hung; the app can say so without calling it dead |
 | at or past the offline band (12 intervals) | `offline` | minutes of silence, not one dropped write |
 | in the future beyond the tolerance (one interval) | `clock-differs` | the phone's clock, not the orchestrator, is what is wrong |
-| absent (`null`) | `offline`, and **never** `live` | "we have heard nothing" must not render as "everything is fine" |
+| absent (`null`) | `offline` | "we have heard nothing" must not render as "everything is fine" — and it is **never** `live` |
 
 **The order of those branches is the rule.** The future check runs first, so a skewed clock can
 never be read as `live` (a negative age) and never as `offline` (an age that "makes no sense").
@@ -59,22 +59,25 @@ setting — and check 84's result may move it.
 
 Every way an input can fail to be this rule's input has its own code, exported as `REFUSAL`. A
 refusal returns `{ ok: false, code, field, detail }` and carries **no state**, so a caller
-cannot render a bug as "offline" by accident:
+cannot render a bug as "offline" by accident. Every code the module can return is here, and a
+test in `index.test.js` fails if this table and `REFUSAL` ever drift apart:
 
-- the input is not a plain object, or carries an unknown field;
-- the heartbeat is not a plain object (a `Date` instance, an array, a string, a number), carries
-  an unknown field, or is missing its timestamp or its boot id;
-- the heartbeat's `at` is not a **positive safe integer** — a numeric string, a float, `NaN`,
-  `Infinity`, `0` or a negative number is refused: `at: 0` is the shape of an *unset* counter,
-  and silently reading it as 1970 would hide a writer bug behind the state it resembles;
-- the boot id is empty, oversize, or outside `[A-Za-z0-9._:-]`;
-- `now` is not a positive safe integer;
-- the interval is below D117's floor or above its ceiling;
-- a band is not an integer in `1..MAX_BAND`;
-- **two bands that do not nest** (`offlineIntervals <= missedIntervals`) — an ambiguity is a
-  refusal, because the alternative is picking one band silently and calling the other a bug
-  later;
-- the future tolerance is negative or not an integer.
+| Code | When |
+|---|---|
+| `input-not-an-object` | the input is not a plain object (a string, a number, an array, `null`, a class instance) |
+| `unknown-field` | the input carries a field this rule does not read |
+| `invalid-heartbeat` | the heartbeat is not a plain object — a `Date` instance, an array, a string, a number |
+| `heartbeat-missing-field` | the heartbeat lacks its `at` or its `bootId` (D117's node carries both) |
+| `heartbeat-unknown-field` | the heartbeat carries a field beyond `at` and `bootId` |
+| `invalid-heartbeat-timestamp` | `at` is not a **positive safe integer** — a numeric string, a float, `NaN`, `Infinity`, `0` or a negative number. `at: 0` is the shape of an *unset* counter, and silently reading it as 1970 would hide a writer bug behind the state it resembles |
+| `invalid-boot-id` | the boot id is empty, oversize (> 64), or outside `[A-Za-z0-9._:-]` |
+| `invalid-now` | `now` is not a positive safe integer |
+| `invalid-interval` | the interval is not a **positive safe integer at all** — a numeric string, a float, `0`, a negative number or `NaN`; refused before the floor and the ceiling are consulted |
+| `interval-below-floor` | the interval is a positive integer but below D117's floor (30 000 ms) |
+| `interval-above-ceiling` | the interval is above the ceiling (86 400 000 ms) |
+| `invalid-band` | a band is not an integer in `1..MAX_BAND` |
+| `bands-not-increasing` | **two bands that do not nest** (`offlineIntervals <= missedIntervals`) — an ambiguity is a refusal, because the alternative is picking one band silently and calling the other a bug later |
+| `invalid-future-tolerance` | the future tolerance is negative or not an integer |
 
 ## The boot id
 

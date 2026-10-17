@@ -29,6 +29,7 @@
 // scanner could mistake for a credential.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -501,6 +502,35 @@ test('the four states are distinct and are the whole vocabulary', () => {
   ]);
 
   assert.deepEqual([...states].sort(), Object.values(STATE).sort());
+});
+
+test('the module README documents every code the module can return', () => {
+  // A code that exists but is documented nowhere is a caller's afternoon lost,
+  // and a refusal table that quietly covers 13 of 14 codes reads as complete.
+  // The README is this module's contract, so the contract is checked against
+  // the module rather than trusted.
+  const readme = readFileSync(new URL('./README.md', import.meta.url), 'utf8');
+
+  for (const [name, code] of Object.entries(REFUSAL)) {
+    assert.ok(
+      readme.includes(code),
+      `REFUSAL.${name} (${code}) is not documented in shared/presence/README.md`,
+    );
+  }
+  // The four states are checked as their own table cells rather than as
+  // substrings, because "the word `clock-differs` appears somewhere in the
+  // README" is true of prose that no longer lists it as a state at all.
+  const cells = readme
+    .split('\n')
+    .filter((line) => line.startsWith('|'))
+    .flatMap((line) => line.split('|').map((cell) => cell.trim()));
+
+  for (const state of Object.values(STATE)) {
+    assert.ok(
+      cells.includes(`\`${state}\``),
+      `the state ${state} is not listed as a table cell in shared/presence/README.md`,
+    );
+  }
 });
 
 test('every refusal code is distinct and names itself', () => {

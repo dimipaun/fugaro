@@ -31,7 +31,7 @@
 // Nothing here reads a clock, a file, the network or a random source: the
 // inputs are the whole input, which is what D126 asks of everything that can be
 // a pure function. `shared/README.md` is the package's own contract, and
-// `../implementation-plan.md`'s P1.4 is this module's task.
+// `../../docs/mobile/implementation-plan.md`'s P1.4 is this module's task.
 
 /**
  * The four states the rule can answer with. Nothing else is a state: every
