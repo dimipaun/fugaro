@@ -26,6 +26,7 @@ const README_PATH = path.join(SITE_ROOT, 'README.md')
 const PACKAGE_PATH = path.join(SITE_ROOT, 'package.json')
 const CONFIG_PATH = path.join(SITE_ROOT, 'astro.config.mjs')
 const CONTENT_DIR = path.join(SITE_ROOT, 'content')
+const TEST_DIR = path.join(SITE_ROOT, 'test')
 
 // The header every generated file under `content/` carries. It is read out of the file
 // rather than typed here, so the README is held to the command the generator itself
@@ -69,11 +70,20 @@ test('the check script builds the site and then runs every test/*.mjs', () => {
   // The glob has to be the directory's, not a list: a task that adds a file to test/
   // must be picked up without editing this one (W1.1 step 4).
   assert.match(check, /node --test\s+test\/\*\.mjs/, `check does not run every test/*.mjs under node --test: ${check}`)
-  const tests = readdirSync(path.join(SITE_ROOT, 'test')).filter((name) => name.endsWith('.mjs'))
+
+  // And the glob reaches every test there is: `test/*.mjs` is the files directly in
+  // test/ and nothing below it, so a test in a subdirectory would be written, committed,
+  // and never run. That is the property worth asserting here — re-matching the glob
+  // against a name this test built itself would assert nothing.
+  const entries = readdirSync(TEST_DIR, { withFileTypes: true })
+  const tests = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.mjs'))
   assert.ok(tests.length > 0, 'website/test/ holds no .mjs file, so the glob check is looking at nothing')
-  for (const name of tests) {
-    assert.match(`test/${name}`, /^test\/.*\.mjs$/, `${name} would not be picked up by check's glob`)
-  }
+  const nested = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  assert.deepEqual(
+    nested,
+    [],
+    `website/test/ holds the subdirectories ${nested.join(', ')}, and check's glob (test/*.mjs) does not reach into them: a test there would never run`,
+  )
 
   // The build is the site's own gate, and it is astro's: a lockfile-committed install
   // followed by a build that fetches nothing (W1.1 step 2).

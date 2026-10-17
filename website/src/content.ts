@@ -183,6 +183,39 @@ const MAPPING_LINE = /^([^:#\s][^:#]*):(\s.*|)$/
 // A block scalar's indicator: `|` or `>` with an optional chomping sign.
 const BLOCK_SCALAR = /^[|>][-+]?$/
 
+/**
+ * A value line with its trailing `#` comment removed.
+ *
+ * The data files are YAML, and in YAML `- brew install dimipaun/tap/fugaro   # the cask`
+ * is a command and a comment, not a command with a comment glued to the end of it. This
+ * reader reads it the same way rather than adopting the comment into the fact: a fact that
+ * silently carries somebody's note is a fact the site renders wrongly, and it is the same
+ * class of defect as a missing file — except that nothing fails.
+ *
+ * Two of YAML's own rules are kept, and both matter here: a `#` starts a comment only at
+ * the start of the text or after whitespace, so a URL's fragment (`…#anchor`) is not one,
+ * and a `#` inside a quoted scalar is not one either, so a value may contain the character
+ * by quoting it. Block scalars never come through here: their lines are content, and
+ * install.yaml's verification commands carry a `# macOS` and a `# Linux` that are part of
+ * the command a reader copies.
+ */
+function stripComment(text: string): string {
+  let quote = ''
+  for (let at = 0; at < text.length; at++) {
+    const ch = text[at]
+    if (quote !== '') {
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (ch === '#' && (at === 0 || /\s/.test(text[at - 1]))) return text.slice(0, at).trimEnd()
+  }
+  return text
+}
+
 function parseYAML(raw: string, file: string): Value {
   const lines = splitLines(raw)
   let i = 0
@@ -199,16 +232,32 @@ function parseYAML(raw: string, file: string): Value {
   }
 
   const scalar = (text: string, at: Line): Scalar => {
-    if (text.startsWith('[')) {
-      if (!text.endsWith(']')) fail(`the flow sequence ${JSON.stringify(text)} does not close on this line`, at)
-      const inner = text.slice(1, -1).trim()
-      return inner === '' ? [] : inner.split(',').map((part) => scalar(part.trim(), at))
-    }
+    text = stripComment(text).trim()
+    // Quoted scalars first: quoting is how a value carries a `#` or a `: ` that would
+    // otherwise be a comment or a nested mapping. Everything below this is a plain scalar.
     if (text.startsWith('"') || text.startsWith("'")) {
       if (text.length < 2 || !text.endsWith(text[0])) {
         fail(`the quoted scalar ${JSON.stringify(text)} does not close on this line`, at)
       }
       return text.slice(1, -1)
+    }
+    if (text.startsWith('[')) {
+      if (!text.endsWith(']')) fail(`the flow sequence ${JSON.stringify(text)} does not close on this line`, at)
+      const inner = text.slice(1, -1).trim()
+      return inner === '' ? [] : inner.split(',').map((part) => scalar(part.trim(), at))
+    }
+    // The constructs this reader has not been taught, refused by name rather than read as
+    // the string they look like: an alias, an anchor and a tag are YAML's own references
+    // and this reader resolves none of them, and a flow mapping is a shape it does not
+    // parse. Each of them, taken for text, is a fact that renders as `*defaults` or
+    // `{a: 1}` on a page — which is why the contract is "refuse", not "guess".
+    if (/^[*&!{}]/.test(text)) {
+      fail(`the value ${JSON.stringify(text)} is a YAML alias, anchor, tag or flow mapping, and this reader reads none of them`, at)
+    }
+    // A plain scalar cannot carry a nested mapping: `key: a: b` is a YAML error, and this
+    // reader refuses it rather than reading the value as the string "a: b".
+    if (/:\s/.test(text)) {
+      fail(`the value ${JSON.stringify(text)} carries ": ", which makes it a mapping rather than a value; quote it if it is meant as text`, at)
     }
     if (text === 'true') return true
     if (text === 'false') return false
@@ -262,6 +311,9 @@ function parseYAML(raw: string, file: string): Value {
   // The value on the right of a `key:` line: a scalar on the line itself, a block scalar,
   // or a nested block on the lines below it.
   const readValue = (rest: string, at: Line, parentIndent: number): Value => {
+    // The comment goes before the shape is decided: `key: |- # a literal block` is a block
+    // scalar with a comment on it, and `key: # only a comment` is a key with no value.
+    rest = stripComment(rest).trim()
     if (rest === '') {
       skip()
       const next = lines[i]
@@ -292,7 +344,7 @@ function parseYAML(raw: string, file: string): Value {
       const key = m[1].trim()
       const rest = m[2].trim()
       i++
-      put(key, rest, line)
+      put(key, rest, line) // readValue, which strips the value's comment before it shapes it
     }
     return map
   }

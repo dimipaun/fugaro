@@ -47,7 +47,9 @@ const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
 
 // The probe page: a page that renders the layout, and through it the whole content
 // pipeline. It renders the security document's own heading, so a build that renders an
-// empty block is visible in the output rather than only in the exit code.
+// empty block is visible in the output rather than only in the exit code, and the first
+// install path's command and note, so a test can hold a fact's *text* — which is where a
+// reader that guesses instead of refusing shows up — and not only its presence.
 const PROBE = `---
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
@@ -55,6 +57,7 @@ import { loadSite } from '../content.ts'
 const site = loadSite()
 const security = site.documents['security.md']
 const heading = security.body.split('\\n')[0]
+const homebrew = site.install.paths[0]
 ---
 
 <Base title="The probe page">
@@ -62,6 +65,7 @@ const heading = security.body.split('\\n')[0]
   <section id="generated" data-source={security.source}>
     <h2>{heading}</h2>
   </section>
+  <section id="install" data-command={homebrew.commands[0]} data-note={homebrew.note}></section>
 </Base>
 `
 
@@ -155,6 +159,46 @@ test('the build fails when a generated file loses its header', async (t) => {
   assert.notEqual(built.status, 0, `the build succeeded with an ungenerated security.md:\n${built.output}`)
   assert.match(built.output, /security\.md/, 'the failure does not name the file without a header')
   assert.equal(built.page, null, 'the build wrote a page from a file with no generated header')
+})
+
+test('the pipeline reads an inline comment as a comment, not as part of the fact', async (t) => {
+  // The data files are YAML, and in YAML `- brew install x   # the cask` is a command and
+  // a comment. A reader that adopts the comment into the fact renders somebody's note to
+  // a reader of the site — and does it silently, which is the failure mode this whole
+  // pipeline exists to remove. Both halves are checked here: an inline value and a
+  // sequence item, against the same two facts the page renders.
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'data', 'install.yaml')
+    const before = readFileSync(file, 'utf8')
+    const after = before
+      .replace('      - |-\n        brew install dimipaun/tap/fugaro\n', '      - brew install dimipaun/tap/fugaro   # the cask\n')
+      .replace('    note: The Homebrew cask (tested on macOS).', '    note: The Homebrew cask (tested on macOS). # tested on macOS 15')
+    assert.notEqual(after, before, 'the fixture did not change install.yaml, so this test would pass on anything')
+    writeFileSync(file, after)
+  })
+
+  const page = builtPage(built)
+  assert.match(page, /data-command="brew install dimipaun\/tap\/fugaro"/, 'the command did not survive the comment, or the comment was adopted into it')
+  assert.match(page, /data-note="The Homebrew cask \(tested on macOS\)\."/, 'the note did not survive the comment, or the comment was adopted into it')
+  assert.ok(!page.includes('the cask'), 'the comment was adopted into a fact the page renders')
+  assert.ok(!page.includes('tested on macOS 15'), 'the comment was adopted into a fact the page renders')
+})
+
+test('the build refuses a data file that uses a construct the reader has not been taught', async (t) => {
+  // The reader's contract is "refuse what you do not understand rather than guessing at
+  // it". An alias is the clearest case: taken for text, `- *cask` becomes a command a
+  // reader would copy and a shell could not run, and nothing on the page would look wrong.
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'data', 'install.yaml')
+    const before = readFileSync(file, 'utf8')
+    const after = before.replace('      - |-\n        brew install dimipaun/tap/fugaro\n', '      - *cask\n')
+    assert.notEqual(after, before, 'the fixture did not change install.yaml, so this test would pass on anything')
+    writeFileSync(file, after)
+  })
+
+  assert.notEqual(built.status, 0, `the build accepted a YAML alias as a command:\n${built.output}`)
+  assert.match(built.output, /install\.yaml/, 'the failure does not name the data file it refused')
+  assert.match(built.output, /alias, anchor, tag or flow mapping/, 'the failure does not say what the reader could not read')
 })
 
 test('the build fails when a data file is missing', async (t) => {

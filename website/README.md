@@ -39,11 +39,14 @@ npm run check # the site's gate: the build, then every test/*.mjs
 **The build needs no network.** `npm ci` fetches the pinned tree once; after that nothing
 here fetches anything: there is no integration, no remote font, no remote image, and the
 build script sets `ASTRO_TELEMETRY_DISABLED=1` so that Astro's own anonymous usage report
-is off too. `npm run check` is the same command a developer runs and the one the staged
-deploy workflow runs, and it is hermetic: it reads this repository, builds, and asserts
-over the artifact — no cloud, no credential, no deployed site. The live checks (the real
-domain, DNS, TLS and the deployed HTML) are the owner's, numbered 69a–69c in
-`docs/gcp-live-checklist.md`.
+is off too. `npm run check` is the same command a developer runs, and it is hermetic: it
+reads this repository, builds, and asserts over the artifact — no cloud, no credential,
+no deployed site. It is also the command the deploy workflow is written to run, and that
+workflow is **W2.1's** (`docs/pending-workflows/website.yml`): until W2.1 stages it and the
+owner copies it into `.github/workflows/`, nothing runs this site's checks anywhere but
+here. The live checks (the real domain, DNS, TLS and the deployed HTML) are the owner's
+too, and **W2.2 and W2.3** are the tasks that write them into `docs/gcp-live-checklist.md`
+as checks 69a–69c; until then that document's highest written check is 58.
 
 ## Nothing loads from a third party
 
@@ -133,6 +136,9 @@ website/
 `node_modules/`, `dist/` and `.astro/` are not committed: the first is what `npm ci`
 installs from the committed lockfile, and the last two are build output.
 
-The site is deployed by an **owner-run step** from a workflow staged under
-`docs/pending-workflows/` — never by a Fugaro run, which may not change
+The site is deployed by an **owner-run step** — never by a Fugaro run, which may not change
 `.github/workflows/` — to the Firebase project created for the website only (D91, D109).
+That step does not exist yet: **W2.1** stages the workflow under `docs/pending-workflows/`
+for the owner to copy in, and **W2.2** writes the hosting configuration's redirects. Until
+the owner has done that, nothing here is deployed, and this README describes a site that is
+built and checked but not published.
