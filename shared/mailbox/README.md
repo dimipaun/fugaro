@@ -184,9 +184,14 @@ they trade against each other: **a larger `maxSeen`** is a larger per-72-hour
 budget and more ledger state for the caller to persist, and **a shorter
 `promptTtlMs`** is fewer hours inside which a redelivery must still be
 remembered — which shortens the retention of *commands* as well, because the
-horizon is single. `MAX_PROMPT_TTL_MS` (30 days) is the ceiling on the second
-lever: at a TTL that long the same `maxSeen` sustains `maxSeen` records per 30
-days, four times the volume a 72-hour TTL allows.
+horizon is single. Sustained volume is `maxSeen / horizon`, so the second lever
+moves it the other way round from the first — a **longer** `promptTtlMs` is a
+**slower** mailbox, not a larger one: `MAX_PROMPT_TTL_MS` (30 days) is the
+ceiling, and at a TTL that long the same `maxSeen` sustains `maxSeen` records
+per 30 days — about **a tenth** of the volume the 72-hour default allows (the
+default's 1024 records per 72 hours is ~10240 per 30 days, and the 30-day TTL
+has ten times as long to hold the same 1024). P4.1 must size `maxSeen` for the
+horizon it is actually configured with, not for the command window's 6 hours.
 
 **The exact bound.** The ledger never holds more than `maxSeen` records
 (refused on read, never grown on write), plus one number, the watermark; at
