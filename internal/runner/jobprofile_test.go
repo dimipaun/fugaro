@@ -112,3 +112,29 @@ func TestRunnerRunsAWorkflowThatNamesNoJobProfile(t *testing.T) {
 		}
 	})
 }
+
+// TestRunnerRunsAnExplicitStandardJobProfileLikeTheDefault: a workflow that
+// writes `job_profile: standard` says what omitting the key says
+// (docs/project-layer.md: a workflow that names none runs on standard), so it
+// runs wherever the omission runs — with no policy, and with a policy that
+// carries no profiles block. The mutation is checking every written name: the
+// two runs below then halt on a selection identical to the default.
+func TestRunnerRunsAnExplicitStandardJobProfileLikeTheDefault(t *testing.T) {
+	cfg := gwConfig(t, "")
+	standard := strings.Replace(cfg, "  app:\n", "  app:\n    job_profile: standard\n", 1)
+	if standard == cfg {
+		t.Fatal("the fixture has no app: workflow to put a job_profile under")
+	}
+	for _, tc := range []struct{ what, policy string }{
+		{"no policy at all", ""},
+		{"a policy with no profiles block", `{"version":1,"allow_repos":["github/acme/*"]}`},
+		{"a policy with profiles", jobProfilePolicy},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			b := admissionRunCfg(t, "github", "acme/app", "off", "", standard, tc.policy)
+			if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+				t.Fatalf("rec = %+v, err = %v: an explicit standard must run where the default runs", rec, err)
+			}
+		})
+	}
+}

@@ -129,14 +129,17 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // — would run a repository's work on a job whose shape, secrets and admission
 // its owner did not choose for it.
 //
-// Only an explicit selection is checked. A workflow that names none runs on
-// the default (standard), and a policy that carries a profiles block must
-// define it (projectpolicy.validProfiles), so the default can only be defined;
-// a policy with no profiles block at all defines nothing, and a run has no job
-// layout to apply one with yet (task 3.2), so nothing is refused for the
-// default. An installation that has published no policy is the phase-2
-// installation: naming a job profile there is a claim about a document that
-// does not exist, and it is refused rather than ignored.
+// Only a selection other than the default is checked. A workflow that names
+// none runs on the default (standard), and a policy that carries a profiles
+// block must define it (projectpolicy.validProfiles), so the default can only
+// be defined; a policy with no profiles block at all defines nothing, and a run
+// has no job layout to apply one with yet (task 3.2), so nothing is refused for
+// the default. A workflow that writes `job_profile: standard` says exactly what
+// omitting the key says (docs/project-layer.md), so it is the default too and
+// runs wherever the omission runs. An installation that has published no
+// policy is the phase-2 installation: naming any other job profile there is a
+// claim about a document that does not exist, and it is refused rather than
+// ignored.
 //
 // The name is the whole check this release can make: the profile's resources,
 // secrets and admission list describe the job the run is launched as, and the
@@ -149,7 +152,7 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // refuses a name it does not know. The skew is therefore a refusal at
 // validation, never a run on a profile nobody selected.
 func (r *run) checkJobProfile(ctx context.Context, workflow string, wf config.Workflow) error {
-	if wf.JobProfile == "" {
+	if wf.JobProfile == "" || wf.JobProfile == projectpolicy.DefaultProfileName {
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)
