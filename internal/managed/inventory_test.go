@@ -670,3 +670,101 @@ func TestInventoryErrorOnLaterPageFallsBack(t *testing.T) {
 		t.Errorf("a page-2 error decided %+v, want a fallback with cause %q and nothing foreign", d, CauseUnreadable)
 	}
 }
+
+// The assets GCP itself creates, and the list the whole-project read ignores
+// (Task 4.4's REQUIRED precursor, recorded on #489's review of 2026-10-17).
+//
+// A real managed project always holds resources GCP created and no Terraform
+// state accounts for: the project itself, the services it has enabled, the
+// _Default and _Required log buckets and sinks, the default and Google-managed
+// service accounts, Cloud Run's revisions and executions, and the images a
+// build pushes into Artifact Registry — several of them named by the project
+// NUMBER, which the state's ids never carry. Without this list every read of a
+// real project falls back, so the apply the gate opens would ask for a
+// confirmation every time and 67a's "no fallback" step could not pass.
+//
+// Each entry is asserted on its own, so a type that stops being ignored fails
+// the subtest named for it rather than a listing of thirteen.
+func TestInventoryIgnoresTheAssetsGCPItselfCreates(t *testing.T) {
+	const number = "123456789012"
+	runs := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + gcpProject
+
+	for _, tc := range []struct {
+		what  string
+		asset Asset
+	}{
+		{"the project itself",
+			listed("//cloudresourcemanager.googleapis.com/projects/"+gcpProject, "cloudresourcemanager.googleapis.com/Project")},
+		{"an enabled service",
+			listed("//serviceusage.googleapis.com/projects/"+number+"/services/run.googleapis.com", "serviceusage.googleapis.com/Service")},
+		{"the _Default log bucket",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/locations/global/buckets/_Default", "logging.googleapis.com/LogBucket")},
+		{"the _Required log bucket",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/locations/global/buckets/_Required", "logging.googleapis.com/LogBucket")},
+		{"the _Default log sink",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/sinks/_Default", "logging.googleapis.com/LogSink")},
+		{"the _Required log sink",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/sinks/_Required", "logging.googleapis.com/LogSink")},
+		{"the Compute default service account",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/"+number+"-compute@developer.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"the Google APIs service agent",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/"+number+"@cloudservices.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"a Google-managed service agent",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/service-"+number+"@gcp-sa-firebase.iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"the App Engine default service account",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/"+gcpProject+"@appspot.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"a Cloud Run revision",
+			listed("//run.googleapis.com/projects/"+gcpProject+"/locations/us-east5/revisions/check-00001-abc", "run.googleapis.com/Revision")},
+		{"a Cloud Run execution",
+			listed("//run.googleapis.com/projects/"+gcpProject+"/locations/us-east5/executions/check-abc", "run.googleapis.com/Execution")},
+		{"an image a build pushed",
+			listed("//artifactregistry.googleapis.com/projects/"+gcpProject+"/locations/us-east5/repositories/fugaro/dockerImages/sha256:abc", "artifactregistry.googleapis.com/DockerImage")},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			a := &fakeAssets{assets: []Asset{tc.asset, listed(runsName, "storage.googleapis.com/Bucket")}}
+			d := inventory(a, runs).Check(context.Background())
+			if d.Fallback {
+				t.Fatalf("a project holding only %s and its accounted bucket fell the run back: %s", tc.what, d.Why)
+			}
+		})
+	}
+}
+
+// The other direction, and the one that matters more: a type the list does not
+// name is still foreign, and a resource of a SHARED type that GCP did not name
+// is still foreign. The list is closed on purpose — a type GCP adds later is
+// foreign until it is named here — and it ignores the shared types by the
+// name GCP gives them, never by type alone, because a service account or a log
+// sink an operator created is a resource the state does not account for.
+func TestInventoryStillForeignWhatGCPDidNotCreate(t *testing.T) {
+	runs := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + gcpProject
+
+	for _, tc := range []struct {
+		what  string
+		asset Asset
+	}{
+		{"a type the list does not name",
+			listed("//compute.googleapis.com/projects/"+gcpProject+"/zones/us-east5-a/instances/somebody-elses", "compute.googleapis.com/Instance")},
+		{"a service account an operator created",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/fugaro-build@"+gcpProject+".iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"a service account that merely borrows the prefix",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/deployer@fugaro.example.com", "iam.googleapis.com/ServiceAccount")},
+		{"a log sink an operator created",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/sinks/audit-export", "logging.googleapis.com/LogSink")},
+		{"a log bucket an operator created",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/locations/us-east5/buckets/archive", "logging.googleapis.com/LogBucket")},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			a := &fakeAssets{assets: []Asset{tc.asset, listed(runsName, "storage.googleapis.com/Bucket")}}
+			d := inventory(a, runs).Check(context.Background())
+			if !d.Fallback || d.Cause != CauseForeign {
+				t.Fatalf("%s decided %+v, want a fallback with cause %q", tc.what, d, CauseForeign)
+			}
+			if len(d.Foreign) != 1 || d.Foreign[0].Name != tc.asset.Name {
+				t.Errorf("Foreign = %+v, want only %s", d.Foreign, tc.asset.Name)
+			}
+		})
+	}
+}
