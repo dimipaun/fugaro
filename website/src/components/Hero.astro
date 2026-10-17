@@ -68,11 +68,9 @@ const videoExists = facts.features.video
       paths.map((path) => (
         <div class="hero-install-path" data-path={path.id} data-source={path.source}>
           <p class="hero-install-name">{path.name}</p>
-          {path.commands.map((command) => (
-            <pre class="hero-install-command">
-              <code>{command}</code>
-            </pre>
-          ))}
+          {/* Written on one line: whitespace inside `<pre>` is shown, so an indented
+              template would indent the command on the page. */}
+          {path.commands.map((command) => <pre class="hero-install-command"><code>{command}</code></pre>)}
           {path.note && <p class="hero-install-note">{path.note}</p>}
         </div>
       ))

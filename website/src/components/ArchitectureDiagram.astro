@@ -1,0 +1,290 @@
+---
+/**
+ * website/src/components/ArchitectureDiagram.astro — the architecture diagram (website
+ * plan, Task W1.4 step 3).
+ *
+ * Five stages, in the order `docs/website/spec.md` names them, and each stage's caption is
+ * a line the repository already writes: README.md's `## How it works` (its ASCII diagram
+ * and its numbered steps) or `docs/design/v1.md`. Nothing here is written for the page —
+ * every caption goes through `comparable()` below at build time and the build stops naming
+ * the file when one of them is not in the document it cites, and `website/test/home.mjs`
+ * makes the same check against the built page from outside.
+ *
+ * **The two names the README does not use.** The spec's `security boundary` and `PR or
+ * artifact collected back` are this page's map onto the README's steps — the README says
+ * "the trust boundary is the container" and "Push and open the pull request" — so they are
+ * labels on the diagram and never quotations. The test asserts exactly that: it refuses a
+ * build in which the page attributes either name to the README's `## How it works`.
+ *
+ * **The diagram is a list, and its picture is decoration.** The stages are an `<ol>` of
+ * headings and captions, which is the whole content: the rail above them is an SVG marked
+ * `aria-hidden`, because a picture of five boxes is not a thing a screen reader should have
+ * to describe when the five boxes are right there as text. Nothing about the diagram depends
+ * on the SVG having been drawn.
+ *
+ * **The animation.** The stages fade in as the reader scrolls to them, using a scroll-driven
+ * animation (`animation-timeline: view()`), which costs no JavaScript at all (D105's budget
+ * is W1.11's to enforce). It is inside a feature query and a preference query: a browser
+ * that cannot run scroll-driven animations, and a reader whose system asks for less motion,
+ * both get the diagram as it stands — every stage visible, nothing moving (W1.4 step 3).
+ */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from '../content.ts'
+
+/**
+ * A string with its markdown markers and its whitespace removed: how a caption and the
+ * document it claims to come from are compared. Emphasis and code spans are markers rather
+ * than text, and where a document breaks a line or pads a column is its layout rather than
+ * its words — most of the README's ASCII diagram is padding, so a caption quoted from it is
+ * compared with the drawing taken out.
+ */
+function comparable(document: string): string {
+  return document.replace(/[`*]/g, '').replace(/\s+/g, '')
+}
+
+/** README.md's `## How it works` section: its heading to the next `## `. */
+function readmeHowItWorks(): string {
+  const readme = readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')
+  const start = readme.indexOf('\n## How it works\n')
+  if (start === -1) {
+    throw new Error(
+      'website/src/components/ArchitectureDiagram.astro: README.md carries no "## How it works" section, and the diagram\'s captions are the lines that section writes (W1.4 step 3).',
+    )
+  }
+  const rest = readme.slice(start + 1)
+  const next = rest.indexOf('\n## ', 1)
+  return next === -1 ? rest : rest.slice(0, next)
+}
+
+/** The documents a caption may come from, by the path each stage cites. */
+const SOURCES: { [file: string]: string } = {
+  'README.md': readmeHowItWorks(),
+  'docs/design/v1.md': readFileSync(path.join(REPO_ROOT, 'docs/design/v1.md'), 'utf8'),
+}
+
+/**
+ * The five stages, in the spec's order. `source` is the file the caption is a line of, and
+ * it is checked below rather than trusted: a caption that is a paraphrase of the design
+ * fails the build instead of shipping as a quotation (Global Constraint 6).
+ */
+const STAGES = [
+  {
+    name: 'local dispatch',
+    source: 'README.md',
+    // README.md's ASCII diagram: the CLI on your machine handing the task to the cloud.
+    caption: 'fugaro CLI ---- run ------------->',
+  },
+  {
+    name: 'cloud job',
+    source: 'README.md',
+    // The end of the same arrow in the same diagram, in its own words: what is at the other
+    // end of a dispatch. The line above it in the drawing ("Cloud Run job per repository
+    // workflow,") is the same stage's other half, and it stays in the README rather than
+    // being joined to this one here — a caption is a line of the document, not a splice.
+    caption: 'one execution per task, then gone',
+  },
+  {
+    name: 'cache',
+    source: 'README.md',
+    // Step 2 of the README's numbered steps, which is the stage the spec calls "cache".
+    caption: 'Sync to the exact target commit and restore the dependency caches.',
+  },
+  {
+    name: 'security boundary',
+    source: 'docs/design/v1.md',
+    // v1.md §6.1, opening sentence: the sentence the stage is named after.
+    caption: 'The trust boundary is the container, not the process.',
+  },
+  {
+    name: 'PR or artifact collected back',
+    source: 'README.md',
+    // Step 4's first sentence: what a reader gets back at the end of a run.
+    caption:
+      'Push and open the pull request: each commit is pushed within about a minute while the agent works, a draft opens at the first push (marked not verified), and it is marked ready only when the run passes.',
+  },
+]
+
+// Hold every caption to the document it cites, here, so a paraphrase stops the build with the
+// file's name in the message rather than reaching a reader as the repository's words.
+for (const stage of STAGES) {
+  const source = SOURCES[stage.source]
+  if (!source || !comparable(source).includes(comparable(stage.caption))) {
+    throw new Error(
+      `website/src/components/ArchitectureDiagram.astro: the ${stage.name} caption ${JSON.stringify(stage.caption)} is not a line of ${stage.source}, and every caption on the diagram is the repository's own words rather than one written for the page (W1.4 step 3).`,
+    )
+  }
+}
+
+// The rail's geometry: five evenly spaced nodes and the arrows between them. Computed here
+// rather than written out five times, so adding a stage cannot leave the picture behind.
+const NODES = STAGES.map((_, index) => 80 + index * 210)
+const RAIL_Y = 36
+---
+
+<figure class="diagram" data-source="docs/website/spec.md">
+  <svg class="diagram-rail" viewBox="0 0 1000 72" aria-hidden="true" focusable="false">
+    {/* The arrowhead, defined before the lines that point at it. */}
+    <defs>
+      <marker
+        id="diagram-arrowhead"
+        viewBox="0 0 10 10"
+        refX="9"
+        refY="5"
+        markerWidth="6"
+        markerHeight="6"
+        orient="auto-start-reverse"
+      >
+        <path class="rail-arrowhead" d="M 0 0 L 10 5 L 0 10 z" />
+      </marker>
+    </defs>
+    <line class="rail-line" x1={NODES[0]} y1={RAIL_Y} x2={NODES[NODES.length - 1]} y2={RAIL_Y} />
+    {
+      NODES.slice(0, -1).map((x, index) => (
+        <line
+          class="rail-arrow"
+          x1={x + 30}
+          y1={RAIL_Y}
+          x2={NODES[index + 1] - 30}
+          y2={RAIL_Y}
+          marker-end="url(#diagram-arrowhead)"
+        />
+      ))
+    }
+    {
+      NODES.map((x, index) => (
+        <g class="rail-node">
+          <circle cx={x} cy={RAIL_Y} r="18" />
+          <text class="rail-number" x={x} y={RAIL_Y + 5} text-anchor="middle">
+            {index + 1}
+          </text>
+        </g>
+      ))
+    }
+  </svg>
+
+  <figcaption class="diagram-note">
+    Every caption below is the repository's own words: a line from README.md's "How it
+    works", or from docs/design/v1.md.
+  </figcaption>
+
+  <ol class="stages">
+    {
+      STAGES.map((stage) => (
+        <li class="stage" data-stage={stage.name} data-source={stage.source}>
+          <h2 class="stage-name">{stage.name}</h2>
+          <p class="stage-caption">{stage.caption}</p>
+        </li>
+      ))
+    }
+  </ol>
+</figure>
+
+<style>
+  /* Tokens only (W1.2): the rail's line, its nodes and its numbers are named through the
+     palette rather than given colours of their own. */
+  .diagram {
+    margin: 0;
+    max-width: var(--page-max);
+  }
+
+  .diagram-rail {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-bottom: var(--space-lg);
+  }
+
+  .rail-line {
+    stroke: var(--border);
+    stroke-width: 2;
+  }
+
+  .rail-arrow {
+    stroke: var(--border);
+    stroke-width: 2;
+  }
+
+  .rail-arrowhead {
+    fill: var(--border);
+  }
+
+  .rail-node circle {
+    fill: var(--ground);
+    stroke: var(--border);
+    stroke-width: 2;
+  }
+
+  .rail-number {
+    fill: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 16px;
+  }
+
+  .diagram-note {
+    max-width: var(--measure);
+    margin-bottom: var(--space-lg);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+  }
+
+  .stages {
+    display: grid;
+    gap: var(--space-md);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: stage;
+  }
+
+  .stage {
+    max-width: var(--measure);
+    padding: var(--space-md);
+    border: var(--border-width) solid var(--border);
+    border-left-width: calc(var(--border-width) * 4);
+    border-radius: var(--radius-md);
+    background: var(--ground);
+  }
+
+  .stage-name {
+    margin: 0 0 var(--space-2xs);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text);
+  }
+
+  .stage-caption {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-relaxed);
+  }
+
+  /* The reveal, as the reader scrolls to each stage: a scroll-driven animation, which is a
+     timeline the browser drives and not a script the page ships. Guarded twice — once for a
+     browser that cannot run it, once for a reader who asked for less motion — so that in
+     both of those cases the diagram is simply there, in full, with nothing moving. */
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      @keyframes stage-in {
+        from {
+          opacity: 0;
+          transform: translateY(var(--space-xs));
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      .stage {
+        animation: stage-in linear both;
+        animation-timeline: view();
+        animation-range: entry 10% cover 40%;
+      }
+    }
+  }
+</style>

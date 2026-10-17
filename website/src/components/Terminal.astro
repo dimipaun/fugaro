@@ -131,12 +131,15 @@ const characters = COMMAND.length
     animation: terminal-type 2.4s steps(var(--terminal-characters), end) both;
   }
 
+  /* The reveal's end is the command's own width, from the same count the steps use: a fixed
+     width here would be a second copy of "how long is the command", and the copy that cuts
+     the last characters off the day the README's example grows. */
   @keyframes terminal-type {
     from {
       max-width: 0;
     }
     to {
-      max-width: 60ch;
+      max-width: calc(var(--terminal-characters) * 1ch);
     }
   }
 

@@ -93,12 +93,16 @@ function classText(html, className) {
 
 /**
  * A string as a document writes it rather than as a page renders it: markdown emphasis and
- * code spans are markers and not text, and a document's lines wrap where a page's do not.
- * Applied to both sides of every comparison below, so a caption and its source are compared
- * as the reader reads them.
+ * code spans are markers and not text, and where a document breaks a line or indents is the
+ * document's layout rather than its words. Applied to both sides of every comparison below,
+ * so a caption and the document it comes from are compared word for word with the layout
+ * taken out of them — which is what README.md's `## How it works` needs, since a third of
+ * that section is an ASCII diagram whose columns and padding are drawing rather than
+ * writing, and a page that quotes a line of it should not have to quote the diagram's
+ * whitespace along with it.
  */
 function normalize(markdown) {
-  return markdown.replace(/[`*]/g, '').replace(/\s+/g, ' ').trim()
+  return markdown.replace(/[`*]/g, '').replace(/\s+/g, '')
 }
 
 /** README.md's tagline: the line under its `# Fugaro` title, emphasis stripped (F48). */
@@ -267,6 +271,30 @@ test("the diagram carries the spec's five stage names and no sixth", () => {
     rendered,
     names,
     'the diagram does not carry the spec\'s five stage names, in the spec\'s order, and no sixth (W1.4 step 3)',
+  )
+})
+
+test('the diagram moves on scroll only for a reader who allows motion', () => {
+  const css = builtCSS(builtPage('how-it-works'))
+
+  // The animation is a scroll-driven one on the stages, and the reduced-motion path is the
+  // diagram itself: a reader whose system asks for less motion gets every stage in place,
+  // because the animation that brings a stage in is inside a guard that never opens for
+  // them. That is why the guard is checked here rather than a fill mode (W1.4 step 3, D105).
+  assert.match(
+    css,
+    /animation-timeline:\s*view\(\)/,
+    'the diagram has no scroll-driven animation, and W1.4 step 3 asks for one that reveals the stages as the reader reaches them',
+  )
+  assert.match(
+    css.replace(/\s+/g, ''),
+    /@supports\(animation-timeline:view\(\)\)/,
+    'the scroll-driven animation is not behind a feature query: a browser that cannot run it has to render the diagram as it stands rather than render nothing',
+  )
+  assert.match(
+    css.replace(/\s+/g, ''),
+    /@media\(prefers-reduced-motion:no-preference\)/,
+    'the scroll-driven animation is not behind a preference query, so a reader who asked for less motion would get a diagram that fades in as they scroll it (D105, W1.4 step 3)',
   )
 })
 
