@@ -108,7 +108,10 @@ const DATA_BLOCK = new Set(['application/ld+json', 'application/json'])
  * 'first-party' (scripts, styles, fonts, forms, CSS) or 'media' (images, media, embeds).
  */
 export function refuse(raw, context, facts) {
-  const url = raw.trim()
+  // Read the URL the way a browser's URL parser does before deciding it is relative: it
+  // drops ASCII tabs and newlines anywhere and treats a backslash as a slash, so
+  // `/\cdn.example.net/x.js` and `/\t/cdn.example.net/x.js` are protocol-relative too.
+  const url = raw.trim().replace(/[\t\n\r]/g, '').replace(/\\/g, '/')
   if (url === '') return 'an empty URL'
   if (url.startsWith('//')) return `${url} is protocol-relative: it names a host without saying which, and the site loads nothing from another host`
   const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(url)
@@ -416,6 +419,8 @@ test('every way a page can fetch from another host is refused', () => {
     ['an image in srcset', { body: '<img src="/a.png" srcset="/a.png 1x, https://img.example.net/a@2x.png 2x" alt="">' }, /img\.example\.net/],
     ['a script from an allowed link host', { head: '<script src="https://github.com/x.js"></script>' }, /link target.*D106/],
     ['a protocol-relative script', { head: '<script src="//cdn.example.net/x.js"></script>' }, /protocol-relative/],
+    ['a backslash protocol-relative script', { head: '<script src="/\\cdn.example.net/x.js"></script>' }, /protocol-relative/],
+    ['a tab-split protocol-relative script', { head: '<script src="/&#9;/cdn.example.net/x.js"></script>' }, /protocol-relative/],
     ['a plain-http image', { body: '<img src="http://site.example/a.png" alt="">' }, /http:/],
     ['a form posting elsewhere', { body: '<form action="https://collect.example.net/"><label>e<input name="e"></label></form>' }, /collect\.example\.net/],
     ['a <base>', { head: '<base href="https://cdn.example.net/">' }, /<base>/],

@@ -171,7 +171,8 @@ export function linkFailures(dist, facts, repository) {
           continue
         }
         const fragment = url.hash ? decodeURIComponent(url.hash.slice(1)) : null
-        if (url.hash === '#' || (value.includes('#') && fragment === '')) {
+        // `new URL('/a/#').hash` is '', not '#', so an empty fragment is read off the text.
+        if (value.endsWith('#')) {
           failures.push(`${where} has an empty fragment`)
           continue
         }
@@ -276,13 +277,14 @@ test('a link to a page the build did not produce is refused', (t) => {
 
 test('a missing anchor, on this page or another, is refused', (t) => {
   const f = verdict(t, {
-    'index.html': '<h2 id="here">h</h2><a href="#here">ok</a><a href="#gone">x</a><a href="/a/#there">ok</a><a href="/a/#nowhere">x</a><a href="#">x</a>',
+    'index.html': '<h2 id="here">h</h2><a href="#here">ok</a><a href="#gone">x</a><a href="/a/#there">ok</a><a href="/a/#nowhere">x</a><a href="#">x</a><a href="/a/#">x</a>',
     'a/index.html': '<p id="there">t</p>',
   })
-  assert.equal(f.length, 3, f.join('\n'))
+  assert.equal(f.length, 4, f.join('\n'))
   assert.match(f[0], /#gone is not an id in index\.html/)
   assert.match(f[1], /#nowhere is not an id in a\/index\.html/)
   assert.match(f[2], /links nowhere/)
+  assert.match(f[3], /<a href="\/a\/#">.*has an empty fragment/)
 })
 
 test('a relative link resolves the way a browser resolves it', (t) => {

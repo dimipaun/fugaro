@@ -34,11 +34,12 @@ export function linkNodeModules(into) {
   }
 }
 
-/** Copy the repository, let `mutate` change the copy, build it, and clean up after `t`. */
-export function buildCopy(t, mutate, prefix = 'fugaro-gates-') {
-  const dir = mkdtempSync(path.join(tmpdir(), prefix))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
-  const root = path.join(dir, 'repo')
+/**
+ * Copy what a site build reads of the repository into `root` — everything but SKIP and the
+ * site's installed and built directories — with a private node_modules. Returns the copy's
+ * website directory.
+ */
+export function copyRepository(root) {
   cpSync(REPO, root, {
     recursive: true,
     filter: (src) => {
@@ -50,6 +51,15 @@ export function buildCopy(t, mutate, prefix = 'fugaro-gates-') {
   })
   const site = path.join(root, 'website')
   linkNodeModules(path.join(site, 'node_modules'))
+  return site
+}
+
+/** Copy the repository, let `mutate` change the copy, build it, and clean up after `t`. */
+export function buildCopy(t, mutate, prefix = 'fugaro-gates-') {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const root = path.join(dir, 'repo')
+  const site = copyRepository(root)
   mutate({ root, site })
   const result = spawnSync(process.execPath, [path.join(site, 'node_modules', 'astro', 'bin', 'astro.mjs'), 'build'], {
     cwd: site,

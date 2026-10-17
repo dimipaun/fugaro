@@ -4,21 +4,22 @@
 // D105 asks for the performance contract "as numbers a test enforces": a static-first page
 // with no client JavaScript except deliberate islands, and a JavaScript budget. The plan
 // names the budgets but gives no figures, so the figures below are A DELIBERATE CHOICE FOR
-// THE OWNER, derived rather than invented, and recorded where the plan says they live —
-// `website/README.md`, "The gates" — which this file reads, so the README's numbers are the
-// enforced ones and cannot drift from them:
+// THE OWNER, recorded where the plan says they live — `website/README.md`, "The gates" —
+// which this file reads, so the README's numbers are the enforced ones and cannot drift
+// from them.
+//
+// The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
+// now and optimize later"): each is three times the tight derivation below, and the
+// JavaScript allowance is a generous 100,000 bytes, until a later optimisation pass tightens
+// them back towards these figures. The tight derivation, for that pass:
 //
 //   - JavaScript per page: 0 bytes. The built site ships no script at all today (no
-//     island, no inline script; the terminal and the diagram are CSS/SVG), and 0 × 1.25 is
-//     0. The first task that ships a script — W1.12's consent banner — raises this number
-//     in the README in the same commit, by the size it adds plus 25%, which is the point:
-//     a script is a decision someone states, not a byte count that creeps.
-//   - Page weight per page: 220,922 bytes. The heaviest page on 2026-10-17, after the base styles
-//     (#528) landed, was
-//     `docs/index.html` (176,737 bytes: the whole generated CLI reference, inline CSS
-//     included); × 1.25, rounded up. One ceiling for every page rather than one per page,
-//     so a page that grows with the product (the changelog, the reference) is held to the
-//     same line as the rest instead of to its own history.
+//     island, no inline script; the terminal and the diagram are CSS/SVG).
+//   - Page weight per page: 220,922 bytes. The heaviest page on 2026-10-17, after the base
+//     styles (#528) landed, was `docs/index.html` (176,737 bytes: the whole generated CLI
+//     reference, inline CSS included); × 1.25, rounded up. One ceiling for every page rather
+//     than one per page, so a page that grows with the product (the changelog, the
+//     reference) is held to the same line as the rest instead of to its own history.
 //   - Whole site: 484,942 bytes. Every file in `dist/` on that build summed to 387,953
 //     bytes (ten pages; no separate stylesheet, script, font or image); × 1.25, rounded up.
 //
@@ -172,6 +173,20 @@ test('a linked stylesheet counts toward the page, and every file toward the site
   assert.equal(f.length, 2, f.join('\n'))
   assert.match(f[0], /fetched files 1200/)
   assert.match(f[1], /^the whole site is \d+ bytes; the budget is 3000 bytes/)
+})
+
+test('the README numbers themselves still refuse: one byte over each fails', (t) => {
+  const b = readmeBudgets()
+  const over = shell('', 'x'.repeat(b.page + 1))
+  const dist = distOf(t, {
+    'index.html': over,
+    'js/index.html': shell('', `<script>${'x'.repeat(b.js + 1)}</script>`),
+    'pad.bin': 'y'.repeat(b.site),
+  })
+  const f = budgetFailures(dist, b)
+  assert.ok(f.some((l) => /^index\.html weighs \d+ bytes .* the budget is \d+ bytes per page/.test(l)), f.join('\n'))
+  assert.ok(f.some((l) => /^js\/index\.html ships \d+ bytes of JavaScript/.test(l)), f.join('\n'))
+  assert.ok(f.some((l) => /^the whole site is \d+ bytes/.test(l)), f.join('\n'))
 })
 
 test('the README budget lines are read strictly', () => {

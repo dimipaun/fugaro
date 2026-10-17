@@ -78,15 +78,19 @@ with fixtures that keep its refusals running, and none of them needs the network
   landmarks, a skip link, names and labels, keyboard reachability, focus outlines, a
   `prefers-reduced-motion` path for every animation, and the shipped tokens equal to the
   palette in force.
-- `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes; derived from the
-  build of 2026-10-17 (with the base styles of #528) with 25% headroom, because the plan names the budgets but no figures —
-  the derivation is in the test's header, and a task that needs more raises the number here,
-  in the commit that needs it):
-  - **JavaScript per page:** 0 bytes. The site ships no script; the first one (W1.12's
-    consent banner) raises this line.
-  - **Page weight per page:** 220,922 bytes. The heaviest page (the docs hub, 176,737
-    bytes) plus 25%.
-  - **Whole site:** 484,942 bytes. Every file in `dist/` (387,953 bytes) plus 25%.
+- `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
+  deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
+  each is about three times what the build of 2026-10-17 needs, and a later optimisation
+  pass tightens them.** The gate itself is not loose: a page or a site over the number
+  fails, and the test keeps a case that proves it. The original derivation (that build plus
+  25%) is in the test's header; a task that needs more raises the number here, in the commit
+  that needs it:
+  - **JavaScript per page:** 100,000 bytes. The site ships no script today; the allowance
+    leaves room for W1.12's consent banner and the logo work without a budget edit.
+  - **Page weight per page:** 662,766 bytes. Three times 220,922 (the heaviest page, the
+    docs hub at 176,737 bytes, plus 25%).
+  - **Whole site:** 1,454,826 bytes. Three times 484,942 (every file in `dist/`, 387,953
+    bytes, plus 25%).
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
