@@ -216,6 +216,7 @@ test('every anchor the repository sends a reader to is in the built page', () =>
   const page = builtPage()
   const ids = [...page.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1])
   assert.ok(ids.length > 0, 'the built page carries no id at all')
+  assert.equal(new Set(ids).size, ids.length, 'the built page carries the same id twice, and a duplicated id sends a reader to the first of them')
 
   // The document names a destination the way its own text does — a heading, or a bold
   // bullet lead — and a reference may name a prefix of a longer name, which is why this
@@ -297,6 +298,18 @@ test("the page's own text is the lead line and the contents, and both are link l
     lead,
     new RegExp(`href="#${slug(reportingHeading.text)}"`),
     'the lead line does not point at the reporting section itself, which is the pointer W1.8 step 3 asks for: the section is in the document below, and the page does not paraphrase it',
+  )
+
+  // And the second link is the file the page renders, in the repository `site.yaml` names:
+  // the page is a rendering of a document that is in the tree, and a reader can check that
+  // claim. The repository is read here rather than taken from the page, so a link built
+  // from the wrong fact -- an origin-absolute path that loses the repository, say -- fails.
+  const facts = readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8')
+  const repository = /^repository:\s*(\S+)\s*$/m.exec(facts)?.[1]
+  assert.ok(repository, 'website/data/site.yaml names no repository, so the lead line has no source to point at')
+  assert.ok(
+    lead.includes(`href="${repository}/blob/main/${SOURCE}"`),
+    `the lead line does not link ${SOURCE} at its own path in ${repository}: the page says which document it renders, and the link is the way a reader checks it (W1.8 step 1)`,
   )
 })
 
