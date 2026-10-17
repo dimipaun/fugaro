@@ -235,7 +235,10 @@ func (r *applyRig) request(t *testing.T) Request {
 	t.Helper()
 	_, access, imp, _ := deployRig()
 	return Request{
-		Enable:     Enable{Open: true},
+		// The gate a successful apply-time budget read opens (Task 4.4): the
+		// only value Apply admits, so every test below runs the sequence the
+		// command runs once its read answered with an amount.
+		Enable:     Enable{Budget: Budget{Amount: 5000, Currency: "USD"}, Read: true},
 		Project:    project,
 		GCPProject: gcpProject,
 		Fact:       Fact{Managed: true},
@@ -782,15 +785,18 @@ func TestApplyAsksD55sRuleForTheSessionsOwnConditions(t *testing.T) {
 	}
 }
 
-// The apply is inert until phase 4 lands: with the config gate as this release
-// ships it, no combination of the run's conditions, the marker read and the
-// verdict reaches an apply at all — and the case the predicate WOULD proceed
-// in, with phase 4's gate open, is the case this release must not reach. That
-// second half is what makes the closed gate the whole of the difference rather
-// than an untested claim.
+// The apply is unreachable while no budget read opened the gate, and the gate
+// is the whole of the difference: no combination of the run's conditions, the
+// marker read and the verdict reaches an apply at all, and the case the
+// predicate WOULD proceed in is an apply the moment a read has opened it. Task
+// 3.1 shipped that gate closed behind Shipped; Task 4.4 removed the constant
+// and left one thing that opens it, a budget read that answered with an amount
+// (budget_test.go), so what this test pins now is that the constant is gone
+// and the closed value still refuses every row.
 func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
-	if Shipped().Open {
-		t.Fatal("the shipped gate is open, and phase 4's three safeguards are not in this release")
+	closed, err := ApplyGate(BudgetRead{Project: project})
+	if err == nil || closed.Read {
+		t.Fatalf("a read that answered nothing produced %+v (err %v), want a closed gate", closed, err)
 	}
 	n, wouldProceed, opened := 0, 0, 0
 	for _, c := range allConditions() {
@@ -808,7 +814,7 @@ func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
 					r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
 				}
 				req := r.request(t)
-				req.Enable = Shipped()
+				req.Enable = closed
 				req.Fact = Fact{Managed: managed}
 				res, err := Apply(context.Background(), req)
 				if !errors.Is(err, ErrNotEnabled) {
