@@ -1,16 +1,16 @@
 # Fugaro mobile app — the documents
 
-**Status: plan only; nothing is implemented. The owner answered decisions D110–D129 on 2026-10-17; no task is approved.** No line of an Expo app, no mailbox, no rules change and no shared module exists anywhere in this repository or in any other. This directory holds the owner's spec, the reconciliation of it against the code, and the plan — in the shape the earlier reconciliations use.
+**Status: plan only; nothing is implemented. The owner answered decisions D110–D129 and resolved the three tensions between them on 2026-10-17; no task is approved.** No line of an Expo app, no mailbox, no rules change and no shared module exists anywhere in this repository or in any other. This directory holds the owner's spec, the reconciliation of it against the code, and the plan — in the shape the earlier reconciliations use.
 
 **Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-16.
 
 | File | What it is |
 |---|---|
 | [spec.md](spec.md) | The owner's spec, **verbatim**, committed alone in its own first commit. Nothing in it was changed, and nothing in it is a statement about this repository. |
-| [reconciliation.md](reconciliation.md) | Findings **F1–F37** against the code (each classified **Wrong / Exists / Gap / Rule / Open**, each citing a file and a symbol, each stating its **consequence** for the design), then **decisions D110–D129** (twenty-two rows, D113b and D113c among them) for the owner — every row with a recommendation, the alternative and its cost, and the "Owner's answer" column, filled with the owner's answers of 2026-10-17 — then **Open for the owner** (the three open tensions those answers leave), then the **UNVERIFIED** table. |
+| [reconciliation.md](reconciliation.md) | Findings **F1–F37** against the code (each classified **Wrong / Exists / Gap / Rule / Open**, each citing a file and a symbol, each stating its **consequence** for the design), then **decisions D110–D129** (twenty-two rows, D113b and D113c among them) for the owner — every row with a recommendation, the alternative and its cost, and the "Owner's answer" column, filled with the owner's answers of 2026-10-17 — then **Open for the owner** (the three tensions those answers left, each now marked resolved 2026-10-17), then the **UNVERIFIED** table. |
 | [implementation-plan.md](implementation-plan.md) | The plan: ordered parts, each independently mergeable, each with its **verification**, the **files touched** and a **reviewer tier**, plus a **Parallel execution** section of levels and waves with the critical path. |
 
-**Every decision in `reconciliation.md` was answered by the owner on 2026-10-17** — D112 against the recommendation (direct RTDB reads) and D113c as option (ii) (a new `fugaro` command) — **and no task in the plan may start before the owner passes the plan's approval gate**, which has not happened. Answering a decision is not approving a task; the plan says so in its own gate. Three tensions between the answers are open for the owner (reconciliation §4).
+**Every decision in `reconciliation.md` was answered by the owner on 2026-10-17** — D112 against the recommendation (direct RTDB reads) and D113c as option (ii) (a new `fugaro` command) — **and no task in the plan may start before the owner passes the plan's approval gate**, which has not happened. Answering a decision is not approving a task; the plan says so in its own gate. The three tensions between the answers were **resolved by the owner on 2026-10-17** (reconciliation §4: direct reads under the feed's reader rules, a four-family read grant with no run titles, the per-pairing MAC key confirmed, and the command named `fugaro mailbox`); that approves no task.
 
 ## The numbers this work holds
 

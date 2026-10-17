@@ -8,15 +8,14 @@ D50's operative rulings: the code lives **in this repository**, it is **not an n
 `package.json` is `private` and the version is `0.0.0`, so nothing here is published and
 nothing here is a public API — and there is **no `fugaro voice` command**.
 
-**Status: the skeleton, and the staleness rule.** What exists today is the runner, the
-skeleton's one trivial module with its test, **`shared/presence/`** (the staleness and offline
-rule, Task **P1.4**: its module, its tests and its own README), and this document. The message
-schema (P0.2), the URL validator (P0.3), the mailbox state machine (P1.1), the consumer lease
-(P1.2), the digest and its redactor (P1.3) and the mailbox simulator (P1.5) are planned,
-unbuilt, and each is its own directory. **This status line is amended by the change
-that makes it true** rather than left to deny the code beside it: P0.1 wrote it for the
-skeleton, and P1.4 amended it. No task of that plan is approved, and this directory is not
-evidence that one is.
+**Status: the skeleton, and `mailbox-schema/` (P0.2, the message schema).** The
+URL validator (P0.3), the mailbox state machine (P1.1), the consumer lease
+(P1.2), the digest and its redactor (P1.3), the staleness rule (P1.4) and the mailbox
+simulator (P1.5) are planned, unbuilt, and each is its own directory. What exists today is
+the runner, the skeleton module and `mailbox-schema/`, each with its test, and this document. No task of that plan is
+approved, and this directory is not evidence that one is.
+
+`url/` (P0.3) is the URL validator: built, with an empty host allow-list until the owner answers D124; see `url/README.md`.
 
 ## The runner, and the glob
 
