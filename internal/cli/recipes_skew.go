@@ -279,8 +279,9 @@ func checkImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task
 // is not a release: devJudge returns the refusal of such an image when its
 // record shows it cannot know knows, supported when the record shows it does
 // (no warning then), and neither when that cannot be shown (the warning
-// stands). A nil devJudge only warns, as checkImageSince does.
-func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, since, subject, knows, alt string, devJudge func(rec *imagecheck.Record, ref string) (supported bool, err error), warn io.Writer) error {
+// stands, with note appended when the judge gives one: what is at stake and
+// the cure). A nil devJudge only warns, as checkImageSince does.
+func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, since, subject, knows, alt string, devJudge func(rec *imagecheck.Record, ref string) (supported bool, note string, err error), warn io.Writer) error {
 	base := "this release's base image"
 	if kind != "" {
 		base = "this release's " + kind + " base image"
@@ -314,16 +315,20 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 	// not judged here; init and image build own that.
 	switch rel, ok := releaseOf(rec.BaseRef); {
 	case !ok:
+		note := ""
 		if devJudge != nil {
-			supported, err := devJudge(rec, ref)
+			supported, n, err := devJudge(rec, ref)
 			if err != nil {
 				return err
 			}
 			if supported {
 				return nil
 			}
+			if n != "" {
+				note = ": " + n
+			}
 		}
-		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows %s is not checked\n", spec.Repo, spec.Workflow, ref, knows)
+		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows %s is not checked%s\n", spec.Repo, spec.Workflow, ref, knows, note)
 	case imagePredates(rel, since):
 		return refuse(fmt.Sprintf("was built from base image %s, release %s", ref, rel))
 	}

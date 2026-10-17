@@ -294,6 +294,13 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 				if tc.warns != "" && !strings.Contains(errOut, tc.warns) {
 					t.Fatalf("stderr = %q, want a warning that says %q", errOut, tc.warns)
 				}
+				// The warning says what is at stake and what to do, not only
+				// that nothing was checked.
+				for _, want := range []string{"peer runs of the repository can read", "fugaro image build --repo acme/app --workflow web"} {
+					if tc.warns != "" && !strings.Contains(errOut, want) {
+						t.Fatalf("stderr = %q, want the warning to say %q", errOut, want)
+					}
+				}
 				if tc.warns == "" && strings.Contains(errOut, "sealed budget token") {
 					t.Fatalf("stderr = %q, want no seal warning", errOut)
 				}

@@ -15,8 +15,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -340,7 +342,15 @@ func (e *cloudEnv) sealGate(ctx context.Context, slug string, spec *task.Spec, k
 	const subject = "a launch that mints a budget token (the token is sealed and its key is in FUGARO_BUDGET_TOKEN)"
 	const knows = "the sealed budget token"
 	if clone {
-		return checkCloneImageSince(e.lc, spec, sealSince, subject, knows, "", warn)
+		if err := checkCloneImageSince(e.lc, spec, sealSince, subject, knows, "", warn); err != nil {
+			return err
+		}
+		if ref := e.lc.BaseImage(config.BaseKind); ref != "" {
+			if _, ok := releaseOf(ref); !ok {
+				fmt.Fprintf(warn, "warning: the checkout: clone job image %s is not a release base image: %s\n", pluginwire.Printable(ref), sealDevNote(spec, true))
+			}
+		}
+		return nil
 	}
 	return checkImageSinceDev(ctx, e, slug, spec, kind, sealSince, subject, knows, "", sealDevRefusal(spec), warn)
 }
@@ -357,20 +367,32 @@ func (e *cloudEnv) sealGate(ctx context.Context, slug string, spec *task.Spec, k
 //   - otherwise (built after, or no built_at) it cannot be shown either way —
 //     a job image rebuilt today from an old development base looks the same
 //     as one from a base with only the runner half — and the gate only warns.
-func sealDevRefusal(spec *task.Spec) func(rec *imagecheck.Record, ref string) (bool, error) {
-	return func(rec *imagecheck.Record, ref string) (bool, error) {
+func sealDevRefusal(spec *task.Spec) func(rec *imagecheck.Record, ref string) (bool, string, error) {
+	return func(rec *imagecheck.Record, ref string) (bool, string, error) {
 		if rec.SealedBudgetToken {
-			return true, nil
+			return true, "", nil
 		}
 		if rec.BuiltAt.IsZero() || !rec.BuiltAt.Before(sealRunnerIntroduced) {
-			return false, nil
+			return false, sealDevNote(spec, false), nil
 		}
-		return false, userErr("a launch that mints a budget token (the token is sealed and its key is in FUGARO_BUDGET_TOKEN) needs a job image whose runner knows the sealed budget token, "+
+		return false, "", userErr("a launch that mints a budget token (the token is sealed and its key is in FUGARO_BUDGET_TOKEN) needs a job image whose runner knows the sealed budget token, "+
 			"but the job image of %s workflow %s was built from %s, which is not a release base image, on %s, and so predates the seal (its runner half was introduced on %s): "+
 			"its runner would echo the seal key into the run's record. Rebuild the base image from a checkout that has the seal and then the job image from it with fugaro image build --repo %s --workflow %s, "+
 			"or move the workflow to a release base image (fugaro %s or later) with fugaro image refresh in its checkout, in your own terminal window",
 			spec.Repo, spec.Workflow, ref, rec.BuiltAt.UTC().Format(time.RFC3339), sealRunnerIntroduced.UTC().Format(time.RFC3339), spec.Repo, spec.Workflow, sealSince)
 	}
+}
+
+// sealDevNote is what the seal gate adds to its warning about a development
+// base it cannot judge: the stake and the cure.
+func sealDevNote(spec *task.Spec, clone bool) string {
+	if clone {
+		return fmt.Sprintf("if it predates the seal, its runner puts this launch's seal key into the run's record, where peer runs of the repository can read it; "+
+			"move base_images.base to a release base image (fugaro %s or later) with fugaro init --base base, in your own terminal window", sealSince)
+	}
+	return fmt.Sprintf("if that base predates the seal, its runner puts this launch's seal key into the run's record, where peer runs of the repository can read it; "+
+		"rebuild the base image from a checkout that has the seal and the job image from it with fugaro image build --repo %s --workflow %s (its record then says sealed_budget_token and this warning goes)",
+		spec.Repo, spec.Workflow)
 }
 
 // newSealKey draws the seal key of one launch (token.NewKey). Tests replace
