@@ -29,6 +29,19 @@ export default defineConfig({
   // files is unaffected: it is workers, not this flag, that decides how many
   // spec files run at once.
   fullyParallel: false,
+  // Task 2.1's goldens (`test/e2e/__screenshots__/live-{light,dark}.png`) are
+  // compared, never written by a run. `'none'` writes nothing and FAILS a
+  // screenshot whose baseline is missing; `'missing'` would write the baseline
+  // and pass, so a golden nobody committed would compare nothing and no run
+  // could ever be red for it. Recording is an explicit act, on the platform the
+  // comparison runs on (pixels differ between macOS and Linux):
+  //   npx playwright test live.spec.ts --update-snapshots
+  // The command-line flag overrides this option for that one run.
+  updateSnapshots: 'none',
+  // One PNG per theme, named without the platform and project suffix Playwright
+  // adds by default, so a recording from another platform cannot sit beside the
+  // comparison's own and never be compared.
+  snapshotPathTemplate: '{testDir}/__screenshots__/{arg}{ext}',
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'line' : 'list',
