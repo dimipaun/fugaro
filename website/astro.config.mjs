@@ -20,6 +20,9 @@
 import { defineConfig } from 'astro/config'
 
 export default defineConfig({
+  // The one markdown file is a generated reference, shown as written: `--out` must not be
+  // rewritten to an en dash. (Raw HTML in it is escaped by src/lib/escape-raw-html.mjs.)
+  markdown: { smartypants: false },
   // Static output: no server, no adapter, nothing rendered per request.
   output: 'static',
   // Stated rather than omitted, because "the shell ships no integration" is a rule this
