@@ -21,9 +21,8 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow, protocol, session } from 'electron'
 
-import type { CliCompatibility } from '../shared/version'
 import { handleAppRequests, registerAppScheme } from './protocol'
-import { installWebContentsSecurity, openStartupWindow, openWindowFor } from './window'
+import { createConsoleLifecycle, installWebContentsSecurity, versionReadFrom } from './window'
 import type { ConsoleWindowDeps, VersionRead } from './window'
 import { privateWorkingDirectory, resolveBinary } from './spawn'
 import type { SpawnTarget } from './spawn'
@@ -60,7 +59,7 @@ function reportAndQuit(error: unknown): void {
  * these per process: `protocol.handle` refuses a scheme that is already
  * registered ("Failed to register protocol: app"), so a second call is not a
  * harmless no-op but a thrown error. It is therefore separate from
- * `openConsoleWindow` below, which is the half that may run again.
+ * `lifecycle.activate` below, which is the half that may run again.
  */
 function serveBundle(): void {
   handleAppRequests(protocol, rendererRoot())
@@ -86,11 +85,11 @@ const HANDSHAKE_TARGET: SpawnTarget = Object.freeze({ project: '' })
  *
  * It reads the machine and nothing else -- no state from a previous run, no
  * cached answer -- because the question the handshake asks is "which CLI is the
- * console about to drive, right now". A resolution that fails says so in the
- * console's own words (`resolution.reason`: which paths it looked at), and a
- * resolution or a probe that *throws* is left to `runVersionHandshake`, which
- * turns it into the refusal with the console's own sentence rather than a
- * crash.
+ * console about to drive, right now". A resolution that fails crosses into the
+ * compatibility as a **category** (`versionReadFrom` in `window.ts`), never as
+ * `resolution.reason`, which embeds what the binary printed; and a resolution
+ * or a probe that *throws* is left to `runVersionHandshake`, which turns it into
+ * the refusal with the console's own sentence rather than a crash.
  *
  * The child runs in `privateWorkingDirectory()` -- the same owner-only 0700
  * directory every spawn without a checkout uses (rule 5, `src/source/cli.ts`'s
@@ -103,8 +102,7 @@ async function readCliVersion(): Promise<VersionRead> {
     directory: privateWorkingDirectory(),
     target: HANDSHAKE_TARGET,
   })
-  if (!resolution.ok) return { ok: false, reason: resolution.reason }
-  return { ok: true, stdout: resolution.version }
+  return versionReadFrom(resolution)
 }
 
 /** windowDeps is the Electron surface the windows are built with.
@@ -115,50 +113,27 @@ function windowDeps(): ConsoleWindowDeps {
 }
 
 /**
- * startup is the handshake's answer, kept for the lifetime of the process: the
- * mode does not change while the console runs (it is read once, from a binary
- * that was resolved once), so `activate` opens the window that answer calls for
- * instead of reading the machine again -- a dock-icon click must not be able to
- * change which console the operator is looking at.
- */
-let startup: CliCompatibility | null = null
-
-/**
- * startConsole is the whole startup: the version handshake **before any window
- * exists** (Task 3.3's first step), and then the one window the compatibility
- * allows -- `openStartupWindow` in `window.ts`, which is the order itself and
- * is unit-tested under plain Node. Refused, that window's document is
- * `REFUSAL_ENTRY_URL`; the dashboard document is never loaded by it.
- */
-async function startConsole(): Promise<void> {
-  const opened = await openStartupWindow({ ...windowDeps(), readVersion: readCliVersion })
-  startup = opened.compatibility
-}
-
-/**
- * openConsoleWindow is the repeatable half: macOS's `activate` calls it again
- * after the window has been closed. It opens the window the *stored* answer
+ * lifecycle is the startup and the `activate` path (`createConsoleLifecycle` in
+ * `window.ts`, where it is unit-tested): the handshake runs once -- a stored
+ * promise, so an `activate` during the handshake waits for it rather than
+ * starting a second one -- and `activate` opens the window the stored answer
  * allows, so a refused console comes back as a refusal screen and never as a
- * dashboard.
+ * dashboard, and a dock-icon click cannot change which console the operator is
+ * looking at.
  */
-async function openConsoleWindow(): Promise<void> {
-  if (startup === null) {
-    // `activate` before the handshake has answered: nothing has been decided
-    // yet, so the honest move is to decide now, exactly as startup does, rather
-    // than to open a dashboard on the strength of an answer that does not exist.
-    await startConsole()
-    return
-  }
-  await openWindowFor(windowDeps(), startup)
-}
+const lifecycle = createConsoleLifecycle({
+  windowDeps,
+  readVersion: readCliVersion,
+  openWindowCount: () => BrowserWindow.getAllWindows().length,
+})
 
 /**
  * main is what `whenReady` resolves into: serve the bundle once, then run the
- * startup. Everything a second call would repeat is in `openConsoleWindow`.
+ * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
   serveBundle()
-  await startConsole()
+  await lifecycle.start()
 }
 
 app.whenReady().then(main).catch(reportAndQuit)
@@ -176,7 +151,5 @@ app.on('window-all-closed', () => {
 // `reportAndQuit` would turn into `app.exit(1)`: the console would quit the
 // moment the user asked it to come back.
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    openConsoleWindow().catch(reportAndQuit)
-  }
+  lifecycle.activate().catch(reportAndQuit)
 })

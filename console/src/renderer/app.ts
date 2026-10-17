@@ -203,6 +203,12 @@ export interface MountLike {
  * refused is never carried into it. */
 export const RENDERER_UNREADABLE = 'the console could not read its own handshake answer'
 
+/** RENDERER_FIELD_LIMIT bounds every free string the renderer accepts in a
+ * compatibility (`skew`, `cliVersion`, `because`). It is the renderer's own copy
+ * of the main process's `MAX_COMPATIBILITY_FIELD_LENGTH`, written out rather
+ * than imported for the reason in this file's header. */
+export const RENDERER_FIELD_LIMIT = 200
+
 /** StartConsoleDeps is everything the gate needs: the bridge, where the drawings
  * go, the factory the drawings come from, and the theme they are drawn for. */
 export interface StartConsoleDeps {
@@ -236,7 +242,9 @@ export interface ScreenGate {
  * verdicts, written here rather than imported (see this file's header). The
  * refusal it answers with is `unreadableCompatibility`, so a document that got
  * an answer it could not read draws the refusal screen and no figures -- never a
- * dashboard on the strength of a value nobody checked.
+ * dashboard on the strength of a value nobody checked. What it answers for a
+ * value it accepts is a fresh, frozen object built from the checked fields, so
+ * no unchecked key reaches the gate.
  */
 export function compatibilityFrom(answer: unknown): CliCompatibility {
   const refused = (): CliCompatibility => unreadableCompatibility(RENDERER_UNREADABLE)
@@ -251,13 +259,16 @@ export function compatibilityFrom(answer: unknown): CliCompatibility {
   const record = value as Record<string, unknown>
   const mode = record['mode']
   if (mode !== 'ok' && mode !== 'reduced' && mode !== 'refused') return refused()
-  if (typeof record['skew'] !== 'string' || record['skew'] === '') return refused()
-  if (typeof record['consoleVersion'] !== 'string' || typeof record['floor'] !== 'string') return refused()
-  if (record['cliVersion'] !== null && typeof record['cliVersion'] !== 'string') return refused()
-  if (
-    !Array.isArray(record['supported']) ||
-    record['supported'].some((minor: unknown) => typeof minor !== 'string')
-  ) {
+  const skew = record['skew']
+  if (typeof skew !== 'string' || skew === '' || skew.length > RENDERER_FIELD_LIMIT) return refused()
+  const consoleVersion = record['consoleVersion']
+  const floor = record['floor']
+  if (typeof consoleVersion !== 'string' || typeof floor !== 'string') return refused()
+  const cliVersion = record['cliVersion']
+  if (cliVersion !== null && typeof cliVersion !== 'string') return refused()
+  if (typeof cliVersion === 'string' && cliVersion.length > RENDERER_FIELD_LIMIT) return refused()
+  const supported: unknown = record['supported']
+  if (!Array.isArray(supported) || supported.some((minor: unknown) => typeof minor !== 'string')) {
     return refused()
   }
   const hidden = record['hidden']
@@ -266,11 +277,31 @@ export function compatibilityFrom(answer: unknown): CliCompatibility {
   if (views.some((view) => !REDUCED_VIEWS.includes(view as ReducedView))) return refused()
   if (new Set(views).size !== views.length) return refused()
 
-  const compatibility = value as unknown as CliCompatibility
+  // `because`: absent, or a short string on an `unreadable` value -- the same
+  // verdict as the main process's check, written out again here.
+  const hasBecause = Object.prototype.hasOwnProperty.call(record, 'because')
+  const because = record['because']
+  if (hasBecause) {
+    if (typeof because !== 'string' || because === '') return refused()
+    if (because.length > RENDERER_FIELD_LIMIT || skew !== 'unreadable') return refused()
+  }
+
+  // A fresh object from the checked fields only: a key this check did not read
+  // is not carried into the gate, whatever the main process sent.
+  const compatibility: CliCompatibility = {
+    mode,
+    skew: skew as CliCompatibility['skew'],
+    cliVersion,
+    consoleVersion,
+    supported: Object.freeze([...(supported as string[])]),
+    floor,
+    hidden: Object.freeze([...(views as ReducedView[])]),
+    ...(hasBecause ? { because: because as string } : {}),
+  }
   for (const view of REDUCED_VIEWS) {
     if (hidesView(compatibility, view) !== (mode !== 'ok')) return refused()
   }
-  return compatibility
+  return Object.freeze(compatibility)
 }
 
 /**

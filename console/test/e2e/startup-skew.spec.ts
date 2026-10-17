@@ -221,8 +221,13 @@ test.describe('the startup handshake, in the real app', () => {
         expect(shape.url, JSON.stringify(line.slice(0, 40))).toBe(REFUSAL_ENTRY_URL)
         expect(shape.text, JSON.stringify(line.slice(0, 40))).not.toContain(DASHBOARD_MARKER)
         // The line itself is nowhere: the refusal document is the console's own
-        // sentence, and it never carries what the binary printed.
-        expect(shape.text, 'the line is not drawn').not.toContain(line.slice(0, 40))
+        // sentence, and it never carries what the binary printed. The empty
+        // line is the one case this cannot be asked of -- every string contains
+        // the empty string, which is what made the first version of this
+        // assertion fail on every run -- and it has nothing to draw anyway.
+        if (line !== '') {
+          expect(shape.text, 'the line is not drawn').not.toContain(line.slice(0, 40))
+        }
         expect(shape.text.length).toBeLessThan(1000)
       } finally {
         await app.close()
@@ -241,7 +246,14 @@ test.describe('the startup handshake, in the real app', () => {
       // is in the document's text, and no markup element was created from the
       // line (the tag is text, or it is nothing -- never an element).
       expect(shape.text).not.toContain('\u001b')
+      expect(shape.text).not.toContain('[31m')
       expect(shape.text).not.toContain('fugaro says hello')
+      expect(shape.text).not.toContain('<h1>')
+      expect(shape.text).not.toContain('0.8.1')
+      expect(shape.text).not.toContain(HOSTILE)
+      // The markers are the other half: the page is the refusal document, so the
+      // absences above are about a page that drew something, not an empty one.
+      expect(shape.text).toContain(REFUSAL_MARKER)
       expect(await page.evaluate(() => document.querySelectorAll('h1').length)).toBe(1)
       // The title is drawn by the operating system and not by the console's
       // writers, so the console puts no binary-chosen string in it at all --

@@ -120,7 +120,7 @@ import type {
   RendererLike,
 } from '../../src/preload/index'
 import { RENDERER_UNREADABLE, compatibilityFrom } from '../../src/renderer/app'
-import { REDUCED_VIEWS, classifyCliVersion } from '../../src/shared/version'
+import { REDUCED_VIEWS, classifyCliVersion, unreadableCompatibility } from '../../src/shared/version'
 import type { CliCompatibility } from '../../src/shared/version'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
@@ -1778,16 +1778,26 @@ const REDUCED_HANDSHAKE = classifyCliVersion('0.9.0')
 const SUPPORTED_HANDSHAKE = classifyCliVersion('0.8.1')
 
 describe("the handshake's answer on the wire", () => {
-  it('accepts every value the handshake itself produces, and answers it unchanged', () => {
+  it('accepts every value the handshake itself produces, and answers an equal fresh copy', () => {
     for (const compatibility of theHandshakeRan) {
-      // Identity, not equality: the value on the wire is the value the
-      // handshake built, and a check that rebuilt it could quietly normalise a
-      // mode the renderer then gates on wrongly.
-      expect(readStoredCompatibility(compatibility), compatibility.skew).toBe(compatibility)
-      expect(compatibilityFrom({ ok: true, data: compatibility }), compatibility.skew).toBe(
-        compatibility,
-      )
+      // Equal, and **not** the same object: the answer is rebuilt from the
+      // checked fields (round 2 of the review -- returning the input let an
+      // unchecked key ride along), and it is equal field for field, so the
+      // rebuild normalises nothing the renderer gates on.
+      const inMain = readStoredCompatibility(compatibility)
+      const inRenderer = compatibilityFrom({ ok: true, data: compatibility })
+      expect(inMain, compatibility.skew).toEqual(compatibility)
+      expect(inMain, compatibility.skew).not.toBe(compatibility)
+      expect(Object.isFrozen(inMain), compatibility.skew).toBe(true)
+      expect(inRenderer, compatibility.skew).toEqual(compatibility)
+      expect(inRenderer, compatibility.skew).not.toBe(compatibility)
+      expect(Object.isFrozen(inRenderer), compatibility.skew).toBe(true)
     }
+    // The refusal the handshake builds for a read that failed carries its
+    // `because`, and both checks keep it.
+    const unreadable = unreadableCompatibility('the console could not find a fugaro to read')
+    expect(readStoredCompatibility(unreadable)).toEqual(unreadable)
+    expect(compatibilityFrom({ ok: true, data: unreadable })).toEqual(unreadable)
     // The table is not vacuous: it holds all three modes, so the checks above
     // are not "everything is `ok`".
     expect(new Set(theHandshakeRan.map((compatibility) => compatibility.mode))).toEqual(
@@ -1833,8 +1843,18 @@ describe("the handshake's answer on the wire", () => {
       ],
       ['a plain object with an inherited mode', Object.create(REDUCED_HANDSHAKE)],
       ['a date', new Date(0)],
+      ['a because that is a number', { ...unreadableCompatibility('x'), because: 7 }],
+      ['a because that is an object', { ...unreadableCompatibility('x'), because: { treasury: 1 } }],
+      ['a because that is undefined', { ...unreadableCompatibility('x'), because: undefined }],
+      ['an empty because', { ...unreadableCompatibility('x'), because: '' }],
+      ['an overlong because', unreadableCompatibility(`treasury ${'x'.repeat(300)}`)],
+      ['a because on a value that is not unreadable', { ...REDUCED_HANDSHAKE, because: 'treasury' }],
+      ['an overlong cli version', { ...REDUCED_HANDSHAKE, cliVersion: `0.9.0${'0'.repeat(300)}` }],
+      ['an overlong skew', { ...REDUCED_HANDSHAKE, skew: 'x'.repeat(300) }],
     ]
     for (const [why, value] of refusals) {
+      // The renderer's copy refuses the same values, with its own sentence.
+      expect(compatibilityFrom({ ok: true, data: value }).because, why).toBe(RENDERER_UNREADABLE)
       const refused = readStoredCompatibility(value)
       expect(refused.mode, why).toBe('refused')
       expect(refused.skew, why).toBe('unreadable')
@@ -1843,6 +1863,34 @@ describe("the handshake's answer on the wire", () => {
       // console's constant, and it is what a screen draws.
       expect(JSON.stringify(refused), why).not.toContain('treasury')
       expect(refused.hidden, why).toEqual([...REDUCED_VIEWS])
+    }
+  })
+
+  it('drops every key it did not check, so nothing unchecked rides along', () => {
+    // The reviewer's case: a store that carried the raw line beside the
+    // checked fields. The answer is rebuilt, so the key -- and its escape
+    // sequence -- is not on the wire and not in the gate.
+    const carrying = {
+      ...REDUCED_HANDSHAKE,
+      rawStdout: '\u001b[31m0.9.0\u001b[0m <h1>treasury</h1>',
+      get loud(): string {
+        return 'treasury'
+      },
+    }
+    for (const answered of [
+      readStoredCompatibility(carrying),
+      compatibilityFrom({ ok: true, data: carrying }),
+    ]) {
+      expect(answered.mode).toBe('reduced')
+      expect(Object.keys(answered).sort()).toEqual(
+        ['cliVersion', 'consoleVersion', 'floor', 'hidden', 'mode', 'skew', 'supported'],
+      )
+      expect(JSON.stringify(answered)).not.toContain('\u001b')
+      expect(JSON.stringify(answered)).not.toContain('treasury')
+      // The arrays are copies too: mutating the input's afterwards changes
+      // nothing the gate reads.
+      expect(answered.hidden).not.toBe(REDUCED_HANDSHAKE.hidden)
+      expect(answered.supported).not.toBe(REDUCED_HANDSHAKE.supported)
     }
   })
 
@@ -1867,8 +1915,8 @@ describe("the handshake's answer on the wire", () => {
       if (inMain.because === undefined) {
         // A value both sides read -- including the handshake's own `refused`
         // mode, which is a verdict about the CLI and not an unreadable value:
-        // the renderer gates on the same object, not on a copy of it.
-        expect(inRenderer, why).toBe(inMain)
+        // both answer the same fields.
+        expect(inRenderer, why).toEqual(inMain)
         continue
       }
       // A value neither side could read: each refuses with its own sentence,
@@ -1889,8 +1937,8 @@ describe("the handshake's answer on the wire", () => {
     const handler = startupCompatibility(() => SUPPORTED_HANDSHAKE)
     // The handler takes the operation's validated arguments, which for this
     // operation are none: what it is handed changes nothing.
-    expect(await handler({})).toBe(SUPPORTED_HANDSHAKE)
-    expect(await handler({ mode: 'ok' })).toBe(SUPPORTED_HANDSHAKE)
+    expect(await handler({})).toEqual(SUPPORTED_HANDSHAKE)
+    expect(await handler({ mode: 'ok' })).toEqual(SUPPORTED_HANDSHAKE)
 
     // A store mutated under the handler answers the console's refusal, not the
     // mutation -- this is the case the check exists for.

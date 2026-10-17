@@ -1417,6 +1417,13 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
  */
 export const COMPATIBILITY_UNREADABLE = 'the console stored a compatibility it could not read'
 
+/** MAX_COMPATIBILITY_FIELD_LENGTH bounds every free string a compatibility
+ * carries on the wire (`skew`, `cliVersion`, `because`). The longest the
+ * console builds is a sentence of its own well under it; the version line the
+ * resolver accepts is at most 200 characters (`parseVersionLine` in
+ * `src/main/spawn.ts`), and this is that bound. */
+export const MAX_COMPATIBILITY_FIELD_LENGTH = 200
+
 /**
  * readStoredCompatibility is the closed-schema check `startup.compatibility`'s
  * handler runs on the value it is about to answer with: the store is in this
@@ -1437,7 +1444,9 @@ export const COMPATIBILITY_UNREADABLE = 'the console stored a compatibility it c
  *
  * Every failure is the same refusal (`unreadableCompatibility(
  * COMPATIBILITY_UNREADABLE)`), and the value's own contents are never carried
- * into it.
+ * into it. A value that passes is answered as a **fresh, frozen object built
+ * from the checked fields only** (round 2 of the Task 3.3 review: the first
+ * version returned its input, so an unchecked key rode along verbatim).
  */
 export function readStoredCompatibility(value: unknown): CliCompatibility {
   const unreadable = (): CliCompatibility => unreadableCompatibility(COMPATIBILITY_UNREADABLE)
@@ -1447,15 +1456,22 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
   if (mode !== 'ok' && mode !== 'reduced' && mode !== 'refused') return unreadable()
   // `skew` is drawn as a `data-skew` attribute and never as a sentence, and its
   // closed list lives in a type (`CliSkewName`) rather than in a value, so what
-  // is checked here is that it is a string -- the same verdict the renderer's
-  // own check reaches, which `test/unit/ipc.test.ts` holds both to.
-  if (typeof value['skew'] !== 'string' || value['skew'] === '') return unreadable()
-  if (typeof value['consoleVersion'] !== 'string' || typeof value['floor'] !== 'string') return unreadable()
-  if (value['cliVersion'] !== null && typeof value['cliVersion'] !== 'string') return unreadable()
-  if (
-    !Array.isArray(value['supported']) ||
-    value['supported'].some((minor: unknown) => typeof minor !== 'string')
-  ) {
+  // is checked here is that it is a short string -- the same verdict the
+  // renderer's own check reaches, which `test/unit/ipc.test.ts` holds both to.
+  const skew = value['skew']
+  if (typeof skew !== 'string' || skew === '' || skew.length > MAX_COMPATIBILITY_FIELD_LENGTH) {
+    return unreadable()
+  }
+  const consoleVersion = value['consoleVersion']
+  const floor = value['floor']
+  if (typeof consoleVersion !== 'string' || typeof floor !== 'string') return unreadable()
+  const cliVersion = value['cliVersion']
+  if (cliVersion !== null && typeof cliVersion !== 'string') return unreadable()
+  if (typeof cliVersion === 'string' && cliVersion.length > MAX_COMPATIBILITY_FIELD_LENGTH) {
+    return unreadable()
+  }
+  const supported: unknown = value['supported']
+  if (!Array.isArray(supported) || supported.some((minor: unknown) => typeof minor !== 'string')) {
     return unreadable()
   }
 
@@ -1465,6 +1481,36 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
   if (views.some((view) => !REDUCED_VIEWS.includes(view as ReducedView))) return unreadable()
   if (new Set(views).size !== views.length) return unreadable()
 
+  // `because` is the one free sentence the value can carry, so it is held to
+  // the most: absent, or a string; short; and only on the one kind of value
+  // that is built with one (`unreadableCompatibility`, whose skew is
+  // `unreadable`). Since round 2 every `because` the console stores is one of
+  // its own constants, and the drawing passes it through `sanitizeText` too
+  // (`unreadableReason` in `src/shared/version.ts`) -- this check is what keeps
+  // a wrongly typed or overlong one off the wire altogether.
+  const hasBecause = Object.prototype.hasOwnProperty.call(value, 'because')
+  const because = value['because']
+  if (hasBecause) {
+    if (typeof because !== 'string' || because === '') return unreadable()
+    if (because.length > MAX_COMPATIBILITY_FIELD_LENGTH) return unreadable()
+    if (skew !== 'unreadable') return unreadable()
+  }
+
+  // The answer is a **fresh object built from the checked fields only**: a key
+  // the check did not look at (a `rawStdout`, a getter, anything a later edit to
+  // the store adds) is not carried, because carrying the input object would make
+  // this a check on some fields and a pass-through for the rest.
+  const checked: CliCompatibility = {
+    mode,
+    skew: skew as CliCompatibility['skew'],
+    cliVersion,
+    consoleVersion,
+    supported: Object.freeze([...(supported as string[])]),
+    floor,
+    hidden: Object.freeze([...(views as ReducedView[])]),
+    ...(hasBecause ? { because: because as string } : {}),
+  }
+
   // The one check that is about the *pair* rather than a field: the mode and the
   // hidden list have to be the two halves of one answer (`hidesView` is the
   // renderer's question, and it is answered from `hidden`, so a mode that says
@@ -1472,12 +1518,11 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
   // other way in the renderer). `compatibility()` in `src/shared/version.ts`
   // builds every branch as either `[]` (ok) or all of `REDUCED_VIEWS`, so this
   // is what that invariant is worth on the wire.
-  const compatibility = value as unknown as CliCompatibility
   for (const view of REDUCED_VIEWS) {
-    if (hidesView(compatibility, view) !== (mode !== 'ok')) return unreadable()
+    if (hidesView(checked, view) !== (mode !== 'ok')) return unreadable()
   }
 
-  return compatibility
+  return Object.freeze(checked)
 }
 
 /**

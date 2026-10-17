@@ -71,6 +71,7 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',
   'renderer/screens/live.js',

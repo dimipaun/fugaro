@@ -42,7 +42,16 @@ import type {
 } from 'electron'
 
 import { APP_ENTRY_URL, REFUSAL_ENTRY_URL } from '../../src/main/protocol'
-import { CONSOLE_WINDOW_TITLE, openStartupWindow, openWindowFor } from '../../src/main/window'
+import {
+  CONSOLE_WINDOW_TITLE,
+  HANDSHAKE_NOT_FOUND,
+  HANDSHAKE_UNREADABLE,
+  createConsoleLifecycle,
+  openStartupWindow,
+  openWindowFor,
+  runVersionHandshake,
+  versionReadFrom,
+} from '../../src/main/window'
 import type { ConsoleWindowDeps, VersionRead } from '../../src/main/window'
 import { RENDERER_UNREADABLE, startConsole } from '../../src/renderer/app'
 import type { ScreenGate } from '../../src/renderer/app'
@@ -220,6 +229,181 @@ describe('the window the stored answer opens (the activate path)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// What a failed read may say (round 2: never the binary's own words)
+// ---------------------------------------------------------------------------
+
+/** HOSTILE_LINE is the reviewer's case: an escape, markup and a version-shaped
+ * run, as a stub would print it. */
+const HOSTILE_LINE = '\u001b[31m0.8.1\u001b[0m <h1>fugaro says hello</h1>'
+
+describe('a failed read crosses as a category, never as text', () => {
+  it('drops the resolver’s reason, which carries what the binary printed', async () => {
+    // The resolver's reason for an unparsable line quotes the line, and its
+    // reason for a non-zero exit quotes stderr: both are what the reviewer saw
+    // reach `compatibility.because` verbatim.
+    const quoting: readonly string[] = [
+      `the binary printed ${JSON.stringify(HOSTILE_LINE)}, which is not a version`,
+      `the binary exited 2 for \`version\`: ${HOSTILE_LINE}`,
+    ]
+    for (const reason of quoting) {
+      const read = versionReadFrom({ ok: false, path: '/opt/homebrew/bin/fugaro', reason })
+      expect(read).toEqual({ ok: false, failure: 'unreadable' })
+      const compatibility = await runVersionHandshake({ readVersion: async () => read })
+      expect(compatibility.mode).toBe('refused')
+      expect(compatibility.because).toBe(HANDSHAKE_UNREADABLE)
+      const wire = JSON.stringify(compatibility)
+      expect(wire).not.toContain('\\u001b')
+      expect(wire).not.toContain('fugaro says hello')
+      expect(wire).not.toContain('<h1>')
+    }
+  })
+
+  it('says "not found" in its own words, and names no path it looked at', async () => {
+    const read = versionReadFrom({
+      ok: false,
+      path: null,
+      reason: 'no fugaro binary was found: looked at /Users/someone/secret-dir/fugaro',
+    })
+    expect(read).toEqual({ ok: false, failure: 'not-found' })
+    const compatibility = await runVersionHandshake({ readVersion: async () => read })
+    expect(compatibility.because).toBe(HANDSHAKE_NOT_FOUND)
+    expect(JSON.stringify(compatibility)).not.toContain('secret-dir')
+  })
+
+  it('a reader that answers outside its type still produces only the console’s sentence', async () => {
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: false, failure: HANDSHAKE_LINE_AS_FAILURE }) as unknown as VersionRead,
+    })
+    expect(compatibility.because).toBe(HANDSHAKE_UNREADABLE)
+    // And the old shape -- a free `reason` -- is not read at all.
+    const legacy = await runVersionHandshake({
+      readVersion: async () => ({ ok: false, reason: HOSTILE_LINE }) as unknown as VersionRead,
+    })
+    expect(legacy.because).toBe(HANDSHAKE_UNREADABLE)
+  })
+
+  it('a successful read carries the parsed version, and a hostile line is refused with no trace', async () => {
+    const compatibility = await runVersionHandshake({ readVersion: readsVersion(HOSTILE_LINE) })
+    expect(compatibility.mode).toBe('refused')
+    expect(compatibility.cliVersion).toBeNull()
+    expect(JSON.stringify(compatibility)).not.toContain('fugaro says hello')
+  })
+})
+
+/** HANDSHAKE_LINE_AS_FAILURE is a failure "category" that is really a line. */
+const HANDSHAKE_LINE_AS_FAILURE = HOSTILE_LINE
+
+// ---------------------------------------------------------------------------
+// The lifecycle: the startup once, and `activate` (round 2: behaviour, not a
+// source match)
+// ---------------------------------------------------------------------------
+
+/** closableWindows is `recordingWindows` with a `close()` and a count of the
+ * windows that are still open, which is what `activate` asks. */
+function closableWindows(): ReturnType<typeof recordingWindows> & {
+  open(): number
+  closeAll(): void
+} {
+  const windows = recordingWindows()
+  const closed = new Set<unknown>()
+  return {
+    ...windows,
+    open: () => windows.built.filter((window) => !closed.has(window)).length,
+    closeAll: () => {
+      for (const window of windows.built) closed.add(window)
+    },
+  }
+}
+
+/** deferred is a promise this file resolves by hand. */
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve: (value: T) => void = () => undefined
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+describe('the lifecycle', () => {
+  it('a refused console reopened by `activate` is the refusal window again, and never a dashboard', async () => {
+    const windows = closableWindows()
+    let reads = 0
+    const lifecycle = createConsoleLifecycle({
+      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession }),
+      readVersion: async () => {
+        reads += 1
+        return { ok: true, stdout: '0.5.0\n' }
+      },
+      openWindowCount: windows.open,
+    })
+    expect((await lifecycle.start()).mode).toBe('refused')
+    expect(windows.loaded).toEqual([REFUSAL_ENTRY_URL])
+
+    // The window is open: a dock-icon click opens nothing.
+    await lifecycle.activate()
+    expect(windows.built).toHaveLength(1)
+
+    // Closed, then clicked: one refusal window, the handshake not read again.
+    windows.closeAll()
+    await lifecycle.activate()
+    expect(windows.built).toHaveLength(2)
+    expect(windows.open()).toBe(1)
+    expect(windows.loaded).toEqual([REFUSAL_ENTRY_URL, REFUSAL_ENTRY_URL])
+    expect(windows.loaded).not.toContain(APP_ENTRY_URL)
+    expect(reads).toBe(1)
+
+    // Two clicks at once after another close: still one window.
+    windows.closeAll()
+    await Promise.all([lifecycle.activate(), lifecycle.activate()])
+    expect(windows.open()).toBe(1)
+    expect(windows.loaded).not.toContain(APP_ENTRY_URL)
+  })
+
+  it('is single-flight: `activate` during the handshake waits for it, and opens no second window', async () => {
+    const windows = closableWindows()
+    const answer = deferred<VersionRead>()
+    let reads = 0
+    const lifecycle = createConsoleLifecycle({
+      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession }),
+      readVersion: () => {
+        reads += 1
+        return answer.promise
+      },
+      openWindowCount: windows.open,
+    })
+    const starting = lifecycle.start()
+    // The handshake is running and no window exists: the click that comes now
+    // is the one the first version answered with a second `startConsole`.
+    const clicked = lifecycle.activate()
+    const again = lifecycle.start()
+    expect(again).toBe(starting)
+    answer.resolve({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` })
+    await Promise.all([starting, clicked, again])
+    expect(reads).toBe(1)
+    expect(windows.built).toHaveLength(1)
+    expect(windows.loaded).toEqual([APP_ENTRY_URL])
+  })
+
+  it('opens nothing on an `activate` before the startup has begun', async () => {
+    // `main` starts the console once the bundle is served; a click before that
+    // must not start a handshake (or load a document) ahead of the handler.
+    const windows = closableWindows()
+    let reads = 0
+    const lifecycle = createConsoleLifecycle({
+      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession }),
+      readVersion: async () => {
+        reads += 1
+        return { ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }
+      },
+      openWindowCount: windows.open,
+    })
+    await lifecycle.activate()
+    expect(reads).toBe(0)
+    expect(windows.built).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The renderer's half of the same handshake
 // ---------------------------------------------------------------------------
 
@@ -387,19 +571,25 @@ describe('the renderer’s gate', () => {
     expect(gate.drawScreen('spend', () => undefined)).toBe('refused')
   })
 
-  it('gates on the compatibility it was handed, and not on a copy of it', async () => {
-    // The identity matters: `compatibilityFrom` answers the value it read, so
-    // the gate's question (`hidesView`) is asked of the same object the main
-    // process sent, and a fabricated `ok` cannot be handed to `drawScreen`.
+  it('gates on a frozen copy of the checked fields, which a later write cannot change', async () => {
+    // `compatibilityFrom` rebuilds the answer from the fields it checked, so
+    // the gate's question (`hidesView`) is asked of a value nothing else holds:
+    // mutating what the bridge handed over afterwards does not reopen a view.
     const mount = aMount()
+    const handed = { ...reducedHandshake, hidden: [...reducedHandshake.hidden] }
     const gate: ScreenGate = await startConsole({
-      bridge: answers({ ok: true, data: reducedHandshake }),
+      bridge: answers({ ok: true, data: handed }),
       mount,
       factory: drawnFactory,
       theme: 'light',
     })
-    expect(gate.compatibility).toBe(reducedHandshake)
+    expect(gate.compatibility).toEqual(reducedHandshake)
+    expect(gate.compatibility).not.toBe(handed)
+    expect(Object.isFrozen(gate.compatibility)).toBe(true)
+    handed.hidden.length = 0
+    ;(handed as { mode: string }).mode = 'ok'
     expect((gate.compatibility as CliCompatibility).hidden).toContain('spend')
+    expect(gate.drawScreen('spend', () => undefined)).toBe('withheld')
   })
 })
 
@@ -420,8 +610,9 @@ describe('the entry point is wired to the handshake', () => {
     // dashboard's door; an entry point that called it directly would be one
     // that could open a dashboard without an answer, which is what this task
     // removed.
-    expect(indexSource).toContain('await openStartupWindow(')
+    expect(indexSource).toContain('createConsoleLifecycle(')
     expect(indexSource).toContain('readVersion: readCliVersion')
+    expect(indexSource).not.toContain('openWindowFor(')
     expect(indexSource).not.toContain('createConsoleWindow')
     expect(indexSource).not.toContain('APP_ENTRY_URL')
   })
@@ -433,24 +624,27 @@ describe('the entry point is wired to the handshake', () => {
     // source scans also refuse.
     expect(indexSource).toContain('resolveBinary(')
     expect(indexSource).toContain('privateWorkingDirectory()')
+    // The resolver's reason quotes what the binary printed, so the entry point
+    // hands over the category and never the reason.
+    expect(indexSource).toContain('versionReadFrom(resolution)')
+    expect(indexSource).not.toContain('.reason')
     expect(indexSource).not.toContain('child_process')
   })
 
-  it('keeps the answer and opens the window it calls for on activate', () => {
-    // `activate` is the only other place a window is opened, and it goes
-    // through `openWindowFor` with the stored compatibility.
-    expect(indexSource).toContain('openWindowFor(windowDeps(), startup)')
+  it('hands `activate` to the lifecycle, whose behaviour is tested above', () => {
+    // The behaviour -- a refused console reopens as the refusal, the startup
+    // is single-flight -- is `createConsoleLifecycle`'s, driven in 'the
+    // lifecycle' above. What is left to hold here is that the entry point
+    // uses it, and keeps no store of its own beside it.
+    expect(indexSource).toContain('lifecycle.activate()')
     expect(indexSource).not.toContain('startupWindow(')
-    // The store is written by the startup and read by nothing but the two
-    // window paths.
-    const writes = indexSource.match(/startup = /g) ?? []
-    expect(writes).toHaveLength(1)
+    expect(indexSource).not.toMatch(/let startup\b/)
   })
 
   it('runs the startup from main, after the bundle is served exactly once', () => {
     const main = /async function main\(\)[\s\S]*?\n}/.exec(indexSource)?.[0] ?? ''
     expect(main).toContain('serveBundle()')
-    expect(main).toContain('await startConsole()')
+    expect(main).toContain('await lifecycle.start()')
     // `serveBundle` registers a protocol handler that throws on a second call,
     // so it belongs to `main` and not to the repeatable `activate` path. The
     // pattern is anchored to a call on a line of its own, so the function's own

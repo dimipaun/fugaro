@@ -71,6 +71,7 @@ import {
 import {
   ALLOWED_EXTERNAL_HOSTS,
   CONSOLE_WINDOW_TITLE,
+  HANDSHAKE_NOT_FOUND,
   HANDSHAKE_UNREADABLE,
   consoleWebPreferences,
   consoleWindowOptions,
@@ -90,7 +91,7 @@ import {
   startupWindow,
   validateExternalUrl,
 } from '../../src/main/window'
-import type { NavigationEvent } from '../../src/main/window'
+import type { NavigationEvent, VersionRead } from '../../src/main/window'
 import {
   CLI_VERSION_BUILT_AGAINST,
   SKEW_HEADLINES,
@@ -768,12 +769,11 @@ function fakeWindowFactory(): {
   return { BrowserWindow: WindowClass, options, loaded, built, contents }
 }
 
-/** nothingToRead is a reader that failed before it could read: the shape
- * `src/main/spawn.ts`'s `probeVersion` returns when no binary resolved. */
-const nothingToRead = async (): Promise<{ ok: false; reason: string }> => ({
-  ok: false,
-  reason: 'no fugaro binary was found',
-})
+/** nothingToRead is a reader that failed before it could read: what
+ * `versionReadFrom` makes of a resolution with no executable candidate. Since
+ * round 2 a failed read is a category and never a sentence, so the resolver's
+ * reason -- which can quote the binary -- cannot reach the compatibility. */
+const nothingToRead = async (): Promise<VersionRead> => ({ ok: false, failure: 'not-found' })
 
 describe('runVersionHandshake', () => {
   it('proceeds for a CLI inside the supported range', async () => {
@@ -803,13 +803,13 @@ describe('runVersionHandshake', () => {
     expect(compatibility.skew).toBe('below-floor')
   })
 
-  it('refuses, with the reader\'s own reason, when there is no version to read', async () => {
+  it('refuses, with the console\'s sentence for the category, when there is no version to read', async () => {
     const compatibility = await runVersionHandshake({ readVersion: nothingToRead })
     expect(compatibility.mode).toBe('refused')
     expect(compatibility.skew).toBe('unreadable')
-    // The reason a screen or a title shows is the console's own sentence: the
-    // reader's, which is `probeVersion`'s, and never the child's output.
-    expect(unreadableReason(compatibility)).toBe('no fugaro binary was found')
+    // The reason a screen shows is the console's fixed sentence for the
+    // category, never the resolver's reason and never the child's output.
+    expect(unreadableReason(compatibility)).toBe(HANDSHAKE_NOT_FOUND)
   })
 
   it('refuses rather than crashing when the read itself throws', async () => {
@@ -1155,10 +1155,9 @@ describe('openStartupWindow', () => {
     })
     expect(opened.compatibility.mode).toBe('refused')
     expect(opened.compatibility.skew).toBe('unreadable')
-    // `because` is the *reader's* reason (Task 1.3's resolver sentence), not a
-    // generic apology -- and it is the console's own sentence either way, never
-    // anything a child printed.
-    expect(opened.compatibility.because).toBe('no fugaro binary was found')
+    // `because` is the console's fixed sentence for the reader's category --
+    // never the resolver's reason, which can quote what a child printed.
+    expect(opened.compatibility.because).toBe(HANDSHAKE_NOT_FOUND)
     expect(factory.loaded).toEqual([REFUSAL_ENTRY_URL])
   })
 })
