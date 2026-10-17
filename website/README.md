@@ -62,6 +62,36 @@ consent, no cookie before consent, withdrawal and keyboard reachability. `readme
 refuses a third-party font or script host in the shell's own sources today, and W1.11
 asserts the same over the built HTML's script, link, iframe and image origins.
 
+## The gates
+
+Four checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+with fixtures that keep its refusals running, and none of them needs the network:
+
+- `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
+  `#anchor` to an id in its target, every external link is `https:` on `site.yaml`'s
+  `allowed_hosts`, and every GitHub link into this repository names a path and heading that
+  exist.
+- `test/origins.mjs` — nothing loads from a host that is not this site (images and embeds
+  may also come from `allowed_hosts`), inline scripts are on a hash allow-list, and the one
+  third-party origin D93 admits appears only in the layout's consent-gated loader.
+- `test/a11y.mjs` — after W1.2's contrast cases: lang, one `h1`, no heading jumps,
+  landmarks, a skip link, names and labels, keyboard reachability, focus outlines, a
+  `prefers-reduced-motion` path for every animation, and the shipped tokens equal to the
+  palette in force.
+- `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes; derived from the
+  build of 2026-10-17 with 25% headroom, because the plan names the budgets but no figures —
+  the derivation is in the test's header, and a task that needs more raises the number here,
+  in the commit that needs it):
+  - **JavaScript per page:** 0 bytes. The site ships no script; the first one (W1.12's
+    consent banner) raises this line.
+  - **Page weight per page:** 214,233 bytes. The heaviest page (the docs hub, 171,386
+    bytes) plus 25%.
+  - **Whole site:** 418,054 bytes. Every file in `dist/` (334,443 bytes) plus 25%.
+
+**Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
+best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
+requests and the tests here are hermetic, so a browser-driven audit is not one of them.
+
 The site's other gate is the Go side, which holds every fact to the file it is derived
 from:
 
