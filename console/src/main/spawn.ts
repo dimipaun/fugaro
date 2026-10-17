@@ -32,7 +32,10 @@
 //      follows `--project` whenever the installation declares one, and the value
 //      is the installation's, never the ambient environment's.
 //   3. **The binary is resolved explicitly** (rule 4): the operator's configured
-//      path first, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
+//      path first -- an absolute one, since a relative path is checked against
+//      the app's working directory and run against the child's, which is a
+//      refusal and not a fallback (review of Task 4.1) -- then
+//      `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
 //      `/usr/bin`, and only then `PATH`. The path and the version it reported
 //      are the header's ("the resolved absolute path and the version it reports
 //      are shown in the header"), and **a candidate that exists but whose version
@@ -689,7 +692,15 @@ export function binDirectories(options: {
 }): readonly string[] {
   const home = options.home ?? homedir()
   const candidates: string[] = []
-  if (options.configuredPath !== undefined && options.configuredPath !== '') {
+  // Only an absolute one, for the same reason as the `PATH` entries below. This
+  // list is what `isExecutableFile` is asked about, and that question is put to
+  // the *app's* working directory; the child then runs with the installation's
+  // directory as its cwd, and `argv[0]` is this string. A relative configured
+  // path would therefore be checked in one place and run in another -- a
+  // different file, or none -- so it is not a candidate at all. `resolveBinary`
+  // refuses it outright rather than letting the walk fall through to the
+  // well-known prefixes, which would be the silent substitution rule 3 refuses.
+  if (options.configuredPath !== undefined && options.configuredPath !== '' && isAbsolute(options.configuredPath)) {
     candidates.push(options.configuredPath)
   }
   for (const prefix of options.prefixes ?? WELL_KNOWN_BINARY_PREFIXES) {
@@ -1173,6 +1184,11 @@ export type BinaryResolution =
  * file's header -- and an order with no candidate at all is refused with the
  * whole list in the message, because the screen that follows says what to
  * install and where.
+ *
+ * A configured path that is not absolute is refused before the walk begins, and
+ * for the same reason: it would be checked against the app's own working
+ * directory and then run against the child's, so the file that answered the
+ * version check need not be the file that runs.
  */
 export async function resolveBinary(options: {
   readonly configuredPath?: string | undefined
@@ -1185,6 +1201,18 @@ export async function resolveBinary(options: {
   readonly log?: SpawnLogWriter
   readonly timeoutMs?: number
 }): Promise<BinaryResolution> {
+  // Before the walk, and refusing rather than skipping: a configured path that
+  // is not absolute names a file relative to the app's own working directory --
+  // which is nothing the operator chose, and not the directory the child runs in
+  // (rule 5). Walking on would resolve some other installation and report its
+  // numbers under the operator's chosen path (review of Task 4.1).
+  if (options.configuredPath !== undefined && options.configuredPath !== '' && !isAbsolute(options.configuredPath)) {
+    return {
+      ok: false,
+      path: options.configuredPath,
+      reason: `the configured binary path is not absolute: ${options.configuredPath} -- give an absolute path, so the file that is checked is the file that runs`,
+    }
+  }
   const candidates = binDirectories({
     configuredPath: options.configuredPath,
     appEnv: options.appEnv,

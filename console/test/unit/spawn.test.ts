@@ -862,6 +862,56 @@ describe('binary resolution', () => {
     expect([...candidates]).toEqual(['/usr/sbin/fugaro'])
   })
 
+  it('never lists a relative configured path as a place to find the binary', () => {
+    // The same rule as the `PATH` entries above, one step earlier in the order:
+    // this list is what `isExecutableFile` is asked about, and that question is
+    // put to the app's working directory, while the child runs in the
+    // installation's. A relative configured path is therefore not a place to
+    // look -- and `resolveBinary` refuses it rather than falling through.
+    expect([
+      ...binDirectories({ configuredPath: 'bin/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+    ]).toEqual([])
+    expect([
+      ...binDirectories({ configuredPath: './tools/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+    ]).toEqual([])
+    expect([
+      ...binDirectories({ configuredPath: '~/tools/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+    ]).toEqual([])
+  })
+
+  it('puts an absolute configured path first, with the well-known prefixes after it', () => {
+    expect([
+      ...binDirectories({ configuredPath: '/opt/fugaro/bin/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+    ]).toEqual(['/opt/fugaro/bin/fugaro'])
+  })
+
+  it('refuses a configured path that is not absolute, rather than substituting another installation', async () => {
+    // The review of Task 4.1's finding: `bin/fugaro` was validated against the
+    // app's cwd (`isExecutableFile`) and then handed to the child, whose cwd is
+    // the installation's -- so the file that answered the version check need not
+    // be the file that runs. Here the relative path does not exist at all, and a
+    // perfectly good stub sits in a well-known prefix: before this guard the walk
+    // fell through and reported *that* installation's numbers under the
+    // operator's chosen path, which is the silent substitution rule 3 refuses.
+    const base = freshDirectory()
+    const prefix = join(base, 'prefix', 'bin')
+    const stub = installStub(prefix, { commands: { version: { stdout: '9.9.9\n' } } })
+    const resolution = await resolveBinary({
+      configuredPath: 'bin/fugaro',
+      appEnv: {},
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [prefix],
+    })
+    expect(resolution.ok).toBe(false)
+    expect(resolution.ok === false && resolution.path).toBe('bin/fugaro')
+    expect(resolution.ok === false && resolution.reason).toMatch(/not absolute/)
+    expect(resolution.ok === false && resolution.reason).toContain('bin/fugaro')
+    // Nothing was spawned: the refusal is before the walk, so the stub in the
+    // prefix never ran.
+    expect(stub.calls()).toBe(0)
+  })
+
   it('resolves a configured path first, and reports where it came from', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' } } })
