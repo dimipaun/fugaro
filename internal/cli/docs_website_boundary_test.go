@@ -41,7 +41,7 @@ package cli
 // being real: the canonical URL is a real host and appears in site.yaml and
 // nowhere else under website/ (TestWebsiteCanonicalURLAppearsOnlyInSiteYaml),
 // no firebase.json redirect rule sends one of the site's own paths to the
-// site's own host (TestFirebaseConfigRedirectsNoPathToItsOwnSite -- the rule a
+// site's own host (TestWebsiteFirebaseRedirectsDoNotLoop -- the rule a
 // domain-level redirect replaces), and the register carries the two owner-run
 // live checks the plan reserves for this task
 // (TestWebsiteChecklistHasCheck69aAnd69b).
@@ -741,7 +741,7 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	// site links nothing on the domain it redirects away from. The redirect
 	// itself is a domain-level setting and not a firebase.json rule, which is
 	// why nothing in this file pins a rule in that file (see
-	// TestFirebaseConfigRedirectsNoPathToItsOwnSite).
+	// TestWebsiteFirebaseRedirectsDoNotLoop).
 	if facts.SecondaryDomain != "" {
 		secondary := facts.SecondaryDomain
 		switch {
@@ -1028,7 +1028,7 @@ func firebaseSelfRedirects(t *testing.T, path string, config []byte, own []strin
 	return loops
 }
 
-// TestFirebaseConfigRedirectsNoPathToItsOwnSite refuses the one redirect rule
+// TestWebsiteFirebaseRedirectsDoNotLoop refuses the one redirect rule
 // that would take the live site down: a rule that sends one of the site's own
 // paths back to the site's own host. firebaseSelfRedirects carries the reasoning
 // and the schema citation.
@@ -1039,7 +1039,7 @@ func firebaseSelfRedirects(t *testing.T, path string, config []byte, own []strin
 // is what keeps a later task from adding the looping one in the belief that the
 // domain-level step was already done. The positive control beside it plants the
 // loop, so the test cannot pass by looking at an empty list.
-func TestFirebaseConfigRedirectsNoPathToItsOwnSite(t *testing.T) {
+func TestWebsiteFirebaseRedirectsDoNotLoop(t *testing.T) {
 	root := consoleBoundaryRoot(t)
 	facts, _ := readWebsiteFacts(t)
 	own := []string{}
@@ -1063,12 +1063,12 @@ func TestFirebaseConfigRedirectsNoPathToItsOwnSite(t *testing.T) {
 	}
 }
 
-// TestFirebaseSelfRedirectGuardSeesAPlantedLoop is that guard's positive
+// TestWebsiteFirebaseRedirectGuardSeesAPlantedLoop is that guard's positive
 // control: the looping rule it exists for, and the three shapes a legitimate
 // rules list can have beside it -- a redirect to another origin, a redirect to
 // another path on this site, and a relative destination -- so the guard cannot
 // pass by looking at nothing and cannot become a rule against redirects.
-func TestFirebaseSelfRedirectGuardSeesAPlantedLoop(t *testing.T) {
+func TestWebsiteFirebaseRedirectGuardSeesAPlantedLoop(t *testing.T) {
 	const path = "firebase.json"
 	own := []string{"fugaro.dev", "fugaro.ai"}
 	planted := `{"hosting":{"public":"website/dist","redirects":[
