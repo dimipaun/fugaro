@@ -1471,9 +1471,15 @@ export function resolveAmbiguousSequences(raw: string): Ambiguity | null | undef
  * that is the form the rule rewrote. The form as written is tried as well, for
  * the rare match that only it shows.
  */
-function freeText(text: string, prepared: string, ambiguity: Ambiguity | undefined, textClass: TextClass): Changed {
+function freeText(
+  text: string,
+  written: string,
+  prepared: string,
+  ambiguity: Ambiguity | undefined,
+  textClass: TextClass,
+): Changed {
   const rules = textClass === 'sentence' || textClass === 'label' ? FREE_TEXT_RULES : CREDENTIAL_RULES
-  return withRules(text, prepared, ambiguity, rules)
+  return withRules(text, written, prepared, ambiguity, rules)
 }
 
 /** withRules runs `rules` over the prepared form and, when they find nothing
@@ -1481,8 +1487,28 @@ function freeText(text: string, prepared: string, ambiguity: Ambiguity | undefin
  * `sanitizeRefusal`. When an ambiguous escape sequence made the resolver mask a
  * credential (`resolveAmbiguousSequences`), the masked form is the only form
  * read: the form as written is the terminal's reading alone, and it is the one
- * that can still hold the rest of a token another reading found. */
-function withRules(text: string, prepared: string, ambiguity: Ambiguity | undefined, rules: readonly OneRule[]): Changed {
+ * that can still hold the rest of a token another reading found.
+ *
+ * **`written` is the recorder's second reading, and it is not optional.**
+ * `redactFreeText` (`src/source/redact.ts`) retries its rules over
+ * `stripTerminalSequences(text)` -- the value as written, every invisible
+ * character still in place -- and this layer used to retry only the *stripped*
+ * form, which has already lost them. That is a divergence in the one direction
+ * that matters: the prepared form has no character between `J` and the token
+ * after it, so a lookbehind boundary (`(?<![\p{L}\p{N}_])`, the start of every
+ * token shape) is satisfied by the zero-width space and is *gone* with it --
+ * `J​AKIA...` is a token to the recorder and no token here, and the display
+ * drew a key id the fixture beside it had redacted. Design section 5.1 rule 7
+ * makes this layer the last line of defence for a live document, and the
+ * agreement `sanitize-agreement.test.ts` asserts is only worth asserting over
+ * readings both layers take. */
+function withRules(
+  text: string,
+  written: string,
+  prepared: string,
+  ambiguity: Ambiguity | undefined,
+  rules: readonly OneRule[],
+): Changed {
   if (ambiguity?.masked === true) {
     const masked = runRules(ambiguity.text, rules, false)
     if (masked.flags.includes('neutralised-credential')) return masked
@@ -1490,6 +1516,17 @@ function withRules(text: string, prepared: string, ambiguity: Ambiguity | undefi
   }
   const fromPrepared = runRules(prepared, rules, false)
   if (fromPrepared.text !== prepared) return fromPrepared
+  // The form as written: the escape sequences gone, the invisible characters
+  // still there, which is what `redactFreeText` reads second.
+  const fromWritten = runRules(written, rules, false)
+  if (fromWritten.text !== written) {
+    // What a rule rewrote in this reading is drawn without the invisible
+    // characters it left around the replacement: keeping those out of a drawn
+    // value is this layer's own rule and not one of the recorder's -- a value
+    // drawn with a bidi override in it is a value a screen can be made to spell
+    // something else -- and the top-level strip already reported them.
+    return { text: stripInvisible(fromWritten.text).text, flags: fromWritten.flags }
+  }
   if (prepared === text) return fromPrepared
   // `text` is the caller's already-stripped form, so the value returned here
   // carries no invisible character whatever the rules did: removing those is
@@ -1925,6 +1962,12 @@ export function sanitizeText(
   const stripped = stripInvisible(raw)
   const flags: SanitizeFlag[] = [...stripped.flags]
   let text = stripped.text
+  // The recorder's second reading, computed here rather than inside the rule
+  // pass so that it is the *raw* value's: the escape sequences gone and the
+  // invisible characters still in place (`redactFreeText`,
+  // src/source/redact.ts), which is the reading a zero-width character hides a
+  // token from `prepared` in.
+  const written = stripTerminalSequences(raw)
   // The second half of the bound (`MAX_TEXT_INPUT_LENGTH`): the form the rules
   // read, after NFKC, is held to the same 64 KiB as the form that arrived.
   const prepared = prepare(text)
@@ -1986,7 +2029,7 @@ export function sanitizeText(
     return ok(HOST_PLACEHOLDER, [...flags, 'host-placeholder'])
   }
 
-  const rules = freeText(text, prepared, ambiguity, textClass)
+  const rules = freeText(text, written, prepared, ambiguity, textClass)
   flags.push(...rules.flags)
   text = rules.text
 
@@ -2105,7 +2148,7 @@ export function sanitizeRefusal(raw: unknown, field = 'the refusal'): Sanitized 
   }
   const ambiguity = resolveAmbiguousSequences(raw)
   if (ambiguity === null) return refuse(ambiguityRefusal(field))
-  const rules = withRules(stripped.text, prepared, ambiguity, REFUSAL_RULES)
+  const rules = withRules(stripped.text, stripTerminalSequences(raw), prepared, ambiguity, REFUSAL_RULES)
   const cut = clipped(oneLine(rules.text))
   return ok(cut.text, [...stripped.flags, ...rules.flags, ...cut.flags])
 }

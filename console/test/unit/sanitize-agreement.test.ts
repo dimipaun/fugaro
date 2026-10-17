@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { TOKEN_PLACEHOLDER, sanitizeRefusal, sanitizeText } from '../../src/shared/sanitize'
+import { TOKEN_PLACEHOLDER, invisibleRe, sanitizeRefusal, sanitizeText } from '../../src/shared/sanitize'
 import { createRedactor } from '../../src/source/redact'
 import * as fake from '../support/fakeSecrets'
 
@@ -24,9 +24,10 @@ function drawn(result: ReturnType<typeof sanitizeText>): string {
   return result.ok ? result.text : `refused: ${result.reason}`
 }
 
-/** CREDENTIALS is every credential shape the text path redacts. */
-function credentials(): readonly string[] {
-  const shapes = [
+/** plainShapes is every credential shape as it is written, without the
+ * spellings NFKC has to fold first. */
+function plainShapes(): readonly string[] {
+  return [
     fake.githubToken(),
     fake.githubPat(),
     fake.gitlabToken(),
@@ -40,6 +41,13 @@ function credentials(): readonly string[] {
     fake.highEntropyRun(),
     fake.hexDigest(),
   ]
+}
+
+/** credentials is every credential shape the text path redacts, in both the
+ * spelling it is written in and the fullwidth one only NFKC makes a token, plus
+ * the two base64 spellings of one key. */
+function credentials(): readonly string[] {
+  const shapes = plainShapes()
   return [
     ...shapes,
     ...shapes.map(fullwidth),
@@ -158,6 +166,46 @@ describe('terminal escape sequences do not hide a token', () => {
       expect(text, signature).toBe(`rejected ${TOKEN_PLACEHOLDER} here`)
       expect(drawn(sanitizeRefusal(sentence)), signature).toBe(text)
       expect(createRedactor().redactText(sentence), signature).toBe(text)
+    }
+  })
+})
+
+describe('an invisible character between a letter and a token', () => {
+  // Each of these is a boundary to a token shape's lookbehind in the form as
+  // written and nothing at all in the prepared form, so the token next to it is
+  // one token to the recorder, which reads the form as written after the
+  // prepared one (`redactFreeText`, src/source/redact.ts), and was no token to
+  // the display layer, which read only the stripped form: it drew the key id
+  // whole beside a fixture that had redacted it. A zero-width space, a bidi
+  // mark, a word joiner, a combining grapheme joiner and a byte-order mark.
+  const SPLITS = ['​', '‎', '⁠', '͏', '﻿']
+
+  it('is redacted by the sentence class, the refusal door and the recorder alike', () => {
+    for (const split of SPLITS) {
+      const sentence = `J${split}${fake.awsKeyId()} was refused`
+      const text = drawn(sanitizeText(sentence, 'sentence'))
+      expect(text, JSON.stringify(split)).toBe(`J${TOKEN_PLACEHOLDER} was refused`)
+      expect(drawn(sanitizeRefusal(sentence)), JSON.stringify(split)).toBe(text)
+      // The recorder draws the redaction from the form as written, which still
+      // holds the split character: it is this layer's own rule, not one of the
+      // recorder's, that a drawn value carries no invisible character, so the
+      // two agree once this layer's strip is applied to the recorder's answer.
+      expect(createRedactor().redactText(sentence).replace(invisibleRe(), ''), JSON.stringify(split)).toBe(text)
+    }
+  })
+
+  it('holds every token family, in the label class as in the sentence class', () => {
+    for (const token of plainShapes()) {
+      const value = `x​${token}`
+      // The recorder's answer is the expectation: what this layer draws must be
+      // what the fixture beside it holds, and neither may hold the token.
+      const recorded = createRedactor().redactText(value).replace(invisibleRe(), '')
+      expect(recorded, token).not.toContain(token)
+      for (const textClass of ['sentence', 'label'] as const) {
+        const text = drawn(sanitizeText(value, textClass))
+        expect(text, `${textClass}: ${token}`).not.toContain(token)
+        expect(text, `${textClass}: ${token}`).toBe(recorded)
+      }
     }
   })
 })
