@@ -1406,11 +1406,16 @@ each, in one line:
   talks to a network or reads a checkout is the CLI, which is a separate binary
   with its own signature.
 
-`entitlementsInherit` points at the **same file**, which is what makes the
-minimum a property of the whole bundle: left unset, the helpers (renderer, GPU)
-are signed with electron-builder's own inherit plist, which grants the plug-in
-pair. The set here is the signer's own default for the helpers that load no
-plug-in, written down where it can be reviewed.
+`entitlementsInherit` points at the **same file**, and that is what makes the
+minimum a property of the whole bundle rather than of its outermost binary:
+electron-builder's own `templates/entitlements.mac.plist` — the file it uses for
+**both** `entitlements` and `entitlementsInherit` when neither is set
+(`macPackager.js`, `getEntitlements`/`getEntitlementsInherit`) — grants all
+three of `allow-jit`, `allow-unsigned-executable-memory` and
+`disable-library-validation`. Naming this file for both is therefore the edit
+that takes the plug-in pair out of the signature, not a tidiness preference; the
+suite asserts both keys, so deleting one is a red test rather than a quiet
+return to the template.
 
 **Unverified, and named as such in the plist.** This repository has never
 produced a signed build. The claim above is an argument from the bundle's

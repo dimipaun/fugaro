@@ -227,7 +227,7 @@ export function macExecutable(context: AfterPackContext): string {
   return join(context.appOutDir, `${name}.app`, 'Contents', 'MacOS', name)
 }
 
-/** fireWireState spells a wire byte the way a failure message should read. */
+/** wireState spells a wire byte the way a failure message should read. */
 function wireState(state: FuseState | undefined): string {
   if (state === FuseState.ENABLE) return 'enabled'
   if (state === FuseState.DISABLE) return 'disabled'
