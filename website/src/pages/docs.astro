@@ -1,0 +1,30 @@
+---
+/**
+ * website/src/pages/docs.astro — the docs hub (website plan, Task W1.7).
+ *
+ * The hub links the guides this repository holds and renders the generated CLI reference.
+ * Nothing is written yet except the page's own title and a first paragraph, and that
+ * paragraph is pasted from docs/recipes.md on purpose: it is the defect
+ * `website/test/docs-hub.mjs` exists to refuse (finding 37, D98), and the red step of this
+ * task is that check's first failure.
+ */
+import Base from '../layouts/Base.astro'
+import { loadSite, REPO_ROOT } from '../content.ts'
+
+const site = loadSite()
+const reference = site.documents['cli-reference.md']
+---
+
+<Base title="Documentation" description="The guides this repository holds, and the generated CLI reference.">
+  <h1>Documentation</h1>
+
+  <p class="lead">
+    A Fugaro run implements the task, then loops: an optional first-line review by the
+    coder's model, then the senior review, each followed by a fix when the review asks for
+    changes. A recipe names that loop after implement so you can pick it per run, per
+    repository or per project. A repository that names no recipe runs the default recipe,
+    which is the loop Fugaro has always had.
+  </p>
+
+  <section id="cli-reference" data-generated-document={reference.path}></section>
+</Base>
