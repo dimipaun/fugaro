@@ -24,6 +24,14 @@
 //      Windows/WSL support, no "~2 h", no ballpark ranges (F50, D102, W1.4 step 4). The
 //      video slot is checked against `site.yaml`'s own flag rather than against today's
 //      value, so W2.4 turns the video on without meeting a red test here (D107).
+//   6. **Every link the pages carry points at a route the plan's tasks write** — the layout's
+//      nav and the hero's call to action included, since a link to a route outside that list
+//      is a 404 in the artifact (Global Constraint 9). Whether each page *exists* yet is
+//      W1.11's link check, which runs once the page tasks have landed.
+//   7. **Every `var(--token)` the pages ship has a declaration behind it**, because an
+//      undefined custom property makes its declaration invalid at computed-value time rather
+//      than falling back: a token name the design layer does not declare is a style that
+//      silently does not apply, which is how the hero came to name a `--weight-bold` (W1.2).
 //
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file:
 // the check is a statement about the artifact a reader receives, and every fact it holds a
@@ -142,6 +150,30 @@ function installPathBlock(id) {
 /** The commands an install path prints: its `commands:` block scalar bodies. */
 function installPathCommands(id) {
   return [...installPathBlock(id).matchAll(/^ {8}(.*)$/gm)].map((m) => m[1].trim()).filter(Boolean)
+}
+
+/**
+ * The routes the site's pages live at, from the plan: the page files its tasks' `**Files:**`
+ * lines name. Pages are lowercase and components are capitalised in this repository, so a
+ * lowercase `<name>.astro` in a Files line is a page — and this is the only list of the
+ * site's pages that exists while the page tasks are still being written.
+ */
+function plannedRoutes() {
+  const routes = new Set()
+  for (const line of repoFile('docs/website/implementation-plan.md').split('\n')) {
+    if (!line.startsWith('**Files:**')) continue
+    for (const m of line.matchAll(/([a-z0-9-]+)\.astro/g)) {
+      routes.add(m[1] === 'index' ? '/' : `/${m[1]}/`)
+    }
+  }
+  return routes
+}
+
+/** The internal links a built page carries: its hrefs that are paths on this site. */
+function internalLinks(page) {
+  return [...page.matchAll(/<a\b[^>]*href="([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((href) => href.startsWith('/'))
 }
 
 /** The five stage names `docs/website/spec.md` §2 gives the architecture diagram. */
@@ -330,6 +362,74 @@ test("every caption on the diagram is the repository's own words", () => {
       `README.md's "## How it works" uses the name ${JSON.stringify(label)}, and the page says it does not: the two names the README does not use are labels rather than quotations (W1.4 step 3)`,
     )
   }
+})
+
+test("every link on the two pages points at a route the plan's tasks write", () => {
+  const routes = plannedRoutes()
+
+  // A check that read no routes would pass every link, so the parse is asserted on the two
+  // routes this task writes: if the plan's Files lines stop naming pages, this says so
+  // instead of going quiet.
+  assert.ok(
+    routes.has('/') && routes.has('/how-it-works/'),
+    `docs/website/implementation-plan.md's Files lines no longer name the site's pages: this check read ${routes.size} routes out of it, and it holds every link to that list`,
+  )
+
+  for (const route of ['', 'how-it-works']) {
+    const page = builtPage(route)
+    const where = route === '' ? '/' : `/${route}/`
+    for (const href of internalLinks(page)) {
+      assert.ok(
+        routes.has(href),
+        `the ${where} page links ${href}, which is not a route the plan's tasks write (the layout's nav and the hero's call to action included, because every link on these pages is checked here): a route outside that list is a 404 in the artifact, and it is Global Constraint 9's defect one page over from the download link it names (W1.4)`,
+      )
+    }
+  }
+})
+
+test('the tokens the pages name are the ones the design layer declares', () => {
+  // An undefined custom property makes its declaration invalid at computed-value time: the
+  // style does not apply, nothing logs, and the page renders as if the rule were not written.
+  // So the pages' CSS is read for every token name it asks for and every name it declares,
+  // and the difference has to be empty. This is the check the hero needed: it named a
+  // `--weight-bold` and a `--leading-relaxed` that W1.2's layer does not carry, and both
+  // silently did nothing.
+  const pages = ['', 'how-it-works'].map(builtPage)
+  const css = pages.map(builtCSS).join('\n')
+  const named = new Set([...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]))
+
+  assert.ok(
+    named.size > 0,
+    "the pages' styles name no token at all, and every value they paint is a token of the design layer (W1.2, W1.4)",
+  )
+
+  if (!existsSync(path.join(SITE, 'src/styles/tokens.css'))) {
+    // W1.2's layer is not in this tree — this branch is stacked under it, and W1.2 is merged
+    // on main — so the names cannot be checked against it here. What can be checked is that
+    // the layout is written to bundle the layer the moment it arrives: the failure this
+    // guards is a site that ships every page unstyled while every check stays green, which
+    // is what an `import.meta.glob` resolving to nothing looks like from outside. The check
+    // below arms itself in any tree that carries the layer, and it was run in one.
+    assert.match(
+      repoFile('website/src/layouts/Base.astro'),
+      /import\.meta\.glob\(\s*'\.\.\/styles\/tokens\.css'\s*,\s*\{\s*eager:\s*true\s*\}\s*\)/,
+      'website/src/styles/tokens.css is not in this tree and the layout does not bundle it either, so the pages would ship unstyled with nothing to notice it (W1.2, W1.4)',
+    )
+    return
+  }
+
+  // The declarations the artifact carries, from its stylesheets and from the properties a
+  // component sets on an element (`--terminal-characters` is the terminal's, set inline).
+  const declarations = new Set(
+    [...`${css}\n${pages.join('\n')}`.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]),
+  )
+  const undeclared = [...named].filter((name) => !declarations.has(name))
+
+  assert.deepEqual(
+    undeclared,
+    [],
+    `the pages ask for ${undeclared.join(', ')}, and nothing in the artifact declares it: the declaration is invalid at computed-value time, so the style silently does not apply — a token name the design layer does not have is exactly this defect (W1.2, W1.4)`,
+  )
 })
 
 test('neither page names a claim the product cannot back', () => {
