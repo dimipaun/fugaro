@@ -27,8 +27,11 @@
 //      banner goes, and no interception of the keyboard.
 //
 // And the shipped state, which is the one a reader meets today: with `site.yaml`'s flag false
-// there is no banner, no loader, no origin and no script anywhere in the artifact, and the
-// privacy page says in one sentence that the site collects nothing.
+// there is no banner markup, no loader, no origin and no script anywhere in the artifact, and
+// the privacy page says in one sentence that the site collects nothing. (The banner's own
+// stylesheet does ship, inert and fetching nothing: Astro collects an imported component's
+// scoped styles whether or not the component rendered. The first case below says so out loud
+// and holds the stylesheet to being inert.)
 //
 // The red step, and what it turned out to be. The plan's red step reads: "Write the 'no
 // request before consent' case against a page that emits the analytics tag unconditionally.
@@ -363,8 +366,8 @@ const SHIPPED_HOME = pageOf(SHIPPED, 'index.html')
 
 // ---- 1. the state the site ships in ------------------------------------------------------
 
-test('with analytics off, the built site carries no analytics surface at all: no origin, no loader, no banner, no script', () => {
-  const ANALYTICS_SHAPED = /googletagmanager|dataLayer|gtag\(|fugaro:analytics-consent|consent-banner/i
+test('with analytics off, the built site carries no analytics: no origin, no loader, no script, no banner', () => {
+  const ANALYTICS_SHAPED = /googletagmanager|dataLayer|gtag\(|fugaro:analytics-consent/i
   for (const page of SHIPPED) {
     assert.ok(
       !ANALYTICS_SHAPED.test(page.html),
@@ -374,6 +377,17 @@ test('with analytics off, the built site carries no analytics surface at all: no
       !/<script/i.test(page.html),
       `${page.rel} ships a script while analytics are off: the consent banner's controller and the gated loader are the site's only scripts, and neither is emitted until the flag is on`,
     )
+    const doc = parse(page.html)
+    assert.equal(findAll(doc, (el) => el.attrs.get('id') === 'consent-banner').length, 0, `${page.rel} renders the consent banner while the flag is off`)
+    assert.equal(findAll(doc, (el) => el.attrs.has('data-consent')).length, 0, `${page.rel} renders a consent control while the flag is off`)
+
+    // The one trace of the banner that does ship is its own stylesheet: Astro collects an
+    // imported component's scoped styles into every page that imports it, whether or not the
+    // component rendered. It is inert — its selectors match nothing, and it names no origin,
+    // no script and no fetch — which is why the cases above check the markup, the scripts and
+    // the origins rather than the bytes. This is the assertion that keeps it inert.
+    const styles = findAll(doc, (el) => el.name === 'style').map((el) => el.raw ?? '').join('\n')
+    assert.ok(!/url\(|@import|@font-face|https?:/i.test(styles), `${page.rel} ships a stylesheet that fetches something`)
   }
   const text = ['.html', '.css', '.js', '.json', '.webmanifest', '.svg', '.xml', '.txt']
   for (const rel of filesUnder(DIST).filter((rel) => text.some((ext) => rel.endsWith(ext)))) {
@@ -749,5 +763,9 @@ test('the stub records what a page asks for, before and after its scripts run', 
   assert.deepEqual(clicked.cookies, ['a=1'], 'a cookie written by a script was not recorded')
 
   assert.deepEqual(gateFailures(page()), [], 'an empty page was reported as ungated')
-  assert.equal(SHIPPED_HOME.includes('consent-banner'), false, 'the shipped home page carries the banner while the flag is off')
+  assert.equal(
+    SHIPPED_HOME.includes('data-consent'),
+    false,
+    'the shipped home page carries a consent control while the flag is off',
+  )
 })
