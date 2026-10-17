@@ -85,6 +85,16 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		// jobs exactly as it did.
 		return nil, nil
 	}
+	// A project job serves exactly its profile's provider: the provider is an
+	// axis of the job's name, and the runner binds the run's slug — computed
+	// with the repository's own provider — against the job it runs on. A
+	// repository on another provider (in phase 3: every Bitbucket repository,
+	// since no shared job serves bitbucket — design §4.5, D5 as amended, and
+	// internal/infra's ProjectJobs) stays on its per-repository job, decided
+	// here before any claim is taken or budget token minted.
+	if provider := e.repoProvider(spec.Repo, co); provider != pr.Provider {
+		return nil, nil
+	}
 	account, _ := config.ClaudeAccountOfSecrets(pr.Secrets)
 	if err := checkProjectJobAccount(profile, spec.OAuthToken, account); err != nil {
 		return nil, err
@@ -100,6 +110,16 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		Profile: profile,
 		Timeout: timeout + backend.TaskTimeoutSlack,
 	}, nil
+}
+
+// repoProvider is repo's git provider kind as repoSlug resolves it: the local
+// config's entry first, then the checkout's fugaro.yaml (repoSlug has already
+// refused the two disagreeing by the time a launch gets here).
+func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
+	if r, ok := e.localRepo(repo); ok && r.Provider != "" {
+		return r.Provider
+	}
+	return co.Git.Provider
 }
 
 // checkProjectJobAccount refuses a launch whose run selects a Claude account

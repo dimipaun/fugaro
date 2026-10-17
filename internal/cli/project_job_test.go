@@ -549,3 +549,45 @@ func TestReadViewsRefuseAGoneExecution(t *testing.T) {
 		t.Errorf("diagnose stderr = %q, want a note on why there are no logs", errOut)
 	}
 }
+
+// TestLaunchKeepsAnotherProvidersRepositoryOnItsOwnJob is the stack review's
+// provider finding: a project job serves exactly its profile's provider (the
+// provider is an axis of its name, and the runner binds the run's slug with
+// it), and Bitbucket stays on the per-repository path in phase 3 (design
+// §4.5, D5 as amended: no shared job ever serves bitbucket). Before the fix
+// the launcher never compared the repository's provider with the profile's,
+// so a Bitbucket repository's checkout: clone workflow was launched onto the
+// github profile's job — after a claim and a budget token were spent — and
+// the runner then halted on the slug binding. The launch now keeps it on its
+// own per-repository job, as every other launch the shared job does not serve.
+//
+// Mutation (run, restore): drop the provider comparison in
+// launchProjectJobFor — the launch goes to the github project job.
+func TestLaunchKeepsAnotherProvidersRepositoryOnItsOwnJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	const bbRepo = "acme/bb"
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	bbSlug, err := task.Slug("bitbucket", bbRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perRepo := gcp.JobName(bbSlug, "web")
+	f.run.AddJob(perRepo, "4", "8Gi")
+	// The project admits the repository: what decides its job is the provider.
+	publishPolicy(t, f.launchBudgetFixture, strings.Replace(projectJobPolicy, `["github/acme/*"]`, `["github/acme/*","bitbucket/acme/*"]`, 1))
+
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:acme/bb.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1)})
+	t.Chdir(dir)
+
+	if _, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261017-090000-aaaa", "Add a feature"); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s, never the github profile's %s", len(calls), calls, perRepo, f.job)
+	}
+}
