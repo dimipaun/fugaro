@@ -55,6 +55,25 @@ export const APP_ENTRY_PATH = '/index.html'
 /** APP_ENTRY_URL is that document's absolute URL, and the window's only load. */
 export const APP_ENTRY_URL = `${APP_ORIGIN}${APP_ENTRY_PATH}`
 
+/**
+ * REFUSAL_ENTRY_PATH is the refusal document (desktop-console plan Task 3.3;
+ * design section 7.1 and D7).
+ *
+ * It is a **second document** and not a mode of the first, because the claim D7
+ * makes -- "a refused version never shows the dashboard" -- is a claim about
+ * what the window loaded. A refused console that loaded `index.html` and merely
+ * asked its renderer not to draw would be one renderer bug away from a spend
+ * figure nothing vouched for; a window on `refusal.html` has no dashboard root
+ * to draw into at all, whatever the renderer does.
+ */
+export const REFUSAL_ENTRY_PATH = '/refusal.html'
+
+/** REFUSAL_ENTRY_URL is that document's absolute URL, and the refusal window's
+ * only load. Both URLs are the same origin and the same handler (rule 3's CSP
+ * is sent with every response), so the refusal window is exactly as hardened as
+ * the dashboard's -- it is only its document that differs. */
+export const REFUSAL_ENTRY_URL = `${APP_ORIGIN}${REFUSAL_ENTRY_PATH}`
+
 /** CSP_HEADER is the response header the CSP travels in (rule 3). */
 export const CSP_HEADER = 'Content-Security-Policy'
 

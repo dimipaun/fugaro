@@ -79,6 +79,8 @@
 //     `src/main/window.ts` and belongs with the task that brings the handlers.
 
 import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
+import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
+import type { CliCompatibility, ReducedView } from '../shared/version'
 import { APP_HOST, APP_SCHEME } from './protocol'
 import { validateExternalUrl } from './window'
 
@@ -254,7 +256,9 @@ export interface ConsoleOperation {
   readonly method: string
   /**
    * `command` is the CLI command path this operation drives -- and it is `null`
-   * for exactly one operation, `link.openExternal`, which spawns nothing at all.
+   * for exactly two operations, neither of which spawns anything:
+   * `link.openExternal` (it opens a link) and `startup.compatibility` (it
+   * answers the handshake this process already ran).
    * It is a constant: no renderer, no argument and no job-written string ever
    * reaches it, and `registerConsoleHandlers` refuses a table that names
    * anything on `NEVER_REACHABLE`.
@@ -275,13 +279,15 @@ export interface ConsoleOperation {
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twelve operations, and the table is
+ * CONSOLE_OPERATIONS is the whole surface. Thirteen operations, and the table is
  * the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
  * The eleven CLI commands are design section 2.1's list (which is
  * `docs/json-contract.md`'s list, read off the cobra commands), and the twelfth
- * is the one path that is not a command: `openExternal`, whose URL argument goes
+ * is the startup handshake's answer (`startup.compatibility`, the console's own
+ * state, which no CLI command can be asked for); the thirteenth is the one path
+ * that is not a command: `openExternal`, whose URL argument goes
  * through `validateExternalUrl` -- `https:` only, no credentials, no port, host
  * on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console
  * is a link the console would have opened anyway.
@@ -501,6 +507,23 @@ export const CONSOLE_OPERATIONS = [
     command: 'version',
     flags: [],
     summary: 'the handshake: which CLI the console is driving',
+    args: [],
+  },
+  // The startup handshake's other half (Task 3.3): the *answer* the console
+  // reached before it built any window, so the renderer can gate on it instead
+  // of drawing screens a refused or reduced console may not draw. It is the one
+  // read that is not a read of the CLI -- it is the console's own state, which
+  // is why it has no command and no flags -- and it takes no argument at all, so
+  // a renderer cannot ask about a compatibility other than the one this console
+  // is running in. `readStoredCompatibility` below is the closed-schema check
+  // its handler runs, and it is what keeps a *stored* value from being answered
+  // verbatim if it is not one of the three modes.
+  {
+    name: 'startup.compatibility',
+    method: 'getCompatibility',
+    command: null,
+    flags: [],
+    summary: 'the handshake’s answer: this console’s mode, and the views it withholds',
     args: [],
   },
   {
@@ -1379,6 +1402,100 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
   }
 
   return { ok: true, args: Object.freeze(args) }
+}
+
+// ---------------------------------------------------------------------------
+// The startup handshake's answer on the wire (desktop-console plan Task 3.3).
+// ---------------------------------------------------------------------------
+
+/**
+ * COMPATIBILITY_UNREADABLE is the console's own sentence for a stored
+ * compatibility the check below will not answer with. It is a constant of this
+ * console's -- like `HANDSHAKE_UNREADABLE` in `src/main/window.ts` and
+ * `SENDER_REFUSAL` above -- so an unreadable value never puts anything it
+ * carried on the wire, not even the value's own words.
+ */
+export const COMPATIBILITY_UNREADABLE = 'the console stored a compatibility it could not read'
+
+/**
+ * readStoredCompatibility is the closed-schema check `startup.compatibility`'s
+ * handler runs on the value it is about to answer with: the store is in this
+ * process and the value comes from the handshake, so this is not a defence
+ * against a document -- it is the guard that says what the operation's contract
+ * *is*, so that a mutation to the store (a mode typo, a view id that is not on
+ * `REDUCED_VIEWS`, a `hidden` list that no longer agrees with `hidesView`, a
+ * version that is not a string) answers the console's own refusal sentence
+ * instead of handing the renderer a compatibility it would gate on wrongly.
+ *
+ * The renderer's half is `src/renderer/app.ts`'s own check, and it is
+ * deliberately a second implementation rather than an import: the renderer must
+ * refuse an answer that is not a compatibility **even if this one let it
+ * through**, and a shared checker would make the two failures one failure.
+ * `test/unit/ipc.test.ts` holds the two to the same verdicts over the same
+ * table of hostile values, so "two implementations" cannot drift into "two
+ * policies".
+ *
+ * Every failure is the same refusal (`unreadableCompatibility(
+ * COMPATIBILITY_UNREADABLE)`), and the value's own contents are never carried
+ * into it.
+ */
+export function readStoredCompatibility(value: unknown): CliCompatibility {
+  const unreadable = (): CliCompatibility => unreadableCompatibility(COMPATIBILITY_UNREADABLE)
+  if (!isPlainPayload(value)) return unreadable()
+
+  const mode = value['mode']
+  if (mode !== 'ok' && mode !== 'reduced' && mode !== 'refused') return unreadable()
+  // `skew` is drawn as a `data-skew` attribute and never as a sentence, and its
+  // closed list lives in a type (`CliSkewName`) rather than in a value, so what
+  // is checked here is that it is a string -- the same verdict the renderer's
+  // own check reaches, which `test/unit/ipc.test.ts` holds both to.
+  if (typeof value['skew'] !== 'string' || value['skew'] === '') return unreadable()
+  if (typeof value['consoleVersion'] !== 'string' || typeof value['floor'] !== 'string') return unreadable()
+  if (value['cliVersion'] !== null && typeof value['cliVersion'] !== 'string') return unreadable()
+  if (
+    !Array.isArray(value['supported']) ||
+    value['supported'].some((minor: unknown) => typeof minor !== 'string')
+  ) {
+    return unreadable()
+  }
+
+  const hidden = value['hidden']
+  if (!Array.isArray(hidden)) return unreadable()
+  const views = hidden as readonly unknown[]
+  if (views.some((view) => !REDUCED_VIEWS.includes(view as ReducedView))) return unreadable()
+  if (new Set(views).size !== views.length) return unreadable()
+
+  // The one check that is about the *pair* rather than a field: the mode and the
+  // hidden list have to be the two halves of one answer (`hidesView` is the
+  // renderer's question, and it is answered from `hidden`, so a mode that says
+  // `ok` beside a list that withholds spend would gate one way in main and the
+  // other way in the renderer). `compatibility()` in `src/shared/version.ts`
+  // builds every branch as either `[]` (ok) or all of `REDUCED_VIEWS`, so this
+  // is what that invariant is worth on the wire.
+  const compatibility = value as unknown as CliCompatibility
+  for (const view of REDUCED_VIEWS) {
+    if (hidesView(compatibility, view) !== (mode !== 'ok')) return unreadable()
+  }
+
+  return compatibility
+}
+
+/**
+ * startupCompatibility is the handler for the one operation that reads the
+ * console's own state: the value is handed in, checked, and answered -- and a
+ * value the check refuses becomes a refusal the renderer draws, not an
+ * exception.
+ *
+ * `read` is a function rather than the value because the answer is asked for at
+ * message time: the store is written once at startup (`src/main/index.ts`) and a
+ * handler built over a snapshot would keep answering whatever the snapshot was,
+ * which is exactly the kind of stale answer the handshake exists to prevent. It
+ * throws for a store that has not answered yet -- an operation called before
+ * startup finished is a console that does not exist yet -- and `dispatch` turns
+ * that throw into the reply.
+ */
+export function startupCompatibility(read: () => unknown): ConsoleHandler {
+  return () => readStoredCompatibility(read())
 }
 
 /** ConsoleReply is what every operation answers with: the document, or the

@@ -105,6 +105,13 @@ export const BRIDGE_VERSION = 1
  * a *new read* adds a row to the table in `src/main/ipc.ts` and a row here, and
  * the test above is what makes forgetting the second half fail rather than
  * pass.
+ *
+ * **The thirteen rows are now thirteen.** Task 3.3 added
+ * `startup.compatibility` / `getCompatibility` to both files: the handshake's
+ * answer, which the renderer asks for once at load and draws nothing until it
+ * has. It is the one row whose handler is not a spawn, and it takes no argument
+ * at all -- `ConsoleMethod`'s optional argument object is simply not sent, so
+ * there is nothing for a renderer to name.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -117,13 +124,14 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['secrets.inventory', 'listSecrets'],
   ['accounts.inventory', 'listAccounts'],
   ['cli.version', 'cliVersion'],
+  ['startup.compatibility', 'getCompatibility'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twelve string literals, not `string`. It is the type of the `operations` list
+ * thirteen string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]

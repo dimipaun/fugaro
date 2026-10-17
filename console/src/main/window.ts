@@ -22,9 +22,12 @@
 // window: below the hard floor `startupWindow` constructs no window at all, and
 // the only window a refused console can open is the refusal screen's. The
 // startup path is `startupWindow` -- read the CLI's version, place it, build the
-// dashboard window only if the console will draw one -- and `src/main/index.ts`
-// still calls `createConsoleWindow` directly, because the IPC surface and the
-// screen mounting that would consume the handshake are later tasks' wiring.
+// dashboard window only if the console will draw one -- and, since Task 3.3,
+// `src/main/index.ts` calls `openStartupWindow`, which is that handshake
+// **before any window exists** and then the one window the compatibility allows:
+// the dashboard document, or `REFUSAL_ENTRY_URL`. (What the renderer *draws* in
+// either document is still the screen-mounting work of a later task: this tree
+// has no bundling step, so no document loads a script yet.)
 //
 // Two notes on what is deliberately NOT here, because both are later tasks and
 // a reviewer should not have to guess:
@@ -49,7 +52,7 @@ import type {
 
 import { SKEW_HEADLINES, classifyCliVersion, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility } from '../shared/version'
-import { APP_ENTRY_URL } from './protocol'
+import { APP_ENTRY_URL, REFUSAL_ENTRY_URL } from './protocol'
 
 /** CONSOLE_WINDOW_TITLE is the window's title and the document's `<title>`. */
 export const CONSOLE_WINDOW_TITLE = 'Fugaro console'
@@ -317,16 +320,24 @@ export interface ConsoleWindowDeps {
  * resolves once the document has loaded, so the caller knows the window is up.
  */
 export async function createConsoleWindow(deps: ConsoleWindowDeps): Promise<BrowserWindow> {
-  return buildConsoleWindow(deps, null)
+  return buildConsoleWindow(deps, null, APP_ENTRY_URL)
 }
 
 /** buildConsoleWindow is the one place a console window is constructed, so
  * every window this app ever opens -- the dashboard's and the refusal screen's
  * -- has the same preferences, the same handlers, the same denied permissions
- * and the same single load. */
+ * and the same single load.
+ *
+ * `entryUrl` is the document that single load is for, and it is a parameter
+ * rather than a constant (Task 3.3): the dashboard document is the dashboard's,
+ * and the refusal's is `REFUSAL_ENTRY_URL`. Which one a window got is the D7
+ * claim itself and the thing an e2e assertion can read off a running window
+ * (`page.url()`), so it is decided by the caller's door and not by anything the
+ * renderer could influence. */
 async function buildConsoleWindow(
   deps: ConsoleWindowDeps,
   compatibility: CliCompatibility | null,
+  entryUrl: string,
 ): Promise<BrowserWindow> {
   const window = new deps.BrowserWindow(consoleWindowOptions(compatibility))
 
@@ -348,7 +359,7 @@ async function buildConsoleWindow(
   window.once('ready-to-show', () => {
     window.show()
   })
-  await window.loadURL(APP_ENTRY_URL)
+  await window.loadURL(entryUrl)
 
   return window
 }
@@ -436,7 +447,7 @@ export async function startupWindow(deps: StartupWindowDeps): Promise<ConsoleSta
   const compatibility = await runVersionHandshake(deps)
   if (compatibility.mode === 'refused') return { window: null, compatibility }
   return {
-    window: await buildConsoleWindow(deps, compatibility),
+    window: await buildConsoleWindow(deps, compatibility, APP_ENTRY_URL),
     compatibility,
   }
 }
@@ -458,5 +469,55 @@ export async function createRefusalWindow(
   deps: ConsoleWindowDeps,
   compatibility: CliCompatibility,
 ): Promise<BrowserWindow> {
-  return buildConsoleWindow(deps, compatibility)
+  return buildConsoleWindow(deps, compatibility, REFUSAL_ENTRY_URL)
+}
+
+// ---------------------------------------------------------------------------
+// The startup path, in one place (desktop-console plan Task 3.3).
+// ---------------------------------------------------------------------------
+
+/**
+ * openWindowFor opens the one window a compatibility allows: the refusal
+ * screen's when the console refused, the dashboard's when it did not (in the
+ * reduced mode it is still the dashboard document, with the banner the renderer
+ * draws and the three views withheld).
+ *
+ * It is the *only* function that chooses between the two doors, so "a refused
+ * console never opens the dashboard" is one branch a reader can check, and it is
+ * the function `activate` re-enters: a window closed on macOS comes back as the
+ * window the compatibility that was already read calls for, and the handshake is
+ * not read again.
+ */
+export async function openWindowFor(
+  deps: ConsoleWindowDeps,
+  compatibility: CliCompatibility,
+): Promise<BrowserWindow> {
+  if (compatibility.mode === 'refused') return createRefusalWindow(deps, compatibility)
+  return createConsoleWindow(deps)
+}
+
+/**
+ * openStartupWindow is the console's startup: the handshake first, and only
+ * then a window -- the dashboard's if the console may draw one, the refusal
+ * screen's if it may not.
+ *
+ * **The order is the point** (Task 3.3's first step): the version read happens
+ * before any window exists, so there is no window at all during the read, and a
+ * window is built only for a compatibility that has already been decided. A
+ * caller that wants the two halves apart -- to open no window at all on a
+ * refusal, say -- still has `startupWindow` and `createRefusalWindow`; this
+ * function is what `src/main/index.ts` calls, and it is here rather than there
+ * because `index.ts` imports the Electron *runtime* (it cannot be driven under
+ * plain Node, which is how `test/unit/startup.test.ts` holds this order), while
+ * this module imports Electron *types* only.
+ */
+export async function openStartupWindow(
+  deps: StartupWindowDeps,
+): Promise<ConsoleStartup> {
+  const startup = await startupWindow(deps)
+  if (startup.window !== null) return startup
+  return {
+    window: await openWindowFor(deps, startup.compatibility),
+    compatibility: startup.compatibility,
+  }
 }

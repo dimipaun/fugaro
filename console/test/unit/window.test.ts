@@ -59,6 +59,7 @@ import {
   APP_SCHEME,
   CONTENT_SECURITY_POLICY,
   CSP_HEADER,
+  REFUSAL_ENTRY_URL,
   handleAppRequests,
   hasDotSegment,
   isInsideBundleRoot,
@@ -83,6 +84,8 @@ import {
   denyWindowOpen,
   installWebContentsSecurity,
   openExternalValidated,
+  openStartupWindow,
+  openWindowFor,
   runVersionHandshake,
   startupWindow,
   validateExternalUrl,
@@ -104,6 +107,14 @@ import { githubToken } from '../support/fakeSecrets'
 const bundleRoot = fileURLToPath(new URL('../../src/renderer', import.meta.url))
 const indexHTMLPath = fileURLToPath(new URL('../../src/renderer/index.html', import.meta.url))
 const indexHTML = readFileSync(indexHTMLPath, 'utf8')
+
+/**
+ * refusalHTML is the second document in the bundle (Task 3.3): the one a refused
+ * console loads, which has no dashboard root at all. It is read here rather than
+ * described, for the same reason `indexHTML` is.
+ */
+const refusalHTMLPath = fileURLToPath(new URL('../../src/renderer/refusal.html', import.meta.url))
+const refusalHTML = readFileSync(refusalHTMLPath, 'utf8')
 
 /**
  * DOCUMENT_TITLE is the title the loaded document defines, read out of the
@@ -1000,13 +1011,147 @@ describe('createRefusalWindow', () => {
     expect(factory.options[0]?.show).toBe(false)
     // The same single load over the console's own scheme, the same handlers and
     // the same denied permissions as the dashboard window: the refusal screen is
-    // drawn by the renderer in a window that is hardened exactly as much.
-    expect(factory.loaded).toEqual([APP_ENTRY_URL])
+    // drawn by the renderer in a window that is hardened exactly as much. What
+    // differs is *which document*: the refusal document, and never the
+    // dashboard's (Task 3.3, D7 -- "a refused version never shows the
+    // dashboard", which is a claim about the document the window loaded as much
+    // as about what the renderer drew).
+    expect(factory.loaded).toEqual([REFUSAL_ENTRY_URL])
+    expect(factory.loaded).not.toContain(APP_ENTRY_URL)
+    expect(REFUSAL_ENTRY_URL).not.toBe(APP_ENTRY_URL)
     expect(session.requestHandler()).not.toBeNull()
     expect(session.checkHandler()).not.toBeNull()
     const navigate = recordingEvent()
     factory.contents[0]?.emit('will-navigate', navigate, 'https://example.invalid/fugaro')
     expect(navigate.prevented).toBe(true)
     expect(factory.contents[0]?.windowOpenHandler()?.()).toEqual({ action: 'deny' })
+  })
+})
+
+describe('the refusal document in the bundle', () => {
+  it('carries the CSP of rule 3, byte for byte, exactly as the dashboard document does', () => {
+    // The `<meta>` copy is the belt to the header's braces, and the header is
+    // the same one: both documents are served by the same `app://` handler. A
+    // refusal document with a weaker policy would be the one document a
+    // below-the-floor console ever shows being the least constrained.
+    expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)
+    expect(refusalHTML).toContain(`content="${CONTENT_SECURITY_POLICY}"`)
+    expect(indexHTML).toContain(`content="${CONTENT_SECURITY_POLICY}"`)
+  })
+
+  it('is not the dashboard document, and holds nothing a renderer could draw a figure into', () => {
+    // D7's whole content: "a refused version never shows the dashboard". The
+    // strongest form of it is that the document a refused console loads is a
+    // different file with no dashboard in it at all.
+    expect(REFUSAL_ENTRY_URL).toBe(`${APP_ORIGIN}/refusal.html`)
+    expect(refusalHTML).not.toBe(indexHTML)
+    expect(refusalHTML).not.toContain('<script')
+    expect(refusalHTML).not.toContain('<style')
+    // The console's own sentences, and no version, no path and nothing the CLI
+    // printed: the document is static, so what it says cannot depend on the
+    // binary that was found.
+    expect(refusalHTML).toContain(`<title>${CONSOLE_WINDOW_TITLE}</title>`)
+    expect(refusalHTML).toContain('will not draw a dashboard')
+    const markup = refusalHTML.replace(/<!--[\s\S]*?-->/g, '')
+    expect(markup, 'the markup names no version').not.toMatch(/\d+\.\d+/)
+    expect(markup).not.toContain('0.8')
+  })
+
+  it('is served from the same root, under the same scheme and with the same header', async () => {
+    expect(resolveBundleRequest(bundleRoot, REFUSAL_ENTRY_URL)).toEqual({
+      ok: true,
+      filePath: join(bundleRoot, 'refusal.html'),
+      mediaType: 'text/html; charset=utf-8',
+    })
+    const response = await serveAppRequest(bundleRoot, REFUSAL_ENTRY_URL)
+    expect(response.status).toBe(200)
+    expect(response.headers.get(CSP_HEADER)).toBe(CONTENT_SECURITY_POLICY)
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    await expect(response.text()).resolves.toBe(refusalHTML)
+  })
+
+  it('is a real file in the tree the handler serves, checked against the working tree', () => {
+    // `bundleRoot` is this checkout's `src/renderer`, and the read above would
+    // have thrown had the document not been added to the bundle at all.
+    expect(refusalHTML.trimStart().startsWith('<!doctype html>')).toBe(true)
+    expect(indexHTML.trimStart().startsWith('<!doctype html>')).toBe(true)
+  })
+})
+
+describe('openWindowFor', () => {
+  it('opens the dashboard document for anything but a refusal', async () => {
+    for (const mode of ['ok', 'reduced'] as const) {
+      const factory = fakeWindowFactory()
+      const version = mode === 'ok' ? CLI_VERSION_BUILT_AGAINST : '0.9.0'
+      const window = await openWindowFor(
+        { BrowserWindow: factory.BrowserWindow, session: fakeSession().value },
+        classifyCliVersion(version),
+      )
+      expect(factory.built, mode).toEqual([window])
+      expect(factory.loaded, mode).toEqual([APP_ENTRY_URL])
+      expect(factory.options[0]?.title, mode).toBe(CONSOLE_WINDOW_TITLE)
+    }
+  })
+
+  it('opens the refusal document for a refusal, and never the dashboard', async () => {
+    const factory = fakeWindowFactory()
+    await openWindowFor(
+      { BrowserWindow: factory.BrowserWindow, session: fakeSession().value },
+      classifyCliVersion('0.5.0'),
+    )
+    expect(factory.loaded).toEqual([REFUSAL_ENTRY_URL])
+    expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.refused)
+  })
+})
+
+describe('openStartupWindow', () => {
+  it('runs the handshake before any window exists, and opens the right one for its answer', async () => {
+    const factory = fakeWindowFactory()
+    const order: string[] = []
+    const opened = await openStartupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => {
+        // The claim this task is about: the version is read *before* anything
+        // is constructed, so a refused console decides on the document before a
+        // dashboard window could exist.
+        order.push(`read (${factory.built.length} windows built)`)
+        return { ok: true, stdout: '0.5.0\n' }
+      },
+    })
+    expect(order).toEqual(['read (0 windows built)'])
+    expect(opened.compatibility.mode).toBe('refused')
+    expect(factory.loaded).toEqual([REFUSAL_ENTRY_URL])
+    expect(factory.loaded).not.toContain(APP_ENTRY_URL)
+  })
+
+  it('opens the dashboard window for a supported CLI, and does not open a second one', async () => {
+    const factory = fakeWindowFactory()
+    const opened = await openStartupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }),
+    })
+    expect(opened.compatibility.mode).toBe('ok')
+    expect(factory.options).toHaveLength(1)
+    expect(factory.loaded).toEqual([APP_ENTRY_URL])
+    expect(opened.window).toBe(factory.built[0])
+  })
+
+  it('refuses a console it could not identify, which is the answer that draws no figures', async () => {
+    const factory = fakeWindowFactory()
+    const opened = await openStartupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: nothingToRead,
+    })
+    expect(opened.compatibility.mode).toBe('refused')
+    expect(opened.compatibility.skew).toBe('unreadable')
+    // `because` is the *reader's* reason (Task 1.3's resolver sentence), not a
+    // generic apology -- and it is the console's own sentence either way, never
+    // anything a child printed.
+    expect(opened.compatibility.because).toBe('no fugaro binary was found')
+    expect(factory.loaded).toEqual([REFUSAL_ENTRY_URL])
   })
 })
