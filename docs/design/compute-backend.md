@@ -3242,10 +3242,15 @@ recipe — the one route it leaves, the gid baked into the image, is untested
   provisioning that binds once and gives up is a provisioning that fails on a
   fresh project (§1.9, Task 6). **Built** (Task 6): the module's bindings are
   `google_project_iam_member` resources that name the accounts it creates, so
-  Terraform orders the account before the binding — the shape the
-  installation module already uses for its own scheduler account, and the
-  one a live run (57b) would have to confirm rather than a fake. What Task 6
-  retries itself is the call that follows the apply: starting the preload
+  Terraform orders the account before the binding — but ordering is not a
+  wait, so the stage also retries: an apply that fails with "Service account
+  … does not exist" waits (15 s, 30 s, 60 s, 120 s), re-plans, and applies
+  what is left, and only when the new plan passes the guard and the grant
+  rules and holds nothing the confirmed plan did not (`computeStage.apply`,
+  `TestComputeStageRetriesIAMPropagation`). Which message GCP gives for the
+  gap is what a live run (57b) has to confirm rather than a fake; a gap
+  reported in other words fails the stage, and rerunning it applies the rest.
+  What Task 6 also retries is the call that follows the apply: starting the preload
   rebuild, whose scheduler agent's binding on the preload account is seconds
   old (`infra.RunSchedulerJob`: a 403 is retried for about a minute, a 404 —
   the job is not there — is not retried at all, and a refusal that outlasts

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -428,4 +429,137 @@ func TestRegistryRepositoryFollowsThePin(t *testing.T) {
 	if got := registryRepository(lc, outs); got != infra.GhcrRegistry {
 		t.Errorf("a first run's pin: %q, want %q", got, infra.GhcrRegistry)
 	}
+}
+
+// jobsEditorChange is the launchers' Batch Job Editor grant as the compute
+// root's plan would carry it, with conds as its condition blocks.
+func jobsEditorChange(member string, conds []any) planChange {
+	return planChange{"address": `module.compute.google_project_iam_member.launcher_jobs_editor["x"]`, "type": "google_project_iam_member",
+		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{
+			"project": initProject, "role": "roles/batch.jobsEditor", "member": member, "condition": conds}}}
+}
+
+// The compute root's grants are held to the compute module's rules
+// (infra.ComputeCover's GrantsNotCovered): an unconditioned Batch Job Editor
+// -- every Batch job in the project, with any image and any account -- is
+// refused before anything is confirmed or applied, in the plan view and in
+// the apply alike. The change is the COMPUTE root's alone, so the refusal can
+// only be this stage's: deleting the check from either method fails here.
+func TestComputeStageHoldsItsGrantsToTheCover(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"the plan view", []string{"init", "--yes", "--plan-only", "--provision-batch"}},
+		{"the apply", []string{"init", "--yes", "--provision-batch"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			typedThroughYes(t)
+			r := computeRig(t)
+			r.setPlanAt(t, "installation")
+			r.setPlanAt(t, "compute", jobsEditorChange("serviceAccount:"+infra.ReaperAccountID+"@"+initProject+".iam.gserviceaccount.com", []any{}))
+			fakeTerminal(t)
+			out, _, err := executeStdin(t, initProjectName+"\n", tc.args...)
+			if err == nil || !strings.Contains(err.Error(), "the compute root's plan grants what the compute module does not") ||
+				!strings.Contains(err.Error(), "launcher_jobs_editor") {
+				t.Fatalf("err = %v, want the compute stage's grant refusal:\n%s", err, out)
+			}
+			if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
+				t.Fatalf("a plan with an uncovered grant was applied: %q", calls)
+			}
+		})
+	}
+}
+
+// propagationStderr is what an apply says when a binding names a service
+// account the same apply created a moment ago and IAM does not see yet
+// (design compute-backend §7.2 finding 5).
+const propagationStderr = `Error: Error applying IAM policy for project "proj-1234": Error setting IAM policy for project "proj-1234": googleapi: Error 400: Service account fugaro-reaper@proj-1234.iam.gserviceaccount.com does not exist., badRequest`
+
+// A fresh account's bindings are retried, not given up on: an apply that fails
+// because IAM does not see an account yet waits, re-plans, holds the new plan
+// to the guard, the grant rules and the plan that was confirmed, and applies
+// what is left -- without asking again, since what is left is part of what
+// was confirmed.
+func TestComputeStageRetriesIAMPropagation(t *testing.T) {
+	noComputeWaits(t)
+	typedThroughYes(t)
+	r := computeRig(t)
+	r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
+	r.save(t)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := subcommands(computeCalls(t, r)); !slices.Equal(got, []string{"version", "init", "plan", "show", "apply", "plan", "show", "apply", "output"}) {
+		t.Fatalf("terraform calls in the compute workdir = %q, want one re-plan and one more apply\n%s", got, out)
+	}
+	if !strings.Contains(out, "not visible to IAM yet") {
+		t.Errorf("the retry was not reported:\n%s", out)
+	}
+	if runs := r.sched.Runs(); len(runs) != 1 {
+		t.Errorf("the preload rebuild was started %d times, want once after the retried apply", len(runs))
+	}
+}
+
+// What the retry does not do: retry anything that is not a propagation gap,
+// retry for ever, or apply a re-plan that holds more than was confirmed.
+func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
+	t.Run("another failure", func(t *testing.T) {
+		noComputeWaits(t)
+		typedThroughYes(t)
+		r := computeRig(t)
+		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
+		r.save(t)
+		fakeTerminal(t)
+		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		if err == nil {
+			t.Fatal("a failed apply succeeded")
+		}
+		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != 1 {
+			t.Errorf("applied %d times, want 1: only a propagation gap is retried", n)
+		}
+	})
+	t.Run("a gap that never closes", func(t *testing.T) {
+		noComputeWaits(t)
+		typedThroughYes(t)
+		r := computeRig(t)
+		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": propagationStderr}
+		r.save(t)
+		fakeTerminal(t)
+		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		if err == nil || !strings.Contains(err.Error(), "does not exist") {
+			t.Fatalf("err = %v, want the last propagation error", err)
+		}
+		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != len(computeApplyWaits)+1 {
+			t.Errorf("applied %d times, want %d", n, len(computeApplyWaits)+1)
+		}
+	})
+	t.Run("a re-plan with something new", func(t *testing.T) {
+		noComputeWaits(t)
+		typedThroughYes(t)
+		r := computeRig(t)
+		first := planJSON(t, change("module.compute.google_compute_router.this", "create"))
+		second := planJSON(t, change("module.compute.google_compute_router.this", "create"), change("module.compute.google_compute_firewall.extra", "create"))
+		r.script["show@compute"] = []any{map[string]any{"stdout": first}, map[string]any{"stdout": second}}
+		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
+		r.save(t)
+		fakeTerminal(t)
+		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
+		if err == nil || !strings.Contains(err.Error(), "google_compute_firewall.extra") {
+			t.Fatalf("err = %v, want the retry refused for the change nobody confirmed", err)
+		}
+		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != 1 {
+			t.Errorf("applied %d times, want 1", n)
+		}
+	})
+}
+
+// noComputeWaits makes the propagation retry's waits instant.
+func noComputeWaits(t *testing.T) {
+	t.Helper()
+	old := computeApplyWaits
+	computeApplyWaits = make([]time.Duration, len(old))
+	t.Cleanup(func() { computeApplyWaits = old })
 }

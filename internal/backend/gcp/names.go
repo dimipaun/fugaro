@@ -448,9 +448,10 @@ var (
 
 // LauncherJobsCondition narrows the launchers' roles/batch.jobsEditor grant
 // to Fugaro-shaped job names in project and region (design compute-backend
-// §3.7, Check 57a step 9). The compute module and the install guard
-// (tf.Cover) both compare against it byte for byte: this is its one
-// definition. project and region are embedded in a CEL string literal
+// §3.7, Check 57a step 9). The compute module renders it, and the compute
+// stage's grant check (tf.Cover.GrantsNotCovered over the compute root's plan,
+// with that root's project and region) compares against it byte for byte:
+// this is its one definition. project and region are embedded in a CEL string literal
 // unescaped, so it panics on one outside their charsets rather than return
 // a condition that could break out of the literal.
 func LauncherJobsCondition(project, region string) string {

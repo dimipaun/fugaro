@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The Batch backend's installation-level provisioning (design
@@ -206,7 +208,45 @@ func ComputeVars(spec ComputeSpec) ([]byte, error) {
 	case spec.BuildSubmitterRole == "":
 		return nil, fmt.Errorf("the compute root needs the installation's build-submitter role: the preload build is started with it")
 	}
+	for _, m := range spec.Operators {
+		if !computeOperator.MatchString(m) {
+			return nil, fmt.Errorf("the compute root's operator %q is not a user:, group: or serviceAccount: member: every operator gets actAs on the preload account, which can act as the run accounts and create instances, so a whole domain or a wildcard is refused (the module's operators validation)", m)
+		}
+	}
 	return sortedJSON(spec)
+}
+
+// computeOperator is the shape the module's operators validation accepts: one
+// principal with an address, never a domain: member, allUsers or
+// allAuthenticatedUsers.
+var computeOperator = regexp.MustCompile(`^(user|group|serviceAccount):[^@\s]+@[^@\s]+$`)
+
+// ComputeServiceAgents are the project's Cloud Build and Cloud Scheduler
+// service agents, in that order, as modules/compute/iam.tf derives them from
+// the project number: the two Google principals the module gives actAs on the
+// preload account.
+func ComputeServiceAgents(projectNumber string) []string {
+	return []string{
+		"serviceAccount:service-" + projectNumber + "@gcp-sa-cloudbuild.iam.gserviceaccount.com",
+		"serviceAccount:service-" + projectNumber + "@gcp-sa-cloudscheduler.iam.gserviceaccount.com",
+	}
+}
+
+// ComputeCover is the grant rules the compute stage holds its root's plan to
+// (tf.Cover.GrantsNotCovered): the compute root's OWN project and region --
+// the region the module renders the launchers' Batch Job Editor condition
+// for, not the local config's -- the launchers and operators as the only
+// people, and the run accounts and the two service agents as accounts beside
+// the fixed and derived Fugaro ones. The root's plan is never covered by the
+// run's one confirmation; this is what checks its grants, and the
+// jobsEditor condition among them.
+func ComputeCover(spec ComputeSpec) tf.Cover {
+	return tf.Cover{
+		Projects: []string{spec.Project},
+		Region:   spec.Region,
+		Listed:   slices.Concat(spec.Launchers, spec.Operators),
+		Accounts: slices.Concat(spec.RunAccounts, ComputeServiceAgents(spec.ProjectNumber)),
+	}
 }
 
 // DefaultNetwork is the network the job's VMs are placed on when the caller

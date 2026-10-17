@@ -44,7 +44,10 @@ locals {
   # Scheduler job's OAuth token take it. The reaper's own email has no reader:
   # every binding on it names the account resource that creates it
   # (google_service_account.reaper), which is also what orders the binding
-  # after the account — the propagation wait of §7.2.
+  # after the account. Ordering is not the propagation wait of §7.2 (a fresh
+  # account is not visible to binding calls for a while): that wait is the
+  # compute stage's, which retries an apply that fails with "Service account
+  # ... does not exist" (internal/cli/init_compute.go, computeStage.apply).
   preload_email = "${var.names.preload_account_id}@${var.project}.iam.gserviceaccount.com"
   # The service agents that must be able to act as an account this module
   # creates: Cloud Build runs the preload build as the preload account, and

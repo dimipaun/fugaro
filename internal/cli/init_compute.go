@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -30,6 +33,14 @@ import (
 // state of its own, see infra.ComputeWorkdir), handle a secret, or delete
 // anything it did not create — the plan passes tf.Guard like every other
 // apply, and --allow-delete names any address on purpose.
+//
+// Its plan is never covered by the run's one confirmation, but its GRANTS are
+// held to the compute module's rules all the same: Plan and Apply run
+// infra.ComputeCover's GrantsNotCovered over it (the compute root's own
+// project and region), so a Batch Job Editor grant that is not under the
+// launchers' Fugaro job-name condition, a grant to someone who is neither a
+// launcher, an operator nor one of the root's accounts, or a role the module
+// does not grant is refused before anything is confirmed.
 type computeStage struct {
 	e *initEngine
 	// changes and applied mirror engineStage's, so the plan view and the
@@ -93,6 +104,9 @@ func (s *computeStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 	if err := guard(plan, s.e.r.o.allowDelete); err != nil {
 		return initflow.Plan{}, err
 	}
+	if err := s.grants(plan); err != nil {
+		return initflow.Plan{}, err
+	}
 	counts := infra.CountPlan(plan)
 	s.changes = &counts
 	return s.e.planned(&counts), nil
@@ -116,6 +130,9 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	if err := guard(plan, r.o.allowDelete); err != nil {
 		return initflow.Outcome{}, err
 	}
+	if err := s.grants(plan); err != nil {
+		return initflow.Outcome{}, err
+	}
 	counts := infra.CountPlan(plan)
 	s.changes = &counts
 
@@ -132,8 +149,8 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	if !confirmed {
 		return initflow.Outcome{}, r.notConfirmed("nothing was applied")
 	}
-	if err := s.t.Apply(ctx, infra.PlanFile); err != nil {
-		return initflow.Outcome{}, remote(err)
+	if err := s.apply(ctx, plan); err != nil {
+		return initflow.Outcome{}, err
 	}
 	s.applied = true
 	r.res.Applied = true
@@ -150,6 +167,95 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	}
 	fmt.Fprintf(r.w, "provisioned; the preloaded boot image %s is being built now (Cloud Build, about two minutes), and rebuilt on its schedule\n", s.image)
 	return initflow.Outcome{Changed: true, Detail: "applied: " + counts.String() + " (preload image " + s.image + ")"}, nil
+}
+
+// grants refuses a plan whose grants are not the compute module's (see the
+// type's comment): the compute root's own cover, never the installation's.
+func (s *computeStage) grants(plan *tf.Plan) error {
+	if why := infra.ComputeCover(s.spec).GrantsNotCovered(plan); len(why) > 0 {
+		return userErr("the compute root's plan grants what the compute module does not (%s); nothing was applied", strings.Join(why, "; "))
+	}
+	return nil
+}
+
+// computeApplyWaits are the waits before each retry of an apply that failed
+// on IAM propagation: about four minutes in all. A variable so a test can make
+// them instant.
+var computeApplyWaits = []time.Duration{15 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second}
+
+// iamGap is how an apply reports a binding that names a service account IAM
+// does not see yet: "Service account <email> does not exist".
+var iamGap = regexp.MustCompile(`(?i)service\s+account\s+\S+\s+does\s+not\s+exist`)
+
+// apply applies the confirmed plan, and waits out IAM propagation (design
+// compute-backend §7.2 finding 5, §8.1 task 6): the module's bindings name the
+// accounts it creates, so Terraform orders each account before its bindings,
+// but a service account is not visible to IAM binding calls for a while after
+// it is created, and ordering alone does not wait for that. So an apply that
+// fails with "Service account ... does not exist" waits, re-plans, and applies
+// what is left -- and only when the new plan passes the guard and the grant
+// rules and every change in it is a change the confirmed plan held with the
+// same actions, which is what lets it go ahead without asking again. Any other
+// failure, a gap that outlasts the waits, or a re-plan holding anything new is
+// the stage's error.
+func (s *computeStage) apply(ctx context.Context, confirmed *tf.Plan) error {
+	r := s.e.r
+	for attempt := 0; ; attempt++ {
+		err := s.t.Apply(ctx, infra.PlanFile)
+		if err == nil {
+			return nil
+		}
+		if !iamGap.MatchString(err.Error()) || attempt >= len(computeApplyWaits) {
+			return remote(err)
+		}
+		wait := computeApplyWaits[attempt]
+		fmt.Fprintf(r.w, "a service account this apply created is not visible to IAM yet (design compute-backend §7.2); retrying what is left in %s\n", wait)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		changed, err := s.t.Plan(ctx, infra.PlanFile)
+		if err != nil {
+			return remote(err)
+		}
+		if !changed {
+			return nil
+		}
+		next, err := s.t.Show(ctx, infra.PlanFile)
+		if err != nil {
+			return remote(err)
+		}
+		if err := guard(next, r.o.allowDelete); err != nil {
+			return err
+		}
+		if err := s.grants(next); err != nil {
+			return err
+		}
+		if extra := unconfirmed(next, confirmed); len(extra) > 0 {
+			return userErr("the retry's plan holds changes the confirmed plan did not (%s); nothing more was applied: run init --provision-batch again to review and confirm them", strings.Join(extra, ", "))
+		}
+	}
+}
+
+// unconfirmed are the addresses next changes that confirmed did not change,
+// or changed with other actions.
+func unconfirmed(next, confirmed *tf.Plan) []string {
+	had := map[string][]string{}
+	for _, rc := range confirmed.ResourceChanges {
+		had[rc.Address] = rc.Change.Actions
+	}
+	var out []string
+	for _, rc := range next.ResourceChanges {
+		acts := rc.Change.Actions
+		if !slices.ContainsFunc(acts, func(a string) bool { return a != "no-op" && a != "read" }) {
+			continue
+		}
+		if prev, ok := had[rc.Address]; !ok || !slices.Equal(prev, acts) {
+			out = append(out, rc.Address)
+		}
+	}
+	return out
 }
 
 // plan prepares the workdir and the root and plans it. It returns a nil plan
