@@ -46,7 +46,7 @@ type projectJobFixture struct {
 // serving github, and every repository of the fixture's owner admitted to it.
 // The profile mounts no secret, so its job runs as no Claude account and the
 // job's account segment is empty (config.ClaudeAccountOfSecrets).
-const projectJobPolicy = `{"version":1,"allow_repos":["github/acme/*"],` +
+const projectJobPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 
 // projectJobTimeout is the profile's task timeout: what a project job's
@@ -415,7 +415,7 @@ func projectJobCheckoutYAML(t *testing.T, yaml string) string {
 // mounting acme-personal's token: the profile's account is the account segment
 // of its job's name (gcp.ProjectJobName), which is what the launch has to
 // agree with.
-const projectJobAccountPolicy = `{"version":1,"allow_repos":["github/acme/*"],` +
+const projectJobAccountPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"secrets":["claude-oauth-token-acme-personal"]}}}`
 
@@ -495,5 +495,57 @@ func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 	spec, err := runstore.Open(b, appSlug, run).ReadTask(context.Background())
 	if err != nil || spec.OAuthToken != "acme-personal" {
 		t.Errorf("the stored task = %+v, %v; want the profile's account", spec, err)
+	}
+}
+
+// TestReadViewsRefuseAGoneExecution is the #460 review's D1: a run's own
+// service account can write the result.json that names its execution, and an
+// execution Cloud Run no longer has reports no FUGARO_RUN to check. Before
+// the fix checkExecution treated "not found" as followable for every view, so
+// a run naming a deleted execution of another repository's job — whose logs
+// the log bucket still holds — had `fugaro logs` and `fugaro diagnose` print
+// that repository's logs. The read views now refuse it; cancel keeps its
+// tolerance of a vanished execution, and ls (which reads no logs) shows the
+// row without one.
+//
+// Mutation (run, restore): make ownerLaunch follow a gone execution again
+// (checkExecution's ErrNotFound case back to nil, nil for every caller) —
+// logs prints the other repository's line and this test fails.
+func TestReadViewsRefuseAGoneExecution(t *testing.T) {
+	f := newProjectJobFixture(t)
+	other := gcp.JobName(otherSlug, "web")
+	f.run.AddJob(other, "4", "8Gi")
+	// A name of the other repository's job that Cloud Run does not have (any
+	// longer): its logs are still in the log bucket.
+	live := f.run.Start(other)
+	id, ok := backend.ParseExecution(live)
+	if !ok {
+		t.Fatalf("ParseExecution(%q) failed", live)
+	}
+	id.Name += "-zzzzz"
+	gone := id.String()
+	at := time.Now().UTC()
+	f.logging.AddJSONLines(gone, []byte(`{"time":"`+at.Format(time.RFC3339)+`","message":"acme/other said this"}`))
+
+	const lie = "20261016-120000-aaaa"
+	seedSharedRun(t, f.cloudFixture, appSlug, "acme/app", lie, gone)
+	writeRecord(t, f.cloudFixture, lie, &runstore.Record{Version: 1, RunID: lie, Execution: gone, Status: runstore.StatusFailed, Stage: "implement"})
+
+	out, _, err := execute(t, "logs", appSlug+"/"+lie)
+	if strings.Contains(out, "acme/other said") {
+		t.Fatalf("logs printed another repository's entries for a gone execution: %q", out)
+	}
+	if err == nil || !strings.Contains(err.Error(), "no longer exists") {
+		t.Errorf("logs of a run naming a gone execution: %v, want a refusal", err)
+	}
+	out, errOut, err := execute(t, "diagnose", "--json", appSlug+"/"+lie)
+	if err != nil {
+		t.Fatalf("diagnose of a run whose execution is gone: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out+errOut, "acme/other said") {
+		t.Fatalf("diagnose printed another repository's entries for a gone execution: %q", out)
+	}
+	if !strings.Contains(errOut, "no longer exists") {
+		t.Errorf("diagnose stderr = %q, want a note on why there are no logs", errOut)
 	}
 }

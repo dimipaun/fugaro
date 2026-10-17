@@ -98,7 +98,9 @@ func CheckExecutionName(name, region string) error {
 func CheckRunExecution(x backend.Execution, slug, runID string) error {
 	want := slug + "/" + runID
 	if x.Run != want {
-		return fmt.Errorf("execution %s reports FUGARO_RUN %q, not %q: it is not the execution of run %s/%s. A run's objects may name only its own execution, and on a shared job they are the only thing that names one", x.Name, x.Run, want, slug, runID)
+		// Not x.Run: the refusal reaches whoever asked about this run, and
+		// the execution it names may be another repository's (review D2).
+		return fmt.Errorf("execution %s reports another run's FUGARO_RUN (or none), not %q: it is not the execution of run %s/%s. A run's objects may name only its own execution, and on a shared job they are the only thing that names one", x.Name, want, slug, runID)
 	}
 	return nil
 }

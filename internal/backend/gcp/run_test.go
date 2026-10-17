@@ -460,8 +460,17 @@ func TestCheckRunExecution(t *testing.T) {
 		"no FUGARO_RUN at all":        {Name: own.Name},
 		"a bare run id":               {Name: own.Name, Run: run},
 	} {
-		if err := CheckRunExecution(x, slug, run); err == nil {
+		err := CheckRunExecution(x, slug, run)
+		if err == nil {
 			t.Errorf("%s accepted", name)
+			continue
+		}
+		// The refusal reaches the user of the run that named the execution
+		// (logs, cancel, --retry, ls's Reason): it must not say whose run the
+		// execution is (review D2 of #460).
+		// (A bare run id is the run's own id, which the refusal does name.)
+		if x.Run != "" && !strings.Contains(slug+"/"+run, x.Run) && strings.Contains(err.Error(), x.Run) {
+			t.Errorf("%s: the refusal names the other run %q: %v", name, x.Run, err)
 		}
 	}
 }
