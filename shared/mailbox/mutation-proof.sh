@@ -397,6 +397,16 @@ run "every other answer carries the watermark forward" \
 # 9. The eviction rule, the watermark, and the late work it must not lose.
 run "eviction: nothing un-acked is ever evicted" \
   "    if (entry.status !== STATUS.ACKED) return true;" ""
+# The clause above is one guard; that it is `!== acked` rather than `=== accepted`
+# is another. Keeping accepted records but evicting acted ones past the horizon
+# looks like the same rule and is not: an acted record is work this consumer
+# still owes an ack for, so evicting it past the horizon loses the owed ack (the
+# sender never learns the message was acted on and re-delivers it). Only the
+# 80-hour case below catches it, because every other acted record in this suite
+# is evicted only when the horizon has not passed it.
+run "eviction: an acted record past the horizon is kept, not evicted" \
+  "    if (entry.status !== STATUS.ACKED) return true;" \
+  "    if (entry.status === STATUS.ACCEPTED) return true;"
 run "eviction: only past the horizon" \
   "    if (now - entry.at <= horizon) return true;" ""
 run "eviction: at exactly the horizon a record is kept" \
