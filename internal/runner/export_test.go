@@ -114,6 +114,13 @@ func (h *RunHandle) CancelHaltedStage(hl runstore.Halt) { h.r.cancelHaltedStage(
 func (h *RunHandle) MarkCancelled() bool                { return h.r.markCancelled() }
 func (h *RunHandle) Stage() string                      { return h.r.rec.Stage }
 func (h *RunHandle) IsCancelled() bool                  { return h.r.isCancelled() }
+
+// Secrets is the values the run's redactor knows at the moment the hook is
+// called, and Redact is that redactor: together they are how a test asserts
+// that something the run holds (the launch's seal key) is registered before
+// bootstrap and hidden from everything the run publishes.
+func (h *RunHandle) Secrets() []string      { return h.r.secretList() }
+func (h *RunHandle) Redact(s string) string { return h.r.redact(s) }
 func (h *RunHandle) SetStageExtra(f func(stage string) ([]string, int64)) {
 	h.r.mu.Lock()
 	h.r.stageExtra = f

@@ -110,7 +110,7 @@ func runBudget(t *testing.T, auth, mode, script string, onStart func(r *budgetRi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := token.PutObject(context.Background(), b, acmeSlug, runID, tok); err != nil {
+	if err := token.PutObject(context.Background(), b, acmeSlug, runID, tok, nil); err != nil {
 		t.Fatal(err)
 	}
 	b.Close()

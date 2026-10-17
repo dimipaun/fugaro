@@ -368,7 +368,7 @@ func lbStart(t *testing.T, ctx context.Context, env lbEnv, remote string, spec l
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := token.PutObject(ctx, b, slug, spec.runID, r.custom); err != nil {
+		if err := token.PutObject(ctx, b, slug, spec.runID, r.custom, nil); err != nil {
 			t.Fatal(err)
 		}
 		_ = b.Close()

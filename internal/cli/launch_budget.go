@@ -366,7 +366,14 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	if err := token.DeleteObject(ctx, e.bucket, slug, run); err != nil {
 		return false, remote(err)
 	}
-	if err := token.PutObject(ctx, e.bucket, slug, run, tok); err != nil {
+	// The nil key is deliberate and is this slice's whole launcher-side
+	// change: the token still goes into the bucket as plaintext, because a
+	// launcher that seals must hand its key to the execution it starts, and
+	// the fleet has to carry a runner that never echoes a marker's value and
+	// registers the key with its redactor first (D19: runner and image first,
+	// launcher second, in separate deployments). Sealing here is the next
+	// slice's change, together with the re-seal a --retry needs (D17).
+	if err := token.PutObject(ctx, e.bucket, slug, run, tok, nil); err != nil {
 		// A put that failed after writing leaves an untaken token valid
 		// for an hour: remove it, best effort.
 		if !errors.Is(err, token.ErrObjectExists) {

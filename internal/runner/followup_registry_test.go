@@ -62,7 +62,7 @@ func mintFor(t *testing.T, b *bk, run string, at time.Time) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := token.PutObject(context.Background(), b.bucket, repoSlug, run, tok); err != nil {
+	if err := token.PutObject(context.Background(), b.bucket, repoSlug, run, tok, nil); err != nil {
 		t.Fatal(err)
 	}
 }

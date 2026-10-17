@@ -56,7 +56,7 @@ func TestLauncherGrantsCoverEveryLauncherWrite(t *testing.T) {
 	if err := s.RequestCancel(ctx); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	if err := token.PutObject(ctx, b, slug, run, fakeBudgetToken(slug, run)); err != nil {
+	if err := token.PutObject(ctx, b, slug, run, fakeBudgetToken(slug, run), nil); err != nil {
 		t.Fatalf("budget token: %v", err)
 	}
 	if err := token.DeleteObject(ctx, b, slug, run); err != nil {

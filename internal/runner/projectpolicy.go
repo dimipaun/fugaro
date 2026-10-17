@@ -373,7 +373,13 @@ func (r *run) takeBudgetToken(ctx context.Context) (string, error) {
 	if budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
 		return "", fmt.Errorf("the repository slug %q or run id %q cannot be used as keys of the budget database", slug, runID)
 	}
-	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID)
+	// The take carries the launch's seal key (Backend.TokenKey, from the
+	// marker's value): the object is sealed under it once the launcher seals,
+	// and a plaintext object is then refused rather than read (openToken).
+	// An empty key is today's shape, where the launcher writes the token
+	// plaintext. The key itself is registered with the redactor at the top of
+	// Run, before this call, so nothing here may print it.
+	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID, r.d.Backend.TokenKey)
 	switch {
 	case errors.Is(err, token.ErrNoToken):
 		return "", err // the caller says what an absent token means for this run

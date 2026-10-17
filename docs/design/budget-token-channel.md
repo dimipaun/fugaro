@@ -1,13 +1,15 @@
 # The budget token's channel
 
-**Status: the decisions are answered (2026-10-15); implementation awaits the owner's explicit go.**
+**Status: the decisions are answered (2026-10-15); Slice A is built (the runner side and the token
+package); Slice B (the launcher seals, the retry re-seal, the `tokens/` move) follows.**
 Phase 3b, Task 3b.1 of [the project-centric plan](../plans/2026-10-14-project-centric.md).
 SECURITY-SENSITIVE: it is flagged for an independent review, and it decides nothing by itself.
 **D14 to D19 are no longer open**: the owner answered all six on 2026-10-15, and each answer is
 recorded under the decision it answers, in the owner's own terms. The answers settle *what* to
 build, not *whether to start*. This is still an approval-gated design and the gate is real:
-no code follows this document until the owner approves it — no change under `internal/`, no
-Terraform, no config, no live action, no secret handled. Its one red step is the documentation test
+no code follows this document until the owner approves it — D14's "build the seal" is the approval
+the runner side was built under, and the paragraphs below mark what it does and does not cover —
+no Terraform, no config, no live action, no secret handled. Its one red step is the documentation test
 beside it,
 `internal/cli/docs_budget_token_channel_test.go`, which fails until this file and the
 [SECURITY.md](../../SECURITY.md) pointer exist.
@@ -19,6 +21,30 @@ that job can then read, and delete, any other run's budget token. D13 accepted t
 sent it to SECURITY.md's own words beside D4; phase 3b designs the channel that replaces it. One
 half of D13 stands whatever this document decides, and the recommendation below does not touch it:
 inside a shared job the profile is the isolation boundary.
+
+**Slice A is built (2026-10-15).** The owner's "build the seal" (D14) is the approval the paragraph
+above was waiting for, and Slice A is the seal's **runner side**, in the order D19 fixes — runner
+and image first: the versioned envelope in `internal/budget/token` (the new `seal.go`:
+`Seal`/`Unseal`, the version byte, the object's name and the version byte as additional
+authenticated data, `ParseKey`/`EncodeKey`), `PutObject`/`TakeObject` understanding it, every
+refusal §7.4 lists, the
+runner's strict parse of the marker's value with `"1"` still accepted as the one-bit marker, the key
+registered with the runner's redactor before anything can print it, the marker stripped from every
+git call's environment beside the model credentials, and the `%q` leak gone — no code
+path prints the marker's value. **Slice B follows, and is not in this change:** the launcher seals
+and hands its key to the execution it starts, a `--retry` re-mints and re-seals under a new key
+(D17), the object moves to `tokens/` with the grant that reads it (D16, Task 3.2), and SECURITY.md's
+two sentences are rewritten with the launcher's seal (D15). Until Slice B the launcher still writes
+the token plaintext, which is why SECURITY.md's wording is unchanged here: the marker's nature
+change arrives with the launcher, not with the runner that is ready for it.
+
+**One consequence to record for Slice B rather than to build now:** once the launcher seals, the
+key it hands the execution is the same override that the batch backend turns into the job's
+definition, so a batch launch would carry the key in plaintext in the job spec — a location the
+agent cannot read but a peer's `gcloud run jobs describe` could, which is a wider audience than the
+marker's own (compute Task 7, `docs/design/compute-backend.md`). The marker's carrier is settled by
+D15 and this document does not reopen it; the batch path's handling of a secret-bearing override is
+Slice B's to decide, and no batch code changes for Slice A.
 
 Every symbol below was read on `next` on 2026-10-15 and is cited by name rather than by line
 number, because the lines move.
@@ -303,8 +329,15 @@ nothing.
   generates with `crypto/rand` for this launch, in a small versioned envelope so that a later format
   is distinguishable and a plaintext object is distinguishable from a sealed one. The envelope is
   **`version byte || 12-byte nonce || ciphertext || 16-byte tag`**, and the object's own key —
-  `token.ObjectKey(slug, run)`, the `tokens/…` form of §7.2 once the object has moved — is the GCM
-  **additional authenticated data**. **What stops a sealed object from being replayed sideways is the
+  `token.ObjectKey(slug, run)`, the `tokens/…` form of §7.2 once the object has moved — **followed by
+  a zero byte and the envelope's version byte**, is the GCM **additional authenticated data**. The
+  zero byte is the separator (an object key carries none), so a name and a version cannot be
+  rearranged into another pair with the same AAD. The version byte is in the AAD as well as checked
+  — it is the envelope's first byte, and `Unseal` refuses a foreign one before it opens anything —
+  because the check is a statement about *this* build's format and the binding is a statement about
+  the bytes: a later version's envelope can then only be opened by code that knows which format it
+  holds. The AAD is not part of the envelope, so binding it changes nothing about the shape above.
+  **What stops a sealed object from being replayed sideways is the
   per-launch key, not the AAD**: while the object still lives under `runs/` — the seal-only first
   step D19 ships — copying one run's object onto another run's key is a write the peer's grant
   already allows (`google_storage_bucket_iam_member.job`, whose condition covers the bucket's
@@ -322,12 +355,21 @@ nothing.
   by the end-to-end check**: every step of Check 60 that could exercise it already fails earlier, at
   the unseal, because the keys differ. It needs a unit test in `internal/budget/token` that seals under
   one key string and opens under another and asserts the tag check refuses — that test, not a check
-  step, is where this claim is held.
+  step, is where this claim is held. The version byte's half of the AAD is held the same way and
+  needs its own: through `Unseal` the binding is invisible (the version byte is checked before the
+  open), so the test that holds it opens the envelope with `aad` itself and with a changed version
+  (`seal_aad_test.go`, in the package rather than beside it).
 - The key is **32 bytes from `crypto/rand`**, carried in the override as **unpadded base64url** (43
   characters), and the parse is strict, because the value decides whether the run unseals anything
   at all: a value that is not exactly one unpadded base64url string decoding to 32 bytes —
-  whitespace, `=` padding, a second segment, a shorter or longer key — is `MalformedEnv` and stops
-  the run (§7.4, row 2). It is a key, not a passphrase, so there is no KDF anywhere in the channel.
+  whitespace, `=` padding, a second segment, a shorter or longer key, or a non-canonical spelling of
+  the right 32 bytes — is `MalformedEnv` and stops the run (§7.4, row 2). The last of those is not
+  pedantry: 32 bytes is three whole base64url groups plus two, so the last character carries four
+  significant bits and two the encoding discards, and **three other 43-character spellings decode to
+  the same key**. The runner registers the *encoded* key with its redactor, so a lax parse would
+  leave three live spellings of the key that nothing redacts; `token.ParseKey` decodes through
+  `base64.RawURLEncoding.Strict()` and the rubric's value is one spelling, the one the redactor
+  knows. It is a key, not a passphrase, so there is no KDF anywhere in the channel.
 - The key travels in the override the launcher already writes. `internal/cli/run.go`'s
   `lspec.Env = []string{runner.BudgetTokenEnv + "=1"}` becomes a marker whose *value* is the
   execution's key; no new variable name, no new permission and no new resource for the carrier.
@@ -663,7 +705,8 @@ in `internal/budget/token` beside `PutObject`/`TakeObject` (one package owns bot
 channel), with the format's version as the envelope's first byte so a later format is refusable
 rather than misread, and with a plaintext object treated as a refusal once the launcher seals. The
 shape is fixed by §7.1 and decided here only in the sense of being accepted: `version byte ||
-12-byte nonce || ciphertext || 16-byte tag`, the object's key as additional authenticated data,
+12-byte nonce || ciphertext || 16-byte tag`, the object's key followed by the version byte as
+additional authenticated data,
 and a 32-byte key carried as unpadded base64url. **The AAD makes the envelope's bytes depend on the
 name they are stored under**, so the `tokens/` move of §7.2 changes the AAD and cannot be deployed
 against a launcher or a runner that still computes the old key — **the move and the code that
@@ -677,7 +720,7 @@ their only caller.
 
 **Owner's answer (2026-10-15): the versioned envelope, in `internal/budget/token`.** The file lives
 beside `PutObject`/`TakeObject`; the shape is **`version byte || 12-byte nonce || ciphertext ||
-16-byte tag`**; the object's own name is the additional authenticated data; the key is **32 bytes**
+16-byte tag`**; the object's own name and the version byte are the additional authenticated data; the key is **32 bytes**
 carried as **unpadded base64url**; and a plaintext object is **refused** once the launcher seals —
 no fallback to plaintext, for the reason §7.4's rows give (a mixed deployment is not an unsealing
 one), because a fallback would hand the exposure D13 accepted straight back.

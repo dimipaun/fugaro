@@ -62,6 +62,24 @@ var (
 	ErrNoToken = errors.New("budget token: no token object")
 	// ErrObjectExists means PutObject found a token object already there.
 	ErrObjectExists = errors.New("budget token: token object already exists")
+	// ErrSealKey means a value is not a seal key: a marker's value that is
+	// neither "1" nor one unpadded base64url string decoding to KeySize
+	// bytes, or a key handed to Seal/Unseal whose length is not KeySize.
+	ErrSealKey = errors.New("budget token: not a seal key")
+	// ErrNotSealed means the object is not the sealed envelope this runner
+	// writes: it is too short, it is a plaintext token object, or it is an
+	// envelope from a format this runner does not know. A plaintext object
+	// with a key presented is this, and it is a refusal rather than a
+	// fallback to the bytes (§7.4).
+	ErrNotSealed = errors.New("budget token: the object is not a sealed budget token")
+	// ErrSealedNoKey means the object is sealed and this execution presented
+	// no key: never read the bytes as a token, because a sealed object with
+	// no usable key is the theft case and not a plaintext token in a mixed
+	// deployment (§7.4).
+	ErrSealedNoKey = errors.New("budget token: the object is sealed and this execution has no seal key")
+	// ErrUnseal means a sealed envelope did not open: the wrong key, a
+	// tampered object, or a blob sealed for another object's name (the AAD).
+	ErrUnseal = errors.New("budget token: the sealed object did not unseal")
 	// ErrNotMinter means the launcher may not sign as the signer (403): it
 	// lacks the fugaroTokenMinter role on it.
 	ErrNotMinter = errors.New("budget token: not allowed to sign as the token signer")
