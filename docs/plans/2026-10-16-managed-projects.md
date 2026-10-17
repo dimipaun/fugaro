@@ -569,7 +569,7 @@ Each row is one mergeable PR, green on its own:
 
 **Red step — `Expected: FAIL`** — the scoping property against a predicate that removes the refusal for any project, and the "no apply after a refused gate" test against a sequence that logs the refusal and applies anyway.
 
-### Task 3.2: The refusals a person reads — SECURITY-SENSITIVE, independent opus review — D55 ANSWERED 2026-10-16; **this task is not approved** (the owner's Phase 1 approval reaches Tasks 1.0 to 1.5 only)
+### Task 3.2: The refusals a person reads — SECURITY-SENSITIVE, independent opus review — D55 ANSWERED 2026-10-16; **APPROVED 2026-10-17** (the owner's "Phases 3, 4, 5 minus unscheduled"; see the approval update under **Status**) — this heading said the task was not approved until that answer was given, the owner's Phase 1 approval of 2026-10-16 reaching Tasks 1.0 to 1.5 only
 
 **Files:** `internal/managed/apply.go`, `internal/cli/root.go`, `internal/managed/apply_test.go`, `internal/infra/tf/guard.go` (the refusal text, which this task makes replaceable rather than added to), `internal/cli/init.go` (the managed-mode call sites: `Guard`'s refusal and `infra.DeleteHints` at `:1130`), `plugin/skills/setup/SKILL.md` (Global Constraint 13: the new commands and the refusals a person reads, as that skill's `fugaro init` sections describe them)
 

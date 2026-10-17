@@ -13,6 +13,13 @@ var knownActions = map[string]bool{
 	"no-op": true, "create": true, "read": true, "update": true, "delete": true, "forget": true,
 }
 
+// AllowDeleteAdvice is the sentence Guard's refusal ends with when the caller
+// chose none: the advice for a command whose own --allow-delete is a flag it
+// accepts. It is today's text kept as a value rather than a line inside the
+// format string, so that a caller for whom it is false passes its own sentence
+// through GuardWith instead of adding a second refusal beside this one.
+const AllowDeleteAdvice = "Name an address with --allow-delete only if deleting it is intended"
+
 // Guard refuses a plan that would delete any resource, a replace included
 // (["delete","create"] or ["create","delete"]), unless its exact address is
 // in allowDelete — and, even then, unless the object it removes is that
@@ -20,8 +27,24 @@ var knownActions = map[string]bool{
 // moved block) is refused whatever the list says (removesUnderAnotherAddress).
 // forget, from a removed block, destroys nothing and is allowed. A change with
 // no actions, or one it doesn't know, is refused. The error lists every
-// refused address with its actions.
+// refused address with its actions and ends with AllowDeleteAdvice.
 func Guard(p *Plan, allowDelete []string) error {
+	return GuardWith(p, allowDelete, AllowDeleteAdvice)
+}
+
+// GuardWith is Guard with the advice its refusal ends with chosen by the
+// caller, because in one mode the advice above is false and dangerous: a
+// managed project's apply takes no such flag of its own — the addresses come
+// from the owner-written list the read is fail-closed on (D72/D74), and an
+// address the applying command named is refused rather than honoured — so a
+// refusal that told its reader to pass one would be an instruction the session
+// it refuses would follow. The managed sentence is managed.DeleteAdvice's; an
+// empty advice is no advice, and the refusal then ends at what it refused.
+//
+// Everything else is Guard's, and the plan's own words are the same in both
+// modes: the advice is one sentence, and the sentences beside it are not
+// advice but the reason.
+func GuardWith(p *Plan, allowDelete []string, advice string) error {
 	if p == nil {
 		return errors.New("guard: no plan")
 	}
@@ -51,8 +74,11 @@ func Guard(p *Plan, allowDelete []string) error {
 	if len(refused) == 0 {
 		return nil
 	}
-	return fmt.Errorf("the plan would delete or replace %d resource(s), or do something the guard doesn't know; nothing was applied. Name an address with --allow-delete only if deleting it is intended:\n  %s",
-		len(refused), strings.Join(refused, "\n  "))
+	head := fmt.Sprintf("the plan would delete or replace %d resource(s), or do something the guard doesn't know; nothing was applied", len(refused))
+	if advice == "" {
+		return fmt.Errorf("%s:\n  %s", head, strings.Join(refused, "\n  "))
+	}
+	return fmt.Errorf("%s. %s:\n  %s", head, advice, strings.Join(refused, "\n  "))
 }
 
 // removesUnderAnotherAddress: a change whose actions remove an object (a
