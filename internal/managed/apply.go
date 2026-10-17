@@ -112,9 +112,17 @@ type Request struct {
 	// config, Root the copy of the agent-authored root. It is this command's
 	// own (infra.ManagedWorkdir), never the checkout.
 	Workdir *infra.Workdir
-	// TF runs terraform in Workdir.Root, with the environment TerraformEnv
-	// built (tf.Env's allowlist, and the assertion over it).
-	TF *tf.TF
+	// Terraform builds the terraform this apply runs, in Workdir.Root, with
+	// the environment TerraformEnv built (tf.Env's allowlist, and the
+	// assertion over it) and the credential of the deployer account of D75 in
+	// it. It is a function and not a *tf.TF because the credential is not
+	// known until the account has been assumed, and every terraform this apply
+	// runs — init, plan, the show the gate reads, and the apply — has to run
+	// as it: the deployer holds this root's state bucket (D77) and the
+	// operator's identity may not, and a plan read as one identity and applied
+	// as another is not the plan the gate admitted. A nil one is refused
+	// (ready).
+	Terraform func(cred Credential) (*tf.TF, error)
 	// Cover is the managed instantiation of the scope-and-attribute gate: the
 	// managed project's own allowlist (Task 1.1), with the projects, region
 	// and buckets of this installation.
@@ -194,11 +202,13 @@ func (e *RefusedError) Unwrap() error { return ErrRefused }
 //  4. the root's own files — a backend, cloud, provider_meta, ephemeral or
 //     action block is refused BEFORE terraform init (the plan cannot show
 //     them: PR #483's required residual);
-//  5. the backend and the init — D77's bucket, written by this command;
-//  6. the plan, into a saved file;
-//  7. the plan's bytes hashed, then the gate;
-//  8. the deployer assumed (D75), the hash re-checked, and the saved file
-//     applied. Nothing runs outside that assumption.
+//  5. the backend, written by this command — D77's bucket, never the
+//     configuration's;
+//  6. the deployer account of D75 assumed, and everything below inside that
+//     assumption: terraform's own environment is built around its credential,
+//     the init and the plan run as it, the plan is gated, and the saved file
+//     is applied. Nothing runs outside the assumption, and a refused or
+//     unassumable deployer runs no terraform at all.
 func Apply(ctx context.Context, r Request) (Result, error) {
 	if err := r.Enable.Refuse(); err != nil {
 		return Result{}, err
@@ -230,20 +240,41 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 	if err := r.writeVars(); err != nil {
 		return Result{}, fmt.Errorf("the variables file of %s: %w", r.what(), err)
 	}
-	if err := r.TF.Init(ctx, settings); err != nil {
-		return Result{}, fmt.Errorf("initializing the root of %s: %w", r.what(), err)
-	}
-	planPath := filepath.Join(r.Workdir.Root, infra.PlanFile)
-	changed, err := r.TF.Plan(ctx, planPath)
+	// From here on everything runs as the deployer account of D75, and the
+	// first thing that runs as it is terraform itself: the plan is read from
+	// this root's state bucket (D77) and written back to it, so the identity
+	// that plans and the identity that applies have to be the same one, and
+	// both are the deployer's or there is no apply.
+	var (
+		res Result
+		run error
+	)
+	err = Deployer(ctx, r.GCPProject, r.Access, r.Impersonator, func(ctx context.Context, cred Credential) error {
+		t, err := r.Terraform(cred)
+		if err != nil {
+			return fmt.Errorf("terraform for %s: %w", r.what(), err)
+		}
+		if err := t.Init(ctx, settings); err != nil {
+			return fmt.Errorf("initializing the root of %s: %w", r.what(), err)
+		}
+		planPath := filepath.Join(r.Workdir.Root, infra.PlanFile)
+		changed, err := t.Plan(ctx, planPath)
+		if err != nil {
+			return fmt.Errorf("planning the root of %s: %w", r.what(), err)
+		}
+		if !changed {
+			// Nothing to change: there is no plan to gate and none to apply,
+			// and an empty plan is not a verdict.
+			res = Result{Changed: false}
+			return nil
+		}
+		res, run = r.gateAndApply(ctx, t, cred, planPath)
+		return run
+	})
 	if err != nil {
-		return Result{}, fmt.Errorf("planning the root of %s: %w", r.what(), err)
+		return res, err
 	}
-	if !changed {
-		// Nothing to change: there is no plan to gate and none to apply, and
-		// an empty plan is not a verdict.
-		return Result{Changed: false}, nil
-	}
-	return r.gateAndApply(ctx, planPath)
+	return res, nil
 }
 
 // refuseSession is D72/D74's refusal, in the words infra/managed.GuardAllowList
@@ -281,8 +312,8 @@ func (r Request) ready() error {
 	switch {
 	case r.Workdir == nil || r.Workdir.Dir == "" || r.Workdir.Root == "":
 		return fmt.Errorf("%w: no workdir, so there is no root to plan and nothing to apply", ErrRequest)
-	case r.TF == nil:
-		return fmt.Errorf("%w: no terraform, so the root cannot be planned", ErrRequest)
+	case r.Terraform == nil:
+		return fmt.Errorf("%w: nothing builds the terraform of %s, and an apply with no terraform to run as the deployer runs nothing", ErrRequest, r.what())
 	case r.Cover == nil:
 		return fmt.Errorf("%w: no cover, and a managed plan is admitted by the managed cover of %s or by nothing", ErrRequest, r.what())
 	case r.Access == nil || r.Impersonator == nil:
@@ -334,20 +365,22 @@ func (r Request) what() string {
 }
 
 // spec is the gate's own input: the managed cover, the owner's addresses, the
-// discovery's imports and the terraform the saved plan is read with.
-func (r Request) spec() Spec {
+// discovery's imports and the terraform the saved plan is read with — the one
+// the apply already built around the deployer's credential, so the show the
+// gate reads and the apply it admits are the same identity's.
+func (r Request) spec(t *tf.TF) Spec {
 	return Spec{Project: r.Project, GCPProject: r.GCPProject, Cover: r.Cover,
-		AllowDelete: r.AllowDelete, Imports: r.Imports, TF: r.TF}
+		AllowDelete: r.AllowDelete, Imports: r.Imports, TF: t}
 }
 
-// gateAndApply is the second half of Apply: the hash, the gate, the deployer
-// and the apply, in that order.
-func (r Request) gateAndApply(ctx context.Context, planPath string) (Result, error) {
+// gateAndApply is the second half of Apply, inside the deployer's assumption:
+// the hash, the gate, the re-check and the apply, in that order.
+func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, planPath string) (Result, error) {
 	before, err := planHash(planPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: the saved plan of %s: %w", ErrRequest, r.what(), err)
 	}
-	v, err := Gate(ctx, planPath, r.spec())
+	v, err := Gate(ctx, planPath, r.spec(t))
 	if err != nil {
 		// A plan the gate cannot read is an error and never a verdict, and the
 		// zero Verdict it returns is not OK either.
@@ -360,24 +393,21 @@ func (r Request) gateAndApply(ctx context.Context, planPath string) (Result, err
 		// the session a managed apply runs in means the step does not proceed.
 		return res, &RefusedError{Verdict: v}
 	}
-	err = Deployer(ctx, r.GCPProject, r.Access, r.Impersonator, func(ctx context.Context, cred Credential) error {
-		// The verdict is about a plan and not about a file name (Verdict's own
-		// contract), so the bytes are hashed again here, inside the assumption
-		// and immediately before the apply.
-		now, err := planHash(planPath)
-		if err != nil {
-			return fmt.Errorf("%w: the saved plan of %s: %w", ErrPlanChanged, r.what(), err)
-		}
-		if now != before {
-			return fmt.Errorf("%w: the file the gate admitted is not the file that would be applied (%s then, %s now), so nothing is applied: gate and apply must be the same bytes",
-				ErrPlanChanged, before, now)
-		}
-		if r.Out != nil {
-			fmt.Fprintf(r.Out, "applying the saved plan of %s as %s\n", r.what(), cred.Account())
-		}
-		return r.TF.Apply(ctx, planPath)
-	})
+	// The verdict is about a plan and not about a file name (Verdict's own
+	// contract), so the bytes are hashed again here, after the gate and
+	// immediately before the apply.
+	now, err := planHash(planPath)
 	if err != nil {
+		return res, fmt.Errorf("%w: the saved plan of %s: %w", ErrPlanChanged, r.what(), err)
+	}
+	if now != before {
+		return res, fmt.Errorf("%w: the file the gate admitted is not the file that would be applied (%s then, %s now), so nothing is applied: gate and apply must be the same bytes",
+			ErrPlanChanged, before, now)
+	}
+	if r.Out != nil {
+		fmt.Fprintf(r.Out, "applying the saved plan of %s as %s\n", r.what(), cred.Account())
+	}
+	if err := t.Apply(ctx, planPath); err != nil {
 		return res, err
 	}
 	return res, nil
@@ -413,8 +443,8 @@ func oneLine(s string) string {
 }
 
 // TerraformEnv is the environment a managed apply runs terraform with: tf.Env's
-// allowlist, and the assertion over it that the plan's own provider settings
-// are not in the environment either.
+// allowlist, and the assertion over it that no provider setting of the
+// applier's shell is in the environment either.
 //
 // Why the assertion exists as well as the allowlist (PR #483's required
 // residual (c)): the applier's shell is the operator's, and a GOOGLE_* variable
@@ -427,13 +457,25 @@ func oneLine(s string) string {
 // defaults a provider would otherwise fall back to, the impersonation, and
 // every *_CUSTOM_ENDPOINT (which would send the applier's bearer token to
 // another host).
+//
+// What the environment carries instead is the deployer's credential of D75,
+// and it arrives through parent: the caller replaces the one variable that
+// names a credential file (GOOGLE_APPLICATION_CREDENTIALS, on tf.Env's
+// allowlist) with a file of its own — the ADC library's
+// "impersonated_service_account" form, whose source_credentials are the
+// operator's own and whose impersonation URL names the deployer account —
+// BEFORE it calls this, so the assertion above runs over exactly what terraform
+// will run with. The alternative channel, GOOGLE_OAUTH_ACCESS_TOKEN, is refused
+// by name below: a minted access token in the environment is a credential this
+// command cannot refresh, and the file is the shape gcloud's own
+// --impersonate-service-account writes.
 func TerraformEnv(parent []string, workdir, cache string) ([]string, error) {
 	env, err := tf.Env(parent, workdir, cache)
 	if err != nil {
 		return nil, err
 	}
 	if k := providerSettingIn(env); k != "" {
-		return nil, fmt.Errorf("%w: %s is set in terraform's environment, and a managed apply runs with the applier's own ambient credentials alone: unset it", ErrProviderSetting, k)
+		return nil, fmt.Errorf("%w: %s is set in terraform's environment, and the credential terraform runs with is this command's own (the deployer account's): unset it", ErrProviderSetting, k)
 	}
 	return env, nil
 }

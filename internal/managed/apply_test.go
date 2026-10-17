@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -32,6 +33,11 @@ type applyRig struct {
 	*rig
 	wd  *infra.Workdir
 	src string
+	// mu guards creds, the accounts terraform was built around: the closure
+	// Terraform runs in is called from the apply's own goroutine today, and
+	// this is what keeps that an implementation detail.
+	mu    sync.Mutex
+	creds []string
 }
 
 // newApplyRig builds the rig with one root (rootFiles) in the checkout.
@@ -54,24 +60,41 @@ func newApplyRig(t *testing.T, rootFiles map[string]string) *applyRig {
 
 // bin is the terraform this apply runs, built when it is asked for and not
 // when the rig is: the rig's script is marshalled into the fake's environment
-// here, so a test scripts the plan before it applies one.
-func (r *applyRig) bin(t *testing.T) *tf.TF {
+// here, so a test scripts the plan before it applies one. It is the
+// Request.Terraform closure's own body, and it is handed the credential the
+// apply assumed — which it puts in the environment the way the command does,
+// so a test can assert that what terraform ran with is what the deployer's
+// credential says.
+func (r *applyRig) bin(t *testing.T) func(Credential) (*tf.TF, error) {
 	t.Helper()
-	env, err := TerraformEnv(withoutImpersonation(os.Environ()), r.wd.Dir, filepath.Join(r.wd.Dir, "cache"))
-	if err != nil {
-		t.Fatalf("TerraformEnv: %v", err)
+	return func(cred Credential) (*tf.TF, error) {
+		r.mu.Lock()
+		r.creds = append(r.creds, cred.Account())
+		r.mu.Unlock()
+		env, err := TerraformEnv(withoutImpersonation(os.Environ()), r.wd.Dir, filepath.Join(r.wd.Dir, "cache"))
+		if err != nil {
+			return nil, err
+		}
+		script, err := json.Marshal(r.script)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, "FAKE_TERRAFORM_LOG="+r.log, "FAKE_TERRAFORM_SCRIPT="+string(script))
+		bin, err := tf.New(fakeTerraform(t), r.wd.Root, env)
+		if err != nil {
+			return nil, err
+		}
+		bin.Out = io.Discard
+		return bin, nil
 	}
-	script, err := json.Marshal(r.script)
-	if err != nil {
-		t.Fatal(err)
-	}
-	env = append(env, "FAKE_TERRAFORM_LOG="+r.log, "FAKE_TERRAFORM_SCRIPT="+string(script))
-	bin, err := tf.New(fakeTerraform(t), r.wd.Root, env)
-	if err != nil {
-		t.Fatalf("tf.New: %v", err)
-	}
-	bin.Out = io.Discard
-	return bin
+}
+
+// creds are the accounts the terraform of this rig was built around, in
+// order: the apply's own record of who it ran as.
+func (r *applyRig) credsUsed() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.creds...)
 }
 
 func writeFile(t *testing.T, path, body string) {
@@ -151,7 +174,7 @@ func (r *applyRig) request(t *testing.T) Request {
 		GCPProject:   gcpProject,
 		Fact:         Fact{Managed: true},
 		Workdir:      r.wd,
-		TF:           r.bin(t),
+		Terraform:    r.bin(t),
 		Cover:        admitAll{},
 		Access:       access,
 		Impersonator: imp,
@@ -183,6 +206,13 @@ func TestApplyAppliesASavedPlanTheGateAdmitsAsTheDeployer(t *testing.T) {
 	imp := req.Impersonator.(*fakeImp)
 	if len(imp.accounts) != 1 || imp.accounts[0] != DeployerAccount(gcpProject) {
 		t.Errorf("the apply assumed %v, want the deployer account %s alone", imp.accounts, DeployerAccount(gcpProject))
+	}
+	// And terraform itself ran as that account: the credential the apply
+	// assumed is the one its terraform was built around, which is what makes
+	// "the plan is read from the state bucket and written back to it as the
+	// deployer" true of the subprocess and not only of this process.
+	if creds := r.credsUsed(); len(creds) != 1 || creds[0] != DeployerAccount(gcpProject) {
+		t.Errorf("terraform was built around %v, want the deployer account %s alone", creds, DeployerAccount(gcpProject))
 	}
 	if res.PlanHash == "" {
 		t.Error("the result carries no plan hash, and the verdict is not bound to the plan's bytes")
@@ -536,7 +566,9 @@ func TestApplyRefusesWhenThePlanFails(t *testing.T) {
 
 // The credential the apply runs with is the assumed one (Task 1.5): when the
 // deployer account cannot be assumed the apply does not happen as the operator
-// instead, and the fake's log says nothing was applied.
+// instead, and the fake's log says nothing was applied — and nothing was even
+// planned, because the plan is read from the state bucket this root's deployer
+// holds (D77) and terraform's own environment is built around its credential.
 func TestApplyAppliesNothingWhenTheDeployerCannotBeAssumed(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -557,6 +589,12 @@ func TestApplyAppliesNothingWhenTheDeployerCannotBeAssumed(t *testing.T) {
 			if applied := r.applied(t); len(applied) != 0 {
 				t.Errorf("the plan was applied as someone else: %v", applied)
 			}
+			if calls := r.calls(t); len(calls) != 0 {
+				t.Errorf("terraform ran without the deployer account: %v", calls)
+			}
+			if creds := r.credsUsed(); len(creds) != 0 {
+				t.Errorf("terraform was built around %v, and no credential was assumed", creds)
+			}
 		})
 	}
 }
@@ -570,7 +608,7 @@ func TestApplyRefusesARequestItCannotRun(t *testing.T) {
 	}{
 		{"no workdir", func(r *Request) { r.Workdir = nil }},
 		{"a workdir with no root", func(r *Request) { r.Workdir = &infra.Workdir{Dir: t.TempDir()} }},
-		{"no terraform", func(r *Request) { r.TF = nil }},
+		{"nothing builds the terraform", func(r *Request) { r.Terraform = nil }},
 		{"no cover", func(r *Request) { r.Cover = nil }},
 		{"no access", func(r *Request) { r.Access = nil }},
 		{"no impersonator", func(r *Request) { r.Impersonator = nil }},
