@@ -204,18 +204,10 @@ type TF struct {
 	Out io.Writer
 }
 
-// The supported terraform versions: >= 1.9.0 and < 2.0.0.
-//
-// 1.7 was the floor while the tree's features arrived there (import
-// for_each, removed blocks, mock providers). 1.9 is the floor because a
-// variable validation may only read the variable it validates before it: the
-// project module's `secrets` validation reads var.job.secret_env, and on
-// 1.8.5 `terraform init` refuses the installation root outright with "Invalid
-// reference in variable validation" — every installation on 1.7 or 1.8 stops
-// there, rather than merely losing a check. The floor is the version at which
-// the tree can be planned at all, so it moves with the tree.
+// The supported terraform versions: >= 1.7.0 (import for_each, removed
+// blocks, mock providers) and < 2.0.0.
 const (
-	minMinor    = 9
+	minMinor    = 7
 	lockTimeout = "-lock-timeout=60s"
 	stderrTail  = 4096
 )
@@ -254,7 +246,7 @@ func checkVersion(v string) error {
 	minor, _ := strconv.Atoi(m[2])
 	patch, _ := strconv.Atoi(m[3])
 	pre := m[4] != ""
-	// A pre-release sorts before its release, so 1.9.0-beta1 is < 1.9.0.
+	// A pre-release sorts before its release, so 1.7.0-beta1 is < 1.7.0.
 	if major != 1 || minor < minMinor || (minor == minMinor && patch == 0 && pre) {
 		return fmt.Errorf("terraform %s is not supported: fugaro needs >= 1.%d.0 and < 2.0.0", v, minMinor)
 	}
