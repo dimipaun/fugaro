@@ -44,6 +44,7 @@ import { loadSite, REPO_ROOT } from '../content.ts'
 // GitHub's own anchor rule, and the one place it is written: this page resolves the
 // fragments it links and `test/docs-hub.mjs` resolves them again, so the two have to be
 // the same rule rather than two approximations of it (see the module's own note).
+import { escapeRawHtml } from '../lib/escape-raw-html.mjs'
 import { headingAnchor, headingText } from '../lib/github-slug.mjs'
 
 // The generated reference is imported as a document rather than read as bytes: Astro
@@ -217,7 +218,9 @@ function demotedTitle(html: string, file: string, title: string): string {
   return html.replace(titles[0][0], rendered)
 }
 
-const referenceHTML = demotedTitle(await cliReference.compiledContent(), reference.path, referenceTitle)
+// Raw HTML in the generated document is text, not markup: `<name>` is a placeholder a
+// reader reads, and a browser would drop it as an unknown element (see the module's note).
+const referenceHTML = demotedTitle(escapeRawHtml(await cliReference.compiledContent()), reference.path, referenceTitle)
 
 const entries = [...guides, referenceEntry]
 ---

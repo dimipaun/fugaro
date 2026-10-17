@@ -28,7 +28,9 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -346,5 +348,92 @@ test("the anchor rule the hub links by is GitHub's own, not an approximation of 
   // one rule and was checked by another is how the check came to agree with the bug.
   for (const file of ['src/pages/docs.astro', 'test/docs-hub.mjs']) {
     assert.match(repoFile(`website/${file}`), /from '.*github-slug\.mjs'/, `${file} does not import the shared anchor rule, so it carries a second copy of it`)
+  }
+})
+
+// ---------------------------------------------------------------------------------------
+// The generated reference is TEXT, never markup (W1.7 follow-up). The reference documents
+// placeholders such as `<name>` and `<repo-slug>/<run-id>`; a markdown renderer that passes
+// raw HTML through hands the browser unknown elements, and the placeholder vanishes from
+// the page. A reference that carried a `<script>` would run it.
+
+/** The tags the markdown renderer itself emits into the reference section, and no others. */
+const RENDERED_TAGS = new Set([
+  'section', 'h2', 'h3', 'h4', 'p', 'code', 'pre', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  'ul', 'ol', 'li', 'a', 'em', 'strong', 'blockquote', 'hr', 'br',
+])
+
+/** The section of a built page that holds the rendered reference. */
+function referenceSection(page) {
+  const start = page.indexOf('<section id="cli-reference"')
+  assert.ok(start >= 0, 'the built page has no cli-reference section')
+  return page.slice(start, page.indexOf('</section>', start))
+}
+
+/** The tag names a fragment of HTML opens or closes. */
+function tagNames(html) {
+  return [...new Set([...html.matchAll(/<\/?([a-zA-Z][\w:-]*)/g)].map((match) => match[1].toLowerCase()))].sort()
+}
+
+test('the rendered reference carries only tags the renderer emits, and every placeholder is text', () => {
+  const section = referenceSection(builtPage())
+  const unexpected = tagNames(section).filter((name) => !RENDERED_TAGS.has(name))
+  assert.deepEqual(unexpected, [], `the built reference holds tags that are not the renderer's (${unexpected.join(', ')}): a raw \`<x>\` placeholder was passed through as an element, and a browser drops its text`)
+
+  const placeholders = new Set(
+    [...repoFile(REFERENCE).matchAll(/<([a-z][a-z0-9-]*)>/g)].map((match) => match[1]),
+  )
+  assert.ok(placeholders.size > 0, `${REFERENCE} documents no \`<x>\` placeholder, so this case checks nothing`)
+  for (const name of placeholders) {
+    assert.ok(section.includes(`&lt;${name}&gt;`), `the built reference does not show \`<${name}>\` as escaped text (&lt;${name}&gt;)`)
+  }
+})
+
+test('the reference shows its text unaltered: `--out` keeps two hyphens', () => {
+  const section = referenceSection(builtPage())
+  assert.ok(section.includes('--out'), 'the built reference does not contain the literal flag --out')
+  assert.ok(!/[\u2013\u2014]out/.test(section), 'smartypants rewrote `--out` to a dash in the reference')
+})
+
+test('markup planted in the reference source is rendered as text and never as a tag', () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'docs-hub-'))
+  try {
+    // A throwaway copy of what the build reads, so the real reference is untouched.
+    cpSync(path.join(REPO, 'README.md'), path.join(tmp, 'README.md'))
+    cpSync(path.join(REPO, 'go.mod'), path.join(tmp, 'go.mod'))
+    cpSync(path.join(REPO, 'docs'), path.join(tmp, 'docs'), { recursive: true })
+    const site = path.join(tmp, 'website')
+    mkdirSync(site)
+    for (const entry of ['astro.config.mjs', 'package.json', 'tsconfig.json', 'content', 'data', 'src']) {
+      cpSync(path.join(SITE, entry), path.join(site, entry), { recursive: true })
+    }
+    symlinkSync(path.join(SITE, 'node_modules'), path.join(site, 'node_modules'))
+    const file = path.join(site, 'content', 'cli-reference.md')
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8') +
+        '\n## `fugaro planted`\n\nPlanted <script>alert(1)</script> and <img src=x onerror=alert(2)> in prose.\n\n<div onclick="alert(3)">block</div>\n\nIn code: `<script>alert(4)</script>`.\n',
+    )
+    const built = spawnSync('npx', ['astro', 'build'], { cwd: site, encoding: 'utf8', env: { ...process.env, ASTRO_TELEMETRY_DISABLED: '1' } })
+    assert.equal(built.status, 0, `the planted build failed: ${built.stdout}${built.stderr}`)
+    const section = referenceSection(readFileSync(path.join(site, 'dist', 'docs', 'index.html'), 'utf8'))
+    const unexpected = tagNames(section).filter((name) => !RENDERED_TAGS.has(name))
+    assert.deepEqual(unexpected, [], `planted markup became tags: ${unexpected.join(', ')}`)
+    assert.ok(section.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'planted <script> is not shown as text')
+    assert.ok(section.includes('&lt;img src=x onerror=alert(2)&gt;'), 'planted <img onerror> is not shown as text')
+    assert.ok(!/<(script|img|div)\b/i.test(section) && !/\sonerror=/.test(section.replace(/&lt;[^]*?&gt;/g, '')), 'planted markup reached the page as a tag')
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('the anchors the hub links name headings that are unique in their file', () => {
+  // github-slug.mjs has no `-1` suffix for a repeated heading, so a link to one would
+  // anchor at the first occurrence by GitHub's rule only by luck. The hub links unique
+  // headings only, and this fails the day one of them stops being unique.
+  for (const link of LINKED.filter((entry) => entry.includes('#'))) {
+    const [file, anchor] = link.split('#')
+    const count = headingsOf(repoFile(file)).filter((heading) => heading.anchor === anchor).length
+    assert.equal(count, 1, `${file} has ${count} headings anchored at #${anchor}: the hub links it and the slug rule has no duplicate suffix`)
   }
 })

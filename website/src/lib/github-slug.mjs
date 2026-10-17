@@ -38,6 +38,12 @@
 // this function against the `id`s the built page carries, so a disagreement with the
 // renderer fails the site's own check rather than a reader's click.
 //
+// There is no duplicate-heading suffix: GitHub turns the second `## Usage` of a file into
+// `usage-1`, and this function does not, because it sees one heading at a time. That is
+// safe here only because the hub links headings that are unique in their file; the case
+// "the anchors the hub links name headings that are unique in their file" in
+// `test/docs-hub.mjs` fails the day one of them stops being unique.
+//
 // Nothing here depends on `github-slugger` itself: the site ships no dependency for its own
 // benefit (Global Constraint 5), and this is a four-line rule, not a package.
 
