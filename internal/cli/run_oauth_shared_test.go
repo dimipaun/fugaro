@@ -41,7 +41,10 @@ import (
 // — the launch takes the claim (the hook below fires), mints a token and
 // starts an execution on the shared job.
 func TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch(t *testing.T) {
-	f := newProjectJobFixture(t)
+	// The budget installation is on, so "no budget token was minted" is a
+	// question this fixture can answer: with the mode off there is nothing to
+	// mint against, and the assertion would hold for any launch at all.
+	f := newProjectJobFixtureMode(t, "enforce")
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
 	// The claim is the first thing a launch spends, and everything the
@@ -86,8 +89,7 @@ func TestOAuthLaunchOnALegacyJobIsUnchanged(t *testing.T) {
 	// The fixture's policy is published and defines standard, so a launch that
 	// went to the shared job would be refused: what keeps this one on its own
 	// job is the workflow's being baked, not the absence of a profile.
-	baked := strings.Replace(projectJobOAuthRepoYAML, "    checkout: clone\n", "", 1)
-	projectJobCheckoutYAML(t, strings.Replace(baked, "agent:\n  auth: oauth\n", "agent:\n  auth: oauth\n  oauth_token: acme-personal\n", 1))
+	projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML, "    checkout: clone\n", "", 1))
 
 	// The variant job of the named account, and the build record that says the
 	// image's runner knows task.Spec.OAuthToken (checkImageSince).
@@ -96,7 +98,7 @@ func TestOAuthLaunchOnALegacyJobIsUnchanged(t *testing.T) {
 	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release065)
 
 	const run = "20261017-110000-bbbb"
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); err != nil {
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-personal", "Add a feature"); err != nil {
 		t.Fatalf("an OAuth launch on its own per-repository job: %v", err)
 	}
 	calls := f.run.RunRequests()

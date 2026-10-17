@@ -59,7 +59,16 @@ const projectJobTimeout = 6 * time.Hour
 // published policy, and the shared job the installation would have deployed.
 func newProjectJobFixture(t *testing.T) *projectJobFixture {
 	t.Helper()
-	f := newLaunchBudget(t, "off")
+	return newProjectJobFixtureMode(t, "off")
+}
+
+// newProjectJobFixtureMode is newProjectJobFixture on a budget installation
+// with the given mode: "enforce" is the one a test that has to see whether a
+// launch minted its token uses (with the mode off there is no backend to mint
+// against, and the question cannot be asked).
+func newProjectJobFixtureMode(t *testing.T, mode string) *projectJobFixture {
+	t.Helper()
+	f := newLaunchBudget(t, mode)
 	addRepoToConfig(t, f.cloudFixture, otherRepo, "github")
 	f.appendConfig(t,
 		"profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h } }\n"+
