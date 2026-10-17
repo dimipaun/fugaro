@@ -1079,13 +1079,14 @@ func TestManagedCoverRefusesAForeignProjectInAProviderBlock(t *testing.T) {
 		"read from a variable whose value is not a string":       {refs("var.project"), val([]any{"proj-1"}), "var.project"},
 		"read from two variables":                                {refs("var.a", "var.b"), map[string]any{"a": map[string]any{"value": "proj-1"}, "b": map[string]any{"value": "proj-1"}}, "project"},
 		"read from a variable's attribute":                       {refs("var.p.id", "var.p"), map[string]any{"p": map[string]any{"value": map[string]any{"id": "proj-1"}}}, "project"},
+		"read from a variable's attribute, alone":                {refs("var.p.id"), map[string]any{"p.id": map[string]any{"value": "proj-1"}}, "project"},
 		"written out as null":                                    {constant(nil), nil, "project"},
 		"written out as something other than a string":           {constant(1), nil, "project"},
 	}
 	for name, tc := range refuses {
 		t.Run("refuses a provider block whose project is "+name, func(t *testing.T) {
 			out := managedTestCover().NotCovered(providerProjectPlan(t, tc.project, tc.variables), nil)
-			if !refusedWith(out, "provider_config.google (", tc.want, "which is not proven to be this run's") &&
+			if !refusedWith(out, "provider_config.google (", tc.want, "so it is not proven to be this run's") &&
 				!refusedWith(out, "provider_config.google (", tc.want, "which is not this run's") {
 				t.Fatalf("gives %q, want the provider block refused for the project its resources land in", out)
 			}
@@ -1151,7 +1152,7 @@ func TestManagedCoverRefusesAProjectPassedThroughAModuleCall(t *testing.T) {
 // project = var.project, with the call's expressions and the module's
 // variables as given: the shape of testdata/managed_provider_module_project_plan.json,
 // for the forms terraform's output above does not happen to carry.
-func moduleProjectPlan(t *testing.T, callExpressions, moduleVariables map[string]any) *Plan {
+func moduleProjectPlan(t *testing.T, callExpressions any, moduleVariables map[string]any) *Plan {
 	t.Helper()
 	module := map[string]any{"resources": []any{map[string]any{"address": "google_storage_bucket.b", "mode": "managed",
 		"type": "google_storage_bucket", "name": "b", "provider_config_key": "module.m:google"}}}
@@ -1183,7 +1184,10 @@ func TestManagedCoverModuleCallProjectFailsClosed(t *testing.T) {
 			}
 		})
 	}
-	for name, tc := range map[string]struct{ call, vars map[string]any }{
+	for name, tc := range map[string]struct {
+		call any
+		vars map[string]any
+	}{
 		"passed from a local":                                 {map[string]any{"project": refs("local.p")}, map[string]any{"project": map[string]any{}}},
 		"passed from each.value":                              {map[string]any{"project": refs("each.value")}, map[string]any{"project": map[string]any{}}},
 		"passed from a resource":                              {map[string]any{"project": refs("google_project.p.project_id", "google_project.p")}, map[string]any{"project": map[string]any{}}},
@@ -1193,7 +1197,8 @@ func TestManagedCoverModuleCallProjectFailsClosed(t *testing.T) {
 		"defaulted to null":                                   {nil, map[string]any{"project": map[string]any{"default": nil}}},
 		"passed as null over a default":                       {map[string]any{"project": constant(nil)}, map[string]any{"project": map[string]any{"default": "proj-1"}}},
 		"passed proj-2 over a proj-1 default":                 {map[string]any{"project": constant("proj-2")}, map[string]any{"project": map[string]any{"default": "proj-1"}}},
-		"call expressions that do not decode":                 {map[string]any{"project": "proj-1"}, map[string]any{"project": map[string]any{}}},
+		"call expressions that do not decode":                 {[]any{"proj-1"}, map[string]any{"project": map[string]any{"default": "proj-1"}}},
+		"a call argument that is not an expression":           {map[string]any{"project": "proj-1"}, map[string]any{"project": map[string]any{}}},
 	} {
 		t.Run("refuses a project "+name, func(t *testing.T) {
 			out := managedTestCover().NotCovered(moduleProjectPlan(t, tc.call, tc.vars), nil)
