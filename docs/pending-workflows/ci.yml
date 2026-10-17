@@ -2,7 +2,11 @@ name: ci
 on:
   push:
     branches: [main]
-  pull_request:
+  # Pull requests are not merge-gated by CI (owner's ruling 2026-10-16: the
+  # in-run loop already runs the tests). Run it on demand against a branch with
+  # `gh workflow run ci --ref <branch>`; every push to main still runs it, and
+  # the release gate (scripts/release-gate.sh) requires it green on the tag's commit.
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

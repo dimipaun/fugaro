@@ -3,7 +3,7 @@
 **Two files are pending: `images.yml` and `ci.yml`.**
 
 - **`images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
-- **`ci.yml`** — the `terraform` job's root loop grows the `compute` root of the Batch backend (design `docs/design/compute-backend.md` §8.1 task 6). It is one word on one line; nothing schedules it and nothing is released by it, but until it is copied in, CI neither validates nor terraform-tests that root. See `## ci.yml` below.
+- **`ci.yml`** — the `terraform` job's root loop grows the `compute` root of the Batch backend (design `docs/design/compute-backend.md` §8.1 task 6). It is one word on one line; nothing schedules it and nothing is released by it, but until it is copied in, CI neither validates nor terraform-tests that root. It is **the real `.github/workflows/ci.yml` as `main` has it, plus that one word** — not a snapshot of whenever it was first written — because the copy is a `cp` over the real file: a stale snapshot would silently revert every edit `main` made to `ci.yml` since. `images/cloudbuild_test.go`'s `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` refuses exactly that (one differing line, and it must be the loop), so re-stage the file rather than patch it when the real one moves. See `## ci.yml` below.
 
 The most recent copy that *was* applied (`images.yml` for the 0.7.0 hard cut, commit `838e0b0`) is the reason the file below has no legacy per-kind `base` job; that section's older text was replaced by this one when the file became pending again.
 
@@ -22,7 +22,13 @@ git commit -m "..."
 ```
 
 (`ci.yml` is copied in the same way — `cp` it over `.github/workflows/ci.yml`,
-`git rm` the pending copy, commit.)
+`git rm` the pending copy, commit. Before copying that one, check it is still
+`main`'s current file plus the one word: `git diff main --
+.github/workflows/ci.yml docs/pending-workflows/ci.yml` must show the loop line
+and nothing else, which is what
+`TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` checks in CI. A copy staged
+weeks earlier and copied in now would revert whatever `main` changed in
+between — including the owner's 2026-10-16 trigger ruling below.)
 
 The `git rm` is not cleanup, it's load-bearing: the static Go tests that pin
 these workflows' shape (`images/base_workflow_test.go`'s `readWorkflow`,
@@ -259,6 +265,22 @@ line**: the `terraform` job's "validate and test the roots" step loops
 `for r in installation firebase repo; do`. Everything else — the triggers, the
 `changes`, `test`, `rules` and `terraform` jobs, every step, every comment,
 every action pin — is carried over verbatim.
+
+The copy below is `main`'s `ci.yml` **as of 2026-10-17**, re-staged from the
+real file when `main` was merged into this branch, and that matters more here
+than for `images.yml` because the real `ci.yml` is edited often. It carries the
+owner's ruling of 2026-10-16: `ci.yml` is **no longer triggered by
+`pull_request`** — it runs on every push to `main` and on demand
+(`workflow_dispatch:`), because the in-run loop already runs the tests and a
+pull request is not merge-gated by CI. The first version of this staged file
+predated that ruling and still carried `pull_request:`, so `cp`ing it in would
+have re-enabled PR-triggered CI as a silent side effect of adding one word to a
+root loop. `images/cloudbuild_test.go`'s
+`TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` now holds this file to the
+real one line for line — exactly one differing line, the loop, and the staged
+line must be the real one with `compute` appended — so a stale copy fails a
+test instead of being copied in. When the real `ci.yml` moves, re-stage this
+file from it rather than patching it here.
 
 That loop is what `deploy/terraform/gcp/roots/compute` needs: Task 6 of
 `docs/design/compute-backend.md` §8.1 added it (the Batch backend's

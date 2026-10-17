@@ -516,6 +516,71 @@ func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
 	}
 }
 
+// TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot pins the staged copy to
+// the real workflow: exactly one line may differ — the `terraform` job's root
+// loop — and the staged line must be the real one with `compute` appended.
+//
+// The staged file is a snapshot of a file a run may not push, and a stale
+// snapshot is worse than a missing one: the README tells the owner to `cp` it
+// over .github/workflows/ci.yml, so copying an old snapshot silently reverts
+// every edit main made to ci.yml since it was staged. That is not
+// hypothetical — the owner's ruling of 2026-10-16 replaced ci.yml's
+// `pull_request` trigger with `workflow_dispatch:` (CI is no longer a merge
+// gate; every push to main and on demand), and the copy staged before it
+// would have re-enabled PR-triggered CI while claiming to change one word.
+// When this fails, re-stage: copy the real file here and add the word
+// (docs/pending-workflows/README.md, `## ci.yml`).
+func TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot(t *testing.T) {
+	real, err := os.ReadFile(ciWorkflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := os.ReadFile(pendingCIWorkflowPath)
+	if os.IsNotExist(err) {
+		t.Skip("the staged copy was copied in and removed; the real workflow is read on its own")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	realLines := strings.Split(string(real), "\n")
+	stagedLines := strings.Split(string(staged), "\n")
+	if len(realLines) != len(stagedLines) {
+		t.Fatalf("the staged ci.yml has %d lines and .github/workflows/ci.yml has %d: the staged copy is a snapshot of a file this run cannot push, so it is re-staged from the real one (docs/pending-workflows/README.md, `## ci.yml`) rather than patched",
+			len(stagedLines), len(realLines))
+	}
+	var diff []int
+	for i := range realLines {
+		if realLines[i] != stagedLines[i] {
+			diff = append(diff, i)
+		}
+	}
+	if len(diff) != 1 {
+		t.Fatalf("the staged ci.yml differs from .github/workflows/ci.yml on lines %v (%d of them), want exactly one — the root loop. Copying a stale snapshot in would revert everything else main changed in ci.yml since it was staged",
+			lineNumbers(diff), len(diff))
+	}
+	i := diff[0]
+	loop := regexp.MustCompile(`^(\s*)for r in ([a-z ]+); do$`)
+	mReal, mStaged := loop.FindStringSubmatch(realLines[i]), loop.FindStringSubmatch(stagedLines[i])
+	if mReal == nil || mStaged == nil {
+		t.Fatalf("line %d is where the staged ci.yml differs and it is not the Terraform root loop: real %q, staged %q. The one staged change may only be the `compute` word on that line",
+			i+1, realLines[i], stagedLines[i])
+	}
+	if want := mReal[1] + "for r in " + mReal[2] + " compute; do"; stagedLines[i] != want {
+		t.Fatalf("line %d: the staged loop is %q, want the real loop %q with `compute` appended (%q): the staged copy adds one word and changes nothing else",
+			i+1, stagedLines[i], realLines[i], want)
+	}
+}
+
+// lineNumbers is the 1-based numbering of the differing lines, for a message
+// a reader can open the file at.
+func lineNumbers(idx []int) []int {
+	out := make([]int, len(idx))
+	for i, n := range idx {
+		out[i] = n + 1
+	}
+	return out
+}
+
 // TestCIWorkflowPermissionsScoped holds every workflow file to a read-only
 // GITHUB_TOKEN by default: the workflow-level permissions must be exactly
 // contents: read, and only a job whose `if:` gates on the resolved publish
