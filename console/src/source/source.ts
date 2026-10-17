@@ -50,6 +50,7 @@
 // not a generic apology).
 
 import type { ConsoleHandlers, ValidatedArguments } from '../main/ipc'
+import { NO_ACTIVE_INSTALLATION } from '../main/installations'
 import type { Notice } from '../main/spawn'
 
 /**
@@ -242,7 +243,15 @@ export function refusalFrom(operation: string, sentence: string | null): SourceR
  */
 export function handlersFor(
   source: FugaroSource,
-  deps: { readonly openExternal: (raw: unknown) => Promise<void> },
+  deps: {
+    readonly openExternal: (raw: unknown) => Promise<void>
+    /** `installation` is the active installation as the store has it (Task
+     * 3.4b). It is a *read* of the console's own state, so it is handed in the
+     * same way `startup.compatibility` is -- and it is optional, because a
+     * console built without a store (a unit test's, a `refused` console's)
+     * answers D13's no-installation state rather than failing to register. */
+    readonly installation?: () => unknown
+  },
 ): CliBackedHandlers {
   // `satisfies` rather than a cast: the mapped type makes a missing handler a
   // compile error, which is the whole reason `ConsoleHandlers` is mapped. A cast
@@ -267,6 +276,11 @@ export function handlersFor(
       await deps.openExternal(args['url'])
       return null
     },
+    // The fourteenth operation is not a read of the CLI either: it is the
+    // installation the operator chose, as the store holds it. With no store --
+    // and with no installation chosen -- it answers D13's no-installation
+    // state, which is a state and not a guess.
+    'installation.current': () => deps.installation?.() ?? { chosen: false, sentence: NO_ACTIVE_INSTALLATION },
   } satisfies CliBackedHandlers
 }
 
@@ -276,9 +290,12 @@ export function handlersFor(
  * whose answer is the handshake `src/main/index.ts` ran before it built any
  * window. It is not a read this module can make -- the source spawns, and the
  * compatibility is the console's own state -- so `handlersFor` leaves that key
- * out on purpose and the entry point joins it in
- * (`{ ...handlersFor(source, deps), 'startup.compatibility': startupCompatibility(read) }`,
- * built by `startupCompatibility` in `src/main/ipc.ts`).
+ * out on purpose, and the renderer-entry task (Task 3.4a) is what joins it in at
+ * the entry point, as
+ * `{ ...handlersFor(source, deps), 'startup.compatibility': startupCompatibility(read) }`
+ * with `startupCompatibility` from `src/main/ipc.ts`. **Nothing registers the
+ * handlers until that task lands**: today `main()` serves the bundle and starts
+ * the lifecycle, and no window has a preload to reach a channel with.
  *
  * The `Omit` is still a *closed* type: a key typed here that is not an operation
  * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`

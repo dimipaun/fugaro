@@ -19,9 +19,11 @@
 
 import { join } from 'node:path'
 
-import { app, BrowserWindow, protocol, session } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, session } from 'electron'
 
 import { handleAppRequests, registerAppScheme } from './protocol'
+import { installInstallationPicker } from './picker'
+import type { InstallationPicker } from './picker'
 import { createConsoleLifecycle, installWebContentsSecurity, versionReadFrom } from './window'
 import type { ConsoleWindowDeps, VersionRead } from './window'
 import { privateWorkingDirectory, resolveBinary } from './spawn'
@@ -131,9 +133,34 @@ const lifecycle = createConsoleLifecycle({
  * main is what `whenReady` resolves into: serve the bundle once, then run the
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
+/**
+ * picker is the installation picker (Task 3.4b): the store in
+ * `<userData>/installations.json`, the `Installations…` menu item, and the
+ * picker's own window and channels. It is built **after** `whenReady`, because
+ * `session.defaultSession` and `app.getPath` do not exist before it.
+ *
+ * It is a module-level binding rather than a local because the entry point's
+ * remaining join -- passing `picker.installation` to `handlersFor` as the
+ * `installation` dep that answers `installation.current` -- is the
+ * renderer-entry task's (3.4a), and that task needs the picker to still be
+ * reachable from wherever it builds the handlers.
+ */
+let picker: InstallationPicker | null = null
+
 async function main(): Promise<void> {
   serveBundle()
+  picker = installInstallationPicker({
+    electron: { BrowserWindow, session: session.defaultSession, ipcMain, dialog, Menu, app },
+    appEnv: process.env,
+  })
+  // The menu is installed in **every** mode, `refused` included: choosing an
+  // installation is how an operator gets out of a refusal, and a console that
+  // hid the door would be a console with no way back.
+  picker.installMenu()
   await lifecycle.start()
+  // D13's first run: with no installation chosen the console makes no guess,
+  // says so, and opens the picker once.
+  await picker.openOnFirstRun()
 }
 
 app.whenReady().then(main).catch(reportAndQuit)

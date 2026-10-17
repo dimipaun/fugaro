@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The installation picker's document (desktop-console plan Task 3.4b; owner
+      ruling C9, 2026-10-18: the picker is a window of its own, opened from the
+      application menu, and not a panel in the dashboard's header).
+
+      The CSP below is the **same string** as `index.html`'s and as the header
+      `src/main/protocol.ts` attaches to every `app://` response: this document
+      is served by the same protocol handler, so it gets the same header, and
+      `console/test/unit/window.test.ts` is what keeps the two copies
+      byte-identical. There is no delta for this document to have -- it is a
+      second page of the same bundle, not a second policy.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+    />
+    <title>Fugaro console — installations</title>
+  </head>
+  <body>
+    <!--
+      The picker's whole capability is one preload script and one bundle file,
+      both served from this same origin. The script is `installations.js`, built
+      from `src/renderer/installations.ts` by the renderer-entry task's bundle
+      step (Task 3.4a) alongside `index.js` -- this document names it now so
+      that the bundle step has one entry per document and no document is
+      waiting on a script nobody built.
+
+      With the script absent (before that step lands) the page still draws: it
+      is a static document with a heading and an empty list, and the console
+      has nothing to add to it that a document cannot say.
+    -->
+    <main>
+      <h1>Installations</h1>
+      <p id="picker-status">Reading the installation list…</p>
+      <ul id="picker-list"></ul>
+      <form id="picker-add">
+        <label for="picker-project">Project name</label>
+        <input id="picker-project" name="project" type="text" autocomplete="off" />
+        <button type="button" id="picker-pick-binary">Choose binary…</button>
+        <button type="button" id="picker-pick-config">Choose config…</button>
+        <button type="button" id="picker-pick-checkout">Choose checkout…</button>
+        <button type="submit" id="picker-add-submit">Add</button>
+      </form>
+    </main>
+    <script src="./installations.js"></script>
+  </body>
+</html>

@@ -840,19 +840,49 @@ export interface InstallationStore {
 }
 
 /**
- * createInstallationStore returns the store. **It is in memory on purpose**: the
- * console writes nothing but the spawn log (design section 5.1 rule 10), so the
- * installation list does not survive the process, and a later task that persists
- * it will have to reconcile that with rule 10 explicitly rather than growing it
- * by accident. What the store does do is the check that matters: an installation
- * is verified *before* it is stored.
+ * InstallationPersistence is the store's durability seam (desktop-console plan
+ * Task 3.4b; owner ruling C8, 2026-10-18).
+ *
+ * The store itself stays what it was -- a list, and the one check that matters,
+ * that an installation is verified *before* it is stored -- and the file is
+ * somebody else's shape: `src/main/installations.ts` owns `installations.json`,
+ * its closed schema, its ids and its `active` field, and it is the module that
+ * decides **when** a write happens (an add, a choose, a remove, and nothing
+ * else). What this seam exists for is the plan's requirement that the
+ * *verification* logic stay here, in one place: a caller that persists gets it
+ * by handing in `load`/`save` over the same candidate tuple rather than by
+ * writing a second store with its own copy of the check.
+ *
+ * Both halves are optional and both are total: a store with no `load` starts
+ * empty (which is what every unit test wants), and a store with no `save` is the
+ * in-memory list this function used to be. Neither is a path: this module never
+ * learns where the file is, and rule 7's "the app never reads the operator's
+ * config" is untouched by either.
+ */
+export interface InstallationPersistence {
+  load(): readonly InstallationCandidate[]
+  save(list: readonly InstallationCandidate[]): void
+}
+
+/**
+ * createInstallationStore returns the store. It is in memory unless a caller
+ * hands it a `persistence`, and the check it runs is the one that matters: an
+ * installation is verified with one allow-listed read *before* it is stored, so
+ * a refused candidate is never written.
+ *
+ * **This comment used to say the console writes nothing but the spawn log.**
+ * That was true when it was written and it is not true now: rule 10 and section
+ * 7.4 name `installations.json` as the second file the app writes, and the store
+ * that writes it is `src/main/installations.ts` -- this function is the seam it
+ * uses for the check, not a second implementation of it.
  */
 export function createInstallationStore(deps: {
   readonly appEnv?: Readonly<Record<string, string | undefined>>
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
+  readonly persistence?: InstallationPersistence
 }): InstallationStore {
-  const stored: InstallationCandidate[] = []
+  const stored: InstallationCandidate[] = deps.persistence === undefined ? [] : [...deps.persistence.load()]
   const env = deps.appEnv ?? {}
 
   return {
@@ -862,6 +892,11 @@ export function createInstallationStore(deps: {
       assertSpawnSurface(SPAWN_COMMANDS)
       await verifyCandidate(candidate, deps)
       stored.push(candidate)
+      // The write happens *after* the check and after the push, so a save that
+      // throws leaves the in-memory list and the file disagreeing in the one
+      // direction that is safe: the list has the installation, the file does
+      // not, and the next add re-verifies.
+      deps.persistence?.save([...stored])
       return candidate
     },
   }

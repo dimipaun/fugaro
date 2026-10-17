@@ -81,7 +81,7 @@
 import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
-import { APP_HOST, APP_SCHEME } from './protocol'
+import { APP_ENTRY_URL, APP_HOST, APP_SCHEME } from './protocol'
 import { validateExternalUrl } from './window'
 
 /**
@@ -524,6 +524,22 @@ export const CONSOLE_OPERATIONS = [
     command: null,
     flags: [],
     summary: 'the handshake’s answer: this console’s mode, and the views it withholds',
+    args: [],
+  },
+  // The fourteenth operation (Task 3.4b) is the second read of the console's own
+  // state, and it is the one the header needs: **which installation is active**.
+  // It is not a read of the CLI -- the store holds it -- and it takes no argument
+  // at all, so a renderer cannot ask about an installation other than the one
+  // this console is running. Its answer names a project and a binary path and
+  // **never an id a renderer could pass back**: choosing is the picker's
+  // operation (`fugaro:installations/choose`), on the picker's own channel, which
+  // a frame on this document cannot reach.
+  {
+    name: 'installation.current',
+    method: 'getInstallation',
+    command: null,
+    flags: [],
+    summary: 'the installation the operator chose, or D13’s no-installation state',
     args: [],
   },
   {
@@ -1532,10 +1548,14 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
  * exception.
  *
  * `read` is a function rather than the value because the answer is asked for at
- * message time: the store is written once at startup (`src/main/index.ts`) and a
- * handler built over a snapshot would keep answering whatever the snapshot was,
- * which is exactly the kind of stale answer the handshake exists to prevent. It
- * throws for a store that has not answered yet -- an operation called before
+ * message time: the handshake runs **once**, before any window exists, and its
+ * answer is held by the entry point (Task 3.4a's `src/main/index.ts`) -- a
+ * handler built over a snapshot taken at registration would keep answering
+ * whatever that snapshot was, which is exactly the kind of stale answer the
+ * handshake exists to prevent. **This comment said "the store is written once at
+ * startup" while no such wiring existed**; what exists is the handshake in
+ * `src/main/index.ts`, and what the entry point does with its answer is 3.4a's.
+ * It throws for a store that has not answered yet -- an operation called before
  * startup finished is a console that does not exist yet -- and `dispatch` turns
  * that throw into the reply.
  */
@@ -1563,6 +1583,37 @@ export type ConsoleHandler = (args: ValidatedArguments) => unknown | Promise<unk
  * a missing handler is a compile error rather than an operation that answers
  * "not implemented" in production. */
 export type ConsoleHandlers = { readonly [Name in OperationName]: ConsoleHandler }
+
+/**
+ * isSenderOnDocument is the sender gate, narrowed to **one document**.
+ *
+ * `isConsoleSenderUrl` answers about the *origin*, and it has to: a fragment is
+ * how a screen addresses its own views, and refusing `app://console/index.html#spend`
+ * would be refusing the console's own window. But two documents are served from
+ * that origin -- the dashboard and, from Task 3.4b, the installation picker --
+ * and an origin-only check cannot tell them apart. A picker frame that invoked
+ * `runs.list`, or a dashboard frame that invoked `fugaro:installations/remove`,
+ * would both pass an origin check, so the check is on the **path** the frame is
+ * on as well.
+ *
+ * The path is compared after the query and the fragment are stripped, so
+ * `app://console/index.html#spend` is still the dashboard and
+ * `app://console/installations.html?x=1` is still the picker. A frame on a
+ * document this console does not serve -- there is none today, because
+ * `resolveBundleRequest` serves only what is in the bundle -- matches neither
+ * and is refused.
+ */
+export function isSenderOnDocument(event: ConsoleEventLike | null | undefined, entryUrl: string): boolean {
+  try {
+    if (!isConsoleSender(event)) return false
+    const frame = event?.senderFrame
+    const raw = frame?.url
+    if (typeof raw !== 'string' || raw === '') return false
+    return new URL(raw).pathname === new URL(entryUrl).pathname
+  } catch {
+    return false
+  }
+}
 
 /**
  * SENDER_REFUSAL is what a message from anywhere but the console's own top frame
@@ -1858,8 +1909,13 @@ export function registerConsoleHandlers(ipcMain: IpcMainLike, handlers: ConsoleH
     // and never reaches validation, the handler, or anything that would parse
     // what it carried. `dispatch` is then the only path to a handler, and it is
     // the only caller of `validateArguments`.
+    // The gate is `isSenderOnDocument`, not `isConsoleSender`: the origin is not
+    // enough now that the picker is served from it too (Task 3.4b). Every
+    // `fugaro:console/*` channel answers a frame on the dashboard and nothing
+    // else, and the picker's own channels are gated the same way in
+    // `src/main/picker.ts` -- so neither document can reach the other's surface.
     ipcMain.handle(channelForOperation(operation.name), (event: ConsoleEventLike, raw: unknown) =>
-      isConsoleSender(event) ? dispatch(operation.name, handler, raw) : { ok: false, reason: SENDER_REFUSAL },
+      isSenderOnDocument(event, APP_ENTRY_URL) ? dispatch(operation.name, handler, raw) : { ok: false, reason: SENDER_REFUSAL },
     )
   }
 }
