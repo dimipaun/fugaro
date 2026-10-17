@@ -183,7 +183,7 @@ func countAuths(b *bk) *int {
 // launcher-overridable (12a item 2), so a value that could change which
 // repository this run is for is exactly what must not be obeyed.
 func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
-	const policy = `{"version":1,"allow_repos":["github/acme/*"]}`
+	const policy = `{"version":2,"allow_repos":["github/acme/*"]}`
 	t.Run("the agreeing kind runs", func(t *testing.T) {
 		b := admissionRun(t, "github", "acme/app", "off", "", policy)
 		b.deps.ProviderKind = "github"
@@ -218,7 +218,7 @@ func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
 // does not name it. The policy admits the repository the slug names, so the
 // remote is what refused, before any git credential was requested.
 func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
-	b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
+	b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":2,"allow_repos":["bitbucket/acme/*"]}`)
 	b.deps.Remote = "https://github.com/acme/app.git"
 	// Nothing here may reach github.com, not even if the check this test
 	// covers regresses: git rewrites the URL onto a path that does not exist,
@@ -284,7 +284,7 @@ func TestRunnerRefusesARemoteOfAnotherRepositoryOnTheSameHost(t *testing.T) {
 		{"https://github.com/acme/app/tree/main", "https://github.com/acme/app/tree/main", "acme/app/tree/main"},
 	} {
 		t.Run(tc.remote, func(t *testing.T) {
-			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 			b.deps.Remote = tc.remote
 			// As above: nothing here may reach github.com, not even if the
 			// check this test covers regresses.
@@ -308,7 +308,7 @@ func TestRunnerRefusesARemoteOfAnotherRepositoryOnTheSameHost(t *testing.T) {
 // and a job launched for one repository must not run another repository's
 // work. The policy admitted this repository, so the binding is what refused.
 func TestRunnerRefusesSlugMismatch(t *testing.T) {
-	b := admissionRun(t, "github", "acme/other", "off", "", `{"version":1,"allow_repos":["*"]}`)
+	b := admissionRun(t, "github", "acme/other", "off", "", `{"version":2,"allow_repos":["*"]}`)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, b.deps.Store.Slug(), "acme/app", "provider kind")
 }
@@ -316,7 +316,7 @@ func TestRunnerRefusesSlugMismatch(t *testing.T) {
 // A published policy that does not admit the run's repository stops the run:
 // the project's owner has said which repositories may run here.
 func TestRunnerRefusesSlugNotInAllowList(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/other/*","bitbucket/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/other/*","bitbucket/acme/*"]}`)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "github/acme/app", "allow_repos", "github/other/*", "fugaro project repos add")
 }
@@ -338,7 +338,7 @@ func TestRunnerRefusesSlugNotInAllowList(t *testing.T) {
 // rather than at github.com.
 func TestRunnerChecksBeforeTheTokenAndTheLease(t *testing.T) {
 	t.Run("a per-repository job", func(t *testing.T) {
-		b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/other/*"]}`)
+		b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":2,"allow_repos":["github/other/*"]}`)
 		rec, err := b.run(t)
 		refusedAdmission(t, b, rec, err, "github/acme/app", "fugaro project repos add")
 	})
@@ -364,7 +364,7 @@ func TestRunnerChecksBeforeTheTokenAndTheLease(t *testing.T) {
 // (`if false && err != nil`). This test fails on the counter — the run opens
 // its provider and only then halts — and no other test does.
 func TestRunnerRefusesAnUnreadablePolicyBeforeAnyCredential(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":2,"allow_repos":["github/acme/*"]}`)
 	b.db.DenyRead(projectpolicy.PathShared())
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "could not be read", projectpolicy.PathShared(), "older than the marker", "does not start on a ceiling the policy did not set")
@@ -400,7 +400,7 @@ func TestRunnerWithoutAPolicyChecksOnlyTheBinding(t *testing.T) {
 // not the same as an installation that has published nothing, which has no
 // list to be empty (the test above).
 func TestEmptyAllowListInAPublishedPolicyDeniesEverything(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":[]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":[]}`)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "github/acme/app", "empty", "admits no repository at all", "fugaro project repos add")
 }

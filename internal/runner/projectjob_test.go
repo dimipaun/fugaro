@@ -141,7 +141,7 @@ func projectPolicyFor(project, profile string) string {
 	if profile != "" {
 		own = `,"allow_repos":` + profile
 	}
-	return `{"version":1,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
+	return `{"version":2,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
 		own + `,` + profileShape + `}}}`
 }
 
@@ -153,7 +153,7 @@ func projectPolicyFor(project, profile string) string {
 // one (projectpolicy's CloneURLs) — so the fixture publishes what a real
 // publish publishes.
 func projectPolicyCloning(project, url string) string {
-	return `{"version":1,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
+	return `{"version":2,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
 }
 

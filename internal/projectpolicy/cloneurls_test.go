@@ -18,7 +18,7 @@ import (
 // package writes is a node RTDB accepts.
 func TestDecodeReadsCloneURLs(t *testing.T) {
 	const url = "https://github.com/acme/app.git"
-	p, found, err := Decode([]byte(`{"version":1,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"}}`))
+	p, found, err := Decode([]byte(`{"version":2,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"}}`))
 	if err != nil || !found {
 		t.Fatalf("Decode = (%v, %v, %v), want it found and read", p, found, err)
 	}
@@ -40,7 +40,7 @@ func TestDecodeReadsCloneURLs(t *testing.T) {
 // unchanged, so the escape is only what this package writes.
 func TestDecodeReadsAHandWrittenCloneURLsKey(t *testing.T) {
 	const url = "https://github.com/acme/app.git"
-	p, found, err := Decode([]byte(`{"version":1,"clone_urls":{"github/acme/app":"` + url + `"}}`))
+	p, found, err := Decode([]byte(`{"version":2,"clone_urls":{"github/acme/app":"` + url + `"}}`))
 	if err != nil || !found {
 		t.Fatalf("Decode = (%v, %v, %v), want it found and read", p, found, err)
 	}
@@ -54,7 +54,7 @@ func TestDecodeReadsAHandWrittenCloneURLsKey(t *testing.T) {
 // member name is the whole reason for the type.
 func TestCloneURLsRoundTripThroughTheNode(t *testing.T) {
 	const url = "https://github.com/acme/app.git"
-	in := &Policy{Version: 1, Budget: Budget{Mode: "off"}, CloneURLs: CloneURLs{"github/acme/app": url}}
+	in := &Policy{Version: Version, Budget: Budget{Mode: "off"}, CloneURLs: CloneURLs{"github/acme/app": url}}
 	raw, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestCloneURLsRoundTripThroughTheNode(t *testing.T) {
 // with no clone URL is a policy that says nothing about clone URLs, and a node
 // carrying "clone_urls": {} would be noise in every diff.
 func TestCloneURLsOmittedWhenEmpty(t *testing.T) {
-	raw, err := json.Marshal(&Policy{Version: 1})
+	raw, err := json.Marshal(&Policy{Version: Version})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestDecodeRefusesBadCloneURLs(t *testing.T) {
 		{"a key with a truncated escape", `{"github%2":"https://github.com/acme/app.git"}`, "truncated escape"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, found, err := Decode([]byte(`{"version":1,"clone_urls":` + tc.block + `}`))
+			p, found, err := Decode([]byte(`{"version":2,"clone_urls":` + tc.block + `}`))
 			if err == nil {
 				t.Fatalf("Decode(%s) = (%v, %v, nil), want a refusal", tc.block, p, found)
 			}
