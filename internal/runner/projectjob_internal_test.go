@@ -392,6 +392,52 @@ func TestJobIdentityRefusesANameItCannotPlace(t *testing.T) {
 	}
 }
 
+// TestJobIdentityTellsAPolicyWithNoProfilesFromNoPolicy: the refusal's detail
+// and its fix are computed from the policy the set came from, and the three
+// cases are three different things. A policy that is published and defines no
+// profile is not "no policy published": the rules are deployed and the policy
+// is there, it just names nothing, so the fix is to publish a policy with the
+// profiles (fugaro project policy publish) rather than to deploy rules again.
+//
+// Mutation (run, restored): drop the `else` branch, so a policy with no
+// profiles reports "This project has published no policy". The second case
+// below fails.
+func TestJobIdentityTellsAPolicyWithNoProfilesFromNoPolicy(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	job := "someone-elses-job"
+	for _, tc := range []struct {
+		name       string
+		p          *projectpolicy.Policy
+		found      bool
+		wantDetail string
+		wantFix    string
+	}{
+		{"no policy published", nil, false,
+			"This project has published no policy", "fugaro init --firebase"},
+		{"a policy with no profiles", &projectpolicy.Policy{Version: projectpolicy.Version}, true,
+			"This project's published policy defines no job profiles at all", "fugaro project policy publish"},
+		{"a policy with profiles", policyOf(map[string]config.JobProfile{"standard": profileOf("github")}), true,
+			"This project's published policy defines the job profiles standard", "fugaro init --firebase"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := identityRun(t, job, slug, nil, tc.p, tc.found)
+			_, _, _, err := r.jobIdentity(context.Background())
+			if err == nil {
+				t.Fatalf("jobIdentity(%s) was accepted", job)
+			}
+			if !strings.Contains(err.Error(), tc.wantDetail) {
+				t.Errorf("the refusal %q lacks %q", err, tc.wantDetail)
+			}
+			if !strings.Contains(err.Error(), tc.wantFix) {
+				t.Errorf("the refusal %q does not point at %q", err, tc.wantFix)
+			}
+			if tc.found && strings.Contains(err.Error(), "published no policy") {
+				t.Errorf("a published policy was reported as no policy at all: %v", err)
+			}
+		})
+	}
+}
+
 // TestJobIdentityIsSkippedOutsideCloudRun (R2-9): a run with no Cloud Run
 // execution has no job identity to check, so the step does not run at all —
 // which is why a docker run, a local invocation and `fugaro exec --provider
