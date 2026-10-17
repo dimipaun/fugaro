@@ -243,3 +243,48 @@ func TestManagedBudgetHasNoDefault(t *testing.T) {
 	noMarker(t, r.gcs, bucket)
 	r.nothingDone(t, "a managed creation refused for its missing amount")
 }
+
+// --create-project --managed on a project that already exists: the project
+// stage adopts it and creates nothing, so there is no creation to record and
+// markCreated writes no fact. The owner asked for a managed project, and
+// getting an unmarked one with no word about it is the failure this pins:
+// the run must say --managed was not applied and that no fact was written.
+// The bucket is seeded as the managed creation's is, so the absence of the
+// fact is about the gate and not about an unwritable bucket.
+func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
+	r := newProjectRig(t)
+	const number = 424242
+	bucket := "fugaro-runs-" + newProj
+	r.crm.AddProject(newProj, number)
+	r.gcs.AddProject(newProj, number)
+	r.bill.SetBilling(newProj, true)
+	r.bill.AddAccount(billingAcc, true)
+	r.gcs.AddBucket(bucket, number, managedBucketLabels)
+	roles := map[string]string{}
+	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+		roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
+	}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"runs_bucket":               bucket,
+		"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+		"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+		"role_ids":                  roles,
+	})}
+	r.save(t)
+	out, errOut, err := r.run(t, true, newProj+"\n"+initProjectName+"\n"+initProjectName+"\n",
+		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+	all := refusalText(out, errOut, err)
+	if err != nil {
+		t.Fatalf("the run failed, so the warning would be about a failure rather than about adoption: %v\n%s", err, all)
+	}
+	if n := len(r.crm.Creates()); n != 0 {
+		t.Fatalf("%d project(s) created: the project already existed:\n%s", n, all)
+	}
+	noMarker(t, r.gcs, bucket)
+	if !strings.Contains(all, "--managed was not applied") {
+		t.Errorf("the run adopted an existing project with --managed and did not say --managed was not applied:\n%s", all)
+	}
+	if !strings.Contains(all, "no creation fact was written") {
+		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
+	}
+}

@@ -656,6 +656,13 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// ordinary run of an existing installation — fugaro's own, belong, the
 	// owner's — comes through here with it empty.
 	if r.res.Created == "" {
+		// --managed asked for a managed creation, and a project that already
+		// existed was adopted instead: nothing was created, so there is no
+		// fact to record — and the owner must not silently get an unmarked
+		// project where they asked for a managed one.
+		if r.o.managed {
+			r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed", r.gcpProject))
+		}
 		return
 	}
 	if e.c == nil {
