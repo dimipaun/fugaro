@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -160,6 +161,122 @@ var (
 	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory"}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer"}
 )
+
+// The deployer account of D75, and the condition that fences the half of it
+// that may touch an existing resource (Task 1.5 of
+// docs/plans/2026-10-16-managed-projects.md).
+//
+// A managed apply does not run as the operator: it assumes the deployer
+// account the installation module creates, which holds two custom roles split
+// so that a condition on one binding cannot be defeated by an unconditioned
+// binding of the same role (D75). fugaroDeployer holds only create
+// permissions, read permissions and serviceusage.services.enable, and is bound
+// to the account with no condition; fugaroDeployerScoped holds every update,
+// delete, run and pause permission, every *.setIamPolicy and
+// iam.serviceAccounts.actAs, and is bound to the account exactly once, under
+// the IAM condition below — so the authority that could reach an existing
+// resource is authority the deployer holds only over names carrying
+// ManagedPrefix. That prefix is what keeps the deployer out of the runs bucket
+// (where the marker and the owner's delete list are), out of Fugaro's own
+// accounts, jobs, secrets and repositories, and off the project's default
+// compute account, which holds Editor by default.
+//
+// Nothing here holds project-level IAM authority (no resourcemanager.projects.*)
+// and nothing here may edit an IAM role (no iam.roles.*): an account with
+// either could grant itself object access to the runs bucket and forge the
+// marker, which is the fact a managed project's confirmations are skipped on.
+const (
+	// DeployerAccountID is the deployer's fixed service account ID: one
+	// account per installation, in the installation module (C8's answer,
+	// 2026-10-16), created by the owner-run creating apply and by nothing
+	// else.
+	DeployerAccountID = "fugaro-deployer"
+	// DeployerRole is the unconditioned role's ID: create permissions, reads
+	// and serviceusage.services.enable.
+	DeployerRole = "fugaroDeployer"
+	// DeployerScopedRole is the conditioned role's ID: every update, delete,
+	// run and pause permission, every *.setIamPolicy and actAs, held only
+	// where DeployerConditionExpression admits the resource.
+	DeployerScopedRole = "fugaroDeployerScoped"
+	// DeployerConditionTitle is that condition's title. The modules never set
+	// a condition description, and the plan review compares the title and the
+	// expression byte for byte.
+	DeployerConditionTitle = "fugaro-managed-prefix"
+)
+
+// DeployerClause is one clause of the scoped condition: the resource type it
+// admits, and the resource.name test it admits it under. The type term is not
+// optional — a clause with no type term applies to every type the role reaches,
+// so a resource whose name happens to end in the prefix could otherwise reach
+// a permission meant for another service (a bucket named fmgd- is not a
+// service account).
+//
+// Op is "startsWith" or "contains": Cloud Storage names a bucket
+// projects/_/buckets/<bucket> and an object
+// projects/_/buckets/<bucket>/objects/<object>, so the prefix has to be tested
+// at the front of the name; the other services put the resource's own name at
+// the end of a path whose middle carries the project, the location and the
+// parent, so the prefix is tested as a substring of a segment that begins the
+// resource's own name. "contains" is deliberately used with the segment's
+// leading slash and the trailing dash ("/jobs/fmgd-"), so a resource named
+// x-fmgd- or fugaro-fmgd- is not admitted by it.
+//
+// Value is spelled with ManagedPrefix in it, and never as a prefix alone: a
+// value that admitted any name containing "fmgd-" would admit a fugaro-*
+// object in a bucket whose name contains the prefix.
+type DeployerClause struct {
+	Type, Op, Value string
+}
+
+// String is the clause as the condition writes it, and as the module writes it
+// byte for byte (TestDeployerConditionIsTheModules pins the two together).
+func (c DeployerClause) String() string {
+	return "(resource.type == " + strconv.Quote(c.Type) + " && resource.name." + c.Op + "(" + strconv.Quote(c.Value) + "))"
+}
+
+// deployerClauses is the scoped condition, one clause per service the role's
+// permissions reach. Each is written out here as the module writes it in
+// deployer.tf, because the plan review compares the two byte for byte.
+//
+// What is NOT in it, and why: the runs bucket, the installation's state bucket
+// and D77's managed state bucket (whose object access is a bucket-level
+// binding of its own, Task 1.5 (3)), Fugaro's own accounts, jobs, scheduler
+// jobs, secrets and repositories, and the project's default compute account —
+// none of their names carries the prefix, and that is the whole fence.
+//
+// Where GCP does not honour resource.name for one of these types, the
+// permission that needs it is not moved into the unconditioned role: the task
+// that would drop the matching type is Task 1.1's list, and the live check
+// that measures each form is the plan's Check 68. Until it is run, the forms
+// below are what the IAM Conditions documentation says these services name
+// their resources.
+var deployerClauses = []DeployerClause{
+	{"storage.googleapis.com/Bucket", "startsWith", "projects/_/buckets/" + ManagedPrefix},
+	{"storage.googleapis.com/Object", "startsWith", "projects/_/buckets/" + ManagedPrefix},
+	{"secretmanager.googleapis.com/Secret", "contains", "/secrets/" + ManagedPrefix},
+	{"secretmanager.googleapis.com/SecretVersion", "contains", "/secrets/" + ManagedPrefix},
+	{"artifactregistry.googleapis.com/Repository", "contains", "/repositories/" + ManagedPrefix},
+	{"run.googleapis.com/Job", "contains", "/jobs/" + ManagedPrefix},
+	{"cloudscheduler.googleapis.com/Job", "contains", "/jobs/" + ManagedPrefix},
+	{"iam.googleapis.com/ServiceAccount", "contains", "/serviceAccounts/" + ManagedPrefix},
+	{"apikeys.googleapis.com/Key", "contains", "/keys/" + ManagedPrefix},
+}
+
+// DeployerConditionClauses is the scoped condition's clauses, in order, a copy
+// so no caller can widen the fence.
+func DeployerConditionClauses() []DeployerClause { return slices.Clone(deployerClauses) }
+
+// DeployerConditionExpression is binding (2)'s condition expression: the
+// clauses above, joined with " || ". A binding of fugaroDeployerScoped whose
+// expression is not exactly this is not covered (deployerCondition), because
+// the plan review cannot tell a narrowed expression from a widened one.
+func DeployerConditionExpression() string {
+	parts := make([]string, 0, len(deployerClauses))
+	for _, c := range deployerClauses {
+		parts = append(parts, c.String())
+	}
+	return strings.Join(parts, " || ")
+}
 
 var (
 	saMember   = regexp.MustCompile(`^serviceAccount:([a-z][a-z0-9-]*)@([a-z0-9-]+)\.iam\.gserviceaccount\.com$`)
