@@ -16,19 +16,25 @@ package cli
 //     builds[0]; the archive's name template and extension equal archives[0];
 //     the Homebrew line equals homebrew_casks[0]'s owner, tap and cask; and
 //     the go install path carries README.md's "development only" marker.
-//   - TestWebsiteInstallFactsNameNoUnbuiltPlatform: no platform
-//     .goreleaser.yaml does not build is named anywhere in the file (finding
-//     20; F20's gate, and a Windows build is the only thing that changes this
-//     test's answer).
+//   - TestWebsiteInstallFactsNameNoUnbuiltPlatform: the reader-facing platform
+//     list is README.md's "## Requirements" and nothing more, a platform no
+//     build produces is named only where it is marked untested, no support is
+//     claimed for one, and every path's own platform list equals the list the
+//     source offering that path implies -- so `homebrew: [linux]` fails rather
+//     than rendering `brew install` on the Linux page (finding 20; F20's gate
+//     and D94's wording, and a Windows build is the only thing that changes
+//     this test's answer).
 //   - TestWebsiteInstallFactsCarryNoVersion: no version number appears
 //     anywhere -- the site renders `latest`, or the release's own tag.
 //
 // Two consequences are deliberate, and a later page renders around them rather
 // than fixing them here:
 //
-//   - "Windows: untested" is README.md's "## Requirements" sentence, not this
-//     file's: naming a platform the build does not produce is exactly what the
-//     second test refuses, so the page reads that sentence from the README.
+//   - The Windows wording is this file's, not the page's: D94 makes the
+//     platform list part of this same source, so install.yaml carries the
+//     "untested" note -- and the test above is what refuses a *support* claim
+//     for a platform no build produces, which is the narrower refusal the plan
+//     states (a Windows build in .goreleaser.yaml is what re-opens it).
 //   - The archive is a link to the Releases page, never a releases/download/
 //     URL: that URL carries a version the site does not know, and it is the
 //     string W0.2's console-link test refuses site-wide (finding 25).
@@ -58,9 +64,10 @@ const (
 // installFactsFile is website/data/install.yaml, decoded with unknown fields
 // refused: a key nobody reads is a fact nobody pins.
 type installFactsFile struct {
-	Version int                 `yaml:"version"`
-	Build   installFactsBuild   `yaml:"build"`
-	Paths   []installFactsEntry `yaml:"paths"`
+	Version   int                    `yaml:"version"`
+	Build     installFactsBuild      `yaml:"build"`
+	Platforms []installFactsPlatform `yaml:"platforms"`
+	Paths     []installFactsEntry    `yaml:"paths"`
 }
 
 // installFactsBuild is what the repository actually builds, pinned to
@@ -68,6 +75,17 @@ type installFactsFile struct {
 type installFactsBuild struct {
 	OS   []string `yaml:"os"`
 	Arch []string `yaml:"arch"`
+}
+
+// installFactsPlatform is one entry of the reader-facing platform list: the
+// name a reader is shown, the goos it means, whether the repository supports
+// it or only notes it as untested, and the note the untested entry carries.
+type installFactsPlatform struct {
+	ID     string `yaml:"id"`
+	Name   string `yaml:"name"`
+	Goos   string `yaml:"goos"`
+	Status string `yaml:"status"`
+	Note   string `yaml:"note"`
 }
 
 // installFactsEntry is one install path: what it is, the file its text came
@@ -169,20 +187,84 @@ func readGoreleaser(t *testing.T) goreleaserFile {
 	return f
 }
 
-// readmeGettingStarted returns README.md's "## Getting started" section, one
-// of the two sources an install command may come from.
-func readmeGettingStarted(t *testing.T) string {
+// readmeSection returns one of README.md's "## " sections, heading included,
+// ending at the next "## " heading.
+func readmeSection(t *testing.T, heading string) string {
 	t.Helper()
 	doc := readDoc(t, installReadmePath)
-	start := strings.Index(doc, "\n## Getting started\n")
+	start := strings.Index(doc, "\n"+heading+"\n")
 	if start < 0 {
-		t.Fatalf("%s has no \"## Getting started\" section; this test's source list is stale", installReadmePath)
+		t.Fatalf("%s has no %q section; this test's source list is stale", installReadmePath, heading)
 	}
 	section := doc[start+1:]
 	if end := strings.Index(section, "\n## "); end >= 0 {
 		section = section[:end]
 	}
 	return section
+}
+
+// readmeGettingStarted returns README.md's "## Getting started" section, one
+// of the two sources an install command may come from.
+func readmeGettingStarted(t *testing.T) string {
+	t.Helper()
+	return readmeSection(t, "## Getting started")
+}
+
+// readmePlatformStatement reads the bullet in README.md's "## Requirements"
+// that names the operating systems Fugaro runs on -- "macOS or Linux (Windows:
+// untested)" -- and returns the platforms it lists as supported and the ones it
+// marks untested. It is the reader-facing statement the site's own platform
+// list has to equal: the site says what the repository says, and nothing more
+// (D94, F20).
+func readmePlatformStatement(t *testing.T) (supported, untested []string) {
+	t.Helper()
+	section := readmeSection(t, "## Requirements")
+	var bullet string
+	for _, line := range strings.Split(section, "\n") {
+		if strings.Contains(strings.ToLower(line), "untested") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatalf("%s's \"## Requirements\" carries no bullet marking a platform untested; this test's source is stale", installReadmePath)
+	}
+	open := strings.Index(bullet, "(")
+	closing := strings.Index(bullet, ")")
+	if open < 0 || closing < open {
+		t.Fatalf("%s's platform bullet %q carries no parenthetical marking the untested platform; this test's source is stale", installReadmePath, bullet)
+	}
+	inside := bullet[open+1 : closing]
+	if !strings.Contains(strings.ToLower(inside), "untested") {
+		t.Fatalf("%s's platform bullet %q does not mark %q untested; this test's source is stale", installReadmePath, bullet, inside)
+	}
+	supported, untested = platformsIn(bullet[:open]), platformsIn(inside)
+	if len(supported) == 0 || len(untested) == 0 {
+		t.Fatalf("%s's platform bullet %q names no supported or no untested platform; this test's source is stale", installReadmePath, bullet)
+	}
+	return supported, untested
+}
+
+// readmeMarkerPlatforms returns the platforms named in the parenthetical
+// README.md prints on the same line as the given command -- the "(tested on
+// macOS)" beside the Homebrew line -- which is what narrows that path to one
+// platform. A command the README prints without a marker is refused rather
+// than assumed to serve everything.
+func readmeMarkerPlatforms(t *testing.T, command string) []string {
+	t.Helper()
+	for _, line := range strings.Split(readmeGettingStarted(t), "\n") {
+		if !strings.Contains(line, command) {
+			continue
+		}
+		open := strings.Index(line, "(")
+		closing := strings.Index(line, ")")
+		if open < 0 || closing < open {
+			t.Fatalf("%s prints %q with no parenthetical marker; this test's source is stale", installReadmePath, command)
+		}
+		return platformsIn(line[open+1 : closing])
+	}
+	t.Fatalf("%s's \"## Getting started\" does not print %q", installReadmePath, command)
+	return nil
 }
 
 // installCommandLines splits one stored command into the lines it is written
@@ -280,9 +362,6 @@ func TestWebsiteInstallFactsMatchTheRepository(t *testing.T) {
 	if !slices.Contains(gl.Archives[0].Formats, archive.Extension) {
 		t.Errorf("%s: archive extension = %q, .goreleaser.yaml archives[0].formats = %v", installFactsPath, archive.Extension, gl.Archives[0].Formats)
 	}
-	if !slices.Equal(archive.Platforms, gl.Builds[0].Goos) {
-		t.Errorf("%s: the archive's platforms = %v, .goreleaser.yaml builds[0].goos = %v", installFactsPath, archive.Platforms, gl.Builds[0].Goos)
-	}
 	if archive.ReleasePage == "" || !strings.Contains(gettingStarted, archive.ReleasePage) {
 		t.Errorf("%s: archive release_page = %q, which %s's \"## Getting started\" does not print", installFactsPath, archive.ReleasePage, installReadmePath)
 	}
@@ -367,15 +446,97 @@ func platformNameRE() *regexp.Regexp {
 	return regexp.MustCompile(`(?i)\b(` + strings.Join(names, "|") + `)\b`)
 }
 
-// TestWebsiteInstallFactsNameNoUnbuiltPlatform is F20's gate: the install
-// facts may name only the platforms .goreleaser.yaml builds[0] produces
-// (darwin and linux on amd64 and arm64), so no page rendered from them can
-// promise Windows -- or any other unbuilt platform -- as a supported one. A
-// future Windows build is the only thing that changes this test's answer, and
-// it changes it through .goreleaser.yaml.
+// platformsIn returns the canonical platforms a text names, in the order it
+// first names them and without repeats, so a list written in the repository can
+// be compared with one written in the install facts.
+func platformsIn(text string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range platformNameRE().FindAllString(text, -1) {
+		canonical := platformName[strings.ToLower(m)]
+		if !seen[canonical] {
+			seen[canonical] = true
+			out = append(out, canonical)
+		}
+	}
+	return out
+}
+
+// platformAliases returns every word that means the given goos or goarch name,
+// longest first, for building a pattern that matches the platform however a
+// document spells it.
+func platformAliases(canonical string) []string {
+	var out []string
+	for name, c := range platformName {
+		if c == canonical {
+			out = append(out, name)
+		}
+	}
+	slices.SortFunc(out, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(b) - len(a)
+		}
+		return strings.Compare(a, b)
+	})
+	return out
+}
+
+// supportClaimRE matches a support promise made about one platform -- "Windows
+// is supported", "Windows support", "support for Windows", "runs on Windows",
+// "Windows works". It is the shape D94 refuses and the plan's item 3 refuses
+// with it: the install facts may name a platform no build produces only in
+// order to say it is untested, never as somewhere a reader can install.
+func supportClaimRE(canonical string) *regexp.Regexp {
+	word := `(?:` + strings.Join(platformAliases(canonical), "|") + `)`
+	return regexp.MustCompile(`(?i)(` + word + `\s+(is\s+|are\s+)?(support(ed|s)?|available|native|works?|runs?)\b` +
+		`|support(ed|s)?\s+(for|on)\s+` + word + `\b` +
+		`|(works?|runs?)\s+on\s+` + word + `\b)`)
+}
+
+// installProseBlocks returns the file's prose as whole blocks -- each run of
+// consecutive comment lines and each note value -- so that a claim is judged as
+// the text a reader would read rather than one line at a time.
+func installProseBlocks(facts installFactsFile, raw string) []string {
+	var blocks, comment []string
+	flush := func() {
+		if len(comment) > 0 {
+			blocks = append(blocks, strings.Join(comment, "\n"))
+			comment = nil
+		}
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "#") {
+			comment = append(comment, trimmed)
+			continue
+		}
+		flush()
+	}
+	flush()
+	for _, p := range facts.Platforms {
+		if p.Note != "" {
+			blocks = append(blocks, p.Note)
+		}
+	}
+	for _, p := range facts.Paths {
+		if p.Note != "" {
+			blocks = append(blocks, p.Note)
+		}
+	}
+	return blocks
+}
+
+// TestWebsiteInstallFactsNameNoUnbuiltPlatform is F20's gate, narrowed to the
+// refusal D94 and the plan's item 3 actually state: the install facts may not
+// present a platform .goreleaser.yaml builds[0] does not produce as one a
+// reader can install on. The reader-facing platform list equals README.md's
+// "## Requirements" -- macOS and Linux supported, Windows untested -- and the
+// Windows note is the one D94 settles, so it is carried here rather than left
+// for a page to write. A future Windows build is the only thing that changes
+// this test's answer, and it changes it through .goreleaser.yaml.
 func TestWebsiteInstallFactsNameNoUnbuiltPlatform(t *testing.T) {
 	facts, raw := readInstallFacts(t)
 	gl := readGoreleaser(t)
+	supported, untested := readmePlatformStatement(t)
 
 	built := map[string]bool{}
 	for _, os := range gl.Builds[0].Goos {
@@ -385,24 +546,71 @@ func TestWebsiteInstallFactsNameNoUnbuiltPlatform(t *testing.T) {
 		built[arch] = true
 	}
 
-	// The whole file is scanned, comments and notes included: a note that
-	// promises a platform is as much a claim as a platform list entry.
-	for _, m := range platformNameRE().FindAllString(raw, -1) {
-		canonical := platformName[strings.ToLower(m)]
-		if !built[canonical] {
-			t.Errorf("%s names platform %q (%s), which .goreleaser.yaml builds[0] does not build (goos %v, goarch %v)",
-				installFactsPath, m, canonical, gl.Builds[0].Goos, gl.Builds[0].Goarch)
-		}
-	}
-
-	// The structured halves are the matrix itself, and each path's platform
-	// list is a subset of it.
+	// The structured halves are the matrix itself.
 	if !slices.Equal(facts.Build.OS, gl.Builds[0].Goos) {
 		t.Errorf("%s: build.os = %v, .goreleaser.yaml builds[0].goos = %v", installFactsPath, facts.Build.OS, gl.Builds[0].Goos)
 	}
 	if !slices.Equal(facts.Build.Arch, gl.Builds[0].Goarch) {
 		t.Errorf("%s: build.arch = %v, .goreleaser.yaml builds[0].goarch = %v", installFactsPath, facts.Build.Arch, gl.Builds[0].Goarch)
 	}
+
+	// The reader-facing list: every supported entry is a platform the build
+	// produces, every untested entry is one it does not, the untested entry
+	// carries the note, and the two lists together are README.md's own
+	// statement -- so the site cannot promise Windows, and cannot quietly drop
+	// the note either.
+	var declared, noted []string
+	for _, p := range facts.Platforms {
+		if p.Name == "" || p.Goos == "" {
+			t.Errorf("%s: platform %q carries no name or no goos", installFactsPath, p.ID)
+		}
+		switch p.Status {
+		case "supported":
+			declared = append(declared, p.Goos)
+			if !built[p.Goos] {
+				t.Errorf("%s: platform %q is supported and .goreleaser.yaml builds[0] does not build %q (goos %v)", installFactsPath, p.ID, p.Goos, gl.Builds[0].Goos)
+			}
+		case "untested":
+			noted = append(noted, p.Goos)
+			if built[p.Goos] {
+				t.Errorf("%s: platform %q is marked untested and .goreleaser.yaml builds[0] builds it: the note is stale and has to be re-opened", installFactsPath, p.ID)
+			}
+			if !strings.Contains(strings.ToLower(p.Note), "untested") {
+				t.Errorf("%s: platform %q is marked untested and its note %q does not say so", installFactsPath, p.ID, p.Note)
+			}
+		default:
+			t.Errorf("%s: platform %q carries status %q, want supported or untested", installFactsPath, p.ID, p.Status)
+		}
+	}
+	if !slices.Equal(declared, supported) {
+		t.Errorf("%s: the supported platforms = %v, %s's \"## Requirements\" names %v", installFactsPath, declared, installReadmePath, supported)
+	}
+	if !slices.Equal(noted, untested) {
+		t.Errorf("%s: the untested platforms = %v, %s's \"## Requirements\" names %v", installFactsPath, noted, installReadmePath, untested)
+	}
+
+	// The prose: an unbuilt platform may be named only in a block that marks it
+	// untested, and never in one that claims it works. This is what lets the
+	// Windows note live in the file while refusing a Windows support claim.
+	for _, block := range installProseBlocks(facts, raw) {
+		for _, name := range platformsIn(block) {
+			if built[name] {
+				continue
+			}
+			if !strings.Contains(strings.ToLower(block), "untested") {
+				t.Errorf("%s names the platform %s, which .goreleaser.yaml builds[0] does not build, without marking it untested:\n%s", installFactsPath, name, block)
+			}
+			if claim := supportClaimRE(name).FindString(block); claim != "" {
+				t.Errorf("%s claims %q for %s, which .goreleaser.yaml builds[0] does not build:\n%s", installFactsPath, claim, name, block)
+			}
+		}
+	}
+
+	// Every path's own list is pinned exactly, not merely bounded by the build
+	// matrix: a subset check lets `homebrew: [linux]` through, which would
+	// render `brew install` on the Linux page while README.md marks the cask
+	// "(tested on macOS)" and .goreleaser.yaml's own cask comment says Linux is
+	// untested for it.
 	for _, p := range facts.Paths {
 		if len(p.Platforms) == 0 {
 			t.Errorf("%s: path %q names no platform", installFactsPath, p.ID)
@@ -411,6 +619,23 @@ func TestWebsiteInstallFactsNameNoUnbuiltPlatform(t *testing.T) {
 			if !built[plat] {
 				t.Errorf("%s: path %q names platform %q, which .goreleaser.yaml builds[0] does not build", installFactsPath, p.ID, plat)
 			}
+		}
+	}
+	homebrew := facts.installPath(t, "homebrew")
+	if want := readmeMarkerPlatforms(t, strings.TrimSpace(homebrew.Commands[0])); !slices.Equal(homebrew.Platforms, want) {
+		t.Errorf("%s: the Homebrew platforms = %v, the marker %s prints beside the brew line names %v", installFactsPath, homebrew.Platforms, installReadmePath, want)
+	}
+	archive := facts.installPath(t, "archive")
+	if !slices.Equal(archive.Platforms, gl.Builds[0].Goos) {
+		t.Errorf("%s: the archive's platforms = %v, .goreleaser.yaml builds[0].goos = %v", installFactsPath, archive.Platforms, gl.Builds[0].Goos)
+	}
+	cosign := facts.installPath(t, "cosign")
+	if want := platformsIn(strings.Join(cosign.Commands, "\n")); !slices.Equal(cosign.Platforms, want) {
+		t.Errorf("%s: the cosign platforms = %v, the verification block it prints names %v (one checksum line per platform)", installFactsPath, cosign.Platforms, want)
+	}
+	for _, id := range []string{"go-install", "plugin"} {
+		if p := facts.installPath(t, id); !slices.Equal(p.Platforms, supported) {
+			t.Errorf("%s: the %s platforms = %v, %s's \"## Requirements\" names %v for the CLI it installs", installFactsPath, id, p.Platforms, installReadmePath, supported)
 		}
 	}
 }

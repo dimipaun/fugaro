@@ -4,16 +4,42 @@
 # every command below to the file its `source:` names (README.md's
 # "## Getting started" or docs/release.md), verbatim; `build` to
 # .goreleaser.yaml's builds[0]; the archive's name template and extension to
-# archives[0]; the Homebrew line to homebrew_casks[0]; the absence of any
-# platform .goreleaser.yaml does not build; and the absence of any version
-# number. Nothing under website/ is importable by the Go module.
+# archives[0]; the Homebrew line to homebrew_casks[0]; the platform list below
+# to README.md's "## Requirements" and to .goreleaser.yaml, so that a platform
+# no build produces may appear only marked untested and never as something a
+# reader can install on; each path's own platform list to the source that
+# offers it that path; and the absence of any version number. Nothing under
+# website/ is importable by the Go module.
 version: 1
 
 # What this repository actually builds: darwin and linux on amd64 and arm64,
-# and nothing else. No other platform is named anywhere in this file.
+# and nothing else.
 build:
   os: [darwin, linux]
   arch: [amd64, arm64]
+
+# The reader-facing platform list, and the whole of what the site says about
+# the operating systems a reader might be on (reconciliation D94). macOS and
+# Linux are supported. Windows is untested: this repository builds no Windows
+# binary, and the Linux archive may work through WSL, but nobody has verified
+# it. The list is rendered as written -- the Windows entry is a note and never
+# a platform a reader is offered.
+platforms:
+  - id: macos
+    name: macOS
+    goos: darwin
+    status: supported
+  - id: linux
+    name: Linux
+    goos: linux
+    status: supported
+  - id: windows
+    name: Windows
+    goos: windows
+    status: untested
+    note: >-
+      Windows is untested: this repository builds no Windows binary. The Linux
+      archive may work through WSL, but nobody has verified it.
 
 paths:
   - id: homebrew
@@ -47,7 +73,7 @@ paths:
       The verification block docs/release.md prints, verbatim: download the
       checksums, their signature bundle and the archive, verify the signature
       that the release workflow attached to the tag, then check the archive
-      against the checksums.
+      against the checksums -- one checksum line per platform.
     commands:
       - |-
         V=X.Y.Z
