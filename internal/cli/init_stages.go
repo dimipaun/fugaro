@@ -145,7 +145,7 @@ func (e *initEngine) converge(ctx context.Context) error {
 // fail-closed direction), and a warning is appended to the result the print
 // encodes — so a marker warning recorded after it would reach stderr alone,
 // while a --json consumer updating its account read an empty warnings array
-// (TestMarkCreatedWarningsReachTheJSONResult). It is still after the loop's
+// (TestMarkCreatedWarningsAreInThePrintedResult). It is still after the loop's
 // own stages, so the project stage has set r.res.Created by the time it runs,
 // and it still never changes the outcome.
 func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr error) error {
