@@ -45,6 +45,19 @@ over the artifact — no cloud, no credential, no deployed site. The live checks
 domain, DNS, TLS and the deployed HTML) are the owner's, numbered 69a–69c in
 `docs/gcp-live-checklist.md`.
 
+## Nothing loads from a third party
+
+No font, script, stylesheet, image or embed reaches a page from an origin outside this
+build: a font is **self-hosted in this artifact** (`website/public/fonts/`, when the styles
+land in W1.2), and there is no Google Fonts, no CDN, no embed and no pixel — because every
+third-party origin is a request from a reader's browser to a company this project has no
+relationship with (D106). There is exactly **one exception, and the owner chose it**: the
+analytics script (D93), loaded **only after the visitor consents**, with W1.12's banner as
+the gate that decides whether anything is fetched and its own tests for no request before
+consent, no cookie before consent, withdrawal and keyboard reachability. `readme.mjs`
+refuses a third-party font or script host in the shell's own sources today, and W1.11
+asserts the same over the built HTML's script, link, iframe and image origins.
+
 The site's other gate is the Go side, which holds every fact to the file it is derived
 from:
 
