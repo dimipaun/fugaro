@@ -251,6 +251,52 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 	h.mustDeny(consumer, "an ack of the wrong type", put(outbox(mbAlice, "c1")+"/acked", "yes"))
 }
 
+// TestMailboxHeartbeatDeleteIsDenied: the one mailbox node that is overwritten
+// by design — D113b's heartbeat is the consumer's *latest liveness*, not a
+// record — is still not removable, by either writer or by anyone.
+//
+// The heartbeat's `.write` is `CONSUMER && newData.exists()`, and the
+// `newData.exists()` half is what refuses a delete: RTDB does not run
+// validation on one, so a rule that only validated the shape would accept a
+// delete of the node it validated. That matters here more than for a message:
+// the staleness rule (P1.4) decides "offline" by how old the heartbeat is, so
+// removing the node is removing the evidence rather than updating it, and a
+// phone that could delete its own heartbeat could make the consumer's view
+// say anything (or nothing) about liveness.
+//
+// TestMailboxWritesAreExactlyTheFour pins the fragment against the generated
+// rules without an emulator; this is the case that proves what it does against
+// the database, which is what the fragment is for.
+func TestMailboxHeartbeatDeleteIsDenied(t *testing.T) {
+	h := newHarness(t)
+	alice, consumer := h.phone(mbAlice), h.consumer(mbAlice)
+	h.mustAllow(consumer, "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+
+	// The consumer may overwrite it — that is what the node is for — but not
+	// remove it, whole or field by field.
+	h.mustAllow(consumer, "overwriting the heartbeat", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-2"}))
+	h.mustDeny(consumer, "deleting its own heartbeat", map[string]any{beat(mbAlice): nil})
+	h.mustDeny(consumer, "deleting one field of its own heartbeat", map[string]any{beat(mbAlice) + "/at": nil})
+	// A denial is atomic: the message this multi-path update writes beside the
+	// delete is not written either.
+	h.mustDeny(consumer, "deleting the heartbeat in a multi-path update that writes a message too",
+		map[string]any{beat(mbAlice): nil, outbox(mbAlice, "c1"): aMessage("c1", mbAlice)})
+	h.wantValue(beat(mbAlice)+"/boot", `"boot-2"`)
+	h.wantValue(outbox(mbAlice, "c1"), "null")
+
+	// The phone holds no write grant on the heartbeat at all: it reads it
+	// (MAILBOX) and may not write it, delete it or replace it.
+	h.mustDeny(alice, "deleting the heartbeat from the phone", map[string]any{beat(mbAlice): nil})
+	h.wantValue(beat(mbAlice)+"/boot", `"boot-2"`)
+
+	// Nothing above the heartbeat grants a delete either: the mailbox node and
+	// the account node carry no `.write` at all, and a rule that grants nothing
+	// denies.
+	h.mustDeny(consumer, "deleting the mailbox that holds the heartbeat", map[string]any{mailbox(mbAlice): nil})
+	h.mustDeny(alice, "deleting its own mailbox", map[string]any{mailbox(mbAlice): nil})
+	h.wantValue(beat(mbAlice)+"/boot", `"boot-2"`)
+}
+
 // TestMailboxPhoneAcksWhatItSpoke: D113's second phone write — one field on a
 // message the consumer left it — and the fact that it carries no more than
 // that.
@@ -442,18 +488,24 @@ func TestMailboxReadsAreTheGrantedSet(t *testing.T) {
 // chooses the uid and every claim: a launcher (signJwt, iam.tf's token_minter)
 // or any holder of a key of one of the project's service accounts. So a token
 // minted with uid == mu == alice is, to the rules, alice's phone: it reads
-// alice's outbox and heartbeat and writes her inbox. A token minted with
-// mc == alice is alice's consumer and can fake her heartbeat. The rules
+// alice's outbox and heartbeat, writes her inbox, and acks her outbox
+// messages — the ack is the phone's MAILBOX write, so a minted token can mark
+// as spoken a message the phone never spoke, and the consumer, which reads
+// the ack as "delivered and spoken", stops re-delivering it. A token minted
+// with mc == alice is alice's consumer and can fake her heartbeat. The rules
 // cannot tell these apart from the real ones; no claim they could read would
 // help, because the minter writes that claim too. (Launchers also read every
 // mailbox through roles/firebasedatabase.viewer, which bypasses the rules:
 // mobile reconciliation G13.)
 //
-// What closes it is phase 6, by owner decision: the admin-only device node
-// config/admin/devices/$uid that USER will also require (D166, plan P6.4),
-// and a per-pairing MAC on every inbox message and action record that
-// `fugaro mailbox` verifies before it acts (D169, D171, plan P6.3, P6.7), so
-// a minted inbox write cannot make the consumer act. When P6.4 lands, the
+// What would close it is phase 6, if the owner approves it: the admin-only
+// device node config/admin/devices/$uid that USER will also require (D166,
+// plan P6.4), and a per-pairing MAC on every inbox message and action record
+// that `fugaro mailbox` verifies before it acts (D169, D171, plan P6.3,
+// P6.7), so a minted inbox write cannot make the consumer act. Phase 6 is
+// **proposed, not approved** (the plan says "PROPOSED ... NOT APPROVED"; the
+// decisions its tasks build were answered without approving them), so this is
+// the state the rules are in, not a stage on a schedule. When P6.4 lands, the
 // device-node half of this test must change on purpose (a minted token
 // without the node is refused); the MAC half is the consumer's, not the
 // rules'.
@@ -473,8 +525,11 @@ func TestMailboxResidualMintedTokenPassesUntilPhase6(t *testing.T) {
 		put(outbox(mbAlice, "c1")+"/acked", true))
 
 	// A token minted with mc == alice: it writes alice's heartbeat, so the
-	// heartbeat's integrity is not the rules' to keep until a signed
-	// heartbeat lands in phase 6.
+	// heartbeat's integrity is not the rules' to keep until the signed
+	// heartbeat that phase 6 *proposes* (O7 in
+	// docs/mobile/functional-spec-reconciliation.md: a recommendation, and
+	// phase 6 approves no task) — "proposed", not "lands", because no phase 6
+	// task may start without the owner's explicit go.
 	forgedConsumer := h.as(claims{mc: mbAlice, fp: "-", rb: "mallory@example.invalid"})
 	h.mustAllow(forgedConsumer, "alice's heartbeat from a minted mc token",
 		put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "forged"}))

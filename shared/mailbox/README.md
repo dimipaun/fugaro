@@ -151,15 +151,47 @@ from becoming a hole in the fence:
 
 **The lockout trade-off, stated rather than hidden.** With a quarter-of-the-cap
 quota, four senders at their quota fill the ledger, and a fifth is refused
-`dedupe-full` until records age past the horizon (with a 72-hour prompt TTL,
-up to 72 hours). That is the price of never forgetting a record inside the
-horizon. It is bounded by three things: **the quota only means something if
-`sender` is tied to the writer's identity by P2.1's rules** (a writer free to
-choose `sender` is as many senders as it likes); the **recovery** is the
-consumer acting and acking and the records ageing past the horizon; and an
-operator who expects more senders sets a **larger `maxSeen`**. Nothing is
-recovered by a fresh `initialState`, which forgets the ledger and the
-watermark and so reopens every replay still inside its window.
+`dedupe-full` until records age past the horizon. The stall is **up to
+`horizon + futureToleranceMs` after the record is acked**, not `horizon` after
+it was written: eviction needs the record to be acked *and* strictly older than
+the horizon, and a record whose `at` leads `now` by the future tolerance (5
+minutes by default) reaches that age only 5 minutes later than its arrival — so
+with a 72-hour prompt TTL a record dated `now + 5 min` is evicted 72 h 05 m
+later, and its ack has to come first. **While the consumer does not ack, the
+stall has no bound at all**: an un-acked record is never evicted, at any age, so
+a mailbox whose consumer has stopped stays full until the consumer acts and
+acks it, or an operator raises `maxSeen`. That is the price of never forgetting
+a record inside the horizon. It is bounded by three things: **the quota only
+means something if `sender` is tied to the writer's identity by P2.1's rules**
+(a writer free to choose `sender` is as many senders as it likes); the
+**recovery** is the consumer acting and acking and the records ageing past the
+horizon; and an operator who expects more senders sets a **larger `maxSeen`**.
+Nothing is recovered by a fresh `initialState`, which forgets the ledger and
+the watermark and so reopens every replay still inside its window.
+
+**The throughput ceiling the one horizon implies.** `maxSeen` is not a
+per-window budget: a record leaves only by aging past the horizon
+`max(windowMs, promptTtlMs)`, and with the defaults that is **`promptTtlMs` —
+72 hours, not the command window's 6** — because one horizon covers both kinds,
+so a *command* record is retained for 72 hours too. `maxSeen` is therefore a
+budget **per 72 hours**, and P4.1 sizes it from the sustained volume it must
+carry: the defaults (`maxSeen` 1024, quota `max(1, floor(maxSeen / 4))` = 256)
+sustain about **14 deliveries per hour per mailbox** and about **3.5 per hour
+per sender** (256 per 72 hours) before `dedupe-full` / `sender-full` refuse —
+and only while the consumer keeps acking, since an un-acked record never leaves
+at all (the stall above). A mailbox that must carry more has two levers and
+they trade against each other: **a larger `maxSeen`** is a larger per-72-hour
+budget and more ledger state for the caller to persist, and **a shorter
+`promptTtlMs`** is fewer hours inside which a redelivery must still be
+remembered — which shortens the retention of *commands* as well, because the
+horizon is single. Sustained volume is `maxSeen / horizon`, so the second lever
+moves it the other way round from the first — a **longer** `promptTtlMs` is a
+**slower** mailbox, not a larger one: `MAX_PROMPT_TTL_MS` (30 days) is the
+ceiling, and at a TTL that long the same `maxSeen` sustains `maxSeen` records
+per 30 days — about **a tenth** of the volume the 72-hour default allows (the
+default's 1024 records per 72 hours is ~10240 per 30 days, and the 30-day TTL
+has ten times as long to hold the same 1024). P4.1 must size `maxSeen` for the
+horizon it is actually configured with, not for the command window's 6 hours.
 
 **The exact bound.** The ledger never holds more than `maxSeen` records
 (refused on read, never grown on write), plus one number, the watermark; at

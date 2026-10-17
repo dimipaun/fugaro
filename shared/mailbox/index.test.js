@@ -1264,6 +1264,36 @@ test('an acked record at exactly the horizon\'s age is kept, and its redelivery 
   refused(state, deliver(message({ at: NOW }), { now: past }), REFUSAL.REPLAY);
 });
 
+test('an acted record past the horizon is kept: the ack it is owed is never lost', () => {
+  // The eviction rule is "acked AND strictly older than the horizon", and the
+  // `acked` half is load-bearing in both directions. An `acted` record is work
+  // this consumer still owes an ack for, so evicting it past the horizon loses
+  // the ack, not just a bookkeeping row: the sender never learns the message
+  // was acted on, and re-delivers it. The horizon here is the prompt TTL
+  // (72 hours), longer than the command window, so an age past the horizon is
+  // reachable without leaving the module's own bounds.
+  const HOUR = 3_600_000;
+  const TTL = 72 * HOUR;
+  const later = NOW + 80 * HOUR; // past the horizon, and past the TTL itself
+
+  let state = stepped(newMailbox({ maxSeen: 3, promptTtlMs: TTL }), deliver(message({ at: NOW }))).state;
+  state = stepped(state, act()).state;
+  assert.equal(state.seen[0].status, STATUS.ACTED);
+
+  // A delivery long after the horizon: the acted record is not evicted with
+  // it, whatever its age (it is not acked, so it is not evictable at all).
+  state = stepped(state, deliver(message({ id: 'm-0002', at: later }), { now: later })).state;
+  assert.deepEqual(ids(state), ['m-0001', 'm-0002'], 'an acted record past the horizon was evicted: its ack is lost');
+  assert.equal(state.seen[0].status, STATUS.ACTED, 'the record is kept as it was');
+
+  // And the ack it is owed still finds it: the outcome names m-0001, the one
+  // that was acted on, not the newer pending delivery.
+  const acked = stepped(state, ack(later));
+  assert.equal(acked.outcome, OUTCOME.ACKED);
+  assert.equal(acked.id, 'm-0001');
+  assert.equal(acked.state.seen[0].status, STATUS.ACKED);
+});
+
 
 test('one sender cannot starve another: the per-sender quota', () => {
   // The default quota: a quarter of the cap. 8 records, 2 per sender.
