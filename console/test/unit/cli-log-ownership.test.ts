@@ -75,8 +75,11 @@ describe('the spawn log a source opens for itself', () => {
     await expect(
       CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: ENV, spawner }),
     ).rejects.toThrow('spawn failed before a child existed')
-    expect(counts.opened).toBe(1)
-    expect(counts.closed).toBe(1)
+    // No child existed, so no line was recorded and the lazily opened log was
+    // never opened (review round 2 of PR 514: the line used to be written
+    // before the spawn). Whatever was opened is closed.
+    expect(counts.opened).toBe(0)
+    expect(counts.closed).toBe(counts.opened)
   })
 
   it('is closed by close(), once', async () => {
