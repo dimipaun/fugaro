@@ -322,3 +322,45 @@ test('U+2028 and U+2029 in a secret are removed in their JSON-escaped spelling',
     assert.ok(got.includes(REDACTED));
   }
 });
+
+// --- faithfulness to Go's encoder (round-2 fix) ----------------------------
+//
+// `jsonEscape` in `internal/agent/redact.go` is `json.Encoder` with HTML
+// escaping off, so the port must write what that encoder writes. Checked
+// against the repository's toolchain (go 1.27): `\b` and `\f` are the two
+// short forms alongside `\t \n \r`, other controls are lowercase `\u00xx`,
+// `< > &` are not escaped, U+2028/9 are, DEL is not, and an invalid byte
+// becomes a raw U+FFFD (JS analogue: a lone surrogate).
+
+test('the JSON-escaped spelling is Go encoder-faithful, character by character', () => {
+  const cases = [
+    ['\b', '\\b'],
+    ['\f', '\\f'],
+    ['\t', '\\t'],
+    ['\n', '\\n'],
+    ['\r', '\\r'],
+    ['"', '\\"'],
+    ['\\', '\\\\'],
+    ['\u0001', '\\u0001'],
+    ['\u001f', '\\u001f'],
+    [' ', '\\u2028'],
+    [' ', '\\u2029'],
+    ['<', '<'],
+    ['>', '>'],
+    ['&', '&'],
+    ['\u007f', '\u007f'],
+    ['é', 'é'],
+    ['\ud800', '�'],
+    ['\udc00', '�'],
+    ['😀', '😀'],
+  ];
+  for (const [raw, escaped] of cases) {
+    // The secret has no \n of its own except in the one case that is the
+    // newline itself, so the raw-line rule does not mask the escaped form.
+    const secret = `sk-aaaa${raw}bbbb`;
+    const form = `sk-aaaa${escaped}bbbb`;
+    const got = redact(`transcript: "${form}" end`, [secret]);
+    assert.ok(!got.includes(form), `left the escaped form of ${JSON.stringify(raw)} standing`);
+    assert.ok(got.includes(REDACTED));
+  }
+});

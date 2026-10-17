@@ -274,6 +274,14 @@ function jsonEscape(text) {
       out += '\\r';
     } else if (ch === '\t') {
       out += '\\t';
+    } else if (ch === '\b') {
+      out += '\\b';
+    } else if (ch === '\f') {
+      out += '\\f';
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      // A lone surrogate is the JS analogue of invalid UTF-8, which Go's
+      // encoder writes as a raw U+FFFD (go 1.27).
+      out += '\ufffd';
     } else if (code < 0x20 || code === 0x2028 || code === 0x2029) {
       out += `\\u${code.toString(16).padStart(4, '0')}`;
     } else {

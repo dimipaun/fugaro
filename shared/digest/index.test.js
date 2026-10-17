@@ -557,3 +557,28 @@ test('the oversize bound is in UTF-8 bytes, not in characters', () => {
     2048,
   );
 });
+
+test('an enumeration value that is a prototype key is refused', () => {
+  for (const key of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    assert.throws(() => digest(doc({ runs: [run({ health: key })] })), refusal(ERROR.ENUM_UNKNOWN), key);
+    assert.throws(() => digest(doc({ runs: [run({ deadline: key })] })), refusal(ERROR.ENUM_UNKNOWN), key);
+    assert.throws(
+      () => digest(doc({ finished: [finished({ status: key, failed: undefined })] })),
+      refusal(ERROR.ENUM_UNKNOWN),
+      key,
+    );
+  }
+});
+
+test('a list with a hole is refused, not walked around', () => {
+  // eslint-disable-next-line no-sparse-arrays
+  const holey = (entry) => [entry, , entry];
+  for (const d of [
+    doc({ runs: holey(run()) }),
+    doc({ repos: holey(repo()) }),
+    doc({ finished: holey(finished({ run: 'a' })) }),
+    doc({ ready: holey(finished({ run: 'a' })) }),
+  ]) {
+    assert.throws(() => digest(d), refusal(ERROR.TYPE));
+  }
+});

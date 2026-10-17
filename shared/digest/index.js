@@ -240,6 +240,19 @@ function readList(object, field) {
   return value === undefined || value === null ? [] : value;
 }
 
+/**
+ * Walk a list by index. `Array#forEach` skips the holes of a sparse array, so
+ * a document with a hole would be digested as if the entry were not there;
+ * the index loop reads the hole as `undefined`, which the entry's own shape
+ * check refuses.
+ */
+function each(list, fn) {
+  const length = list.length;
+  for (let i = 0; i < length; i++) {
+    fn(list[i], i);
+  }
+}
+
 /** A value that must be one of an enumeration's members, or `UNAVAILABLE`. */
 function readEnum(object, field, table, path) {
   const value = read(object, field);
@@ -405,7 +418,7 @@ export function digest(input) {
   }
 
   const repos = readList(document, 'repos');
-  repos.forEach((entry, i) => {
+  each(repos, (entry, i) => {
     const path = `$.repos[${i}]`;
     const repo = snapshot(entry, REPO_FIELDS, path);
     const slug = read(repo, 'slug');
@@ -437,7 +450,7 @@ export function digest(input) {
   // anything.
   const identified = new Map();
   const finishedItems = (entries, kind, listPath) => {
-    entries.forEach((entry, i) => {
+    each(entries, (entry, i) => {
       const item = finishedItem(entry, kind, `${listPath}[${i}]`);
       if (item.run !== UNAVAILABLE) {
         if (identified.has(item.run)) {
@@ -455,7 +468,7 @@ export function digest(input) {
   finishedItems(readList(document, 'ready'), 'ready', '$.ready');
   finishedItems(readList(document, 'finished'), 'finished', '$.finished');
 
-  readList(document, 'runs').forEach((entry, i) => {
+  each(readList(document, 'runs'), (entry, i) => {
     items.push(runItem(entry, `$.runs[${i}]`));
   });
 
