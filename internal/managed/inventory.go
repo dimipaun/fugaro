@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"google.golang.org/api/cloudasset/v1"
 	"google.golang.org/api/googleapi"
@@ -60,9 +61,39 @@ const ServiceCloudAsset = "cloudasset.googleapis.com"
 const RoleCloudAssetViewer = "roles/cloudasset.viewer"
 
 // inventoryPageSize is how many assets the read asks for per page. The read
-// follows the next-page token, so it is a request-size knob rather than a
-// bound on what is read.
+// follows the next-page token, so it is a request-size knob; the bounds on
+// what is read are inventoryMaxPages and inventoryMaxAssets.
 const inventoryPageSize = 500
+
+// The read's bounds. The SDK's own page loop follows whatever next-page token
+// the server answers with and never notices one it has already followed, so a
+// misbehaving server, or a project far larger than any a managed project is,
+// would loop or grow memory until the context ends — and an apply whose
+// context has no deadline would hang, which D59's "never halt" rules out. Each
+// bound ends the read with an error, and an error falls the run back to its
+// confirmations; none of them reads as clean.
+const (
+	// inventoryMaxPages is the most pages one read follows: at
+	// inventoryPageSize per page, room for ten times inventoryMaxAssets even
+	// when a server answers with short pages.
+	inventoryMaxPages = 400
+	// inventoryMaxAssets is the most assets one read holds. A managed project
+	// is single-purpose, so its listing is in the hundreds; a listing past this
+	// is not a project the check can vouch for.
+	inventoryMaxAssets = 20000
+	// inventoryTimeout is the deadline the check applies when its caller's
+	// context has none, so the read ends whatever the server does.
+	inventoryTimeout = 2 * time.Minute
+)
+
+// withInventoryDeadline is ctx with inventoryTimeout applied when it carries no
+// deadline of its own; a caller's own deadline is kept as it is.
+func withInventoryDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, inventoryTimeout)
+}
 
 // inventoryNamed is how many foreign resources the warning names before it
 // counts the rest. A project can hold hundreds of resources no state accounts
@@ -194,6 +225,8 @@ func (in Inventory) Check(ctx context.Context) Decision {
 	if in.Assets == nil || in.GCPProject == "" {
 		return in.fallback(CauseNoReader, "no whole-project read was made")
 	}
+	ctx, cancel := withInventoryDeadline(ctx)
+	defer cancel()
 	listed, err := in.Assets.List(ctx, in.GCPProject)
 	if err != nil {
 		return in.fallback(classify(err), err.Error())
@@ -407,7 +440,8 @@ func NewCloudAssets(ctx context.Context, opts ...option.ClientOption) (*CloudAss
 }
 
 // List implements Assets: every resource of gcpProject, page by page, as the
-// name and the asset type. The read is the whole project and not a query
+// name and the asset type, within the read's bounds (inventoryMaxPages,
+// inventoryMaxAssets, and inventoryTimeout when ctx has no deadline). The read is the whole project and not a query
 // narrowed to types this program knows, which is the point of it (finding 20).
 func (c *CloudAssets) List(ctx context.Context, gcpProject string) ([]Asset, error) {
 	if c == nil || c.svc == nil {
@@ -416,17 +450,35 @@ func (c *CloudAssets) List(ctx context.Context, gcpProject string) ([]Asset, err
 	if gcpProject == "" {
 		return nil, errors.New("no GCP project to read")
 	}
-	var out []Asset
-	err := c.svc.V1.SearchAllResources("projects/"+gcpProject).
-		PageSize(inventoryPageSize).
-		Pages(ctx, func(res *cloudasset.SearchAllResourcesResponse) error {
-			for _, r := range res.Results {
-				out = append(out, Asset{Name: r.Name, Type: r.AssetType})
-			}
-			return nil
-		})
-	if err != nil {
+	ctx, cancel := withInventoryDeadline(ctx)
+	defer cancel()
+	fail := func(err error) ([]Asset, error) {
 		return nil, fmt.Errorf("reading project %s through the %s API: %w", gcpProject, ServiceCloudAsset, err)
 	}
-	return out, nil
+	call := c.svc.V1.SearchAllResources("projects/" + gcpProject).PageSize(inventoryPageSize)
+	var out []Asset
+	seen := map[string]bool{}
+	token := ""
+	for pages := 1; ; pages++ {
+		res, err := call.PageToken(token).Context(ctx).Do()
+		if err != nil {
+			return fail(err)
+		}
+		for _, r := range res.Results {
+			out = append(out, Asset{Name: r.Name, Type: r.AssetType})
+		}
+		if len(out) > inventoryMaxAssets {
+			return fail(fmt.Errorf("the listing holds more than %d assets", inventoryMaxAssets))
+		}
+		token = res.NextPageToken
+		switch {
+		case token == "":
+			return out, nil
+		case seen[token]:
+			return fail(fmt.Errorf("the server repeated page token %q after %d pages", token, pages))
+		case pages >= inventoryMaxPages:
+			return fail(fmt.Errorf("the listing runs past %d pages", inventoryMaxPages))
+		}
+		seen[token] = true
+	}
 }

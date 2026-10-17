@@ -10,7 +10,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
@@ -412,5 +414,113 @@ func TestInventoryEmptyListingFallsBack(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// pagingServer is a Cloud Asset API that answers every page with results
+// results and the next-page token next(n) for its n-th request (1-based), and
+// counts the requests it was asked. It never ends on its own unless next
+// returns "".
+func pagingServer(t *testing.T, results int, next func(n int) string) (*CloudAssets, *atomic.Int64) {
+	t.Helper()
+	var n atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i := int(n.Add(1))
+		w.Header().Set("Content-Type", "application/json")
+		var b strings.Builder
+		b.WriteString(`{"results":[`)
+		for j := range results {
+			if j > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, `{"name":"//compute.googleapis.com/projects/%s/zones/z/disks/d-%d-%d","assetType":"compute.googleapis.com/Disk"}`, gcpProject, i, j)
+		}
+		fmt.Fprintf(&b, `],"nextPageToken":%q}`, next(i))
+		_, _ = w.Write([]byte(b.String()))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewCloudAssets(context.Background(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, &n
+}
+
+// The read is bounded: a server that repeats a page token forever, one that
+// hands out new tokens forever, and one whose listing is larger than the read
+// will hold all end in an error after a bounded number of requests — never a
+// loop, never unbounded memory, never an apply that hangs until its context
+// ends (D59's never-halt) — and the error falls the run back. The tests give
+// the read a generous context of their own, so a read that only stops at the
+// deadline fails on its error and on its request count, not by hanging.
+func TestInventoryCloudAssetsReadIsBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		results  int
+		next     func(n int) string
+		maxCalls int64
+		says     string
+	}{
+		{"the same page token forever", 1, func(int) string { return "same" }, 2, "repeated"},
+		{"new page tokens forever", 1, func(n int) string { return fmt.Sprintf("t%d", n) }, inventoryMaxPages, "pages"},
+		{"more assets than the read holds", inventoryMaxAssets/4 + 1, func(n int) string { return fmt.Sprintf("t%d", n) }, 4, "assets"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, calls := pagingServer(t, tc.results, tc.next)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+
+			_, err := c.List(ctx, gcpProject)
+			if err == nil {
+				t.Fatal("an unbounded listing read as complete")
+			}
+			if ctx.Err() != nil {
+				t.Fatalf("the read stopped only at the context's deadline (%d requests): %v", calls.Load(), err)
+			}
+			if got := calls.Load(); got > tc.maxCalls {
+				t.Errorf("the read made %d requests, want at most %d", got, tc.maxCalls)
+			}
+			if !strings.Contains(err.Error(), tc.says) {
+				t.Errorf("the error does not say what bound it hit (%q): %v", tc.says, err)
+			}
+
+			d := inventory(c).Check(ctx)
+			if !d.Fallback || d.Cause != CauseUnreadable || len(d.Foreign) != 0 {
+				t.Errorf("an unbounded listing decided %+v, want a fallback with cause %q and nothing foreign", d, CauseUnreadable)
+			}
+		})
+	}
+}
+
+// deadlineAssets records the deadline of the context each read was given.
+type deadlineAssets struct {
+	deadline time.Time
+	ok       bool
+}
+
+func (f *deadlineAssets) List(ctx context.Context, _ string) ([]Asset, error) {
+	f.deadline, f.ok = ctx.Deadline()
+	return []Asset{listed("//cloudresourcemanager.googleapis.com/projects/"+gcpProject, "cloudresourcemanager.googleapis.com/Project")}, nil
+}
+
+// A caller that passes a context with no deadline still gets a read that ends:
+// the check applies inventoryTimeout. A caller's own, nearer deadline is kept.
+func TestInventoryReadHasADeadline(t *testing.T) {
+	f := &deadlineAssets{}
+	start := time.Now()
+	inventory(f).Check(context.Background())
+	if !f.ok {
+		t.Fatal("the read was given a context with no deadline")
+	}
+	if f.deadline.Before(start.Add(inventoryTimeout)) || f.deadline.After(time.Now().Add(inventoryTimeout)) {
+		t.Errorf("the read's deadline is %v away, want %v", f.deadline.Sub(start), inventoryTimeout)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	want, _ := ctx.Deadline()
+	inventory(f).Check(ctx)
+	if !f.ok || !f.deadline.Equal(want) {
+		t.Errorf("the read's deadline is %v, want the caller's own %v", f.deadline, want)
 	}
 }
