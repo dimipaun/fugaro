@@ -1691,3 +1691,46 @@ func TestPendingWorkflowsReadmeNamesTheConsoleTestsRow(t *testing.T) {
 		t.Error("docs/pending-workflows/README.md does not say the console-tests.yml staged copy is kept after the copy-in: it is, because the byte-identity test reads it afterwards")
 	}
 }
+
+// TestConsoleMVPRequiresTheStartupHandshake pins the owner's ruling of
+// 2026-10-17: Task 3.3 (the version handshake wired at startup) is a release
+// gate for the console MVP, because Task 3.2 alone builds a check nothing calls.
+// The plan must carry the task as SECURITY-SENSITIVE, depending on Task 3.2, and
+// name it in "What ships with the MVP" and in Task 4.6.
+func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "plans", "2026-10-15-desktop-console.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := string(raw)
+	section := func(start, end string) string {
+		i := strings.Index(plan, start)
+		if i < 0 {
+			t.Fatalf("plan has no %q", start)
+		}
+		rest := plan[i:]
+		if j := strings.Index(rest[len(start):], end); j >= 0 {
+			return rest[:len(start)+j]
+		}
+		return rest
+	}
+	heading := regexp.MustCompile(`(?m)^### Task 3\.3: .*SECURITY-SENSITIVE, independent opus review$`)
+	if !heading.MatchString(plan) {
+		t.Error("the Task 3.3 heading does not itself carry `SECURITY-SENSITIVE, independent opus review`")
+	}
+	if rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan); !strings.Contains(rule, "2.0, 3.3, 4.1") {
+		t.Error("Global Constraints rule 9's list of security-sensitive tasks does not include 3.3")
+	}
+	task := section("### Task 3.3:", "\n## Phase 4")
+	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "NOT APPROVED TO IMPLEMENT"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("Task 3.3 lost %q", want)
+		}
+	}
+	if gate := section("### Task 4.6:", "\n## Phase 5"); !strings.Contains(gate, "Task 3.3 must be merged before the console MVP is released") {
+		t.Error("Task 4.6's release gate does not require Task 3.3")
+	}
+	if ships := section("**What ships with the MVP.**", "\n\n"); !strings.Contains(ships, "Tasks 3.2 and 3.3") {
+		t.Error(`"What ships with the MVP" does not name Task 3.3`)
+	}
+}
