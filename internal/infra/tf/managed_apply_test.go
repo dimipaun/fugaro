@@ -129,6 +129,12 @@ func TestManagedCoverRefusesWhatRunsAtApply(t *testing.T) {
 		}()}, config(google, []map[string]any{bucketConfig()}, nil),
 			[]string{"google_storage_bucket.b (", `mode ""`}},
 		"no configuration at all": {[]map[string]any{bucket}, nil, []string{"configuration"}},
+		// And the same plan with an empty one: "{}" is a document
+		// terraform's own `show -json` never writes, and read as a
+		// configuration it has nothing to refuse — the provisioner, provider
+		// and data-source rules below all pass, and the plan is taken to have
+		// none, which is exactly what this function refuses the absence of.
+		"an empty configuration": {[]map[string]any{bucket}, map[string]any{}, []string{"configuration"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out := managedTestCover().NotCovered(jsonPlan(t, tc.changes, tc.config), nil)
