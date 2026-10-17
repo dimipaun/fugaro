@@ -401,12 +401,29 @@ func TestJobIdentityRefusesANameItCannotPlace(t *testing.T) {
 func TestJobIdentityIsSkippedOutsideCloudRun(t *testing.T) {
 	spec := &task.Spec{Version: 1, RunID: "20260926-221530-abcd", Repo: "acme/app", Ref: "main", Task: "Add a feature"}
 	r := identityRun(t, "", identitySlug(t, "github", "acme/app"), spec, nil, false)
+	r.d.Local = true
 	profile, provider, account, err := r.jobIdentity(context.Background())
 	if err != nil || profile != "" || provider != "" || account != "" {
 		t.Fatalf("jobIdentity = %q/%q/%q, %v; want no identity and no error outside Cloud Run", profile, provider, account, err)
 	}
 	if _, project := r.projectJob(); project {
 		t.Fatal("a run with no Cloud Run execution adopted a project job identity")
+	}
+}
+
+// TestJobIdentityRefusesAnUnclaimedProcess (review C2): "no Cloud Run
+// execution" is a local invocation only when the invocation said so
+// (Deps.Local). A process no backend claims is in the cloud, and a job name
+// is the one thing its identity could rest on, so with none it halts rather
+// than taking the per-repository path with no job binding at all.
+func TestJobIdentityRefusesAnUnclaimedProcess(t *testing.T) {
+	r := identityRun(t, "", identitySlug(t, "github", "acme/app"), nil, nil, false)
+	_, _, _, err := r.jobIdentity(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not a local invocation") {
+		t.Fatalf("jobIdentity of an unclaimed process = %v, want a halt", err)
+	}
+	if _, project := r.projectJob(); project {
+		t.Fatal("an unclaimed process adopted a project job identity")
 	}
 }
 

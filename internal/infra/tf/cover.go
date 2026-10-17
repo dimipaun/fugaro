@@ -223,7 +223,17 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 	// them, and its condition is accepted only against the account the title
 	// names (bucketCondition).
 	createdSAIDs := map[string]bool{}
+	// heldSAIDs are the accounts each module holds after this plan — created,
+	// updated or unchanged, never deleted — by module and account ID: a
+	// bucket grant that names its member is a project job's widened one only
+	// for the account its own module holds (projectJobCondition).
+	heldSAIDs := map[string]bool{}
 	for _, rc := range p.ResourceChanges {
+		if rc.Type == "google_service_account" && len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
+			if id := str(rc.Change.After["account_id"]); id != "" {
+				heldSAIDs[modulePrefix(rc)+"|"+id] = true
+			}
+		}
 		if slices.Contains(rc.Change.Actions, "create") {
 			creates[modulePrefix(rc)+"|"+rc.Type] = true
 			if rc.Type == "google_service_account" {
@@ -265,7 +275,7 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case strings.HasSuffix(t, "_iam_member"):
 			why := c.checkGrant(rc.Type, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"])
 			if why == "" && t == "google_storage_bucket_iam_member" {
-				why = c.bucketCondition(rc, createdSAIDs)
+				why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
 			}
 			if why != "" {
 				add(rc, why)
@@ -453,10 +463,11 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // The modules never set a description, and a condition known only after apply
 // is not covered.
 //
-// createdSAIDs are the (module, account ID) pairs this plan creates: the
-// widened condition is accepted only for one of them, so a plan that widened
+// createdSAIDs are the (module, account ID) pairs this plan creates and
+// heldSAIDs the pairs each module holds after it: the widened condition is
+// accepted only for the project module's own account, so a plan that widened
 // a per-repository job's grant — or a stranger's — is still stopped.
-func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs map[string]bool) string {
+func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool) string {
 	ch := rc.Change
 	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") || unknownAt(ch.AfterUnknown, "condition", 0, "description") {
 		return "a bucket grant whose condition is not known"
@@ -512,7 +523,7 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs map[string]bool) 
 		if len(conds) == 0 {
 			return "grants objectUser on the bucket to an account with no condition"
 		}
-		if c.projectJobCondition(rc, createdSAIDs, title, expr) {
+		if c.projectJobCondition(rc, createdSAIDs, heldSAIDs, title, expr) {
 			return ""
 		}
 		for _, clause := range strings.Split(expr, " || ") {
@@ -540,16 +551,17 @@ var projectModule = regexp.MustCompile(`^module\.project\["[^"]+"\]$`)
 // account the grant is written for: the grant lives in the project module, the
 // expression is that builder's bytes for one of this run's buckets — no slug,
 // and no other expression can pass, since this compares the whole string — the
-// bucket is that one, and the title is the condition title of the job account
-// named by the member, or, when the member is computed as the module writes
-// it, of an account this plan creates in the same module.
+// bucket is that one, and the title is the condition title of the module's
+// own account: the one the member names, which the same module must hold in
+// this plan (an update plan lists it as a no-op), or, when the member is
+// computed as the module writes it, one this plan creates in the same module.
 //
 // Both parts are what keep the widening bounded: the widened condition is the
 // project module's own, for the accounts that module creates, so widening a
 // per-repository job's grant — in its workflow module, where the account is
 // created just the same — or granting it to an account of another module, is
 // still a plan the review screen stops.
-func (c Cover) projectJobCondition(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) bool {
+func (c Cover) projectJobCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, expr string) bool {
 	if !projectModule.MatchString(modulePrefix(rc)) {
 		return false
 	}
@@ -557,9 +569,12 @@ func (c Cover) projectJobCondition(rc ResourceChange, createdSAIDs map[string]bo
 	switch m := saMember.FindStringSubmatch(str(rc.Change.After["member"])); {
 	case m != nil:
 		// The grant names its account (an update plan, where the account
-		// already exists): it must be a Fugaro job account of this run and the
-		// title must be that account's condition title.
-		if !slices.Contains(c.Projects, m[2]) || !jobAccountID(m[1]) {
+		// already exists): it must be a Fugaro job account of this run that
+		// the same module holds — not merely any job account of the project,
+		// which would let one module's grant widen another profile's or a
+		// repository's account — and the title must be that account's
+		// condition title.
+		if !slices.Contains(c.Projects, m[2]) || !jobAccountID(m[1]) || !heldSAIDs[modulePrefix(rc)+"|"+m[1]] {
 			return false
 		}
 		id = m[1]

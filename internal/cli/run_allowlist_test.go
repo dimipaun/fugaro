@@ -67,7 +67,7 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	f := newLaunchBudget(t, "off")
 	// The allow-list admits every repository, so what refuses below is the
 	// binding and not the policy.
-	publishPolicy(t, f, `{"version":1,"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":2,"allow_repos":["*"]}`)
 	env := memEnv(t, f.cloudFixture)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
 
@@ -114,7 +114,7 @@ func TestProviderKindsAgreeWithTheConfigsList(t *testing.T) {
 // is the only reason an operator sees it now rather than as a failed run.
 func TestRunRefusesBeforeLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":1,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":2,"allow_repos":["github/other/*"]}`)
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
@@ -154,7 +154,7 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 // batch the policy refuses.
 func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":1,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":2,"allow_repos":["github/other/*"]}`)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error from the policy gate", err, ExitCode(err))
@@ -185,7 +185,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
 	}
 	for _, want := range []string{
-		"the project policy is version 99", "this Fugaro understands version 1",
+		"the project policy is version 99", "this Fugaro understands version " + strconv.Itoa(projectpolicy.Version),
 		policySince, "fugaro upgrade",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -206,6 +206,32 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 		if _, err := strconv.Atoi(p); err != nil {
 			t.Fatalf("policySince = %q, want a release", policySince)
 		}
+	}
+}
+
+// The other skew direction (plan task 3.3's version bump): a policy an older
+// Fugaro published — version 1, written before a runner enforced a profile's
+// allow_repos — is refused too, since this binary's runs would refuse it at
+// bootstrap, but "upgrade Fugaro" is backwards for it: this binary is the newer
+// one. The remedy is the publisher's own (publishedPolicyOf): remove the node
+// and publish again.
+func TestRunRefusesAPolicyOlderThanTheBinaryWithAWorkingRemedy(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	publishPolicy(t, f, `{"version":1,"allow_repos":["*"]}`)
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
+	}
+	for _, want := range []string{"the project policy is version 1", "fugaro project policy publish --delete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "upgrade") {
+		t.Errorf("an older policy is met with the newer direction's remedy: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused launch", n)
 	}
 }
 

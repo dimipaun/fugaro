@@ -313,42 +313,24 @@ func TestExecUnclaimedRefusesLoopbackBudget(t *testing.T) {
 }
 
 // The live test's routing knob is a local run's, and an unclaimed process is
-// not local: a run whose checkout would send Claude Code around the gateway
-// is refused at bootstrap even with the knob set. This is the routing
-// refusal the CLI resolves from platform.InCloud() (design
-// compute-backend.md §2.5).
-//
-// The knob's own refusal is not the whole difference: the knob only ever
-// works on a local run against the real API, so a run pointed at a test
-// upstream is refused with or without it. What the platform decides is
-// whether the operator is told the knob is ignored, which is the line
-// asserted below -- without it this test would pass on a `Deps.InCloud`
-// that had lost the unclaimed case.
+// not local: it is in the cloud (platform.InCloud), and the CLI hands the
+// runner Local = false for it. Since plan task 3.3's fix round (review C2) the
+// runner reads that as a process with no job name to place and refuses it at
+// the admission, before any git credential, before the checkout — so before
+// the routing settings this test used to reach. The refusal is itself the
+// proof that the CLI resolved the platform as the cloud: a local one skips the
+// admission. The knob's own "ignored on Cloud Run" refusal is pinned in the
+// runner (TestTestKnobIgnoredInCloud, Local = false).
 func TestExecUnclaimedRefusesRoutingSettings(t *testing.T) {
-	// The fixture's models, pinned and priced, so the run reaches the
-	// settings check rather than the pin check before it.
-	edit := func(cfg string) string {
-		return strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
-  model: claude-sonnet-5-5
-  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
-  max_output_tokens: { coder: 4096, reviewer: 4096 }
-`, 1)
-	}
-	_, errOut, err, store := cloudExec(t,
+	_, _, err, store := cloudExec(t,
 		map[string]string{".claude/settings.json": `{"env": {"ANTHROPIC_BASE_URL": "https://elsewhere.invalid"}}`},
-		edit,
-		map[string]string{"FUGARO_BUDGET_MODE": "observe", "FUGARO_TEST_ALLOW_ROUTING_SETTINGS": "1", "ANTHROPIC_API_KEY": "sk-ant-test"},
-		// The budget is on, so the managed settings need a loopback
-		// upstream; the refusal fires before anything calls it.
-		"--managed-settings", filepath.Join(t.TempDir(), "managed-settings.json"), "--gateway-upstream", "http://127.0.0.1:1")
-	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "ANTHROPIC_BASE_URL") {
+		nil,
+		map[string]string{"FUGARO_TEST_ALLOW_ROUTING_SETTINGS": "1"})
+	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "not a local invocation") {
 		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
 	}
-	if n := strings.Count(errOut, "is ignored on Cloud Run"); n != 1 {
-		t.Fatalf("%d 'ignored on Cloud Run' warnings:\n%s", n, errOut)
-	}
 	rec, rerr := store.ReadRecord(context.Background())
-	if rerr != nil || rec.Status != runstore.StatusInfraError || rec.Stage != "bootstrap" || !strings.Contains(rec.Reason, "ANTHROPIC_BASE_URL") {
+	if rerr != nil || rec.Status != runstore.StatusInfraError || rec.Stage != "bootstrap" || !strings.Contains(rec.Reason, "no Cloud Run execution") {
 		t.Fatalf("record = %+v, %v", rec, rerr)
 	}
 }

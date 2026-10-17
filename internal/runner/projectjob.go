@@ -8,6 +8,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/repourl"
 )
@@ -107,10 +108,18 @@ func (r *run) jobIdentity(ctx context.Context) (profile, provider, account strin
 // job's name is the one thing about the job a launcher cannot write (finding
 // 4, 12a item 1). Deps.Execution carries the name the platform returned, and
 // ExecutionFromEnv refuses an empty CLOUD_RUN_JOB before any of this runs
-// (internal/backend's codec), so "no name" here means "not on Cloud Run".
+// (internal/backend's codec), so "no name" here means "not on Cloud Run" — and
+// "not on Cloud Run" is local only when the invocation said so (Deps.Local).
+// A process no backend claims is in the cloud (backend.Platform.InCloud fails
+// closed) and has no job name to place, so it can neither adopt a project
+// job's identity nor be told apart from one: it halts here, before any git
+// credential (review C2).
 func (r *run) jobName() (string, error) {
 	if r.d.Execution == "" {
-		return "", nil
+		if r.d.Local {
+			return "", nil
+		}
+		return "", fmt.Errorf("this run reports no Cloud Run execution and is not a local invocation (fugaro exec --task-file): a process no backend claims is in the cloud, and with no job name it cannot be placed in the job it is in, so it adopts no identity and is not admitted. The run stops before any git credential is requested; check that the job's environment carries the platform's own variables (CLOUD_RUN_JOB, CLOUD_RUN_EXECUTION)")
 	}
 	job, err := backend.JobOf(r.d.Execution)
 	if err != nil {
@@ -234,6 +243,40 @@ func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workf
 	}
 	return fmt.Errorf("this run is in the Cloud Run job %s, and that is neither a project job of this project's policy nor the per-repository job of this run (%s for the slug %s and the workflow %s): a job the run cannot place may be another installation's, a job of a module version this policy no longer describes, or one created by hand, and the run adopts no identity from it. %s. The fix is `fugaro doctor`, then `fugaro init --firebase` with the current Fugaro",
 		job, gcp.JobName(slug, variant), slug, workflow, detail)
+}
+
+// checkProjectCheckoutOrigin refuses, on a project job, any checkout already
+// in the work directory (review C5). openCheckout opens an existing checkout
+// as it is, and on a per-repository job the admission holds its origin to the
+// task's repository (originURL feeds remoteOfAnotherRepo); a project job
+// computes its clone URL and reads no origin, so without this a checkout of
+// another repository — a baked image built for one, or a directory something
+// left behind — would be fetched with the profile's credential and worked on
+// under this run's slug.
+//
+// The refusal covers a checkout whose origin is the computed URL too, and that
+// is deliberate: an origin is one line of the checkout's .git/config, which
+// also holds a push URL, url rewrites and hooks — code and configuration the
+// run would execute with the profile's credential — so no origin can vouch for
+// a checkout the run did not make. Nothing legitimate is lost: project jobs run
+// the installation's base image, which bakes no checkout, and each Cloud Run
+// execution starts from that image. A run in a per-repository job, and a work
+// directory with no checkout, pass.
+func (r *run) checkProjectCheckoutOrigin(ctx context.Context, remote string) error {
+	job, project := r.projectJob()
+	if !project {
+		return nil
+	}
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		return nil // no checkout: the run clones remote
+	}
+	got := "no origin"
+	if origin, err := strip(repo).OriginURL(ctx); err == nil {
+		got = remoteDisplay(origin)
+	}
+	return fmt.Errorf("the work directory %s already holds a checkout (origin %s), and this run is in the project job %s, which clones %s itself: a project job's image bakes no checkout and the run works only on the one it clones, since a checkout it did not make carries configuration and hooks the profile's credential would run with, so the run stops before any git credential is requested",
+		r.d.WorkDir, got, gcp.ProjectJobName(job.Profile, job.Provider, job.Account), remoteDisplay(remote))
 }
 
 // cloneURL is where this run clones from (design §4.1(1), plan task 3.3 step

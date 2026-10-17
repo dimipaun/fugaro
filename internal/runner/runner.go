@@ -889,6 +889,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := r.checkProjectCheckoutOrigin(ctx, remote); err != nil {
+		return err
+	}
 	r.credURL = gitops.CredentialURL(remote)
 	// The clone and fetch below may already need credentials, so the
 	// provider is opened now if anything but fugaro.yaml names it.

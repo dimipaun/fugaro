@@ -9,22 +9,26 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // projectProfilesLCBlock is the local config block the project-job tests and
-// the installation golden are built with: two profiles on two providers, one
-// mounting a Claude account's token (so it runs as the default account) and
-// one mounting none (so it runs as no account — an api-key job, whose account
-// segment is empty), plus the project-wide containers they mount.
+// the installation golden are built with: two profiles, both on GitHub, one
+// mounting the GitHub App key and the Anthropic key and one the App key alone,
+// plus the project-wide containers they mount.
 //
-// The two providers are the point of the provider axis (finding 4): one job
-// serves one provider, so a profile per provider is two jobs.
+// Both are GitHub's because GitHub is the only provider a shared job may serve
+// in phase 3: the owner ruled on 2026-10-15 that a Bitbucket credential cannot
+// be scoped to one project's repositories, so Bitbucket stays per-repository
+// (plan Task 3.0 step 2, D5 amended). Neither mounts a Claude OAuth token:
+// those are person-owned (design D2, §7) and are refused on a shared job until
+// phase 5 (TestProjectJobsRefuseAClaudeOAuthToken), so every job runs as no
+// account and its name's account segment is empty.
 const projectProfilesLCBlock = `project_secrets:
-  bitbucket-token: { allow_data_to: [acme/sandbox] }
-  claude-oauth-token: { allow_data_to: [acme/sandbox] }
+  anthropic-api-key: { allow_data_to: [acme/webapp] }
   github-app-key: { allow_data_to: [acme/webapp] }
 profiles:
-  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [bitbucket-token, claude-oauth-token] }
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [github-app-key, anthropic-api-key] }
   heavy: { provider: github, cpu: 8, memory: 32Gi, timeout_class: 24h, secrets: [github-app-key] }
 `
 
@@ -64,11 +68,11 @@ func TestProjectJobsAreOnePerProfileProviderAccount(t *testing.T) {
 	if len(jobs) != 2 {
 		t.Fatalf("%d jobs, want 2: %v", len(jobs), slices.Sorted(maps.Keys(jobs)))
 	}
-	// The account axis is the Claude account the profile mounts its token
-	// for; a profile that mounts none runs as no account.
+	// No profile may mount a Claude OAuth token yet (phase 5), so every job
+	// runs as no account.
 	want := map[string]struct{ profile, provider, account string }{
-		gcp.ProjectJobName("standard", "bitbucket", "default"): {"standard", "bitbucket", "default"},
-		gcp.ProjectJobName("heavy", "github", ""):              {"heavy", "github", ""},
+		gcp.ProjectJobName("standard", "github", ""): {"standard", "github", ""},
+		gcp.ProjectJobName("heavy", "github", ""):    {"heavy", "github", ""},
 	}
 	if !slices.Equal(slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(want))) {
 		t.Fatalf("jobs = %v, want %v", slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(want)))
@@ -107,7 +111,7 @@ func TestProjectJobsAreOnePerProfileProviderAccount(t *testing.T) {
 		}
 	}
 	// The profile's own resources and timeout, not the fixture's defaults.
-	standard, heavy := jobs[gcp.ProjectJobName("standard", "bitbucket", "default")], jobs[gcp.ProjectJobName("heavy", "github", "")]
+	standard, heavy := jobs[gcp.ProjectJobName("standard", "github", "")], jobs[gcp.ProjectJobName("heavy", "github", "")]
 	if standard.CPU != "2" || standard.Memory != "8Gi" || heavy.CPU != "8" || heavy.Memory != "32Gi" {
 		t.Errorf("resources = standard %s/%s, heavy %s/%s", standard.CPU, standard.Memory, heavy.CPU, heavy.Memory)
 	}
@@ -170,7 +174,7 @@ func TestProjectJobEnvIsTheInstallationsAlone(t *testing.T) {
 		wantSecrets := map[string]string{}
 		switch j.Profile {
 		case "standard":
-			wantSecrets = map[string]string{"FUGARO_BITBUCKET_TOKEN": "bitbucket-token", "CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth-token"}
+			wantSecrets = map[string]string{"FUGARO_GITHUB_APP_PRIVATE_KEY": "github-app-key", "ANTHROPIC_API_KEY": "anthropic-api-key"}
 		case "heavy":
 			wantSecrets = map[string]string{"FUGARO_GITHUB_APP_PRIVATE_KEY": "github-app-key"}
 		}
@@ -274,8 +278,7 @@ func TestProjectJobsOnVertexCarryTheVertexEnvironment(t *testing.T) {
 func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 	// The same profiles without the containers the installation creates.
 	bare := strings.Replace(projectProfilesLCBlock, `project_secrets:
-  bitbucket-token: { allow_data_to: [acme/sandbox] }
-  claude-oauth-token: { allow_data_to: [acme/sandbox] }
+  anthropic-api-key: { allow_data_to: [acme/webapp] }
   github-app-key: { allow_data_to: [acme/webapp] }
 `, "", 1)
 	for _, c := range []struct{ name, lc, want string }{
@@ -297,9 +300,9 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 	// A provider's key is project-wide by construction (projectSecretContainers),
 	// and it is mounted as the runner's provider variable.
 	jobs := projectJobsFor(t, m4LocalConfig+m5Additions+providerLC+`profiles:
-  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [openrouter-api-key] }
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [openrouter-api-key] }
 `)
-	j, ok := jobs[gcp.ProjectJobName("standard", "bitbucket", "")]
+	j, ok := jobs[gcp.ProjectJobName("standard", "github", "")]
 	if !ok {
 		t.Fatalf("jobs = %v", sortedJobNames(jobs))
 	}
@@ -311,29 +314,52 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 	}
 }
 
-// The account axis: a profile runs as the Claude account whose token it
-// mounts, and a job holds one identity, so two accounts on one profile are
-// refused rather than silently run as one of them.
-func TestProjectJobRunsAsTheAccountItMounts(t *testing.T) {
-	lc := m4LocalConfig + m5Additions + claudeAccountsLC + `profiles:
-  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] }
-  heavy: { provider: bitbucket, cpu: 8, memory: 16Gi, timeout_class: 24h, secrets: [claude-oauth-token-acme-personal, claude-oauth-token-acme-overflow] }
-`
-	_, err := ProjectJobs(parseLC(t, lc), "fugaro-runs-proj-1234", false)
-	// Two Claude accounts on one profile collide on the single variable the
-	// runner reads, so the job's account can never be one of two.
-	if err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN is mounted twice") {
-		t.Fatalf("err = %v, want a refusal of two accounts on one profile", err)
+// A Claude OAuth token is person-owned (design D2 and §7: D2 sweeps API keys
+// and the git credential into project scope, never claude-oauth-token), and
+// its allow_data_to — the repositories that may use the account — is a list a
+// shared job cannot honour, since every repository the profile admits runs on
+// the same job. So until phase 5 decides how an account reaches a shared job,
+// a profile that mounts any Claude account's token is refused, the default
+// account's and a named account's alike, rather than mounted with its
+// allow-list silently ignored.
+func TestProjectJobsRefuseAClaudeOAuthToken(t *testing.T) {
+	for _, c := range []struct{ name, lc string }{
+		{"the default account", `project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/sandbox] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [claude-oauth-token] }
+`},
+		{"a named account", claudeAccountsLC + `profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] }
+`},
+	} {
+		_, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions+c.lc), "fugaro-runs-proj-1234", false)
+		if err == nil || !strings.Contains(err.Error(), "person-owned") || !strings.Contains(err.Error(), "phase 5") {
+			t.Errorf("%s: err = %v, want a refusal naming the token person-owned until phase 5", c.name, err)
+		}
 	}
-	jobs := projectJobsFor(t, m4LocalConfig+m5Additions+claudeAccountsLC+`profiles:
-  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] }
-`)
-	j, ok := jobs[gcp.ProjectJobName("standard", "bitbucket", "acme-personal")]
-	if !ok {
-		t.Fatalf("jobs = %v, want one named for the account acme-personal", sortedJobNames(jobs))
-	}
-	if j.Account != "acme-personal" || j.SecretEnv["CLAUDE_CODE_OAUTH_TOKEN"] != "claude-oauth-token-acme-personal" {
-		t.Errorf("job = %+v", j)
+}
+
+// Bitbucket stays on the per-repository path in phase 3 (the owner's ruling
+// of 2026-10-15 on probe U1: a Bitbucket credential cannot be scoped to one
+// project's repositories; plan Task 3.0 step 2, D5 amended). So a shared job
+// never serves Bitbucket and never mounts the Bitbucket token, whatever
+// provider the profile names.
+func TestProjectJobsRefuseBitbucket(t *testing.T) {
+	for _, c := range []struct{ name, lc, want string }{
+		{"a Bitbucket profile", `profiles:
+  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
+`, "profiles.standard.provider: a shared job never serves bitbucket"},
+		{"the Bitbucket token on a GitHub profile", `project_secrets:
+  bitbucket-token: { allow_data_to: [acme/sandbox] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [bitbucket-token] }
+`, "profiles.standard.secrets[0]: \"bitbucket-token\" is the Bitbucket credential"},
+	} {
+		_, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions+c.lc), "fugaro-runs-proj-1234", false)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want one naming %q", c.name, err, c.want)
+		}
 	}
 }
 
@@ -347,17 +373,17 @@ func TestProjectJobsRefuseAProfileThePolicyWouldRefuse(t *testing.T) {
   standard: { cpu: 2, memory: 8Gi, timeout_class: 6h }
 `, "must name the provider"},
 		{"no standard profile", `profiles:
-  heavy: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
+  heavy: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h }
 `, "standard must be defined"},
 		{"resources Cloud Run refuses", `profiles:
-  standard: { provider: bitbucket, cpu: 8, memory: 1Gi, timeout_class: 6h }
+  standard: { provider: github, cpu: 8, memory: 1Gi, timeout_class: 6h }
 `, "at least"},
 		{"a timeout that is not one", `profiles:
-  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: "soon" }
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: "soon" }
 `, "not a duration"},
 		{"a pattern of another provider", `profiles:
-  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/web] }
-`, "this profile serves bitbucket"},
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [bitbucket/acme/web] }
+`, "this profile serves github"},
 	} {
 		_, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions+c.profiles), "fugaro-runs-proj-1234", false)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -387,40 +413,27 @@ func TestInstallationWithoutProfilesWritesNoProjectJobs(t *testing.T) {
 }
 
 // projectAccountLCBlock is the local config block the recomputation test is
-// built with: the three shapes a profile's account axis has — a profile
-// mounting the reserved token (the default account), one mounting a named
-// account's token, and one mounting no Claude token at all (an api-key
-// profile, whose job's account segment is empty) — plus the containers they
-// mount.
-const projectAccountLCBlock = `claude_accounts:
-  acme-personal:
-    allow_data_to: ["acme/sandbox"]
-project_secrets:
-  claude-oauth-token: { allow_data_to: [acme/sandbox] }
-profiles:
-  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [claude-oauth-token] }
-  personal: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] }
+// built with: a profile mounting no Claude token (an api-key profile, whose
+// job's account segment is empty), the only shape a shared job deploys in
+// phase 3 — a profile mounting a Claude account's token is refused by
+// projectJobSecrets until phase 5 (plan task 3.2's fix round).
+const projectAccountLCBlock = `profiles:
   apikey: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h }
+  standard: { provider: github, cpu: 1, memory: 2Gi, timeout_class: 1h }
 `
 
 // The account axis is computed on two sides, from two different documents: the
-// deployer resolves it while it deploys, from the local config's
-// claude_accounts (projectJobSecrets, over a secret the installation stores
-// project-wide), and the runner recomputes it at run start from the published
-// policy's profile, which carries the secret names and nothing else
-// (config.ClaudeAccountOfSecrets, plan task 3.3 step 1). They must be one rule
-// (the function says so in its own comment): a job whose name the runner would
-// not recompute is a job every run of that profile halts on, because the run
-// cannot place the name it is in and adopts no identity from it.
+// deployer resolves it while it deploys (always empty in phase 3, since no
+// profile may mount a Claude token), and the runner recomputes it at run start
+// from the published policy's profile, which carries the secret names and
+// nothing else (config.ClaudeAccountOfSecrets, plan task 3.3 step 1). They
+// must agree: a job whose name the runner would not recompute is a job every
+// run of that profile halts on, because the run cannot place the name it is
+// in and adopts no identity from it.
 //
 // What is asserted is the deployed *name* — the key the runner matches its
 // CLOUD_RUN_JOB against — and not only the field beside it, because the name is
 // what a run has to reproduce.
-//
-// Mutation (run, restored): change either side's reading of the shape — drop
-// the "-<name>" suffix in ClaudeAccountOfSecrets, or resolve the account from
-// the profile's name in projectJobSecrets. This test says so here rather than
-// at a halt on every run of the profile.
 func TestProjectJobAccountIsWhatTheRunnerRecomputes(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+m5Additions+projectAccountLCBlock)
 	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
@@ -428,9 +441,8 @@ func TestProjectJobAccountIsWhatTheRunnerRecomputes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		gcp.ProjectJobName("standard", "bitbucket", "default"):    "default",
-		gcp.ProjectJobName("personal", "github", "acme-personal"): "acme-personal",
-		gcp.ProjectJobName("apikey", "github", ""):                "",
+		gcp.ProjectJobName("apikey", "github", ""):   "",
+		gcp.ProjectJobName("standard", "github", ""): "",
 	}
 	if !slices.Equal(slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(want))) {
 		t.Fatalf("jobs = %v, want %v", slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(want)))
@@ -449,5 +461,43 @@ func TestProjectJobAccountIsWhatTheRunnerRecomputes(t *testing.T) {
 		if recomputed := gcp.ProjectJobName(j.Profile, j.Provider, got); recomputed != name {
 			t.Errorf("the runner computes the job name %s for the profile %s, and the deployed one is %s", recomputed, j.Profile, name)
 		}
+	}
+}
+
+// Retiring a project job is deferred (plan task 3.2's fix round, review item
+// 4): the module protects the job from deletion and has no allow_job_delete,
+// unlike the workflow module. A profile removed, or one whose secrets change
+// its account and so its job's name, plans the old module instance's delete;
+// the guard refuses it without --allow-delete, and with it the apply would
+// destroy the launchers' grants on the job and then fail on the deletion
+// protection. So the delete of a project job is refused before the apply
+// whatever --allow-delete names, with the way back and the reason.
+func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
+	job := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"].google_cloud_run_v2_job.this`
+	for _, acts := range [][]string{{"delete"}, {"delete", "create"}, {"create", "delete"}} {
+		p := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: job, Change: tf.Change{Actions: acts}}}}
+		err := RefuseProjectJobDeletes(p)
+		if err == nil {
+			t.Fatalf("%v of %s is not refused", acts, job)
+		}
+		for _, want := range []string{job, "retiring a project job is not supported yet", "deletion protection", "restore the profile"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v: err = %v, want it to name %q", acts, err, want)
+			}
+		}
+	}
+	// Anything else the module holds may still be replaced with
+	// --allow-delete (a grant whose condition changed, say), and a plan that
+	// deletes no project job is untouched.
+	for _, addr := range []string{
+		`module.project["` + gcp.ProjectJobName("standard", "github", "") + `"].google_storage_bucket_iam_member.job`,
+		"module.installation.google_cloud_run_v2_job.history[0]",
+	} {
+		if err := RefuseProjectJobDeletes(planDeleting(addr)); err != nil {
+			t.Errorf("deleting %s: %v", addr, err)
+		}
+	}
+	if hints := DeleteHints(planDeleting(job), nil); len(hints) != 1 || !strings.Contains(hints[0], "profiles") {
+		t.Errorf("hints = %v, want one naming the local config's profiles", hints)
 	}
 }

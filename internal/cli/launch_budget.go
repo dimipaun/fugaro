@@ -136,6 +136,8 @@ func policyReadErr(err error) error {
 	var ve *projectpolicy.VersionError
 	var me *projectpolicy.MarkerError
 	switch {
+	case errors.As(err, &ve) && ve.Found < ve.Understood:
+		return olderPolicyRefusal(ve)
 	case errors.As(err, &ve):
 		return userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
 	case errors.As(err, &me):

@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -130,14 +131,17 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // — would run a repository's work on a job whose shape, secrets and admission
 // its owner did not choose for it.
 //
-// Only an explicit selection is checked. A workflow that names none runs on
-// the default (standard), and a policy that carries a profiles block must
-// define it (projectpolicy.validProfiles), so the default can only be defined;
-// a policy with no profiles block at all defines nothing, and a run has no job
-// layout to apply one with yet (task 3.2), so nothing is refused for the
-// default. An installation that has published no policy is the phase-2
-// installation: naming a job profile there is a claim about a document that
-// does not exist, and it is refused rather than ignored.
+// Only a selection other than the default is checked. A workflow that names
+// none runs on the default (standard), and a policy that carries a profiles
+// block must define it (projectpolicy.validProfiles), so the default can only
+// be defined; a policy with no profiles block at all defines nothing, and a run
+// has no job layout to apply one with yet (task 3.2), so nothing is refused for
+// the default. A workflow that writes `job_profile: standard` says exactly what
+// omitting the key says (docs/project-layer.md), so it is the default too and
+// runs wherever the omission runs. An installation that has published no
+// policy is the phase-2 installation: naming any other job profile there is a
+// claim about a document that does not exist, and it is refused rather than
+// ignored.
 //
 // The name is the whole check this release can make: the profile's resources,
 // secrets and admission list describe the job the run is launched as, and the
@@ -150,7 +154,7 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // refuses a name it does not know. The skew is therefore a refusal at
 // validation, never a run on a profile nobody selected.
 func (r *run) checkJobProfile(ctx context.Context, workflow string, wf config.Workflow) error {
-	if wf.JobProfile == "" {
+	if wf.JobProfile == "" || wf.JobProfile == projectpolicy.DefaultProfileName {
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)
@@ -180,6 +184,49 @@ func remoteOfAnotherKind(derived, remote string) string {
 		return kind
 	}
 	return ""
+}
+
+// remoteOffTheKindsHost is the host (with its port, when it names one) of a
+// remote that names a host other than exactly the derived kind's own
+// (repourl.ProviderHost: github.com, bitbucket.org), and "" for a remote on
+// that host with no port, or one that names no host at all. A remote with no
+// host is a local path or a file URL: the run sends it no credential
+// (gitops.CredentialURL is empty for it), and the end-to-end and runner
+// fixtures clone from one.
+//
+// The comparison is on the hostname as the URL spells it, case-insensitively
+// (DNS is), with nothing else: "github.com." and "www.github.com" are other
+// names, however they resolve, and an explicit port is refused too, since the
+// deployer never writes one (repourl.CloneURL refuses it) and a credential
+// helper keyed on the bare host would not match it anyway. A derived kind
+// with no host of its own is refused for any host (fail closed).
+func remoteOffTheKindsHost(derived, remote string) string {
+	host, port := remoteHost(remote)
+	if host == "" {
+		return ""
+	}
+	if want := repourl.ProviderHost(derived); want != "" && strings.EqualFold(host, want) && port == "" {
+		return ""
+	}
+	if port != "" {
+		return host + ":" + port
+	}
+	return host
+}
+
+// remoteHost is the host and port a remote names: a URL's, or the host of an
+// scp-like remote ("git@github.com:acme/app.git", which has no port). Both are
+// "" for a remote that names no host, such as a local path.
+func remoteHost(remote string) (host, port string) {
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		return u.Hostname(), u.Port()
+	}
+	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
+		if h, _, ok := strings.Cut(rest, ":"); ok {
+			return h, ""
+		}
+	}
+	return "", ""
 }
 
 // remoteOfAnotherRepo names what a remote on the derived kind's own host
@@ -269,9 +316,10 @@ func remoteDisplay(remote string) string {
 // git credential exists and before the clone (plan tasks 1.5 and 3.3): the run
 // is placed in the job it is in, the run's slug and its repository must agree
 // under that job's provider, and the policy must admit the repository — for the
-// project, and on a project job for the profile the job's own name pins. A run
-// with no Cloud Run execution is not checked: the binding exists because a
-// job's identity is what an admission rests on (R2-9).
+// project, and on a project job for the profile the job's own name pins. A
+// local invocation is not checked: the binding exists because a job's identity
+// is what an admission rests on (R2-9). A process with no Cloud Run execution
+// that is not local is in the cloud, and it is refused (jobName).
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
 // provider is opened, so no git credential exists yet and nothing has been
@@ -291,10 +339,17 @@ func remoteDisplay(remote string) string {
 // the environment; then the admission — all of it before openProvider and
 // before the budget session takes a lease.
 func (r *run) admissionCheck(ctx context.Context) error {
-	if r.d.Execution == "" {
-		// No Cloud Run execution: no job identity to bind to, so no binding
-		// (R2-9). fugaro exec --provider fake, a local run and the end-to-end
-		// tests keep the path they have always had.
+	if r.d.Local && r.d.Execution == "" {
+		// A local invocation (`fugaro exec --task-file`, the file-backed fake
+		// provider, the end-to-end tests) has no job identity to bind to, so
+		// no binding (R2-9). The skip needs both halves (review C2, and main's
+		// #453 for the phase-1 shape): Local's zero value means the cloud
+		// (runner.go), and a process no backend claims — a platform this
+		// build does not recognise, or a job whose environment was edited —
+		// carries no execution name either. Reading the missing name alone as
+		// "local" exempted that process from everything below while the git
+		// credential stayed scoped to whatever remote its environment named;
+		// it now reaches jobIdentity, which halts it (jobName).
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)
@@ -370,6 +425,17 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		if other := remoteOfAnotherKind(kind, remote); other != "" {
 			return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 				remoteDisplay(remote), other, slug, repo, kind, RemoteEnv)
+		}
+		if host := remoteOffTheKindsHost(kind, remote); host != "" {
+			// The kind check above knows only the hosts gitprov.KindForURL
+			// recognises; every other host was "no disagreement" (review C3).
+			// The git credential is scoped to the remote's host
+			// (gitops.CredentialURL), so a host that is not exactly the
+			// provider's own would receive the provider's token, and an alias
+			// spelling of it (a trailing dot, www., the ssh-over-443 host)
+			// names a repository the run cannot verify.
+			return fmt.Errorf("the run would clone from %s, whose host %s is not %s's own host %s, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and the provider's credential goes only to the provider's own host, so the run stops before any git credential is requested",
+				remoteDisplay(remote), host, kind, repourl.ProviderHost(kind), slug, repo, kind, RemoteEnv)
 		}
 		if other := remoteOfAnotherRepo(kind, repo, remote); other != "" {
 			// internal/infra's repoURL refuses this at deploy time — "it must be

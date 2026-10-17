@@ -17,7 +17,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -463,9 +462,11 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 			// (`allow_repos:` with nothing under it) both reach this function
 			// as an empty slice, and config.JobProfile's allowReposWritten is
 			// what tells them from the absent key. localcfg refuses both when
-			// the file is read (validate), so this is the second door on the
-			// same rule rather than the first: the file is the thing an
-			// operator edits, and this is the function that publishes it.
+			// the file is read (validate), so through the CLI this check is
+			// unreachable: it is defence in depth, the second door on the same
+			// rule for a config that reaches the publisher by another path.
+			// TestBuildProjectPolicyRefusesAnEmptyProfileAllowRepos tests it
+			// with a config built in code.
 			if pr := lc.Profiles[name]; pr.AllowReposWritten() && len(pr.AllowRepos) == 0 {
 				return nil, userErr("this project's config sets profiles.%s.allow_repos to a written list with nothing in it, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
 			}
@@ -1090,20 +1091,7 @@ func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (in
 // policy until it finishes. A flag typed in advance must not be what stops a
 // run that is already running, so this asks for the name itself.
 func confirmRemovalStrict(cmd *cobra.Command, lc *localcfg.Config, what string) error {
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s: --yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", initflow.NeedsTerminal("the typed confirmation of this step"))
-	}
-	fmt.Fprintf(out, "Type %s to confirm: ", lc.Name)
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
-	}
-	if strings.TrimSpace(line) != lc.Name {
-		return userErr("not confirmed (the project's name was not typed); nothing was changed")
-	}
-	return nil
+	return confirmTypedStrict(cmd, lc, "--yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", what)
 }
 
 // confirmRemoval is confirmRemovalStrict where --yes may stand in for the

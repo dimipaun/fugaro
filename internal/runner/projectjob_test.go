@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -141,7 +142,7 @@ func projectPolicyFor(project, profile string) string {
 	if profile != "" {
 		own = `,"allow_repos":` + profile
 	}
-	return `{"version":1,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
+	return `{"version":2,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
 		own + `,` + profileShape + `}}}`
 }
 
@@ -153,7 +154,7 @@ func projectPolicyFor(project, profile string) string {
 // one (projectpolicy's CloneURLs) — so the fixture publishes what a real
 // publish publishes.
 func projectPolicyCloning(project, url string) string {
-	return `{"version":1,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
+	return `{"version":2,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
 }
 
@@ -324,6 +325,38 @@ func TestProjectJobIgnoresFUGARORemote(t *testing.T) {
 	b.deps.Remote = hostile
 	projectHost(t, b)
 	projectSucceeded(t, b)
+}
+
+// A checkout already in the work directory is opened as it is (OpenOrClone),
+// and on a per-repository job its origin is held to the task's repository by
+// the admission (remoteOfAnotherRepo reads it through originURL). A project
+// job reads neither (review C5): its clone URL is computed, so a checkout a
+// project job's container somehow carried — a baked image built for another
+// repository, or a work directory something left — would be fetched with the
+// profile's credential and worked on under this run's slug. Project jobs run
+// the installation's base image, which bakes no checkout, so any checkout is
+// refused before any git credential — including one whose origin is the URL
+// the run computes, since its .git/config and hooks are not the run's.
+//
+// Mutation (run, restored): drop the checkProjectCheckoutOrigin call in
+// bootstrap. Both rows then open the planted checkout and ask for a credential.
+func TestProjectJobRefusesACheckoutItDidNotMake(t *testing.T) {
+	for name, origin := range map[string]func(computed string) string{
+		"another repository": func(string) string { return "https://github.com/evil/other.git" },
+		"its own URL":        func(computed string) string { return computed },
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
+			computed := projectHost(t, b)
+			for _, args := range [][]string{{"init", "-q", b.deps.WorkDir}, {"-C", b.deps.WorkDir, "remote", "add", "origin", origin(computed)}} {
+				if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+			}
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, "already holds a checkout", computed, "before any git credential")
+		})
+	}
 }
 
 // The provider of a project job is the one its own name pins, and the

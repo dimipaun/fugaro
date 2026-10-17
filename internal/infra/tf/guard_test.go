@@ -59,6 +59,36 @@ func TestGuardRefusesDelete(t *testing.T) {
 	}
 }
 
+// TestGuardMatchesTheWholeAddressOnly: an approved address approves that
+// address and nothing it is a prefix, a suffix or a substring of, nothing
+// that differs from it in case or by a space, and nothing under it in a
+// module. Each row is a delete the guard must refuse.
+func TestGuardMatchesTheWholeAddressOnly(t *testing.T) {
+	for _, tc := range []struct{ approved, planned string }{
+		{"google_storage_bucket.data", "google_storage_bucket.data_old"},
+		{"module.web", "module.web.google_sql_database_instance.db"},
+		{`google_storage_bucket.x`, `google_storage_bucket.x["ab"]`},
+		{`x["ab"]`, `x["a"]`},
+		{`x["a"]`, `x["ab"]`},
+		{"module.a.google_storage_bucket.data", "module.b.google_storage_bucket.data"},
+		{"google_storage_bucket.data", "module.old.google_storage_bucket.data"},
+		{"google_storage_bucket.data", "module.old.google_storage_bucket.data_v2"},
+		{"Google_Storage_Bucket.Data", "google_storage_bucket.data"},
+		{"google_storage_bucket.data ", "google_storage_bucket.data"},
+		{"google_storage_bucket.data_old", "google_storage_bucket.data"},
+	} {
+		p := &Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{{
+			Address: tc.planned, Type: "google_storage_bucket", Change: Change{Actions: []string{"delete"}},
+		}}}
+		if Guard(p, []string{tc.approved}) == nil {
+			t.Errorf("approving %q let %q be deleted", tc.approved, tc.planned)
+		}
+		if err := Guard(p, []string{tc.planned}); err != nil {
+			t.Errorf("approving %q itself was refused: %v", tc.planned, err)
+		}
+	}
+}
+
 func TestGuardAllowsNamedDelete(t *testing.T) {
 	if err := Guard(loadPlan(t, "plan_delete.json"), []string{"terraform_data.d"}); err != nil {
 		t.Errorf("named delete refused: %v", err)
