@@ -4033,7 +4033,11 @@ git log -1 --format='the tree is at %h %s'   # the commit the deployed site shou
 **Method.** One browser, one panel, three pages. Open the site's home page with the developer tools' **Network** panel open, **Disable cache** on and a hard reload, then do the same for the FAQ page and the docs hub. **Nothing here changes anything:** no command that writes runs, no cloud project is touched, and **No agent runs any step of it**. The list the check compares against is read out of `website/data/site.yaml`, so it moves with the tree instead of being remembered:
 
 ```bash
+# The host list this check compares against, and the origin step 3 fetches from
+# -- both read from the site's own facts file rather than typed.
 sed -n '/^allowed_hosts:/,/^[^ -]/p' website/data/site.yaml
+C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
+[ -n "$C" ] || { echo "Check 69b stopped: website/data/site.yaml names no canonical_url, so step 3 has nothing to fetch" >&2; exit 1; }
 ```
 
 1. **Every request's host, in the panel.** Read the panel's host column (group the requests by domain, or write the list down). **FACT:** the host list per page — or "only the canonical host" when that is all it holds.
