@@ -94,6 +94,46 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		}
 	})
 
+	// (c') --create-project on a project that already exists and has no
+	// Firebase: the stage adds Firebase where the project is, and creates
+	// nothing. This is where D73's "adding Firebase is never what makes a
+	// project managed" is decided — the AddFirebase branch of the same stage
+	// that creates — so it is pinned here and not only through init
+	// --firebase (b), a different stage. The bucket is the project's own,
+	// seeded and numbered as (c) seeds it, so a mutation that marks the
+	// project on adding Firebase really writes.
+	t.Run("--create-project adding Firebase to an existing project", func(t *testing.T) {
+		r := newProjectRig(t)
+		const number = 424242
+		bucket := "fugaro-runs-" + newProj
+		r.crm.AddProject(newProj, number)
+		r.gcs.AddProject(newProj, number)
+		r.bill.SetBilling(newProj, true)
+		r.gcs.AddBucket(bucket, number, managedBucketLabels)
+		roles := map[string]string{}
+		for _, r := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+			roles[r] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(r[:1]) + r[1:]
+		}
+		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+			"runs_bucket":               bucket,
+			"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+			"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+			"role_ids":                  roles,
+		})}
+		r.save(t)
+		out, _, err := r.run(t, true, newProj+"\n"+initProjectName+"\n", "--create-project")
+		if n := len(r.crm.Creates()); n != 0 {
+			t.Fatalf("%d project(s) created (err %v):\n%s", n, err, out)
+		}
+		if n := len(r.fb.Adds()); n != 1 {
+			t.Fatalf("Firebase added %d time(s), want once (err %v):\n%s", n, err, out)
+		}
+		if !strings.Contains(out, "added Firebase to project "+newProj) {
+			t.Fatalf("the run did not reach the add (err %v):\n%s", err, out)
+		}
+		noMarker(t, r.gcs, bucket)
+	})
+
 	// (d) The project created, but with a runs bucket that is not the
 	// project's own under the default name: a marker there would be a fact
 	// nothing reads — the read of Task 0.2 locates the bucket the way init's
