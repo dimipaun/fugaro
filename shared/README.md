@@ -21,6 +21,8 @@ approved, and this directory is not evidence that one is.
 
 `url/` (P0.3) is the URL validator: built, with an empty host allow-list until the owner answers D124; see `url/README.md`.
 
+`mailbox/` (P1.1) is the mailbox state machine, its dedupe ledger and its replay window: built, with its own tests; see `mailbox/README.md`.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has
