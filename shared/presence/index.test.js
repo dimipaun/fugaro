@@ -541,3 +541,61 @@ test('every refusal code is distinct and names itself', () => {
     assert.match(code, /^[a-z][a-z0-9-]*$/);
   }
 });
+
+test('a value exactly at each documented bound is accepted, one past it is refused', () => {
+  const base = { heartbeat: heartbeatAged(0), now: NOW };
+
+  const longestId = evaluatePresence({
+    ...base,
+    heartbeat: { at: NOW, bootId: 'b'.repeat(MAX_BOOT_ID_LENGTH) },
+  });
+  assert.equal(longestId.ok, true, 'a boot id of exactly MAX_BOOT_ID_LENGTH is accepted');
+
+  const longestInterval = evaluatePresence({ ...base, intervalMs: MAX_INTERVAL_MS });
+  assert.equal(longestInterval.ok, true, 'an interval of exactly MAX_INTERVAL_MS is accepted');
+  assert.equal(longestInterval.intervalMs, MAX_INTERVAL_MS);
+
+  const widestMissed = evaluatePresence({
+    ...base,
+    missedIntervals: MAX_BAND - 1,
+    offlineIntervals: MAX_BAND,
+  });
+  assert.equal(widestMissed.ok, true, 'an offline band of exactly MAX_BAND is accepted');
+  const refusedBand = evaluatePresence({
+    ...base,
+    missedIntervals: MAX_BAND,
+    offlineIntervals: MAX_BAND + 1,
+  });
+  assert.equal(refusedBand.ok, false);
+  assert.equal(refusedBand.code, REFUSAL.INVALID_BAND);
+  const widestStale = evaluatePresence({
+    ...base,
+    missedIntervals: MAX_BAND,
+    offlineIntervals: MAX_BAND,
+  });
+  assert.equal(widestStale.code, REFUSAL.BANDS_NOT_INCREASING, 'MAX_BAND passes the band check');
+});
+
+test('each input field is read exactly once, so a getter cannot change between reads', () => {
+  const flip = (first, second) => {
+    let reads = 0;
+    return {
+      get: () => (++reads === 1 ? first : second),
+      reads: () => reads,
+    };
+  };
+  const cases = [
+    ['intervalMs', 60_000, 5],
+    ['missedIntervals', 3, 0],
+    ['offlineIntervals', 10, 0],
+    ['futureToleranceMs', 60_000, -1],
+  ];
+  for (const [field, first, second] of cases) {
+    const probe = flip(first, second);
+    const input = { heartbeat: heartbeatAged(0), now: NOW };
+    Object.defineProperty(input, field, { get: probe.get, enumerable: true });
+    const result = evaluatePresence(input);
+    assert.equal(result.ok, true, `${field}: the first read is the value used`);
+    assert.equal(probe.reads(), 1, `${field} is read exactly once`);
+  }
+});

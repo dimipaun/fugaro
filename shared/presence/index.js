@@ -218,7 +218,10 @@ export function evaluatePresence(input = {}) {
     return refuse(REFUSAL.INVALID_NOW, 'now', 'now must be a positive safe integer');
   }
 
-  const intervalMs = input.intervalMs === undefined ? DEFAULT_INTERVAL_MS : input.intervalMs;
+  // Each field is read exactly once, so a getter cannot answer differently
+  // between the check and the use.
+  const rawInterval = input.intervalMs;
+  const intervalMs = rawInterval === undefined ? DEFAULT_INTERVAL_MS : rawInterval;
   if (typeof intervalMs !== 'number' || !Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
     return refuse(
       REFUSAL.INVALID_INTERVAL,
@@ -241,10 +244,10 @@ export function evaluatePresence(input = {}) {
     );
   }
 
-  const missedIntervals =
-    input.missedIntervals === undefined ? DEFAULT_MISSED_INTERVALS : input.missedIntervals;
-  const offlineIntervals =
-    input.offlineIntervals === undefined ? DEFAULT_OFFLINE_INTERVALS : input.offlineIntervals;
+  const rawMissed = input.missedIntervals;
+  const rawOffline = input.offlineIntervals;
+  const missedIntervals = rawMissed === undefined ? DEFAULT_MISSED_INTERVALS : rawMissed;
+  const offlineIntervals = rawOffline === undefined ? DEFAULT_OFFLINE_INTERVALS : rawOffline;
   for (const [field, band] of [
     ['missedIntervals', missedIntervals],
     ['offlineIntervals', offlineIntervals],
@@ -273,10 +276,9 @@ export function evaluatePresence(input = {}) {
     );
   }
 
+  const rawTolerance = input.futureToleranceMs;
   const futureToleranceMs =
-    input.futureToleranceMs === undefined
-      ? DEFAULT_FUTURE_TOLERANCE_MS
-      : input.futureToleranceMs;
+    rawTolerance === undefined ? DEFAULT_FUTURE_TOLERANCE_MS : rawTolerance;
   if (
     typeof futureToleranceMs !== 'number' ||
     !Number.isSafeInteger(futureToleranceMs) ||
@@ -292,7 +294,8 @@ export function evaluatePresence(input = {}) {
   const staleAfterMs = intervalMs * missedIntervals;
   const offlineAfterMs = intervalMs * offlineIntervals;
 
-  const heartbeat = input.heartbeat === undefined ? null : input.heartbeat;
+  const rawHeartbeat = input.heartbeat;
+  const heartbeat = rawHeartbeat === undefined ? null : rawHeartbeat;
   if (heartbeat === null) {
     // No heartbeat is offline, and is NEVER live: an account that has never
     // been written to has no orchestrator to show, and "we have heard nothing"
