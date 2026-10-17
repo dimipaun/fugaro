@@ -242,6 +242,22 @@ describe('the fixture format and its loader', () => {
     // says which are still owner-run. None of them is this file's case.
     expect(FIXTURE_CASES).toHaveLength(8)
     expect(FIXTURE_CASES).not.toContain('synthetic')
+    // ...nor Task 3.1's degraded fixture, which is written here for the same
+    // reason: a list that mixed the written fixtures with the recordings would
+    // leave a reader working out which name was real.
+    expect(FIXTURE_CASES).not.toContain('degraded')
+  })
+
+  it('quotes the digest the committed fixture actually carries (README drift)', () => {
+    // The review of Task 3.2 found the README quoting `2c8a636f…` while the
+    // committed header said `24cdc5f8…`: the fixture was rewritten by a later
+    // task and the sentence quoting it was not. A reader who "fixed" the fixture
+    // to match the README would break this file's byte-identity test, so the two
+    // are held together here -- the README's own hex, against the header's.
+    const readme = readFileSync(join(__dirname, '..', '..', 'README.md'), 'utf8')
+    const quoted = /"sha256":"([0-9a-f]{64})"/.exec(readme)?.[1]
+    expect(quoted).toBe(loaded().header.sha256)
+    expect(readme).toContain(`"case":"${loaded().header.case}"`)
   })
 
   it('is exactly what the redaction path writes from the documents in source', () => {

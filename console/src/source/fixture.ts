@@ -95,9 +95,14 @@ export class FixtureRefusal extends Error {
   override readonly name = 'FixtureRefusal'
 }
 
-/** FixtureCaseName is one of the eight cases design section 9.1 asks the owner
- * to record, plus the synthetic case this task commits. The names are the
- * design's own, so a missing recording is a missing *name* and not a shrug. */
+/** FixtureCaseName is every `case` a committed fixture may carry, and there are
+ * three kinds of them, in this order: the eight cases design section 9.1 asks
+ * the owner to record (the names are the design's own, so a missing recording is
+ * a missing *name* and not a shrug), `synthetic` (Task 2.0's invented documents
+ * through the same redaction path), and `degraded` (Task 3.1's project with no
+ * budget backend, a state no recording of the sandbox can be in). The last two
+ * are fixtures this tree writes; `FIXTURE_CASES` is the eight, and only the
+ * eight. */
 export type FixtureCaseName =
   | 'normal'
   | 'silent-then-lost'
@@ -108,13 +113,17 @@ export type FixtureCaseName =
   | 'gap'
   | 'hostile-title'
   | 'synthetic'
+  | 'degraded'
 
 /**
  * FIXTURE_CASES is the eight recordings design section 9.1 asks for, in its
  * order. **Every one of them is owner-run and none of them exists yet**: the
  * plan forbids an agent from running the recorder against a real installation,
  * so this list is what the owner's work will be checked against and what the
- * README says is missing. `synthetic` is deliberately not on it.
+ * README says is missing. `synthetic` and `degraded` are deliberately not on it:
+ * both are fixtures this tree *writes* from invented documents, and a list that
+ * mixed them with the recordings would leave a reader working out which name was
+ * real.
  */
 export const FIXTURE_CASES: readonly FixtureCaseName[] = Object.freeze([
   'normal',
@@ -137,7 +146,11 @@ export type FixtureRecord =
 
 /** FixtureMeta is what a fixture says about itself besides its records. */
 export interface FixtureMeta {
-  /** `case` is which of `FIXTURE_CASES` this is, or `synthetic`. */
+  /** `case` is which `FixtureCaseName` this is: a name in `FIXTURE_CASES` for a
+   * recording, `synthetic` for Task 2.0's invented documents, `degraded` for
+   * Task 3.1's degraded-mode frames. It is typed `string` rather than
+   * `FixtureCaseName` because a header is read before it is trusted (the
+   * loader's audit is what names a bad field). */
   readonly case: string
   /** `project` is the project **as redacted**: the marker `<project>`, for a
    * recording and for a synthetic fixture alike -- the loader audits the header

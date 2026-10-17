@@ -707,16 +707,22 @@ repository at its cap needs real spend to accumulate. The other five could be
 recorded from a sandbox checkout, and they are missing for the same reason:
 **the recorder is the owner's to run, full stop.** They land here as
 `test/fixtures/<case>.ndjson`, one file per name in `FIXTURE_CASES`, which is
-the only naming `fixture.test.ts` accepts beside `synthetic.ndjson` — a stray
-file fails a test by name, while the owner's recordings do not have to be
-preceded by an edit to the suite. Until they land,
-`test/fixtures/` holds one file, and it is labelled for what it is:
+the only naming `fixture.test.ts` accepts beside the two fixtures this tree
+writes from invented documents, `synthetic.ndjson` and `degraded.ndjson` — a
+stray file fails a test by name, while the owner's recordings do not have to be
+preceded by an edit to the suite. Until they land, `test/fixtures/` holds those
+two files and no recording at all, and each is labelled for what it is:
 
 ```
 {"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/2","case":"synthetic",
- "project":"<project>","synthetic":true,"records":6,"sha256":"2c8a636f…",
+ "project":"<project>","synthetic":true,"records":6,"sha256":"24cdc5f829ce2bea6efb4336622c38d85066be5ea522af10ef51079d26415a0e",
  "note":"synthetic: invented documents put through the same redaction path as a recording; never recorded from any installation or cloud"}}
 ```
+
+(`degraded.ndjson` is Task 3.1's: a project with no budget backend, which the
+sandbox every recording is made against cannot be put into, so the degraded
+screen and the recorder cannot be exercised from the same fixture. Its header
+says `"case":"degraded"`, and `FixtureCaseName` names it for the same reason.)
 
 `synthetic` is deliberately **not** a member of `FIXTURE_CASES`: the eight are
 the recordings, and a reader who saw nine names would have to work out which one
