@@ -23,6 +23,8 @@ export const ERROR = Object.freeze({
   UNKNOWN_FIELD: 'E_UNKNOWN_FIELD',
   /** A field the contract names is present with the wrong JSON type. */
   TYPE: 'E_TYPE',
+  /** A number field is not finite, or is negative where a count, age or amount must not be. */
+  RANGE: 'E_RANGE',
   /** A string field is longer than the digest will carry. Refused, not cut. */
   OVERSIZE: 'E_OVERSIZE',
   /** A field that is an enumeration carries a value the contract does not name. */

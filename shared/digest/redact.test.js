@@ -301,3 +301,24 @@ test('the redactor holds no state: equal calls, equal output, inputs untouched',
   assert.equal(redact(`x ${GH_SECRET} y`, secrets), redact(`x ${GH_SECRET} y`, secrets));
   assert.deepEqual(secrets, before);
 });
+
+// --- mutation-killing cases (fix round) -----------------------------------
+
+test('a space in a query-escaped secret is the plus sign', () => {
+  const secret = ['pass', 'phrase'].join('') + ' one two';
+  const text = `GET /?k=${queryEscape(secret)} HTTP/1.1`;
+  assert.ok(text.includes('passphrase+one+two'));
+  const got = redact(text, [secret]);
+  assert.ok(!got.includes('passphrase+one+two'));
+  assert.ok(got.includes(REDACTED));
+});
+
+test('U+2028 and U+2029 in a secret are removed in their JSON-escaped spelling', () => {
+  for (const sep of [' ', ' ']) {
+    const secret = ['sk', '-line', sep, 'sep-tail'].join('');
+    const escaped = `sk-line\\u${sep.charCodeAt(0).toString(16)}sep-tail`;
+    const got = redact(`stream-json said "${escaped}" here`, [secret]);
+    assert.ok(!got.includes(escaped), 'left the JSON-escaped form standing');
+    assert.ok(got.includes(REDACTED));
+  }
+});

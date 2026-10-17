@@ -399,3 +399,161 @@ test('the digest is a pure function of its argument: no clock, no randomness', (
   assert.deepEqual(digest(d), digest(d));
   assert.deepEqual(d, doc({ total: total({ kill: kill() }), runs: [run()], finished: [finished()] }));
 });
+
+// --- the independent review's findings (fix round) -------------------------
+
+test('the overlap keeps the MORE SEVERE entry for a run, in either order', () => {
+  const ok = finished({ run: 'a', status: 'succeeded', failed: false });
+  const bad = finished({ run: 'a', status: 'failed', failed: true });
+  for (const d of [doc({ ready: [ok], finished: [bad] }), doc({ ready: [bad], finished: [ok] })]) {
+    const got = digest(d);
+    assert.equal(got.severity, SEVERITY.failed);
+    assert.deepEqual(got.items.map((i) => [i.kind, i.run]), [['failed_finish', 'a']]);
+  }
+  // Equal severity: the first still wins, so the documented order holds.
+  const twin = digest(doc({ ready: [ok], finished: [finished({ run: 'a', title: 'later' })] }));
+  assert.equal(twin.items.length, 1);
+  assert.equal(twin.items[0].kind, 'ready');
+});
+
+test('a prototype key is an unknown field, never a known one', () => {
+  for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+    const own = (extra) => JSON.parse(JSON.stringify(extra).replace('"KEY"', JSON.stringify(key)));
+    const docs = [
+      own({ KEY: 1, ...doc() }),
+      own(doc({ runs: [{ ...run(), KEY: 1 }] })),
+      own(doc({ total: { ...total(), burn: { ...burn(), KEY: 1 } } })),
+    ];
+    for (const d of docs) {
+      assert.throws(() => digest(d), refusal(ERROR.UNKNOWN_FIELD), key);
+    }
+  }
+  const viaInherit = Object.create({ project: 'inherited' });
+  assert.equal(digest(viaInherit).project, UNAVAILABLE);
+});
+
+test('a repo burn is shape-checked whether or not it is fast', () => {
+  assert.throws(
+    () => digest(doc({ repos: [repo({ burn: { zzz: 1, fast: false } })] })),
+    refusal(ERROR.UNKNOWN_FIELD),
+  );
+  assert.throws(() => digest(doc({ repos: [repo({ burn: [] })] })), refusal(ERROR.TYPE));
+  assert.throws(() => digest(doc({ repos: [repo({ burn: { fast: 'no' } })] })), refusal(ERROR.TYPE));
+  // And the project's burn behaves the same way, with no fast flag.
+  assert.throws(() => digest(doc({ total: total({ burn: { zzz: 1 } }) })), refusal(ERROR.UNKNOWN_FIELD));
+});
+
+test('a burn with no fast flag raises no fast-burn item', () => {
+  const got = digest(doc({
+    total: total({ burn: { known: true, usd_per_min: 1 } }),
+    repos: [repo({ burn: { known: true, usd_per_min: 1 } })],
+  }));
+  assert.equal(got.severity, SEVERITY.info);
+  assert.deepEqual(got.items, []);
+  assert.equal(got.total.burn.fast, UNAVAILABLE);
+});
+
+test('a number must be finite, and a count, age or amount must not be negative', () => {
+  const bad = [NaN, Infinity, -Infinity, -1, -0.01];
+  for (const v of bad) {
+    const killers = [
+      doc({ runs: [run({ spent_usd: v })] }),
+      doc({ runs: [run({ age_seconds: v })] }),
+      doc({ finished: [finished({ age_seconds: v })] }),
+      doc({ finished: [finished({ pr_number: v })] }),
+      doc({ total: total({ spent_usd: v }) }),
+      doc({ total: total({ runs: v }) }),
+      doc({ total: total({ burn: burn({ usd_per_min: v }) }) }),
+      doc({ repos: [repo({ counted_usd: v })] }),
+      doc({ connection: { state: 'live', age_seconds: v } }),
+    ];
+    for (const d of killers) {
+      assert.throws(() => digest(d), refusal(ERROR.RANGE), String(v));
+    }
+  }
+  assert.equal(digest(doc({ runs: [run({ spent_usd: 0, age_seconds: 0 })] })).items[0].spent_usd, 0);
+});
+
+test('a burn with known:false has an unavailable rate, never 0', () => {
+  const got = digest(doc({
+    total: total({ burn: burn({ known: false, usd_per_min: 0, fast: true }) }),
+    repos: [repo({ burn: burn({ known: false, usd_per_min: 0, fast: true }) })],
+  }));
+  assert.equal(got.total.burn.usd_per_min, UNAVAILABLE);
+  assert.equal(got.total.burn.known, false);
+  const burns = got.items.filter((i) => i.kind === 'fast_burn');
+  assert.equal(burns.length, 2);
+  for (const item of burns) {
+    assert.equal(item.usd_per_min, UNAVAILABLE);
+  }
+  // A known rate of 0 is a figure and stays one.
+  const known = digest(doc({ total: total({ burn: burn({ known: true, usd_per_min: 0 }) }) }));
+  assert.equal(known.total.burn.usd_per_min, 0);
+});
+
+test('each field is read exactly once: a getter cannot pass a check and then change', () => {
+  const reads = {};
+  const trap = (object, field, first, second) => {
+    reads[field] = 0;
+    Object.defineProperty(object, field, {
+      enumerable: true,
+      get() {
+        reads[field] += 1;
+        return reads[field] === 1 ? first : second;
+      },
+    });
+    return object;
+  };
+  const sneaky = trap(run(), 'title', 'short', 'x'.repeat(100000));
+  const got = digest(doc({ runs: [sneaky] }));
+  assert.equal(got.items[0].title, 'short');
+  assert.equal(reads.title, 1);
+
+  const health = trap(run(), 'health', 'ok', 'gone');
+  assert.equal(digest(doc({ runs: [health] })).items[0].health, 'ok');
+  assert.equal(reads.health, 1);
+
+  const spent = trap(run(), 'spent_usd', 1, -5);
+  assert.equal(digest(doc({ runs: [spent] })).items[0].spent_usd, 1);
+  assert.equal(reads.spent_usd, 1);
+
+  const nested = trap(doc(), 'total', total(), 'not an object');
+  assert.equal(digest(nested).total.spent_usd, 1);
+  assert.equal(reads.total, 1);
+
+  const burnObject = trap(burn({ fast: true }), 'fast', true, false);
+  const viaBurn = digest(doc({ repos: [repo({ burn: burnObject })] }));
+  assert.equal(viaBurn.severity, SEVERITY.fast_burn);
+  assert.equal(reads.fast, 1);
+});
+
+test('a refusal never echoes the refused key or value', () => {
+  const secretKey = 'sk-test-leaky-key-name';
+  let seen;
+  assert.throws(
+    () => digest(doc({ runs: [{ ...run(), [secretKey]: 'v' }] })),
+    (err) => {
+      seen = err;
+      return err.code === ERROR.UNKNOWN_FIELD;
+    },
+  );
+  assert.ok(!seen.message.includes(secretKey));
+  assert.ok(!seen.path.includes(secretKey));
+  assert.equal(seen.path, '$.runs[0]');
+  assert.throws(
+    () => digest(doc({ runs: [run({ health: 'sk-test-leaky-value' })] })),
+    (err) => !err.message.includes('leaky') && !err.path.includes('leaky'),
+  );
+});
+
+test('the oversize bound is in UTF-8 bytes, not in characters', () => {
+  // 2049 two-byte characters: 2049 code units, 4098 bytes.
+  assert.throws(
+    () => digest(doc({ runs: [run({ title: 'é'.repeat(2049) })] })),
+    refusal(ERROR.OVERSIZE),
+  );
+  assert.equal(
+    digest(doc({ runs: [run({ title: 'é'.repeat(2048) })] })).items[0].title.length,
+    2048,
+  );
+});

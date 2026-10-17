@@ -40,7 +40,7 @@
 // this directory has one entry point.
 
 import { DigestError, ERROR } from './errors.js';
-import { SEVERITY, mostSevere } from './severity.js';
+import { SEVERITY, moreSevere, mostSevere } from './severity.js';
 
 export { DigestError, ERROR } from './errors.js';
 export { REDACTED, redact, redactFunc, redactForms } from './redact.js';
@@ -181,20 +181,29 @@ function bytesOf(text) {
 }
 
 /**
- * Refuse a value that is neither absent nor of the shape the contract names.
+ * Refuse a value that is neither absent nor of the shape the contract names,
+ * and return a **snapshot** of it: a null-prototype object holding each known
+ * field's value, read from the document exactly once. Everything after this
+ * reads the snapshot and never the document, so a getter cannot pass a check
+ * and then answer with something else.
+ *
  * `null` and `undefined` are the contract's own encoding of "no value" (the
  * Go structs' `*float64` fields marshal to `null`), so they are not a type
- * error; they become `UNAVAILABLE` at the read below.
+ * error; they become `UNAVAILABLE` at the read below. A field not in the
+ * schema's **own** properties is unknown -- `constructor` and `toString` are
+ * unknown fields, not members of the contract -- and the refusal names the
+ * object's path, never the document's key text.
  */
-function checkShape(value, schema, path) {
+function snapshot(value, schema, path) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new DigestError(ERROR.TYPE, path);
   }
+  const out = Object.create(null);
   for (const [field, got] of Object.entries(value)) {
-    const spec = schema[field];
-    if (spec === undefined) {
-      throw new DigestError(ERROR.UNKNOWN_FIELD, `${path}.${field}`);
+    if (!Object.hasOwn(schema, field)) {
+      throw new DigestError(ERROR.UNKNOWN_FIELD, path);
     }
+    const spec = schema[field];
     if (got === null || got === undefined) {
       continue;
     }
@@ -202,10 +211,15 @@ function checkShape(value, schema, path) {
     if (!ok) {
       throw new DigestError(ERROR.TYPE, `${path}.${field}`);
     }
+    if (spec === NUMBER && (!Number.isFinite(got) || got < 0)) {
+      throw new DigestError(ERROR.RANGE, `${path}.${field}`);
+    }
     if (spec === STRING && bytesOf(got) > MAX_FIELD_BYTES) {
       throw new DigestError(ERROR.OVERSIZE, `${path}.${field}`);
     }
+    out[field] = got;
   }
+  return out;
 }
 
 /** A field's value, or `UNAVAILABLE` where the document carries none. */
@@ -247,27 +261,35 @@ function readEnum(object, field, table, path) {
 // here sorts by time: the digest holds no clock.
 
 function killItem(object, scope, repo, path) {
-  checkShape(object, KILL_FIELDS, path);
+  const kill = snapshot(object, KILL_FIELDS, path);
   return {
     kind: 'kill',
     severity: SEVERITY.kill,
     scope,
     repo,
-    by: read(object, 'by'),
-    at: read(object, 'at'),
-    reason: read(object, 'reason'),
+    by: read(kill, 'by'),
+    at: read(kill, 'at'),
+    reason: read(kill, 'reason'),
   };
 }
 
-function burnItem(object, scope, repo, path) {
-  checkShape(object, BURN_FIELDS, path);
+/**
+ * A burn's rate. `known: false` says the CLI could not compute one, so a
+ * `usd_per_min` carried beside it is an absent figure spoken as a number
+ * (`0`); it is `unavailable`, whatever the document put there.
+ */
+function burnRate(burn) {
+  return read(burn, 'known') === false ? UNAVAILABLE : read(burn, 'usd_per_min');
+}
+
+function burnItem(burn, scope, repo) {
   return {
     kind: 'fast_burn',
     severity: SEVERITY.fast_burn,
     scope,
     repo,
-    known: read(object, 'known'),
-    usd_per_min: read(object, 'usd_per_min'),
+    known: read(burn, 'known'),
+    usd_per_min: burnRate(burn),
   };
 }
 
@@ -277,9 +299,9 @@ function burnItem(object, scope, repo, path) {
  * a finish can be unclassifiable, and guessing would colour a screen or a
  * sentence with a severity no document supports.
  */
-function finishFailed(object, path) {
-  const failed = read(object, 'failed');
-  const status = readEnum(object, 'status', FINISH_STATUS, path);
+function finishFailed(entry, path) {
+  const failed = read(entry, 'failed');
+  const status = readEnum(entry, 'status', FINISH_STATUS, path);
   if (failed === UNAVAILABLE && status === UNAVAILABLE) {
     throw new DigestError(ERROR.UNCLASSIFIED, path);
   }
@@ -291,18 +313,18 @@ function finishFailed(object, path) {
 }
 
 function finishedItem(object, scope, path) {
-  checkShape(object, FINISHED_FIELDS, path);
-  const failed = finishFailed(object, path);
+  const entry = snapshot(object, FINISHED_FIELDS, path);
+  const failed = finishFailed(entry, path);
   return {
     kind: failed ? 'failed_finish' : scope,
     severity: failed ? SEVERITY.failed : SEVERITY.info,
-    repo: read(object, 'repo'),
-    run: read(object, 'run'),
-    title: read(object, 'title'),
-    status: read(object, 'status'),
-    outcome: read(object, 'outcome'),
-    failed: read(object, 'failed'),
-    age_seconds: read(object, 'age_seconds'),
+    repo: read(entry, 'repo'),
+    run: read(entry, 'run'),
+    title: read(entry, 'title'),
+    status: read(entry, 'status'),
+    outcome: read(entry, 'outcome'),
+    failed: read(entry, 'failed'),
+    age_seconds: read(entry, 'age_seconds'),
   };
 }
 
@@ -310,33 +332,29 @@ function runItem(object, path) {
   // The shape is checked before anything is read out of the entry: a `null`
   // or non-object element in a list is a refusal with a code, and reading a
   // field first would raise a raw TypeError instead.
-  checkShape(object, RUN_FIELDS, path);
-  readEnum(object, 'health', HEALTH, path);
-  readEnum(object, 'deadline', DEADLINE, path);
+  const entry = snapshot(object, RUN_FIELDS, path);
+  readEnum(entry, 'health', HEALTH, path);
+  readEnum(entry, 'deadline', DEADLINE, path);
   return {
     kind: 'run',
     severity: SEVERITY.info,
-    repo: read(object, 'repo'),
-    run: read(object, 'run'),
-    title: read(object, 'title'),
-    stage: read(object, 'stage'),
-    health: read(object, 'health'),
-    deadline: read(object, 'deadline'),
-    spent_usd: read(object, 'spent_usd'),
-    age_seconds: read(object, 'age_seconds'),
-    notional: read(object, 'notional'),
+    repo: read(entry, 'repo'),
+    run: read(entry, 'run'),
+    title: read(entry, 'title'),
+    stage: read(entry, 'stage'),
+    health: read(entry, 'health'),
+    deadline: read(entry, 'deadline'),
+    spent_usd: read(entry, 'spent_usd'),
+    age_seconds: read(entry, 'age_seconds'),
+    notional: read(entry, 'notional'),
   };
 }
 
-function burnSummary(object) {
-  if (object === null) {
-    return UNAVAILABLE;
-  }
-  checkShape(object, BURN_FIELDS, '$.total.burn');
+function burnSummary(burn) {
   return {
-    known: read(object, 'known'),
-    usd_per_min: read(object, 'usd_per_min'),
-    fast: read(object, 'fast'),
+    known: read(burn, 'known'),
+    usd_per_min: burnRate(burn),
+    fast: read(burn, 'fast'),
   };
 }
 
@@ -348,55 +366,61 @@ function burnSummary(object) {
  * malformed field inside one, as `errors.js` lists. It is a pure function of
  * its argument.
  */
-export function digest(document) {
-  if (document === null || typeof document !== 'object' || Array.isArray(document)) {
+export function digest(input) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     throw new DigestError(ERROR.NOT_A_DOCUMENT);
   }
-  checkShape(document, DOC_FIELDS, '$');
+  const document = snapshot(input, DOC_FIELDS, '$');
 
   const items = [];
 
   const totalDocument = readObject(document, 'total');
   let total = UNAVAILABLE;
   if (totalDocument !== null) {
-    checkShape(totalDocument, TOTAL_FIELDS, '$.total');
+    const totals = snapshot(totalDocument, TOTAL_FIELDS, '$.total');
+    const burnDocument = readObject(totals, 'burn');
+    const burn = burnDocument === null ? null : snapshot(burnDocument, BURN_FIELDS, '$.total.burn');
     total = {
-      counted_usd: read(totalDocument, 'counted_usd'),
-      spent_usd: read(totalDocument, 'spent_usd'),
-      notional_usd: read(totalDocument, 'notional_usd'),
-      daily_cap_usd: read(totalDocument, 'daily_cap_usd'),
-      percent: read(totalDocument, 'percent'),
-      runs: read(totalDocument, 'runs'),
-      run_hours: read(totalDocument, 'run_hours'),
-      burn: burnSummary(readObject(totalDocument, 'burn')),
+      counted_usd: read(totals, 'counted_usd'),
+      spent_usd: read(totals, 'spent_usd'),
+      notional_usd: read(totals, 'notional_usd'),
+      daily_cap_usd: read(totals, 'daily_cap_usd'),
+      percent: read(totals, 'percent'),
+      runs: read(totals, 'runs'),
+      run_hours: read(totals, 'run_hours'),
+      burn: burn === null ? UNAVAILABLE : burnSummary(burn),
     };
-    const kill = readObject(totalDocument, 'kill');
+    const kill = readObject(totals, 'kill');
     if (kill !== null) {
       items.push(killItem(kill, 'project', UNAVAILABLE, '$.total.kill'));
     }
-    const burn = readObject(totalDocument, 'burn');
     if (burn !== null && read(burn, 'fast') === true) {
-      items.push(burnItem(burn, 'project', UNAVAILABLE, '$.total.burn'));
+      items.push(burnItem(burn, 'project', UNAVAILABLE));
     }
   }
 
   const connection = readObject(document, 'connection');
   if (connection !== null) {
-    checkShape(connection, CONNECTION_FIELDS, '$.connection');
+    snapshot(connection, CONNECTION_FIELDS, '$.connection');
   }
 
   const repos = readList(document, 'repos');
-  repos.forEach((repo, i) => {
+  repos.forEach((entry, i) => {
     const path = `$.repos[${i}]`;
-    checkShape(repo, REPO_FIELDS, path);
+    const repo = snapshot(entry, REPO_FIELDS, path);
     const slug = read(repo, 'slug');
     const kill = readObject(repo, 'kill');
     if (kill !== null) {
       items.push(killItem(kill, 'repo', slug, `${path}.kill`));
     }
-    const burn = readObject(repo, 'burn');
-    if (burn !== null && read(burn, 'fast') === true) {
-      items.push(burnItem(burn, 'repo', slug, `${path}.burn`));
+    // The burn's shape is checked whether or not it is fast: a malformed
+    // burn is a refusal, not something skipped because it raises nothing.
+    const burnDocument = readObject(repo, 'burn');
+    if (burnDocument !== null) {
+      const burn = snapshot(burnDocument, BURN_FIELDS, `${path}.burn`);
+      if (read(burn, 'fast') === true) {
+        items.push(burnItem(burn, 'repo', slug));
+      }
     }
   });
 
@@ -405,19 +429,25 @@ export function digest(document) {
   // derived by `internal/watch/filter.go` as the finished runs whose outcome
   // is ready). So the same run arrives in both, and emitting it twice would
   // make a speaking consumer say it twice and a counting one count it twice.
-  // The run is emitted once, from the first list that carries it, and `ready`
-  // is walked first because it is the more specific statement about it. An
-  // entry whose `run` is `unavailable` cannot be identified, so it is not
-  // deduped against anything.
-  const identified = new Set();
+  // The run is emitted once, at the position of the first list that carries
+  // it (`ready` is walked first), but with the **more severe** of its
+  // entries: keeping the first blindly would let a `succeeded` copy hide a
+  // `failed` one. Equal severity keeps the first. An entry whose `run` is
+  // `unavailable` cannot be identified, so it is not deduped against
+  // anything.
+  const identified = new Map();
   const finishedItems = (entries, kind, listPath) => {
     entries.forEach((entry, i) => {
       const item = finishedItem(entry, kind, `${listPath}[${i}]`);
       if (item.run !== UNAVAILABLE) {
         if (identified.has(item.run)) {
+          const at = identified.get(item.run);
+          if (moreSevere(item.severity, items[at].severity)) {
+            items[at] = item;
+          }
           return;
         }
-        identified.add(item.run);
+        identified.set(item.run, items.length);
       }
       items.push(item);
     });

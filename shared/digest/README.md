@@ -67,7 +67,8 @@ ones, then the live runs. **A run is emitted once even when the document
 carries it twice**: `ready` is a subset of `finished` in the contract
 (`internal/watch/json.go` keeps both lists, and `internal/watch/filter.go`
 derives the ready ones as the finished runs whose outcome is ready), so the
-first list to carry a run wins and the `finished` copy of it is dropped — a
+run takes the place of the first list that carries it, with the **more severe**
+of its entries (a `succeeded` copy never hides a `failed` one) — a
 speaking consumer would otherwise say the run twice and a counting one count
 it twice. An entry whose `run` is `unavailable` cannot be identified and is
 not deduped against anything. Nothing here sorts by time — **the digest holds
@@ -84,6 +85,7 @@ threw" is not the property the plan asks for.
 | `E_NOT_A_DOCUMENT` | the digest was handed something that is not a document |
 | `E_UNKNOWN_FIELD` | a field the contract does not name is present |
 | `E_TYPE` | a field the contract names carries the wrong JSON type |
+| `E_RANGE` | a number is not finite, or is negative (every number field is a count, age or amount) |
 | `E_OVERSIZE` | a string field is longer than `MAX_FIELD_BYTES` (4096) |
 | `E_ENUM_UNKNOWN` | `status`, `health` or `deadline` carries a value outside its set |
 | `E_UNCLASSIFIED` | a finish carries neither `failed` nor `status` |
@@ -93,9 +95,11 @@ threw" is not the property the plan asks for.
 
 An oversize field is **refused, not clipped**: clipping drops silently what
 was past the cut, and the redactor is the thing allowed to shorten text,
-deliberately. A refusal never echoes the value it refuses, because the
-documents this module reads carry agent-written text — `DigestError#path`
-names the field instead.
+deliberately. A refusal never echoes the value or the key it refuses, because
+the documents this module reads carry agent-written text — `DigestError#path`
+names the field, or, for an unknown field, the object that carries it. A
+burn with `known: false` has an `unavailable` rate whatever `usd_per_min` says,
+and each field of the document is read exactly once.
 
 ## The redactor is a port, on purpose
 
