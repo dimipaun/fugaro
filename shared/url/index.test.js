@@ -79,13 +79,6 @@ function refuses(candidate, hostAllowList, code) {
   );
   assert.equal(typeof result.message, 'string');
   assert.ok(result.message.length > 0, 'a refusal carries a message');
-  if (typeof candidate === 'string' && candidate.length > 0) {
-    assert.equal(
-      result.message.includes(candidate),
-      false,
-      'a refusal never echoes the string it refused',
-    );
-  }
   assert.equal('url' in result, false, 'a refusal carries no url');
   assert.equal('host' in result, false, 'a refusal carries no host');
   return result;
@@ -392,7 +385,14 @@ test('a string that is not a URL is refused', () => {
   refuses('//github.com/a', GITHUB, URL_REFUSAL.NOT_A_URL);
   refuses('www.github.com/a', GITHUB, URL_REFUSAL.NOT_A_URL);
   refuses('https://', GITHUB, URL_REFUSAL.NOT_A_URL);
-  refuses('github.com:443/a', GITHUB, URL_REFUSAL.NOT_A_URL);
+});
+
+test('a string with no scheme at all is refused, whatever the parser calls it', () => {
+  // `new URL('github.com:443/a')` succeeds: the parser reads `github.com` as a
+  // scheme, because a scheme is letters, digits, `+`, `-` and `.`. So this is
+  // refused as a scheme rather than as a parse failure, which is the same
+  // answer either way -- it is not https.
+  refuses('github.com:443/a', GITHUB, URL_REFUSAL.SCHEME_NOT_HTTPS);
 });
 
 test('a refusal never carries a host, so nothing downstream can trust one', () => {
@@ -400,6 +400,39 @@ test('a refusal never carries a host, so nothing downstream can trust one', () =
   assert.equal(result.ok, false);
   assert.equal(result.host, undefined);
   assert.equal(result.url, undefined);
+});
+
+test('a refusal never echoes the string it refused', () => {
+  // A refusal is shown to a person and often logged, and the string being
+  // refused is hostile by definition -- it arrived from a node a coding agent
+  // wrote. Interpolating it is how a refusal becomes the injection it refused.
+  const marker = 'zz-refused-marker-zz';
+  const hostile = [
+    `https://${marker}.example/a`,
+    `https://evil.example/${marker}`,
+    `javascript:alert('${marker}')`,
+    `https://user:${marker}@evil.example/a`,
+    `https://github.com:443/${marker}`,
+    `https://${marker}`,
+  ];
+  for (const candidate of hostile) {
+    const result = validateExternalUrl(candidate, GITHUB);
+    assert.equal(result.ok, false, `${candidate} should be refused`);
+    assert.equal(
+      result.message.includes(marker),
+      false,
+      `the message for ${result.code} echoed the string it refused`,
+    );
+  }
+});
+
+test('the refusal codes are distinct non-empty strings', () => {
+  const codes = Object.values(URL_REFUSAL);
+  assert.equal(new Set(codes).size, codes.length, 'two codes share a name');
+  for (const code of codes) {
+    assert.equal(typeof code, 'string');
+    assert.ok(code.length > 0);
+  }
 });
 
 // ---------------------------------------------------------------------------
