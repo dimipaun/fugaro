@@ -40,9 +40,9 @@
 //   * **Nothing is coerced.** A non-string, an empty string and a malformed
 //     allow-list are each a refusal with its own code.
 //
-// Two things are notes rather than checks. `github.com.` is `github.com` to
-// DNS, so the trailing dot is a miss rather than a normalised hit. And the
-// refusal messages are static, so none of them echoes the string it refuses.
+// One thing is a note rather than a check: the refusal messages are static, so
+// none of them echoes the string it refuses. (A trailing dot in the authority
+// is refused as its own code: `github.com.` is `github.com` to DNS.)
 //
 // **The allow-list is not this module's to choose.** It is the owner's answer
 // to **D124** (reconciliation U3: "the rule is design prose and names no list;
@@ -120,6 +120,11 @@ export const URL_REFUSAL = Object.freeze({
   USERINFO: 'userinfo',
   /** The authority carries a port, the default `:443` included. */
   PORT: 'port',
+  /**
+   * The authority ends in a dot. `github.com.` is `github.com` to DNS, so it is
+   * refused outright rather than left to the allow-list to miss.
+   */
+  TRAILING_DOT: 'trailing-dot',
   /** The host is an IP literal, in any form the parser accepts. */
   IP_LITERAL: 'ip-literal',
   /** A host label is punycode (`xn--`), which no ASCII allow-list can name. */
@@ -151,6 +156,7 @@ const MESSAGES = Object.freeze({
   [URL_REFUSAL.NOT_CANONICAL]: 'the link does not begin with https://, so it is not opened',
   [URL_REFUSAL.USERINFO]: 'the link carries a user name, so it is not opened',
   [URL_REFUSAL.PORT]: 'the link names a port, so it is not opened',
+  [URL_REFUSAL.TRAILING_DOT]: 'the link ends its host with a dot, so it is not opened',
   [URL_REFUSAL.IP_LITERAL]: 'the link is an IP address rather than a host name, so it is not opened',
   [URL_REFUSAL.PUNYCODE_HOST]: 'the link names an internationalised host, so it is not opened',
   [URL_REFUSAL.ENCODED_HOST]: 'the link encodes its host, so it is not opened',
@@ -276,6 +282,9 @@ export function validateExternalUrl(candidate, hostAllowList = DEFAULT_HOST_ALLO
   // `port === ''` -- so this is a check on the string, not on `parsed.port`.
   if (authority.includes(':')) return refuse(URL_REFUSAL.PORT);
   if (authority.includes('%')) return refuse(URL_REFUSAL.ENCODED_HOST);
+  // `github.com.` is `github.com` to DNS. Refusing it here, in the authority,
+  // means the answer never depends on what the list holds.
+  if (authority.endsWith('.')) return refuse(URL_REFUSAL.TRAILING_DOT);
 
   const host = authority.toLowerCase();
 
@@ -319,8 +328,8 @@ export function validateExternalUrl(candidate, hostAllowList = DEFAULT_HOST_ALLO
   if (allowed.length === 0) return refuse(URL_REFUSAL.ALLOW_LIST_EMPTY);
   // An exact match. Not `endsWith`, not a suffix on a dot boundary, not a
   // wildcard -- which is why `github.com.evil.example` and `sub.github.com`
-  // are both misses, and why the trailing dot in `github.com.` is a miss even
-  // though DNS would resolve it to the same host.
+  // are both misses. (A trailing dot never gets this far: it is refused in the
+  // authority.)
   if (!allowed.includes(host)) return refuse(URL_REFUSAL.HOST_NOT_ALLOWED);
 
   return { ok: true, url: candidate, host };

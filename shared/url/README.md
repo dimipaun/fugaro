@@ -38,9 +38,9 @@ same nine in the same order, and the two lists are kept in step deliberately:
 | whitespace and control characters are refused, never trimmed | `new URL('  https://x  ')` succeeds, so trimming validates a different string from the one a caller opens |
 | nothing is coerced | `String(x)` is how a value nobody checked becomes a link |
 
-Two things are notes rather than checks. `github.com.` is `github.com` to DNS,
-so a validator that stripped the trailing dot would accept a string the
-allow-list never named; the match is on the string, so it is a miss. And the
+A trailing dot in the authority is refused as its own code (`trailing-dot`):
+`github.com.` is `github.com` to DNS, so it is refused outright rather than left
+for the allow-list to miss. One thing is a note rather than a check: the
 refusal messages are static — the string being refused arrived from a node a
 coding agent wrote, so none of them echoes it.
 
@@ -100,7 +100,7 @@ value out of one.
 
 `not-a-string` · `empty` · `too-long` · `control-character` · `non-ascii` ·
 `backslash` · `not-a-url` · `scheme-not-https` · `not-canonical` · `userinfo` ·
-`port` · `ip-literal` · `punycode-host` · `encoded-host` · `host-not-allowed` ·
+`port` · `ip-literal` · `punycode-host` · `encoded-host` · `trailing-dot` · `host-not-allowed` ·
 `allow-list-empty` · `invalid-allow-list`
 
 `allow-list-empty` and `invalid-allow-list` are refusals of the **list**, not of

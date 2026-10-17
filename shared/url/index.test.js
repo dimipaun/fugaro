@@ -223,7 +223,21 @@ test('a trailing dot is refused, though DNS resolves it to the same host', () =>
   // The reason this is its own case: `github.com.` IS `github.com` for DNS, so
   // a validator that stripped the dot would accept a string the allow-list
   // never named. It is refused because the match is on the string.
-  refuses('https://github.com./a', GITHUB, URL_REFUSAL.HOST_NOT_ALLOWED);
+  refuses('https://github.com./a', GITHUB, URL_REFUSAL.TRAILING_DOT);
+});
+
+test('a trailing dot is refused as its own code, whatever the list holds', () => {
+  // Refused in the authority, before the list is read: with an empty list, with
+  // a list that names the dotted form's undotted twin, and with the dot on a
+  // host that is not listed at all. The dot never decides the answer by luck.
+  refuses('https://github.com./a', [], URL_REFUSAL.TRAILING_DOT);
+  refuses('https://github.com.', GITHUB, URL_REFUSAL.TRAILING_DOT);
+  refuses('https://github.com.?q=1', GITHUB, URL_REFUSAL.TRAILING_DOT);
+  refuses('https://github.com.#f', GITHUB, URL_REFUSAL.TRAILING_DOT);
+  refuses('https://evil.example./a', GITHUB, URL_REFUSAL.TRAILING_DOT);
+  // A dot inside the path or query is just a URL.
+  accepts('https://github.com/a.', GITHUB, 'github.com');
+  accepts('https://github.com/a?x=y.', GITHUB, 'github.com');
 });
 
 test('a host on another list is refused, and the lists do not overlap', () => {
@@ -495,7 +509,7 @@ test('every hostile string is refused, each with its own code', () => {
     ['https://github.com.evil.example/a', URL_REFUSAL.HOST_NOT_ALLOWED],
     ['https://evil.example/github.com', URL_REFUSAL.HOST_NOT_ALLOWED],
     ['https://sub.github.com/a', URL_REFUSAL.HOST_NOT_ALLOWED],
-    ['https://github.com./a', URL_REFUSAL.HOST_NOT_ALLOWED],
+    ['https://github.com./a', URL_REFUSAL.TRAILING_DOT],
     ['https://xn--github-9d0c.com/a', URL_REFUSAL.PUNYCODE_HOST],
     ['https://%67ithub.com/a', URL_REFUSAL.ENCODED_HOST],
     ['https://127.0.0.1/a', URL_REFUSAL.IP_LITERAL],
@@ -545,4 +559,9 @@ test('the sweep is a negative control: nothing in it is ever passed through', ()
       `a feed string was passed through as a link: ${JSON.stringify(candidate)}`,
     );
   }
+});
+
+test('an empty label in the host is a miss, never a normalised hit', () => {
+  refuses('https://github..com/a', GITHUB, URL_REFUSAL.HOST_NOT_ALLOWED);
+  refuses('https://.github.com/a', GITHUB, URL_REFUSAL.HOST_NOT_ALLOWED);
 });
