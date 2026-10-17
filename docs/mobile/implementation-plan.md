@@ -228,7 +228,7 @@ P3.1 ──► P6.8
 P3.6 ──┬─► P6.9
        └─► P6.10         (shared directory: mobile/src/mailbox/)
 P3.5 ──► P6.12           (shared directory: mobile/src/voice/)
-P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go; also needs O4 answered)
+P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 ```
 
 **Every arrow is a "Depends on" line below. There is no edge that is not written down.**
@@ -365,7 +365,7 @@ P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go; also needs
 
 **Files.** `shared/mailbox/`.
 **Depends on.** P0.2.
-**Verification.** Tests over the schema: a message carries an id; delivering the same id twice is **acted on once** and the second delivery is acknowledged as a duplicate, not re-acted; an id from a different sender is not deduped against; a message older than the window is refused as a replay; the state machine's transitions are total (every state × every event has a defined outcome, asserted by an exhaustive table test).
+**Verification.** Tests over the schema: a message carries an id; delivering the same id twice is **acted on once** and the second delivery is acknowledged as a duplicate, not re-acted; an id from a different sender is not deduped against; a message older than the window is refused as a replay *(D173, owner ruling 2026-10-17: the 6-hour window applies to commands — cancel, merge, launch, confirm; for prompts the acceptance window is the prompt's TTL, D118)*; the state machine's transitions are total (every state × every event has a defined outcome, asserted by an exhaustive table test).
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.**
 
 **Why it is the load-bearing module.** F19 records that the tree has no message id, no ordering, no idempotency, no replay protection and no ack. This module is where all five are decided, and it is what answers D49's "no ack, no expiry, no dedupe" objection **in code rather than in prose**.
@@ -615,8 +615,8 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 
 ### Task P6.5: The prompt queue and the interrupt policy
 
-**Files.** `shared/prompts/` (new). **Depends on.** P1.3, P1.4, P6.3; **D160, D168**, D127, O4.
-**Verification.** `npm test` in `shared/`: prompts queue by default; at a natural pause the announcement counts pending prompts across every account ("Two questions waiting"); "what's pending" lists them per installation; **no prompt ever leaves the queue by time** (D168 answered never expire, 2026-10-17); **reminder escalation** — a waiting prompt is re-announced at the next natural pause after 1 hour, then once a day, and is listed first in "what's pending" (the bounded alternative of [functional-spec-reconciliation.md](functional-spec-reconciliation.md) §3.4; proposed, NOT APPROVED); a **hard cap on pending prompts per consumer**: at the maximum count a new prompt is refused with a defined answer to the orchestrator ("queue full"), tested at the boundary; reminder escalation bounds attention, the cap bounds storage; **whether unanswered prompts are exempt from D118's TTL is open item O4** and this module takes it as a parameter rather than deciding it; only D160's set interrupts, and the local switch narrows or widens it; a pure function of (queue, digest, presence, switch, now).
+**Files.** `shared/prompts/` (new). **Depends on.** P1.3, P1.4, P6.3; **D160, D168 (amended: prompts expire at D118's TTL), D173**, D127.
+**Verification.** `npm test` in `shared/`: prompts queue by default; at a natural pause the announcement counts pending prompts across every account ("Two questions waiting"); "what's pending" lists them per installation; **an unanswered prompt expires at D118's mailbox TTL** (D168 as amended 2026-10-17) and the expiry yields the prompt's non-destructive answer, or a stop if it has none; a prompt is **accepted within its TTL, not P1.1's 6-hour command replay window** (D173; P1.1's module implements the two windows, this module relies on them); **reminder escalation**, before expiry — a waiting prompt is re-announced at the next natural pause after 1 hour, then once a day, and is listed first in "what's pending" (the bounded alternative of [functional-spec-reconciliation.md](functional-spec-reconciliation.md) §3.4; proposed, NOT APPROVED); a **hard cap on pending prompts per consumer**: at the maximum count a new prompt is refused with a defined answer to the orchestrator ("queue full"), tested at the boundary; reminder escalation bounds attention, the cap bounds storage;  only D160's set interrupts, and the local switch narrows or widens it; a pure function of (queue, digest, presence, switch, now).
 **Reviewer tier.** standard.
 
 ### Task P6.6: `fugaro pair` — SECURITY-SENSITIVE
@@ -628,8 +628,8 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 ### Task P6.7: The consumer's enforcement of the D128 amendment — SECURITY-SENSITIVE
 
 **Files.** `internal/cli/mailbox.go` and its tests (extending P4.1's consumer; CLI plan per D19). **Depends on.** P4.1, P6.2, P6.3, P6.4; **D169**, D162, D168.
-**What it does.** Re-validates every action record with a **Go implementation** of `shared/confirm`'s rules (the consumer is Go; the JS module cannot be imported), held to them by a parity test over `shared/confirm/vectors.json`: (verb in the closed set, target resolved, confirmation present, inside its timeout, not already used), and **first verifies the record's MAC with the per-pairing key** read from the OS keychain by the item name (D169, D171) — an unsigned or wrongly signed record is refused before anything else; for a merge, re-reads the PR's head and **refuses if it differs from the head SHA in the record**; **refuses a destructive command that arrives without a valid confirmation record**; executes cancel through the CLI's own cancel path and merge as D169 says; refuses destructive free text it recognises; produces prompts that **never expire** (D168, answered 2026-10-17), up to P6.5's pending-prompt cap (beyond it, it answers the orchestrator "queue full"), and keeps its lease and heartbeat while one waits; advertises its agents in the heartbeat's `agents` list (D161); a launch ("kick off …") is passed through without a confirmation record (D162), and the caps apply.
-**Verification.** `go test ./internal/cli -run 'Mailbox'` over the simulator, including `TestConfirmParityWithShared` over every vector in `shared/confirm/vectors.json`: an action with no confirmation record is refused and nothing runs; **a forged record — unsigned, or signed with the wrong key — is refused and nothing runs**, including one whose confirmation id and time are well-formed (the launcher-as-`m~` case of D169); a merge whose PR head moved since the read-back is refused; the pending-prompt cap refuses the next prompt at the boundary; a **replayed** confirmation id is refused; a confirmation for **a different target** is refused; an expired confirmation is refused; a well-formed confirmed cancel calls the cancel path once (a fake); a launch with no confirmation record is **not** refused for lacking one (D162); the kill switch and budget writes are refused even when confirmed. **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
+**What it does.** Re-validates every action record with a **Go implementation** of `shared/confirm`'s rules (the consumer is Go; the JS module cannot be imported), held to them by a parity test over `shared/confirm/vectors.json`: (verb in the closed set, target resolved, confirmation present, inside its timeout, not already used), and **first verifies the record's MAC with the per-pairing key** read from the OS keychain by the item name (D169, D171) — an unsigned or wrongly signed record is refused before anything else; for a merge, re-reads the PR's head and **refuses if it differs from the head SHA in the record**; **refuses a destructive command that arrives without a valid confirmation record**; executes cancel through the CLI's own cancel path and merge as D169 says; refuses destructive free text it recognises; produces prompts that **expire at D118's TTL** (D168 as amended 2026-10-17) — at expiry it hands the orchestrator the prompt's non-destructive answer, or tells it to stop if there is none — up to P6.5's pending-prompt cap (beyond it, it answers "queue full"); applies the 6-hour replay window to commands and the TTL to prompts (D173); advertises its agents in the heartbeat's `agents` list (D161); a launch ("kick off …") is passed through without a confirmation record (D162), and the caps apply.
+**Verification.** `go test ./internal/cli -run 'Mailbox'` over the simulator, including `TestConfirmParityWithShared` over every vector in `shared/confirm/vectors.json`: an action with no confirmation record is refused and nothing runs; **a forged record — unsigned, or signed with the wrong key — is refused and nothing runs**, including one whose confirmation id and time are well-formed (the launcher-as-`m~` case of D169); a merge whose PR head moved since the read-back is refused; the pending-prompt cap refuses the next prompt at the boundary; a **replayed** confirmation id is refused; a confirmation for **a different target** is refused; an expired confirmation is refused; a well-formed confirmed cancel calls the cancel path once (a fake); a launch with no confirmation record is **not** refused for lacking one (D162); an expired prompt gives the orchestrator its non-destructive answer, never a destructive one; a prompt answer older than 6 hours but within the TTL is accepted while a command older than 6 hours is refused (D173); the kill switch and budget writes are refused even when confirmed. **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
 
 ### Task P6.8: Pairing and the overview in the app — SECURITY-SENSITIVE
 
@@ -657,9 +657,9 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 
 ### Task P6.13: The real sweeper's rule for waiting prompts
 
-**Files.** `internal/cli/mailbox.go` (the D118 mailbox sweeper P4.1 builds in `internal/budget/sweep.go`'s shape) and its test. **Depends on.** P6.7; D118, D168, **open item O4** (the owner's ruling on whether unanswered prompts are exempt from the TTL).
-**What it does.** Implements O4's answer in the sweeper itself, so that what the documents say about waiting prompts is what the code deletes.
-**Verification.** `go test ./internal/cli -run 'MailboxSweep'` with a fake clock: under O4 option (1), an unanswered prompt older than the TTL survives a sweep and an answered or spoken message older than the TTL is deleted; under option (2), both are deleted; either way the pending-prompt cap (P6.5, P6.7) is the storage bound and a test pins that a full queue plus a sweep never exceeds it. **Red step.** The survival test, against a sweeper that deletes by age alone. **Reviewer tier.** standard.
+**Files.** `internal/cli/mailbox.go` (the D118 mailbox sweeper P4.1 builds in `internal/budget/sweep.go`'s shape) and its test. **Depends on.** P6.7; D118, D168 (as amended 2026-10-17: prompts expire at the TTL).
+**What it does.** Makes the real sweeper expire unanswered prompts at D118's TTL, and makes the expiry deliver the prompt's non-destructive answer to the waiting conversation (or a stop), so that what the documents say about waiting prompts is what the code does.
+**Verification.** `go test ./internal/cli -run 'MailboxSweep'` with a fake clock: an unanswered prompt older than the TTL is deleted by the sweep, and the conversation waiting on it receives the non-destructive answer (or a stop when the prompt has none) exactly once; a prompt younger than the TTL survives; the pending-prompt cap (P6.5, P6.7) is the storage bound and a test pins that a full queue plus a sweep never exceeds it. **Red step.** The safe-answer test, against a sweeper that deletes the prompt without answering the conversation. **Reviewer tier.** standard.
 
 ---
 
@@ -696,7 +696,7 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 | P6.2 *(proposed, NOT APPROVED)* | P0.1 | D169, D162, D128 as amended 2026-10-17 |
 | P6.3 *(proposed, NOT APPROVED)* | P0.2 | D161, D167, D168, D169, D171 |
 | P6.4 *(proposed, NOT APPROVED)* | P2.2, P6.3 | D161, D166, D169, D171 |
-| P6.5 *(proposed, NOT APPROVED)* | P1.3, P1.4, P6.3 | D160, D168, D127 |
+| P6.5 *(proposed, NOT APPROVED)* | P1.3, P1.4, P6.3 | D160, D168, D173, D127 |
 | P6.6 *(proposed, NOT APPROVED)* | P6.4, P4.1 | D165, D166, D171 |
 | P6.7 *(proposed, NOT APPROVED)* | P4.1, P6.2, P6.3, P6.4 | D169, D162, D168 |
 | P6.8 *(proposed, NOT APPROVED)* | P3.1, P6.1, P6.6 | D165, D170, D171, D114 |
@@ -704,7 +704,7 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 | P6.10 *(proposed, NOT APPROVED)* | P3.6, P6.3 | D167 |
 | P6.11 *(proposed, NOT APPROVED)* | P6.4 | D126 |
 | P6.12 *(proposed, NOT APPROVED)* | P3.5, P6.1, P6.2, P6.5 | D162, D169 |
-| P6.13 *(proposed, NOT APPROVED)* | P6.7 | D118, D168, **O4 (open)** |
+| P6.13 *(proposed, NOT APPROVED)* | P6.7 | D118, D168 (amended) |
 
 ---
 
