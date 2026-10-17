@@ -23,18 +23,23 @@ func managedTestCover() ManagedCover {
 	}}
 }
 
-// mrc is one resource of a managed plan: the address is the type's own, so a
-// refusal's address says which fixture it came from.
+// mrc is one resource of a managed plan, under Google's provider: the address
+// is the type's own, so a refusal's address says which fixture it came from.
 func mrc(typ string, after map[string]any) ResourceChange {
 	if after == nil {
 		after = map[string]any{}
 	}
-	return ResourceChange{Address: "module.managed." + typ + ".this", Type: typ,
-		Change: Change{Actions: []string{"create"}, After: after, AfterUnknown: map[string]any{}}}
+	return ResourceChange{Address: "module.managed." + typ + ".this", Mode: "managed", Type: typ,
+		ProviderName: "registry.terraform.io/hashicorp/google",
+		Change:       Change{Actions: []string{"create"}, After: after, AfterUnknown: map[string]any{}}}
 }
 
+// managedPlan is a plan of changes with a configuration that declares Google's
+// provider and nothing else: the clean configuration every fixture of the
+// resource rules shares (managed_apply_test.go holds the configuration's own).
 func managedPlan(changes ...ResourceChange) *Plan {
-	return &Plan{FormatVersion: "1.2", ResourceChanges: changes}
+	return &Plan{FormatVersion: "1.2", ResourceChanges: changes, Configuration: &Configuration{
+		ProviderConfig: map[string]ProviderConfig{"google": {Name: "google", FullName: "registry.terraform.io/hashicorp/google"}}}}
 }
 
 // managedAccount is the email of a managed service account of the managed

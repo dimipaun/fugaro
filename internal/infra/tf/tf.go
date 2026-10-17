@@ -27,13 +27,59 @@ import (
 type Plan struct {
 	FormatVersion   string           `json:"format_version"`
 	ResourceChanges []ResourceChange `json:"resource_changes"`
+	// Configuration is the plan's configuration, nil when the document has
+	// none. Only the managed cover reads it (ManagedCover): what runs at apply
+	// besides the resources' own API calls — a provisioner, a provider, a data
+	// source — is declared there and not in resource_changes.
+	Configuration *Configuration `json:"configuration"`
 }
 
 // ResourceChange is one entry of a plan's resource_changes.
 type ResourceChange struct {
 	Address string `json:"address"`
-	Type    string `json:"type"`
-	Change  Change `json:"change"`
+	// Mode is "managed" for a resource and "data" for a data source.
+	Mode string `json:"mode"`
+	Type string `json:"type"`
+	// ProviderName is the provider's full source address, such as
+	// registry.terraform.io/hashicorp/google.
+	ProviderName string `json:"provider_name"`
+	Change       Change `json:"change"`
+}
+
+// Configuration is what the managed cover reads of a plan's configuration:
+// the providers it declares and the resources of every module it calls.
+type Configuration struct {
+	ProviderConfig map[string]ProviderConfig `json:"provider_config"`
+	RootModule     ConfigModule              `json:"root_module"`
+}
+
+// ProviderConfig is one entry of a configuration's provider_config: a
+// provider the configuration requires or configures, in any module.
+type ProviderConfig struct {
+	Name     string `json:"name"`
+	FullName string `json:"full_name"`
+}
+
+// ConfigModule is one module of a configuration: its resources, and the
+// modules it calls with theirs.
+type ConfigModule struct {
+	Resources   []ConfigResource      `json:"resources"`
+	ModuleCalls map[string]ModuleCall `json:"module_calls"`
+}
+
+// ConfigResource is a resource or data block of a configuration, with the
+// provisioners declared on it. Address is relative to its module.
+type ConfigResource struct {
+	Address      string            `json:"address"`
+	Mode         string            `json:"mode"`
+	Type         string            `json:"type"`
+	Provisioners []json.RawMessage `json:"provisioners"`
+}
+
+// ModuleCall is a module block of a configuration and the module it calls.
+type ModuleCall struct {
+	Source string       `json:"source"`
+	Module ConfigModule `json:"module"`
 }
 
 // Change is what a plan will do to one resource instance.

@@ -3,6 +3,7 @@ package tf
 import (
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -189,13 +190,23 @@ var managedGrantRules = map[string]bool{
 // account a job, a scheduler or a grant is on, a member, a role — must be
 // known at plan time. A computed one is refused, never trusted for what it
 // references (managedNames says why).
+//
+// And one rule before all four, because a managed apply runs as the operator
+// (D75: the operator's shell impersonates the deployer): nothing in the plan
+// runs at apply besides Google's own provider making the resources' API
+// calls. No provisioner anywhere, no provider but Google's two, no data
+// source, and no object uploaded from a local path — read from the plan's
+// configuration and each change's mode and provider, which is why a plan
+// without a configuration is refused (managedConfiguration).
 type ManagedCover struct {
 	Cover
 }
 
 // NotCovered lists why a managed project's plan is not covered, empty when it
-// is. It is Cover.NotCovered's own walk — the action set, the authoritative
-// IAM resources, the imports and the two halves in that order — with the four
+// is. The configuration comes first (managedConfiguration), then each
+// change's mode and provider, and then Cover.NotCovered's own walk — the
+// action set, the authoritative IAM resources, the imports and the two halves
+// in that order — with the four
 // managed rules above in place of init's type list and grant table, and with
 // no attribute check of the embedded modules': what a managed resource must
 // *point at* rather than what it must be named is Task 1.2's, and its
@@ -210,10 +221,20 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
 	}
-	var out []string
+	out := managedConfiguration(p)
 	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
+		// What runs besides the resource's API calls, before its actions: a
+		// no-op still loads its provider, and a read is a data source.
+		switch {
+		case rc.Mode != "managed":
+			add(rc, managedModeReason(rc.Mode))
+			continue
+		case !managedProviders[rc.ProviderName]:
+			add(rc, managedProviderReason(rc.ProviderName))
+			continue
+		}
 		switch {
 		case len(acts) == 0:
 			add(rc, "no actions")
@@ -245,6 +266,81 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			}
 		}
 	}
+	return out
+}
+
+// managedProviders are the providers a managed plan may use: Google's own two,
+// by their full source address. Any other is a binary the plan's author chose,
+// run at apply with the credentials of whoever applies — under D75, the
+// operator's shell impersonating the deployer.
+var managedProviders = map[string]bool{
+	"registry.terraform.io/hashicorp/google":      true,
+	"registry.terraform.io/hashicorp/google-beta": true,
+}
+
+// managedProviderReason says why a provider is not a managed plan's.
+func managedProviderReason(full string) string {
+	if full == "" {
+		return "a provider the plan does not name: a managed plan uses registry.terraform.io/hashicorp/google or google-beta alone"
+	}
+	return "provider " + full + ", which is not registry.terraform.io/hashicorp/google or google-beta: a managed plan runs no other provider"
+}
+
+// managedModeReason says why a change of a mode other than "managed" is not a
+// managed plan's. No data source is on the managed list: one is code the
+// provider runs to read, and data.external is a program the plan names, so a
+// data source is refused whatever its type (the list of admitted ones is
+// empty, and adding one is a decision for this file).
+func managedModeReason(mode string) string {
+	if mode == "data" {
+		return "a data source, which a managed plan does not read"
+	}
+	return fmt.Sprintf("mode %q, which is not a managed resource", mode)
+}
+
+// managedConfiguration says why a plan's configuration is not one a managed
+// plan may carry: a provisioner anywhere, in the root module or any module it
+// calls however deep, a provider outside managedProviders, or a data source.
+// resource_changes shows none of these — a provisioner is not an attribute, a
+// data source the plan already read has no change, and a provider the
+// configuration requires need not be the one any change names — so they are
+// read here, and a plan with resource changes and no configuration to read
+// them from is refused rather than taken to have none.
+//
+// What this does not cover is what ran before the gate: providers start at
+// init and plan, file() and templatefile() read at plan, and a data source is
+// read at plan when it can be. Refusing those plans here stops their apply,
+// not their plan; plan-time execution is Task 3.x's.
+func managedConfiguration(p *Plan) []string {
+	cfg := p.Configuration
+	if cfg == nil {
+		if len(p.ResourceChanges) == 0 {
+			return nil
+		}
+		return []string{"the plan (no configuration: a managed plan's provisioners, providers and data sources are read from it, so a plan without one is refused rather than read as having none)"}
+	}
+	var out []string
+	for _, key := range slices.Sorted(maps.Keys(cfg.ProviderConfig)) {
+		if full := cfg.ProviderConfig[key].FullName; !managedProviders[full] {
+			out = append(out, "provider_config."+key+" ("+managedProviderReason(full)+")")
+		}
+	}
+	var walk func(prefix string, m ConfigModule)
+	walk = func(prefix string, m ConfigModule) {
+		for _, r := range m.Resources {
+			addr := prefix + r.Address
+			switch {
+			case len(r.Provisioners) > 0:
+				out = append(out, addr+" (a provisioner, which runs a command or a file copy at apply on the machine that applies: a managed plan declares none)")
+			case r.Mode != "managed":
+				out = append(out, addr+" ("+managedModeReason(r.Mode)+")")
+			}
+		}
+		for _, name := range slices.Sorted(maps.Keys(m.ModuleCalls)) {
+			walk(prefix+"module."+name+".", m.ModuleCalls[name].Module)
+		}
+	}
+	walk("", cfg.RootModule)
 	return out
 }
 
@@ -287,6 +383,14 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 		}
 	}
 	switch rc.Type {
+	case "google_storage_bucket_object":
+		// source is a path on the machine that applies — the operator's, under
+		// D75 — and the provider uploads whatever file it names. A managed
+		// object carries its content in the plan or none; a computed source is
+		// refused for managedNames' reason.
+		if unknown(rc.Change, "source") || str(a["source"]) != "" {
+			return "an object uploaded from source, a local path on the machine that applies: write its content in the plan instead"
+		}
 	case "google_cloud_run_v2_job":
 		// A job with no service account runs as the project's default compute
 		// account, which holds Editor by default: unset is refused, not read
@@ -351,9 +455,21 @@ func (c ManagedCover) managedName(rc ResourceChange, attr string) string {
 		return rc.Type + " with no " + attr
 	case !strings.HasPrefix(n, ManagedPrefix):
 		return fmt.Sprintf("%s %q, outside the managed prefix %s", attr, n, ManagedPrefix)
+	case !managedNameChars.MatchString(n):
+		return fmt.Sprintf("%s %q carries a character outside [a-z0-9._-]: write the resource's own short ID, never a path or an import ID", attr, n)
 	}
 	return ""
 }
+
+// managedNameChars is every character a managed name may carry. The provider
+// reads an IAM resource's parent as an import ID when it has the shape of one,
+// so "fmgd-x/projects/<p>/secrets/<id>" starts with the prefix and names the
+// secret its path names — Fugaro's own, the runs bucket, a job or a
+// repository. A name of these characters alone is the resource's own ID: no
+// '/', no ':', no capital (a bucket, an account, a job or a repository takes
+// none, and a secret or a scheduler written in capitals asks for a
+// confirmation rather than being read).
+var managedNameChars = regexp.MustCompile(`^[a-z0-9._-]+$`)
 
 // managedGrant says why a role a managed plan grants is not one it may grant:
 // the resource it is on is managedResource's, the member must be one the
