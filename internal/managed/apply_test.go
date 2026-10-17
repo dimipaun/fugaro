@@ -1,0 +1,808 @@
+package managed
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
+)
+
+// The tests of the apply path: the gate's verdict is the whole of the
+// decision, the marker and the delete list are read (Tasks 0.2 and 1.4), the
+// deployer is assumed (Task 1.5), and the coding-agent refusal is removed for a
+// managed project alone (D55).
+//
+// Every refusal below is proved by the fake terraform's own call log as well as
+// by the error it returned: a refusal that applied something anyway is the bug
+// a return value cannot show.
+
+// applyRig is a managed apply's whole world: a checkout holding a root, this
+// command's workdir with a copy of it, and a terraform running there.
+type applyRig struct {
+	*rig
+	wd  *infra.Workdir
+	src string
+}
+
+// newApplyRig builds the rig with one root (rootFiles) in the checkout.
+func newApplyRig(t *testing.T, rootFiles map[string]string) *applyRig {
+	t.Helper()
+	r := newRig(t)
+	src := filepath.Join(filepath.Dir(r.dir), "checkout")
+	if err := os.MkdirAll(src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range rootFiles {
+		writeFile(t, filepath.Join(src, name), body)
+	}
+	wd, err := infra.CopyRoot(r.dir, src)
+	if err != nil {
+		t.Fatalf("CopyRoot: %v", err)
+	}
+	return &applyRig{rig: r, wd: wd, src: src}
+}
+
+// bin is the terraform this apply runs, built when it is asked for and not
+// when the rig is: the rig's script is marshalled into the fake's environment
+// here, so a test scripts the plan before it applies one.
+func (r *applyRig) bin(t *testing.T) *tf.TF {
+	t.Helper()
+	env, err := TerraformEnv(withoutImpersonation(os.Environ()), r.wd.Dir, filepath.Join(r.wd.Dir, "cache"))
+	if err != nil {
+		t.Fatalf("TerraformEnv: %v", err)
+	}
+	script, err := json.Marshal(r.script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env = append(env, "FAKE_TERRAFORM_LOG="+r.log, "FAKE_TERRAFORM_SCRIPT="+string(script))
+	bin, err := tf.New(fakeTerraform(t), r.wd.Root, env)
+	if err != nil {
+		t.Fatalf("tf.New: %v", err)
+	}
+	bin.Out = io.Discard
+	return bin
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// plainRoot is an ordinary agent-authored root: one resource, and no block the
+// plan cannot show.
+func plainRoot() map[string]string {
+	return map[string]string{"main.tf": "resource \"google_storage_bucket\" \"data\" {\n  name = \"x\"\n}\n"}
+}
+
+// calls is every invocation the fake recorded, one line per call, in order.
+func (r *rig) calls(t *testing.T) []string {
+	t.Helper()
+	f, err := os.Open(r.log)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var out []string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(nil, 1<<20)
+	for sc.Scan() {
+		var c struct{ Args []string }
+		if err := json.Unmarshal(sc.Bytes(), &c); err != nil {
+			t.Fatal(err)
+		}
+		// tf.New's own version probe is not an invocation of the root, and
+		// every assertion below is about what ran in the workdir.
+		if len(c.Args) > 0 && strings.Join(c.Args, " ") != "version -json" {
+			out = append(out, strings.Join(c.Args, " "))
+		}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// ran reports whether the fake was ever asked for a subcommand.
+func (r *rig) ran(t *testing.T, sub string) bool {
+	t.Helper()
+	for _, c := range r.calls(t) {
+		if c == sub || strings.HasPrefix(c, sub+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// planWithChanges scripts a plan that changes something — the fake's
+// -detailed-exitcode 2 — and the show the gate then reads.
+func (r *applyRig) planWithChanges(t *testing.T, changes ...map[string]any) {
+	t.Helper()
+	r.script["plan"] = map[string]any{"exit": 2}
+	r.show(t, changes...)
+}
+
+// request is the apply this rig's world runs: the config gate open (Task 4.4's
+// value), the project managed, and this command's own inputs.
+func (r *applyRig) request(t *testing.T) Request {
+	t.Helper()
+	_, access, imp, _ := deployRig()
+	return Request{
+		Enable:       Enable{Open: true},
+		Project:      project,
+		GCPProject:   gcpProject,
+		Fact:         Fact{Managed: true},
+		Workdir:      r.wd,
+		TF:           r.bin(t),
+		Cover:        admitAll{},
+		Access:       access,
+		Impersonator: imp,
+		Out:          io.Discard,
+	}
+}
+
+// An ordinary managed apply: the plan is read, gated, and the saved file is
+// applied as the deployer account of D75 — and the fake recorded exactly one
+// apply, of the saved plan file.
+func TestApplyAppliesASavedPlanTheGateAdmitsAsTheDeployer(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	req := r.request(t)
+	res, err := Apply(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !res.Changed || !res.Verdict.OK {
+		t.Fatalf("result %+v, want a change the gate admitted", res)
+	}
+	applied := r.applied(t)
+	if len(applied) != 1 {
+		t.Fatalf("the fake was asked to apply %v, want exactly one apply", applied)
+	}
+	if want := "apply -input=false -no-color -lock-timeout=60s " + filepath.Join(r.wd.Root, infra.PlanFile); applied[0] != want {
+		t.Errorf("applied %q, want %q", applied[0], want)
+	}
+	imp := req.Impersonator.(*fakeImp)
+	if len(imp.accounts) != 1 || imp.accounts[0] != DeployerAccount(gcpProject) {
+		t.Errorf("the apply assumed %v, want the deployer account %s alone", imp.accounts, DeployerAccount(gcpProject))
+	}
+	if res.PlanHash == "" {
+		t.Error("the result carries no plan hash, and the verdict is not bound to the plan's bytes")
+	}
+}
+
+// The saved-plan requirement (tf.Apply refuses to apply without one, and this
+// asserts the sequence keeps it): what is applied is the file the plan step
+// wrote, inside this command's own workdir, and the hash the result carries is
+// that file's own bytes.
+func TestApplyAppliesTheSavedPlanAndNothingElse(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	res, err := Apply(context.Background(), r.request(t))
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if want := filepath.Join(r.wd.Root, infra.PlanFile); res.PlanPath != want {
+		t.Errorf("the plan is %s, want the saved plan of this command's workdir %s", res.PlanPath, want)
+	}
+	st, err := os.Stat(res.PlanPath)
+	if err != nil {
+		t.Fatalf("the applied plan file: %v", err)
+	}
+	if !st.Mode().IsRegular() || st.Size() == 0 {
+		t.Errorf("the applied plan is %v (%d bytes), want a regular file the plan step wrote", st.Mode(), st.Size())
+	}
+	want, err := planHash(res.PlanPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PlanHash != want {
+		t.Errorf("the result's hash is %s, want the applied file's own bytes %s", res.PlanHash, want)
+	}
+	if !strings.HasPrefix(res.PlanPath, r.wd.Root+string(filepath.Separator)) {
+		t.Errorf("the applied plan %s is outside the workdir root %s", res.PlanPath, r.wd.Root)
+	}
+}
+
+// The backend is this command's, not the configuration's: init is asked for
+// D77's bucket and this prefix, and the root's own backend block is the file
+// this command wrote.
+func TestApplySetsTheBackendItself(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	if _, err := Apply(context.Background(), r.request(t)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	var init string
+	for _, c := range r.calls(t) {
+		if strings.HasPrefix(c, "init ") {
+			init = c
+		}
+	}
+	bucketName := ManagedStateBucketName(gcpProject)
+	for _, want := range []string{"-backend-config=bucket=" + bucketName, "-backend-config=prefix=" + infra.StatePrefixManaged} {
+		if !strings.Contains(init, want) {
+			t.Errorf("init %q does not carry %q", init, want)
+		}
+	}
+	block, err := os.ReadFile(filepath.Join(r.wd.Root, infra.BackendBlockFile))
+	if err != nil {
+		t.Fatalf("the root's backend block: %v", err)
+	}
+	if got := string(block); got != "terraform {\n  backend \"gcs\" {}\n}\n" {
+		t.Errorf("the backend block is %q, want the gcs block this command writes", got)
+	}
+	if bucketName == InstallationsStateBucket(gcpProject) {
+		t.Error("the managed state bucket and the installation's are the same bucket")
+	}
+}
+
+// tf.Plan passes -var-file=terraform.tfvars.json, which terraform fails on when
+// the file is not there: a root that writes no variables file gets the empty
+// one, and a root that writes one keeps it byte for byte.
+func TestApplyWritesTheEmptyVarsFileOnlyWhenTheRootHasNone(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	if _, err := Apply(context.Background(), r.request(t)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	vars, err := os.ReadFile(filepath.Join(r.wd.Root, infra.VarsFile))
+	if err != nil {
+		t.Fatalf("a root with no variables file: %v", err)
+	}
+	if got := strings.TrimSpace(string(vars)); got != "{}" {
+		t.Errorf("the variables file is %q, want the empty object", got)
+	}
+	const mine = "{\n  \"region\" = \"us-east5\"\n}\n"
+	r2 := newApplyRig(t, map[string]string{
+		"main.tf":      plainRoot()["main.tf"],
+		infra.VarsFile: mine,
+	})
+	r2.planWithChanges(t, bucket(planBucket))
+	if _, err := Apply(context.Background(), r2.request(t)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	vars2, err := os.ReadFile(filepath.Join(r2.wd.Root, infra.VarsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(vars2) != mine {
+		t.Errorf("the root's own variables file is %q, want it kept as %q", vars2, mine)
+	}
+}
+
+// The red step's second half: a plan the gate refuses is not applied, and the
+// fake's call log is what says so. A sequence that logs the refusal and applies
+// anyway turns this red.
+func TestApplyStopsAtARefusedGateAndAppliesNothing(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	res, err := Apply(context.Background(), r.request(t))
+	if err == nil {
+		t.Fatal("a plan the guard refuses was applied")
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("refusal %v, want the gate's own (ErrRefused)", err)
+	}
+	var refused *RefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("refusal %v does not carry the verdict that refused", err)
+	}
+	if refused.Verdict.OK {
+		t.Error("the carried verdict says the plan was admitted")
+	}
+	if len(refused.Verdict.Refusals) != 1 || refused.Verdict.Refusals[0].Address != planBucket {
+		t.Errorf("the verdict carries %v, want the guard's refusal of %s", refused.Verdict.Refusals, planBucket)
+	}
+	if res.Verdict.OK {
+		t.Error("the returned result says the plan was admitted")
+	}
+	if applied := r.applied(t); len(applied) != 0 {
+		t.Errorf("the refused apply still applied something: %v", applied)
+	}
+}
+
+// The delete list's provenance: an address the applying command's own command
+// line named is refused by name rather than honoured, and nothing runs at all.
+func TestApplyRefusesAnAddressTheCommandLineNamed(t *testing.T) {
+	for _, addr := range []string{planBucket, "module.other.google_storage_bucket.x"} {
+		r := newApplyRig(t, plainRoot())
+		r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+		req := r.request(t)
+		req.Session = []string{addr}
+		// Even the owner's object allowing the same address is not the point:
+		// what is refused is the source of the address.
+		req.AllowDelete = []string{addr}
+		_, err := Apply(context.Background(), req)
+		if !errors.Is(err, ErrSessionAddresses) {
+			t.Fatalf("session address %s: %v, want the provenance refusal", addr, err)
+		}
+		if !strings.Contains(err.Error(), addr) {
+			t.Errorf("refusal %v does not name the address it refused", err)
+		}
+		if strings.Contains(err.Error(), "--allow-delete") {
+			t.Errorf("refusal %v names the flag, which the session it refuses would read as a thing to pass", err)
+		}
+		if calls := r.calls(t); len(calls) != 0 {
+			t.Errorf("the refused apply ran terraform: %v", calls)
+		}
+	}
+}
+
+// And the other direction of the same rule: an absent or empty owner's list
+// refuses every delete, so a plan that deletes is refused even when the command
+// line named nothing.
+func TestApplyRefusesADeleteNoOwnerListApproves(t *testing.T) {
+	for _, allow := range [][]string{nil, {}} {
+		r := newApplyRig(t, plainRoot())
+		r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+		req := r.request(t)
+		req.AllowDelete = allow
+		if _, err := Apply(context.Background(), req); !errors.Is(err, ErrRefused) {
+			t.Fatalf("allow-list %v: %v, want the guard's refusal", allow, err)
+		}
+		if applied := r.applied(t); len(applied) != 0 {
+			t.Errorf("the refused apply applied something: %v", applied)
+		}
+	}
+	// And the owner's list allowing it admits it, which is what the list is for.
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	req := r.request(t)
+	req.AllowDelete = []string{planBucket}
+	if _, err := Apply(context.Background(), req); err != nil {
+		t.Errorf("a delete the owner's object approves was refused: %v", err)
+	}
+}
+
+// A marker read that did not answer managed is not an apply: every way of not
+// being managed — a readable reason, no reason at all, and an error — stops
+// before terraform is run.
+func TestApplyRefusesWhenTheCreationFactDoesNotSayManaged(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fact Fact
+	}{
+		{"not managed, with a reason", Fact{Reason: "gs://fugaro-runs-p/fugaro/managed.json is not there"}},
+		{"not managed, with no reason at all", Fact{}},
+		{"not managed, with a blank reason", Fact{Reason: "  \n "}},
+		{"a read that failed", Fact{Err: errors.New("the storage API answered 500")}},
+		{"managed and then failed", Fact{Managed: true, Err: errors.New("5xx")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, bucket(planBucket))
+			req := r.request(t)
+			req.Fact = tc.fact
+			_, err := Apply(context.Background(), req)
+			if !errors.Is(err, ErrNotManaged) {
+				t.Fatalf("%+v: %v, want the marker read's refusal", tc.fact, err)
+			}
+			if calls := r.calls(t); len(calls) != 0 {
+				t.Errorf("the refused apply ran terraform: %v", calls)
+			}
+		})
+	}
+	// The readable reason reaches the refusal, so a person can act on it.
+	r := newApplyRig(t, plainRoot())
+	req := r.request(t)
+	req.Fact = Fact{Reason: "gs://fugaro-runs-p/fugaro/managed.json carries no fugaro=managed label"}
+	_, err := Apply(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "carries no fugaro=managed label") {
+		t.Errorf("refusal %v does not carry the read's own reason", err)
+	}
+}
+
+// The residual the plan JSON cannot show (PR #483's required (b)): a root that
+// carries a backend, cloud, provider_meta, ephemeral or action block is refused
+// before terraform init, in .tf and in .tf.json, and a file that cannot be read
+// is refused rather than skipped.
+func TestApplyRefusesTheBlocksThePlanCannotShow(t *testing.T) {
+	ephemeral := "ephemeral \"google_secret_manager_secret_version\" \"v\" {\n  secret = \"x\"\n}\n" +
+		"resource \"google_storage_bucket\" \"data\" {\n  name = \"x\"\n  depends_on = [ephemeral.google_secret_manager_secret_version.v]\n}\n"
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{"a backend block", map[string]string{"main.tf": "terraform {\n  backend \"http\" {}\n}\n"}},
+		{"a top-level backend block", map[string]string{"main.tf": "backend \"gcs\" {}\n"}},
+		{"a cloud block", map[string]string{"main.tf": "terraform {\n  cloud {\n    organization = \"o\"\n  }\n}\n"}},
+		{"a provider_meta block", map[string]string{"main.tf": "terraform {\n  provider_meta \"google\" {\n    a = \"b\"\n  }\n}\n"}},
+		{"an ephemeral block no expression references", map[string]string{"main.tf": "ephemeral \"google_secret_manager_secret_version\" \"v\" {\n  secret = \"x\"\n}\n"}},
+		{"an ephemeral block named only in a depends_on", map[string]string{"main.tf": ephemeral}},
+		{"an action block", map[string]string{"main.tf": "action \"google_cloud_run_v2_job\" \"run\" {\n  config {\n    name = \"x\"\n  }\n}\n"}},
+		{"a backend block behind a comment and a heredoc", map[string]string{"main.tf": "# backend \"s3\" {}\nlocals {\n  x = <<EOT\nbackend \"s3\" {}\nEOT\n}\nterraform {\n  /* a comment */\n  backend \"s3\" {}\n}\n"}},
+		{"a JSON backend block", map[string]string{"main.tf.json": `{"terraform": {"backend": {"gcs": {}}}}`}},
+		{"a JSON ephemeral block", map[string]string{"main.tf.json": `{"ephemeral": {"google_secret_manager_secret_version": {"v": {}}}}`}},
+		{"a JSON action block", map[string]string{"main.tf.json": `{"action": {"google_cloud_run_v2_job": {"run": {}}}}`}},
+		{"a local module with a backend", map[string]string{
+			"main.tf":       "module \"m\" {\n  source = \"./m\"\n}\n",
+			"m/main.tf":     "terraform {\n  backend \"http\" {}\n}\n",
+			"m/vars.tf":     "variable \"x\" {}\n",
+			"m/ignored.txt": "backend \"s3\" {}\n",
+		}},
+		{"a local module reached through another", map[string]string{
+			"main.tf":        "module \"a\" {\n  source = \"./a\"\n}\n",
+			"a/main.tf":      "module \"b\" {\n  source = \"../b\"\n}\n",
+			"b/notes.txt":    "backend \"s3\" {}\n",
+			"b/main.tf.json": `{"terraform": {"provider_meta": {"google": {}}}}`,
+		}},
+		{"a module that leaves the root", map[string]string{"main.tf": "module \"m\" {\n  source = \"../../outside\"\n}\n"}},
+		{"a file that is not HCL", map[string]string{"main.tf": "resource \"a\" \"b\" {\n"}},
+		{"a string that never ends", map[string]string{"main.tf": "locals {\n  x = \"oops\n}\n"}},
+		{"a comment that never ends", map[string]string{"main.tf": "/* oops\n"}},
+		{"a .tf.json that is not JSON", map[string]string{"main.tf.json": "{not json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newApplyRig(t, tc.files)
+			r.planWithChanges(t, bucket(planBucket))
+			_, err := Apply(context.Background(), r.request(t))
+			if !errors.Is(err, ErrPreflight) {
+				t.Fatalf("got %v, want the root's own refusal", err)
+			}
+			if calls := r.calls(t); len(calls) != 0 {
+				t.Errorf("the refused root ran terraform: %v", calls)
+			}
+		})
+	}
+}
+
+// And the ordinary root beside them: a resource, a module with no refused
+// block, an import block, a provider block, a locals block and a commented-out
+// backend are all read and applied.
+func TestApplyReadsAnOrdinaryRootAndItsModules(t *testing.T) {
+	r := newApplyRig(t, map[string]string{
+		"main.tf":    "// backend \"s3\" {}\nterraform {\n  required_version = \">= 1.7\"\n}\nprovider \"google\" {\n  project = \"" + gcpProject + "\"\n}\nlocals {\n  x = \"}\"\n  y = <<-EOT\n    }\n  EOT\n}\nimport {\n  to = google_storage_bucket.data\n  id = \"" + gcpProject + "/data\"\n}\nmodule \"m\" {\n  source = \"./m\"\n}\nresource \"google_storage_bucket\" \"data\" {\n  name = \"x\"\n}\n",
+		"m/main.tf":  "resource \"google_storage_bucket\" \"inner\" {\n  name = \"i\"\n}\n",
+		"notes.md":   "backend \"s3\" {}\n",
+		"broken.txt": "resource \"a\" {\n",
+	})
+	r.planWithChanges(t, bucket(planBucket))
+	if _, err := Apply(context.Background(), r.request(t)); err != nil {
+		t.Fatalf("an ordinary root was refused: %v", err)
+	}
+	if len(r.applied(t)) != 1 {
+		t.Errorf("the ordinary root was not applied: %v", r.calls(t))
+	}
+}
+
+// The saved plan's bytes are what the gate admitted (Verdict's own contract): a
+// file swapped between the gate and the apply is refused, and nothing is
+// applied. The fake's show is scripted to rewrite the plan file, which is
+// exactly the swap.
+func TestApplyRefusesASavedPlanThatChangedAfterTheGate(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	show := r.script["show"].(map[string]any)
+	show["files"] = map[string]string{filepath.Join(r.wd.Root, infra.PlanFile): "another plan"}
+	_, err := Apply(context.Background(), r.request(t))
+	if !errors.Is(err, ErrPlanChanged) {
+		t.Fatalf("got %v, want the plan-changed refusal", err)
+	}
+	if applied := r.applied(t); len(applied) != 0 {
+		t.Errorf("the swapped plan was applied: %v", applied)
+	}
+}
+
+// A plan with nothing to change is not gated and not applied: there is no
+// verdict to take and nothing to do.
+func TestApplyDoesNothingWhenThePlanIsEmpty(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.script["plan"] = map[string]any{"exit": 0}
+	res, err := Apply(context.Background(), r.request(t))
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.Changed {
+		t.Error("an empty plan reports a change")
+	}
+	if r.ran(t, "show") {
+		t.Error("an empty plan was gated")
+	}
+	if applied := r.applied(t); len(applied) != 0 {
+		t.Errorf("an empty plan was applied: %v", applied)
+	}
+}
+
+// A plan that fails is a refusal and not an apply, whatever the reason.
+func TestApplyRefusesWhenThePlanFails(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.script["plan"] = map[string]any{"exit": 1, "stderr": "the provider rejected the configuration"}
+	if _, err := Apply(context.Background(), r.request(t)); err == nil {
+		t.Fatal("a failed plan was applied")
+	}
+	if applied := r.applied(t); len(applied) != 0 {
+		t.Errorf("the failed plan was applied: %v", applied)
+	}
+}
+
+// The credential the apply runs with is the assumed one (Task 1.5): when the
+// deployer account cannot be assumed the apply does not happen as the operator
+// instead, and the fake's log says nothing was applied.
+func TestApplyAppliesNothingWhenTheDeployerCannotBeAssumed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mut  func(*fakeAccess, *fakeImp)
+	}{
+		{"the impersonation grant is missing", func(a *fakeAccess, _ *fakeImp) { a.granted = false }},
+		{"the account is not there", func(a *fakeAccess, _ *fakeImp) { a.exists = false }},
+		{"the assumption fails", func(_ *fakeAccess, i *fakeImp) { i.err = errors.New("iamcredentials: permission denied") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, bucket(planBucket))
+			req := r.request(t)
+			tc.mut(req.Access.(*fakeAccess), req.Impersonator.(*fakeImp))
+			if _, err := Apply(context.Background(), req); err == nil {
+				t.Fatal("the plan was applied without the deployer account")
+			}
+			if applied := r.applied(t); len(applied) != 0 {
+				t.Errorf("the plan was applied as someone else: %v", applied)
+			}
+		})
+	}
+}
+
+// A request that is not one is refused rather than treated as nothing to check,
+// and each refusal runs no terraform at all.
+func TestApplyRefusesARequestItCannotRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mut  func(*Request)
+	}{
+		{"no workdir", func(r *Request) { r.Workdir = nil }},
+		{"a workdir with no root", func(r *Request) { r.Workdir = &infra.Workdir{Dir: t.TempDir()} }},
+		{"no terraform", func(r *Request) { r.TF = nil }},
+		{"no cover", func(r *Request) { r.Cover = nil }},
+		{"no access", func(r *Request) { r.Access = nil }},
+		{"no impersonator", func(r *Request) { r.Impersonator = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, bucket(planBucket))
+			req := r.request(t)
+			tc.mut(&req)
+			if _, err := Apply(context.Background(), req); !errors.Is(err, ErrRequest) {
+				t.Fatalf("got %v, want the request's own refusal", err)
+			}
+			if calls := r.calls(t); len(calls) != 0 {
+				t.Errorf("the refused request ran terraform: %v", calls)
+			}
+		})
+	}
+}
+
+// The apply is inert until phase 4 lands: with the config gate as this release
+// ships it, no combination of the run's conditions, the marker read and the
+// verdict reaches an apply at all — and the case the predicate WOULD proceed
+// in, with phase 4's gate open, is the case this release must not reach. That
+// second half is what makes the closed gate the whole of the difference rather
+// than an untested claim.
+func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
+	if Shipped().Open {
+		t.Fatal("the shipped gate is open, and phase 4's three safeguards are not in this release")
+	}
+	n, wouldProceed, opened := 0, 0, 0
+	for _, c := range allConditions() {
+		for _, managed := range []bool{false, true} {
+			for _, admitted := range []bool{false, true} {
+				n++
+				// The predicate's answer for this row: a coding agent's session
+				// whose project the read says is managed and whose plan the gate
+				// admitted — the case that would apply if the config gate were
+				// open and nothing else changed.
+				proceeds := c.Agent != "" && initflow.CanConfirmManaged(initflow.YesOrTyped, c, initflow.Managed{Managed: managed, Admitted: admitted})
+				r := newApplyRig(t, plainRoot())
+				r.planWithChanges(t, bucket(planBucket))
+				if !admitted {
+					r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+				}
+				req := r.request(t)
+				req.Enable = Shipped()
+				req.Fact = Fact{Managed: managed}
+				res, err := Apply(context.Background(), req)
+				if !errors.Is(err, ErrNotEnabled) {
+					t.Fatalf("conditions %+v, managed=%v admitted=%v: %v, want the config gate's refusal", c, managed, admitted, err)
+				}
+				if !strings.Contains(err.Error(), NotEnabled) {
+					t.Errorf("the refusal %v is not the plan's own sentence", err)
+				}
+				if res.Changed {
+					t.Error("a closed gate reports a change")
+				}
+				if calls := r.calls(t); len(calls) != 0 {
+					t.Errorf("the closed gate ran terraform: %v", calls)
+				}
+				if !proceeds {
+					continue
+				}
+				wouldProceed++
+				// The same row, with the gate phase 4 opens: it applies. Nothing
+				// but the gate stands between here and an apply.
+				r2 := newApplyRig(t, plainRoot())
+				r2.planWithChanges(t, bucket(planBucket))
+				req2 := r2.request(t)
+				req2.Fact = Fact{Managed: managed}
+				res2, err := Apply(context.Background(), req2)
+				if err != nil {
+					t.Fatalf("conditions %+v: %v, want the case the predicate proceeds in to apply once the gate is open", c, err)
+				}
+				if !res2.Changed || len(r2.applied(t)) != 1 {
+					t.Fatalf("conditions %+v: the open gate applied nothing", c)
+				}
+				opened++
+			}
+		}
+	}
+	if want := len(allConditions()) * 4; n != want {
+		t.Fatalf("the property ran %d combinations, want %d", n, want)
+	}
+	// Non-vacuous: the rows the predicate proceeds in are reached, and each of
+	// them is an apply once the gate is open.
+	if want := len(allConditions()) * 2 / 3; wouldProceed != want || opened != want {
+		t.Fatalf("the predicate proceeds in %d rows and %d of them applied, want %d of each", wouldProceed, opened, want)
+	}
+}
+
+// allConditions is the whole product of initflow.Conditions — the same five
+// flags internal/cli's completeness test enumerates — with three marker states:
+// none, the IDE terminal's marker and a coding agent's.
+func allConditions() []initflow.Conditions {
+	var out []initflow.Conditions
+	for _, yes := range []bool{false, true} {
+		for _, ni := range []bool{false, true} {
+			for _, js := range []bool{false, true} {
+				for _, term := range []bool{false, true} {
+					for _, agent := range []string{"", initflow.IDEMarker, "CLAUDECODE"} {
+						out = append(out, initflow.Conditions{Yes: yes, NonInteractive: ni, JSON: js, Terminal: term, Agent: agent})
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// The red step's first half: D55's removal is one predicate wide, and it is
+// removed only when all three of the plan's conditions hold. Over the whole
+// product of the run's conditions, the marker read and the verdict:
+//
+//   - a project the read does not say is managed never loses a prompt, and its
+//     decision is CanConfirm's byte for byte;
+//   - a verdict that refused never loses one either;
+//   - and the removal happens for no class but the one the gate covers, so a
+//     Typed step — money or permanent — never becomes the step that proceeds.
+//
+// A predicate that removes the refusal for any project turns this red.
+func TestManagedRefusalIsRemovedOnlyForAManagedAdmittedPlan(t *testing.T) {
+	n, removed := 0, 0
+	for _, c := range allConditions() {
+		for _, managed := range []bool{false, true} {
+			for _, admitted := range []bool{false, true} {
+				for _, class := range []initflow.ConfirmClass{initflow.YesOrTyped, initflow.Typed} {
+					n++
+					m := initflow.Managed{Managed: managed, Admitted: admitted}
+					got := initflow.CanConfirmManaged(class, c, m)
+					base := initflow.CanConfirm(class, c)
+					removes := managed && admitted && class == initflow.YesOrTyped
+					switch {
+					case c.Agent != "" && removes:
+						removed++
+						if !got {
+							t.Errorf("conditions %+v, %+v: the managed case did not remove the refusal", c, m)
+						}
+					case c.Agent != "" && got:
+						t.Errorf("conditions %+v, %+v: a coding agent's session confirmed a step it may not", c, m)
+					case got != base:
+						t.Errorf("conditions %+v, %+v, class %v: the decision is %v, want CanConfirm's %v", c, m, class, got, base)
+					}
+					if m.Removes(initflow.Typed) {
+						t.Errorf("%+v: a Typed step is covered by the gate's removal", m)
+					}
+				}
+			}
+		}
+	}
+	if want := len(allConditions()) * 8; n != want || n == 0 {
+		t.Fatalf("the property ran %d combinations, want %d", n, want)
+	}
+	if want := len(allConditions()) * 2 / 3; removed != want {
+		t.Fatalf("the removal happened %d times, want it in the %d rows that are a coding agent's session with a managed project and an admitted plan", removed, want)
+	}
+}
+
+// The zero value of Managed is the whole of the safety of delegating: every
+// caller that does not know about managed projects — init's embedded roots, the
+// plugin stage — keeps today's rule exactly.
+func TestManagedZeroValueKeepsEveryRefusal(t *testing.T) {
+	var m initflow.Managed
+	for _, c := range allConditions() {
+		for _, class := range []initflow.ConfirmClass{initflow.YesOrTyped, initflow.Typed} {
+			if m.Removes(class) {
+				t.Fatalf("the zero Managed removes the refusal of a %v step", class)
+			}
+			if got, want := initflow.CanConfirmManaged(class, c, m), initflow.CanConfirm(class, c); got != want {
+				t.Errorf("conditions %+v, class %v: %v, want CanConfirm's %v", c, class, got, want)
+			}
+		}
+	}
+}
+
+// TerraformEnv is tf.Env's allowlist, and the assertion over it (PR #483's
+// required (c)): no provider setting — a credential, the billing project, the
+// project/region/zone defaults a provider would otherwise fall back to, or any
+// *_CUSTOM_ENDPOINT that would send the applier's bearer token elsewhere —
+// reaches terraform.
+func TestTerraformEnvDropsEveryProviderSetting(t *testing.T) {
+	dir := t.TempDir()
+	parent := append(withoutImpersonation(os.Environ()),
+		"GOOGLE_CREDENTIALS={\"type\":\"service_account\"}",
+		"GOOGLE_OAUTH_ACCESS_TOKEN="+fakeToken(),
+		"GOOGLE_BILLING_PROJECT=billing-project",
+		"GOOGLE_PROJECT=another-project",
+		"GOOGLE_REGION=another-region",
+		"GOOGLE_ZONE=another-zone",
+		"GOOGLE_SERVICE_ACCOUNT=someone@example.com",
+		"GOOGLE_STORAGE_CUSTOM_ENDPOINT=https://example.invalid",
+		"GOOGLE_IAM_CUSTOM_ENDPOINT=https://example.invalid",
+		"CLOUDSDK_CORE_PROJECT=another-project",
+	)
+	env, err := TerraformEnv(parent, dir, filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatalf("TerraformEnv: %v", err)
+	}
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		switch {
+		case strings.HasSuffix(k, "_CUSTOM_ENDPOINT"):
+			t.Errorf("terraform's environment carries %s", k)
+		case slices.Contains(providerSettings, k):
+			t.Errorf("terraform's environment carries %s", k)
+		case k == "CLOUDSDK_CORE_PROJECT":
+			t.Errorf("terraform's environment carries %s, which decides the provider's project", k)
+		}
+	}
+	if got := providerSettingIn(env); got != "" {
+		t.Errorf("the assertion over the built environment finds %s", got)
+	}
+	if !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "TF_CLI_CONFIG_FILE=") }) {
+		t.Error("terraform's environment was not built by tf.Env")
+	}
+	// And the assertion refuses rather than runs with one: a setting that
+	// reached the environment is caught here.
+	if got := providerSettingIn([]string{"PATH=/bin", "GOOGLE_BILLING_PROJECT=x"}); got != "GOOGLE_BILLING_PROJECT" {
+		t.Errorf("the assertion found %q, want the billing project it was given", got)
+	}
+}
+
+// And the impersonation variable is refused rather than dropped, so the applier
+// learns that the apply would otherwise have run as someone else (tf.Env's own
+// rule).
+func TestTerraformEnvRefusesTheImpersonationVariable(t *testing.T) {
+	dir := t.TempDir()
+	_, err := TerraformEnv([]string{"PATH=/bin", "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT=someone@example.com"}, dir, filepath.Join(dir, "cache"))
+	if err == nil {
+		t.Fatal("the impersonation variable was accepted")
+	}
+	if !strings.Contains(err.Error(), "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT") {
+		t.Errorf("refusal %v does not name the variable", err)
+	}
+}
