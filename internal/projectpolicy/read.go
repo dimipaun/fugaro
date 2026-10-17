@@ -15,12 +15,12 @@ import (
 //
 //   - The rules marker, config/limits/policyRules, records which generation
 //     of the database's security rules is deployed. Absent, or below
-//     RulesVersion, this installation's rules predate the policy nodes: no
-//     policy can have been published here (publishing refuses without the
-//     marker), so the answer is "not found" and a permission-denied or
-//     missing read of config/policy/shared is not an error. This is what
-//     keeps a release from halting an installation whose rules deploy is the
-//     owner's own step.
+//     RulesVersion, this installation's rules are an older generation than the
+//     one this code reads a policy under: no policy can have been published
+//     here (publishing refuses without a current marker), so the answer is
+//     "not found" and a permission-denied or missing read of
+//     config/policy/shared is not an error. This is what keeps a release from
+//     halting an installation whose rules deploy is the owner's own step.
 //   - With the marker deployed, the node decides: absent (or null) is
 //     "installed, not adopted", today's behaviour; anything else that cannot
 //     be read or decoded is an error the caller must treat as a halt, never
