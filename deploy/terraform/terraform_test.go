@@ -1423,13 +1423,12 @@ func TestComputePreloadBuildsOnTheNATsNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := string(b)
-	if !strings.Contains(script, `gcloud compute instances create "$BUILDER"`) {
-		t.Fatal("preload.sh no longer creates the builder VM with the name this test looks for")
-	}
+	// The create command itself -- its line and its continuation lines -- and
+	// not the script: a comment that mentions a flag is not the flag.
+	create := shellCommand(t, string(b), `gcloud compute instances create "$BUILDER"`)
 	for _, want := range []string{`--network="$NETWORK"`, `--subnet="$SUBNETWORK"`, "--no-address"} {
-		if !strings.Contains(script, want) {
-			t.Errorf("the builder VM's create does not name %s", want)
+		if !slices.Contains(strings.Fields(create), want) {
+			t.Errorf("the builder VM's create does not name %s: %s", want, create)
 		}
 	}
 	// And the two it names are the module's own inputs, passed to the step.
@@ -1442,6 +1441,31 @@ func TestComputePreloadBuildsOnTheNATsNetwork(t *testing.T) {
 			t.Errorf("the preload build's environment does not pass %s to the script", want)
 		}
 	}
+}
+
+// shellCommand is the shell command in script that starts with start: its
+// line and every continuation line after it, comments excluded.
+func shellCommand(t *testing.T, script, start string) string {
+	t.Helper()
+	var cmd []string
+	in := false
+	for _, line := range strings.Split(script, "\n") {
+		l := strings.TrimSpace(line)
+		if !in {
+			if !strings.HasPrefix(l, start) {
+				continue
+			}
+			in = true
+		}
+		cmd = append(cmd, strings.TrimSuffix(l, "\\"))
+		if !strings.HasSuffix(l, "\\") {
+			break
+		}
+	}
+	if !in {
+		t.Fatalf("the script no longer runs %s", start)
+	}
+	return strings.Join(cmd, " ")
 }
 
 // The built-in roles the design forbids are granted nowhere, and the one
@@ -2265,7 +2289,14 @@ case "$args" in
         *"--format="*) printf '%s\n' "$IMAGE_ROW";;
       esac
       exit 0;;
-  *"instances describe "*) exit 1;;
+  *"instances describe "*)
+      # A leftover builder VM from an interrupted build, when the test names
+      # one: its fugaro label is LEFTOVER_LABEL.
+      [ -n "$LEFTOVER" ] || exit 1
+      case "$args" in
+        *"--format="*) printf '%s\n' "$LEFTOVER_LABEL";;
+      esac
+      exit 0;;
   *"instances create "*) exit 0;;
   *"instances get-serial-port-output "*) printf '%s\n' "$MARKER"; exit 0;;
   *"instances stop "*) exit 0;;
@@ -2426,6 +2457,70 @@ func TestComputePreloadShellDecidesAndReplaces(t *testing.T) {
 		il := len(gcloudCalls(t, calls, "instances delete"))
 		if il == 0 {
 			t.Error("the rebuild left its builder VM behind")
+		}
+	})
+
+	t.Run("the builder VM is created with no external address", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":  preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST": "",
+			"MARKER":     "fugaro-preload-built",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v:\n%s", err, out)
+		}
+		created := gcloudCalls(t, calls, "instances create")
+		if len(created) != 1 {
+			t.Fatalf("the builder VM was created %d times, want 1:\n%s", len(created), strings.Join(calls, "\n"))
+		}
+		// The call gcloud received, not the script's text: the VM's egress is
+		// the module's NAT, and an external address would be a second path
+		// around it.
+		for _, want := range []string{"--no-address", "--network=projects/proj-1234/global/networks/default",
+			"--subnet=projects/proj-1234/regions/us-east5/subnetworks/default", "--labels=fugaro=managed"} {
+			if !slices.Contains(created[0], want) {
+				t.Errorf("the builder VM's create lacks %s: %s", want, strings.Join(created[0], " "))
+			}
+		}
+	})
+
+	t.Run("a leftover builder VM that is not ours is refused, not deleted", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":      preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":     "",
+			"MARKER":         "fugaro-preload-built",
+			"LEFTOVER":       "1",
+			"LEFTOVER_LABEL": "someone-else",
+		})
+		if err == nil {
+			t.Fatalf("preload.sh went on beside a VM of its builder's name that is not fugaro=managed:\n%s", out)
+		}
+		if !strings.Contains(out, "is not fugaro=managed; refusing to touch it") {
+			t.Errorf("the refusal was not reported:\n%s", out)
+		}
+		if d := gcloudCalls(t, calls, "instances delete"); len(d) != 0 {
+			t.Errorf("a VM that is not fugaro=managed was deleted:\n%s", strings.Join(calls, "\n"))
+		}
+		if c := gcloudCalls(t, calls, "instances create"); len(c) != 0 {
+			t.Errorf("a builder VM was created beside a foreign one:\n%s", strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a leftover builder VM of ours is deleted before the new one", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":      preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":     "",
+			"MARKER":         "fugaro-preload-built",
+			"LEFTOVER":       "1",
+			"LEFTOVER_LABEL": "managed",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v:\n%s", err, out)
+		}
+		del := slices.IndexFunc(calls, func(c string) bool { return strings.Contains(c, "compute instances delete") })
+		create := slices.IndexFunc(calls, func(c string) bool { return strings.Contains(c, "compute instances create") })
+		if del < 0 || create < 0 || del > create {
+			t.Errorf("the leftover builder was not deleted before the new one was created (delete %d, create %d):\n%s", del, create, strings.Join(calls, "\n"))
 		}
 	})
 

@@ -127,16 +127,21 @@ variable "operators" {
   description = "The installation's operators: the members who apply this root. They get actAs on the preload account and nothing else here — creating the rebuild's Scheduler job, whose OAuth token is minted from that account, needs it, and the same grant the installation module makes on its scheduler account."
   type        = set(string)
 
-  # The same shape the installation module validates its own operators against,
-  # because the list is the installation's and reaches here unchanged (init
-  # --provision-batch writes it from the spec). Each value becomes a
-  # project-level IAM member on the preload account (iam.tf's
-  # preload_operator), so a malformed one is not a no-op: without this it is
-  # accepted at plan time and fails at apply, as an API error naming the member
-  # rather than the variable.
+  # One principal with an address each: a user, a group or a service account,
+  # NEVER a domain: member, allUsers or allAuthenticatedUsers. Each value gets
+  # actAs on the preload account (iam.tf's preload_operator), and the preload
+  # account can act as every run account and create instances, so an operator
+  # can run code as a run account through one build and one VM. A domain:
+  # member would hand that to every account in the domain -- including ones
+  # created after this apply, with no membership list to review -- which is
+  # why this is narrower than the installation module's operators (whose
+  # grants are not this one) and refuses as the launchers' validation does.
+  # infra.ComputeVars refuses the same members before a plan, and the stage's
+  # grant rules (tf.Cover) refuse a domain: grant once more. A malformed value
+  # is refused here rather than accepted at plan time and rejected at apply.
   validation {
-    condition     = alltrue([for m in var.operators : can(regex("^(user|group|serviceAccount|domain):[^ ]+$", m))])
-    error_message = "operators must be IAM members: user:, group:, serviceAccount: or domain: followed by the address (the same shape the installation module takes)."
+    condition     = alltrue([for m in var.operators : can(regex("^(user|group|serviceAccount):[^@[:space:]]+@[^@[:space:]]+$", m))])
+    error_message = "operators must be single principals: user:<email>, group:<email> or serviceAccount:<email>. A domain: member (or allUsers, or allAuthenticatedUsers) would give actAs on the preload account -- which acts as every run-class account and creates instances -- to every account it covers."
   }
 }
 

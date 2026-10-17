@@ -582,6 +582,68 @@ run "a_malformed_operator_is_refused" {
   expect_failures = [var.operators]
 }
 
+# Every operator gets actAs on the preload account, and the preload account can
+# act as every run account and create instances: a domain: member would hand
+# that to every account in the domain, including ones created after this
+# apply, and allUsers / allAuthenticatedUsers to anyone at all. They are
+# refused as the launchers' are.
+run "a_domain_operator_is_refused" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    operators = ["domain:example.com"]
+  }
+
+  expect_failures = [var.operators]
+}
+
+run "an_all_users_operator_is_refused" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    operators = ["allUsers"]
+  }
+
+  expect_failures = [var.operators]
+}
+
+run "an_all_authenticated_users_operator_is_refused" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    operators = ["allAuthenticatedUsers"]
+  }
+
+  expect_failures = [var.operators]
+}
+
+# An operator may be a service account -- the installation's own operators
+# can be one, such as a CI identity that applies the roots -- since it is one
+# principal with an address, not a set nobody reviews.
+run "a_service_account_operator_is_accepted" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    operators = ["serviceAccount:ci@proj-1234.iam.gserviceaccount.com"]
+  }
+}
+
 # A group is people with a membership list someone manages, and it is what the
 # installation module already grants the runs bucket's objectUser to, so it is
 # accepted here: refusing it would make a supported installation's launchers
