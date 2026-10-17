@@ -38,6 +38,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { MAX_CLOCK_SKEW, MAX_TIMESTAMP } from '../lease/index.js';
 import { REFUSALS } from '../mailbox-schema/index.js';
 import {
   DEFAULT_FUTURE_TOLERANCE_MS,
@@ -45,7 +46,9 @@ import {
   DEFAULT_WINDOW_MS,
   EVENT,
   INPUT_REFUSALS,
+  KIND,
   MAX_FUTURE_TOLERANCE_MS,
+  MAX_PROMPT_TTL_MS,
   MAX_MAX_SEEN,
   MAX_WINDOW_MS,
   MIN_MAX_SEEN,
@@ -54,7 +57,9 @@ import {
   REFUSAL,
   STATE,
   STATUS,
+  TIME_MAX,
   TRANSITIONS,
+  defaultMaxPerSender,
   initialState,
   step,
 } from './index.js';
@@ -69,6 +74,9 @@ const NOW = 1_700_000_000_000;
 const WINDOW = 60_000;
 const TOLERANCE = 5_000;
 const MAX_SEEN = 4;
+// The prompt TTL (D118's mailbox TTL, owner ruling 2026-10-17): longer than
+// the command window, so a prompt can be accepted where a command is a replay.
+const PROMPT_TTL = 10 * WINDOW;
 
 /** The mailbox's options, as `initialState` takes them. */
 function options(overrides = {}) {
@@ -76,6 +84,10 @@ function options(overrides = {}) {
     now: NOW,
     windowMs: WINDOW,
     maxSeen: MAX_SEEN,
+    // The quota is lifted in the general tests (every sender may use the
+    // whole ledger) and exercised on its own, with its default, below.
+    maxPerSender: overrides.maxSeen ?? MAX_SEEN,
+    promptTtlMs: PROMPT_TTL,
     futureToleranceMs: TOLERANCE,
     ...overrides,
   };
@@ -170,11 +182,17 @@ test('initialState takes the documented defaults, and each is a bounded number',
   const state = newMailbox({
     windowMs: undefined,
     maxSeen: undefined,
+    maxPerSender: undefined,
     futureToleranceMs: undefined,
   });
 
   assert.equal(state.windowMs, DEFAULT_WINDOW_MS);
   assert.equal(state.maxSeen, DEFAULT_MAX_SEEN);
+  assert.equal(state.maxPerSender, DEFAULT_MAX_SEEN / 4);
+  assert.equal(state.maxPerSender, defaultMaxPerSender(DEFAULT_MAX_SEEN));
+  assert.equal(defaultMaxPerSender(1), 1, 'the quota is at least one');
+  assert.equal(defaultMaxPerSender(7), 1);
+  assert.equal(defaultMaxPerSender(8), 2);
   assert.equal(state.futureToleranceMs, DEFAULT_FUTURE_TOLERANCE_MS);
 
   // The defaults are inside the ranges the module refuses to leave.
@@ -184,10 +202,18 @@ test('initialState takes the documented defaults, and each is a bounded number',
 });
 
 test('initialState refuses a config that is not this module\'s config', () => {
+  const T = { promptTtlMs: PROMPT_TTL };
   const cases = [
     [null, REFUSAL.NOT_AN_OBJECT],
     [[], REFUSAL.NOT_AN_OBJECT],
     [{}, REFUSAL.MISSING_FIELD],
+    [{ now: NOW }, REFUSAL.MISSING_FIELD],
+    [{ now: TIME_MAX + 1, ...T }, REFUSAL.INVALID_NOW],
+    [{ now: NOW, promptTtlMs: MIN_WINDOW_MS - 1 }, REFUSAL.INVALID_PROMPT_TTL],
+    [{ now: NOW, promptTtlMs: MAX_PROMPT_TTL_MS + 1 }, REFUSAL.INVALID_PROMPT_TTL],
+    [{ now: NOW, promptTtlMs: -0 }, REFUSAL.INVALID_PROMPT_TTL],
+    [{ now: NOW, maxSeen: 4, maxPerSender: 0, ...T }, REFUSAL.INVALID_MAX_PER_SENDER],
+    [{ now: NOW, maxSeen: 4, maxPerSender: 5, ...T }, REFUSAL.INVALID_MAX_PER_SENDER],
     [{ now: 0 }, REFUSAL.INVALID_NOW],
     [{ now: -1 }, REFUSAL.INVALID_NOW],
     [{ now: 1.5 }, REFUSAL.INVALID_NOW],
@@ -199,9 +225,9 @@ test('initialState refuses a config that is not this module\'s config', () => {
     [{ now: NOW, windowMs: -0 }, REFUSAL.INVALID_WINDOW],
     [{ now: NOW, maxSeen: 0 }, REFUSAL.INVALID_MAX_SEEN],
     [{ now: NOW, maxSeen: MAX_MAX_SEEN + 1 }, REFUSAL.INVALID_MAX_SEEN],
-    [{ now: NOW, futureToleranceMs: -1 }, REFUSAL.INVALID_FUTURE_TOLERANCE],
-    [{ now: NOW, futureToleranceMs: -0 }, REFUSAL.INVALID_FUTURE_TOLERANCE],
-    [{ now: NOW, futureToleranceMs: MAX_FUTURE_TOLERANCE_MS + 1 }, REFUSAL.INVALID_FUTURE_TOLERANCE],
+    [{ now: NOW, futureToleranceMs: -1, ...T }, REFUSAL.INVALID_FUTURE_TOLERANCE],
+    [{ now: NOW, futureToleranceMs: -0, ...T }, REFUSAL.INVALID_FUTURE_TOLERANCE],
+    [{ now: NOW, futureToleranceMs: MAX_FUTURE_TOLERANCE_MS + 1, ...T }, REFUSAL.INVALID_FUTURE_TOLERANCE],
     [{ now: NOW, window: WINDOW }, REFUSAL.UNKNOWN_FIELD],
   ];
 
@@ -237,7 +263,9 @@ test("the schema's own codes are propagated, and name the message's field", () =
     [message({ at: 'yesterday' }), REFUSALS.WRONG_TYPE, 'message.at'],
     [message({ at: 1.5 }), REFUSALS.BAD_TIMESTAMP, 'message.at'],
     [message({ acked: 'yes' }), REFUSALS.WRONG_TYPE, 'message.acked'],
-    [message({ extra: 1 }), REFUSALS.UNKNOWN_FIELD, 'message.extra'],
+    // An unknown key is reported as the message, never by the key's own name:
+    // the key is the writer's choice, and a refusal is logged.
+    [message({ extra: 1 }), REFUSALS.UNKNOWN_FIELD, 'message'],
     [null, REFUSALS.NOT_AN_OBJECT, 'message'],
   ];
 
@@ -324,20 +352,6 @@ test('a reused id carrying a different at is a conflict, not a duplicate', () =>
   // second message under it is an ambiguity -- refused, never merged.
   const conflict = refused(delivered.state, deliver(message({ at: NOW - 500 })), REFUSAL.ID_CONFLICT);
   assert.equal(conflict.field, 'message.at');
-});
-
-test('an id reused after the window is a new message, and the ledger keeps one record', () => {
-  // The ledger forgets by the window, deliberately: it is the same bound the
-  // replay rule uses, so the entry and the message can never disagree about
-  // whether a delivery is inside it.
-  const delivered = stepped(newMailbox(), deliver(message()));
-  const later = NOW + WINDOW + 1;
-
-  const reused = stepped(delivered.state, deliver(message({ at: later - 1_000 }), { now: later }));
-
-  assert.equal(reused.outcome, OUTCOME.ACCEPTED);
-  assert.equal(reused.state.seen.length, 1, 'one record per (sender, id)');
-  assert.equal(reused.state.seen[0].at, later - 1_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -515,43 +529,235 @@ test('the transition table is total: every state x every event has a defined out
   assert.deepEqual([...outcomes].sort(), Object.values(OUTCOME).sort());
 });
 
-test('every state x every event cell agrees with the code', () => {
-  for (const phase of Object.values(STATE)) {
-    const state = mailboxIn(phase);
-    const probes = {
-      [EVENT.DELIVER]: [
-        deliver(message({ id: `m-${phase}-fresh` })),
-        deliver(message({ id: `m-${phase}-stale`, at: NOW - WINDOW - 1 })),
-      ],
-      [EVENT.ACT]: [act()],
-      [EVENT.ACK]: [ack()],
-      [EVENT.CLOSE]: [close()],
-    };
+// The EXPECTED table, written here by hand and NOT imported from the module:
+// a test that read the module's own TRANSITIONS could only ever agree with it.
+// Each cell names the outcomes it may answer with, the phases it may leave the
+// mailbox in, and whether it refuses with the delivery refusals.
+const DELIVERY_CODES = Object.freeze([
+  'not-an-object',
+  'unknown-field',
+  'missing-field',
+  'negative-zero',
+  'zero-timestamp',
+  'replay',
+  'expired',
+  'future-timestamp',
+  'id-conflict',
+  'dedupe-full',
+  'sender-full',
+  ...Object.values(REFUSALS),
+]);
+// The delivery refusals that are this module's own decision (not the schema's
+// and not an input refusal): each must actually be produced by the
+// enumeration below, so the table cannot list a code nothing raises.
+const MODULE_DELIVERY_CODES = Object.freeze([
+  'negative-zero',
+  'zero-timestamp',
+  'replay',
+  'expired',
+  'future-timestamp',
+  'id-conflict',
+  'dedupe-full',
+  'sender-full',
+]);
+const CLOSED_CELL = { ok: [], next: ['closed'], no: ['mailbox-closed'] };
+const EXPECTED = {
+  idle: {
+    deliver: { ok: ['accepted', 'duplicate'], next: ['pending', 'idle'], no: DELIVERY_CODES },
+    act: { ok: ['nothing-to-act'], next: ['idle'], no: [] },
+    ack: { ok: ['nothing-to-ack'], next: ['idle'], no: [] },
+    close: { ok: ['closed'], next: ['closed'], no: [] },
+  },
+  pending: {
+    deliver: { ok: ['accepted', 'duplicate'], next: ['pending'], no: DELIVERY_CODES },
+    act: { ok: ['acted', 'stale-pending'], next: ['acted', 'pending'], no: [] },
+    // deliver a, act, deliver b: the mailbox is pending AND holds an acted
+    // record, so an ack there acks it (the cell the first table got wrong).
+    ack: { ok: ['acked', 'nothing-to-ack'], next: ['pending'], no: [] },
+    close: { ok: ['closed'], next: ['closed'], no: [] },
+  },
+  acted: {
+    deliver: { ok: ['accepted', 'duplicate'], next: ['pending', 'acted'], no: DELIVERY_CODES },
+    act: { ok: ['nothing-to-act'], next: ['acted'], no: [] },
+    ack: { ok: ['acked'], next: ['idle', 'acted'], no: [] },
+    close: { ok: ['closed'], next: ['closed'], no: [] },
+  },
+  closed: { deliver: CLOSED_CELL, act: CLOSED_CELL, ack: CLOSED_CELL, close: CLOSED_CELL },
+};
 
-    for (const event of Object.values(EVENT)) {
-      const cell = TRANSITIONS[phase][event];
-      const results = probes[event].map((probe) => step(state, probe));
-      assert.equal(results.length > 0, true);
+const sorted = (values) => [...new Set(values)].sort();
 
-      for (const result of results) {
+/** A ledger record, as a literal. */
+function record(sender, id, at, status, kind = KIND.COMMAND) {
+  return { sender, id, at, kind, status };
+}
+
+/** The canonical order, restated here rather than trusted from the module. */
+function canonical(entries) {
+  const key = (entry) => [entry.at, entry.sender, entry.id];
+  return [...entries].sort((left, right) => {
+    const [a, b] = [key(left), key(right)];
+    for (let i = 0; i < 3; i++) {
+      if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    }
+    return 0;
+  });
+}
+
+/** The phase a ledger implies, restated independently of the module. */
+function phaseOf(entries) {
+  if (entries.some((entry) => entry.status === STATUS.ACCEPTED)) return 'pending';
+  if (entries.some((entry) => entry.status === STATUS.ACTED)) return 'acted';
+  return 'idle';
+}
+
+/** A literal state: built by hand, so every composition is reachable. */
+function stateWith(entries, overrides = {}) {
+  const seen = canonical(entries);
+  return {
+    phase: phaseOf(seen),
+    now: NOW,
+    windowMs: WINDOW,
+    maxSeen: MAX_SEEN,
+    maxPerSender: 2,
+    promptTtlMs: PROMPT_TTL,
+    futureToleranceMs: TOLERANCE,
+    seen,
+    ...overrides,
+  };
+}
+
+const OLD = NOW - WINDOW - 10; // a command's window has passed it
+const DEAD = NOW - PROMPT_TTL - 10; // a prompt's TTL has passed it too
+const { ACCEPTED: P, ACTED: A, ACKED: K } = STATUS;
+
+/** Every ledger composition a phase can have, as the review listed them. */
+const COMPOSITIONS = {
+  'empty': [],
+  'pending-only': [record('a', 'p1', NOW - 1_000, P)],
+  'acted-only': [record('a', 't1', NOW - 1_000, A)],
+  'two pending': [record('a', 'p1', NOW - 2_000, P), record('b', 'p2', NOW - 1_000, P)],
+  'two acted': [record('a', 't1', NOW - 2_000, A), record('b', 't2', NOW - 1_000, A)],
+  'acked-only': [record('a', 'k1', NOW - 1_000, K)],
+  'mixed': [record('a', 'k1', NOW - 3_000, K), record('b', 't1', NOW - 2_000, A), record('a', 'p1', NOW - 1_000, P)],
+  'acted-and-pending': [record('a', 't1', NOW - 2_000, A), record('b', 'p1', NOW - 1_000, P)],
+  'at-cap pending': [record('a', 'c1', NOW - 4_000, K), record('a', 'c2', NOW - 3_000, P), record('b', 'c3', NOW - 2_000, K), record('b', 'c4', NOW - 1_000, A)],
+  'at-cap acted': [record('a', 'c1', NOW - 4_000, K), record('a', 'c2', NOW - 3_000, A), record('b', 'c3', NOW - 2_000, K), record('b', 'c4', NOW - 1_000, A)],
+  'at-cap acked': [record('a', 'c1', NOW - 4_000, K), record('a', 'c2', NOW - 3_000, K), record('b', 'c3', NOW - 2_000, K), record('b', 'c4', NOW - 1_000, K)],
+  'at-cap acked, all stale': [record('a', 'c1', OLD - 3, K), record('a', 'c2', OLD - 2, K), record('b', 'c3', OLD - 1, K), record('b', 'c4', OLD, K)],
+  'sender at quota, idle': [record('a', 'q1', NOW - 2_000, K), record('a', 'q2', NOW - 1_000, K)],
+  'sender at quota, pending': [record('a', 'q1', NOW - 2_000, P), record('a', 'q2', NOW - 1_000, K)],
+  'sender at quota, acted': [record('a', 'q1', NOW - 2_000, A), record('a', 'q2', NOW - 1_000, K)],
+  'stale accepted': [record('a', 's1', OLD, P)],
+  'stale acted': [record('a', 's1', OLD, A)],
+  'stale acked': [record('a', 's1', OLD, K)],
+  'stale mixed': [record('a', 's1', OLD - 2, K), record('b', 's2', OLD - 1, A), record('c', 's3', OLD, P)],
+  'prompt past the command window, inside its TTL': [record('a', 'pr', OLD, P, KIND.PROMPT)],
+  'prompt past its TTL': [record('a', 'pr', DEAD, P, KIND.PROMPT)],
+  'acked prompt inside its TTL': [record('a', 'pr', OLD, K, KIND.PROMPT)],
+};
+
+/** Every event worth sending to a composition. */
+function probesFor(entries) {
+  const events = [
+    ['deliver', deliver(message({ sender: 'c', id: 'fresh' }))],
+    ['deliver', deliver(message({ sender: 'a', id: 'fresh-a' }))],
+    ['deliver', deliver(message({ sender: 'c', id: 'fresh-p', at: NOW - WINDOW - 5 }), { kind: KIND.PROMPT })],
+    ['deliver', deliver(message({ id: 'old', at: NOW - WINDOW - 1 }))],
+    ['deliver', deliver(message({ id: 'dead', at: NOW - PROMPT_TTL - 1 }), { kind: KIND.PROMPT })],
+    ['deliver', deliver(message({ id: 'ahead', at: NOW + TOLERANCE + 1 }))],
+    ['deliver', deliver(message({ id: 'zero', at: 0 }))],
+    ['deliver', deliver(message({ id: 'negzero', at: -0 }))],
+    ['deliver', deliver(message({ id: 'empty', text: '' }))],
+    ['deliver', deliver(null)],
+    ['act', act()],
+    ['ack', ack()],
+    ['close', close()],
+  ];
+  for (const entry of entries) {
+    const other = entry.kind === KIND.PROMPT ? KIND.COMMAND : KIND.PROMPT;
+    const same = message({ sender: entry.sender, id: entry.id, at: entry.at });
+    events.push(['deliver', deliver(same, { kind: entry.kind })]);
+    events.push(['deliver', deliver(same, { kind: other })]);
+    events.push(['deliver', deliver(message({ sender: entry.sender, id: entry.id, at: NOW - 1 }), { kind: entry.kind })]);
+  }
+  return events;
+}
+
+test('the declared table is the expected one, written independently of the module', () => {
+  assert.deepEqual(sorted(Object.keys(TRANSITIONS)), sorted(Object.keys(EXPECTED)));
+  for (const [phase, row] of Object.entries(EXPECTED)) {
+    assert.deepEqual(sorted(Object.keys(TRANSITIONS[phase])), sorted(Object.keys(row)), `${phase}'s row`);
+    for (const [event, cell] of Object.entries(row)) {
+      const declared = TRANSITIONS[phase][event];
+      assert.deepEqual(sorted(declared.ok), sorted(cell.ok), `${phase} x ${event}: outcomes`);
+      assert.deepEqual(sorted(declared.next), sorted(cell.next), `${phase} x ${event}: next phases`);
+      assert.deepEqual(sorted(declared.no), sorted(cell.no), `${phase} x ${event}: refusals`);
+    }
+  }
+});
+
+test('every ledger composition x every event agrees with the expected table, and every cell is reached', () => {
+  const observed = {};
+  for (const phase of Object.keys(EXPECTED)) {
+    observed[phase] = {};
+    for (const event of Object.keys(EXPECTED[phase])) observed[phase][event] = { ok: [], next: [], no: [] };
+  }
+
+  let probes = 0;
+  for (const [name, entries] of Object.entries(COMPOSITIONS)) {
+    const open = stateWith(entries);
+    // The composition must be a state the module reads, or this test proves
+    // nothing about it.
+    assert.equal(step(open, close()).ok, true, `${name} is not a readable state`);
+
+    for (const state of [open, { ...open, phase: 'closed' }]) {
+      for (const [event, probe] of probesFor(entries)) {
+        probes++;
+        const cell = EXPECTED[state.phase][event];
+        const seen = observed[state.phase][event];
+        const result = step(state, probe);
+        const where = `${name} (${state.phase}) x ${event} ${JSON.stringify(probe.message ?? null)}`;
         if (result.ok) {
-          assert.ok(
-            cell.ok.includes(result.outcome),
-            `${phase} x ${event} answered ${result.outcome}, which the table does not declare`,
-          );
-          assert.ok(
-            cell.next.includes(result.phase),
-            `${phase} x ${event} left the mailbox in ${result.phase}, which the table does not declare`,
-          );
+          assert.ok(cell.ok.includes(result.outcome), `${where} answered ${result.outcome}`);
+          assert.ok(cell.next.includes(result.phase), `${where} left the mailbox ${result.phase}`);
+          assert.equal(result.state.phase, result.phase, `${where}: the answer and its state disagree`);
+          // And what it answers with is a state the module reads back.
+          const back = step(result.state, close());
+          assert.ok(back.ok || back.code === 'mailbox-closed', `${where} returned an unreadable state`);
+          seen.ok.push(result.outcome);
+          seen.next.push(result.phase);
         } else {
-          assert.ok(
-            cell.no.includes(result.code),
-            `${phase} x ${event} refused with ${result.code}, which the table does not declare`,
-          );
+          assert.ok(cell.no.includes(result.code), `${where} refused ${result.code}`);
+          // A refusal has no state: the mailbox stays in the phase it was in,
+          // which the cell must therefore declare as a next phase.
+          assert.ok(cell.next.includes(state.phase), `${where}: a refusal must leave ${state.phase}`);
+          seen.no.push(result.code);
+          seen.next.push(state.phase);
         }
       }
     }
   }
+  assert.ok(probes > 500, `only ${probes} probes ran`);
+
+  // The other direction: every outcome and next phase the table declares is
+  // actually produced, so the table cannot over-declare a cell either.
+  const raised = new Set();
+  for (const [phase, row] of Object.entries(EXPECTED)) {
+    for (const [event, cell] of Object.entries(row)) {
+      const seen = observed[phase][event];
+      assert.deepEqual(sorted(seen.ok), sorted(cell.ok), `${phase} x ${event}: outcomes reached`);
+      assert.deepEqual(sorted(seen.next), sorted(cell.next), `${phase} x ${event}: phases reached`);
+      if (cell === CLOSED_CELL) assert.deepEqual(sorted(seen.no), ['mailbox-closed']);
+      if (event === 'deliver' && phase !== 'closed') {
+        for (const code of seen.no) raised.add(code);
+        for (const code of MODULE_DELIVERY_CODES) {
+          assert.ok(seen.no.includes(code), `${phase} x deliver never refused with ${code}`);
+        }
+      }
+    }
+  }
+  assert.ok(raised.size >= MODULE_DELIVERY_CODES.length);
 });
 
 test('every refusal the module can answer with is an input refusal or a declared cell', () => {
@@ -602,8 +808,8 @@ test('a phase that disagrees with the ledger is refused rather than trusted', ()
 
 test('a ledger that is not a ledger is refused, each way with its own code', () => {
   const state = newMailbox();
-  const entry = { sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, status: STATUS.ACCEPTED };
-  const other = { sender: 'phone-b', id: 'm-0002', at: NOW - 900, status: STATUS.ACTED };
+  const entry = { sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, kind: KIND.COMMAND, status: STATUS.ACCEPTED };
+  const other = { sender: 'phone-b', id: 'm-0002', at: NOW - 900, kind: KIND.PROMPT, status: STATUS.ACTED };
 
   refused({ ...state, seen: 'none' }, act(), REFUSAL.INVALID_SEEN);
   refused({ ...state, seen: [entry, other, entry, other, entry] }, act(), REFUSAL.INVALID_SEEN);
@@ -617,10 +823,17 @@ test('a ledger that is not a ledger is refused, each way with its own code', () 
   refused({ ...state, seen: [{ ...entry, sender: 's'.repeat(201) }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, id: 'i'.repeat(101) }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, at: -0 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  refused({ ...state, seen: [{ ...entry, at: TIME_MAX + 1 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  refused({ ...state, seen: [{ ...entry, kind: 'reply' }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  const kindless = { ...entry };
+  delete kindless.kind;
+  // A record without a kind is refused rather than read as a command: which
+  // window it is judged by is not a guess.
+  refused({ ...state, seen: [kindless] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [entry, { ...entry }] }, act(), REFUSAL.DUPLICATE_SEEN_ENTRY);
   refused({ ...state, seen: [other, entry] }, act(), REFUSAL.UNSORTED_SEEN);
   // A ledger longer than the state's own cap is not a state either.
-  refused({ ...state, maxSeen: 1, seen: [entry, other] }, act(), REFUSAL.INVALID_SEEN);
+  refused({ ...state, maxSeen: 1, maxPerSender: 1, seen: [entry, other] }, act(), REFUSAL.INVALID_SEEN);
 });
 
 // ---------------------------------------------------------------------------
@@ -646,8 +859,8 @@ test('an accessor property is refused: a getter can answer differently each read
   refused(stateWithGetter, close(), REFUSAL.ACCESSOR_PROPERTY);
   assert.equal(reads, 0, 'the getter must never be called');
 
-  const ledgerWithGetter = [{ sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, status: STATUS.ACKED }];
-  const entryWithGetter = { sender: 'phone-a', id: 'm-0001', status: STATUS.ACKED };
+  const ledgerWithGetter = [{ sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, kind: KIND.COMMAND, status: STATUS.ACKED }];
+  const entryWithGetter = { sender: 'phone-a', id: 'm-0001', kind: KIND.COMMAND, status: STATUS.ACKED };
   Object.defineProperty(entryWithGetter, 'at', { get: getter, enumerable: true, configurable: true });
   refused({ ...state, seen: ledgerWithGetter.concat([entryWithGetter]).slice(1) }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   assert.equal(reads, 0, 'the getter must never be called');
@@ -693,6 +906,10 @@ test('every number this module reads is a finite integer in its documented range
   refused({ ...state, futureToleranceMs: -0 }, act(), REFUSAL.INVALID_FUTURE_TOLERANCE);
   refused(state, { type: EVENT.CLOSE, now: -0 }, REFUSAL.INVALID_NOW);
   refused(state, { type: EVENT.CLOSE, now: 2 ** 53 }, REFUSAL.INVALID_NOW);
+  refused({ ...state, maxPerSender: 0 }, act(), REFUSAL.INVALID_MAX_PER_SENDER);
+  refused({ ...state, maxPerSender: MAX_SEEN + 1 }, act(), REFUSAL.INVALID_MAX_PER_SENDER);
+  refused({ ...state, promptTtlMs: MIN_WINDOW_MS - 1 }, act(), REFUSAL.INVALID_PROMPT_TTL);
+  refused({ ...state, promptTtlMs: MAX_PROMPT_TTL_MS + 1 }, act(), REFUSAL.INVALID_PROMPT_TTL);
 });
 
 test('a step mutates nothing it was handed, and everything it answers with is frozen', () => {
@@ -716,13 +933,13 @@ test('the state a step returns shares no structure with what the caller handed i
   // A state is a value, not a view: a caller that keeps hold of the ledger it
   // built and writes to it later must not be able to change an answer the
   // machine has already given.
-  const ledger = [{ sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, status: STATUS.ACKED }];
+  const ledger = [{ sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, kind: KIND.COMMAND, status: STATUS.ACKED }];
   const state = { ...newMailbox(), seen: ledger };
 
   const closed = stepped(state, close());
   assert.deepEqual(ids(closed.state), ['m-0001']);
 
-  ledger.push({ sender: 'phone-b', id: 'm-0002', at: NOW - 900, status: STATUS.ACCEPTED });
+  ledger.push({ sender: 'phone-b', id: 'm-0002', at: NOW - 900, kind: KIND.COMMAND, status: STATUS.ACCEPTED });
   assert.deepEqual(ids(closed.state), ['m-0001'], 'the returned state followed the caller\'s array');
 });
 
@@ -909,7 +1126,12 @@ test('the module README documents every code, state, event and outcome', () => {
     .filter((line) => line.startsWith('|'))
     .flatMap((line) => line.split('|').map((cell) => cell.trim()));
 
-  for (const value of [...Object.values(STATE), ...Object.values(EVENT), ...Object.values(OUTCOME)]) {
+  for (const value of [
+    ...Object.values(STATE),
+    ...Object.values(EVENT),
+    ...Object.values(OUTCOME),
+    ...Object.values(KIND),
+  ]) {
     assert.ok(cells.includes(`\`${value}\``), `${value} is not listed as a table cell in shared/mailbox/README.md`);
   }
 });
@@ -919,9 +1141,335 @@ test('the module is pure logic: one import, no clock, no randomness, no runtime'
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
   const specifiers = [...code.matchAll(/\bfrom\s+'([^']+)'/g)].map((match) => match[1]);
-  assert.deepEqual(specifiers, ['../mailbox-schema/index.js'], 'the module imports more than the schema');
+  // The schema it speaks, and the lease's two time constants (its timestamp
+  // ceiling and its clock skew), imported so the two modules cannot drift.
+  assert.deepEqual(
+    specifiers,
+    ['../lease/index.js', '../mailbox-schema/index.js'],
+    'the module imports more than the schema and the lease',
+  );
 
   for (const forbidden of ['Date', 'Math.random', 'node:', 'require(', 'process.', 'fetch(']) {
     assert.ok(!code.includes(forbidden), `the module's code mentions ${forbidden}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Round 2 (independent review of 2026-10-17): the same id acted on once, at
+// every age; the window's edges; the per-sender quota; the ledger's reader
+// ---------------------------------------------------------------------------
+
+test('a stale record that was acted on is never re-admitted under its id', () => {
+  // The review's probe: deliver x at T0, act, deliver x again a window later
+  // carrying a fresh `at`. The first round dropped the stale un-acked record
+  // and accepted x, and the next act acted on x a second time.
+  let state = stepped(newMailbox(), deliver(message({ at: NOW }))).state;
+  state = stepped(state, act()).state;
+  const later = NOW + WINDOW + 1;
+
+  const again = refused(state, deliver(message({ at: later }), { now: later }), REFUSAL.ID_CONFLICT);
+  assert.equal(again.field, 'message.at');
+  assert.deepEqual(state.seen.map((entry) => entry.status), [STATUS.ACTED], 'the record is kept as it was');
+  assert.equal(stepped(state, act(later)).outcome, OUTCOME.NOTHING_TO_ACT, 'x was acted on twice');
+});
+
+test('an acked record outside the window, not yet evicted, is a conflict and not a new message', () => {
+  let state = mailboxIn(STATE.IDLE); // m-0001, acked
+  const later = NOW + WINDOW + 1;
+  refused(state, deliver(message({ at: later }), { now: later }), REFUSAL.ID_CONFLICT);
+  // And the original redelivery is a replay, by the window, before the ledger.
+  refused(state, deliver(message(), { now: later }), REFUSAL.REPLAY);
+});
+
+test('an accepted record the window has passed is kept, and surfaces as stale-pending', () => {
+  let state = stepped(newMailbox(), deliver(message({ id: 'm-late', at: NOW }))).state;
+  const later = NOW + WINDOW + 1;
+
+  // Another delivery after the window: the un-acted record is not evicted.
+  state = stepped(state, deliver(message({ id: 'm-next', at: later }), { now: later })).state;
+  assert.deepEqual(ids(state), ['m-late', 'm-next']);
+
+  const late = stepped(state, act(later));
+  assert.equal(late.outcome, OUTCOME.STALE_PENDING, 'late work must be surfaced as late');
+  assert.equal(late.id, 'm-late');
+  assert.equal(late.phase, STATE.PENDING);
+  // It is acted on once, like any other: it is not offered again.
+  const next = stepped(late.state, act(later));
+  assert.equal(next.outcome, OUTCOME.ACTED);
+  assert.equal(next.id, 'm-next');
+  assert.equal(stepped(next.state, act(later)).outcome, OUTCOME.NOTHING_TO_ACT);
+
+  // At exactly the window's age it is not stale yet.
+  const edge = stepped(stepped(newMailbox(), deliver(message({ at: NOW }))).state, act(NOW + WINDOW));
+  assert.equal(edge.outcome, OUTCOME.ACTED);
+});
+
+test('a full ledger never drops an accepted record, at any age', () => {
+  let state = stepped(newMailbox({ maxSeen: 1 }), deliver(message({ at: NOW }))).state;
+  const muchLater = NOW + 100 * WINDOW;
+  refused(state, deliver(message({ id: 'm-0002', at: muchLater }), { now: muchLater }), REFUSAL.DEDUPE_FULL);
+  assert.equal(stepped(state, act(muchLater)).outcome, OUTCOME.STALE_PENDING);
+});
+
+test('an acked record at exactly the window\'s age is kept, and its redelivery is a duplicate', () => {
+  let state = stepped(newMailbox({ maxSeen: 3 }), deliver(message({ at: NOW }))).state;
+  state = stepped(state, act()).state;
+  state = stepped(state, ack()).state;
+
+  // Age exactly WINDOW: the message is still deliverable (the replay rule is
+  // inclusive), so its record must still be there to call it a duplicate.
+  const edge = NOW + WINDOW;
+  state = stepped(state, deliver(message({ id: 'm-0002', at: edge }), { now: edge })).state;
+  assert.deepEqual(ids(state), ['m-0001', 'm-0002'], 'an acked record was evicted at age == window');
+  assert.equal(stepped(state, deliver(message({ at: NOW }), { now: edge })).outcome, OUTCOME.DUPLICATE);
+
+  // One millisecond later it is evictable, and the redelivery is a replay.
+  const past = edge + 1;
+  state = stepped(state, deliver(message({ id: 'm-0003', at: past }), { now: past })).state;
+  assert.deepEqual(ids(state), ['m-0002', 'm-0003']);
+  refused(state, deliver(message({ at: NOW }), { now: past }), REFUSAL.REPLAY);
+});
+
+test('an acked record at exactly the window\'s age does not make room in a full ledger', () => {
+  let state = stepped(newMailbox({ maxSeen: 1 }), deliver(message({ at: NOW }))).state;
+  state = stepped(state, act()).state;
+  state = stepped(state, ack()).state;
+  const edge = NOW + WINDOW;
+  refused(state, deliver(message({ id: 'm-0002', at: edge }), { now: edge }), REFUSAL.DEDUPE_FULL);
+  assert.equal(
+    stepped(state, deliver(message({ id: 'm-0002', at: edge + 1 }), { now: edge + 1 })).outcome,
+    OUTCOME.ACCEPTED,
+  );
+});
+
+test('one sender cannot starve another: the per-sender quota', () => {
+  // The default quota: a quarter of the cap. 8 records, 2 per sender.
+  let state = newMailbox({ maxSeen: 8, maxPerSender: undefined });
+  assert.equal(state.maxPerSender, 2);
+
+  for (const id of ['a-1', 'a-2']) {
+    state = stepped(state, deliver(message({ sender: 'phone-a', id }))).state;
+  }
+  const full = refused(state, deliver(message({ sender: 'phone-a', id: 'a-3' })), REFUSAL.SENDER_FULL);
+  assert.equal(full.field, 'message.sender');
+
+  // Another sender still has its own room.
+  assert.equal(stepped(state, deliver(message({ sender: 'phone-b', id: 'b-1' }))).outcome, OUTCOME.ACCEPTED);
+
+  // A consumer that stops acking does not change that: a window later A's
+  // records are still un-acked (so never evicted) and A is still at its quota,
+  // and B is still admitted.
+  const later = NOW + WINDOW + 1;
+  refused(state, deliver(message({ sender: 'phone-a', id: 'a-3', at: later }), { now: later }), REFUSAL.SENDER_FULL);
+  assert.equal(
+    stepped(state, deliver(message({ sender: 'phone-b', id: 'b-1', at: later }), { now: later })).outcome,
+    OUTCOME.ACCEPTED,
+  );
+});
+
+test('a sender at its quota, or a full ledger, never re-admits a replay and never evicts', () => {
+  let state = newMailbox({ maxSeen: 8, maxPerSender: 2 });
+  for (const id of ['a-1', 'a-2']) {
+    state = stepped(state, deliver(message({ sender: 'phone-a', id }))).state;
+  }
+  const before = JSON.stringify(state.seen);
+  // The redelivery of a held message is a duplicate, never a refusal that
+  // would make the sender re-send, and never a second acceptance.
+  assert.equal(stepped(state, deliver(message({ sender: 'phone-a', id: 'a-1' }))).outcome, OUTCOME.DUPLICATE);
+  refused(state, deliver(message({ sender: 'phone-a', id: 'a-0', at: NOW - WINDOW - 1 })), REFUSAL.REPLAY);
+  assert.equal(JSON.stringify(state.seen), before);
+
+  let capped = newMailbox({ maxSeen: 2 });
+  for (const id of ['m-0001', 'm-0002']) capped = stepped(capped, deliver(message({ id }))).state;
+  assert.equal(stepped(capped, deliver(message({ id: 'm-0001' }))).outcome, OUTCOME.DUPLICATE);
+  refused(capped, deliver(message({ id: 'm-0000', at: NOW - WINDOW - 1 })), REFUSAL.REPLAY);
+  refused(capped, deliver(message({ id: 'm-0003' })), REFUSAL.DEDUPE_FULL);
+  const muchLater = NOW + 100 * WINDOW;
+  refused(capped, deliver(message({ id: 'm-0003', at: muchLater }), { now: muchLater }), REFUSAL.DEDUPE_FULL);
+});
+
+test('the ledger is read by index from a plain array, never iterated', () => {
+  const state = newMailbox();
+  const pending = { sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, kind: KIND.COMMAND, status: STATUS.ACCEPTED };
+
+  // An own iterator that yields nothing would hide a pending record: the
+  // first round read this ledger as empty and lost the work.
+  const iterating = [pending];
+  iterating[Symbol.iterator] = function* () {};
+  refused({ ...state, phase: STATE.PENDING, seen: iterating }, act(), REFUSAL.INVALID_SEEN);
+
+  // An index accessor is refused, and never called.
+  let reads = 0;
+  const accessor = [];
+  Object.defineProperty(accessor, '0', {
+    get: () => {
+      reads++;
+      return pending;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  refused({ ...state, phase: STATE.PENDING, seen: accessor }, act(), REFUSAL.INVALID_SEEN);
+  assert.equal(reads, 0, 'the getter must never be called');
+
+  const extra = [pending];
+  extra.note = 'x';
+  refused({ ...state, phase: STATE.PENDING, seen: extra }, act(), REFUSAL.INVALID_SEEN);
+
+  const holey = [];
+  holey.length = 1;
+  refused({ ...state, seen: holey }, act(), REFUSAL.INVALID_SEEN);
+
+  class Ledger extends Array {}
+  refused({ ...state, phase: STATE.PENDING, seen: Ledger.from([pending]) }, act(), REFUSAL.INVALID_SEEN);
+
+  // (A realm whose built-ins are themselves tampered with -- a replaced
+  // Array.prototype[Symbol.iterator] -- is out of scope, as the README's
+  // honest limits say: this module trusts its own realm.)
+});
+
+test('a refusal never echoes a key name the input chose', () => {
+  // Built at run time, from harmless pieces.
+  const keys = [
+    ['message', '.SECRET=', 'tok123'].join(''),
+    ['sk', '-ant-', 'xyz'].join(''),
+  ];
+  const state = newMailbox();
+  for (const key of keys) {
+    const entry = { sender: 'phone-a', id: 'm-0001', at: NOW - 1_000, kind: KIND.COMMAND, status: STATUS.ACKED, [key]: 1 };
+    const results = [
+      refused(state, deliver({ ...message(), [key]: 1 }), REFUSALS.UNKNOWN_FIELD),
+      refused({ ...state, [key]: 1 }, act(), REFUSAL.UNKNOWN_FIELD),
+      refused(state, { ...act(), [key]: 1 }, REFUSAL.UNKNOWN_FIELD),
+      refused({ ...state, seen: [entry] }, act(), REFUSAL.INVALID_SEEN_ENTRY),
+      initialState({ ...options(), [key]: 1 }),
+    ];
+    for (const result of results) {
+      assert.equal(result.ok, false);
+      assert.ok(!JSON.stringify(result).includes(key), `a refusal echoed the key: ${JSON.stringify(result)}`);
+      assert.ok(!JSON.stringify(result).includes('SECRET') && !JSON.stringify(result).includes('ant'));
+    }
+  }
+  // The fixed paths it names instead.
+  assert.equal(refused(state, deliver({ ...message(), [keys[0]]: 1 })).field, 'message');
+  assert.equal(refused({ ...state, [keys[0]]: 1 }, act()).field, 'state');
+  assert.equal(refused(state, { ...act(), [keys[0]]: 1 }).field, 'event');
+  assert.equal(initialState({ ...options(), [keys[0]]: 1 }).field, 'options');
+
+  // A symbol key is a key like any other: refused, not skipped.
+  refused({ ...state, [Symbol('extra')]: 1 }, act(), REFUSAL.UNKNOWN_FIELD);
+  refused(state, { ...act(), [Symbol('extra')]: 1 }, REFUSAL.UNKNOWN_FIELD);
+});
+
+test('initialState answers with a frozen value, outside as well as in', () => {
+  const created = initialState(options());
+  assert.ok(Object.isFrozen(created), 'the outer { ok, state } must be frozen');
+  assert.ok(Object.isFrozen(created.state));
+  assert.ok(Object.isFrozen(initialState({})), 'a refusal is frozen too');
+});
+
+test('time is bounded by the lease\'s ceiling, and the skew is the lease\'s', () => {
+  assert.equal(TIME_MAX, MAX_TIMESTAMP, 'the ceiling is imported, not restated');
+  assert.equal(DEFAULT_FUTURE_TOLERANCE_MS, MAX_CLOCK_SKEW, 'the skew is imported, not restated');
+
+  const state = newMailbox();
+  refused(state, close(TIME_MAX + 1), REFUSAL.INVALID_NOW);
+  refused({ ...state, now: TIME_MAX + 1 }, act(), REFUSAL.INVALID_NOW);
+
+  // At the ceiling the mailbox still works, and an `at` past the ceiling is
+  // refused even where the tolerance alone would admit it -- otherwise it
+  // would be written into a ledger this module's own reader refuses.
+  const top = newMailbox({ now: TIME_MAX });
+  refused(top, deliver(message({ at: TIME_MAX + 1 }), { now: TIME_MAX }), REFUSAL.FUTURE_TIMESTAMP);
+  const delivered = stepped(top, deliver(message({ at: TIME_MAX }), { now: TIME_MAX }));
+  const acted = stepped(delivered.state, act(TIME_MAX));
+  assert.equal(stepped(acted.state, ack(TIME_MAX)).phase, STATE.IDLE);
+});
+
+test('a future tolerance of zero is a tolerance, read back like any other', () => {
+  const state = newMailbox({ futureToleranceMs: 0 });
+  assert.equal(state.futureToleranceMs, 0);
+  const now = stepped(state, deliver(message({ at: NOW })));
+  assert.equal(now.outcome, OUTCOME.ACCEPTED);
+  assert.equal(step(now.state, act()).ok, true, 'a state with tolerance 0 must be readable');
+  refused(state, deliver(message({ at: NOW + 1 })), REFUSAL.FUTURE_TIMESTAMP);
+});
+
+// ---------------------------------------------------------------------------
+// The per-kind window (owner ruling, 2026-10-17): commands keep the replay
+// window; a prompt is accepted for its TTL and is `expired` after it
+// ---------------------------------------------------------------------------
+
+const prompt = (value, overrides = {}) => deliver(value, { kind: KIND.PROMPT, ...overrides });
+
+test('a prompt older than the command window but inside its TTL is accepted; a command is a replay', () => {
+  const age = WINDOW + 1;
+  refused(newMailbox(), deliver(message({ at: NOW - age })), REFUSAL.REPLAY);
+  const accepted = stepped(newMailbox(), prompt(message({ at: NOW - age })));
+  assert.equal(accepted.outcome, OUTCOME.ACCEPTED);
+  assert.equal(accepted.state.seen[0].kind, KIND.PROMPT);
+  // And it is not stale when acted on: its window is its TTL.
+  assert.equal(stepped(accepted.state, act()).outcome, OUTCOME.ACTED);
+});
+
+test('a prompt older than its TTL is expired, not a replay; at the TTL it is accepted', () => {
+  const result = refused(newMailbox(), prompt(message({ at: NOW - PROMPT_TTL - 1 })), REFUSAL.EXPIRED);
+  assert.equal(result.field, 'message.at');
+  assert.equal(stepped(newMailbox(), prompt(message({ at: NOW - PROMPT_TTL }))).outcome, OUTCOME.ACCEPTED);
+});
+
+test('a delivery is a command unless it says otherwise, and the kind is a closed vocabulary', () => {
+  const plain = stepped(newMailbox(), deliver(message()));
+  assert.equal(plain.state.seen[0].kind, KIND.COMMAND);
+  assert.equal(stepped(newMailbox(), deliver(message(), { kind: KIND.COMMAND })).state.seen[0].kind, KIND.COMMAND);
+  for (const kind of ['reply', 'PROMPT', '', 1, null]) {
+    refused(newMailbox(), deliver(message(), { kind }), REFUSAL.UNKNOWN_KIND);
+  }
+  // Only a delivery carries a kind.
+  refused(newMailbox(), { ...act(), kind: KIND.PROMPT }, REFUSAL.UNKNOWN_FIELD);
+});
+
+test('the same pair and at under another kind is a conflict, not a duplicate', () => {
+  const delivered = stepped(newMailbox(), deliver(message()));
+  refused(delivered.state, prompt(message()), REFUSAL.ID_CONFLICT);
+  const asPrompt = stepped(newMailbox(), prompt(message()));
+  refused(asPrompt.state, deliver(message()), REFUSAL.ID_CONFLICT);
+});
+
+test('an acked prompt is never evicted before its TTL, and never re-admitted after', () => {
+  let state = stepped(newMailbox({ maxSeen: 3 }), prompt(message({ id: 'p-1', at: NOW }))).state;
+  state = stepped(state, act()).state;
+  state = stepped(state, ack()).state;
+
+  // Past the command window: a command record would go, the prompt's stays.
+  const later = NOW + WINDOW + 1;
+  state = stepped(state, deliver(message({ id: 'c-1', at: later }), { now: later })).state;
+  assert.deepEqual(ids(state), ['p-1', 'c-1'], 'an acked prompt was evicted inside its TTL');
+  assert.equal(stepped(state, prompt(message({ id: 'p-1', at: NOW }), { now: later })).outcome, OUTCOME.DUPLICATE);
+
+  // At exactly the TTL's age it is still kept.
+  const edge = NOW + PROMPT_TTL;
+  state = stepped(state, deliver(message({ id: 'c-2', at: edge }), { now: edge })).state;
+  assert.ok(ids(state).includes('p-1'), 'an acked prompt was evicted at age == TTL');
+
+  // Past it, it goes, and its redelivery has expired: never re-admitted.
+  const past = edge + 1;
+  state = stepped(state, deliver(message({ id: 'c-3', at: past }), { now: past })).state;
+  assert.ok(!ids(state).includes('p-1'));
+  refused(state, prompt(message({ id: 'p-1', at: NOW }), { now: past }), REFUSAL.EXPIRED);
+});
+
+test('an accepted prompt past its TTL is stale-pending; between the window and the TTL it is not', () => {
+  const state = stepped(newMailbox(), prompt(message({ at: NOW }))).state;
+  assert.equal(stepped(state, act(NOW + WINDOW + 1)).outcome, OUTCOME.ACTED);
+  assert.equal(stepped(state, act(NOW + PROMPT_TTL)).outcome, OUTCOME.ACTED);
+  assert.equal(stepped(state, act(NOW + PROMPT_TTL + 1)).outcome, OUTCOME.STALE_PENDING);
+});
+
+test('the per-sender quota counts prompts and commands together', () => {
+  let state = newMailbox({ maxSeen: 8, maxPerSender: 2 });
+  state = stepped(state, deliver(message({ id: 'c-1' }))).state;
+  state = stepped(state, prompt(message({ id: 'p-1' }))).state;
+  refused(state, prompt(message({ id: 'p-2' })), REFUSAL.SENDER_FULL);
+  refused(state, deliver(message({ id: 'c-2' })), REFUSAL.SENDER_FULL);
 });

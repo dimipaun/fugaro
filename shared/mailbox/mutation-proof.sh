@@ -176,7 +176,7 @@ killed=0
 
 # 3. Reading the inputs: the value itself, its fields, and their descriptors.
 run "not-an-object guard (null/array/primitive)" \
-  "  if (!isPlainObject(value)) return refuse(REFUSAL.NOT_AN_OBJECT, null);" ""
+  "  if (!isPlainObject(value)) return refuse(REFUSAL.NOT_AN_OBJECT, where);" ""
 run "plain-object guard: a prototype of its own" \
   "  return prototype === Object.prototype || prototype === null;" "  return true;"
 # There is deliberately no mutation for the `Array.isArray` clause of
@@ -190,47 +190,96 @@ run "plain-object guard: a prototype of its own" \
 run "plain-object guard: null is not an object" \
   "  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;" \
   "  if (typeof value !== 'object' || Array.isArray(value)) return false;"
-run "unknown-field guard" \
-  "    if (!names.includes(key)) return refuse(REFUSAL.UNKNOWN_FIELD, key);" ""
+run "unknown-field guard (symbols included)" \
+  "    if (!names.includes(key)) return refuse(REFUSAL.UNKNOWN_FIELD, where);" ""
+run "an unknown key is reported by its container, never by its name" \
+  "    if (!names.includes(key)) return refuse(REFUSAL.UNKNOWN_FIELD, where);" \
+  "    if (!names.includes(key)) return refuse(REFUSAL.UNKNOWN_FIELD, String(key));"
+run "every key is read, symbols included (not only string names)" \
+  "  for (const key of Reflect.ownKeys(value)) {" "  for (const key of Object.getOwnPropertyNames(value)) {"
 run "accessor-property guard (never called)" \
   "    if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) {" "    if (false) {"
 run "missing-field guard" \
   "    if (values[field] === undefined) return refuse(REFUSAL.MISSING_FIELD, field);" ""
+run "the schema's field is echoed only when the schema defines it" \
+  "      MESSAGE_FIELDS.includes(validated.field) ? \`message.\${validated.field}\` : 'message'," \
+  "      validated.field === null ? 'message' : \`message.\${validated.field}\`,"
 
-# 4. The state: its phase, the ledger's summary, and the four numbers.
+# 4. The state: its phase, the ledger's summary, and the six numbers.
 run "unknown-state guard" \
   "  if (!Object.values(STATE).includes(values.phase)) return refuse(REFUSAL.UNKNOWN_STATE, 'phase');" ""
 run "phase-vs-ledger guard (invalid-state)" \
   "  if (values.phase !== STATE.CLOSED && values.phase !== derivePhase(seen.entries)) {" "  if (false) {"
 run "state: now range" \
-  "  if (!isIntegerInRange(values.now, 1, AT_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');" ""
+  "  if (!isIntegerInRange(values.now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');" ""
+run "state: now ceiling is the lease's" \
+  "  if (!isIntegerInRange(values.now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');" \
+  "  if (!isIntegerInRange(values.now, 1, Number.MAX_SAFE_INTEGER)) return refuse(REFUSAL.INVALID_NOW, 'now');"
 run "state: window range" \
   "  if (!isIntegerInRange(values.windowMs, MIN_WINDOW_MS, MAX_WINDOW_MS)) {" "  if (false) {"
 run "state: cap range" \
   "  if (!isIntegerInRange(values.maxSeen, MIN_MAX_SEEN, MAX_MAX_SEEN)) {" "  if (false) {"
+run "state: per-sender quota range" \
+  "  if (!isIntegerInRange(values.maxPerSender, 1, values.maxSeen)) {" "  if (false) {"
+run "state: per-sender quota is at most the cap" \
+  "  if (!isIntegerInRange(values.maxPerSender, 1, values.maxSeen)) {" \
+  "  if (!isIntegerInRange(values.maxPerSender, 1, MAX_MAX_SEEN)) {"
+run "state: prompt TTL range" \
+  "  if (!isIntegerInRange(values.promptTtlMs, MIN_WINDOW_MS, MAX_PROMPT_TTL_MS)) {" "  if (false) {"
 run "state: future-tolerance range" \
   "  if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {" "  if (false) {"
+run "state: future-tolerance floor is 0, not 1" \
+  "  if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {" \
+  "  if (!isIntegerInRange(values.futureToleranceMs, 1, MAX_FUTURE_TOLERANCE_MS)) {"
 run "the number rule: negative zero" \
   "    !Object.is(value, -0) &&" ""
 run "the number rule: the safe-integer line" \
   "    Number.isSafeInteger(value) &&" ""
 
-# 5. initialState's own four, which are a second entry point to the same numbers.
+# 5. initialState's own, a second entry point to the same numbers.
 run "initialState: now range" \
-  "  if (!isIntegerInRange(now, 1, AT_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');" ""
+  "  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');" ""
 run "initialState: window range" \
   "  if (!isIntegerInRange(windowMs, MIN_WINDOW_MS, MAX_WINDOW_MS)) {" "  if (false) {"
 run "initialState: cap range" \
   "  if (!isIntegerInRange(maxSeen, MIN_MAX_SEEN, MAX_MAX_SEEN)) {" "  if (false) {"
+run "initialState: per-sender quota range" \
+  "  if (!isIntegerInRange(maxPerSender, 1, maxSeen)) {" "  if (false) {"
+run "initialState: the default quota is a quarter of the cap" \
+  "  return Math.max(1, Math.floor(maxSeen / SENDER_SHARE));" "  return maxSeen;"
+run "initialState: the default quota is at least one" \
+  "  return Math.max(1, Math.floor(maxSeen / SENDER_SHARE));" "  return Math.floor(maxSeen / SENDER_SHARE);"
+run "initialState: the prompt TTL is required" \
+  "  if (promptTtlMs === undefined) return refuse(REFUSAL.MISSING_FIELD, 'promptTtlMs');" ""
+run "initialState: prompt TTL range" \
+  "  if (!isIntegerInRange(promptTtlMs, MIN_WINDOW_MS, MAX_PROMPT_TTL_MS)) {" "  if (false) {"
 run "initialState: future-tolerance range" \
   "  if (!isIntegerInRange(futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {" "  if (false) {"
+run "initialState: future-tolerance floor is 0, not 1" \
+  "  if (!isIntegerInRange(futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {" \
+  "  if (!isIntegerInRange(futureToleranceMs, 1, MAX_FUTURE_TOLERANCE_MS)) {"
+run "initialState: the outer answer is frozen" \
+  "  return Object.freeze({
+    ok: true,
+    state: Object.freeze({
+      phase: STATE.IDLE," \
+  "  return ({
+    ok: true,
+    state: Object.freeze({
+      phase: STATE.IDLE,"
 
 # 6. The ledger's shape: the container, its cap, each record's fields, one
 #    record per pair, and the canonical order.
 run "ledger: the array guard" \
-  "  if (!Array.isArray(value) || value.length > maxSeen) {" "  if (value.length > maxSeen) {"
+  "  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;" \
+  "  if (!Array.isArray(value)) return null;"
 run "ledger: the cap" \
-  "  if (!Array.isArray(value) || value.length > maxSeen) {" "  if (!Array.isArray(value)) {"
+  "  if (length > max) return null;" ""
+run "ledger: own keys are exactly the indices and length" \
+  "  if (Reflect.ownKeys(value).length !== length + 1) return null;" ""
+run "ledger: an index is a data property, never a getter" \
+  "    if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) return null;" \
+  "    if (descriptor === undefined) return null;"
 run "ledger record: sender is a string" \
   "      typeof entry.sender !== 'string' ||" ""
 run "ledger record: sender is not empty" \
@@ -244,7 +293,11 @@ run "ledger record: id is not empty" \
 run "ledger record: id's bound" \
   "      entry.id.length > ID_MAX ||" ""
 run "ledger record: at is a time" \
-  "      !isIntegerInRange(entry.at, 1, AT_MAX) ||" ""
+  "      !isIntegerInRange(entry.at, 1, TIME_MAX) ||" ""
+run "ledger record: at's ceiling is the lease's" \
+  "      !isIntegerInRange(entry.at, 1, TIME_MAX) ||" "      !isIntegerInRange(entry.at, 1, Number.MAX_SAFE_INTEGER) ||"
+run "ledger record: the kind is a kind" \
+  "      !KIND_VALUES.includes(entry.kind) ||" ""
 run "ledger record: the status is a status" \
   "      !STATUS_VALUES.includes(entry.status)" "      false"
 run "ledger: one record per (sender, id)" \
@@ -261,53 +314,96 @@ run "the canonical order compares senders" \
 
 # 7. The event, and the one guard the dispatch table owns.
 run "event: the injected now is a time" \
-  "  if (!isIntegerInRange(values.now, 1, AT_MAX)) {" "  if (false) {"
+  "  if (!isIntegerInRange(values.now, 1, TIME_MAX)) {" "  if (false) {"
 run "event: a delivery carries a message" \
   "  if (values.type === EVENT.DELIVER && !hasMessage) {" "  if (false) {"
 run "event: only a delivery carries a message" \
   "  if (values.type !== EVENT.DELIVER && hasMessage && EVENT_VALUES.includes(values.type)) {" \
   "  if (false) {"
+run "event: only a delivery carries a kind" \
+  "    if (values.type !== EVENT.DELIVER && EVENT_VALUES.includes(values.type)) {" "    if (false) {"
+run "event: the kind is a closed vocabulary" \
+  "    if (!KIND_VALUES.includes(values.kind)) return refuse(REFUSAL.UNKNOWN_KIND, 'kind');" ""
 run "unknown-event guard (the dispatch table's one lookup)" \
   "  if (typeof type !== 'string' || !Object.hasOwn(row, type)) {" "  if (false) {"
 run "the monotonic now (now-went-backwards)" \
   "  if (now < current.state.now) {" "  if (false) {"
 
-# 8. The delivery itself: the message's time, the dedupe pair, the duplicate,
-#    the conflict, and the cap.
+# 8. The delivery itself: the message's time, the kind's window, the dedupe
+#    pair, the duplicate, the conflict, the cap and the sender's quota.
 run "delivery: negative zero in a message" \
   "  if (Object.is(at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'message.at');" ""
 run "delivery: a zero timestamp is not a time" \
   "  if (at < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, 'message.at');" ""
+run "delivery: the timestamp ceiling" \
+  "  if (at > TIME_MAX) return refuse(REFUSAL.FUTURE_TIMESTAMP, 'message.at');" ""
 run "delivery: the future bound" \
   "  if (at - values.now > state.futureToleranceMs) {" "  if (false) {"
-run "delivery: the replay window" \
-  "  if (values.now - at > state.windowMs) return refuse(REFUSAL.REPLAY, 'message.at');" ""
+run "delivery: the kind's window" \
+  "  if (values.now - at > windowFor(state, kind)) {" "  if (false) {"
+run "delivery: the window's edge is inclusive" \
+  "  if (values.now - at > windowFor(state, kind)) {" "  if (values.now - at >= windowFor(state, kind)) {"
+run "delivery: an expired prompt is not a replay" \
+  "    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'message.at');" \
+  "    return refuse(REFUSAL.REPLAY, 'message.at');"
+run "delivery: an absent kind is a command" \
+  "  const kind = values.kind === undefined ? KIND.COMMAND : values.kind;" \
+  "  const kind = values.kind === undefined ? KIND.PROMPT : values.kind;"
+run "the prompt window is the prompt TTL" \
+  "  return kind === KIND.PROMPT ? state.promptTtlMs : state.windowMs;" "  return state.windowMs;"
+run "the command window is not the prompt TTL" \
+  "  return kind === KIND.PROMPT ? state.promptTtlMs : state.windowMs;" "  return state.promptTtlMs;"
 run "dedupe: the pair is (sender, id), not the id alone" \
   "  const known = state.seen.find((entry) => entry.sender === sender && entry.id === id);" \
   "  const known = state.seen.find((entry) => entry.id === id);"
-run "dedupe: only inside the window is a record consulted" \
-  "  if (known !== undefined && values.now - known.at <= state.windowMs) {" "  if (known !== undefined) {"
+run "dedupe: a stale record is still consulted (never re-admitted)" \
+  "  if (known !== undefined) {" "  if (known !== undefined && values.now - known.at <= state.windowMs) {"
 run "the id-conflict guard" \
-  "    if (known.at !== at) return refuse(REFUSAL.ID_CONFLICT, 'message.at');" ""
+  "    if (known.at !== at || known.kind !== kind) return refuse(REFUSAL.ID_CONFLICT, 'message.at');" ""
+run "the id-conflict guard: the kind is part of the identity" \
+  "    if (known.at !== at || known.kind !== kind) return refuse(REFUSAL.ID_CONFLICT, 'message.at');" \
+  "    if (known.at !== at) return refuse(REFUSAL.ID_CONFLICT, 'message.at');"
 run "a duplicate does not re-arm the record" \
   "    return answered(OUTCOME.DUPLICATE, state.phase, state, values.now, state.seen, sender, id);" \
-  "    return answered(OUTCOME.DUPLICATE, state.phase, state, values.now, state.seen.map((entry) => Object.freeze({ sender: entry.sender, id: entry.id, at: entry.at, status: STATUS.ACCEPTED })), sender, id);"
+  "    return answered(OUTCOME.DUPLICATE, state.phase, state, values.now, state.seen.map((entry) => Object.freeze({ ...entry, status: STATUS.ACCEPTED })), sender, id);"
 run "the cap refuses rather than evicting a live record" \
   "  if (kept.length >= state.maxSeen) {" "  if (false) {"
+run "the per-sender quota refuses" \
+  "  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {" "  if (false) {"
+run "the per-sender quota counts only that sender" \
+  "  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {" \
+  "  if (kept.length >= state.maxPerSender) {"
 
-# 9. The eviction rule: both halves of the predicate, and the id being reused.
+# 9. The eviction rule, and the late work it must not lose.
+run "eviction: nothing un-acked is ever evicted" \
+  "    if (entry.status !== STATUS.ACKED) return true;" ""
 run "eviction: only outside the window is evictable" \
-  "    if (now - entry.at <= state.windowMs) return true;" "    if (false) return true;"
-run "eviction: only an acked record is evictable" \
-  "    if (entry.status === STATUS.ACKED) return false;" "    if (false) return false;"
-run "eviction: a reused id's old record goes" \
-  "    return !(entry.sender === sender && entry.id === id);" "    return true;"
+  "    return now - entry.at <= windowFor(state, entry.kind);" "    return false;"
+run "eviction: at exactly the window's age a record is kept" \
+  "    return now - entry.at <= windowFor(state, entry.kind);" "    return now - entry.at < windowFor(state, entry.kind);"
+run "eviction: by the record's own kind's window" \
+  "    return now - entry.at <= windowFor(state, entry.kind);" "    return now - entry.at <= state.windowMs;"
+run "act: late work is surfaced as stale-pending" \
+  "    values.now - target.at > windowFor(state, target.kind) ? OUTCOME.STALE_PENDING : OUTCOME.ACTED," \
+  "    OUTCOME.ACTED,"
+run "act: at exactly the window's age it is not stale" \
+  "    values.now - target.at > windowFor(state, target.kind) ? OUTCOME.STALE_PENDING : OUTCOME.ACTED," \
+  "    values.now - target.at >= windowFor(state, target.kind) ? OUTCOME.STALE_PENDING : OUTCOME.ACTED,"
+run "act: stale by the record's own kind's window" \
+  "    values.now - target.at > windowFor(state, target.kind) ? OUTCOME.STALE_PENDING : OUTCOME.ACTED," \
+  "    values.now - target.at > state.windowMs ? OUTCOME.STALE_PENDING : OUTCOME.ACTED,"
 
-# 10. The dispatch table, the derived phase, and the two freezes.
+# 10. The dispatch table, the declared table, the derived phase, the freezes.
 run "dispatch: the closed row is not the open row" \
   "  [STATE.CLOSED]: closedRow()," "  [STATE.CLOSED]: openRow(),"
 run "dispatch: a closed mailbox refuses a delivery" \
   "    [EVENT.DELIVER]: refuseClosed," "    [EVENT.DELIVER]: deliver,"
+run "the declared table: a pending ack can ack" \
+  "      ok: Object.freeze([OUTCOME.ACKED, OUTCOME.NOTHING_TO_ACK])," \
+  "      ok: Object.freeze([OUTCOME.NOTHING_TO_ACK]),"
+run "the declared table: a pending act can be stale" \
+  "      ok: Object.freeze([OUTCOME.ACTED, OUTCOME.STALE_PENDING])," \
+  "      ok: Object.freeze([OUTCOME.ACTED]),"
 run "derivePhase: an acted record is not idle" \
   "  if (entries.some((entry) => entry.status === STATUS.ACTED)) return STATE.ACTED;" ""
 run "the answer is frozen" \

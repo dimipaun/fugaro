@@ -36,20 +36,28 @@
 // carried text would be a second copy of the mailbox, and D113b's MAC — the
 // phone's — is what protects a message's contents, not this table.
 //
-// **Bounded, and safe to bound.** The ledger has a cap (`maxSeen`), and the
-// rules that keep the cap from being a hole in the replay fence are:
+// **Bounded, and safe to bound.** The ledger has a cap (`maxSeen`) and a
+// per-sender quota (`maxPerSender`), and the rules that keep them from being a
+// hole in the replay fence are:
 //
 //   * a delivery at or above the cap is REFUSED (`dedupe-full`) unless an
-//     entry is evictable. Nothing live is ever dropped to make room: dropping
-//     an in-flight record is exactly the "acted on twice" failure dedupe is
-//     for;
-//   * an entry is evictable only when it is **acked** and **outside the replay
-//     window**. Outside the window is the load-bearing half: a redelivery of
-//     an evicted message is refused as a replay by the window rule before the
-//     ledger is consulted, so eviction cannot re-admit a replay;
-//   * the same `(sender, id)` arriving with a different `at` inside the window
-//     is `id-conflict` — the id is the message's identity, so a second message
-//     under it is an ambiguity, not a duplicate.
+//     entry is evictable, and one whose sender already holds its quota is
+//     REFUSED (`sender-full`). Nothing that is not acked is ever dropped, to
+//     make room or for any other reason: dropping an un-acked record is either
+//     the "acted on twice" failure dedupe is for, or work lost silently;
+//   * an entry is evictable only when it is **acked** and **strictly outside
+//     the replay window**. Outside the window is the load-bearing half: a
+//     redelivery of an evicted message is refused as a replay by the window
+//     rule before the ledger is consulted, so eviction cannot re-admit a
+//     replay;
+//   * a record is consulted whatever its age: the same `(sender, id)` with the
+//     same `at` is a `duplicate`, and with a different `at` it is
+//     `id-conflict` — the id is the message's identity, so a second message
+//     under it is an ambiguity, never a new delivery, for as long as the
+//     ledger remembers the first;
+//   * an accepted record that is still un-acted when the window passes it is
+//     kept, and `act` answers `stale-pending` for it rather than `acted`: the
+//     work is surfaced as late, never dropped.
 //
 // **Time is injected.** Every event carries the `now` it is to be judged at,
 // and the machine reads no clock of its own: `now` is the caller's, anchored
@@ -62,8 +70,9 @@
 // **Fail closed.** An unknown field, a wrong type, an accessor property, an
 // out-of-range number, a negative zero, a ledger that is not a ledger and an
 // unknown state or event are each a REFUSAL with a code of its own, never a
-// coerced value and never a guess. A refusal names the *field* at fault and
-// never the value it refused, so a refusal can be logged.
+// coerced value and never a guess. A refusal names the *field* at fault by a
+// fixed path this module chose — never the value it refused, and never a key
+// name the input chose — so a refusal can be logged.
 //
 // The message itself is P0.2's: this module calls `validateMessage` and
 // propagates the schema's codes verbatim (prefixed with `message.`), because
@@ -77,8 +86,9 @@
 // `../mailbox-schema/` is the schema this module speaks, and
 // `../../docs/mobile/implementation-plan.md`'s P1.1 is this module's task.
 
+import { MAX_CLOCK_SKEW, MAX_TIMESTAMP } from '../lease/index.js';
 import {
-  AT_MAX,
+  FIELDS as MESSAGE_FIELDS,
   ID_MAX,
   REFUSALS,
   SENDER_MAX,
@@ -105,6 +115,28 @@ export const EVENT = Object.freeze({
 });
 
 /**
+ * The kinds of message, each with its own acceptance window (owner ruling,
+ * 2026-10-17, on the replay window against D168):
+ *
+ *   command  cancel, merge, launch, confirm — the replay window (`windowMs`,
+ *            six hours by default), unchanged; older is `replay`
+ *   prompt   a queued prompt — its own TTL (`promptTtlMs`, D118's mailbox
+ *            TTL); older is `expired`. A consumer offline longer than six
+ *            hours but inside the TTL still accepts it; past the TTL it has
+ *            expired (the ruling supersedes D168's "never expire")
+ *
+ * P0.2's schema has no kind field yet, so the kind travels on the `deliver`
+ * event (the consumer's assertion about which kind it is delivering) and is
+ * written into the ledger record. It defaults to `command`, the stricter of
+ * the two windows. P6.3 adds the kind to the message itself; then the event's
+ * field goes, and the kind is read from the validated message.
+ */
+export const KIND = Object.freeze({
+  COMMAND: 'command',
+  PROMPT: 'prompt',
+});
+
+/**
  * The status of a ledger record. It is the consumer's own bookkeeping, not the
  * message's `acked` field: D113 gives the phone the write of the `acked` child,
  * and this status is what the consumer has done about a delivery so far.
@@ -123,6 +155,10 @@ export const OUTCOME = Object.freeze({
   ACCEPTED: 'accepted',
   DUPLICATE: 'duplicate',
   ACTED: 'acted',
+  // `act` on an accepted record the window has already passed: it is acted on
+  // (once, like any other), and the outcome says it is late, so a consumer
+  // can decide what late means for it rather than lose it silently.
+  STALE_PENDING: 'stale-pending',
   ACKED: 'acked',
   NOTHING_TO_ACT: 'nothing-to-act',
   NOTHING_TO_ACK: 'nothing-to-ack',
@@ -149,7 +185,10 @@ export const REFUSAL = Object.freeze({
   NOW_WENT_BACKWARDS: 'now-went-backwards',
   INVALID_WINDOW: 'invalid-window',
   INVALID_MAX_SEEN: 'invalid-max-seen',
+  INVALID_MAX_PER_SENDER: 'invalid-max-per-sender',
+  INVALID_PROMPT_TTL: 'invalid-prompt-ttl',
   INVALID_FUTURE_TOLERANCE: 'invalid-future-tolerance',
+  UNKNOWN_KIND: 'unknown-kind',
   INVALID_SEEN: 'invalid-seen',
   INVALID_SEEN_ENTRY: 'invalid-seen-entry',
   DUPLICATE_SEEN_ENTRY: 'duplicate-seen-entry',
@@ -158,9 +197,11 @@ export const REFUSAL = Object.freeze({
   NEGATIVE_ZERO: 'negative-zero',
   ZERO_TIMESTAMP: 'zero-timestamp',
   REPLAY: 'replay',
+  EXPIRED: 'expired',
   FUTURE_TIMESTAMP: 'future-timestamp',
   ID_CONFLICT: 'id-conflict',
   DEDUPE_FULL: 'dedupe-full',
+  SENDER_FULL: 'sender-full',
   // The mailbox.
   MAILBOX_CLOSED: 'mailbox-closed',
 });
@@ -184,7 +225,10 @@ export const INPUT_REFUSALS = Object.freeze([
   REFUSAL.NOW_WENT_BACKWARDS,
   REFUSAL.INVALID_WINDOW,
   REFUSAL.INVALID_MAX_SEEN,
+  REFUSAL.INVALID_MAX_PER_SENDER,
+  REFUSAL.INVALID_PROMPT_TTL,
   REFUSAL.INVALID_FUTURE_TOLERANCE,
+  REFUSAL.UNKNOWN_KIND,
   REFUSAL.INVALID_SEEN,
   REFUSAL.INVALID_SEEN_ENTRY,
   REFUSAL.DUPLICATE_SEEN_ENTRY,
@@ -207,10 +251,25 @@ export const INPUT_REFUSALS = Object.freeze([
  * and `MAX_WINDOW_MS` refuses one long enough that the ledger's cap could
  * never be reached without the window's help — both are refusals rather than
  * clamps, so a typo cannot quietly change what the protocol admits.
+ *
+ * This window is the **command** window. By the owner's ruling of 2026-10-17
+ * it applies to commands unchanged, and a prompt is judged by its own TTL
+ * instead (`promptTtlMs`, below).
  */
 export const DEFAULT_WINDOW_MS = 6 * 60 * 60 * 1_000;
 export const MIN_WINDOW_MS = 1_000;
 export const MAX_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
+
+/**
+ * The prompt window: a prompt is accepted for as long as its TTL (D118's
+ * mailbox TTL) and refused as `expired` after it. D118 states that there is a
+ * TTL but no number, so this module invents none: `promptTtlMs` is a
+ * **required** state field, handed in by the consumer (P4.1) from the TTL its
+ * sweeper enforces, and validated `MIN_WINDOW_MS .. MAX_PROMPT_TTL_MS` — a
+ * refusal, not a clamp. Thirty days is a ceiling on the ledger's memory, not
+ * a retention policy.
+ */
+export const MAX_PROMPT_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 
 /**
  * The dedupe ledger's cap: how many `(sender, id)` records a mailbox holds.
@@ -226,10 +285,40 @@ export const MIN_MAX_SEEN = 1;
 export const MAX_MAX_SEEN = 100_000;
 
 /**
+ * The per-sender quota: how many of the ledger's `maxSeen` records one sender
+ * may hold at once. Without it one sender could fill the whole ledger and
+ * lock every other sender out with `dedupe-full` for up to a window — and for
+ * ever, if the consumer stops acking, because un-acked records are never
+ * evicted. A sender at its quota is refused (`sender-full`); nothing is
+ * evicted to make room for it.
+ *
+ * The default is a quarter of the cap, at least one (`defaultMaxPerSender`):
+ * four full senders can still fill the ledger, and *how many* senders may
+ * write is P2.1's rules' business, not this module's. It is a state field,
+ * validated `1 .. maxSeen`, so an operator can move it.
+ */
+export const SENDER_SHARE = 4;
+
+/** The default per-sender quota for a cap: `max(1, floor(maxSeen / SENDER_SHARE))`. */
+export function defaultMaxPerSender(maxSeen) {
+  return Math.max(1, Math.floor(maxSeen / SENDER_SHARE));
+}
+
+/**
+ * The latest time this module reads, on a `now` or an `at`: the lease's own
+ * ceiling (`shared/lease`'s MAX_TIMESTAMP, 2100-01-01T00:00:00Z), imported
+ * rather than restated so the two modules cannot drift. A `now` beyond it is
+ * refused, so one huge `now` can push the mailbox's clock no further than the
+ * ceiling — `now-went-backwards` is permanent only up to there.
+ */
+export const TIME_MAX = MAX_TIMESTAMP;
+
+/**
  * How far into the future a message's `at` may be before it is refused.
  *
  * Five minutes covers ordinary clock skew and latency between the writer's
- * clock and the server's. The bound is not decoration: a future `at` is
+ * clock and the server's, and it is the lease's `MAX_CLOCK_SKEW`, imported
+ * rather than restated. The bound is not decoration: a future `at` is
  * *inside* the window by definition (its age is negative), so an unbounded
  * future timestamp would be an entry that no window could ever evict — a
  * memory lever a writer could pull. Beyond the tolerance it is refused
@@ -237,7 +326,7 @@ export const MAX_MAX_SEEN = 100_000;
  * server's timestamp is the authority, and a writer whose clock is far ahead
  * is a writer whose `at` cannot be trusted.
  */
-export const DEFAULT_FUTURE_TOLERANCE_MS = 5 * 60 * 1_000;
+export const DEFAULT_FUTURE_TOLERANCE_MS = MAX_CLOCK_SKEW;
 export const MAX_FUTURE_TOLERANCE_MS = 24 * 60 * 60 * 1_000;
 
 /**
@@ -281,12 +370,16 @@ export const TRANSITIONS = Object.freeze({
       next: Object.freeze([STATE.PENDING]),
     }),
     [EVENT.ACT]: Object.freeze({
-      ok: Object.freeze([OUTCOME.ACTED]),
+      // `stale-pending` when the oldest accepted record is outside the window.
+      ok: Object.freeze([OUTCOME.ACTED, OUTCOME.STALE_PENDING]),
       no: Object.freeze([]),
       next: Object.freeze([STATE.ACTED, STATE.PENDING]),
     }),
     [EVENT.ACK]: Object.freeze({
-      ok: Object.freeze([OUTCOME.NOTHING_TO_ACK]),
+      // A pending mailbox may also hold acted records (deliver a, act,
+      // deliver b): the ack acks the oldest of those and the mailbox stays
+      // pending, because b is still accepted.
+      ok: Object.freeze([OUTCOME.ACKED, OUTCOME.NOTHING_TO_ACK]),
       no: Object.freeze([]),
       next: Object.freeze([STATE.PENDING]),
     }),
@@ -340,9 +433,11 @@ function DELIVERY_REFUSALS() {
       REFUSAL.NEGATIVE_ZERO,
       REFUSAL.ZERO_TIMESTAMP,
       REFUSAL.REPLAY,
+      REFUSAL.EXPIRED,
       REFUSAL.FUTURE_TIMESTAMP,
       REFUSAL.ID_CONFLICT,
       REFUSAL.DEDUPE_FULL,
+      REFUSAL.SENDER_FULL,
       ...Object.values(REFUSALS),
     ]),
   ]);
@@ -363,15 +458,23 @@ const STATE_FIELDS = Object.freeze([
   'now',
   'windowMs',
   'maxSeen',
+  'maxPerSender',
+  'promptTtlMs',
   'futureToleranceMs',
   'seen',
 ]);
 
-/** An event's keys, exactly: `type`, the injected `now`, and a delivery's message. */
-const EVENT_FIELDS = Object.freeze(['type', 'now', 'message']);
+/**
+ * An event's keys, exactly: `type`, the injected `now`, and a delivery's
+ * message and (optional) kind.
+ */
+const EVENT_FIELDS = Object.freeze(['type', 'now', 'message', 'kind']);
 
 /** A ledger record's keys, exactly. */
-const SEEN_FIELDS = Object.freeze(['sender', 'id', 'at', 'status']);
+const SEEN_FIELDS = Object.freeze(['sender', 'id', 'at', 'kind', 'status']);
+
+/** The kind vocabulary. */
+const KIND_VALUES = Object.freeze(Object.values(KIND));
 
 /** The event vocabulary, for the one check that is not a table lookup. */
 const EVENT_VALUES = Object.freeze(Object.values(EVENT));
@@ -418,25 +521,32 @@ function closedRow() {
 
 /**
  * initialState builds the mailbox a consumer starts from: idle, an empty
- * ledger, and the four numbers the machine is judged with.
+ * ledger, and the five numbers the machine is judged with.
  *
- *     initialState({ now, windowMs?, maxSeen?, futureToleranceMs? })
+ *     initialState({ now, promptTtlMs, windowMs?, maxSeen?, maxPerSender?, futureToleranceMs? })
  *
  * `now` is required and is the caller's — the server-anchored time (D117) the
- * first event will be judged against. The rest default to the constants above.
- * It returns `{ ok: true, state }` or a refusal; it never throws.
+ * first event will be judged against. `promptTtlMs` is required: it is D118's
+ * mailbox TTL, which has no number this module could default to. The rest
+ * default to the constants above (`maxPerSender` to
+ * `defaultMaxPerSender(maxSeen)`). It returns a frozen `{ ok: true, state }`
+ * or a refusal; it never throws.
  *
- * @param {{ now: number, windowMs?: number, maxSeen?: number, futureToleranceMs?: number }} [options]
+ * @param {{ now: number, promptTtlMs: number, windowMs?: number, maxSeen?: number, maxPerSender?: number, futureToleranceMs?: number }} [options]
  * @returns {{ ok: true, state: object } | { ok: false, code: string, field: string | null }}
  */
 export function initialState(options = {}) {
-  const read = readFields(options, STATE_FIELDS.filter((field) => field !== 'phase' && field !== 'seen'));
+  const read = readFields(
+    options,
+    STATE_FIELDS.filter((field) => field !== 'phase' && field !== 'seen'),
+    'options',
+  );
   if (!read.ok) return read;
   const values = read.values;
 
   const now = values.now;
   if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');
-  if (!isIntegerInRange(now, 1, AT_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
 
   const windowMs = values.windowMs === undefined ? DEFAULT_WINDOW_MS : values.windowMs;
   if (!isIntegerInRange(windowMs, MIN_WINDOW_MS, MAX_WINDOW_MS)) {
@@ -448,23 +558,37 @@ export function initialState(options = {}) {
     return refuse(REFUSAL.INVALID_MAX_SEEN, 'maxSeen');
   }
 
+  const maxPerSender =
+    values.maxPerSender === undefined ? defaultMaxPerSender(maxSeen) : values.maxPerSender;
+  if (!isIntegerInRange(maxPerSender, 1, maxSeen)) {
+    return refuse(REFUSAL.INVALID_MAX_PER_SENDER, 'maxPerSender');
+  }
+
+  const promptTtlMs = values.promptTtlMs;
+  if (promptTtlMs === undefined) return refuse(REFUSAL.MISSING_FIELD, 'promptTtlMs');
+  if (!isIntegerInRange(promptTtlMs, MIN_WINDOW_MS, MAX_PROMPT_TTL_MS)) {
+    return refuse(REFUSAL.INVALID_PROMPT_TTL, 'promptTtlMs');
+  }
+
   const futureToleranceMs =
     values.futureToleranceMs === undefined ? DEFAULT_FUTURE_TOLERANCE_MS : values.futureToleranceMs;
   if (!isIntegerInRange(futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {
     return refuse(REFUSAL.INVALID_FUTURE_TOLERANCE, 'futureToleranceMs');
   }
 
-  return {
+  return Object.freeze({
     ok: true,
     state: Object.freeze({
       phase: STATE.IDLE,
       now,
       windowMs,
       maxSeen,
+      maxPerSender,
+      promptTtlMs,
       futureToleranceMs,
       seen: Object.freeze([]),
     }),
-  };
+  });
 }
 
 /**
@@ -523,15 +647,19 @@ export function step(state, event) {
  * are the shape of a negated or unset counter rather than a time. Then the
  * future bound, before the window: a far-future `at` would otherwise compute a
  * negative age and read as "inside the window". Then the window, which is the
- * replay rule. Then the ledger: the same `(sender, id)` inside the window is a
- * duplicate when its `at` agrees and a conflict when it does not.
+ * replay rule. Then the ledger: the same `(sender, id)` — whatever the age of
+ * its record — is a duplicate when its `at` agrees and a conflict when it does
+ * not. Then the cap, and then the sender's quota.
  */
 function deliver(state, values) {
   const validated = validateMessage(values.message);
   if (!validated.ok) {
+    // The schema names an unknown field by its key, which the writer chose:
+    // only a field the schema itself defines is echoed, anything else is
+    // reported as the message as a whole.
     return refuse(
       validated.code,
-      validated.field === null ? 'message' : `message.${validated.field}`,
+      MESSAGE_FIELDS.includes(validated.field) ? `message.${validated.field}` : 'message',
     );
   }
 
@@ -547,27 +675,48 @@ function deliver(state, values) {
   // close. The guard is written `at < 1` rather than `at === 0` so that it
   // stays right if the schema's floor ever moves.
   if (at < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, 'message.at');
+  // The ceiling is checked on its own, not left to the tolerance: with `now`
+  // at the ceiling an `at` inside the tolerance could pass it, be written into
+  // the ledger and then be refused by this module's own reader.
+  if (at > TIME_MAX) return refuse(REFUSAL.FUTURE_TIMESTAMP, 'message.at');
   if (at - values.now > state.futureToleranceMs) {
     return refuse(REFUSAL.FUTURE_TIMESTAMP, 'message.at');
   }
-  if (values.now - at > state.windowMs) return refuse(REFUSAL.REPLAY, 'message.at');
+  // The kind's own window: a command older than `windowMs` is a replay, a
+  // prompt older than its TTL has expired. Two codes, because "replayed" and
+  // "waited too long" are different facts for the consumer to report.
+  const kind = values.kind === undefined ? KIND.COMMAND : values.kind;
+  if (values.now - at > windowFor(state, kind)) {
+    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'message.at');
+  }
 
+  // A record is consulted whatever its age. A pair the ledger still holds is
+  // never a new delivery: un-acked records are never evicted, so a stale
+  // record for this pair is either work in flight (acting on the "new" one
+  // would be the same id acted on twice) or an acked record not yet evicted.
+  // The kind is part of the message's identity: the same pair and `at` under
+  // another kind is a second message, not a duplicate.
   const known = state.seen.find((entry) => entry.sender === sender && entry.id === id);
-  if (known !== undefined && values.now - known.at <= state.windowMs) {
-    if (known.at !== at) return refuse(REFUSAL.ID_CONFLICT, 'message.at');
+  if (known !== undefined) {
+    if (known.at !== at || known.kind !== kind) return refuse(REFUSAL.ID_CONFLICT, 'message.at');
     // A duplicate is answered, not acted on, and the ledger is left exactly as
     // it was: a redelivery must not re-arm a delivery that was already acted
     // on, and must not resurrect an acked one.
     return answered(OUTCOME.DUPLICATE, state.phase, state, values.now, state.seen, sender, id);
   }
 
-  const kept = evict(state, values.now, sender, id);
+  const kept = evict(state, values.now);
   if (kept.length >= state.maxSeen) {
     // Nothing evictable and no room: refusing is the only answer that does not
     // lose a record, and a lost record is a message that can be acted on twice.
     return refuse(REFUSAL.DEDUPE_FULL, 'seen');
   }
-  const entries = insert(kept, Object.freeze({ sender, id, at, status: STATUS.ACCEPTED }));
+  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {
+    // One sender may not take the ledger from every other one. Refused, never
+    // evicted: the quota is a fence, not a reason to forget.
+    return refuse(REFUSAL.SENDER_FULL, 'message.sender');
+  }
+  const entries = insert(kept, Object.freeze({ sender, id, at, kind, status: STATUS.ACCEPTED }));
   return answered(OUTCOME.ACCEPTED, STATE.PENDING, state, values.now, entries, sender, id);
 }
 
@@ -578,17 +727,25 @@ function deliver(state, values) {
  * order are acted on in the same sequence — "at-least-once" says nothing about
  * the order a mailbox learns of them, and an order that depended on arrival
  * would make the state a function of the network.
+ *
+ * A record the window has already passed is still acted on — exactly once,
+ * like any other — and the outcome is `stale-pending` instead of `acted`, so
+ * the consumer learns the work is late rather than never learning of it. What
+ * late means (perform it anyway, or tell the sender it expired) is the
+ * consumer's to decide; this module never drops it.
  */
 function act(state, values) {
-  return moveOldest(state, values, STATUS.ACCEPTED, STATUS.ACTED, OUTCOME.ACTED, OUTCOME.NOTHING_TO_ACT);
+  return moveOldest(state, values, STATUS.ACCEPTED, STATUS.ACTED, (target) =>
+    values.now - target.at > windowFor(state, target.kind) ? OUTCOME.STALE_PENDING : OUTCOME.ACTED,
+  OUTCOME.NOTHING_TO_ACT);
 }
 
 /** ack: tell the sender the oldest acted delivery is done (D110's ack). */
 function ack(state, values) {
-  return moveOldest(state, values, STATUS.ACTED, STATUS.ACKED, OUTCOME.ACKED, OUTCOME.NOTHING_TO_ACK);
+  return moveOldest(state, values, STATUS.ACTED, STATUS.ACKED, () => OUTCOME.ACKED, OUTCOME.NOTHING_TO_ACK);
 }
 
-function moveOldest(state, values, from, to, outcome, nothing) {
+function moveOldest(state, values, from, to, outcomeFor, nothing) {
   const index = state.seen.findIndex((entry) => entry.status === from);
   if (index === -1) {
     // Not a refusal: "there was nothing to act on" is a fact about the mailbox,
@@ -599,10 +756,10 @@ function moveOldest(state, values, from, to, outcome, nothing) {
   const target = state.seen[index];
   const entries = state.seen.map((entry, position) =>
     position === index
-      ? Object.freeze({ sender: entry.sender, id: entry.id, at: entry.at, status: to })
+      ? Object.freeze({ sender: entry.sender, id: entry.id, at: entry.at, kind: entry.kind, status: to })
       : entry,
   );
-  return answered(outcome, derivePhase(entries), state, values.now, entries, target.sender, target.id);
+  return answered(outcomeFor(target), derivePhase(entries), state, values.now, entries, target.sender, target.id);
 }
 
 /**
@@ -625,26 +782,30 @@ function refuseClosed() {
 
 /**
  * evict drops the records that may be dropped, and returns the survivors as a
- * new array. A record is dropped when it is outside the replay window AND
- * either
+ * new array. A record is dropped only when it is **acked** — the delivery is
+ * finished, so forgetting it cannot lose work — AND **strictly** outside its
+ * kind's window (its age is greater than `windowMs` for a command, or
+ * `promptTtlMs` for a prompt), so that any redelivery of its message is
+ * already refused (`replay`, `expired`) before the ledger is read. At an age
+ * of exactly the window the message is still deliverable, so its record must
+ * still be there to call the redelivery a duplicate. A prompt record therefore
+ * outlives a command record of the same age: it is never evicted before its
+ * TTL passes, and never re-admitted after.
  *
- *   * acked — the delivery is finished, so forgetting it cannot lose work; or
- *   * the record for the very `(sender, id)` now arriving — the id is being
- *     reused, which the window has already ruled is a new message rather than a
- *     duplicate, and the ledger holds one record per pair.
- *
- * An in-flight record for any *other* pair survives even far outside the
- * window: a delivery that was acted on and never acked is work this consumer
- * still owes an ack for, and dropping it would make room for a second action.
- * Only the arriving pair's own stale record goes, and only because the window
- * has already ruled that its message is not the one arriving.
+ * Nothing that is not acked is ever dropped, at any age: an accepted record is
+ * work not yet done, and an acted one is work this consumer still owes an ack
+ * for. Dropping either would lose the work or make room for a second action.
  */
-function evict(state, now, sender, id) {
+function evict(state, now) {
   return state.seen.filter((entry) => {
-    if (now - entry.at <= state.windowMs) return true;
-    if (entry.status === STATUS.ACKED) return false;
-    return !(entry.sender === sender && entry.id === id);
+    if (entry.status !== STATUS.ACKED) return true;
+    return now - entry.at <= windowFor(state, entry.kind);
   });
+}
+
+/** The acceptance window of a kind: the command window, or the prompt TTL. */
+function windowFor(state, kind) {
+  return kind === KIND.PROMPT ? state.promptTtlMs : state.windowMs;
 }
 
 /** insert keeps the ledger in its canonical order, without a sort. */
@@ -693,7 +854,7 @@ function derivePhase(entries) {
  * the declared phase must agree with the ledger.
  */
 function readState(state) {
-  const read = readFields(state, STATE_FIELDS);
+  const read = readFields(state, STATE_FIELDS, 'state');
   if (!read.ok) return read;
   const values = read.values;
 
@@ -703,12 +864,18 @@ function readState(state) {
 
   if (!Object.values(STATE).includes(values.phase)) return refuse(REFUSAL.UNKNOWN_STATE, 'phase');
 
-  if (!isIntegerInRange(values.now, 1, AT_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  if (!isIntegerInRange(values.now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
   if (!isIntegerInRange(values.windowMs, MIN_WINDOW_MS, MAX_WINDOW_MS)) {
     return refuse(REFUSAL.INVALID_WINDOW, 'windowMs');
   }
   if (!isIntegerInRange(values.maxSeen, MIN_MAX_SEEN, MAX_MAX_SEEN)) {
     return refuse(REFUSAL.INVALID_MAX_SEEN, 'maxSeen');
+  }
+  if (!isIntegerInRange(values.maxPerSender, 1, values.maxSeen)) {
+    return refuse(REFUSAL.INVALID_MAX_PER_SENDER, 'maxPerSender');
+  }
+  if (!isIntegerInRange(values.promptTtlMs, MIN_WINDOW_MS, MAX_PROMPT_TTL_MS)) {
+    return refuse(REFUSAL.INVALID_PROMPT_TTL, 'promptTtlMs');
   }
   if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {
     return refuse(REFUSAL.INVALID_FUTURE_TOLERANCE, 'futureToleranceMs');
@@ -731,6 +898,8 @@ function readState(state) {
       now: values.now,
       windowMs: values.windowMs,
       maxSeen: values.maxSeen,
+      maxPerSender: values.maxPerSender,
+      promptTtlMs: values.promptTtlMs,
       futureToleranceMs: values.futureToleranceMs,
       seen: seen.entries,
     }),
@@ -738,20 +907,19 @@ function readState(state) {
 }
 
 /**
- * readSeen reads the ledger: an array of `{ sender, id, at, status }` records,
- * no longer than the state's own cap, one per `(sender, id)`, in canonical
- * order. Anything else is refused — a ledger that is not in order cannot be
- * searched, and one with two records for a pair cannot say whether a
+ * readSeen reads the ledger: an array of `{ sender, id, at, kind, status }`
+ * records, no longer than the state's own cap, one per `(sender, id)`, in
+ * canonical order. Anything else is refused — a ledger that is not in order
+ * cannot be searched, and one with two records for a pair cannot say whether a
  * redelivery is a duplicate.
  */
 function readSeen(value, maxSeen) {
-  if (!Array.isArray(value) || value.length > maxSeen) {
-    return refuse(REFUSAL.INVALID_SEEN, 'seen');
-  }
+  const items = readArray(value, maxSeen);
+  if (items === null) return refuse(REFUSAL.INVALID_SEEN, 'seen');
 
   const entries = [];
-  for (const raw of value) {
-    const read = readFields(raw, SEEN_FIELDS);
+  for (const raw of items) {
+    const read = readFields(raw, SEEN_FIELDS, 'seen');
     if (!read.ok) return refuse(REFUSAL.INVALID_SEEN_ENTRY, 'seen');
     const entry = read.values;
     if (
@@ -761,13 +929,20 @@ function readSeen(value, maxSeen) {
       typeof entry.id !== 'string' ||
       entry.id === '' ||
       entry.id.length > ID_MAX ||
-      !isIntegerInRange(entry.at, 1, AT_MAX) ||
+      !isIntegerInRange(entry.at, 1, TIME_MAX) ||
+      !KIND_VALUES.includes(entry.kind) ||
       !STATUS_VALUES.includes(entry.status)
     ) {
       return refuse(REFUSAL.INVALID_SEEN_ENTRY, 'seen');
     }
     entries.push(
-      Object.freeze({ sender: entry.sender, id: entry.id, at: entry.at, status: entry.status }),
+      Object.freeze({
+        sender: entry.sender,
+        id: entry.id,
+        at: entry.at,
+        kind: entry.kind,
+        status: entry.status,
+      }),
     );
   }
 
@@ -793,7 +968,7 @@ function readSeen(value, maxSeen) {
  * copy of it would be a second answer.
  */
 function readEvent(event) {
-  const read = readFields(event, EVENT_FIELDS);
+  const read = readFields(event, EVENT_FIELDS, 'event');
   if (!read.ok) return read;
   const values = read.values;
 
@@ -803,8 +978,16 @@ function readEvent(event) {
   // a float, a negative zero or a value past the exact-double line is refused
   // here rather than compared against the state's own now and reported as an
   // ordering problem it is not.
-  if (!isIntegerInRange(values.now, 1, AT_MAX)) {
+  if (!isIntegerInRange(values.now, 1, TIME_MAX)) {
     return refuse(REFUSAL.INVALID_NOW, 'now');
+  }
+
+  // The kind is a delivery's, and only a delivery's; absent, it is a command.
+  if (values.kind !== undefined) {
+    if (values.type !== EVENT.DELIVER && EVENT_VALUES.includes(values.type)) {
+      return refuse(REFUSAL.UNKNOWN_FIELD, 'event');
+    }
+    if (!KIND_VALUES.includes(values.kind)) return refuse(REFUSAL.UNKNOWN_KIND, 'kind');
   }
 
   const hasMessage = values.message !== undefined;
@@ -812,7 +995,7 @@ function readEvent(event) {
     return refuse(REFUSAL.MISSING_FIELD, 'message');
   }
   if (values.type !== EVENT.DELIVER && hasMessage && EVENT_VALUES.includes(values.type)) {
-    return refuse(REFUSAL.UNKNOWN_FIELD, 'message');
+    return refuse(REFUSAL.UNKNOWN_FIELD, 'event');
   }
 
   return { ok: true, values };
@@ -823,19 +1006,26 @@ function readEvent(event) {
  * each field once, through its own descriptor.
  *
  * A value that is not a plain data object is refused (`not-an-object`), a key
- * the caller does not name is refused (`unknown-field`) — the field set is the
- * version, and a state or an event from a later protocol must be refused
- * rather than silently read with the new field dropped — and an accessor
- * property is refused (`accessor-property`) without ever being called, because
- * a getter can answer differently each time it is read, and this module's
- * whole claim is that the answer is a function of the value it was handed.
+ * the caller does not name — a symbol included — is refused (`unknown-field`):
+ * the field set is the version, and a state or an event from a later protocol
+ * must be refused rather than silently read with the new field dropped. An
+ * accessor property is refused (`accessor-property`) without ever being
+ * called, because a getter can answer differently each time it is read, and
+ * this module's whole claim is that the answer is a function of the value it
+ * was handed.
+ *
+ * An unknown key is reported by `where` — the container this module named —
+ * and never by the key itself: the key is the input's choice, and a refusal
+ * that echoed it would log whatever a writer chose to put there. An accessor
+ * is reported by its key, which by then is one of `names`.
  */
-function readFields(value, names) {
-  if (!isPlainObject(value)) return refuse(REFUSAL.NOT_AN_OBJECT, null);
+function readFields(value, names, where) {
+  if (!isPlainObject(value)) return refuse(REFUSAL.NOT_AN_OBJECT, where);
 
   const values = Object.create(null);
-  for (const key of Object.getOwnPropertyNames(value)) {
-    if (!names.includes(key)) return refuse(REFUSAL.UNKNOWN_FIELD, key);
+  for (const key of Reflect.ownKeys(value)) {
+    // A symbol is never one of `names`, so it is refused here too.
+    if (!names.includes(key)) return refuse(REFUSAL.UNKNOWN_FIELD, where);
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) {
       return refuse(REFUSAL.ACCESSOR_PROPERTY, key);
@@ -843,6 +1033,33 @@ function readFields(value, names) {
     values[key] = descriptor.value;
   }
   return { ok: true, values };
+}
+
+/**
+ * readArray reads a ledger array into a fresh plain array, or answers null.
+ *
+ * It is read by index, never iterated: an own `Symbol.iterator`, or a tampered
+ * `Array.prototype[Symbol.iterator]`, would otherwise decide which records the
+ * module sees — a pending record could be skipped and lost, or the cap read off
+ * a length the iteration never honoured. So the array must be a plain one
+ * (`Array.prototype`, not a subclass), its length is read once and checked
+ * against the cap before anything else, its own keys must be exactly the
+ * indices and `length` (no holes, no extra properties, no symbols), and every
+ * index must be a data property — a getter is never called. A Proxy can still
+ * answer all of these dishonestly; see the README's honest limits.
+ */
+function readArray(value, max) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;
+  const length = Object.getOwnPropertyDescriptor(value, 'length').value;
+  if (length > max) return null;
+  if (Reflect.ownKeys(value).length !== length + 1) return null;
+  const items = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) return null;
+    items.push(descriptor.value);
+  }
+  return items;
 }
 
 /**
@@ -898,6 +1115,8 @@ function answered(outcome, phase, state, now, entries, sender, id) {
       now,
       windowMs: state.windowMs,
       maxSeen: state.maxSeen,
+      maxPerSender: state.maxPerSender,
+      promptTtlMs: state.promptTtlMs,
       futureToleranceMs: state.futureToleranceMs,
       seen: Object.freeze(entries),
     }),
