@@ -15,24 +15,34 @@
 //   * there is **no userinfo**; and
 //   * there is **no port**.
 //
-// Five more are added here, and they are the reason this module is not a
+// Nine more are added here, and they are the reason this module is not a
 // two-line regex. Each is a way the four checks above can be walked around by a
-// string that *looks* fine:
+// string that *looks* fine. `README.md` carries the same nine rows in the same
+// order, and the two lists are kept in step deliberately:
 //
-//   * **The parser normalises.** `new URL()` drops an explicit `:443`, decodes
-//     a percent-encoded host (`%67ithub.com` becomes `github.com`), folds
-//     `2130706433` and `0x7f.1` into `127.0.0.1`, turns a Cyrillic host into
-//     punycode, and rewrites a backslash as a slash. So the parsed URL is used
-//     to *parse*, and the **raw string** is what the authority checks read.
-//   * **`github.com.` is `github.com`** to DNS. The match is on the string, so
-//     the trailing dot is a miss, not a hit.
-//   * **Whitespace is not trimmed.** `new URL('  https://x  ')` succeeds; a
-//     validator that accepted it would be validating a different string from
-//     the one a caller opens.
-//   * **There is a length bound**, so a hostile string cannot be handed to a
-//     shell, a log line or a native bridge without a limit.
-//   * **Nothing is coerced.** A non-string, an unknown shape, a malformed
-//     allow-list: every one is a refusal with its own code.
+//   * **The authority is read off the raw string.** `new URL()` drops an
+//     explicit `:443` -- `parsed.port` is `''` -- so a check on the parsed port
+//     would accept `github.com:443`.
+//   * **The string must spell `https://`.** `https:github.com/a` and
+//     `https:/github.com/a` both parse as https, with host `github.com`.
+//   * **No backslash**: the parser rewrites it as a slash, so
+//     `https://github.com\.evil.example/a` has host `github.com`.
+//   * **No `%` in the authority**: `%67ithub.com` parses to host `github.com`.
+//   * **No IP literal**: `2130706433`, `0x7f.1` and `0177.0.0.1` are all
+//     `127.0.0.1` to the parser, and `[::1]` is a literal in brackets.
+//   * **No punycode label, no non-ASCII host**: a Cyrillic `аpple.com` parses
+//     to `xn--pple-43d.com`, which no ASCII allow-list can name.
+//   * **A length bound** (`MAX_URL_LENGTH`), so a hostile string cannot reach a
+//     shell, a log line or a native bridge unbounded.
+//   * **Whitespace and control characters are refused, never trimmed.**
+//     `new URL('  https://x  ')` succeeds; trimming would validate a different
+//     string from the one a caller opens.
+//   * **Nothing is coerced.** A non-string, an empty string and a malformed
+//     allow-list are each a refusal with its own code.
+//
+// Two things are notes rather than checks. `github.com.` is `github.com` to
+// DNS, so the trailing dot is a miss rather than a normalised hit. And the
+// refusal messages are static, so none of them echoes the string it refuses.
 //
 // **The allow-list is not this module's to choose.** It is the owner's answer
 // to **D124** (reconciliation U3: "the rule is design prose and names no list;
@@ -95,7 +105,12 @@ export const URL_REFUSAL = Object.freeze({
   NON_ASCII: 'non-ascii',
   /** The candidate contains a backslash, which the parser rewrites as a slash. */
   BACKSLASH: 'backslash',
-  /** The candidate is not a URL at all -- `new URL` refused it. */
+  /**
+   * The candidate is not a URL this module will treat as one: `new URL` refused
+   * it, or it parsed with an **empty authority** -- `https:///evil.example/a`
+   * parses, with host `evil.example` and nothing between `https://` and the
+   * path, so there is no host to check and nothing to open.
+   */
   NOT_A_URL: 'not-a-url',
   /** The URL parses, and its scheme is not `https:`. */
   SCHEME_NOT_HTTPS: 'scheme-not-https',
@@ -169,7 +184,15 @@ const IPV4_LITERAL = /^\d{1,3}(\.\d{1,3}){3}$/;
 // quietly matching nothing.
 const HOST_ENTRY = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
-/** The lower-cased host of an already-validated authority, or `null`. */
+/**
+ * Normalise an allow-list to lower-cased hosts, or `null` if it is not one.
+ *
+ * `null` is the "this is not a list of hosts" answer, and the caller turns it
+ * into `invalid-allow-list`. It is deliberately not an exception and not an
+ * empty list: a list that silently drops an entry it cannot read is a list the
+ * owner did not write, and an empty result means something different (nobody
+ * has written the list yet). The list it is given is never mutated.
+ */
 function normalizeAllowList(hostAllowList) {
   if (!Array.isArray(hostAllowList)) return null;
   const hosts = [];
@@ -255,19 +278,25 @@ export function validateExternalUrl(candidate, hostAllowList = DEFAULT_HOST_ALLO
   if (authority.includes('%')) return refuse(URL_REFUSAL.ENCODED_HOST);
 
   const host = authority.toLowerCase();
-  const parsedHost = parsed.hostname.toLowerCase();
 
   // --- The host ------------------------------------------------------------
   // An IP literal is refused here, before anything reads the host as a name,
   // because the spellings the parser normalises are exactly the ones that would
-  // otherwise be answered as something else: `2130706433` and `0x7f.1` are
-  // `127.0.0.1` to `new URL`, so their raw authority and their parsed host
-  // disagree about them -- and "an IP address in a disguise" is the more useful
-  // thing to say about those two than "this string does not parse".
-  if (IPV4_LITERAL.test(parsedHost) || parsedHost.startsWith('[')) {
-    return refuse(URL_REFUSAL.IP_LITERAL);
-  }
-  if (IPV4_LITERAL.test(host)) return refuse(URL_REFUSAL.IP_LITERAL);
+  // otherwise be answered as something else: `2130706433`, `0x7f.1` and
+  // `0177.0.0.1` are all `127.0.0.1` to `new URL`, so their raw authority is
+  // not a dotted quad at all, and "an IP address in a disguise" is the more
+  // useful thing to say about them than "this host is not on the list".
+  //
+  // The check reads the **parsed** host, which is the address a browser would
+  // dial, and it is the only IP clause here for a reason: a raw dotted quad is
+  // normalised to itself, and a bracketed IPv6 literal is refused above at the
+  // authority, so neither a raw-host clause nor a `parsedHost.startsWith('[')`
+  // clause is ever the sole guard for any input. An earlier version carried
+  // both; a sweep over 276 IP spellings found no candidate where either was the
+  // only thing standing in the way, so they were removed rather than kept as
+  // assertions nobody can exercise -- the same reason the raw-host invariant
+  // that used to sit below was removed.
+  if (IPV4_LITERAL.test(parsed.hostname)) return refuse(URL_REFUSAL.IP_LITERAL);
 
   // `host` -- the raw string's own authority, lower-cased -- is what the
   // allow-list is matched against, and it is the host the parser resolved for

@@ -239,6 +239,24 @@ test('an allow-list entry is matched case-insensitively', () => {
   accepts('https://github.com/a', ['GitHub.com'], 'github.com');
 });
 
+test('the allow-list it is given is never mutated', () => {
+  // `normalizeAllowList` lower-cases its entries, and the obvious way to write
+  // that is in place. The list belongs to the caller -- an account's list, held
+  // for the life of the app -- so a validator that rewrote it would be editing
+  // another component's state, and would throw outright on a frozen one.
+  const list = ['GitHub.com', 'Bitbucket.ORG'];
+  const before = [...list];
+  const frozen = Object.freeze([...list]);
+
+  accepts('https://github.com/a', list, 'github.com');
+  refuses('https://evil.example/a', list, URL_REFUSAL.HOST_NOT_ALLOWED);
+  accepts('https://github.com/a', frozen, 'github.com');
+
+  assert.deepEqual(list, before, 'the list was rewritten in place');
+  assert.deepEqual(frozen, before);
+  assert.equal(Object.isFrozen(list), false, 'the list was frozen by the call');
+});
+
 // ---------------------------------------------------------------------------
 // No userinfo
 // ---------------------------------------------------------------------------
@@ -313,6 +331,17 @@ test('a non-ASCII host is refused, before the parser turns it into punycode', ()
   refuses('https://github.com/ünïcøde', GITHUB, URL_REFUSAL.NON_ASCII);
 });
 
+test('a `%` in the path or query is accepted: only the authority is checked', () => {
+  // The complement of `encoded-host`, and the case that keeps it honest. A
+  // percent-encoded host is a string that is not the URL it looks like; a
+  // percent-encoded path is just a URL. If the `%` check ever widens from the
+  // authority to the whole string, this is the test that fails.
+  accepts('https://github.com/a%20b/c', GITHUB, 'github.com');
+  accepts('https://github.com/o/r/pull/1?diff=split&w=%31', GITHUB, 'github.com');
+  accepts('https://github.com/o/r/pull/1#discussion_r%31', GITHUB, 'github.com');
+  accepts('https://github.com/o/r/pull/1?q=%E2%9C%93#frag', GITHUB, 'github.com');
+});
+
 test('a percent-encoded host is refused, though the parser decodes it', () => {
   // `new URL('https://%67ithub.com/a').hostname` is `github.com`.
   refuses('https://%67ithub.com/a', GITHUB, URL_REFUSAL.ENCODED_HOST);
@@ -342,6 +371,15 @@ test('whitespace around or inside a URL is refused, never trimmed', () => {
 // ---------------------------------------------------------------------------
 // The length bound
 // ---------------------------------------------------------------------------
+
+test('the length bound is 2048, pinned here so it cannot drift silently', () => {
+  // Every other case in this file derives its string from MAX_URL_LENGTH, which
+  // means the constant could be changed to anything and they would all still
+  // pass. This is the one assertion on the number itself: the module's doc
+  // comment and its README both state 2048, and a bound that moves without a
+  // test moving with it is a bound nobody chose.
+  assert.equal(MAX_URL_LENGTH, 2048);
+});
 
 test('the length bound is a refusal, and it is inclusive at the bound', () => {
   const prefix = 'https://github.com/';
