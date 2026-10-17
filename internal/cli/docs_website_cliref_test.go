@@ -181,15 +181,15 @@ func TestCliReferenceInventsNothing(t *testing.T) {
 			}
 		}
 	}
-	hidden := map[string]bool{}
-	for path, cmd := range cliRefEveryCommand(NewRootCmd()) {
-		if _, ok := documented[path]; !ok && cmd.Hidden {
-			hidden[path] = true
+	undocumented := map[string]bool{}
+	for path := range cliRefEveryCommand(NewRootCmd()) {
+		if _, ok := documented[path]; !ok {
+			undocumented[path] = true
 		}
 	}
-	for _, path := range slices.Sorted(maps.Keys(hidden)) {
+	for _, path := range slices.Sorted(maps.Keys(undocumented)) {
 		if strings.Contains(doc, "`"+path+"`") {
-			t.Errorf("%s names the hidden command %q: hidden commands are not user documentation (F38)", cliRefPath, path)
+			t.Errorf("%s names the command %q, which the tree does not document: it is hidden, or it sits under a hidden command, and a hidden command is not user documentation (F38)", cliRefPath, path)
 		}
 	}
 }
