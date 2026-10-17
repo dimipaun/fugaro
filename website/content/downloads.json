@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "available": false,
+  "name": "The Fugaro desktop console",
+  "what": {
+    "text": "A desktop application that is a graphical fugaro watch: live run monitoring and spending graphs, drawn over the CLI's own read-only output. It holds no credential, no database client and no backend of its own — the CLI is the data plane.",
+    "source": "docs/design/desktop-console.md D1"
+  },
+  "not_released": {
+    "text": "Not released yet. The console is designed and not built — no code, no scaffolding, nothing to run — and this section carries no download link until its own artifact ships.",
+    "source": "docs/releases/v0.8.0.md"
+  },
+  "properties": [
+    {
+      "id": "read-only",
+      "title": "Strictly read-only",
+      "text": "Every command the console runs is a read-only CLI command, and the commands that write — kill, resume and cancel — stay in the CLI, with the CLI's own typed confirmations, admin check and compare-and-set.",
+      "source": "docs/design/desktop-console.md D2"
+    },
+    {
+      "id": "no-telemetry",
+      "title": "No telemetry",
+      "text": "No telemetry, no crash reporting to a third party, no analytics, and no update check that carries an identifier: its only outbound requests are the CLI's own, to the cloud the operator already owns.",
+      "source": "docs/design/desktop-console.md D5"
+    },
+    {
+      "id": "own-artifact",
+      "title": "Its own artifact",
+      "text": "The console ships as its own artifact, published from the CLI's own vX.Y.Z tag — one release train and one gate — with the range of CLI versions it was built against declared and checked at startup.",
+      "source": "docs/design/desktop-console.md D11"
+    }
+  ],
+  "downloads": []
+}

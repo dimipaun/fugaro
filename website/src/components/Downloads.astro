@@ -1,0 +1,77 @@
+---
+/**
+ * website/src/components/Downloads.astro — the console's downloads section (website plan,
+ * Task W1.6).
+ *
+ * This is the section the spec asks for as *"per-OS download links (placeholder until the
+ * console ships)"*, and the console has not shipped: `console/` holds two documents and no
+ * code, and `docs/releases/v0.8.0.md` lists the desktop console under *"Not in this
+ * release"* (finding 23). So the section ships as a placeholder whose links a test refuses
+ * to emit (D95, Global Constraint 9) — the one outcome here with a real consequence for a
+ * reader, because a download link to an unsigned or unreleased artifact either 404s or
+ * points at something nobody has built.
+ *
+ * **The rule is structural, not editorial.** The two states are one `if`: the link list is
+ * rendered from `downloads.json`'s `downloads` array and *only* when `available` is true,
+ * and the unavailable branch has no element a reader can follow. That is what makes "the
+ * placeholder carries no link and no button" a property of the component rather than a
+ * promise about its copy — and the page that renders this component refuses, in its own
+ * build, a data file whose flag and URL list disagree (W1.6 steps 1 and 2).
+ *
+ * The facts come in as props rather than being read here, because the page owns the one
+ * reader for them: `website/src/pages/console.astro` loads and validates
+ * `website/content/downloads.json`, and this component renders what it was handed. Nothing
+ * below is typed into the markup: the note is the data file's own sentence, and the
+ * platform names are its own — the site invents no distribution (D4, D11).
+ */
+interface DownloadFacts {
+  /** The platform the artifact is for, as the data file names it (e.g. `macOS`). */
+  platform: string
+  /** Where a reader downloads it from. Only ever rendered while `available` is true. */
+  url: string
+}
+
+interface Props {
+  /** `downloads.json`'s `available`: the console's own artifact exists (W3.1 flips it). */
+  available: boolean
+  /** The data file's `not_released` sentence, rendered while `available` is false. */
+  note: string
+  /** The data file's `downloads` entries. Empty while `available` is false. */
+  downloads: DownloadFacts[]
+}
+
+const { available, note, downloads } = Astro.props
+
+// A label rather than a fact: the section's own heading, which is the navigation's word
+// for this page and not a claim about the product (the layout's nav carries the same one).
+const HEADING = 'Downloads'
+---
+
+<section id="downloads" aria-labelledby="downloads-heading">
+  <h2 id="downloads-heading">{HEADING}</h2>
+
+  {
+    available ? (
+      <ul class="downloads">
+        {downloads.map((download) => (
+          <li>
+            <a href={download.url} rel="noopener">
+              {download.platform}
+            </a>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <div class="downloads-unreleased">
+        <p>{note}</p>
+        {/* W1.6 red step: a hard-coded placeholder download URL, the defect the task
+            removes and the reason website/test/console.mjs exists. */}
+        <p>
+          <a href="https://github.com/dimipaun/fugaro/releases/download/v0.9.0/fugaro-console-macos.dmg" rel="noopener">
+            Download for macOS
+          </a>
+        </p>
+      </div>
+    )
+  }
+</section>
