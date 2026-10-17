@@ -315,17 +315,61 @@ export function contradiction(health: string, ageSeconds: number | null): string
 export class BurnHistory {
   private readonly samples = new Map<string, Sample[]>()
 
-  /** observe adds one arrival and drops what has fallen out of the window. */
+  /**
+   * observe adds one arrival and drops what has fallen out of the window.
+   *
+   * The list is kept **ordered by time** and **one sample per stamp**: a sample
+   * at a stamp the key already holds is the same observation arriving again
+   * (a stale rebuild re-reads the last document and must not draw it a second
+   * time, design section 6.3), so it is dropped; and a gap that follows a gap
+   * replaces it, so one silence is one gap rather than a gap per rebuild. A
+   * sample stamped before the newest one is inserted where its time puts it
+   * rather than at the end, so a clock that steps back cannot reorder the bars.
+   */
   observe(key: string, sample: Sample): void {
     const existing = this.samples.get(key)
     if (existing === undefined) {
       this.samples.set(key, [sample])
       return
     }
-    existing.push(sample)
-    const end = Date.parse(sample.at)
-    if (Number.isNaN(end)) return // an unparseable stamp is not a basis to drop anything
-    const cut = end - LIVE_BURN_WINDOW_SECONDS * 1000
+    const when = Date.parse(sample.at)
+    if (Number.isNaN(when)) {
+      existing.push(sample) // an unparseable stamp has no place in time: keep it last, drop nothing
+      return
+    }
+    const isGap = sample.reading.state === 'gap'
+    // Where the stamp puts it: after everything at or before it, so a gap that
+    // shares the last measured sample's stamp still comes after it.
+    let index = existing.length
+    while (index > 0) {
+      const before = Date.parse(existing[index - 1]?.at ?? '')
+      if (Number.isNaN(before) || before <= when) break
+      index--
+    }
+    // The same observation arriving again is dropped, and a gap replaces the gap
+    // before it (one silence is one gap). A measured sample and a gap at one
+    // stamp are two different things and both stay, measured first.
+    let at = index
+    while (at > 0 && Date.parse(existing[at - 1]?.at ?? '') === when) {
+      const held = existing[at - 1]
+      if ((held?.reading.state === 'gap') === isGap) {
+        if (isGap) existing[at - 1] = sample
+        return
+      }
+      at--
+    }
+    const last = existing[index - 1]
+    if (isGap && last !== undefined && last.reading.state === 'gap' && index === existing.length) {
+      existing[index - 1] = sample
+    } else {
+      existing.splice(index, 0, sample)
+    }
+    let newest = when
+    for (const held of existing) {
+      const at = Date.parse(held.at)
+      if (!Number.isNaN(at) && at > newest) newest = at
+    }
+    const cut = newest - LIVE_BURN_WINDOW_SECONDS * 1000
     let keep = 0
     while (keep < existing.length && Date.parse(existing[keep]?.at ?? '') < cut) keep++
     if (keep > 0) existing.splice(0, keep)
@@ -584,6 +628,15 @@ function rowOf(run: RunView): LiveRunRow {
   }
 }
 
+/** laterStamp is the later of two RFC 3339 stamps; an unparseable one loses. */
+function laterStamp(a: string, b: string): string {
+  const x = Date.parse(a)
+  const y = Date.parse(b)
+  if (Number.isNaN(y)) return a
+  if (Number.isNaN(x)) return b
+  return y > x ? b : a
+}
+
 /**
  * buildLiveModel is one frame as the screen's data.
  *
@@ -600,16 +653,29 @@ export function buildLiveModel(
 ): LiveModel {
   const repos: LiveRepoRow[] = document.repos.map((repo) => {
     const burn = burnReading(repo.burn)
+    // The document's sample is observed once, at the document's own stamp, and
+    // `observe` drops a second one at the same stamp: a stale rebuild is the
+    // last document read again, not a new measurement, and must not redraw it
+    // after the gap.
     history.observe(repo.slug, { at: document.now, reading: burn })
     // A feed that has gone quiet is a **gap** in every series, not a flat line
     // and not a repeat of the last sample: the console stopped observing, and
     // `seriesSegments` splits the sparkline where it did (design section 6.3,
     // "the graphs break rather than interpolate"). The last known sample stays
     // where it is, which is what makes the break visible at all.
-    const at = feed !== null && feed.stale ? feed.at : document.now
+    //
+    // Two clocks meet here: `document.now` is the CLI's and `feed.at` is the
+    // console's. The rule is that the later of the two is the console's "now"
+    // for the silence: the gap is stamped there and the window ends there. A
+    // console clock that is behind the CLI's therefore cannot push the last
+    // known bar out of its own window (or put the gap before it); a console
+    // that is ahead by more than the window ages the bar out like any other
+    // sample, and the banner says how long the silence is.
+    let at = document.now
     if (feed !== null && feed.stale) {
+      at = laterStamp(document.now, feed.at)
       history.observe(repo.slug, {
-        at: feed.at,
+        at,
         reading: gap(`no document has arrived for ${String(feed.seconds ?? 0)}s, so this series breaks here`),
       })
     }

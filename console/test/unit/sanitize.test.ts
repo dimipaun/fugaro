@@ -224,7 +224,7 @@ describe('the hostile-title corpus', () => {
     // around it survives, because a title that vanished entirely would be a
     // worse lie than an ugly one.
     expect(text('a title with a \u0000 nul', 'sentence')).toBe('a title with a nul')
-    expect(text('an escape: \u001b[31mred\u001b[0m', 'sentence')).toBe('an escape: [31mred[0m')
+    expect(text('an escape: \u001b[31mred\u001b[0m', 'sentence')).toBe('an escape: red')
     expect(text('pay\u00adpal', 'sentence')).toBe('paypal')
     // The bidi override is gone, and so is what it was hiding behind: `evil` and
     // `gpj.exe` are two four-character segments around a slash, which is a
@@ -478,7 +478,7 @@ describe('the credential rules', () => {
     // that this repository contains no credential-shaped string -- not even
     // inside a regular expression. Assembly can drift; the table's size and its
     // behaviour are what stop it.
-    expect(TOKEN_SHAPES).toHaveLength(8)
+    expect(TOKEN_SHAPES).toHaveLength(9)
     for (const pattern of TOKEN_SHAPES) {
       expect(pattern.flags).toContain('g')
       expect(pattern.source).not.toContain('undefined')

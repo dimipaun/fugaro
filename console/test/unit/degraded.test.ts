@@ -460,6 +460,50 @@ describe('the stale Live screen', () => {
     expect(all(tree, 'live-burn-bar').some((bar) => bar.getAttribute('data-state') === 'gap')).toBe(true)
   })
 
+  it('draws each sample once and in time order across repeated stale rebuilds', () => {
+    // The probe from the gate review: one fresh build, then the banner is drawn
+    // by rebuilding with the last document and no new frame, every ten seconds.
+    // Each rebuild used to observe the old sample again, so the last value was
+    // redrawn after every gap, out of time order (design section 6.3).
+    const history = new BurnHistory()
+    const frame = theLiveFrame()
+    buildLiveModel(frame, history, aFeed(frame, 2))
+    let bars: readonly { readonly at: string; readonly height: { readonly state: string } }[] = []
+    for (const seconds of [50, 60, 70, 80]) {
+      bars = buildLiveModel(frame, history, aFeed(frame, seconds)).repos[0]?.spark.bars ?? []
+    }
+    const stamps = bars.map((bar) => Date.parse(bar.at))
+    expect(stamps).toEqual([...stamps].sort((a, b) => a - b))
+    expect(new Set(stamps).size).toBe(stamps.length)
+    // The document's sample appears once, and nothing measured follows a gap.
+    expect(bars.filter((bar) => bar.at === frame.now && bar.height.state !== 'gap')).toHaveLength(1)
+    const firstGap = bars.findIndex((bar) => bar.height.state === 'gap')
+    expect(firstGap).toBeGreaterThan(0)
+    expect(bars.slice(firstGap).every((bar) => bar.height.state === 'gap')).toBe(true)
+    // One silence is one gap, stamped at the console's latest reading.
+    expect(bars.filter((bar) => bar.height.state === 'gap')).toHaveLength(1)
+    expect(bars[bars.length - 1]?.at).toBe(aFeed(frame, 80).at)
+  })
+
+  it('keeps the last-known bar when the console clock is behind the CLI clock', () => {
+    // `document.now` is the CLI's clock and `feed.at` the console's. The rule:
+    // the later of the two is "now" for the silence, so a console that is behind
+    // neither pushes the last-known bar out of the window nor stamps the gap
+    // before it.
+    const history = new BurnHistory()
+    const frame = theLiveFrame()
+    const behind: FeedHealth = {
+      since: frame.now,
+      at: new Date(Date.parse(frame.now) - 120_000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      seconds: 90,
+      stale: true,
+    }
+    const bars = buildLiveModel(frame, history, behind).repos[0]?.spark.bars ?? []
+    expect(bars.map((bar) => bar.height.state === 'gap')).toEqual([false, true])
+    expect(bars[0]?.at).toBe(frame.now)
+    expect(Date.parse(bars[1]?.at ?? '')).toBeGreaterThanOrEqual(Date.parse(bars[0]?.at ?? ''))
+  })
+
   it('keeps the last-known values and says when they were read', () => {
     const frame = theLiveFrame()
     const model = buildLiveModel(frame, new BurnHistory(), aFeed(frame, 90))
@@ -562,6 +606,15 @@ describe('the console after a refused read', () => {
     const sentence = one(tree, 'unavailable-sentence')
     expect(sentence.textContent).not.toContain(token)
     expect(sentence.textContent).toBe(`permission denied for ${TOKEN_PLACEHOLDER}`)
+  })
+
+  it('sanitizes again when a caller builds the state without refusedState', () => {
+    const token = githubToken()
+    const built: RefusedState = { kind: 'refused', operation: `budget.show ${token}`, sentence: `denied for ${token}` }
+    const tree = renderUnavailable(factory, built, 'light')
+    expect(one(tree, 'unavailable-sentence').textContent).toBe(`denied for ${TOKEN_PLACEHOLDER}`)
+    expect(one(tree, 'unavailable-operation').textContent).toBe(`budget.show ${TOKEN_PLACEHOLDER}`)
+    expect(drawn(tree)).not.toContain(token)
   })
 
   it('does not offer a link, a control or a second sentence about the fix', () => {

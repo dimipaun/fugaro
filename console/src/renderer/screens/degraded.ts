@@ -588,6 +588,13 @@ function noBinary(factory: ScreenFactory, state: NoBinaryState): ScreenElement {
   return element
 }
 
+/** drawnOrNothing is a console label after `sanitizeRefusal`, or the empty
+ * string when that refuses it. */
+function drawnOrNothing(label: string): string {
+  const drawn = sanitizeRefusal(label, 'the operation label')
+  return drawn.ok ? drawn.text : ''
+}
+
 /** refused draws the refused-read screen: the console names the read, and the
  * CLI's own sentence is the whole of the rest of it. */
 function refused(factory: ScreenFactory, state: RefusedState): ScreenElement {
@@ -595,7 +602,12 @@ function refused(factory: ScreenFactory, state: RefusedState): ScreenElement {
   literal(cell(element, factory, 'h1', 'unavailable-headline'), REFUSED_HEADLINE)
   // The operation is the console's own label of what it asked for
   // (`OperationName`), never a document's string.
-  literal(cell(element, factory, 'span', 'unavailable-operation'), state.operation)
+  //
+  // `RefusedState` is a plain exported type, so a caller can build one without
+  // `refusedState`: both strings are therefore passed through `sanitizeRefusal`
+  // again here (it is idempotent over its own output), and a value it refuses is
+  // never drawn.
+  literal(cell(element, factory, 'span', 'unavailable-operation'), drawnOrNothing(state.operation))
   // And this is the CLI's sentence, already through `sanitizeRefusal` in
   // `refusedState` -- which is what makes a `literal` call honest here, since
   // the value is no longer a string this screen did not write. The reasoning is
@@ -618,7 +630,8 @@ function refused(factory: ScreenFactory, state: RefusedState): ScreenElement {
   //     `firestoreErr` is the one place the two role names are written, and a
   //     screen that redacted them would leave the operator with a refusal and no
   //     remedy.
-  literal(cell(element, factory, 'p', 'unavailable-sentence'), state.sentence)
+  const sentence = sanitizeRefusal(state.sentence, 'the CLI refusal sentence')
+  literal(cell(element, factory, 'p', 'unavailable-sentence'), sentence.ok ? sentence.text : REFUSAL_UNREADABLE)
   return element
 }
 

@@ -177,10 +177,23 @@ function tooLong(what: string, bound: number): string {
 const INVISIBLE_RE =
   /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
 
+/**
+ * ANSI_RE matches a complete terminal escape sequence: a CSI (ESC `[`, any
+ * parameter and intermediate bytes, one final byte; or the one-character C1
+ * form U+009B), or an OSC (ESC `]` or U+009D, anything up to BEL or ST). The
+ * invisible-character strip removes the ESC itself and would leave `[31m` or
+ * `]0;title` behind, joined to the next word, so a token wrapped in colour
+ * codes was never at a word boundary and no `\b`-anchored family matched it.
+ * Whole sequences go first, before any credential rule reads the text. Every
+ * alternative is linear: the bodies are negated classes with a fixed terminator.
+ */
+const ANSI_RE =
+  /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|(?:\u001b\]|\u009d)[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)/g
+
 /** prepare is the form every rule reads: NFKC first (so a fullwidth `＠` *is*
  * an `@` before the address rule looks), then the invisible characters gone. */
 function prepare(text: string): string {
-  return text.normalize('NFKC').replace(INVISIBLE_RE, '')
+  return text.replace(ANSI_RE, '').normalize('NFKC').replace(INVISIBLE_RE, '')
 }
 
 /**
@@ -523,6 +536,9 @@ const TOKEN_RES: readonly RegExp[] = Object.freeze([
   /\bya29\.[0-9A-Za-z_-]{8,}/g,
   /(?<![\p{L}\p{N}])1\/\/0[0-9A-Za-z_-]{8,}/gu,
   /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+  // A JWT with a short, empty or missing signature: its header and payload are
+  // the readable part, so two `eyJ` segments are a token whatever follows.
+  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?/g,
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*/gi,
   // The body may not run past the next BEGIN or END line, so a string of BEGIN
   // lines with no END is one short scan each, not a scan to the end each.

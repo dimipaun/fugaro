@@ -113,3 +113,51 @@ describe('a path-shaped secret', () => {
     expect(drawn(sanitizeText('see /home/someone/src/x for it', 'sentence'))).toBe('see <path> for it')
   })
 })
+
+describe('terminal escape sequences do not hide a token', () => {
+  const ESC = String.fromCharCode(27)
+  const BEL = String.fromCharCode(7)
+  const jwt = (signature: string): string =>
+    ['ey' + 'JhbGciOiJIUzI1NiJ9', 'ey' + 'JzdWIiOiIxMjM0NTY3ODkwIn0', signature].filter((part) => part !== '').join('.')
+
+  const wrapped = (): readonly string[] => {
+    const token = fake.githubToken()
+    const key = fake.providerApiKey()
+    return [
+      `${ESC}[31m${token}${ESC}[0m`,
+      `${ESC}[1;38;5;196m${key}${ESC}[0m`,
+      `${ESC}]0;title${BEL}${token}`,
+      `${ESC}]8;;x${ESC}\\${token}${ESC}]8;;${ESC}\\`,
+      `${String.fromCharCode(0x9b)}31m${token}`,
+      // a token split by a sequence in its middle
+      `${token.slice(0, 8)}${ESC}[0m${token.slice(8)}`,
+      jwt('abcDEF123_-xyz789').replace(/^/, `${ESC}[32m`),
+    ]
+  }
+
+  it('is redacted by the sentence class, the refusal door and the recorder alike', () => {
+    for (const value of wrapped()) {
+      const sentence = `permission denied for ${value} while reading`
+      const text = drawn(sanitizeText(sentence, 'sentence'))
+      expect(text, JSON.stringify(value)).toBe(`permission denied for ${TOKEN_PLACEHOLDER} while reading`)
+      expect(drawn(sanitizeRefusal(sentence)), JSON.stringify(value)).toBe(text)
+      expect(createRedactor().redactText(sentence), JSON.stringify(value)).toBe(text)
+    }
+  })
+
+  it('leaves no fragment of a sequence in a sentence that held no token', () => {
+    const sentence = `${ESC}[31mpermission denied${ESC}[0m`
+    expect(drawn(sanitizeRefusal(sentence))).toBe('permission denied')
+    expect(drawn(sanitizeText(sentence, 'sentence'))).toBe('permission denied')
+  })
+
+  it('redacts a JWT whatever its signature, at the refusal door as in the sentence class', () => {
+    for (const signature of ['', 'sig', 'abcDE', 'abcDEF123_-xyz789']) {
+      const sentence = `rejected ${jwt(signature)} here`
+      const text = drawn(sanitizeText(sentence, 'sentence'))
+      expect(text, signature).toBe(`rejected ${TOKEN_PLACEHOLDER} here`)
+      expect(drawn(sanitizeRefusal(sentence)), signature).toBe(text)
+      expect(createRedactor().redactText(sentence), signature).toBe(text)
+    }
+  })
+})

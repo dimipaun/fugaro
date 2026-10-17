@@ -262,6 +262,19 @@ const INVISIBLE_RE =
   /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\ufff9-\ufffb\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
 
 /**
+ * ANSI_RE matches a complete terminal escape sequence: a CSI (ESC `[`, any
+ * parameter and intermediate bytes, one final byte; or the one-character C1
+ * form U+009B), or an OSC (ESC `]` or U+009D, anything up to BEL or ST). The
+ * invisible-character strip removes the ESC itself and would leave `[31m` or
+ * `]0;title` behind, joined to the next word, so a token wrapped in colour
+ * codes was never at a word boundary and no `\b`-anchored family matched it.
+ * Whole sequences go first, before any credential rule reads the text. Every
+ * alternative is linear: the bodies are negated classes with a fixed terminator.
+ */
+const ANSI_RE =
+  /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|(?:\u001b\]|\u009d)[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)/g
+
+/**
  * CONTROL_RE matches the line and paragraph separators -- the two separators a
  * screen must not draw, and the two the recorder's set deliberately keeps. They
  * are removed rather than flattened, so a sentence that used one to smuggle a
@@ -277,7 +290,7 @@ const CONTROL_RE = /[\u2028\u2029]/g
  * `prepare`, copied.
  */
 function prepare(text: string): string {
-  return text.normalize('NFKC').replace(INVISIBLE_RE, '')
+  return text.replace(ANSI_RE, '').normalize('NFKC').replace(INVISIBLE_RE, '')
 }
 
 /**
@@ -374,6 +387,17 @@ export const TOKEN_SHAPES: readonly RegExp[] = Object.freeze([
     String.raw`(?<![A-Za-z0-9_-])`,
     JWT_STYLE,
     String.raw`J[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`,
+  ]),
+  // A JWT with a short, empty or missing signature: its header and payload are
+  // the readable part, so two JWT-style segments are a token whatever follows.
+  // Without it the refusal door drew `<header>.<payload>.sig` while the
+  // sentence class (whose host rule catches it) did not.
+  shape([
+    String.raw`(?<![A-Za-z0-9_-])`,
+    JWT_STYLE,
+    String.raw`J[A-Za-z0-9_-]{8,}\.`,
+    JWT_STYLE,
+    String.raw`J[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?`,
   ]),
 ])
 
@@ -939,7 +963,7 @@ function stripInvisible(
   text: string,
 ): { readonly text: string; readonly flags: readonly SanitizeFlag[] } {
   const flags: SanitizeFlag[] = []
-  let working = text.replace(INVISIBLE_RE, '')
+  let working = text.replace(ANSI_RE, '').replace(INVISIBLE_RE, '')
   if (working !== text) flags.push('stripped-invisible')
   const before = working
   working = working.replace(CONTROL_RE, '')
