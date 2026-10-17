@@ -95,7 +95,8 @@ type Result struct {
 	// estimated, published groups or not: it is the count of runs whose
 	// CostUSD is a lower bound rather than a measurement.
 	ComputeNotEstimated int
-	// RunsWithoutFigure counts the records read that carry no figure.
+	// RunsWithoutFigure counts the records read that carry no figure, the
+	// ones that cannot be read at all among them.
 	RunsWithoutFigure int
 }
 
