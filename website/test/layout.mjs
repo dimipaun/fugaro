@@ -175,6 +175,45 @@ test('the build fails when a data file is malformed', async (t) => {
   assert.match(built.output, /min_runs/, 'the failure does not name the key that is malformed')
 })
 
+test('a trailing comment is not part of a value the reader reads', async (t) => {
+  // A YAML comment is not the value. This reader used to keep it, so `key: value # why`
+  // read as "value # why" — a fact silently wrong in the one way nothing can see, because
+  // the Go boundary test reads the same file through a real YAML decoder and would agree
+  // with the file while the built page disagreed with both. The canonical URL is where
+  // that is visible in the artifact rather than only in the parsed value.
+  const canonical = /^canonical_url:\s*(\S+)$/m.exec(repoFile('website/data/site.yaml'))[1]
+
+  const page = builtPage(
+    buildWith(t, (copy) => {
+      const file = path.join(copy.site, 'data', 'site.yaml')
+      writeFileSync(file, readFileSync(file, 'utf8').replace(/^canonical_url:.*$/m, `canonical_url: ${canonical} # the placeholder origin`))
+    }),
+  )
+
+  assert.match(
+    page,
+    new RegExp(`<link rel="canonical" href="${canonical}/probe/"`),
+    'the canonical URL did not come out of site.yaml clean: a comment written after a value is a comment, not part of it',
+  )
+  assert.ok(!page.includes('the placeholder origin'), 'the comment after the canonical URL reached the built page as part of the value')
+})
+
+test('the build refuses a value written outside the subset the reader implements', async (t) => {
+  // The reader's promise is that a data file which grows a construct it has not been taught
+  // fails the build loudly (W1.3 step 2). A flow mapping was the one that reached it as
+  // text: `min_runs: {20: yes}` read as the string "{20: yes}", a value nothing downstream
+  // can see is wrong, and site.yaml is hand-edited by six later tasks.
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'data', 'site.yaml')
+    writeFileSync(file, readFileSync(file, 'utf8').replace('min_runs: 20', 'min_runs: {20: yes}'))
+  })
+
+  assert.notEqual(built.status, 0, `the build succeeded with a flow mapping in site.yaml, and read it as a string:\n${built.output}`)
+  assert.match(built.output, /site\.yaml/, 'the failure does not name the data file the value came from')
+  assert.match(built.output, /flow mapping/, 'the failure does not say what the reader met, so a reader of the message cannot tell a typo from a construct the reader lacks')
+  assert.equal(built.page, null, 'the build wrote a page from a data file it did not understand')
+})
+
 test('the build refuses a published figure drawn from too few runs', async (t) => {
   // D97: no figure is published from fewer runs than the aggregation's minimum. The
   // command suppresses a thin group, and this is the fence behind it — a costs file that
@@ -360,4 +399,32 @@ test("the page description is README.md's own tagline line", async (t) => {
     .trim()
 
   assert.ok(page.includes(`<meta name="description" content="${tagline}"`), `the page's description is not the README's tagline ${JSON.stringify(tagline)}`)
+})
+
+test("the site's name is README.md's own title, and the built page follows it", async (t) => {
+  // The name is printed in four places — `<title>`, the OpenGraph site name, the header's
+  // wordmark and the footer's — and it is read from the README's `# ` title rather than
+  // typed into the layout, for the reason the tagline beside it is read (F48, D102): a
+  // retitled README would otherwise leave all four naming the old word.
+  const readme = repoFile('README.md').split('\n')
+  const at = readme.findIndex((line) => /^#\s+\S/.test(line.trim()))
+  assert.notEqual(at, -1, "README.md carries no '# ' title, and the site's name is that title")
+  const name = readme[at].trim().replace(/^#\s+/, '')
+
+  const page = builtPage(buildWith(t, () => {}))
+  for (const printed of [`<title>The probe page · ${name}</title>`, `<meta property="og:site_name" content="${name}"`]) {
+    assert.ok(page.includes(printed), `the built page does not print the site's name as README.md writes it (${JSON.stringify(name)}): ${JSON.stringify(printed)}`)
+  }
+
+  // And it is a read rather than a copy: retitle the README in a copy of the repository and
+  // the built page names the new title, wherever the name is printed.
+  const renamed = builtPage(
+    buildWith(t, (copy) => {
+      const file = path.join(copy.root, 'README.md')
+      writeFileSync(file, readFileSync(file, 'utf8').replace(/^#\s+.*$/m, '# Acme Renamed'))
+    }),
+  )
+  assert.ok(renamed.includes('<title>The probe page · Acme Renamed</title>'), 'the page title did not follow the README\'s new title')
+  assert.ok(renamed.includes('<meta property="og:site_name" content="Acme Renamed"'), 'the OpenGraph site name did not follow the README\'s new title')
+  assert.ok(!renamed.includes(`content="${name}"`), 'the built page still prints the old name after the README was retitled')
 })

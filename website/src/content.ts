@@ -183,6 +183,18 @@ const MAPPING_LINE = /^([^:#\s][^:#]*):(\s.*|)$/
 // A block scalar's indicator: `|` or `>` with an optional chomping sign.
 const BLOCK_SCALAR = /^[|>][-+]?$/
 
+// The start of a comment inside a plain scalar: a `#` that opens the value or follows
+// whitespace. YAML reads everything from there to the end of the line as a comment, and so
+// does this reader (see `stripComment` below) — `#` inside a word (`a#b`) is part of it.
+const PLAIN_COMMENT = /(?:^|\s)#/
+
+// The node starts this reader does not implement: a flow mapping (`{`), an anchor (`&`), an
+// alias (`*`), a tag (`!`), a directive (`%`) and the reserved `@`. Each one opens something
+// in YAML — `scalar()` refuses them rather than returning the line as a string, because a
+// value that is silently the text of a construct is a value nothing downstream can see is
+// wrong (the loud-failure rule this reader is written to).
+const UNIMPLEMENTED_NODE = /^[{}&*!%@]/
+
 function parseYAML(raw: string, file: string): Value {
   const lines = splitLines(raw)
   let i = 0
@@ -198,7 +210,37 @@ function parseYAML(raw: string, file: string): Value {
     while (i < lines.length && lines[i].blank) i++
   }
 
+  // A plain scalar ends where a comment starts: a `#` that opens the value or follows
+  // whitespace, with everything after it not part of the value. This reader used to keep
+  // the whole line, so `secondary_domain: none # here` read as "none # here" — a value
+  // wrong in the one way nothing can see, because the Go boundary test reads the same file
+  // through a real YAML decoder and would agree with the file while the site's own pages
+  // disagreed with both. site.yaml is hand-edited by six later tasks, and a commented
+  // `repository:` would have become a silently wrong URL whose host still passed the host
+  // checks. A value that is *only* a comment (`features: # the flags`) comes back empty,
+  // which is what it is in YAML: the caller then looks for the block on the lines below and
+  // refuses the key loudly when there is none, rather than reading the comment as the value.
+  //
+  // Block scalars are not affected, and that is why this rule is here rather than in the
+  // line loop above: inside a block scalar a `#` is content (install.yaml's verification
+  // commands carry `# macOS` and `# Linux`), and a value never reaches `scalar()` with one.
+  const stripComment = (text: string): string => {
+    const comment = PLAIN_COMMENT.exec(text)
+    if (comment === null) return text
+    return text.slice(0, comment.index + comment[0].length - 1).trim()
+  }
+
   const scalar = (text: string, at: Line): Scalar => {
+    // A construct outside the subset, refused by name rather than returned as text: the
+    // reader's promise is that a data file which grows something it has not been taught
+    // fails the build loudly (W1.3 step 2).
+    const unimplemented = UNIMPLEMENTED_NODE.exec(text)
+    if (unimplemented) {
+      fail(
+        `the value ${JSON.stringify(text)} starts with ${JSON.stringify(unimplemented[0])}, which opens a node this reader does not implement (a flow mapping, an anchor, an alias, a tag, a directive or a reserved character)`,
+        at,
+      )
+    }
     if (text.startsWith('[')) {
       if (!text.endsWith(']')) fail(`the flow sequence ${JSON.stringify(text)} does not close on this line`, at)
       const inner = text.slice(1, -1).trim()
@@ -261,7 +303,12 @@ function parseYAML(raw: string, file: string): Value {
 
   // The value on the right of a `key:` line: a scalar on the line itself, a block scalar,
   // or a nested block on the lines below it.
-  const readValue = (rest: string, at: Line, parentIndent: number): Value => {
+  const readValue = (rawRest: string, at: Line, parentIndent: number): Value => {
+    // Every value of a `key: value` line and of a sequence item passes through here, so
+    // this is the one place a comment has to come off — including one written after a block
+    // scalar's indicator (`key: |  # the command`) and one written inside a flow sequence
+    // (`[a, b] # the hosts`), both of which are the line's trailing comment.
+    const rest = stripComment(rawRest)
     if (rest === '') {
       skip()
       const next = lines[i]
@@ -815,30 +862,62 @@ function loadCosts(minRuns: number): CostsFacts | null {
 // ---------------------------------------------------------------------------------------
 
 /**
+ * The site's name: **README.md's own `# ` title**, the word the tagline sits under.
+ *
+ * Read rather than typed, for the reason the tagline beside it is read (F48, D102): the
+ * name is printed in every page's `<title>`, in the OpenGraph site name, in the header and
+ * in the footer, and a name written into the layout would go on naming the old word the
+ * day the README's title changes. Nothing else pins those four, so the reading is the pin
+ * — `website/test/layout.mjs` retitles the README in a copy and reads the built page back.
+ */
+export function loadSiteName(): string {
+  const file = 'README.md'
+  const lines = readBytes(
+    path.join(REPO_ROOT, file),
+    "the site's name: the README's own `# ` title, which the header, the footer and every page title render rather than restating (F48, D102)",
+  ).split('\n')
+
+  const title = lines.findIndex((line) => /^#\s+\S/.test(line.trim()))
+  if (title === -1) {
+    throw new Error(`${file}: no "# " title, and the site's name is that title rather than a word typed into the layout (F48, D102).`)
+  }
+  const name = lines[title].trim().replace(/^#\s+/, '').replace(/[*_`]/g, '').trim()
+  if (name === '') {
+    throw new Error(`${file}: its "# " title is empty, and the site's name is that title (F48, D102).`)
+  }
+  return name
+}
+
+/**
  * The tagline: **README.md's own tagline line, the line under its `# Fugaro` title**
  * (F48, D102). It is read rather than copied into a component, because a tagline typed
  * into a template is a second copy of the README's line and the one that drifts — and
  * because every other sentence the site prints has to be traceable to a document or a
  * command, starting with this one.
  *
+ * The title it reads under is the site's name as `loadSiteName` reads it, rather than the
+ * word `Fugaro` written out again here: the two are one fact about one line of one file,
+ * and a second copy of the word would be the copy that drifts (the review of W1.7 caught
+ * exactly that in the layout).
+ *
  * The line's markdown emphasis is not part of the sentence, so the `**` that makes it
  * bold in the README is stripped: what a page renders is the text a reader reads.
  */
 export function loadTagline(): string {
   const file = 'README.md'
-  const lines = readBytes(path.join(REPO_ROOT, 'README.md'), 'the tagline: the line under its `# Fugaro` title, which the site renders rather than restating (F48, D102)').split('\n')
+  const lines = readBytes(path.join(REPO_ROOT, file), 'the tagline: the line under the README\'s "# " title, which the site renders rather than restating (F48, D102)').split('\n')
 
-  const title = lines.findIndex((line) => line.trim() === '# Fugaro')
+  const title = lines.findIndex((line) => /^#\s+\S/.test(line.trim()))
   if (title === -1) {
-    throw new Error(`${file}: no "# Fugaro" title, and the site's tagline is the line under it (F48, D102, W1.3 step 1).`)
+    throw new Error(`${file}: no "# " title, and the site's tagline is the line under it (F48, D102, W1.3 step 1).`)
   }
   const line = lines.slice(title + 1).find((candidate) => candidate.trim() !== '')
   if (line === undefined) {
-    throw new Error(`${file}: the "# Fugaro" title is the last thing in the file, and the tagline is the line under it (F48, D102).`)
+    throw new Error(`${file}: the "# " title is the last thing in the file, and the tagline is the line under it (F48, D102).`)
   }
   const tagline = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
   if (tagline === '') {
-    throw new Error(`${file}: the line under the "# Fugaro" title is empty, and the site renders that line as its tagline (F48, D102).`)
+    throw new Error(`${file}: the line under the "# " title is empty, and the site renders that line as its tagline (F48, D102).`)
   }
   return tagline
 }
@@ -887,6 +966,8 @@ export function loadSitemapHref(canonicalURL: string): string | null {
 export interface Site {
   facts: SiteFacts
   install: InstallFacts
+  /** README.md's `# ` title, the site's name. */
+  siteName: string
   /** README.md's tagline line, the site's default page description. */
   tagline: string
   /** The generated documents under content/, keyed by file name. */
@@ -915,6 +996,7 @@ export function loadSite(): Site {
   loaded = {
     facts,
     install: loadInstallFacts(),
+    siteName: loadSiteName(),
     tagline: loadTagline(),
     documents: loadGeneratedDocuments(),
     costs: loadCosts(facts.minRuns),

@@ -57,10 +57,12 @@ const { title, description } = Astro.props
 const site = loadSite()
 const facts = site.facts
 
-// The site's name, as README.md's title writes it. It is the `<title>`'s prefix and the
-// footer's wordmark, and it is not the tagline: the tagline is a sentence, and this is a
-// word.
-const SITE_NAME = 'Fugaro'
+// The site's name, **read from README.md's own `# ` title** rather than typed here: it is
+// the `<title>`'s prefix, the OpenGraph site name and the header's and footer's wordmark,
+// and a word written into this file would go on naming the old one the day the README's
+// title changes — the drift the tagline beside it is read to avoid (F48, D102, W1.3 step
+// 1). It is not the tagline: the tagline is a sentence, and this is a word.
+const SITE_NAME = site.siteName
 
 const pageTitle = title === SITE_NAME ? title : `${title} · ${SITE_NAME}`
 const pageDescription = description ?? site.tagline
