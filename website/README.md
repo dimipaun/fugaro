@@ -40,8 +40,9 @@ npm run check # the site's gate: the build, then every test/*.mjs
 here fetches anything: there is no integration, no remote font, no remote image, and the
 build script sets `ASTRO_TELEMETRY_DISABLED=1` so that Astro's own anonymous usage report
 is off too. `npm run check` is the same command a developer runs and the one W2.1 stages
-the deploy workflow to run (the workflow itself is staged under `docs/pending-workflows/`
-for the owner to copy, and no Fugaro run may write it), and it is hermetic: it reads this
+the deploy workflow to run (that workflow is W2.1's: it is not written yet, it will be staged under
+`docs/pending-workflows/` for the owner to copy, and no Fugaro run may write it into
+`.github/workflows/`), and it is hermetic: it reads this
 repository, builds, and asserts over the artifact — no cloud, no credential, no deployed
 site. The live checks — the real domain, DNS, TLS and the deployed HTML — are the owner's,
 and W2.2 and W2.3 write them as **checks 69a–69c** in `docs/gcp-live-checklist.md`, whose
@@ -157,5 +158,6 @@ installs from the committed lockfile, and the last two are build output.
 The deploy comes later and it is **not a Fugaro run's to write**: W2.1 stages a workflow
 under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to deploy
 to the Firebase project created for the website only (D91, D109) — a run may not change
-`.github/workflows/`. Nothing under `docs/pending-workflows/` or `firebase.json` exists
-yet: it is W2.1's, and this document describes it in advance rather than claiming it.
+`.github/workflows/`. `docs/pending-workflows/` holds other pending workflows today (`images.yml`, `ci.yml`),
+but no deploy workflow and no `firebase.json` exists yet: they are W2.1's, and this document describes them in advance
+rather than claiming them.

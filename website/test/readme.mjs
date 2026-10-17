@@ -124,9 +124,14 @@ function resolveSource(token) {
 
   if (token.startsWith('fugaro ')) {
     const reference = readFileSync(path.join(CONTENT_DIR, 'cli-reference.md'), 'utf8')
-    const command = token.split(/\s+/).slice(1).filter((word) => !word.startsWith('-') && !word.startsWith('<')).join(' ')
-    if (reference.includes(command)) return null
-    return `the generated CLI reference documents no \`${command}\``
+    // Only <placeholder> words are dropped: a literal -flag must itself appear in the
+    // reference, so an invented flag does not resolve.
+    const words = token.split(/\s+/).slice(1).filter((word) => !word.startsWith('<'))
+    const command = words.filter((word) => !word.startsWith('-')).join(' ')
+    if (!reference.includes(command)) return `the generated CLI reference documents no \`${command}\``
+    const missing = words.filter((word) => word.startsWith('-') && !reference.includes(word))
+    if (missing.length === 0) return null
+    return `the generated CLI reference documents no ${missing.map((f) => `\`${f}\``).join(', ')}`
   }
 
   return `it is not a file, a Go package and symbol, or a command`
@@ -481,7 +486,7 @@ test('.gitignore keeps the dependency tree and the build output out of the tree'
   assert.ok(existsSync(ignore), 'website/.gitignore is missing: a committed node_modules or dist/ is a build output in the repository')
   const lines = readFileSync(ignore, 'utf8').split('\n').map((l) => l.trim())
 
-  for (const entry of ['node_modules/', 'dist/']) {
+  for (const entry of ['node_modules/', 'dist/', '.astro/']) {
     assert.ok(lines.includes(entry), `website/.gitignore does not ignore ${entry}`)
   }
   // The lockfile is the opposite of an ignored file and is deliberately not matched
@@ -490,4 +495,15 @@ test('.gitignore keeps the dependency tree and the build output out of the tree'
     !lines.some((l) => l === 'package-lock.json' || l === '*.json'),
     'website/.gitignore ignores the lockfile: the pinned dependency tree is committed, so `npm ci` installs what the build was checked with',
   )
+})
+
+test('the README claims about docs/pending-workflows/ and firebase.json are literally true', () => {
+  const text = readme()
+  assert.ok(!/Nothing under `docs\/pending-workflows\/`/.test(text), 'the README says nothing is staged under docs/pending-workflows/, but other pending workflows are committed there')
+  const staged = path.join(REPO_ROOT, 'docs', 'pending-workflows')
+  assert.ok(existsSync(path.join(staged, 'ci.yml')), 'the README says other pending workflows are staged under docs/pending-workflows/, and ci.yml is not there')
+  // W2.1's, and the README says so: if one lands, the README must be rewritten.
+  assert.ok(!existsSync(path.join(REPO_ROOT, 'firebase.json')), 'firebase.json exists: the README says it does not yet, so update the README')
+  const deploy = existsSync(staged) ? readdirSync(staged).filter((n) => /deploy/i.test(n)) : []
+  assert.deepEqual(deploy, [], 'a deploy workflow is staged: the README says it is W2.1\'s and not yet there')
 })
