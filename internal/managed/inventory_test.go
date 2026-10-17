@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // fakeAssets is the whole-project read as a test sees it: what it answers, and
@@ -251,21 +253,92 @@ func TestInventoryCloudAssetsListsTheProject(t *testing.T) {
 	}
 }
 
-// The two halves this task cannot build in code are facts about the embedded
-// module and the role's name, and both are asserted rather than assumed
+// A SERVICE_DISABLED for a service that is not the one this read goes through
+// is not this API being disabled: the answer names the other service, and
+// sending the operator to fugaro init for it would be a wrong sentence about
+// their project. It is the read failing, with the answer's own words in the
+// warning — the same reading internal/infra's serviceDisabled makes of the
+// detail's service.
+func TestInventoryOtherServiceDisabledIsNotThisAPI(t *testing.T) {
+	const other = "logging.googleapis.com"
+	err := errorInfo(403, "SERVICE_DISABLED", other, "Logging API has not been used in project "+gcpProject+" before or it is disabled")
+	d := inventory(&fakeAssets{err: err}).Check(context.Background())
+
+	if !d.Fallback {
+		t.Fatalf("a read that failed did not fall back: %+v", d)
+	}
+	if d.Cause != CauseUnreadable {
+		t.Errorf("Cause = %q, want %q (%s)", d.Cause, CauseUnreadable, d.Why)
+	}
+	if strings.Contains(d.Why, string(CauseAPIDisabled)) {
+		t.Errorf("the warning says the Cloud Asset API is disabled: %s", d.Why)
+	}
+	if !strings.Contains(d.Why, other) {
+		t.Errorf("the warning does not carry the answer's own words, which name %s: %s", other, d.Why)
+	}
+}
+
+// The two halves of this task that are facts about the installation's own
+// module rather than about this package: the API the read goes through is
+// enabled, and the identity that makes the read holds the read role. Both are
+// read out of the embedded module the installation applies, never out of a
+// literal here, so a module that stops granting either fails this test
 // (Global Constraint 12: no live cloud in a test).
-func TestInventoryCloudAssetAPIAndRoleAreTheModules(t *testing.T) {
-	b, err := fs.ReadFile(terraform.FS, "gcp/modules/installation/apis.tf")
+func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
+	apis, err := fs.ReadFile(terraform.FS, "gcp/modules/installation/apis.tf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"`+ServiceCloudAsset+`"`) {
-		t.Errorf("the installation module does not enable %s: %s", ServiceCloudAsset, b)
+	if !strings.Contains(string(apis), `"`+ServiceCloudAsset+`"`) {
+		t.Errorf("the installation module does not enable %s: %s", ServiceCloudAsset, apis)
 	}
-	if RoleCloudAssetViewer != "roles/cloudasset.viewer" {
-		t.Errorf("RoleCloudAssetViewer = %q, want the narrowest read role that lists a project's assets", RoleCloudAssetViewer)
+
+	iam, err := fs.ReadFile(terraform.FS, "gcp/modules/installation/iam.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := grantBlock(t, string(iam), RoleCloudAssetViewer)
+	for _, want := range []string{"toset(var.operators)", "each.value"} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("the installation's grant of %s does not name %s:\n%s", RoleCloudAssetViewer, want, grant)
+		}
+	}
+
+	// And the gate admits the grant the module makes, which is the coupling
+	// that makes the grant real rather than decorative: internal/infra/tf's
+	// grantRules is an allowlist, so a module grant the table does not name
+	// makes fugaro init refuse the installation's own plan — and the identity
+	// the read needs would then never exist.
+	op := "user:operator@example.com"
+	plan := &tf.Plan{ResourceChanges: []tf.ResourceChange{{
+		Address: `module.installation.google_project_iam_member.operator_cloudasset_viewer["` + op + `"]`,
+		Type:    "google_project_iam_member",
+		Change: tf.Change{Actions: []string{"create"},
+			After: map[string]any{"member": op, "role": RoleCloudAssetViewer, "project": gcpProject}},
+	}}}
+	cover := tf.Cover{Projects: []string{gcpProject}, Listed: []string{op}}
+	if why := cover.NotCovered(plan, nil); len(why) != 0 {
+		t.Errorf("the installation's own gate refuses the grant its module makes: %q", why)
 	}
 }
+
+// grantBlock is the body of the module's *_iam_member resource that grants
+// role, read the way internal/infra/tf's own module walk reads the modules:
+// the blocks are the fixture, and a module that grants the role nowhere fails
+// the test rather than passing it.
+func grantBlock(t *testing.T, module, role string) string {
+	t.Helper()
+	for _, m := range iamMemberRE.FindAllStringSubmatch("\n"+module, -1) {
+		if strings.Contains(m[2], `"`+role+`"`) {
+			return m[2]
+		}
+	}
+	t.Fatalf("no *_iam_member resource in the installation module grants %s", role)
+	return ""
+}
+
+// iamMemberRE is one *_iam_member resource block of a module.
+var iamMemberRE = regexp.MustCompile(`(?s)\nresource "([a-z0-9_]+_iam_member)" "[a-z0-9_]+" \{(.*?)\n\}`)
 
 // errorInfo is a googleapi error carrying one ErrorInfo detail, as the client
 // parses Google's answer to a call to an API that is not enabled (the shape

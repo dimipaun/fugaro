@@ -45,15 +45,18 @@ const ServiceCloudAsset = "cloudasset.googleapis.com"
 // RoleCloudAssetViewer is the read role the whole-project read needs: the
 // narrowest role that lists a project's assets, and a read role, so the
 // identity that runs the inventory gains no write from holding it. It is named
-// once, here, so the grant and the owner-run check that exercises it (Check
-// 67a) refer to one string.
+// once, here, so the grant, the gate that admits it and the owner-run check
+// that exercises it (Check 67a) all refer to one string.
 //
-// The grant itself is not this task's to make, and that is not an oversight:
-// an installation-module grant of a role the cover's own grant table does not
-// name makes fugaro init refuse the installation's plan (internal/infra/tf's
-// grantRules is an allowlist, and TestGrantRulesAreTheModules walks the
-// modules), so a grant and its table entry land together — which is the file
-// set of the task that binds the account that applies, not of this one.
+// The installation module grants it to the operators (iam.tf's
+// operator_cloudasset_viewer): the operator running a managed apply is the
+// identity that makes the read. The module grant and this role's entry in
+// internal/infra/tf's grantRules landed together, because that table is an
+// allowlist — an installation grant of a role the table does not name makes
+// fugaro init refuse the installation's own plan. The apply's own credential
+// becomes the impersonated deployer account (D75, Task 1.5), and the grant
+// that account needs of this role is that task's to make beside the roles the
+// account is created with.
 const RoleCloudAssetViewer = "roles/cloudasset.viewer"
 
 // inventoryPageSize is how many assets the read asks for per page. The read
@@ -274,9 +277,22 @@ func (in Inventory) what() string {
 // three different things for an operator to do: enable the API (fugaro init
 // does), grant RoleCloudAssetViewer, or wait out a quota. It reads the
 // structured answer, not the message, in the discipline internal/infra's own
-// serviceDisabled keeps: a 403 whose details carry an ErrorInfo with reason
-// SERVICE_DISABLED for this API is a disabled API, any other 403 is a missing
-// permission, and 429 is quota.
+// serviceDisabled keeps (apis.go): a 403 whose details carry an ErrorInfo with
+// reason SERVICE_DISABLED *for this API* is a disabled API, any other 403 is a
+// missing permission, and 429 is quota.
+//
+// The API the detail names has to be the one the read goes through, which is
+// the part of that discipline a message-level reading gets wrong: a project can
+// have a dozen APIs disabled, and answering "the Cloud Asset API is disabled in
+// the project" for a SERVICE_DISABLED about another service is a wrong sentence
+// about the operator's project — one that sends them to fugaro init for
+// something that is not the read's problem. So a SERVICE_DISABLED naming
+// another service is neither this API's answer nor a missing role, and it is
+// reported as what it is: the read failed, with the answer's own words in the
+// warning. internal/infra's check also matches the consumer project of the
+// detail (apis.go's target.consumes); this read cannot, because a detail's
+// consumer is the project's *number* and the read knows only its ID — the
+// service is the part of the detail it can hold the answer to.
 func classify(err error) Cause {
 	var ae *googleapi.Error
 	if !errors.As(err, &ae) {
@@ -288,6 +304,7 @@ func classify(err error) Cause {
 	case ae.Code != http.StatusForbidden:
 		return CauseUnreadable
 	}
+	otherDisabled := false
 	for _, d := range ae.Details {
 		m, ok := d.(map[string]any)
 		if !ok || m["@type"] != "type.googleapis.com/google.rpc.ErrorInfo" || m["domain"] != "googleapis.com" {
@@ -295,12 +312,27 @@ func classify(err error) Cause {
 		}
 		switch m["reason"] {
 		case "SERVICE_DISABLED":
-			return CauseAPIDisabled
+			if detailService(m) == ServiceCloudAsset {
+				return CauseAPIDisabled
+			}
+			otherDisabled = true
 		case "RESOURCE_EXHAUSTED":
 			return CauseQuota
 		}
 	}
+	if otherDisabled {
+		return CauseUnreadable
+	}
 	return CauseRoleMissing
+}
+
+// detailService is the service an ErrorInfo detail is about, from its
+// metadata, in the shape Google's answers carry it (internal/infra's
+// serviceDisabled reads the same field).
+func detailService(m map[string]any) string {
+	md, _ := m["metadata"].(map[string]any)
+	s, _ := md["service"].(string)
+	return s
 }
 
 // CloudAssets is the whole-project read through the Cloud Asset API. It only
