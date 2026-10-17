@@ -453,6 +453,13 @@ func newProjectJobAccountFixture(t *testing.T) *projectJobFixture {
 // Mutation (run, restore): drop checkProjectJobAccount and read the profile's
 // account unconditionally — the first launch below succeeds, lands on the
 // acme-personal job, and its task.json says the default account.
+//
+// The third launch — the profile's own account — no longer runs: since task
+// 3.4a (the owner's ruling of 2026-10-17) an OAuth account on a shared project
+// job is refused up front, and this fixture's profile mounts one, so the job
+// it names is one `fugaro init` refuses to deploy. Before that refusal this
+// launch was accepted, took its claim, minted its token and then failed in
+// Cloud Run; the last third of the test is that refusal now.
 func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 	f := newProjectJobAccountFixture(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
@@ -478,23 +485,21 @@ func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 		t.Errorf("%d executions, want none", n)
 	}
 
-	// The profile's own account is the one it runs as, and the run records it.
+	// The profile's own account is the account its job runs as — and it is a
+	// Claude OAuth token, which no shared job may mount in this release: the
+	// job this launch computes was refused by `fugaro init` and so was never
+	// deployed, which is why the launch stops here, before the claim, the
+	// budget token and the Cloud Run call (task 3.4a).
 	const run = "20261016-140000-cccc"
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-personal", "Add a feature"); err != nil {
-		t.Fatalf("a launch selecting the profile's account: %v", err)
+	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-personal", "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") || !strings.Contains(err.Error(), "acme-personal") {
+		t.Fatalf("a launch selecting the profile's own account: %v", err)
 	}
-	calls := f.run.RunRequests()
-	if len(calls) != 1 || calls[0].Job != f.job {
-		t.Fatalf("the accepted launch made %d jobs.run calls (%+v), want one on %s", len(calls), calls, f.job)
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Fatalf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
 	}
-	b, err := blob.OpenBucket(context.Background(), f.bucket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
-	spec, err := runstore.Open(b, appSlug, run).ReadTask(context.Background())
-	if err != nil || spec.OAuthToken != "acme-personal" {
-		t.Errorf("the stored task = %+v, %v; want the profile's account", spec, err)
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Errorf("the refused launch minted a budget token: %s", tok)
 	}
 }
 
