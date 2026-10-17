@@ -2,3 +2,6 @@ node_modules/
 dist/
 test-results/
 playwright-report/
+# The recorder's build output (`tsconfig.record-fixture.json`, Task 1.4): the
+# compiled tool and the src/ it imports, produced by `npm run record-fixture`.
+.record-fixture/

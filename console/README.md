@@ -62,11 +62,16 @@ window (plan Task 1.1, below): `src/main/window.ts`, `src/main/protocol.ts`,
 two test files that try to leave it, and a third that holds the e2e harness's
 own premise (`test/unit/playwright.test.ts`); the IPC allow-list (plan Task 1.2,
 which this file's history carries without a section of its own):
-`src/main/ipc.ts`, `src/preload/index.ts`, and `test/unit/ipc.test.ts`; and the
-one child process (plan Task 1.3, the last section): `src/main/spawn.ts`,
+`src/main/ipc.ts`, `src/preload/index.ts`, and `test/unit/ipc.test.ts`; the
+one child process (plan Task 1.3): `src/main/spawn.ts`,
 `src/main/spawnlog.ts`, `src/source/source.ts`, `src/source/cli.ts`, and the
 three suites that hold them (`test/unit/{spawn,spawnlog,configread}.test.ts`)
-with the fake CLI they spawn (`test/unit/stub.ts`).
+with the fake CLI they spawn (`test/unit/stub.ts`); and the recorded fixtures
+(plan Task 1.4, the last section): `src/source/redact.ts`,
+`src/source/fixture.ts`, the recorder (`tools/record-fixture/index.ts`),
+the one committed fixture (`test/fixtures/synthetic.ndjson`, **synthetic**),
+the suite that invents it (`test/unit/synthetic.ts`), and the three suites that
+hold the three (`test/unit/{redact,fixture,recorder}.test.ts`).
 
 ## The toolchain, pinned (Task 1.0)
 
@@ -120,6 +125,7 @@ npm run build                                  # tsc -p tsconfig.build.json, src
 npm run test:e2e                               # playwright, test/e2e/*.spec.ts; builds first
 npm run test:e2e -- security                   # just the window's spec
 npm run typecheck                              # tsc --noEmit over src/, test/, tools/ and the root config files
+npm run record-fixture -- --help               # the recorder; OWNER-RUN, see "Recorded, redacted fixtures"
 ```
 
 `npm ci` — never `npm install` — is the install step in this file, in the plan's
@@ -623,7 +629,462 @@ run against the committed tree, and each made a named test red:
 - **Persistence.** The installation store is in memory for one run; see the note
   above on rule 10.
 - **The fixtures.** `FugaroSource`'s second implementation is Task 1.4's
-  recorder and replay, and it slots in behind the same interface.
+  recorder and replay, and it slots in behind the same interface — see the
+  section below. What landed there is the tool and one synthetic fixture; the
+  design's eight recordings are still the owner's to make.
 - **`version --json` and a schema version.** The CLI has neither (contract §4.3
   gaps 1 and 3), so the handshake is the one human line and the console refuses a
   binary whose line it cannot read rather than guessing.
+
+## Recorded, redacted fixtures, and the recorder (Task 1.4)
+
+**The tool is agent-written; the recordings are OWNER-RUN.** This is the
+distinction the whole section turns on, and it is a boundary rather than a
+division of labour: an agent may not run `fugaro watch` against a real
+installation, may not read `~/.config/fugaro`, may not handle a credential and
+may not touch `belong` (Global Constraints 2 and 6), so **no agent ran the
+recorder in this task, and no file under `test/fixtures/` was recorded.** What
+is agent-written is the recorder, the redactor, the fixture format, its loader
+and the replaying source; what is the owner's is the eight recordings design
+§9.1 asks for.
+
+Three files make up the data plane's second implementation, and they have three
+different jobs:
+
+| File | What it is |
+|---|---|
+| `src/source/redact.ts` | the redactor: what a recording may carry into this repository |
+| `src/source/fixture.ts` | the format, the loader that verifies it, and `FixtureSource`, the replay |
+| `tools/record-fixture/index.ts` | the recorder: one `fugaro watch --json` → one fixture file |
+
+### The owner's one command
+
+```
+npm run record-fixture -- --out test/fixtures/<name>.ndjson --project <project> --gcp-project <gcp-project-id>
+```
+
+Run **by the owner**, from the sandbox checkout, with the **sandbox**
+installation selected — never `belong`. The eight recordings are the owner's to
+produce, and the plan attaches them to this task's pull request by hand or in a
+follow-up commit. `--project` is **required and never defaulted**: falling back
+to whatever the ambient selection happens to be is precisely how a recording of
+the wrong project gets made (design §3.4 rule 3), so its absence is a refusal
+that names the flag. `--gcp-project` is required too: the recorder reads no
+config, so it is told the GCP project ID, and the ID, its runs bucket
+(`fugaro-runs-<id>`), an optional `--project-number` and any `--literal`
+(repeatable) are handed to the redactor as literals. The rest of the flags,
+and the refusals, are in `--help` / `USAGE`.
+
+The script is `tsc -p tsconfig.record-fixture.json && node
+.record-fixture/tools/record-fixture/index.js`: the tool is TypeScript like
+everything else here, and `.record-fixture/` is a build output directory that
+`.gitignore` names. The recorder spawns through the console's **own**
+`planFor('live.watch', …)`, so the argv, the child environment
+(`CHILD_ENV_KEYS`), the working directory and `shell: false` are the console's
+rules and not a second copy of them — a recording cannot be of a command the
+console would refuse to run. It records for a bounded time (`--duration`, 120 s
+by default), then stops the child the way the console does, `SIGTERM` and then
+`SIGKILL` after `SHUTDOWN_GRACE_MS`; a torn last line is dropped rather than
+recorded as garbage.
+
+### The eight recordings, and why seven of them are missing
+
+Design §9.1 asks for eight cases, one recording each, and `FIXTURE_CASES` in
+`src/source/fixture.ts` is that list in that order:
+
+`normal`, `silent-then-lost`, `kill-mid-feed`, `repo-at-cap`, `oauth-notional`,
+`absent-field`, `gap`, `hostile-title`.
+
+**None of the eight exists on this tree, and the reason is not effort.** Three
+of them cannot be produced without a live sandbox doing real work: a run that
+stops heartbeating and then goes `lost` needs a real stalled run, a kill switch
+flipping mid-feed needs a real `budget kill` against the sandbox, and a
+repository at its cap needs real spend to accumulate. The other five could be
+recorded from a sandbox checkout, and they are missing for the same reason:
+**the recorder is the owner's to run, full stop.** They land here as
+`test/fixtures/<case>.ndjson`, one file per name in `FIXTURE_CASES`, which is
+the only naming `fixture.test.ts` accepts beside `synthetic.ndjson` — a stray
+file fails a test by name, while the owner's recordings do not have to be
+preceded by an edit to the suite. Until they land,
+`test/fixtures/` holds one file, and it is labelled for what it is:
+
+```
+{"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/2","case":"synthetic",
+ "project":"<project>","synthetic":true,"records":6,"sha256":"2c8a636f…",
+ "note":"synthetic: invented documents put through the same redaction path as a recording; never recorded from any installation or cloud"}}
+```
+
+`synthetic` is deliberately **not** a member of `FIXTURE_CASES`: the eight are
+the recordings, and a reader who saw nine names would have to work out which one
+was real. The invented documents live in `test/unit/synthetic.ts`, not only in
+the committed file, and `fixture.test.ts` regenerates the fixture from them and
+asserts the committed bytes are exactly what comes out — **byte-identity, not a
+diff** — so a hand-edited fixture fails a named test even if its digest were
+recomputed by hand, and a reader can see which documents the file was made from
+without a decoder in their head. Those documents cover the axes a replay has to
+reproduce (a normal document, the next tick with the numbers moved, the degraded
+mode's sentence as a *notice*, a silent run, a 160-second gap with the run
+`lost`, and a run with fields the CLI omits), which is why one synthetic fixture
+is enough to make the harness exercisable while the real eight are missing —
+**and it is not a substitute for them.** No screen has ever claimed to be tested
+against real CLI output, and this section does not claim it either.
+
+### The redactor: deny-by-default, and fail-closed twice
+
+A recording is made on a real installation against a real project from a real
+checkout, so every document in it can carry the operator's world — their project
+name, their machine, their home directory, their repository names, their
+colleagues' addresses and branch names, and whatever a job wrote into a title.
+None of that belongs in a commit. `src/source/redact.ts` is what stands between
+a recording and `test/fixtures/`, and it is written to be told nothing:
+
+- **Every string is hostile until a rule has passed over it.** Two kinds of rule.
+  *Field classes*, where the key names what the value is and **the whole value
+  is replaced**: a repository (`repo`), a slug, a project (`project`,
+  `gcp_project`, `project_id`, `project_number`), a bucket, a path (`path`,
+  `dir`, `cwd`, `checkout`, `binary`, `config`, …), a host (`host`,
+  `hostname`, `ip`, …), a URL (`url`, `pr_url`, `log_url`, any `*_url`), a
+  credential (`token`, `secret`, `password`, `private_key_id`, any `*_token`,
+  `*_secret`, `*_password`, `*_api_key`, `*_session_id`, …; keys are read
+  through camelCase and hyphens, so `githubToken`, `X-Api-Key` and `sessionId`
+  are credentials too), a person or account (`requested_by`,
+  `author`, `user`, `actor`, `owner`, `account`, `oauth_account`, any `*_by`,
+  `*_email`; `by` everywhere except a report's break-down dimension), a branch
+  (`branch`, `base_branch`, `ref`, any `*_branch`), an opaque identifier
+  (`execution`), and a digest (`sha256`, `pushed_head`, …, kept only when it
+  is hex). A reserved key's **whole subtree** is its class (`{"branch":
+  {"name": …}}` is a branch all the way down), a **number** under a reserved
+  key becomes its marker (`project_number: 123456789012` is `<project>`), and a
+  number that is one of the literals becomes `[redacted]`. *Pattern classes*
+  apply to **every** string whatever its key is, and they read its **prepared
+  form**: NFKC first, then every default-ignorable, bidi and control character
+  stripped — so a fullwidth `＠` *is* an `@` before the address rule looks
+  (`ana.smith＠acme.com` is `redacted@example.invalid`, local part and all), and
+  a zero-width space, a soft hyphen or a bidi override cannot split an address
+  or a literal. A percent-encoded run is decoded (up to three rounds, so
+  `%2540` is an `@`) and anything a rule finds in it replaces the run:
+  `u=ana.smith%40acme.com` is `u=redacted@example.invalid`. The classes: a URL; a token (GitHub, OpenAI/Anthropic, Slack,
+  GitLab, npm, AWS, Google API key, access and refresh token, JWT, bearer
+  header, PEM block, a percent- or base64-wrapped one decoded first, a
+  `name=value` assignment whose name says secret, and any long high-entropy
+  run, so a token split across two fields loses both halves, and one split
+  across adjacent strings of an array loses every piece); an address in
+  any script, IDN domains included; a branch by its prefix or `refs/`; an
+  absolute path, consumed whole with its spaces and non-ASCII characters; a
+  repository path; a GCP project or bucket named in a sentence and the runs
+  bucket by name; an IPv4 or IPv6 address; a hostname; and the installation's
+  own literals, matched case-insensitively, with Cyrillic and Greek
+  look-alikes folded (`acme-dеvel` with a Cyrillic `е` is the literal), and
+  with a host literal's stem (`Zoras-Laptop-Pro.local` is also
+  `Zoras-Laptop-Pro`). **A person is identity wherever the document spells
+  them**: every person-class value is collected before anything is redacted,
+  and the same name anywhere else in the document — matched on whole words,
+  in any case, in NFKC, look-alikes folded, with any separator between its
+  words and last word first (`Ana  Smith`, `Ana-Smith`, `Smith, Ana`) — gets
+  the same pseudonym its field got. The CLI titles a queued run with no
+  workflow by its requester (`internal/watch/queued.go`), and `requested_by` is
+  the config's free-form `user:`, so without this a queued run's title carried
+  the name its `requested_by` had lost. **People and literals are replaced
+  after every pattern rule**, never before: a requester called `ya29`,
+  `password`, `local` or `42` would otherwise switch off the rule for a token,
+  an assignment, a host or an IP address. The names are a hash table of word
+  sequences, one scan of each string's words whatever the number of people, and
+  a document naming more than 4096 distinct persons (or a person in more than
+  16 words) is refused. A requester that is a contract keyword (`queued`,
+  `run`, `api`, ...) or the `-` placeholder is not a name, and the contract
+  fields (`run`, `id`, `stage`, `status`, `auth`, `health`, `deadline`,
+  `verify`, `outcome`, `mode`, `state`) are never rewritten by the person pass.
+  Every redacted document must be a **fixed point**: redacting it again must
+  change nothing, or the recording is refused. A document
+  with a key nobody anticipated still cannot carry an address out of the room, and a test per class holds each one — a run title, a
+  requester address, a repository name in the field *and* in a sentence, a
+  branch name, a POSIX and a Windows path (including the `/usr`, `/etc`,
+  `/System` and firmlink forms a prefix whitelist would have missed), a token by
+  shape and by key, a URL with userinfo, the installation's own literals, and an
+  address under a key nobody anticipated.
+- **A key is a string too, and it is the one string a rule cannot replace.**
+  Renaming a key would change a document's shape — `repo`, `title`, `day` and
+  `burn` are names the console reads — so a key that carries identity is a
+  **refusal** instead: `{"ana@example.com": …}`, `{"acme/secret-repo": …}`,
+  `{"/Users/ana/src/fugaro": 1}` and a key naming the installation's own project
+  all end a recording rather than travelling inside one that redacts to itself.
+  The audit walks keys with the same rules as values, and reads a key's *parent*
+  through an array index, so `{"kill":[{"by":"Ana Smith"}]}` is a person there
+  as it is in the object form. A `__proto__` key is refused rather than
+  silently dropped by the copy. **A refusal names no identity**: it names the
+  class and the path, prints a value as its length, and prints a key that is
+  not plain snake_case (or that itself carries a class) as its position
+  (`<key 3>`).
+- **Every rule runs in time linear in its input, and the input is capped.** A
+  pattern that can fail after scanning a run starts only at the start of that
+  run; the percent-encoded rule is a single character-class scan and a
+  hand-written decoder. At 96b81997 three rules were quadratic — 100 KB of
+  `a` took half a minute, and the recorder's 4 MiB line bound made that about
+  twelve hours inside the stdout handler, where the `--duration` timer cannot
+  fire. Now a megabyte of every shape that was quadratic takes well under a
+  second, and `redact-final.test.ts` holds each shape to a 4x-input / under-10x
+  time ratio. On top of that, a string or key longer than
+  `MAX_REDACTABLE_STRING_LENGTH` (64 KiB) and a feed line longer than
+  `MAX_REDACTABLE_LINE_LENGTH` (1 MiB) are **refused before any rule runs**,
+  never truncated; the loader holds the same string cap and a record line cap
+  of twice the line cap. A document nested deeper than 256 levels, a string
+  whose NFKC form is more than twice its length, and a document whose strings
+  together grow by more than 64 KiB under NFKC are refused too (a `RedactionRefusal`,
+  or a `FixtureRefusal` on load), never a raw `RangeError`.
+- **Redaction is a marker, not a deletion, and the markers are a closed set**
+  (`<path>`, `<project>`, `<bucket>`, `<host>`, `<branch>`, `[redacted-token]`,
+  `[redacted-url]`, `redacted@example.invalid`, `[redacted]`). A marked value is
+  unambiguous on sight, so nothing in a fixture can be mistaken for real data,
+  and a value that is *already* marked is left alone — which is what makes the
+  whole function **idempotent**, asserted as `redact(redact(x)) == redact(x)`.
+  Three classes keep a per-value pseudonym instead of a fixed marker — a
+  repository (`r-1a2b3c4d/r-5e6f7a8b`), a slug (`slug-1a2b3c4d`) and a person
+  (`person-1a2b3c4d`) — because a fixture with several repositories is only
+  worth having if the rows stay distinguishable. **A pseudonym is an
+  HMAC-SHA-256 under a per-recording random key**, drawn when the recorder
+  builds its redactor, held in a closure and never written anywhere: the same
+  repository is the same pseudonym within one recording and a different one in
+  the next, and the loader never needs the key. (An earlier version used
+  SHA-256 with a public salt cut to 32 bits; for a guessable name — an
+  organisation, a product — that is a lookup table away from the name, so it
+  was not one-way in any sense that mattered.) The synthetic fixture uses a
+  fixed, public, synthetic-only key so its bytes are reproducible; its names
+  are invented.
+- **It fails closed, twice.** A line that is not a JSON object is refused rather
+  than passed through, and every document is **audited** after redaction: if any
+  class is still present after the rules have run — any pattern class above, a
+  literal, or a reserved key whose value is not its class's marker — the call
+  throws. A bug in a rule is therefore a failed
+  recording, not a leaked fixture. The refusal names the class it refused on, so
+  a failed recording can be read rather than guessed at.
+- **It redacts identity, not hostility, and it does not invent data.** A
+  `<script>` in a title stays a `<script>`: the design wants a hostile-title
+  *recording*, and making text safe to *render* is the display layer's job (Task
+  2.0's `src/shared/sanitize.ts`), not the recorder's. Numbers, booleans, `null`
+  and an **empty string** pass through untouched — `pr_url: ""` is a run with no
+  pull request, not a URL to redact — because a fixture whose absent fields had
+  been turned into markers would be a fixture that lies about absence.
+
+**And the same audit runs on the way back in.** `loadFixture` audits every
+document and every notice it loads, so a fixture edited by hand after it was
+written is refused too, with `FixtureRefusal` naming the class. The loader is
+told no literals, but every other class — addresses, hosts, IPs, GCP names,
+branch and person fields, tokens, paths — needs no list, and is checked.
+
+### The format, and what the loader refuses
+
+A fixture is NDJSON: one header line and one line per record. The header is the
+file's paperwork — the format version, **the redactor that made it**
+(`redactor: "fugaro-console-redact/2"`), whether it is synthetic, which case it
+is, the project *as redacted*, how many records follow, and **a SHA-256 of the
+body**. The records are what the console replays: an arrival stamp and either a
+document or a notice, which is exactly the pair `decodeFeedLine` produces from a
+child's stdout.
+
+`loadFixture` verifies **before** it returns anything, and refuses by name at
+each step: the header parses; the format version is one this build knows; the
+redaction marker names a redactor this build knows; the body's digest matches
+the header's; **the header itself is redaction-clean**; the record count matches
+the header's; every record is a well-formed envelope with a non-decreasing
+timestamp; and every document and notice passes the redaction audit. The
+header's own audit is not decoration either: **the digest covers the body, not
+the header**, so a hand-edited `"project"` — a value `FixtureSource` hands a
+screen as the installation's name — would otherwise pass every check above it.
+**The digest is an unkeyed SHA-256 and proves nothing about who wrote the
+file**: anyone who edits a fixture can recompute it. It catches an accidental
+truncation or a partial edit, nothing more. What stands between a hand-edited
+fixture and a replay is the redaction audit, and, for the synthetic fixture
+only, the byte-identity test against `test/unit/synthetic.ts`. The redactor
+check is a version check: a fixture stamped by an older or unknown redactor is
+refused, because its contents were judged by rules that are not the ones in
+front of it.
+
+`FixtureSource` then implements the whole `FugaroSource` interface over one
+fixture, so every screen and every later test can be driven with no child
+process, no network and no installation. **The live feed replays the recording's
+own clock**: ninety seconds between two records is ninety seconds in the stream,
+the documents go through the same `FeedTracker` a real child's frames go
+through, and the notices arrive on the same stream in the same place. A fixture
+that replayed its records back-to-back would answer the wrong question — the
+eight cases are *about* time, and "a gap in the recording is a gap in the
+replayed stream" is what makes Task 3.1's `stale` tests mean anything.
+
+### The recorder's refusals are the point
+
+Everything the recorder does before it spawns is a refusal rather than a
+guess, and this is what makes it a tool an agent cannot be talked into
+misusing. `parseRecorderArgs` refuses, by name: a missing `--project` or
+`--gcp-project`; the project `belong`, however it is spaced or spelled (values
+are NFKC-normalised, stripped of whitespace and control characters, folded
+for Cyrillic and Greek look-alikes, lower-cased, and stripped of a trailing dot
+per segment before the check, so `bеlong` with a Cyrillic `е` and `belong.` are
+refused too); **any `--out` outside this repository's
+`console/test/fixtures/`** (any directory merely *named* `fixtures` was
+accepted once) or not ending `.ndjson`; an existing fixture without `--force`; an unknown flag; a
+`--duration` that is not a positive number; and a `--case` outside
+`FIXTURE_CASES` — a `--case wibble` would write `test/fixtures/wibble.ndjson`, a
+file `fixture.test.ts` then refuses, so the refusal would land on whoever
+replays the recording rather than on the invocation that made it. `OUT_OF_BOUNDS` also refuses a path
+carrying the fragment `.config/fugaro`, normalised for case and for Windows
+separators, so an invocation pointed at the operator's config stops before it
+spawns anything. And a recording that read **no document at all** is a refusal
+rather than an empty fixture: an empty file would look like a quiet installation
+rather than a failed run.
+
+The recorder never prints the child's documents, and it never echoes its
+stderr either — the operator's terminal is theirs, but a scrollback is a leak
+this tool will not create. A stdout line longer than
+`MAX_REDACTABLE_LINE_LENGTH` (1 MiB, the redactor's own bound) ends the
+recording before it reaches the redactor, so the buffer cannot grow without
+limit and no single line can hold the event loop. The child's stderr is **drained and discarded**:
+drained, because `planFor` gives the child a pipe and a pipe nobody reads fills
+up and then blocks the child's write, which would stall a recording of a CLI
+that logs; discarded, because a stderr line is raw CLI text rather than a feed
+frame, and putting it in the fixture as a *notice* would make the fixture claim
+`watch --json` wrote something it did not. It writes exactly one file: the
+fixture `--out` names, and only after the text has gone back through the real
+`loadFixture`. **The write is safe against links** (`writeFixtureFile`): every
+component from the console package down to `test/fixtures/` is `lstat`ed and
+refused if it is a symbolic link, the target's parent must be that directory by
+real path, a symbolic link at the target — dangling or not — is refused, and so
+is anything that is not a regular file **even with `--force`**. The text goes
+to a temporary file created exclusively (`wx`) in the same directory, then is
+linked into place (a new fixture; fails if something appeared meanwhile) or
+renamed over the regular file `--force` names.
+
+### The properties are tests, and each one fails under a mutation
+
+| Mutation | What fails |
+|---|---|
+| a title passed through untouched | "redacts run titles: the words stay, the people and the places go" |
+| the path rule narrowed back to a whitelist of first segments, or its leading-context lookbehind restored | "redacts the paths a whitelist of prefixes would have missed" |
+| the literal rule's lookbehind restored, so a literal glued to a word character or a slash is missed | "redacts a literal whose first character is not a word character, glued into a word" |
+| the repository rule back to two-character segments, so `and/or` becomes a repository | "finds a repository behind a host, and never invents one out of prose" |
+| keys left outside the rules and the audit | "refuses a key that carries identity, because a key cannot be renamed" |
+| `parentKeyOf` reading the raw trail, so an array index hides the parent | "reads the class of a key through an array index" |
+| a fixture in `test/fixtures/` with a planted address | "refuses a fixture whose records carry what the redactor removes" |
+| a fixture committed into `test/fixtures/` with a stale digest or a planted address | "loads every file in test/fixtures/, and refuses one that does not verify" |
+| `redactDocument` made non-idempotent | "redacting twice changes nothing" |
+| a frame that cannot be parsed passed through | "fails closed on a frame it cannot parse" |
+| the audit's throw turned into a return of the problems | "the audit accepts what redaction produces, and refuses what it does not" |
+| a repository pseudonym replaced by the value itself | "uses pseudonyms that are stable within a recording, and never the value itself" |
+| the pseudonym key made fixed or public again | "are keyed per recording, so a name list cannot rebuild them" (`redact-hardening.test.ts`) |
+| any rule or field class the security review of `b65fff5` added, removed or narrowed back | the test named after its class in `redact-hardening.test.ts` (addresses in any script, branch and account fields, hosts and GCP names, folded literals, token families, people and paths, the loader with no literals) |
+| `--gcp-project` optional again, or `belong` with a leading space accepted | "requires the GCP project, …" / "normalises a value before the out-of-bounds check" |
+| an `--out` in any directory named `fixtures` | "refuses an --out outside this repository's console/test/fixtures" |
+| the write following a symbolic link, overwriting a non-file, or `stat` in place of `lstat` | the four tests under "the write" |
+| the line buffer unbounded | "refuses a line longer than a feed line can be, before it reaches the redactor" |
+| the header's `sha256` left unchecked on load | "refuses a fixture whose hash does not verify" |
+| the header's `redactor` left unchecked on load | "refuses a fixture whose redaction marker this build does not know" |
+| the header left out of the redaction audit, so an edited `project` passes the digest and every check above it | "refuses a header that carries what the redactor removes" |
+| a fixture edited after it was written to carry an address | "refuses a fixture whose records carry what the redactor removes" |
+| the replay firing records back-to-back instead of on their stamps | "replays the recording on the recording's own clock" |
+| the committed synthetic fixture hand-edited, digest and all | "is exactly what the redaction path writes from the documents in source" |
+| a stray file in `test/fixtures/` — a hand-made copy, a recording under a name no case holds | "holds exactly the synthetic fixture plus, at most, one file per recorded case" |
+| a `--project` defaulted to the ambient project, `belong` accepted, an `--out` outside `fixtures/`, or a `--case` outside `FIXTURE_CASES` | "refuses an invocation that would record the wrong thing" (one table, one row per refusal) |
+| an existing fixture overwritten without `--force` | "never overwrites a fixture without --force" |
+| the spawn built from a hand-written argv instead of `planFor` | "is the console's live.watch plan, --project and all" |
+| the child's environment inherited instead of built | "gives the child CHILD_ENV_KEYS and nothing else" |
+| the redaction refusal swallowed, so the recording continues | "refuses rather than records when the redactor will not vouch for a frame" |
+| the fixture written before it is verified | "verifies the whole fixture before a byte is written" |
+| the child's stderr left undrained | "drains the child's stderr, and never records a byte of it" |
+| `SIGKILL` never sent to a child that will not go | "stops the child at the end of the duration: SIGTERM, then SIGKILL" |
+| the child left running after a refusal | "reports a refusal, and the child is stopped rather than left running" |
+| an empty recording written as a quiet-looking fixture | "refuses an empty recording rather than writing a quiet-looking fixture" |
+
+The red step was run as the plan writes it, on this tree: the title-passthrough
+mutation and the planted-address fixture both failed the tests named above, and
+the two workflow mutations the plan says to run first (a `console` job renamed,
+and one carrying `paths: ['console/**']`) were run with them — see the
+`docs/pending-workflows/console-tests.yml` section below for those two.
+
+Seven more were run after a review of this task, one per row above that names a
+mutation of the redactor or the recorder's arguments: the path rule restored to
+its whitelist and lookbehind, the literal rule's lookbehind restored, the
+repository rule's segments shortened to two, `auditKey` removed, `parentKeyOf`
+left reading the raw trail, `--case` accepted unchecked, and a `test/fixtures/`
+file written with a stale digest. Each failed exactly the test named beside it
+and nothing else, which is what makes the row a promise rather than a note. One
+mutation is *not* in the table because nothing failed it: dropping the
+repository rule's dotted host prefix. The widened path class reaches
+`github.com/acme/secret-repo` on its own, so that half of the rule is the second
+of two rather than the only one, and `src/source/redact.ts` says so where the
+rule is written.
+
+### What is deliberately not here (Task 1.4)
+
+- **The recordings.** Eight cases, owner-run, listed above and in
+  `FIXTURE_CASES`; one synthetic fixture stands in until they land.
+- **Any screen.** Nothing renders a fixture yet: `FixtureSource` is a
+  `FugaroSource` and no screen exists to consume one until Task 2.0.
+- **The wiring.** Nothing chooses a fixture, and nothing switches a running
+  console between the live source and a replay — that belongs with the Live
+  screen's task, beside the `handlersFor` wiring Task 1.3 left open.
+
+### Deviations from the plan's file list, said out loud
+
+Three additions and one move, each with its reason:
+
+- **`src/source/redact.ts`, not `tools/record-fixture/redact.ts`.** The plan puts
+  the recorder in `tools/`, and the recorder is the *writer* of a fixture — but
+  the rules are also the *reader*'s, because `loadFixture` audits every document
+  it loads with exactly these classes, and a fixture is only as safe as the rules
+  that made it. `src/source/fixture.ts` therefore has to import the module, and
+  `tsconfig.build.json` has `rootDir: "src"`: a file under `tools/` cannot be in
+  the app's build. The redactor lives next to the loader that depends on it, and
+  the recorder imports it from there. The plan's split is otherwise exactly as
+  written: recorder in `tools/`, format and loader in `src/`.
+- **`tsconfig.record-fixture.json`, `.gitignore`'s `.record-fixture/`, and
+  package.json's `record-fixture` script.** The plan's owner step is
+  `npm run record-fixture -- --out test/fixtures/<name>.ndjson`, and a command
+  that runs a TypeScript tool needs a build and a script to be that command.
+  The config is Node16 with `rootDir: "."` over `src/**` and `tools/**`, which
+  is what makes the tool's imports of `src/source/*` resolve as written at
+  runtime. `test/unit/pinning.test.ts` asserts the `test:unit` and `test:e2e`
+  scripts exactly and allows other scripts to exist, so this adds no exception
+  to a pin.
+- **`test/unit/synthetic.ts`** — the fixture suite's own module rather than a
+  helper inside `fixture.test.ts`, because it is also what the byte-identity
+  assertion of the committed file regenerates from.
+- **`test/unit/recorder.test.ts`** — the plan's file list names the redactor's
+  and the fixture's suites but not the recorder's. A recorder whose *refusals*
+  are untested is a recorder that can be talked into recording the wrong
+  project, and the refusals are most of what the file does before it spawns;
+  the suite holds every one of them, plus the spawn, the redaction of one line,
+  the header, a recording in progress and the whole tool end to end, against
+  stubs and never a real child.
+
+## `docs/pending-workflows/console-tests.yml`
+
+The console's own CI is **staged, not applied**, and Task 1.4 is the task that
+stages it — see `docs/pending-workflows/README.md` for the file itself and the
+one command that applies it. Two things about it belong here, because they are
+about this directory rather than about the workflow:
+
+- **The file is `console-tests.yml`, tests only, and it holds no secret of any
+  kind.** The signing, notarising and stapling workflow is Task 4.2's
+  **separate** `console-release.yml`, precisely so that a file which runs on
+  every pull request from any branch never sits next to the Apple material
+  (design §9.4).
+- **The job runs unconditionally, and that is what makes it gate-able.** It has
+  no `paths:` filter and no job-level `if:`, and its name is exactly `console`
+  — the string Task 4.6 adds to `scripts/release-gate.sh`'s `names` list (that
+  line reads `names="test terraform rules"` today, so the check is not required
+  yet). From that edit on, the gate requires a check named `console` on a tag's
+  commit and, in its `identical_tree_checks` fallback, the same names on the
+  pull request head whose tree matches; **a check that does not exist is not a
+  success and neither is a skipped one**, so a `console` job filtered to
+  `console/**` would then make the gate refuse **every** release tag in this
+  repository, including the ones that never touch the console (design §9.4;
+  plan Task 4.6). Two tests in
+  `internal/cli/docs_desktop_console_test.go` —
+  `TestConsoleTestsWorkflowIsStagedAndPinned` and `TestConsoleWorkflowJobIsGateable`
+  — assert the pins, the absence of any secret, the job's name and the absence
+  of a filter or a guard, and byte-identity with the copy under
+  `.github/workflows/` once the owner has applied it.
+
+**Tasks 1.0 to 1.4 merged with no console CI at all.** The copy-in is Task 1.5,
+and this paragraph is not a claim that it already happened: the pinned
+toolchain, the hardened window, the IPC allow-list, `FugaroSource` and the
+fixtures were written, reviewed and merged on the strength of a reviewer's
+machine, and no workflow ran a console test on any of their pull requests.

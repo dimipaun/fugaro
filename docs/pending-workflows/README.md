@@ -1,6 +1,10 @@
 # Pending workflow changes
 
-**One file is pending: `images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
+**Two files are pending: `images.yml` and `console-tests.yml`.**
+
+**`images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
+
+**`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
 
 The most recent copy that *was* applied (`images.yml` for the 0.7.0 hard cut, commit `838e0b0`) is the reason the file below has no legacy per-kind `base` job; that section's older text was replaced by this one when the file became pending again.
 
@@ -17,6 +21,11 @@ git add .github/workflows/images.yml
 git rm docs/pending-workflows/images.yml
 git commit -m "..."
 ```
+
+**The `git rm` is for `images.yml`, and it is not the rule for every file here.**
+`console-tests.yml` below is copied in **without** removing the staged copy,
+because its test asserts the two files are byte-identical while both exist — see
+that section for the command and the reason.
 
 The `git rm` is not cleanup, it's load-bearing: the static Go tests that pin
 these workflows' shape (`images/base_workflow_test.go`'s `readWorkflow`,
@@ -39,6 +48,52 @@ and *must* contain the base jobs, so deleting them (by hand, by a bad
 merge, anything) fails the tests immediately.
 `TestReadWorkflowFallsBackOnlyWhilePending` pins this fallback directly,
 against temp files, independent of the real repository state.
+
+## `console-tests.yml`
+
+The desktop console's own tests in CI, staged by Task 1.4 of
+`docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5.
+One job named exactly `console`, on `macos-latest` and on `ubuntu-latest` with
+the end-to-end pass under `xvfb-run`: `actions/setup-node` with the version read
+from `console/package.json`'s `engines.node`, `npm ci --ignore-scripts
+--no-audit --no-fund`, `npm run test:unit` and `npm run test:e2e` (which builds
+the app first and passes on a tree with no spec). **It holds no secret at all**,
+and its triggers are `pull_request` and `push` to `main` **with no `paths:`
+filter and no job-level `if:`** — and that is a correctness requirement rather
+than taste. **Task 4.6 is what adds `console` to `scripts/release-gate.sh`'s
+`names` list** (that line reads `names="test terraform rules"` today, so this
+check is not yet required), and from that edit on the gate requires a check named
+`console` on a tag's commit and, in its `identical_tree_checks` fallback, the
+same names on the pull request head whose tree matches. **A check a filter
+skipped is not a success**, so a `console` job filtered to `console/**` would
+then refuse **every** release tag in this repository, including the releases that
+never touch the console (plan Task 4.6, design section 9.4). The signing,
+notarising and stapling job and the Apple material it reads are Task 4.2's
+**separate** `console-release.yml`, precisely so that this file — which runs on
+every pull request from any branch — never sits next to them.
+
+The owner applies it with one command, from the repository root:
+
+```sh
+cp docs/pending-workflows/console-tests.yml .github/workflows/console-tests.yml
+git add .github/workflows/console-tests.yml
+git commit -m "console: run the console's tests in CI (plan Task 1.5)"
+```
+
+**Unlike `images.yml`, the staged copy is not deleted after the copy-in.** While
+both files exist, `TestConsoleTestsWorkflowIsStagedAndPinned` (in
+`internal/cli/docs_desktop_console_test.go`) reads the staged file and asserts
+the one under `.github/workflows/` is **byte-identical** to it: absence would say
+only that nobody wrote a file, while identity says the file that exists is the
+reviewed one, and the staged copy is what makes that assertable before *and*
+after the copy-in. Deleting it would remove the check, so this file's procedure
+has no `git rm` in it.
+
+After the copy-in, `console/README.md` gains a line naming the applying commit
+(plan Task 1.5), which is the only way a later reader can tell which console
+commits had CI and which did not: **Tasks 1.0 to 1.4 merged with no console CI
+at all**, and that gap is a fact about this repository's history rather than
+something the plan claims away.
 
 ## `images.yml`
 

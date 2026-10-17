@@ -26,6 +26,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -40,6 +42,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/watch"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
 )
 
 // TestDocsDesktopConsoleDesignCarriesTheDecisions asserts the design holds
@@ -1270,5 +1273,408 @@ func TestWatchCancelReturnsNilSoTheChildExitsZero(t *testing.T) {
 		}
 	case <-time.After(20 * time.Second):
 		t.Fatal("the cancelled watch did not return: SIGTERM would leave the child running")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 1.4: the console's staged tests workflow.
+//
+// A workflow change cannot be delivered by an agent run at all (GitHub rejects
+// a Fugaro push that touches .github/workflows/**), so this repository's
+// workflow changes are written under docs/pending-workflows/ and copied in by
+// hand -- see docs/pending-workflows/README.md. The console's CI is staged with
+// Task 1.4 and applied by the owner as Task 1.5, and the three tests below are
+// the two halves of what that staging has to keep true:
+//
+//   - TestConsoleTestsWorkflowIsStagedAndPinned reads the STAGED file, which is
+//     why these tests keep passing after the copy-in: the staged copy is not
+//     deleted (unlike images.yml), and while both files exist they must be
+//     byte-identical, so an edit to one without the other fails here rather
+//     than drifting silently.
+//   - TestConsoleWorkflowJobIsGateable is the one that keeps Task 4.6 from
+//     silently breaking every tag on this repository. **Task 4.6 is what adds
+//     `console` to scripts/release-gate.sh's `names` list** -- today that line
+//     reads `names="test terraform rules"` -- and once it does, the gate
+//     requires a check named `console` on the tag's commit and, in its
+//     identical_tree_checks fallback, on the pull request head whose tree
+//     matches. A check that does not exist is not a success, so a `console` job
+//     behind a `paths:` filter, behind an `if:` guard, or renamed by an
+//     interpolated matrix value would refuse every release once that edit
+//     lands -- including the ones that never touch the console (design section
+//     9.4). The name and the triggers are asserted here so that the edit in
+//     Task 4.6 has something to land on.
+// ---------------------------------------------------------------------------
+
+const (
+	// consoleTestsWorkflowPath is the staged console CI; appliedConsoleTestsPath
+	// is where the owner copies it (plan Task 1.5).
+	consoleTestsWorkflowPath = "docs/pending-workflows/console-tests.yml"
+	appliedConsoleTestsPath  = ".github/workflows/console-tests.yml"
+)
+
+// consoleWorkflow is the staged file's shape, as far as these tests read it.
+// The unmodelled keys are covered separately, from the raw mapping, so a
+// `paths:` filter or a job-level `if:` cannot hide behind a field this struct
+// does not have.
+type consoleWorkflow struct {
+	On struct {
+		Push struct {
+			Branches []string `yaml:"branches"`
+		} `yaml:"push"`
+	} `yaml:"on"`
+	Permissions map[string]string             `yaml:"permissions"`
+	Jobs        map[string]consoleWorkflowJob `yaml:"jobs"`
+}
+
+type consoleWorkflowJob struct {
+	Name        string            `yaml:"name"`
+	If          string            `yaml:"if"`
+	RunsOn      string            `yaml:"runs-on"`
+	Permissions map[string]string `yaml:"permissions"`
+	Strategy    struct {
+		Matrix struct {
+			OS []string `yaml:"os"`
+		} `yaml:"matrix"`
+	} `yaml:"strategy"`
+	Steps []consoleWorkflowStep `yaml:"steps"`
+}
+
+type consoleWorkflowStep struct {
+	Uses string            `yaml:"uses"`
+	Run  string            `yaml:"run"`
+	If   string            `yaml:"if"`
+	With map[string]string `yaml:"with"`
+}
+
+// readConsoleTestsWorkflow is the staged file's text, parsed both ways: into
+// the typed shape above, and into raw mappings of the trigger block and of each
+// job, where a key this test does not model (`paths:`, `paths-ignore:`, `if:`)
+// is still visible.
+func readConsoleTestsWorkflow(t *testing.T) (string, consoleWorkflow, map[string]any, map[string]map[string]any) {
+	t.Helper()
+	text := readDoc(t, consoleTestsWorkflowPath)
+	var wf consoleWorkflow
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", consoleTestsWorkflowPath, err)
+	}
+	var raw struct {
+		On   map[string]any            `yaml:"on"`
+		Jobs map[string]map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", consoleTestsWorkflowPath, err)
+	}
+	if len(raw.On) == 0 || len(wf.Jobs) == 0 {
+		t.Fatalf("%s parsed with no triggers (%d) or no jobs (%d): these tests read the file, not a comment about it",
+			consoleTestsWorkflowPath, len(raw.On), len(wf.Jobs))
+	}
+	return text, wf, raw.On, raw.Jobs
+}
+
+// consoleUsesLine matches one `uses:` line: a full 40-hex commit pin with the
+// `# vX.Y.Z` comment that makes the pin reviewable. Dependabot does not watch
+// docs/pending-workflows/, and this file is copied in by hand, so the comment is
+// how the person copying it can compare pins (README's "Before you copy").
+var consoleUsesLine = regexp.MustCompile(`^\s*(?:-\s*)?uses:\s*[^\s@]+@[0-9a-f]{40}\s+#\s+v\d+\.\d+\.\d+\s*$`)
+
+// consoleBlob matches a long run of characters that could be a base64 blob:
+// the shape a pasted secret has. The pinned SHAs match it too, so the `uses:`
+// lines are removed before it is applied, and `consoleWord` excludes a bare
+// identifier -- this workflow's own comment naming a Go test is 42 letters, and
+// a check that fires on prose is a check that gets deleted. What is left is a
+// long run carrying a `+`, a `/` or a `=`, which is what a real blob has and a
+// word does not. The limit is stated rather than hidden: a secret that base64s
+// to pure alphanumerics is indistinguishable from an identifier, which is why
+// the `secrets.` assertion above is the one that actually holds the line.
+var (
+	consoleBlob = regexp.MustCompile(`[A-Za-z0-9+/]{40,}={0,2}`)
+	consoleWord = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+)
+
+// TestConsoleTestsWorkflowIsStagedAndPinned holds the staged file to what the
+// plan's Task 1.4 says it is: pinned, secretless, gated on nothing, and -- once
+// the owner has copied it in -- byte-identical to the file under
+// .github/workflows/.
+func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
+	text, wf, _, rawJobs := readConsoleTestsWorkflow(t)
+
+	// Every `uses:` is pinned to a full commit SHA with a version comment, and
+	// the file has at least one (a workflow whose actions were all deleted would
+	// otherwise pass this loop vacuously).
+	uses := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "uses:") {
+			continue
+		}
+		uses++
+		if !consoleUsesLine.MatchString(line) {
+			t.Errorf("%s: %q is not a full 40-hex pin with a `# vX.Y.Z` comment", consoleTestsWorkflowPath, strings.TrimSpace(line))
+		}
+	}
+	if uses == 0 {
+		t.Fatalf("%s pins no action at all: the console job checks the repository out and installs Node", consoleTestsWorkflowPath)
+	}
+
+	// No secret of any kind, and no shape that could be one. The signing,
+	// notarising and stapling job is Task 4.2's separate file, and this is the
+	// assertion that keeps the two from being merged back into one: a job that
+	// runs on every pull request must hold nothing a fork's pull request would
+	// otherwise be running next to.
+	if strings.Contains(text, "secrets.") {
+		t.Errorf("%s names a secret: the console job holds none at all (design section 9.4)", consoleTestsWorkflowPath)
+	}
+	for _, forbidden := range []string{"-----BEGIN", "pull_request_target", "workflow_run", "write-all"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("%s contains %q, which the tests workflow may never have (design section 9.4)", consoleTestsWorkflowPath, forbidden)
+		}
+	}
+	var body []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "uses:") {
+			continue
+		}
+		body = append(body, line)
+	}
+	for _, blob := range consoleBlob.FindAllString(strings.Join(body, "\n"), -1) {
+		if consoleWord.MatchString(blob) {
+			continue
+		}
+		t.Errorf("%s carries %q, which is long enough and shaped like a pasted credential: the tests job holds no secret", consoleTestsWorkflowPath, blob)
+	}
+
+	// Every job declares `permissions:` explicitly, and only what it needs.
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("%s's workflow-level permissions = %v, want exactly contents: read", consoleTestsWorkflowPath, wf.Permissions)
+	}
+	for name, job := range wf.Jobs {
+		if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
+			t.Errorf("%s's %s job permissions = %v, want exactly contents: read declared on the job", consoleTestsWorkflowPath, name, job.Permissions)
+		}
+		raw, ok := rawJobs[name]
+		if !ok {
+			t.Fatalf("%s's %s job is missing from the raw mapping", consoleTestsWorkflowPath, name)
+		}
+		if _, ok := raw["permissions"]; !ok {
+			t.Errorf("%s's %s job inherits permissions instead of declaring them", consoleTestsWorkflowPath, name)
+		}
+	}
+
+	// The install is `npm ci` from the committed lockfile, with the flags the
+	// plan names, and nothing else installs anything: no `npm install`, no
+	// `npm test` (the script is `test:unit`), and no unpinned `npx`.
+	installs := 0
+	var runs []string
+	for _, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			runs = append(runs, step.Run)
+			if step.Run == "npm ci --ignore-scripts --no-audit --no-fund" {
+				installs++
+			}
+		}
+	}
+	if installs != 1 {
+		t.Errorf("%s has %d steps running exactly `npm ci --ignore-scripts --no-audit --no-fund`, want 1: it is the plan's install step", consoleTestsWorkflowPath, installs)
+	}
+	all := strings.Join(runs, "\n")
+	for _, want := range []string{"npm run test:unit", "npm run test:e2e"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("%s never runs %q", consoleTestsWorkflowPath, want)
+		}
+	}
+	for _, forbidden := range []string{"npm install", "npm test\n", "npx "} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("%s contains %q: the install is `npm ci` from the lockfile, and nothing here is unpinned", consoleTestsWorkflowPath, forbidden)
+		}
+	}
+
+	// The two runners, and the Linux pass under a display: Electron has no X on
+	// a bare runner, and macOS needs none.
+	job := wf.Jobs["console"]
+	if !slices.Contains(job.Strategy.Matrix.OS, "ubuntu-latest") || !slices.Contains(job.Strategy.Matrix.OS, "macos-latest") {
+		t.Errorf("%s's console job runs on %v, want both ubuntu-latest and macos-latest", consoleTestsWorkflowPath, job.Strategy.Matrix.OS)
+	}
+	linux, darwin := "", ""
+	for _, step := range job.Steps {
+		if strings.Contains(step.Run, "test:e2e") {
+			switch step.If {
+			case "runner.os == 'Linux'":
+				linux = step.Run
+			case "runner.os != 'Linux'":
+				darwin = step.Run
+			}
+		}
+	}
+	if !strings.HasPrefix(linux, "xvfb-run") {
+		t.Errorf("%s's Linux end-to-end step is %q, want it under xvfb-run: Electron needs a display", consoleTestsWorkflowPath, linux)
+	}
+	if darwin == "" || strings.Contains(darwin, "xvfb") {
+		t.Errorf("%s's macOS end-to-end step is %q, want the plain e2e script (xvfb-run does not exist there)", consoleTestsWorkflowPath, darwin)
+	}
+
+	// The Node version is read from console/package.json's `engines.node`, never
+	// written here a second time: test/unit/pinning.test.ts keeps that field an
+	// exact pin, and a copy of it in this file is a pin that can disagree.
+	nodeSteps := 0
+	for _, step := range job.Steps {
+		if !strings.Contains(step.Uses, "actions/setup-node@") {
+			continue
+		}
+		nodeSteps++
+		if step.With["node-version-file"] != "console/package.json" {
+			t.Errorf("%s's setup-node takes node-version-file %q, want console/package.json's engines.node", consoleTestsWorkflowPath, step.With["node-version-file"])
+		}
+		if _, ok := step.With["node-version"]; ok {
+			t.Errorf("%s's setup-node pins a version of its own instead of reading engines.node", consoleTestsWorkflowPath)
+		}
+	}
+	if nodeSteps != 1 {
+		t.Errorf("%s has %d setup-node steps, want 1", consoleTestsWorkflowPath, nodeSteps)
+	}
+
+	// And while both files exist, they are the same file: the staged copy is the
+	// reviewed one, so a hand-edited or hand-written workflow under
+	// .github/workflows/ is a failure here rather than something nobody reads.
+	// (Absence is not asserted: the owner's copy-in is the whole point of the
+	// staging, and an absence assertion would turn main red the moment they did
+	// it -- Task 1.5.)
+	if _, statErr := os.Stat(filepath.Join("..", "..", appliedConsoleTestsPath)); statErr == nil {
+		applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleTestsPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(applied) != text {
+			t.Errorf("%s differs from the staged %s: the workflow under .github/workflows/ must be the reviewed staged copy, not an edit of it", appliedConsoleTestsPath, consoleTestsWorkflowPath)
+		}
+	} else if !os.IsNotExist(statErr) {
+		t.Fatal(statErr)
+	}
+}
+
+// TestConsoleWorkflowJobIsGateable pins the job name and the triggers, which is
+// what keeps scripts/release-gate.sh from refusing every tag in this repository
+// **once Task 4.6 adds `console` to its `names` list** (today that line reads
+// `names="test terraform rules"`; the gate does not require this check yet, and
+// this test is what makes the edit safe when it lands).
+// Each check below is a separate way the `console` check stops existing on a
+// commit the gate asks about, and the two mutations to try first are the ones
+// that are invisible until a tag is refused: rename the job to `console-tests`,
+// and add `paths: ['console/**']` to its trigger.
+func TestConsoleWorkflowJobIsGateable(t *testing.T) {
+	_, wf, on, rawJobs := readConsoleTestsWorkflow(t)
+
+	// A job whose key is exactly `console` -- the string Task 4.6 adds to
+	// release-gate.sh's `names` list, which today reads
+	// `names="test terraform rules"`. A rename has to be a deliberate edit here
+	// AND there.
+	job, ok := wf.Jobs["console"]
+	if !ok {
+		var keys []string
+		for name := range wf.Jobs {
+			keys = append(keys, name)
+		}
+		slices.Sort(keys)
+		t.Fatalf("%s has no `console` job (it has %v): that key is the check name scripts/release-gate.sh will require once Task 4.6 names it", consoleTestsWorkflowPath, keys)
+	}
+	if len(wf.Jobs) != 1 {
+		var keys []string
+		for name := range wf.Jobs {
+			keys = append(keys, name)
+		}
+		slices.Sort(keys)
+		t.Errorf("%s has jobs %v: the console's tests are one job, and a second one is another check nobody asked for", consoleTestsWorkflowPath, keys)
+	}
+
+	// The displayed name is the check-run name, and it is the static string.
+	// A matrix value interpolated into it (`console (${{ matrix.os }})`) would
+	// rename the check to something the gate cannot find.
+	if job.Name != "console" {
+		t.Errorf("%s's console job is named %q, want exactly %q: it is the string release-gate.sh's `names` list must carry (Task 4.6)", consoleTestsWorkflowPath, job.Name, "console")
+	}
+	if strings.Contains(job.Name, "${{") {
+		t.Errorf("%s's console job name %q interpolates: a matrix value in the name is a check name the gate cannot look up", consoleTestsWorkflowPath, job.Name)
+	}
+
+	// Triggers: every pull request and every push to main, which is ci.yml's
+	// pattern minus its docs-only skip.
+	if !slices.Equal(wf.On.Push.Branches, []string{"main"}) {
+		t.Errorf("%s's push trigger branches = %v, want [main]", consoleTestsWorkflowPath, wf.On.Push.Branches)
+	}
+	keys := make([]string, 0, len(on))
+	for key := range on {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"pull_request", "push"}) {
+		t.Errorf("%s triggers on %v, want exactly push and pull_request", consoleTestsWorkflowPath, keys)
+	}
+
+	// No `if:` on the job, in particular none on a `changes`/`docs_only` output:
+	// a skipped check is not a success, so the fallback in
+	// scripts/release-gate.sh would treat it as missing once Task 4.6 requires
+	// the check.
+	if job.If != "" {
+		t.Errorf("%s's console job carries `if: %s`: a guarded job is a check that can be skipped, and a skipped check is not a success", consoleTestsWorkflowPath, job.If)
+	}
+
+	// No `paths:`/`paths-ignore:` at the trigger level or on the job. This is the
+	// failure that refuses every release, including the ones that ship none of
+	// the console: once Task 4.6's `names="test terraform rules console"` is in
+	// place, the gate would require a check this filter skipped.
+	for key, value := range on {
+		if key != "push" {
+			continue
+		}
+		push, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("%s's push trigger is %T, want a mapping", consoleTestsWorkflowPath, value)
+		}
+		for _, filter := range []string{"paths", "paths-ignore"} {
+			if _, ok := push[filter]; ok {
+				t.Errorf("%s's push trigger carries `%s:`: the console job must run unconditionally or the release gate refuses every tag", consoleTestsWorkflowPath, filter)
+			}
+		}
+	}
+	for _, filter := range []string{"paths", "paths-ignore", "if"} {
+		if _, ok := rawJobs["console"][filter]; ok {
+			t.Errorf("%s's console job carries `%s:`, and the job that produces the gate's `console` check has neither", consoleTestsWorkflowPath, filter)
+		}
+	}
+}
+
+// TestPendingWorkflowsReadmeNamesTheConsoleTestsRow asserts the staging
+// directory's README carries THIS file's row: what it is, that it is staged
+// because no agent may push a workflow here, and the one command that applies
+// it. The name is singular and row-specific on purpose -- Task 4.2 adds a second
+// console row and a second test, `TestPendingWorkflowsReadmeNamesTheConsoleRows`
+// (plural), which asserts both -- so no reader has to work out whether two
+// similarly-named tests are the same test.
+func TestPendingWorkflowsReadmeNamesTheConsoleTestsRow(t *testing.T) {
+	doc := readDoc(t, "docs/pending-workflows/README.md")
+	for _, want := range []string{
+		// What the file is: the console's own tests, on the two runners, with
+		// no secret and nothing to gate it.
+		"console-tests.yml",
+		"npm run test:unit",
+		"macos-latest",
+		"xvfb-run",
+		// Why it is staged here rather than applied.
+		"Fugaro refuses to push a commit that touches `.github/workflows/**`",
+		// The one command that applies it.
+		"cp docs/pending-workflows/console-tests.yml .github/workflows/console-tests.yml",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/pending-workflows/README.md lacks %q: the console's staged workflow needs its row here, with what it is, why it is staged and the one command that applies it", want)
+		}
+	}
+	// The staged file must exist under its own name, and the row must not tell a
+	// reader to delete it: unlike images.yml this staged copy is kept after the
+	// copy-in, because TestConsoleTestsWorkflowIsStagedAndPinned asserts the two
+	// files are byte-identical from then on.
+	if _, err := os.Stat(filepath.Join("..", "..", consoleTestsWorkflowPath)); err != nil {
+		t.Fatalf("%s is missing: the README describes a staged file that must be here (%v)", consoleTestsWorkflowPath, err)
+	}
+	if !strings.Contains(doc, filepath.Base(consoleTestsWorkflowPath)+"` is **not** deleted") &&
+		!strings.Contains(doc, "is not deleted after the copy") {
+		t.Error("docs/pending-workflows/README.md does not say the console-tests.yml staged copy is kept after the copy-in: it is, because the byte-identity test reads it afterwards")
 	}
 }
