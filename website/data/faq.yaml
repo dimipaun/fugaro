@@ -31,12 +31,8 @@
 # build does not produce or a download that does not exist (F50, D102).
 version: 1
 
-# D103's answer puts the owner in the loop: the FAQ, its comparison section included, is
-# reviewed by the owner before it publishes. This flag is that state, and the page renders
-# it as a note rather than publishing the FAQ as final -- the owner flips it to false in the
-# commit that records the review, and the note disappears with it. The test holds the flag
-# and the page together, so the note cannot outlive the review or be forgotten before it.
-review_pending: true
+# D103's owner review of this page is done: the owner approved the FAQ on 2026-10-17. The
+# page carries no review state any more, and a `review_pending:` key is not one the page reads.
 
 questions:
   - id: what-it-is
