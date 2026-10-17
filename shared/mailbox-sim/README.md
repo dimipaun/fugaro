@@ -33,7 +33,12 @@ copying it:
 
 A refusal the modules make is propagated with **their** code, never renamed: a store built
 with a 31-day prompt TTL is refused `invalid-prompt-ttl` by `mailbox.initialState`, and the
-simulator hands that code back untouched.
+simulator hands that code back untouched. The same holds for the three values the modules
+own rather than the harness — the prompt TTL, the start time and the lease TTL. This module
+validates only what is its own (the field set of its options, its own schedule, its own
+actor ids) and passes those three through, so a caller sees `invalid-now` from
+`initialState` and `bad-ttl` from `readLease` rather than a second opinion from here. The
+mutation proof has no mutation for them for that reason, and says so.
 
 ## Two rules the modules do not expose, and what the harness does instead
 
