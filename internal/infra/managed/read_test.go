@@ -291,6 +291,33 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 	}
 }
 
+// The fact is about the GCP project, and the Fugaro project name is the name
+// the answer is reported about: an installation is one Fugaro project in one
+// GCP project, whose own bucket carries the fact, so the same GCP project
+// answers the same way under any name — and a refusal names the project the
+// caller asked about rather than a name read out of the object.
+func TestIsManagedIsAboutTheGCPProject(t *testing.T) {
+	ctx := context.Background()
+	s, f, c, _ := managedWorld(t)
+	f.Put(testBucket, MarkerObject, []byte(markerJSON))
+
+	ok, reason, err := IsManaged(ctx, s, c, "another-name", testProject)
+	if err != nil || !ok || reason != "" {
+		t.Fatalf("IsManaged under another name = %v, %q, %v; want true, \"\", nil", ok, reason, err)
+	}
+
+	// The other half: the refusal is about the project asked about. No
+	// marker is the one mismatch every name shares.
+	s2, _, c2, _ := managedWorld(t)
+	ok, reason, err = IsManaged(ctx, s2, c2, "another-name", testProject)
+	if err != nil || ok {
+		t.Fatalf("no marker = %v, %q, %v; want false, a reason, nil", ok, reason, err)
+	}
+	if !strings.Contains(reason, "another-name") {
+		t.Errorf("reason = %q, want it to name the project asked about", reason)
+	}
+}
+
 // The error is never the signal. Three results and not two, so the
 // difference is in the type rather than in a convention: a caller that
 // treats a nil error as "managed" is wrong, because "there is no marker" is

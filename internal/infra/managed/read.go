@@ -62,6 +62,15 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // disabled answers 403 too — which reads as "not managed", the direction in
 // which a caller asks its confirmation rather than skipping it.
 //
+// The fact is scoped to the GCP project and not to the name: the bucket that
+// carries it is the GCP project's own, and an installation is one Fugaro
+// project in one GCP project (init's owner() and the runs bucket's name say
+// the same). project is therefore the name the answer is reported about — it
+// appears in every reason and in nothing else — and asking about the same GCP
+// project under another name answers the same way. The read does not compare
+// it against anything, and a later task that made it a condition would be
+// adding a check this design does not have.
+//
 // err is set only when the read could not be made at all: a caller's own
 // mistake (no clients, no project), or an API that did not answer (a 5xx,
 // which the storage client does not retry into an answer). It is never the
