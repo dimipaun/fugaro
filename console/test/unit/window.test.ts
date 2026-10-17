@@ -70,17 +70,30 @@ import {
 import {
   ALLOWED_EXTERNAL_HOSTS,
   CONSOLE_WINDOW_TITLE,
+  HANDSHAKE_UNREADABLE,
   consoleWebPreferences,
   consoleWindowOptions,
+  consoleWindowTitle,
   createConsoleWindow,
+  createRefusalWindow,
   denyEveryPermission,
   denyNavigation,
   denyWebviewAttach,
   denyWindowOpen,
   installWebContentsSecurity,
   openExternalValidated,
+  runVersionHandshake,
+  startupWindow,
   validateExternalUrl,
 } from '../../src/main/window'
+import {
+  CLI_VERSION_BUILT_AGAINST,
+  SKEW_HEADLINES,
+  classifyCliVersion,
+  hidesView,
+  unreadableReason,
+} from '../../src/shared/version'
+import { githubToken } from '../support/fakeSecrets'
 
 // The two files of the bundle, read from this test's own location rather than
 // from the working directory: the protocol handler's root is the source tree
@@ -633,5 +646,237 @@ describe('createConsoleWindow', () => {
     expect(shown).toBe(false)
     listeners.get('ready-to-show')?.()
     expect(shown).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The version skew handshake (desktop-console plan Task 3.2; design section 7.1
+// and D7).
+//
+// The handshake's *placement* is `src/shared/version.ts`'s and is tested there
+// boundary by boundary. What is held here is the half that only this module can
+// be wrong about: that the refusal is real -- that a console which will not read
+// the CLI it found builds **no window**, so there is no dashboard to draw and
+// nothing to misreport spend into. That is the plan's red step, and it is
+// asserted by counting the constructors rather than by reading a flag, because a
+// flag is exactly what a console that drew the dashboard anyway would have set
+// correctly.
+// ---------------------------------------------------------------------------
+
+/** fakeWindowFactory counts every window constructed, records every load, and
+ * hands back the fake `webContents` of each so the handler wiring can be
+ * checked on the window that was actually built. */
+function fakeWindowFactory(): {
+  BrowserWindow: new (options: BrowserWindowConstructorOptions) => BrowserWindow
+  options: BrowserWindowConstructorOptions[]
+  loaded: string[]
+  built: unknown[]
+  contents: FakeWebContents[]
+} {
+  const options: BrowserWindowConstructorOptions[] = []
+  const loaded: string[] = []
+  const built: unknown[] = []
+  const contents: FakeWebContents[] = []
+  const WindowClass = function (given: BrowserWindowConstructorOptions): object {
+    options.push(given)
+    const webContents = fakeWebContents()
+    contents.push(webContents)
+    const window = {
+      webContents: webContents.value,
+      once() {},
+      show() {},
+      async loadURL(url: string) {
+        loaded.push(url)
+      },
+    }
+    built.push(window)
+    return window
+  } as unknown as new (options: BrowserWindowConstructorOptions) => BrowserWindow
+  return { BrowserWindow: WindowClass, options, loaded, built, contents }
+}
+
+/** nothingToRead is a reader that failed before it could read: the shape
+ * `src/main/spawn.ts`'s `probeVersion` returns when no binary resolved. */
+const nothingToRead = async (): Promise<{ ok: false; reason: string }> => ({
+  ok: false,
+  reason: 'no fugaro binary was found',
+})
+
+describe('runVersionHandshake', () => {
+  it('proceeds for a CLI inside the supported range', async () => {
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }),
+    })
+    expect(compatibility.mode).toBe('ok')
+    expect(compatibility.skew).toBe('supported')
+    expect(compatibility.cliVersion).toBe(CLI_VERSION_BUILT_AGAINST)
+  })
+
+  it('proceeds in a reduced mode for a CLI outside it, naming what it read', async () => {
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: true, stdout: '0.9.0\n' }),
+    })
+    expect(compatibility.mode).toBe('reduced')
+    expect(compatibility.skew).toBe('newer')
+    expect(compatibility.cliVersion).toBe('0.9.0')
+    expect(hidesView(compatibility, 'spend')).toBe(true)
+  })
+
+  it('refuses a CLI below the floor', async () => {
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: true, stdout: '0.5.0\n' }),
+    })
+    expect(compatibility.mode).toBe('refused')
+    expect(compatibility.skew).toBe('below-floor')
+  })
+
+  it('refuses, with the reader\'s own reason, when there is no version to read', async () => {
+    const compatibility = await runVersionHandshake({ readVersion: nothingToRead })
+    expect(compatibility.mode).toBe('refused')
+    expect(compatibility.skew).toBe('unreadable')
+    // The reason a screen or a title shows is the console's own sentence: the
+    // reader's, which is `probeVersion`'s, and never the child's output.
+    expect(unreadableReason(compatibility)).toBe('no fugaro binary was found')
+  })
+
+  it('refuses rather than crashing when the read itself throws', async () => {
+    // A subprocess that misbehaves must not take the console down with it, and
+    // must not be upgraded into a dashboard either: the outcome of a throw is the
+    // same refusal a failed read gets.
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => {
+        throw new Error('spawn failed')
+      },
+    })
+    expect(compatibility.mode).toBe('refused')
+    expect(compatibility.skew).toBe('unreadable')
+    expect(unreadableReason(compatibility)).toBe(HANDSHAKE_UNREADABLE)
+  })
+
+  it('carries no part of a line it could not read', async () => {
+    // The line a wrapper echoed is a string a binary chose. It is dropped where
+    // it was read: the compatibility, its reason and its title all have no place
+    // for it, so nothing downstream can draw it.
+    const output = `${githubToken()}\n`
+    const compatibility = await runVersionHandshake({ readVersion: async () => ({ ok: true, stdout: output }) })
+    expect(compatibility.cliVersion).toBeNull()
+    expect(JSON.stringify(compatibility)).not.toContain(githubToken())
+    expect(consoleWindowTitle(compatibility)).not.toContain(githubToken())
+  })
+})
+
+describe('consoleWindowTitle', () => {
+  it('is the plain title before a handshake has run, and inside the range', () => {
+    expect(consoleWindowTitle(null)).toBe(CONSOLE_WINDOW_TITLE)
+    expect(consoleWindowTitle(classifyCliVersion(CLI_VERSION_BUILT_AGAINST))).toBe(CONSOLE_WINDOW_TITLE)
+  })
+
+  it('says which mode the console is in, in its own words', () => {
+    const reduced = consoleWindowTitle(classifyCliVersion('0.9.0'))
+    expect(reduced).toContain(CONSOLE_WINDOW_TITLE)
+    expect(reduced).toContain(SKEW_HEADLINES.reduced)
+    const refused = consoleWindowTitle(classifyCliVersion('0.5.0'))
+    expect(refused).toContain(CONSOLE_WINDOW_TITLE)
+    expect(refused).toContain(SKEW_HEADLINES.refused)
+  })
+
+  it('never carries the version the binary reported, because the OS chrome draws it', () => {
+    // A window title is not drawn by this console's writers, so it is not a
+    // place `sanitize.ts` can reach and not a place a string from outside goes.
+    // The reported version is drawn in the document instead, by
+    // `renderVersionSkew`, through the sanitizer.
+    const compatibility = classifyCliVersion('v0.9.0-3-gabc1234')
+    expect(compatibility.cliVersion).toBe('v0.9.0-3-gabc1234')
+    expect(consoleWindowTitle(compatibility)).not.toContain('gabc1234')
+    expect(consoleWindowTitle(compatibility)).not.toContain('0.9.0')
+  })
+})
+
+describe('startupWindow', () => {
+  it('builds the dashboard window for a CLI inside the range', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }),
+    })
+    expect(startup.compatibility.mode).toBe('ok')
+    expect(factory.options).toHaveLength(1)
+    expect(factory.built).toEqual([startup.window])
+    expect(factory.options[0]?.title).toBe(CONSOLE_WINDOW_TITLE)
+    expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+    expect(factory.loaded).toEqual([APP_ENTRY_URL])
+  })
+
+  it('builds the window in a reduced mode too, because a reduced console is a console', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: '0.6.9\n' }),
+    })
+    expect(startup.compatibility.mode).toBe('reduced')
+    expect(startup.window).not.toBeNull()
+    expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.reduced)
+    // The window is still the hardened one: a reduced mode is not a reason to
+    // relax anything.
+    expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+  })
+
+  it('builds no window at all below the floor -- the plan\'s red step', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: '0.5.0\n' }),
+    })
+    expect(startup.compatibility.mode).toBe('refused')
+    expect(startup.window).toBeNull()
+    // The stronger half: nothing was *constructed*. A console that built a
+    // window and decided later not to draw a dashboard in it would pass a
+    // `window === null` check written the other way round, and would still be
+    // one renderer bug away from a spend figure nothing vouched for.
+    expect(factory.options).toHaveLength(0)
+    expect(factory.built).toHaveLength(0)
+    expect(factory.loaded).toEqual([])
+  })
+
+  it('builds no window when the version could not be read either', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: nothingToRead,
+    })
+    expect(startup.compatibility.mode).toBe('refused')
+    expect(startup.window).toBeNull()
+    expect(factory.options).toHaveLength(0)
+  })
+})
+
+describe('createRefusalWindow', () => {
+  it('builds the hardened window, with a title that says what it refused', async () => {
+    const factory = fakeWindowFactory()
+    const session = fakeSession()
+    const compatibility = classifyCliVersion('0.5.0')
+    const built = await createRefusalWindow(
+      { BrowserWindow: factory.BrowserWindow, session: session.value },
+      compatibility,
+    )
+    expect(factory.built).toEqual([built])
+    expect(factory.options).toHaveLength(1)
+    expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.refused)
+    expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+    expect(factory.options[0]?.show).toBe(false)
+    // The same single load over the console's own scheme, the same handlers and
+    // the same denied permissions as the dashboard window: the refusal screen is
+    // drawn by the renderer in a window that is hardened exactly as much.
+    expect(factory.loaded).toEqual([APP_ENTRY_URL])
+    expect(session.requestHandler()).not.toBeNull()
+    expect(session.checkHandler()).not.toBeNull()
+    const navigate = recordingEvent()
+    factory.contents[0]?.emit('will-navigate', navigate, 'https://example.invalid/fugaro')
+    expect(navigate.prevented).toBe(true)
+    expect(factory.contents[0]?.windowOpenHandler()?.()).toEqual({ action: 'deny' })
   })
 })

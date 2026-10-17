@@ -33,11 +33,11 @@
 // **Two things this file deliberately does not carry.** The raw unparseable line
 // never enters the model: a string a binary printed can be anything -- a usage
 // message, a stack trace, a token a wrapper echoed -- and a model that carried
-// it would put it one `putText` away from a screen. A line the console cannot
+// it would put it one writer away from a screen. A line the console cannot
 // parse becomes `unreadable` with the console's own sentence and a `null`
 // version, and the string is dropped where it was read. And the version strings
-// that *do* enter the model are drawn through `renderer/app.ts`'s `putText`, the
-// same door every other string from outside the console goes through, because a
+// that *do* enter the model are drawn through the same door every other string
+// from outside the console goes through (`putVersionText` below), because a
 // version line is a string the CLI chose.
 //
 // **Why the drawing is here and not in a screen.** The skew state is the
@@ -47,9 +47,17 @@
 // prepends to itself and the refusal screen a refused console draws instead of a
 // dashboard are the two presentations of that one state, and they live beside
 // the comparison that produces it.
+//
+// This is the one file in `shared/` that draws, and it is also imported by the
+// **main** process (`src/main/window.ts` runs the handshake with it), so it
+// depends on nothing in `renderer/`: the one writer below takes `sanitizeText`
+// directly rather than `renderer/app.ts`'s `putText`, which is six lines over
+// the same call, and the element shape it draws into is declared here as the
+// three DOM members it uses rather than imported from a screen. Both are the
+// same rule: the renderer depends on `shared/`, and `shared/` does not depend on
+// the renderer.
 
-import type { ElementLike } from '../renderer/app'
-import { putText } from '../renderer/app'
+import { UNAVAILABLE_MARK } from './availability'
 import { sanitizeText } from './sanitize'
 
 /**
@@ -390,12 +398,18 @@ export function hidesView(compatibility: CliCompatibility, view: ReducedView): b
 export type SkewTheme = 'light' | 'dark'
 
 /**
- * SkewElement is what this file draws into: the writers' `ElementLike` plus
- * `tag` and `append`. It is structural rather than an import from a screen, so
- * `shared/` does not depend on `renderer/screens/` -- the same choice
- * `renderer/screens/degraded.ts` makes from the other side.
+ * SkewElement is what this file draws into: the three DOM members
+ * `renderer/app.ts`'s writers use, plus `tag` and `append`. It is declared
+ * structurally rather than imported, so `shared/` depends on no screen --
+ * `renderer/screens/degraded.ts` makes the mirror-image choice from the other
+ * side -- and it is the same shape as `ScreenElement`, so a screen hands its own
+ * elements to `renderVersionSkew` without a conversion.
  */
-export interface SkewElement extends ElementLike {
+export interface SkewElement {
+  textContent: string | null
+  setAttribute(name: string, value: string): void
+  getAttribute(name: string): string | null
+  removeAttribute(name: string): void
   readonly tag: string
   append(child: SkewElement): void
 }
@@ -413,14 +427,14 @@ export interface SkewFactory {
 export const SKEW_HEADLINES: Readonly<Record<CliCompatibilityMode, string>> = Object.freeze({
   ok: 'the fugaro this console is driving is one it was built against',
   reduced: 'fugaro version skew: reduced mode',
-  refused: 'this fugaro is too old to read',
+  refused: 'this fugaro is not one this console will read',
 })
 
 /**
  * skewSentence is the banner's sentence, in the console's own words, and it is
  * deliberately **without the CLI's text**: the console's own constants are the
  * only versions it composes into a sentence, and the version the CLI reported is
- * drawn in its own cell through `putText` (`renderVersionSkew`). That way the
+ * drawn in its own cell through the one writer (`renderVersionSkew`). That way the
  * line a binary printed is never concatenated into prose this file wrote, and
  * the sentence is the same string whatever the binary said.
  */
@@ -466,6 +480,26 @@ export function skewSentence(compatibility: CliCompatibility): string {
   }
 }
 
+/**
+ * putVersionText writes a string the CLI chose into an element, and it is
+ * `renderer/app.ts`'s `putText` by the same means: `sanitizeText` with the
+ * `'label'` class, the text when it is accepted, and `n/a` plus the reason in
+ * the `title` attribute when it is not -- so a version line this console will not
+ * draw says why under the cursor instead of disappearing. It is written out here
+ * rather than imported because `src/main/window.ts` imports this module and the
+ * main process must not pull the renderer in (see the note at the top); the
+ * substance is the same one door every other string from outside goes through.
+ */
+function putVersionText(element: SkewElement, raw: string, field: string): void {
+  const result = sanitizeText(raw, 'label', field)
+  if (result.ok) {
+    element.textContent = result.text
+    return
+  }
+  element.textContent = UNAVAILABLE_MARK
+  element.setAttribute('title', result.reason)
+}
+
 /** literal writes the console's own vocabulary into an element. Nothing a
  * document or a binary wrote reaches this function: every argument is a string
  * literal or a module constant of this file. */
@@ -489,9 +523,9 @@ function cell(
 
 /**
  * versionRow draws one labelled version. The CLI's version goes through
- * `putText` -- it is a string a binary chose -- and `null` (the unreadable case)
- * is drawn as the console's own sentence, because there is no value to draw and
- * an `n/a` with a title nobody can see would be less than the truth.
+ * `putVersionText` -- it is a string a binary chose -- and `null` (the unreadable
+ * case) is drawn as the console's own sentence, because there is no value to
+ * draw and an `n/a` with a title nobody can see would be less than the truth.
  */
 function versionRow(
   parent: SkewElement,
@@ -509,7 +543,7 @@ function versionRow(
     literal(value, 'a version line the console could not read')
     return
   }
-  putText(value, version, 'label', field)
+  putVersionText(value, version, field)
 }
 
 /**
