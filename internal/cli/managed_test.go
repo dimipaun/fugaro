@@ -326,13 +326,21 @@ func nonManaged(r managedRead) bool { return !(r.ok && r.err == nil) }
 // property: the confirmation of a project that is not managed skipped, or a
 // coding agent's session confirming anything at all. It is empty for the rule
 // above, and it is what catches each mutation the test below feeds it.
-func managedViolations(mode func(ok bool, reason string, err error) bool, reads []managedRead) []string {
+//
+// confirm is the rule the confirmations are judged by: the property is run
+// once over initflow.CanConfirm, which is the rule itself, and once over the
+// CLI's own seam (canConfirmTyped, the variable the apply path asks), so a
+// change to what the program actually confirms through cannot leave the
+// property passing over a function nothing calls.
+func managedViolations(mode func(ok bool, reason string, err error) bool,
+	confirm func(initflow.ConfirmClass, initflow.Conditions) bool, reads []managedRead) []string {
 	var bad []string
+	conditions := allConditions()
 	for _, class := range confirmClasses {
-		for _, c := range allConditions() {
+		for _, c := range conditions {
 			// An agent's environment marker confirms nothing, whatever else
 			// is set — --yes included.
-			if c.Agent != "" && initflow.CanConfirm(class.class, c) {
+			if c.Agent != "" && confirm(class.class, c) {
 				bad = append(bad, fmt.Sprintf("%s is confirmed in a coding agent's session (%s)", class.name, conditionsString(c)))
 			}
 			for _, r := range reads {
@@ -348,11 +356,11 @@ func managedViolations(mode func(ok bool, reason string, err error) bool, reads 
 			}
 		}
 	}
-	for _, c := range allConditions() {
+	for _, c := range conditions {
 		// The run's own confirmation — the project's name typed once for all
 		// the ordinary steps — is a Typed one, so an agent's session never
-		// takes it either.
-		if c.Agent != "" && initflow.CanConfirmRun(c) {
+		// takes it either (CanConfirmRun is CanConfirm(Typed, …)).
+		if c.Agent != "" && confirm(initflow.Typed, c) {
 			bad = append(bad, fmt.Sprintf("the run's one confirmation is taken in a coding agent's session (%s)", conditionsString(c)))
 		}
 	}
@@ -401,8 +409,20 @@ func TestManagedNonManagedProjectNeverSkipsAConfirmation(t *testing.T) {
 		t.Fatalf("the marker read answered %d managed and %d not managed: the property needs both, or it tests one direction", managedRows, notManaged)
 	}
 
-	if bad := managedViolations(managedMode, reads); len(bad) != 0 {
-		t.Fatalf("a project that is not managed changed its decision in %d combination(s):\n%s", len(bad), firstFew(bad))
+	// The rule, and the seam the CLI confirms through: a program whose apply
+	// path asks something other than the rule must fail here rather than pass
+	// by being tested nowhere.
+	for _, confirm := range []struct {
+		name string
+		fn   func(initflow.ConfirmClass, initflow.Conditions) bool
+	}{
+		{"initflow.CanConfirm", initflow.CanConfirm},
+		{"canConfirmTyped, the apply path's own seam", canConfirmTyped},
+	} {
+		if bad := managedViolations(managedMode, confirm.fn, reads); len(bad) != 0 {
+			t.Errorf("%s: a project that is not managed changed its decision in %d combination(s):\n%s",
+				confirm.name, len(bad), firstFew(bad))
+		}
 	}
 }
 
@@ -436,7 +456,7 @@ func TestManagedPropertyCatchesAWrongPredicate(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bad := managedViolations(tc.mode, reads)
+			bad := managedViolations(tc.mode, initflow.CanConfirm, reads)
 			if len(bad) == 0 {
 				t.Fatalf("the property accepted a predicate that reads a project nothing recorded as managed: %s", tc.why)
 			}
