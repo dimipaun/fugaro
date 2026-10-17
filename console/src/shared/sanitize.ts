@@ -35,8 +35,9 @@
 // and has no Node builtins, no network and no Electron. That is why the
 // recorder's vocabulary is *copied* rather than imported: `src/source/redact.ts`
 // reaches for `node:crypto`, and a `shared/` module that imported it would be a
-// module the renderer cannot load. `sanitize.test.ts` holds the two copies
-// equal by equality and by running both over the same corpus, so a drift on
+// module the renderer cannot load. `sanitize.test.ts` holds the vocabulary
+// (markers, placeholders, bounds) equal to the recorder's by equality, and the
+// rule list equal to it by running both over the same corpus, so a drift on
 // either side fails a test rather than a screen. The corpus test is
 // one-directional on purpose: this layer is allowed to change *more* than the
 // recorder -- it always removes the invisible characters, and it keeps the word
