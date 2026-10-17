@@ -386,7 +386,7 @@ func (c ManagedCover) managedGrant(rc ResourceChange, creates map[string]bool) s
 	switch r := str(ch.After["role"]); {
 	case r == "":
 		return "no role"
-	case basicRoles[r]:
+	case slices.Contains(PrimitiveRoles(), r):
 		// The project's basic roles are project-level authority whatever they
 		// are bound on, and a managed plan binds none: the deployer holds no
 		// project-level IAM permission at all (D75 (iii)).
@@ -395,9 +395,15 @@ func (c ManagedCover) managedGrant(rc ResourceChange, creates map[string]bool) s
 	return ""
 }
 
-// basicRoles are the roles that mean "the project" rather than "this
-// resource", whichever resource they are written on.
-var basicRoles = map[string]bool{"roles/owner": true, "roles/editor": true}
+// PrimitiveRoles are the project's basic roles — owner, editor and viewer —
+// the roles that mean "the project" rather than "this resource", whichever
+// resource they are written on. It is the one enumeration of them: the
+// managed cover refuses each, and the modules' own test
+// (deploy/terraform/terraform_test.go, checkLiteralRole) refuses each in the
+// embedded modules. A fresh slice on every call, so no caller can edit it.
+func PrimitiveRoles() []string {
+	return []string{"roles/owner", "roles/editor", "roles/viewer"}
+}
 
 // accountMember reads a service account id as a member string: the plan writes
 // one as the account's email or as projects/<p>/serviceAccounts/<email>.

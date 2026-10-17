@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The embedded tree is what fugaro init writes into its workdir, so every
@@ -1129,7 +1130,7 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 
 func checkLiteralRole(t *testing.T, path, where, role, typ string, inFirebase bool) {
 	t.Helper()
-	if role == "roles/owner" || role == "roles/editor" || role == "roles/viewer" {
+	if slices.Contains(tf.PrimitiveRoles(), role) {
 		t.Errorf("%s: %s grants or names the primitive role %s", path, where, role)
 		return
 	}

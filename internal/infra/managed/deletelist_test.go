@@ -266,22 +266,30 @@ func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
 	if _, ok := deleteListAt(t, s, bucket); ok {
 		t.Errorf("gs://%s/%s is there: a refused write must write nothing", bucket, AllowDeleteObject)
 	}
-	// And the read of what such a write would have produced is the empty
-	// list, so the refusal above is the difference between an approval and
-	// nothing rather than between two shapes of the same answer.
-	over, f := newStorage(t)
-	f.AddBucket(testBucket, testProjectNumber, testManaged)
-	body := oversizedDeleteList(t)
-	// The fixture has to be a body the reader would otherwise believe, or
-	// this row would pass for a reason that has nothing to do with the cap:
-	// anything strictFields refuses — padding the object with text, say — is
-	// rejected before parseDeleteList's length check and leaves the write's
-	// cap and the read's unpinned as a pair. The read of the padding row above
-	// is the whitespace one, where the length is the only thing left to
-	// refuse it for.
+	// And the read of what such a write would have produced is no list, for
+	// the length and for nothing else: the fixture is a list this package
+	// writes in every way but its size (strictFields accepts it, and the same
+	// list one address shorter, under the cap, parses), so parseDeleteList's
+	// length case (deletelist.go:237) is the only thing that refuses it. It is
+	// handed to parseDeleteList whole, because the reader never sees it whole.
+	body, under := oversizedDeleteList(t)
 	if err := strictFields(body); err != nil {
 		t.Fatalf("the oversized fixture is not a list this package writes (%v), so this row would pass before reaching the cap", err)
 	}
+	if got := parseDeleteList(under, testProject); len(got) == 0 {
+		t.Fatalf("the same list under the cap (%d bytes) does not parse, so the cap is not what refuses the oversized one", len(under))
+	}
+	if got := parseDeleteList(body, testProject); got != nil {
+		t.Errorf("parseDeleteList over a %d-byte list = %d address(es), want none: the read's cap is not the write's", len(body), len(got))
+	}
+	// Through AllowDelete the same object is no addresses as well, but for a
+	// different reason: the read takes at most allowDeleteMaxBytes+1 bytes, so
+	// a body past the cap reaches parseDeleteList cut mid-value and strictFields
+	// refuses it first. The length case is reached through AllowDelete only by
+	// a body whose first allowDeleteMaxBytes+1 bytes are still a whole list —
+	// TestAllowDeleteFailsClosed's "padding past the cap" row.
+	over, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
 	f.Put(testBucket, AllowDeleteObject, body)
 	list, err := AllowDelete(ctx, over, testBucket, testProject, testProjectNumber)
 	if err != nil || len(list) != 0 {
@@ -290,13 +298,10 @@ func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
 }
 
 // oversizedDeleteList is a list this package writes in every way but one: it
-// is past allowDeleteMaxBytes, which is the only thing the read refuses it
-// for. It is marshalled from the same DeleteList the writer writes, so the
-// length check is what refuses it (parseDeleteList, deletelist.go:237) and
-// not strictFields — which is what "the write's cap and the read's are the
-// same cap" means, and what a body padded with something unparseable would
-// not show.
-func oversizedDeleteList(t *testing.T) []byte {
+// is past allowDeleteMaxBytes. It is marshalled from the same DeleteList the
+// writer writes, and returned with the same list one address shorter, which
+// is the last one at or under the cap.
+func oversizedDeleteList(t *testing.T) (over, under []byte) {
 	t.Helper()
 	d := DeleteList{Version: AllowDeleteVersion, GCPProject: testProject}
 	for i := 0; ; i++ {
@@ -306,8 +311,9 @@ func oversizedDeleteList(t *testing.T) []byte {
 			t.Fatal(err)
 		}
 		if len(b) > allowDeleteMaxBytes {
-			return b
+			return b, under
 		}
+		under = b
 	}
 }
 

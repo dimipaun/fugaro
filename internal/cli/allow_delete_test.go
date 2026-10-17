@@ -102,6 +102,45 @@ func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 	}
 }
 
+// TestAllowDeleteCommandAsksBeforeItReplacesAnUnreadableObject: an object at
+// the list's name that is not a list this command reads (hand-edited, from a
+// future version, or about another installation) held approvals nobody can
+// read, so replacing it is confirmed the way a removal is — and the question
+// tells the owner what it is: an unreadable object replaced, not "removing 0
+// address(es)", which said nothing was being lost.
+func TestAllowDeleteCommandAsksBeforeItReplacesAnUnreadableObject(t *testing.T) {
+	r := allowDeleteRig(t)
+	const unreadable = `{"version":99,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`
+	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(unreadable))
+	// No terminal: refused, nothing written.
+	out, _, err := execute(t, "allow-delete", "google_cloud_run_v2_job.web")
+	if err == nil {
+		t.Fatalf("an unreadable list was replaced without a confirmation:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if got, _ := allowDeleteAt(t, r.gcs, initRunsBucket); got != unreadable {
+		t.Errorf("a refused replacement changed the object: %s", got)
+	}
+	if strings.Contains(out, "removing 0") {
+		t.Errorf("the confirmation says nothing is removed while an unreadable object is replaced:\n%s", out)
+	}
+	if !strings.Contains(out, "nothing it held could be read") {
+		t.Errorf("the confirmation does not say what it held could not be read:\n%s", out)
+	}
+	// The project's name typed: the object is replaced by the list.
+	terminal(t, true)
+	out, _, err = executeStdin(t, initProjectName+"\n", "allow-delete", "google_cloud_run_v2_job.web")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_cloud_run_v2_job.web"]}`
+	if got, _ := allowDeleteAt(t, r.gcs, initRunsBucket); got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+}
+
 // assertNamesNoFlagItLacks: a refusal that tells the owner to pass a flag the
 // command does not define is advice that cannot be taken — fugaro allow-delete
 // registers the cloud flags and nothing else, so "or pass --yes" named a flag
