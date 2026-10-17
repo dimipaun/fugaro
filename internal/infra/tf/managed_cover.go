@@ -240,6 +240,7 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	}
 	out := append(managedPlanFields(p), managedConfiguration(p)...)
 	out = append(out, c.managedProviderProject(p)...)
+	declared := managedConfigResources(p.Configuration)
 	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -283,8 +284,8 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
 		case c.managedResource(rc) != "":
 			add(rc, c.managedResource(rc))
-		case c.managedProject(rc) != "":
-			add(rc, c.managedProject(rc))
+		case c.managedProject(rc, declared) != "":
+			add(rc, c.managedProject(rc, declared))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.managedGrant(rc); why != "" {
 				add(rc, why)
@@ -691,8 +692,9 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 }
 
 // managedProject says why a managed resource is in a project that is not this
-// run's. "" when it is in one, or when the plan does not say which one it is
-// in. It is the first of Task 1.2's two retained attribute checks, and this
+// run's, or in one the plan cannot prove is. "" when it is in one, when it sets
+// none, and when it is known only after apply because the resource leaves it to
+// its provider block. It is the first of Task 1.2's two retained attribute checks, and this
 // comment is the whole re-derivation of Cover.attributes (cover.go:713-827)
 // for an agent-authored plan: each of init's checks is re-justified rather
 // than inherited, the ones that only make sense for Fugaro's own embedded
@@ -704,15 +706,23 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 //     is in Cover.Projects — the review's projects, not the managed project
 //     alone — so a resource in a second project Fugaro owns is refused too.
 //     This is the spec's step 3 and D61's own second entry. A project the plan
-//     knows only after apply is admitted, and that is evidence rather than
-//     optimism: terraform writes `project` as unknown for a resource that
-//     leaves it to its provider block (testdata/managed_provider_clean_plan.json
-//     is terraform's own output and shows it), so refusing an unknown project
-//     would refuse every real managed plan. Such a resource lands in the
-//     project its provider block decides, which is why that block's own
-//     project is read too (managedProviderProject) rather than left to Task
-//     1.1's form check: the escape this rule would otherwise have is a plan
-//     that moves the project one line up.
+//     knows only after apply is two cases the plan's value cannot tell apart,
+//     because terraform writes after_unknown.project true for both: a resource
+//     that leaves project to its provider block
+//     (testdata/managed_provider_clean_plan.json), and one that sets it to
+//     something computed — project = "${substr(
+//     google_service_account.a.unique_id,0,0)}proj-2", or a module's var.p
+//     fed such a value, applies into proj-2
+//     (testdata/managed_resource_computed_project_plan.json and its module and
+//     instances siblings, terraform's own output). The configuration tells
+//     them apart: an unknown project is admitted only when the resource's
+//     configuration entry carries no project expression at all, and refused
+//     when it carries one, whatever its form, for managedNames' reason — or
+//     when the entry cannot be found, which fails closed. A resource left to
+//     its provider block lands in the project that block decides, which is
+//     why that block's own project is read too (managedProviderProject)
+//     rather than left to Task 1.1's form check: the escape this rule would
+//     otherwise have is a plan that moves the project one line up.
 //   - the billing account the review showed: KEPT, in managedBilling beside
 //     this, which says why it is read before the type rule rather than after.
 //   - the image a job runs, the command and args the modules set and the
@@ -748,12 +758,75 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 // on. Admitting those modes is the decision that would owe those checks (a
 // prefixed repository of the managed project, and a prefixed secret), and it
 // is the owner's rather than this cover's.
-func (c ManagedCover) managedProject(rc ResourceChange) string {
-	a := rc.Change.After
-	if p := str(a["project"]); p != "" && !slices.Contains(c.Projects, p) {
+//
+// declared is the configuration's resources by address
+// (managedConfigResources).
+func (c ManagedCover) managedProject(rc ResourceChange, declared map[string]ConfigResource) string {
+	if unknown(rc.Change, "project") {
+		r, found := declared[managedConfigAddress(rc.Address)]
+		switch _, sets := r.Expressions["project"]; {
+		case !found:
+			return "a project known only after apply, of a resource the configuration does not declare, so the plan does not show whether the resource sets it: it is not proven to be this run's"
+		case sets:
+			return "a project the resource sets to something known only after apply, which the plan cannot prove is this run's: write it out, or leave it to the provider block"
+		}
+		return ""
+	}
+	if p := str(rc.Change.After["project"]); p != "" && !slices.Contains(c.Projects, p) {
 		return "in project " + p + ", which is not this run's"
 	}
 	return ""
+}
+
+// managedConfigResources are the managed resources of a configuration, in
+// every module however deep, by the address a resource change carries with
+// its instance keys removed (managedConfigAddress): module.a.module.b.<type>.<name>.
+// Empty when there is no configuration, which managedConfiguration refuses.
+func managedConfigResources(cfg *Configuration) map[string]ConfigResource {
+	out := map[string]ConfigResource{}
+	if cfg == nil {
+		return out
+	}
+	var walk func(prefix string, m ConfigModule)
+	walk = func(prefix string, m ConfigModule) {
+		for _, r := range m.Resources {
+			if r.Mode == "managed" {
+				out[prefix+r.Address] = r
+			}
+		}
+		for name, call := range m.ModuleCalls {
+			walk(prefix+"module."+name+".", call.Module)
+		}
+	}
+	walk("", cfg.RootModule)
+	return out
+}
+
+// managedConfigAddress is a resource change's address with every instance key
+// removed — a count's [0], a for_each's ["key"], a module's own included —
+// which is the address its configuration entry is found under. A key's quoted
+// text is read as text, so a bracket, a dot or an escaped quote inside it ends
+// nothing.
+func managedConfigAddress(addr string) string {
+	var b strings.Builder
+	depth, quoted, escaped := 0, false, false
+	for _, r := range addr {
+		switch {
+		case depth == 0 && r == '[':
+			depth = 1
+		case depth == 0:
+			b.WriteRune(r)
+		case escaped:
+			escaped = false
+		case quoted && r == '\\':
+			escaped = true
+		case r == '"':
+			quoted = !quoted
+		case !quoted && r == ']':
+			depth = 0
+		}
+	}
+	return b.String()
 }
 
 // managedBilling says why a resource names a billing account that is not the

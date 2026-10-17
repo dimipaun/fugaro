@@ -45,6 +45,17 @@ func managedPlan(changes ...ResourceChange) *Plan {
 			Expressions: map[string]json.RawMessage{"project": json.RawMessage(`{"constant_value":"proj-1"}`)}}}}}
 }
 
+// managedPlanConfigured is managedPlan with rc declared in the configuration,
+// in the module mrc's address names, with the given expressions: what
+// terraform writes for a resource, which says whether it sets project itself.
+func managedPlanConfigured(rc ResourceChange, expressions map[string]json.RawMessage) *Plan {
+	p := managedPlan(rc)
+	name := strings.TrimPrefix(rc.Address, "module.managed.")
+	p.Configuration.RootModule.ModuleCalls = map[string]ModuleCall{"managed": {Module: ConfigModule{
+		Resources: []ConfigResource{{Address: name, Mode: "managed", Type: rc.Type, Expressions: expressions}}}}}
+	return p
+}
+
 // managedAccount is the email of a managed service account of the managed
 // project, the shape a managed plan's own grants point at.
 const managedAccount = ManagedPrefix + "run@proj-1.iam.gserviceaccount.com"
@@ -926,12 +937,33 @@ func TestManagedCoverProjectScope(t *testing.T) {
 		"the managed project":               {managedTestCover(), bucket("proj-1")},
 		"a second project of this run":      {twoProjects, bucket(second)},
 		"no project, so the provider's own": {managedTestCover(), bucket("")},
-		"a project known only after apply": {managedTestCover(),
-			withUnknown(bucket(""), map[string]any{"project": true})},
 	} {
 		t.Run("admits "+name, func(t *testing.T) {
 			if out := tc.c.NotCovered(managedPlan(tc.rc), nil); len(out) != 0 {
 				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+	// A project known only after apply is two cases the plan's value cannot
+	// tell apart: the resource leaves project to its provider block, or sets it
+	// from something computed. Only the configuration tells them apart.
+	late := withUnknown(bucket(""), map[string]any{"project": true})
+	t.Run("admits a project known only after apply that the resource leaves to its provider block", func(t *testing.T) {
+		if out := managedTestCover().NotCovered(managedPlanConfigured(late, nil), nil); len(out) != 0 {
+			t.Fatalf("gives %q, want it covered", out)
+		}
+	})
+	for name, p := range map[string]*Plan{
+		"a project the resource sets, known only after apply": managedPlanConfigured(late,
+			map[string]json.RawMessage{"project": json.RawMessage(`{"references":["google_service_account.a.unique_id","google_service_account.a"]}`)}),
+		"a project the resource sets to a constant, yet known only after apply": managedPlanConfigured(late,
+			map[string]json.RawMessage{"project": json.RawMessage(`{"constant_value":"proj-1"}`)}),
+		"a project known only after apply, of a resource the configuration does not declare": managedPlan(late),
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(p, nil)
+			if len(out) != 1 || !strings.HasPrefix(out[0], late.Address+" (") || !strings.Contains(out[0], "project") {
+				t.Fatalf("gives %q, want one refusal at %s for its project", out, late.Address)
 			}
 		})
 	}
@@ -940,6 +972,65 @@ func TestManagedCoverProjectScope(t *testing.T) {
 	if len(out) != 1 || !strings.HasPrefix(out[0], rc.Address+" (") ||
 		!strings.Contains(out[0], "in project "+second+", which is not this run's") {
 		t.Fatalf("a resource in %s gives %q, want one refusal at %s naming the project", second, out, rc.Address)
+	}
+}
+
+// TestManagedCoverRefusesAComputedProjectAResourceSets is terraform's own
+// output (terraform 1.16.4 and google 8.4.0, planned offline from the plugin
+// cache with a placeholder token and every proxy pointed at a closed port,
+// never applied): a resource that sets project = "${substr(
+// google_service_account.a.unique_id, 0, 0)}proj-2" is written with
+// after_unknown.project true, exactly as a resource that leaves its project
+// to its provider block, and applies into proj-2. The configuration is what
+// tells them apart — its project expression — so every such resource is
+// refused: in the root (a bucket and a secret), in a child module whose
+// project = var.p is fed the computed value by its call, and as count and
+// for_each instances, a module's for_each instance included, whose addresses
+// carry an index the configuration's do not. The control from the same
+// terraform is the same shapes with no project set at all: each inherits
+// proj-1 from the provider block and is admitted, so the rule refuses the
+// computed project and not the unknown one.
+func TestManagedCoverRefusesAComputedProjectAResourceSets(t *testing.T) {
+	for fixture, addrs := range map[string][]string{
+		"managed_resource_computed_project_plan.json": {
+			"google_secret_manager_secret.s", "google_storage_bucket.b"},
+		"managed_resource_computed_project_module_plan.json": {
+			"module.m.google_secret_manager_secret.s", "module.m.google_storage_bucket.b"},
+		"managed_resource_computed_project_instances_plan.json": {
+			`google_secret_manager_secret.f["x.y"]`, `google_secret_manager_secret.f["z[0]"]`,
+			"google_storage_bucket.c[0]", "google_storage_bucket.c[1]", `module.m["k"].google_storage_bucket.b[0]`},
+	} {
+		t.Run(fixture, func(t *testing.T) {
+			out := managedTestCover().NotCovered(readPlanFixture(t, fixture), nil)
+			for _, addr := range addrs {
+				if !refusedWith(out, addr+" (", "project", "known only after apply") {
+					t.Errorf("gives %q, want %s refused for a computed project", out, addr)
+				}
+			}
+			if len(out) != len(addrs) {
+				t.Errorf("gives %d refusals %q, want the %d resources that set a computed project alone", len(out), out, len(addrs))
+			}
+		})
+	}
+	if out := managedTestCover().NotCovered(readPlanFixture(t, "managed_resource_inherited_project_plan.json"), nil); len(out) != 0 {
+		t.Fatalf("the same shapes leaving project to the provider block give %q, want them covered", out)
+	}
+}
+
+// TestManagedConfigAddress pins how a resource change's address finds its
+// configuration entry: every instance key goes, a module's included, and a
+// key's quoted text is read as text, brackets, dots and escapes included.
+func TestManagedConfigAddress(t *testing.T) {
+	for in, want := range map[string]string{
+		"google_storage_bucket.b":                         "google_storage_bucket.b",
+		"google_storage_bucket.c[1]":                      "google_storage_bucket.c",
+		`google_secret_manager_secret.f["z[0]"]`:          "google_secret_manager_secret.f",
+		`module.m["k"].google_storage_bucket.b[0]`:        "module.m.google_storage_bucket.b",
+		`module.a[0].module.b["x\"]y"].google_x.y["a.b"]`: "module.a.module.b.google_x.y",
+	} {
+		if got := managedConfigAddress(in); got != want {
+			t.Errorf("managedConfigAddress(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

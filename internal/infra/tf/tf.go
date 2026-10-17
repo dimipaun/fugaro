@@ -138,6 +138,9 @@ type ConfigResource struct {
 	Mode         string            `json:"mode"`
 	Type         string            `json:"type"`
 	Provisioners []json.RawMessage `json:"provisioners"`
+	// Expressions are the resource's arguments as the configuration writes
+	// them; the managed cover reads whether project is among them.
+	Expressions map[string]json.RawMessage `json:"expressions"`
 }
 
 // ModuleCall is a module block of a configuration and the module it calls.
