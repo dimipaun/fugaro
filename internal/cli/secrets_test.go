@@ -1079,8 +1079,24 @@ func TestSecretsLsMissingCoversBothSources(t *testing.T) {
 	if _, ok := got["not-required-token"]; ok {
 		t.Errorf("a name neither source requires is listed: %+v", got)
 	}
-	// The human table marks the same rows, with no SECRET and no CREATED for
-	// a name that has no container.
+	// A required name that is stored stops being marked, and a name no source
+	// requires never is, however empty its container.
+	for _, name := range []string{"npm-token", "claude-oauth-token"} {
+		if _, _, err := executeStdin(t, tokenValue, "secrets", "set", name, "--repo", "acme/app"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got = secretsMissingByName(secretsLsJSON(t))
+	for _, name := range []string{"npm-token", "claude-oauth-token"} {
+		if got[name] {
+			t.Errorf("%s is stored, so it is not missing: %+v", name, got)
+		}
+	}
+	if !got["github-app-key"] {
+		t.Errorf("github-app-key is still stored nowhere: %+v", got)
+	}
+	// The human table marks the same rows, and a name with no container has
+	// no SECRET and no CREATED to show.
 	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/app")
 	if err != nil {
 		t.Fatal(err)
@@ -1089,11 +1105,14 @@ func TestSecretsLsMissingCoversBothSources(t *testing.T) {
 		t.Errorf("the table has no MISSING column:\n%s", out)
 	}
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "npm-token") && !strings.Contains(line, "yes") {
-			t.Errorf("the npm-token row does not say missing: %q", line)
+		if strings.HasPrefix(line, "github-app-key") && !strings.Contains(line, "yes") {
+			t.Errorf("the github-app-key row does not say missing: %q", line)
+		}
+		if strings.HasPrefix(line, "npm-token") && strings.Contains(line, "yes") {
+			t.Errorf("the stored npm-token row says missing: %q", line)
 		}
 	}
-	if strings.Contains(out, gcp.SecretID(appSlug, "npm-token")) {
+	if strings.Contains(out, gcp.SecretID(appSlug, "github-app-key")) {
 		t.Errorf("a missing secret claims a container:\n%s", out)
 	}
 }
@@ -1122,6 +1141,15 @@ func TestSecretsLsMissingIsAbsentVersionNotAbsentContainer(t *testing.T) {
 	got = secretsMissingByName(secretsLsJSON(t))
 	if got["bitbucket-token"] {
 		t.Error("an allow-listed project copy resolves the name, so it is not missing")
+	}
+	// A container with no enabled version that nothing requires is listed as
+	// it is — empty — and never marked: MISSING is about the requirement, not
+	// about the emptiness.
+	sm.Seed(gcp.SecretID(appSlug, "openrouter-api-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "openrouter-api-key"}, nil)
+	got = secretsMissingByName(secretsLsJSON(t))
+	if _, listed := got["openrouter-api-key"]; !listed || got["openrouter-api-key"] {
+		t.Errorf("an empty container of a name nothing requires = %+v", got)
 	}
 	// Nothing here reads a value, at any point (Task 5.1's promise).
 	for _, r := range sm.Requests() {

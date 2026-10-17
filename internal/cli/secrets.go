@@ -610,9 +610,11 @@ version resolves for: the answer to "which required secret is gone" after a
 restore. "Required" is the union of what the checkout's fugaro.yaml declares
 (workflows.<w>.secrets) and the names the platform itself mounts
 (config.ReservedSecrets), and a required name with nothing behind it gets a
-row of its own — a missing secret has no container to be listed from, so its
-SECRET, LATEST and CREATED are "-". Run this from a checkout of the repository
-to check the names its own configuration declares as well.
+row of its own — a missing secret has no container to be listed from, so it
+has no secret ID, and its SECRET, LATEST and CREATED read "-". The same marks
+a container that exists with no enabled version behind it, which resolves to
+nothing as surely as no container at all. Run this from a checkout of the
+repository to check the names its own configuration declares as well.
 
 --project-wide lists the installation's project-wide containers instead,
 with the repositories the local config allows to use each one. It has no
@@ -743,6 +745,10 @@ func printSecrets(w io.Writer, subject string, entries []secretEntry, asJSON, pr
 		return enc.Encode(entries)
 	}
 	if len(entries) == 0 {
+		// A project-wide listing is empty when the installation has stored
+		// none; a repository's listing is empty only when nothing is required
+		// of it either, since a required name with no value gets a row of its
+		// own (Task 5.1).
 		if projectWide {
 			_, err := fmt.Fprintf(w, "no project-wide secrets stored for %s\n", subject)
 			return err
