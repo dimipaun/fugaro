@@ -971,13 +971,32 @@ function looksRandom(label: string): boolean {
 }
 
 /**
- * punycodeDecode is RFC 3492's decoder, for the part of an `xn--` label after
- * its prefix; `null` for a label that does not decode. The URL parser writes a
- * non-ASCII host in this form, and a token at the start of such a label is
- * preceded by `xn--` -- a hyphen, which is exactly what a family pattern's
- * left edge refuses -- so the host rule reads the decoded label as well.
+ * punycodeDigit is RFC 3492's digit value of one character: `a`-`z` and `A`-`Z`
+ * are 0-25, `0`-`9` are 26-35, and anything else is -1 -- each range spelled
+ * out, so no character outside `[0-9A-Za-z]` can map to a digit.
  */
-function punycodeDecode(input: string): string | null {
+function punycodeDigit(code: number): number {
+  if (code >= 0x30 && code <= 0x39) return code - 0x30 + 26
+  if (code >= 0x41 && code <= 0x5a) return code - 0x41
+  if (code >= 0x61 && code <= 0x7a) return code - 0x61
+  return -1
+}
+
+/** PUNYCODE_MAX_INT is the decoder's integer bound, RFC 3492's `maxint`. */
+const PUNYCODE_MAX_INT = 0x7fffffff
+
+/**
+ * punycodeDecode is RFC 3492's decoder, for the part of an `xn--` label after
+ * its prefix; `null` for a label that does not decode -- a character that is
+ * not a digit, a digit sequence that runs out, an integer past the RFC's bound,
+ * or a code point that is not a Unicode scalar value -- so it never throws. The
+ * URL parser writes a non-ASCII host in this form, and a token at the start of
+ * such a label is preceded by `xn--` -- a hyphen, which is exactly what a
+ * family pattern's left edge refuses -- so the host rule reads the decoded
+ * label as well, and refuses a label that does not decode
+ * (`hostCarriesCredential`).
+ */
+export function punycodeDecode(input: string): string | null {
   const base = 36
   const output: number[] = []
   const delimiter = input.lastIndexOf('-')
@@ -993,15 +1012,15 @@ function punycodeDecode(input: string): string | null {
     const oldi = i
     for (let w = 1, k = base; ; k += base) {
       if (index >= input.length) return null
-      const code = input.charCodeAt(index)
+      const digit = punycodeDigit(input.charCodeAt(index))
       index += 1
-      const digit = code - 48 < 10 ? code - 22 : code - 65 < 26 ? code - 65 : code - 97 < 26 ? code - 97 : base
-      if (digit >= base) return null
+      if (digit < 0) return null
+      if (digit > Math.floor((PUNYCODE_MAX_INT - i) / w)) return null
       i += digit * w
       const t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias
       if (digit < t) break
+      if (w > Math.floor(PUNYCODE_MAX_INT / (base - t))) return null
       w *= base - t
-      if (i > 0x7fffffff) return null
     }
     const length = output.length + 1
     let delta = i - oldi
@@ -1010,9 +1029,10 @@ function punycodeDecode(input: string): string | null {
     let k = 0
     for (; delta > 455; k += base) delta = Math.floor(delta / 35)
     bias = Math.floor(k + (36 * delta) / (delta + 38))
+    if (Math.floor(i / length) > PUNYCODE_MAX_INT - n) return null
     n += Math.floor(i / length)
     i %= length
-    if (n > 0x10ffff) return null
+    if (n < 0x80 || n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) return null
     output.splice(i, 0, n)
     i += 1
   }
@@ -1037,7 +1057,8 @@ function rawHost(text: string): string {
  * random-looking label. It reads the host as written (case kept, which is what
  * the entropy guard reads) and as parsed (percent-decoded and case-folded) --
  * whole, so a token with a dot in it is still one token, and label by label,
- * each `xn--` label also punycode-decoded -- and runs on every form the
+ * each `xn--` label also punycode-decoded, and refused when it does not
+ * decode -- and runs on every form the
  * credential pass (which percent-decodes a form itself), the entropy net and
  * `looksRandom`.
  */
@@ -1049,8 +1070,11 @@ function hostCarriesCredential(text: string, hostname: string): boolean {
     for (const label of host.split(HOST_DOT_RE)) {
       forms.add(label)
       if (/^xn--/i.test(label)) {
+        // A label that claims to be punycode and is not is no host a link
+        // has: it is refused rather than read as plain text.
         const decoded = punycodeDecode(label.slice(4))
-        if (decoded !== null) forms.add(decoded)
+        if (decoded === null) return true
+        forms.add(decoded)
       }
     }
   }
@@ -1071,19 +1095,47 @@ function hostCarriesCredential(text: string, hostname: string): boolean {
  * is not a webhook is kept.
  */
 const WEBHOOK_URLS: readonly { readonly host: RegExp; readonly path: RegExp }[] = Object.freeze([
-  { host: /^hooks\.slack\.com$/, path: /^\/(?:services|workflows|triggers)\//i },
-  { host: /^(?:(?:ptb|canary)\.)?discord(?:app)?\.com$/, path: /^\/api\/(?:v\d+\/)?webhooks\//i },
+  { host: /(?:^|\.)hooks\.slack\.com$/, path: /^\/(?:services|workflows|triggers)\//i },
+  { host: /(?:^|\.)discord(?:app)?\.com$/, path: /^\/api\/(?:v\d+\/)?webhooks\//i },
   { host: /(?:^|\.)webhook\.office\.com$/, path: /^\/webhookb2\//i },
-  { host: /^outlook\.office(?:365)?\.com$/, path: /^\/webhook\//i },
-  { host: /^hooks\.zapier\.com$/, path: /^\/hooks\//i },
-  { host: /^maker\.ifttt\.com$/, path: /\/with\/key\//i },
-  { host: /^api\.telegram\.org$/, path: /^\/(?:file\/)?bot/i },
+  { host: /(?:^|\.)outlook\.office(?:365)?\.com$/, path: /^\/webhook\//i },
+  { host: /(?:^|\.)hooks\.zapier\.com$/, path: /^\/hooks\//i },
+  { host: /(?:^|\.)maker\.ifttt\.com$/, path: /\/with\/key\//i },
+  { host: /(?:^|\.)api\.telegram\.org$/, path: /^\/(?:file\/)?bot/i },
 ])
 
-/** isWebhook answers whether a parsed URL is one of `WEBHOOK_URLS`. */
+/**
+ * webhookPath is a URL path in the form `WEBHOOK_URLS` reads: percent-decoded,
+ * every run of slashes and backslashes collapsed to one slash (a server reads
+ * `//services` as `/services`, the parser does not), and its `.` and `..`
+ * segments resolved by the URL parser -- repeated until it stops changing, so a
+ * separator or a dot that only appears once decoded is resolved too.
+ */
+function webhookPath(pathname: string): string {
+  let path = pathname
+  for (let round = 0; round < 4; round += 1) {
+    const flat = percentDecode(path).replace(/[\\/]+/g, '/')
+    let next: string
+    try {
+      next = new URL(flat.startsWith('/') ? flat : `/${flat}`, 'https://webhook.invalid').pathname
+    } catch {
+      return flat
+    }
+    if (next === path) return flat
+    path = next
+  }
+  return percentDecode(path).replace(/[\\/]+/g, '/')
+}
+
+/**
+ * isWebhook answers whether a parsed URL is one of `WEBHOOK_URLS`. The host
+ * loses every trailing dot (`hooks.slack.com..` is that host) and a listed host
+ * matches with any subdomain in front of it (`www.discord.com`); the path is
+ * `webhookPath`'s.
+ */
 function isWebhook(parsed: URL): boolean {
-  const host = parsed.hostname.replace(/\.$/, '')
-  const path = percentDecode(parsed.pathname)
+  const host = parsed.hostname.replace(/\.+$/, '')
+  const path = webhookPath(parsed.pathname)
   return WEBHOOK_URLS.some((hook) => hook.host.test(host) && hook.path.test(path))
 }
 

@@ -1124,9 +1124,19 @@ validating classes are not held to that equality, because they decide
 differently on purpose: the recorder replaces **every** `url` field with
 `[redacted-url]`, while the `url` class keeps a clean `https` link (and refuses
 one whose host, path, query or fragment carries anything the credential rules
-match, or whose host has a random-looking label);
+match, whose host has a random-looking label or an `xn--` label that is not
+valid punycode, or that is one of the well-known webhook URLs whose secret is a
+path segment, matched after the path's slash runs, dot segments and percent
+escapes are resolved and with any subdomain or trailing dots on the host);
 the recorder writes a keyed pseudonym where this layer, with no key, accepts the
 recorder's pseudonym or validates the value's shape.
+
+The host rule has a trade-off, said out loud: a host label with an unbroken run
+of 20 or more letters and digits that mixes both at 3.5 bits per character or
+more reads as a key, not a name, so a legitimate host built that way — a Netlify
+deploy preview's hash-prefixed subdomain, for one — is refused and drawn as
+`n/a` rather than as a link. A run broken by hyphens (`us-east-1`,
+`edgeweb-abc123xyz-ue`) is read piece by piece and kept.
 
 Every value is held to 64 KiB twice — as it arrives, and again after NFKC (which
 can grow a string eighteen-fold) — and a value past either bound is refused, not

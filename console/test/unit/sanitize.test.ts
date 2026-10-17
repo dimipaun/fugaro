@@ -79,6 +79,7 @@ import {
   TOKEN_SHAPES,
   URL_PLACEHOLDER,
   isMarkerText,
+  punycodeDecode,
   safeUrl,
   sanitizeText,
 } from '../../src/shared/sanitize'
@@ -930,6 +931,8 @@ describe('the class rules', () => {
       ['Zapier', `https://hooks.zapier.com/hooks/catch/123/${secret}/`],
       ['IFTTT', `https://maker.ifttt.com/trigger/event/with/key/${secret}`],
       ['Telegram', `https://api.telegram.org/bot${id}:${secret}/sendMessage`],
+      ['Outlook', `https://outlook.office.com/webhook/${id}/IncomingWebhook/${secret}`],
+      ['Outlook 365', `https://outlook.office365.com/webhook/${id}/IncomingWebhook/${secret}`],
     ] as const) {
       refusedLink(url, secret, what)
     }
@@ -940,6 +943,95 @@ describe('the class rules', () => {
       'https://github.com/o/r/settings/hooks/123',
     ]) {
       expect(text(url, 'url'), url).toBe(url)
+    }
+  })
+
+  it('refuses a webhook URL behind doubled slashes, dot segments, encoded separators or a www host', () => {
+    // Review round 5 of PR 478: the anchored path patterns read the parsed
+    // path, which keeps `//`, and the host lost only one trailing dot. Every
+    // value is assembled at run time (see this file's header).
+    const id = '123456789012345678'
+    const secret = fake.inert('Ab', 'cD', 'ef', 'GH', 'ij', 'KL', 'mn', 'OP')
+    const bot = `${id}:${secret}`
+    for (const [what, url] of [
+      ['Slack, a doubled slash', `https://hooks.slack.com//services/T0000/B0000/${secret}`],
+      ['Slack, slashes inside', `https://hooks.slack.com/services//T0000/B0000/${secret}`],
+      ['Slack, two trailing dots', `https://hooks.slack.com../services/T0000/B0000/${secret}`],
+      ['Slack, a dot segment', `https://hooks.slack.com/./services/T0000/B0000/${secret}`],
+      ['Slack, a parent segment', `https://hooks.slack.com/x/../services/T0000/B0000/${secret}`],
+      ['Slack, an encoded parent segment', `https://hooks.slack.com/x/%2e%2e/services/T0000/B0000/${secret}`],
+      ['Slack, an encoded slash', `https://hooks.slack.com/%2Fservices/T0000/B0000/${secret}`],
+      ['Slack, an encoded parent behind encoded slashes', `https://hooks.slack.com/x%2F..%2Fservices/T0000/B0000/${secret}`],
+      ['Slack, an encoded backslash', `https://hooks.slack.com/%5Cservices/T0000/B0000/${secret}`],
+      ['Discord, a doubled slash first', `https://discord.com//api/webhooks/${id}/${secret}`],
+      ['Discord, a doubled slash inside', `https://discord.com/api//webhooks/${id}/${secret}`],
+      ['Discord, versioned, a doubled slash', `https://discord.com/api/v10//webhooks/${id}/${secret}`],
+      ['Discord, www', `https://www.discord.com/api/webhooks/${id}/${secret}`],
+      ['Discord, the old host with www', `https://www.discordapp.com/api/webhooks/${id}/${secret}`],
+      ['Telegram, a doubled slash', `https://api.telegram.org//bot${bot}/sendMessage`],
+      ['Telegram, two trailing dots', `https://api.telegram.org../bot${bot}/sendMessage`],
+      ['Zapier, a doubled slash', `https://hooks.zapier.com//hooks/catch/123/${secret}/`],
+      ['Teams, a doubled slash', `https://acme.webhook.office.com//webhookb2/${id}/IncomingWebhook/${secret}`],
+      ['Outlook, a doubled slash', `https://outlook.office.com//webhook/${id}/IncomingWebhook/${secret}`],
+    ] as const) {
+      refusedLink(url, secret, what)
+    }
+  })
+
+  it('decodes punycode exactly as the URL parser encodes it, many code points to a label', () => {
+    // Review round 5 of PR 478: every label here inserts several code points,
+    // so a decoder whose bias adaptation is wrong puts them in the wrong place
+    // or decodes the wrong ones.
+    for (const label of ['bücher', 'münchen-straße', 'ñandú', 'δοκιμή', 'испытание', '例え', 'aé1üb2öc3', 'résumé-café']) {
+      const encoded = new URL(`https://${label}.example/`).hostname.split('.')[0] ?? ''
+      expect(encoded.startsWith('xn--'), label).toBe(true)
+      expect(punycodeDecode(encoded.slice(4)), label).toBe(label.normalize('NFC').toLowerCase())
+    }
+  })
+
+  it('refuses, and never throws on, an xn-- label that is not punycode', () => {
+    // Review round 5 of PR 478: the digit mapping was a signed comparison, so
+    // `:;<=>?@` became negative digits, and enough of them drove the code point
+    // negative and `String.fromCodePoint` threw out of `sanitizeText`.
+    for (const url of [
+      `https://xn--a${';'.repeat(200)}b.com/`,
+      `https://xn--${'='.repeat(200)}.com/`,
+      `https://xn--a${'!'.repeat(5)}.com/`,
+      `https://xn--${'zzzzzzzzzz'.repeat(5)}.com/`,
+    ]) {
+      expect(() => sanitizeText(url, 'url'), url).not.toThrow()
+      expect(refused(url, 'url'), url).toContain('the console will not')
+    }
+    for (const input of [';;;', 'a-;', '====', '@', '[', '`', '{', '_', '99999999999999999999', '-é', '9999999999']) {
+      expect(punycodeDecode(input), input).toBeNull()
+    }
+  })
+
+  it('never lets an exception escape the url class, whatever the xn-- label holds', () => {
+    // A fuzz loop over labels built from letters, digits and the ASCII
+    // punctuation, with a fixed seed so a failure reproduces. sanitizeText
+    // never throws: a value it will not draw comes back as a refusal.
+    const alphabet = `abcxyzABCXYZ0189-!"#$&'()*+,;=:<>?@[]^_\`{|}~.%`
+    let seed = 0x5eed
+    const next = (limit: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      return seed % limit
+    }
+    for (let round = 0; round < 3000; round += 1) {
+      let label = ''
+      const length = 1 + next(250)
+      // Runs of one character as well as single ones: a long run of a
+      // punctuation digit is what drove the old decoder's code point negative.
+      while (label.length < length) {
+        label += (alphabet[next(alphabet.length)] ?? '').repeat(next(4) === 0 ? 1 + next(200) : 1)
+      }
+      for (const url of [`https://xn--${label}.com/`, `https://a.xn--${label}/x`, `https://xn--${label}`]) {
+        let result: ReturnType<typeof sanitizeText> | undefined
+        expect(() => {
+          result = sanitizeText(url, 'url')
+        }, url).not.toThrow()
+        expect(result, url).toBeDefined()
+      }
     }
   })
 
