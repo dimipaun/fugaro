@@ -465,6 +465,11 @@ func (c *CloudAssets) List(ctx context.Context, gcpProject string) ([]Asset, err
 			return fail(err)
 		}
 		for _, r := range res.Results {
+			// A null or nameless element is not a resource: reading the listing
+			// as complete without it would be a guess, so the read fails.
+			if r == nil || r.Name == "" {
+				return fail(errors.New("the listing holds an element with no resource name"))
+			}
 			out = append(out, Asset{Name: r.Name, Type: r.AssetType})
 		}
 		if len(out) > inventoryMaxAssets {

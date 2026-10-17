@@ -207,6 +207,12 @@ func TestInventoryAccountedMatching(t *testing.T) {
 			"//iam.googleapis.com/projects/proj-1234/serviceAccounts/" + runs, saT, false},
 		{"same path, different type", []StateResource{{Type: jobT, Name: job}}, "//run.googleapis.com/" + job, "run.googleapis.com/Service", false},
 		{"a bare name nested under a location", []StateResource{{Type: jobT, Name: "check"}}, "//run.googleapis.com/" + job, jobT, false},
+		{"a bare location name nested in the job", []StateResource{{Type: jobT, Name: "us-east5"}}, "//run.googleapis.com/" + job, jobT, false},
+		{"a bare project name nested in the job", []StateResource{{Type: jobT, Name: "proj-1234"}}, "//run.googleapis.com/" + job, jobT, false},
+		{"an API path that only ends the asset's path", []StateResource{{Type: jobT, Name: job}},
+			"//run.googleapis.com/x/" + job, jobT, false},
+		{"an untyped asset and an untyped entry", []StateResource{{Name: runs}}, "//storage.googleapis.com/" + runs, "", false},
+		{"an entry with no name", []StateResource{{Type: bucketT}}, "//storage.googleapis.com/projects/proj-1234/buckets/", bucketT, false},
 		{"a partial path names no project or location", []StateResource{{Type: jobT, Name: "jobs/check"}}, "//run.googleapis.com/" + job, jobT, false},
 		{"same job, different project", []StateResource{{Type: jobT, Name: job}},
 			"//run.googleapis.com/projects/other-5678/locations/us-east5/jobs/check", jobT, false},
@@ -522,5 +528,49 @@ func TestInventoryReadHasADeadline(t *testing.T) {
 	inventory(f).Check(ctx)
 	if !f.ok || !f.deadline.Equal(want) {
 		t.Errorf("the read's deadline is %v, want the caller's own %v", f.deadline, want)
+	}
+}
+
+// A null element in the listing decodes to a nil resource; reading its name
+// would panic and crash the apply. It is a read error, and the run falls back.
+func TestInventoryNullListingElementFallsBack(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"results":[{"name":"//storage.googleapis.com/a","assetType":"storage.googleapis.com/Bucket"},null]}`)
+	}))
+	defer srv.Close()
+	c, err := NewCloudAssets(context.Background(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := inventory(c).Check(context.Background())
+	if !d.Fallback || d.Cause != CauseUnreadable || len(d.Foreign) != 0 {
+		t.Errorf("a null element decided %+v, want a fallback with cause %q and nothing foreign", d, CauseUnreadable)
+	}
+}
+
+// An error on the second page is an error, not a short listing: reading the
+// first page alone as the whole project would account for the rest unseen.
+func TestInventoryErrorOnLaterPageFallsBack(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("pageToken") == "" {
+			fmt.Fprint(w, `{"results":[{"name":"//storage.googleapis.com/a","assetType":"storage.googleapis.com/Bucket"}],"nextPageToken":"t2"}`)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"code":500,"message":"backend error"}}`)
+	}))
+	defer srv.Close()
+	c, err := NewCloudAssets(context.Background(), option.WithEndpoint(srv.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.List(context.Background(), gcpProject); err == nil {
+		t.Errorf("List = %+v, nil; want an error from page 2", got)
+	}
+	d := inventory(c).Check(context.Background())
+	if !d.Fallback || d.Cause != CauseUnreadable || len(d.Foreign) != 0 {
+		t.Errorf("a page-2 error decided %+v, want a fallback with cause %q and nothing foreign", d, CauseUnreadable)
 	}
 }
