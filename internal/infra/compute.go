@@ -18,6 +18,8 @@ import (
 	scheduler "google.golang.org/api/cloudscheduler/v1"
 	"google.golang.org/api/googleapi"
 	iam "google.golang.org/api/iam/v1"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // The Batch backend's installation-level provisioning (design
@@ -49,7 +51,7 @@ const (
 	// Condition, measured accepted and read back as written on 2026-10-15,
 	// §3.7), and the reaper's sweep is defined over the same prefix, so
 	// both read this one constant.
-	JobPrefix = "fugaro-"
+	JobPrefix = gcp.BatchJobPrefix
 	// ReaperAccountID is the reaper's dedicated service account (§3.7).
 	ReaperAccountID = "fugaro-reaper"
 	// ReaperRoleID is the reaper's custom role: exactly the six

@@ -86,7 +86,7 @@ var grantRules = map[string]map[string]who{
 		customKey + "fugaroHistory":               toAccounts,
 		"roles/aiplatform.user":                   toAccounts,
 		"roles/batch.agentReporter":               toAccounts,
-		"roles/batch.jobsEditor":                  toPeople, // under the Fugaro-job-name condition (the compute module's local.job_name_prefix)
+		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition)
 		"roles/datastore.user":                    toAccounts,
 		"roles/datastore.viewer":                  toPeople,
 		"roles/firebaseauth.admin":                toAccounts,
@@ -282,6 +282,9 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			if why == "" && t == "google_storage_bucket_iam_member" {
 				why = c.bucketCondition(rc.Change)
 			}
+			if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
+				why = c.jobsCondition(rc.Change)
+			}
 			if why != "" {
 				add(rc, why)
 			}
@@ -454,6 +457,63 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole bool) st
 	return ""
 }
 
+// grantConditions reads a grant's condition blocks, or says why they cannot
+// be trusted (what names the grant in that reason): a condition known only
+// after apply, a condition that is not a block or a list of them, a list
+// holding anything else, or more than one block.
+func grantConditions(ch Change, what string) ([]map[string]any, string) {
+	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") || unknownAt(ch.AfterUnknown, "condition", 0, "description") {
+		return nil, what + " whose condition is not known"
+	}
+	condRaw := ch.After["condition"]
+	switch v := condRaw.(type) {
+	case nil, map[string]any:
+	case []any:
+		// objects() silently drops a list entry that is not itself a condition
+		// block: without this check, a condition such as ["true"] would read as
+		// zero conditions (objects() returns none of it), covering a grant that
+		// is not in fact unconditioned.
+		if len(objects(v)) != len(v) {
+			return nil, what + " whose condition list holds something that is not a condition block"
+		}
+	default:
+		return nil, what + " whose condition is not a condition block or a list of them"
+	}
+	conds := objects(condRaw)
+	if len(conds) > 1 {
+		return nil, what + " with more than one condition"
+	}
+	return conds, ""
+}
+
+// jobsCondition says why a roles/batch.jobsEditor grant's condition is not
+// the compute module's, "" when it is. The role lets its holder create a
+// Batch job with any image, command and secrets, as any account it has
+// actAs on, so it is covered only under exactly gcp.LauncherJobsCondition for
+// the grant's own project and this run's region, with the module's title and
+// description: no condition, a different one, and one that merely contains
+// or prefixes it are all refused, as is a cover with no region to check it
+// against.
+func (c Cover) jobsCondition(ch Change) string {
+	conds, why := grantConditions(ch, "a Batch Job Editor grant")
+	if why != "" {
+		return why
+	}
+	if len(conds) == 0 {
+		return "grants roles/batch.jobsEditor with no condition, which is every Batch job in the project"
+	}
+	project := str(ch.After["project"])
+	if !slices.Contains(c.Projects, project) || !gcp.ValidJobsConditionScope(project, c.Region) {
+		return "grants roles/batch.jobsEditor where the Fugaro job-name condition cannot be checked (project or region)"
+	}
+	cd := conds[0]
+	if str(cd["title"]) != gcp.LauncherJobsConditionTitle || str(cd["description"]) != gcp.LauncherJobsConditionDescription ||
+		str(cd["expression"]) != gcp.LauncherJobsCondition(project, c.Region) {
+		return "grants roles/batch.jobsEditor under a condition that is not the compute module's Fugaro job-name condition"
+	}
+	return ""
+}
+
 // accountClause is one clause of a job or build account's bucket condition,
 // as gcp.BucketCondition writes it.
 var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/(runs|cache|locks|builds)/([a-z0-9][a-z0-9_-]*)/"\)$`)
@@ -466,26 +526,9 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // never set a description, and a condition known only after apply is not
 // covered.
 func (c Cover) bucketCondition(ch Change) string {
-	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") || unknownAt(ch.AfterUnknown, "condition", 0, "description") {
-		return "a bucket grant whose condition is not known"
-	}
-	condRaw := ch.After["condition"]
-	switch v := condRaw.(type) {
-	case nil, map[string]any:
-	case []any:
-		// objects() silently drops a list entry that is not itself a condition
-		// block: without this check, a condition such as ["true"] would read as
-		// zero conditions (objects() returns none of it), covering a grant that
-		// is not in fact unconditioned.
-		if len(objects(v)) != len(v) {
-			return "a bucket grant whose condition list holds something that is not a condition block"
-		}
-	default:
-		return "a bucket grant whose condition is not a condition block or a list of them"
-	}
-	conds := objects(condRaw)
-	if len(conds) > 1 {
-		return "a bucket grant with more than one condition"
+	conds, why := grantConditions(ch, "a bucket grant")
+	if why != "" {
+		return why
 	}
 	var title, expr string
 	if len(conds) == 1 {

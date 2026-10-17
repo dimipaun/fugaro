@@ -427,3 +427,41 @@ func LauncherBucketCondition(bucket string) string {
 	}
 	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
 }
+
+// BatchJobPrefix is the prefix every Fugaro Batch job's name starts with
+// (infra.JobPrefix reads it): the launchers' Batch Job Editor grant is
+// narrowed to it, and the reaper's sweep is defined over it.
+const BatchJobPrefix = "fugaro-"
+
+// LauncherJobsConditionTitle and LauncherJobsConditionDescription are the
+// title and description of the launchers' roles/batch.jobsEditor grant, as
+// the compute module (modules/compute/iam.tf) sets them.
+const (
+	LauncherJobsConditionTitle       = "fugaro-jobs-only"
+	LauncherJobsConditionDescription = "Batch jobs whose name starts with the Fugaro job prefix, in this region."
+)
+
+var (
+	jobsProjectRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	jobsRegionRE  = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
+)
+
+// LauncherJobsCondition narrows the launchers' roles/batch.jobsEditor grant
+// to Fugaro-shaped job names in project and region (design compute-backend
+// §3.7, Check 57a step 9). The compute module and the install guard
+// (tf.Cover) both compare against it byte for byte: this is its one
+// definition. project and region are embedded in a CEL string literal
+// unescaped, so it panics on one outside their charsets rather than return
+// a condition that could break out of the literal.
+func LauncherJobsCondition(project, region string) string {
+	if !jobsProjectRE.MatchString(project) || !jobsRegionRE.MatchString(region) {
+		panic(fmt.Sprintf("gcp.LauncherJobsCondition: project %q or region %q is outside its charset", project, region))
+	}
+	return fmt.Sprintf(`resource.name.startsWith("projects/%s/locations/%s/jobs/%s")`, project, region, BatchJobPrefix)
+}
+
+// ValidJobsConditionScope reports whether LauncherJobsCondition accepts
+// project and region.
+func ValidJobsConditionScope(project, region string) bool {
+	return jobsProjectRE.MatchString(project) && jobsRegionRE.MatchString(region)
+}
