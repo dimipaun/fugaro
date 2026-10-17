@@ -61,11 +61,13 @@ func bucketConfig(provisioners ...map[string]any) map[string]any {
 }
 
 // config is a configuration whose providers are the given full names, keyed
-// by their local names, and whose root module holds resources and calls.
+// by their local names, each with the managed project written out as its
+// project, and whose root module holds resources and calls.
 func config(providers map[string]string, resources []map[string]any, calls map[string]any) map[string]any {
 	pc := map[string]any{}
 	for name, full := range providers {
-		pc[name] = map[string]any{"name": name, "full_name": full}
+		pc[name] = map[string]any{"name": name, "full_name": full,
+			"expressions": map[string]any{"project": constant("proj-1")}}
 	}
 	root := map[string]any{"resources": resources}
 	if calls != nil {
@@ -271,8 +273,12 @@ func readPlanFixture(t *testing.T, name string) *Plan {
 // invention): a provider block in the root that impersonates Fugaro's
 // scheduler and sends the storage API — and the bearer token with it — to an
 // outside address, an aliased block whose impersonated account comes from an
-// ephemeral resource, and a module's own block that bills another project.
-// Each is refused for the setting it carries; the plan's resources are clean.
+// ephemeral resource, and a module's own block that bills another project and
+// lands its resources in it. Each setting is refused for what it carries, and
+// so is the resource the module block writes: it is in proj-2, which is not
+// this run's project, and Task 1.2's project rule refuses it by address — as
+// it refuses the block itself for the project it lands them in, which is the
+// same rule read where a resource leaves the choice to its provider.
 func TestManagedCoverRefusesTerraformsOwnProviderSettings(t *testing.T) {
 	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_settings_plan.json"), nil)
 	for _, want := range [][]string{
@@ -282,29 +288,36 @@ func TestManagedCoverRefusesTerraformsOwnProviderSettings(t *testing.T) {
 		{"provider_config.google.other (", "impersonate_service_account"},
 		{"provider_config.module.m:google (", "billing_project"},
 		{"provider_config.module.m:google (", "user_project_override"},
+		{"provider_config.module.m:google (", "lands resources in project proj-2"},
 		{"configuration (references ephemeral.google_service_account_access_token.t:"},
+		{"module.m.google_project_service.s (", "in project proj-2, which is not this run's"},
 	} {
 		if !refusedWith(out, want...) {
 			t.Errorf("gives %q, want a refusal carrying %q", out, want)
 		}
 	}
 	for _, o := range out {
-		if !strings.HasPrefix(o, "provider_config.") && !strings.HasPrefix(o, "configuration (references ephemeral.") {
-			t.Errorf("refuses %q, which is neither a provider setting nor the ephemeral resource", o)
+		if !strings.HasPrefix(o, "provider_config.") && !strings.HasPrefix(o, "configuration (references ephemeral.") &&
+			!strings.HasPrefix(o, "module.m.google_project_service.s (") {
+			t.Errorf("refuses %q, which is neither a provider setting, the ephemeral resource, nor the module's own resource in proj-2", o)
 		}
 		if strings.Contains(o, "setting project") || strings.Contains(o, "setting region") {
 			t.Errorf("refuses %q, an allowed setting", o)
 		}
 	}
-	// The positive control from the same terraform: project from a variable,
-	// region, zone and default labels written out.
+	// The positive control from the same terraform: project, region, zone and
+	// default labels written out.
 	if out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_clean_plan.json"), nil); len(out) != 0 {
 		t.Errorf("the clean plan gives %q, want it covered", out)
 	}
 }
 
 // providerPlan is a plan of one managed bucket whose configuration's google
-// entry carries the given fields beside its name and full name.
+// entry carries the given fields beside its name and full name. The root
+// variables are the values terraform writes for every root variable of a real
+// plan, var.p among them as proj-1: a row reading var.p is refused even
+// though the plan shows that value, because the plan cannot show the block
+// reads the variable bare (managedProviderProject).
 func providerPlan(t *testing.T, fields map[string]any) *Plan {
 	t.Helper()
 	pc := map[string]any{"name": "google", "full_name": googleProvider}
@@ -313,7 +326,19 @@ func providerPlan(t *testing.T, fields map[string]any) *Plan {
 	}
 	cfg := config(nil, []map[string]any{bucketConfig()}, nil)
 	cfg["provider_config"] = map[string]any{"google": pc}
-	return jsonPlan(t, []map[string]any{bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)}, cfg)
+	doc := map[string]any{"format_version": "1.2",
+		"resource_changes": []map[string]any{bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)},
+		"configuration":    cfg,
+		"variables":        map[string]any{"p": map[string]any{"value": "proj-1"}}}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsePlan(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 func constant(v any) map[string]any { return map[string]any{"constant_value": v} }
@@ -323,9 +348,11 @@ func refs(r ...string) map[string]any { return map[string]any{"references": r} }
 // TestManagedCoverProviderSettings: a provider block decides who applies,
 // who is billed and where every request — with the applier's bearer token —
 // goes. A managed plan's provider blocks, in every module, set project,
-// region, zone, default labels and the attribution label alone, each written
-// out or read from a variable; every other setting, an alias and any field of
-// the entry the cover does not know is refused.
+// region, zone, default labels and the attribution label alone, the project
+// always and written out, the others written out or read from a variable;
+// every other setting, an alias and any field of the entry the cover does not
+// know is refused, and so is a block that sets no project or reads it from a
+// variable.
 func TestManagedCoverProviderSettings(t *testing.T) {
 	refused := map[string]map[string]any{
 		"credentials":                           {"expressions": map[string]any{"credentials": constant("{}")}},
@@ -344,7 +371,10 @@ func TestManagedCoverProviderSettings(t *testing.T) {
 		"project from a function":               {"expressions": map[string]any{"project": map[string]any{}}},
 		"labels from a data source":             {"expressions": map[string]any{"default_labels": refs("data.x.y.labels", "data.x.y")}},
 		"an alias":                              {"alias": "other", "expressions": map[string]any{"project": constant("proj-1")}},
-		"a field the cover does not know":       {"future_setting": map[string]any{"x": 1}},
+		"a field the cover does not know":       {"future_setting": map[string]any{"x": 1}, "expressions": map[string]any{"project": constant("proj-1")}},
+		"no project at all":                     {},
+		"the allowed settings from variables": {"expressions": map[string]any{
+			"project": refs("var.p"), "region": refs("var.r"), "zone": refs("var.z"), "default_labels": refs("var.l.x", "var.l")}},
 	}
 	for name, fields := range refused {
 		t.Run("refuses "+name, func(t *testing.T) {
@@ -354,13 +384,13 @@ func TestManagedCoverProviderSettings(t *testing.T) {
 		})
 	}
 	admitted := map[string]map[string]any{
-		"nothing": {},
+		"the project alone": {"expressions": map[string]any{"project": constant("proj-1")}},
 		"the allowed settings written out": {"version_constraint": "8.4.0", "expressions": map[string]any{
 			"project": constant("proj-1"), "region": constant("us-east5"), "zone": constant("us-east5-a"),
 			"default_labels": constant(map[string]any{"team": "a"}), "add_terraform_attribution_label": constant(true),
 			"terraform_attribution_label_addition_strategy": constant("CREATION_ONLY")}},
-		"the allowed settings from variables": {"expressions": map[string]any{
-			"project": refs("var.p"), "region": refs("var.r"), "zone": refs("var.z"), "default_labels": refs("var.l.x", "var.l")}},
+		"the project written out and the rest from variables": {"expressions": map[string]any{
+			"project": constant("proj-1"), "region": refs("var.r"), "zone": refs("var.z"), "default_labels": refs("var.l.x", "var.l")}},
 		"a module's own block": {"module_address": "module.m", "expressions": map[string]any{"project": constant("proj-1")}},
 	}
 	for name, fields := range admitted {

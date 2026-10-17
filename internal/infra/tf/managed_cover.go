@@ -185,7 +185,16 @@ var managedGrantRules = map[string]bool{
 //     one the deployer holds no iam.roles.* to set;
 //   - the runs bucket, by name: a bucket grant on it is refused before the
 //     prefix is read, because that is where the marker and the owner's delete
-//     list live (Task 1.4).
+//     list live (Task 1.4);
+//   - the attributes, two of them and no more (managedProject, managedBilling
+//     and managedProviderProject, which is the same project rule read on the
+//     provider block that decides the project of a resource left to it, and
+//     which admits that block's project written out and nothing else): the
+//     project every resource is in, kept as the wider rule Cover.Projects is,
+//     and the billing account the review showed. Every other attribute check
+//     init's cover makes is re-justified there, and the ones that only make
+//     sense for Fugaro's own embedded modules are dropped rather than
+//     inherited.
 //
 // Nor does a managed plan lock anything: a bucket's locked retention policy or
 // an object's Locked retention can never be undone, so it is refused whatever
@@ -204,7 +213,8 @@ var managedGrantRules = map[string]bool{
 // configuration and each change's mode and provider, which is why a plan
 // without a configuration is refused (managedConfiguration). Nor does the
 // plan choose who applies, who is billed or where the requests go: a provider
-// block sets project, region, zone and labels alone (managedProviderAllowed).
+// block sets project, region, zone and labels alone (managedProviderAllowed),
+// and its project always, written out (managedProviderProject).
 // No action, deferred change or ephemeral resource either, and any key of the
 // plan, the configuration or a module the cover does not know is refused
 // rather than read as inert (managedPlanFields). What the plan JSON does not
@@ -215,25 +225,22 @@ type ManagedCover struct {
 }
 
 // NotCovered lists why a managed project's plan is not covered, empty when it
-// is. The configuration comes first (managedConfiguration), then each
-// change's mode and provider, and then Cover.NotCovered's own walk — the
-// action set, the authoritative IAM resources, the imports and the two halves
-// in that order — with the four
+// is. The configuration comes first (managedConfiguration) and the provider
+// blocks' own projects with it (managedProviderProject), then each change's
+// mode and provider, and then Cover.NotCovered's own walk — the action set,
+// the authoritative IAM resources, the imports and the two halves in that
+// order — with the four
 // managed rules above in place of init's type list and grant table, and with
-// no attribute check of the embedded modules': what a managed resource must
-// *point at* rather than what it must be named is Task 1.2's, and its
-// re-derivation of those checks belongs there rather than here. The one hole
-// that leaves is stated rather than left to be found: until Task 1.2 lands,
-// this cover does not check the project a resource is in, so a plan naming a
-// second project is refused by nothing here. It is refused one step later all
-// the same — the deployer's IAM reaches the managed project alone, so such a
-// plan cannot be applied — and closing it in the gate is Task 1.2's first
-// check rather than a second implementation of it here.
+// the two attribute checks in place of the embedded modules' own: the billing
+// account a resource names (managedBilling, read before the type rule so that
+// it is read at all) and the project it is in (managedProject).
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
 	}
 	out := append(managedPlanFields(p), managedConfiguration(p)...)
+	out = append(out, c.managedProviderProject(p)...)
+	declared := managedConfigResources(p.Configuration)
 	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -264,6 +271,11 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "an authoritative IAM resource")
 		case t == "google_service_account_key":
 			add(rc, "a service account key")
+		case c.managedBilling(rc) != "":
+			// Before the type rule: google_billing_budget is off the managed
+			// list, so read after it the billing account would never be read
+			// (managedBilling).
+			add(rc, c.managedBilling(rc))
 		case !managedTypes[t]:
 			add(rc, c.managedTypeReason(t))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
@@ -272,6 +284,8 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
 		case c.managedResource(rc) != "":
 			add(rc, c.managedResource(rc))
+		case c.managedProject(rc, declared) != "":
+			add(rc, c.managedProject(rc, declared))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.managedGrant(rc); why != "" {
 				add(rc, why)
@@ -449,7 +463,10 @@ var managedProviderAllowed = map[string]bool{
 // cover does not know, a setting outside managedProviderAllowed, or an
 // allowed one whose value is neither written out nor read from variables
 // alone — a local, a resource, a data source or an ephemeral resource can
-// carry what the plan does not show, and a function call shows as neither.
+// carry what the plan does not show, and a function call of no variable shows
+// as neither. (One whose arguments read a variable shows as that variable,
+// which is why the project, the one setting whose value decides where the
+// resources land, is admitted written out alone: managedProviderProject.)
 func managedProviderSettings(pc ProviderConfig) []string {
 	var out []string
 	if pc.Alias != "" {
@@ -465,22 +482,42 @@ func managedProviderSettings(pc ProviderConfig) []string {
 			out = append(out, fmt.Sprintf("setting %s, which a managed plan's provider block may not carry: it sets only %s", k, strings.Join(slices.Sorted(maps.Keys(managedProviderAllowed)), ", ")))
 			continue
 		}
-		var e struct {
-			ConstantValue json.RawMessage `json:"constant_value"`
-			References    []string        `json:"references"`
-		}
-		ok := json.Unmarshal(pc.Expressions[k], &e) == nil
-		if ok && e.ConstantValue == nil {
-			ok = len(e.References) > 0
-			for _, r := range e.References {
-				ok = ok && strings.HasPrefix(r, "var.")
+		if !managedSettingForm(pc.Expressions[k]) {
+			fix := "write it out, or read it from a variable"
+			if k == "project" {
+				fix = "write it out"
 			}
-		}
-		if !ok || (e.ConstantValue != nil && len(e.References) > 0) {
-			out = append(out, fmt.Sprintf("setting %s from something other than a literal or variables alone: write it out, or read it from a variable", k))
+			out = append(out, fmt.Sprintf("setting %s from something other than a literal or variables alone: %s", k, fix))
 		}
 	}
 	return out
+}
+
+// managedExpr is one expression as terraform's configuration JSON writes it.
+type managedExpr struct {
+	ConstantValue json.RawMessage `json:"constant_value"`
+	References    []string        `json:"references"`
+}
+
+// managedSettingForm: the expression is written out, or read from variables
+// alone. A function call with no reference writes neither and fails it; one
+// whose arguments read a variable writes that variable's reference and
+// nothing else, exactly as the variable itself does, so for the project this
+// is the form check alone and managedProviderProject admits a literal only.
+func managedSettingForm(raw json.RawMessage) bool {
+	var e managedExpr
+	if json.Unmarshal(raw, &e) != nil {
+		return false
+	}
+	if e.ConstantValue != nil {
+		return len(e.References) == 0
+	}
+	for _, r := range e.References {
+		if !strings.HasPrefix(r, "var.") {
+			return false
+		}
+	}
+	return len(e.References) > 0
 }
 
 // managedEphemeralReferences says which ephemeral resources an expression of
@@ -652,6 +689,247 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 		}
 	}
 	return ""
+}
+
+// managedProject says why a managed resource is in a project that is not this
+// run's, or in one the plan cannot prove is. "" when it is in one, when it sets
+// none, and when it is known only after apply because the resource leaves it to
+// its provider block. It is the first of Task 1.2's two retained attribute checks, and this
+// comment is the whole re-derivation of Cover.attributes (cover.go:713-827)
+// for an agent-authored plan: each of init's checks is re-justified rather
+// than inherited, the ones that only make sense for Fugaro's own embedded
+// modules are dropped and said to be dropped, and no check outside this set is
+// added — D61 fixes the checkable set and closes it, so a rule that is not on
+// it is a new decision rather than an implementation detail.
+//
+//   - the project every resource is in: KEPT, and kept as the WIDER rule it
+//     is in Cover.Projects — the review's projects, not the managed project
+//     alone — so a resource in a second project Fugaro owns is refused too.
+//     This is the spec's step 3 and D61's own second entry. A project the plan
+//     knows only after apply is two cases the plan's value cannot tell apart,
+//     because terraform writes after_unknown.project true for both: a resource
+//     that leaves project to its provider block
+//     (testdata/managed_provider_clean_plan.json), and one that sets it to
+//     something computed — project = "${substr(
+//     google_service_account.a.unique_id,0,0)}proj-2", or a module's var.p
+//     fed such a value, applies into proj-2
+//     (testdata/managed_resource_computed_project_plan.json and its module and
+//     instances siblings, terraform's own output). The configuration tells
+//     them apart: an unknown project is admitted only when the resource's
+//     configuration entry carries no project expression at all, and refused
+//     when it carries one, whatever its form, for managedNames' reason — or
+//     when the entry cannot be found, which fails closed. A resource left to
+//     its provider block lands in the project that block decides, which is
+//     why that block's own project is read too (managedProviderProject)
+//     rather than left to Task 1.1's form check: the escape this rule would
+//     otherwise have is a plan that moves the project one line up.
+//   - the billing account the review showed: KEPT, in managedBilling beside
+//     this, which says why it is read before the type rule rather than after.
+//   - the image a job runs, the command and args the modules set and the
+//     FUGARO_CHECK_SPEC it carries: dropped. They are Fugaro's own images,
+//     commands and check specs — init's cover reads them because its plans are
+//     the embedded modules' — and a managed plan's workload is its own.
+//   - the job a scheduler calls: dropped. init's cover requires the run's own
+//     project and region; a managed scheduler's account is checked by
+//     managedResource instead, which requires the account it calls as to be a
+//     prefixed account of the managed project, so it calls as nothing of
+//     Fugaro's.
+//   - the sink's project: dropped with its type, which the managed list does
+//     not carry (managedDropped: Fugaro's own log plumbing).
+//   - a bucket's public access prevention and uniform access: dropped. The
+//     rule is about Fugaro's own buckets, which hold the installation's state,
+//     runs and build records; a managed plan's bucket is the plan's own, and
+//     the bucket rules this gate needs are Task 1.1's — the name carries the
+//     prefix and the runs bucket is refused by name.
+//   - the two API targets of Fugaro's web key: dropped. init's cover requires
+//     a key to be that key's shape; a managed plan's key is its own, and the
+//     prefix covers the ID the deployer's apikeys.keys.* permissions are
+//     conditioned on.
+//   - the bucket or the repository a grant or an object is on: dropped as
+//     subsumed, because Task 1.1 checks the name every one of them carries —
+//     the runs bucket by name, everything else by the prefix.
+//
+// What Task 1.1 left this task, from its fourth review (PR #483), is stated
+// where it would go rather than left to be found: an Artifact Registry
+// repository's virtual_repository_config.upstream_policies[*].repository and
+// remote_repository_config.*.upstream_credentials are not read here, because
+// no virtual or remote repository is admitted at all — managedResource refuses
+// every mode but STANDARD_REPOSITORY — so there is nothing for them to be read
+// on. Admitting those modes is the decision that would owe those checks (a
+// prefixed repository of the managed project, and a prefixed secret), and it
+// is the owner's rather than this cover's.
+//
+// declared is the configuration's resources by address
+// (managedConfigResources).
+func (c ManagedCover) managedProject(rc ResourceChange, declared map[string]ConfigResource) string {
+	if unknown(rc.Change, "project") {
+		r, found := declared[managedConfigAddress(rc.Address)]
+		switch _, sets := r.Expressions["project"]; {
+		case !found:
+			return "a project known only after apply, of a resource the configuration does not declare, so the plan does not show whether the resource sets it: it is not proven to be this run's"
+		case sets:
+			return "a project the resource sets to something known only after apply, which the plan cannot prove is this run's: write it out, or leave it to the provider block"
+		}
+		return ""
+	}
+	if p := str(rc.Change.After["project"]); p != "" && !slices.Contains(c.Projects, p) {
+		return "in project " + p + ", which is not this run's"
+	}
+	return ""
+}
+
+// managedConfigResources are the managed resources of a configuration, in
+// every module however deep, by the address a resource change carries with
+// its instance keys removed (managedConfigAddress): module.a.module.b.<type>.<name>.
+// Empty when there is no configuration, which managedConfiguration refuses.
+func managedConfigResources(cfg *Configuration) map[string]ConfigResource {
+	out := map[string]ConfigResource{}
+	if cfg == nil {
+		return out
+	}
+	var walk func(prefix string, m ConfigModule)
+	walk = func(prefix string, m ConfigModule) {
+		for _, r := range m.Resources {
+			if r.Mode == "managed" {
+				out[prefix+r.Address] = r
+			}
+		}
+		for name, call := range m.ModuleCalls {
+			walk(prefix+"module."+name+".", call.Module)
+		}
+	}
+	walk("", cfg.RootModule)
+	return out
+}
+
+// managedConfigAddress is a resource change's address with every instance key
+// removed — a count's [0], a for_each's ["key"], a module's own included —
+// which is the address its configuration entry is found under. A key's quoted
+// text is read as text, so a bracket, a dot or an escaped quote inside it ends
+// nothing.
+func managedConfigAddress(addr string) string {
+	var b strings.Builder
+	depth, quoted, escaped := 0, false, false
+	for _, r := range addr {
+		switch {
+		case depth == 0 && r == '[':
+			depth = 1
+		case depth == 0:
+			b.WriteRune(r)
+		case escaped:
+			escaped = false
+		case quoted && r == '\\':
+			escaped = true
+		case r == '"':
+			quoted = !quoted
+		case !quoted && r == ']':
+			depth = 0
+		}
+	}
+	return b.String()
+}
+
+// managedBilling says why a resource names a billing account that is not the
+// one the review showed. "" when it names none and when it names the review's.
+// It is the second of Task 1.2's two retained attribute checks, and it is read
+// before the type rule in NotCovered because google_billing_budget — the
+// resource that carries a billing account — is off the managed list
+// (managedDropped: a billing-account permission no project role can hold).
+// Read after it, this rule could never fire: every budget would be refused for
+// its type first and the account would go unread, which is a rule that exists
+// only on paper. Read before it, a plan that moves billing is refused for the
+// account it moves it to, which is this check's own reason for existing; a
+// budget on the review's own account is still refused, for its type.
+//
+// It reads the attribute rather than the type, so it holds for whatever
+// resource a later decision lets carry a billing account: a plan naming one
+// outside the review is refused whether or not its type is admitted.
+func (c ManagedCover) managedBilling(rc ResourceChange) string {
+	a := rc.Change.After
+	raw, ok := a["billing_account"]
+	if !ok {
+		return ""
+	}
+	acct := strings.TrimPrefix(str(raw), "billingAccounts/")
+	switch {
+	case acct == "":
+		return "a billing account the plan does not name"
+	case !slices.Contains(c.Billing, acct):
+		return "billing account " + acct + ", which the review did not show"
+	}
+	return ""
+}
+
+// managedProviderProject says why a provider configuration may land its
+// resources in a project that is not this run's, one refusal per
+// configuration: one whose project is written out and is another, and one
+// whose project the plan does not prove — read from anything, or not set at
+// all. One whose project's form managedProviderSettings already refuses is
+// left to that refusal.
+//
+// It is the second half of managedProject, and the reason that rule is not
+// bypassed by moving a project one line up: a resource that leaves its project
+// to its provider block is admitted there (terraform writes the attribute as
+// unknown), so the block's project is the one that decides — and
+// managedProviderSettings reads only the setting's form, never its value.
+//
+// A project is proven only when the block writes it out: the expression is a
+// constant_value, with no reference, that is a string naming one of this
+// run's projects. Nothing read from a variable is admitted, however plainly
+// the plan shows the variable's value, because the plan cannot show that the
+// block reads the variable bare: terraform writes an expression's references
+// and nothing else, so replace(var.project, "1", "2"), "${var.project}-x",
+// lower(var.project), tostring(var.project) and var.project == "a" ? "b" :
+// "c" are each written exactly as var.project is, {"references":
+// ["var.project"]} (terraform 1.16.4's own output for all six is
+// testdata/managed_provider_wrapped_project_plan.json). Resolving the
+// variable would read the function's argument as its result, so an earlier
+// revision that followed var.project through module calls to its value
+// admitted a block landing its resources in proj-2. A module call's argument
+// is not read for the same reason: it feeds a provider block only through a
+// reference, which is already refused. A refused block falls back to the
+// typed confirmation, and the agent can always write the project out — a
+// constant_value is the value terraform evaluated, templates over literals
+// included.
+//
+// And a configuration with no project at all is refused, the one terraform
+// configures by itself when the plan declares no provider block included: its
+// resources land in whatever project the environment of whoever applies names
+// (GOOGLE_PROJECT and its aliases, then gcloud's configuration), which the
+// plan does not show and the review did not.
+func (c ManagedCover) managedProviderProject(p *Plan) []string {
+	cfg := p.Configuration
+	if cfg == nil {
+		return nil
+	}
+	var out []string
+	for _, key := range slices.Sorted(maps.Keys(cfg.ProviderConfig)) {
+		where := "provider_config." + key + " (lands resources in "
+		raw, set := cfg.ProviderConfig[key].Expressions["project"]
+		if !set {
+			// Terraform's JSON gives a provider config of a module nested two
+			// or more deep (module.m.module.n:google) no expressions at all, so
+			// it lands here too: a known conservative refusal that fails closed
+			// (the run asks for the typed confirmation), never a pass.
+			out = append(out, "provider_config."+key+" (sets no project, so it lands resources in whatever project the environment of whoever applies names, which the plan does not show: it is not proven to be this run's — write the project out)")
+			continue
+		}
+		if !managedSettingForm(raw) {
+			continue
+		}
+		var e managedExpr
+		_ = json.Unmarshal(raw, &e) // managedSettingForm decoded it
+		var proj string
+		switch {
+		case len(e.References) > 0:
+			out = append(out, where+"a project read from "+strings.Join(e.References, ", ")+", not written out: terraform writes a function or a template over a variable exactly as it writes the variable, so the plan does not prove the value and it is not proven to be this run's — write the project out)")
+		case json.Unmarshal(e.ConstantValue, &proj) != nil || proj == "":
+			out = append(out, where+"project "+string(e.ConstantValue)+", which is not a string the plan names, so it is not proven to be this run's)")
+		case !slices.Contains(c.Projects, proj):
+			out = append(out, where+"project "+proj+", which is not this run's)")
+		}
+	}
+	return out
 }
 
 // managedBucketLock says why a bucket's retention policy is one a managed
