@@ -81,7 +81,7 @@ function frames(): readonly LiveDocument[] {
   for (const record of theFixture().records) {
     if (!('document' in record)) continue
     const decoded = decodeSnapshot(record.document, record.at)
-    if (!decoded.ok) throw new Error(`${record.at}: ${decoded.skew.reason}`)
+    if (!decoded.ok) throw new Error(`${record.at}: ${decoded.skew.because}`)
     out.push(decoded.value)
   }
   return out
@@ -367,9 +367,20 @@ describe('the row model', () => {
     // section 1): `null` is "no cap is set", which is not a cap of zero, and a
     // screen that drew 0% would be asserting the project spent nothing against
     // a cap that does not exist.
-    const noCap = { ...theLastFrame(), total: { ...theLastFrame().total } }
+    const frame = theLastFrame()
+    // The CLI writes `daily_cap_usd` and `percent` together (`usdPtr`,
+    // `internal/watch/json.go:122`): a bar with no cap has no percentage
+    // either, and a document carrying one without the other is not a shape any
+    // version of `watch` writes.
     const model = buildLiveModel(
-      { ...noCap, total: { ...noCap.total, dailyCapUsd: unavailable('the document has no total.daily_cap_usd') } },
+      {
+        ...frame,
+        total: {
+          ...frame.total,
+          dailyCapUsd: unavailable('the document has no total.daily_cap_usd'),
+          percent: unavailable('the document has no total.percent'),
+        },
+      },
       new BurnHistory(),
     )
     expect(formatReading(model.total.dailyCapUsd, 'usd')).toBe(UNAVAILABLE_MARK)
@@ -549,10 +560,10 @@ describe('the burn history', () => {
       expect(model.repos[0]?.spark.bars.length ?? 0).toBeGreaterThan(0)
     }
     // Five frames over four minutes and twenty-one seconds. At the last
-    // frame's own stamp the 300 s window reaches back to 12:00:21, which leaves
-    // the three frames from 12:01:40 on; five seconds later it reaches 12:00:05
-    // and keeps four.
-    expect(history.window(repo.slug, AT_CAP)).toHaveLength(3)
+    // frame's own stamp the 300 s window reaches back to 11:59:21, which is
+    // before every one of them; forty-four seconds later it reaches 12:00:05
+    // and leaves the four frames from there on.
+    expect(history.window(repo.slug, AT_CAP)).toHaveLength(5)
     expect(history.window(repo.slug, '2026-10-15T12:05:05Z')).toHaveLength(4)
   })
 })
