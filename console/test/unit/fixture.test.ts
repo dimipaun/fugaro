@@ -516,7 +516,18 @@ describe('the committed synthetic fixture', () => {
     // draws what the CLI's degraded shape carries, and `degraded.spec.ts` reads
     // this file), so it is named here rather than added to `FIXTURE_CASES`,
     // which is the list of the *recorder's* cases.
-    const allowed = new Set(['synthetic.ndjson', 'degraded.ndjson', ...FIXTURE_CASES.map((name) => `${name}.ndjson`)])
+    // `bin` is not a case and not a recording: it is the directory holding the
+    // stub `fugaro` the e2e specs install (`test/fixtures/bin/fugaro`, Task 3.3),
+    // which lives under `test/fixtures/` because that is the directory of things
+    // the specs read from disk. It is a directory, so the `.ndjson` sweep above
+    // never looks inside it, and the stub itself is asserted where it is used
+    // (`test/e2e/startup-skew.spec.ts`) rather than here.
+    const allowed = new Set([
+      'synthetic.ndjson',
+      'degraded.ndjson',
+      'bin',
+      ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
+    ])
     const present = readdirSync(FIXTURE_DIRECTORY)
     expect(present.filter((name) => !allowed.has(name))).toEqual([])
     expect(present).toContain('synthetic.ndjson')

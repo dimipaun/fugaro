@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The CSP of design section 5.1 rule 3, and it is the *copy*, byte for byte
+      the one `src/renderer/index.html` carries: the real policy is delivered as
+      a `Content-Security-Policy` response header by `src/main/protocol.ts` over
+      the registered `app://` scheme, and this document is served by the same
+      handler, so it is exactly as constrained as the dashboard's. That matters
+      more here, not less: the refusal screen is the one document a console below
+      the floor ever shows, and it must not be a weaker one.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+    />
+    <title>Fugaro console</title>
+  </head>
+  <body>
+    <!--
+      The refusal document (desktop-console plan Task 3.3; design section 7.1 and
+      D7).
+
+      Why it is a *second document* rather than a mode of `index.html`: D7's
+      claim is "a refused version never shows the dashboard", and a claim about
+      what is drawn is only as strong as the document it is drawn in. A refused
+      console that loaded the dashboard document and asked its renderer not to
+      draw would be one renderer bug away from spend figures nothing vouched
+      for; this document has no dashboard root at all, so there is nothing for a
+      renderer to draw a figure into. The window that loads it is built by the
+      same `buildConsoleWindow` as the dashboard's -- same preferences, same
+      denials, same single load -- and `REFUSAL_ENTRY_URL` is the only URL it
+      ever loads.
+
+      Like `index.html` it is script-free and style-free, and for the same
+      reason: rule 3's CSP allows neither inline scripts nor inline styles, so
+      both arrive as files served from this bundle, and this tree has no
+      bundling step yet (`tsc` emits `dist/`, the handler serves `src/renderer`).
+      The refusal screen -- `renderVersionSkew`'s drawing in
+      `src/shared/version.ts`, the console's own headline and sentence about the
+      CLI it found -- is drawn into this document by the renderer entry point
+      (`src/renderer/app.ts`'s `startConsole`) once a step can load it. Until
+      then the sentence below is what an operator sees, and it is the console's
+      own: it names no version, quotes nothing the CLI printed, and offers no
+      figure.
+    -->
+    <main>
+      <h1>Fugaro console</h1>
+      <p>This console will not draw a dashboard for the fugaro it found.</p>
+    </main>
+  </body>
+</html>

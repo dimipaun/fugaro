@@ -22,9 +22,12 @@
 // window: below the hard floor `startupWindow` constructs no window at all, and
 // the only window a refused console can open is the refusal screen's. The
 // startup path is `startupWindow` -- read the CLI's version, place it, build the
-// dashboard window only if the console will draw one -- and `src/main/index.ts`
-// still calls `createConsoleWindow` directly, because the IPC surface and the
-// screen mounting that would consume the handshake are later tasks' wiring.
+// dashboard window only if the console will draw one -- and, since Task 3.3,
+// `src/main/index.ts` calls `openStartupWindow`, which is that handshake
+// **before any window exists** and then the one window the compatibility allows:
+// the dashboard document, or `REFUSAL_ENTRY_URL`. (What the renderer *draws* in
+// either document is still the screen-mounting work of a later task: this tree
+// has no bundling step, so no document loads a script yet.)
 //
 // Two notes on what is deliberately NOT here, because both are later tasks and
 // a reviewer should not have to guess:
@@ -49,7 +52,8 @@ import type {
 
 import { SKEW_HEADLINES, classifyCliVersion, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility } from '../shared/version'
-import { APP_ENTRY_URL } from './protocol'
+import { APP_ENTRY_URL, REFUSAL_ENTRY_URL } from './protocol'
+import type { BinaryResolution } from './spawn'
 
 /** CONSOLE_WINDOW_TITLE is the window's title and the document's `<title>`. */
 export const CONSOLE_WINDOW_TITLE = 'Fugaro console'
@@ -317,16 +321,24 @@ export interface ConsoleWindowDeps {
  * resolves once the document has loaded, so the caller knows the window is up.
  */
 export async function createConsoleWindow(deps: ConsoleWindowDeps): Promise<BrowserWindow> {
-  return buildConsoleWindow(deps, null)
+  return buildConsoleWindow(deps, null, APP_ENTRY_URL)
 }
 
 /** buildConsoleWindow is the one place a console window is constructed, so
  * every window this app ever opens -- the dashboard's and the refusal screen's
  * -- has the same preferences, the same handlers, the same denied permissions
- * and the same single load. */
+ * and the same single load.
+ *
+ * `entryUrl` is the document that single load is for, and it is a parameter
+ * rather than a constant (Task 3.3): the dashboard document is the dashboard's,
+ * and the refusal's is `REFUSAL_ENTRY_URL`. Which one a window got is the D7
+ * claim itself and the thing an e2e assertion can read off a running window
+ * (`page.url()`), so it is decided by the caller's door and not by anything the
+ * renderer could influence. */
 async function buildConsoleWindow(
   deps: ConsoleWindowDeps,
   compatibility: CliCompatibility | null,
+  entryUrl: string,
 ): Promise<BrowserWindow> {
   const window = new deps.BrowserWindow(consoleWindowOptions(compatibility))
 
@@ -348,7 +360,7 @@ async function buildConsoleWindow(
   window.once('ready-to-show', () => {
     window.show()
   })
-  await window.loadURL(APP_ENTRY_URL)
+  await window.loadURL(entryUrl)
 
   return window
 }
@@ -359,22 +371,70 @@ async function buildConsoleWindow(
 // ---------------------------------------------------------------------------
 
 /**
+ * HandshakeFailure is the closed set of reasons a version read can fail for,
+ * and it is a *category*, never a sentence: round 2 of the Task 3.3 review found
+ * the first version carrying `resolution.reason` into the refusal, and that
+ * reason embeds what the binary printed (`parseVersionLine`'s "the binary
+ * printed "<line>", which is not a version") and the CLI's stderr -- so a
+ * hostile stub's line reached `compatibility.because` verbatim. Plan step 3:
+ * "the raw unparsable line is never carried". A category cannot carry a line.
+ *
+ *   - `not-found`: no candidate on rule 4's list is an executable `fugaro`;
+ *   - `unreadable`: a binary was found and did not answer `version` with a line
+ *     the console could read (an unparsable line, a non-zero exit, a signal, a
+ *     timeout -- the resolver's reason says which, and that reason stays in the
+ *     main process: it is the CLI's words as much as the console's).
+ */
+export type HandshakeFailure = 'not-found' | 'unreadable'
+
+/** HANDSHAKE_NOT_FOUND is the console's sentence for `not-found`. */
+export const HANDSHAKE_NOT_FOUND = 'the console found no fugaro binary to read'
+
+/** HANDSHAKE_UNREADABLE is the console's own reason when a binary was found and
+ * its version could not be read, or the read itself threw -- a spawn that
+ * failed, a timeout. It is a sentence of this console's, never the child's
+ * output, and it is the `because` of the compatibility `runVersionHandshake`
+ * builds, so the refusal screen draws it in the reason cell (`p.skew-because`)
+ * under the console's own skew sentence. */
+export const HANDSHAKE_UNREADABLE = 'the console could not read which fugaro it is driving'
+
+/** HANDSHAKE_SENTENCES is the whole of what a failed read can say: one fixed
+ * sentence per category, and nothing else is ever a `because`. */
+export const HANDSHAKE_SENTENCES: Readonly<Record<HandshakeFailure, string>> = Object.freeze({
+  'not-found': HANDSHAKE_NOT_FOUND,
+  unreadable: HANDSHAKE_UNREADABLE,
+})
+
+/**
  * VersionRead is the reader's answer: the line `fugaro version` wrote, or the
- * console's own reason for not having one. It is required to be a *reader* and
- * not an import because this module holds no spawner -- `src/main/spawn.ts` owns
+ * category of failure. It is required to be a *reader* and not an import
+ * because this module holds no spawner -- `src/main/spawn.ts` owns
  * `resolveBinary`/`probeVersion` (Task 1.3) and the console's rule that a binary
  * whose version cannot be read is a binary it does not run.
  */
 export type VersionRead =
   | { readonly ok: true; readonly stdout: string }
-  | { readonly ok: false; readonly reason: string }
+  | { readonly ok: false; readonly failure: HandshakeFailure }
 
-/** HANDSHAKE_UNREADABLE is the console's own reason when the read itself threw
- * -- no binary resolved, a spawn that failed, a timeout. It is a sentence of
- * this console's, never the child's output, and it is the `because` of the
- * compatibility this function builds, so the refusal screen draws it in the
- * reason cell (`p.skew-because`) under the console's own skew sentence. */
-export const HANDSHAKE_UNREADABLE = 'the console could not read which fugaro it is driving'
+/**
+ * versionReadFrom turns rule 4's resolution into the handshake's read. The
+ * resolver's `reason` is deliberately **dropped**: it is a sentence built in
+ * part from the child's own output, and only the category crosses into the
+ * compatibility. `path === null` is the resolver's "no candidate was
+ * executable"; a non-null path is a binary that was found and failed its probe.
+ */
+export function versionReadFrom(resolution: BinaryResolution): VersionRead {
+  if (resolution.ok) return { ok: true, stdout: resolution.version }
+  return { ok: false, failure: resolution.path === null ? 'not-found' : 'unreadable' }
+}
+
+/** handshakeSentence is the fixed sentence for a category, and the unreadable
+ * one for anything that is not on the closed list -- a reader that answered
+ * outside its type still produces no text of its own. */
+function handshakeSentence(failure: unknown): string {
+  if (failure === 'not-found' || failure === 'unreadable') return HANDSHAKE_SENTENCES[failure]
+  return HANDSHAKE_UNREADABLE
+}
 
 /** VersionHandshakeDeps is the Electron-free surface the handshake needs: one
  * function that reads `fugaro version`'s stdout. */
@@ -396,7 +456,8 @@ export interface VersionHandshakeDeps {
 export async function runVersionHandshake(deps: VersionHandshakeDeps): Promise<CliCompatibility> {
   try {
     const read = await deps.readVersion()
-    return read.ok ? classifyCliVersion(read.stdout) : unreadableCompatibility(read.reason)
+    if (read.ok) return classifyCliVersion(read.stdout)
+    return unreadableCompatibility(handshakeSentence(read.failure))
   } catch {
     return unreadableCompatibility(HANDSHAKE_UNREADABLE)
   }
@@ -436,7 +497,7 @@ export async function startupWindow(deps: StartupWindowDeps): Promise<ConsoleSta
   const compatibility = await runVersionHandshake(deps)
   if (compatibility.mode === 'refused') return { window: null, compatibility }
   return {
-    window: await buildConsoleWindow(deps, compatibility),
+    window: await buildConsoleWindow(deps, compatibility, APP_ENTRY_URL),
     compatibility,
   }
 }
@@ -458,5 +519,141 @@ export async function createRefusalWindow(
   deps: ConsoleWindowDeps,
   compatibility: CliCompatibility,
 ): Promise<BrowserWindow> {
-  return buildConsoleWindow(deps, compatibility)
+  return buildConsoleWindow(deps, compatibility, REFUSAL_ENTRY_URL)
+}
+
+// ---------------------------------------------------------------------------
+// The startup path, in one place (desktop-console plan Task 3.3).
+// ---------------------------------------------------------------------------
+
+/**
+ * openWindowFor opens the one window a compatibility allows: the refusal
+ * screen's when the console refused, the dashboard's when it did not (in the
+ * reduced mode it is still the dashboard document, with the banner the renderer
+ * draws and the three views withheld).
+ *
+ * It is the *only* function that chooses between the two doors, so "a refused
+ * console never opens the dashboard" is one branch a reader can check, and it is
+ * the function `activate` re-enters: a window closed on macOS comes back as the
+ * window the compatibility that was already read calls for, and the handshake is
+ * not read again.
+ *
+ * The dashboard door is built through `buildConsoleWindow` with **that same
+ * compatibility**, and not through `createConsoleWindow`, which is the door for
+ * "no handshake has run" (`null`) and carries the console's plain title. The
+ * difference is the reduced mode: its window says which console it is, in the
+ * title, and a window that came back after a dock-icon click must not be the one
+ * place where that sentence goes missing -- the mode did not change just because
+ * the window was closed and reopened.
+ */
+export async function openWindowFor(
+  deps: ConsoleWindowDeps,
+  compatibility: CliCompatibility,
+): Promise<BrowserWindow> {
+  if (compatibility.mode === 'refused') return createRefusalWindow(deps, compatibility)
+  return buildConsoleWindow(deps, compatibility, APP_ENTRY_URL)
+}
+
+/**
+ * openStartupWindow is the console's startup: the handshake first, and only
+ * then a window -- the dashboard's if the console may draw one, the refusal
+ * screen's if it may not.
+ *
+ * **The order is the point** (Task 3.3's first step): the version read happens
+ * before any window exists, so there is no window at all during the read, and a
+ * window is built only for a compatibility that has already been decided. A
+ * caller that wants the two halves apart -- to open no window at all on a
+ * refusal, say -- still has `startupWindow` and `createRefusalWindow`; this
+ * function is what `src/main/index.ts` calls, and it is here rather than there
+ * because `index.ts` imports the Electron *runtime* (it cannot be driven under
+ * plain Node, which is how `test/unit/startup.test.ts` holds this order), while
+ * this module imports Electron *types* only.
+ */
+export async function openStartupWindow(
+  deps: StartupWindowDeps,
+): Promise<ConsoleStartup> {
+  const startup = await startupWindow(deps)
+  if (startup.window !== null) return startup
+  return {
+    window: await openWindowFor(deps, startup.compatibility),
+    compatibility: startup.compatibility,
+  }
+}
+
+/**
+ * ConsoleLifecycleDeps is what the console's lifecycle needs from the entry
+ * point: the window surface (a function, because Electron's `session` does not
+ * exist until the app is ready), the version reader, and how many windows are
+ * open right now.
+ */
+export interface ConsoleLifecycleDeps {
+  readonly windowDeps: () => ConsoleWindowDeps
+  readonly readVersion: () => Promise<VersionRead>
+  readonly openWindowCount: () => number
+}
+
+/** ConsoleLifecycle is the startup and the `activate` handler, as two calls. */
+export interface ConsoleLifecycle {
+  /** start runs the handshake and opens the window it allows -- **once**:
+   * every later call answers the same promise. */
+  start(): Promise<CliCompatibility>
+  /** activate is macOS's dock-icon click: a window for the stored answer when
+   * none is open, and nothing otherwise. */
+  activate(): Promise<void>
+}
+
+/**
+ * createConsoleLifecycle is the entry point's state, moved here so it can be
+ * driven under plain Node (`test/unit/startup.test.ts`), which `index.ts`
+ * cannot be: it imports the Electron runtime.
+ *
+ * Two rules, both from round 2 of the Task 3.3 review:
+ *
+ *   - **the startup is single-flight.** The handshake's promise is stored the
+ *     moment it starts, so an `activate` that fires while it is still running
+ *     waits for *that* startup -- whose own window is the one that opens --
+ *     rather than starting a second handshake and a second window. The first
+ *     version kept only the *answer*, so `activate` before the answer saw
+ *     "nothing decided" and ran `startConsole` again;
+ *   - **`activate` opens the window the stored answer allows**, through
+ *     `openWindowFor` and never through a dashboard door of its own, so a
+ *     refused console comes back as the refusal screen, and only when no
+ *     window is open.
+ */
+export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifecycle {
+  let startup: Promise<CliCompatibility> | null = null
+  let decided: CliCompatibility | null = null
+
+  const start = (): Promise<CliCompatibility> => {
+    if (startup === null) {
+      startup = openStartupWindow({ ...deps.windowDeps(), readVersion: deps.readVersion }).then(
+        (opened) => {
+          decided = opened.compatibility
+          return opened.compatibility
+        },
+      )
+    }
+    return startup
+  }
+
+  const activate = async (): Promise<void> => {
+    // Not started: the entry point's `main` starts it once the app is ready and
+    // the bundle is served, and the window that startup opens is the one this
+    // click asked for. Starting it from here could run before the protocol
+    // handler exists.
+    if (startup === null) return
+    if (decided === null) {
+      // The handshake is running: wait for *that* startup, whose window is the
+      // one this click asked for. Never a second handshake, never a second
+      // window.
+      await startup
+      return
+    }
+    // A window is constructed synchronously inside `openWindowFor` (before its
+    // first `await`), so a second click in the same turn already sees it here.
+    if (deps.openWindowCount() > 0) return
+    await openWindowFor(deps.windowDeps(), decided)
+  }
+
+  return { start, activate }
 }

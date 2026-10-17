@@ -27,6 +27,7 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
@@ -62,6 +63,48 @@ const documents: readonly JSONDoc[] = fixture.records
 
 /** first is the fixture's first document, which every test here starts from. */
 const first: JSONDoc = documents[0] ?? {}
+
+/**
+ * RUNVIEW_SOURCE is `internal/runview/runview.go`, read from this file's own
+ * location (the console tree sits two levels inside the repository).
+ *
+ * It is read rather than transcribed because the transcriptions are exactly what
+ * failed: `RECORD_KEYS` and the list this file compared it against were two
+ * hand-written readings of the same struct, so both omitted `artifact_count` and
+ * `artifact_bytes` at once and neither copy could notice. The struct is the
+ * authority -- the console reads the CLI's own json tags -- so the tags are read
+ * off it.
+ */
+const RUNVIEW_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/runview/runview.go', import.meta.url)),
+  'utf8',
+)
+
+/** structTag is one field's `json:` tag: the key it writes, and whether the tag
+ * carries `omitempty`. */
+interface StructTag {
+  readonly key: string
+  readonly optional: boolean
+}
+
+/** structTags is every `json:"…"` tag of one struct in `source`, in declaration
+ * order. A field tagged `json:"-"` writes no key at all, so it is not one of
+ * these. It throws rather than answering an empty list: a pin that silently
+ * finds nothing would pass while checking nothing. */
+function structTags(source: string, name: string): readonly StructTag[] {
+  const start = source.indexOf(`type ${name} struct {`)
+  if (start < 0) throw new Error(`internal/runview/runview.go has no \`type ${name} struct\``)
+  const end = source.indexOf('\n}', start)
+  if (end < 0) throw new Error(`the ${name} struct is not closed at column 0, so its tags cannot be read`)
+  const tags: StructTag[] = []
+  for (const match of source.slice(start, end).matchAll(/`json:"([^"]*)"/g)) {
+    const [key, ...options] = (match[1] ?? '').split(',')
+    if (key === undefined || key === '' || key === '-') continue
+    tags.push({ key, optional: options.includes('omitempty') })
+  }
+  if (tags.length === 0) throw new Error(`the ${name} struct carries no json tags to read`)
+  return tags
+}
 
 /** clone deep-copies a document so a test can move one field without touching
  * the corpus. */
@@ -228,6 +271,13 @@ const FULL_ROW: JSONDoc = Object.freeze({
   settled: true,
   branch: 'feat/console-fixtures',
   outcome: 'ready',
+  // What a run that delivered artifacts carries (`internal/runview/runview.go`,
+  // between `outcome` and `task_pr`): the record's own count and byte total.
+  // Absent for every run that opens a pull request, which is why the omission
+  // from `RECORD_KEYS` survived this file -- `DEGRADED` and the committed
+  // fixture are both rows of that kind.
+  artifact_count: 3,
+  artifact_bytes: 12_345_678,
   task_pr: 411,
   record_pr: 412,
   pr: 412,
@@ -342,21 +392,26 @@ describe('both document shapes decode', () => {
   })
 
   it('lists every key of `runview.Row`, and refuses one the struct cannot write', () => {
-    // The list, pinned against the struct it was read off. A key added to
-    // `Row` and not to this list refuses real documents; a key removed from
-    // `Row` and kept here is a key the console accepts from nothing.
-    const fromTheStruct = [
-      'run', 'repo', 'workflow', 'oauth_account', 'recipe', 'project_layer',
-      'config_sha256', 'run_id', 'status', 'stage', 'reason', 'halt', 'batch',
-      'requested_by', 'pr_url', 'execution', 'log_url', 'created', 'cost',
-      'image_age_s', 'terminal', 'settled', 'branch', 'outcome', 'task_pr',
-      'record_pr', 'pr', 'pushed', 'pushed_head', 'started_at', 'base_branch',
-      'previous_run', 'follow_up', 'draft_fallback', 'pr_status_at', 'stale_draft',
-    ]
+    // The list, pinned against the struct it was read off -- **the struct
+    // itself**, not a second copy of the list. This test used to hold a
+    // hand-written copy of the same reading, so when `artifact_count` and
+    // `artifact_bytes` were missing from `RECORD_KEYS` they were missing from
+    // both sides and the comparison agreed: a real `runs ls --json` row from a
+    // run that delivered artifacts was refused whole as `unknown-key`, and this
+    // test passed.
+    const tags = structTags(RUNVIEW_SOURCE, 'Row')
+    const fromTheStruct = tags.map((tag) => tag.key)
+    for (const found of ['artifact_count', 'artifact_bytes']) {
+      expect(fromTheStruct, `${found} is the omission this pin exists for`).toContain(found)
+    }
     expect([...RECORD_KEYS].sort()).toEqual([...fromTheStruct].sort())
     expect(RECORD_KEYS.length).toBe(fromTheStruct.length)
-    // The four without `omitempty` are the ones whose absence broke it.
-    for (const always of ['terminal', 'settled', 'pushed', 'follow_up']) {
+    // The keys without `omitempty` are the ones whose absence broke it, and they
+    // are the struct's own reading as well: a required tag this fixture does not
+    // carry would make `FULL_ROW` a document the CLI cannot write.
+    const required = tags.filter((tag) => !tag.optional).map((tag) => tag.key)
+    expect(required).toContain('terminal')
+    for (const always of required) {
       expect(RECORD_KEYS, always).toContain(always)
       expect(Object.keys(FULL_ROW), always).toContain(always)
     }
