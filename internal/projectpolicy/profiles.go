@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 )
@@ -296,11 +297,22 @@ func validProfiles(profiles map[string]Profile) error {
 
 // validTimeoutClass checks a profile's task timeout. Cloud Run's own ceiling
 // is the authority (gcp.MaxTaskTimeout, 168h) exactly as its cpu and memory
-// limits are: the value becomes the job's task timeout, so a form the API
-// would refuse must be refused where the owner can read it. The spelling is
-// config.ParseDuration's — the one timeouts.total is read with in fugaro.yaml,
-// day counts and all — so "14d" is a timeout here because it is a timeout
-// there, rather than a form this package refused and that one accepted.
+// limits are: a form the API would refuse must be refused where the owner can
+// read it.
+//
+// The figure compared against the ceiling is the one the job is *deployed*
+// with, and that is the class plus backend.TaskTimeoutSlack — the job's
+// task_timeout_s is the sum (internal/infra/projectjobs.go's TaskTimeoutS,
+// and the launch override writes the same sum), so a class at 168h deploys at
+// 604920 s against Cloud Run's 604800 and the apply is refused. The bound is
+// therefore the ceiling minus the slack, which is what internal/cli's
+// parseTotalTimeout takes for the same quantity (R15): a class at the bound
+// deploys at exactly the ceiling, and one second more does not.
+//
+// The spelling is config.ParseDuration's — the one timeouts.total is read with
+// in fugaro.yaml, day counts and all — so "14d" is a timeout here because it is
+// a timeout there, rather than a form this package refused and that one
+// accepted.
 func validTimeoutClass(at, class string) error {
 	if class == "" {
 		return fmt.Errorf("%s.timeout_class: a profile must name its task timeout, for example \"6h\"", at)
@@ -312,8 +324,9 @@ func validTimeoutClass(at, class string) error {
 	if d <= 0 {
 		return fmt.Errorf("%s.timeout_class: %q is not a positive duration", at, class)
 	}
-	if d > gcp.MaxTaskTimeout {
-		return fmt.Errorf("%s.timeout_class: %q is longer than Cloud Run's longest task timeout, %s", at, class, gcp.MaxTaskTimeout)
+	if limit := gcp.MaxTaskTimeout - backend.TaskTimeoutSlack; d > limit {
+		return fmt.Errorf("%s.timeout_class: %q is longer than a Cloud Run task allows, %s: the job's task timeout is this class plus %s, and Cloud Run's ceiling is %s",
+			at, class, limit, backend.TaskTimeoutSlack, gcp.MaxTaskTimeout)
 	}
 	return nil
 }

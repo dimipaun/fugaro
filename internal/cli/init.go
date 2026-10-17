@@ -664,12 +664,25 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// ordinary run of an existing installation — fugaro's own, belong, the
 	// owner's — comes through here with it empty.
 	if r.res.Created == "" {
-		// --managed asked for a managed creation, and a project that already
-		// existed was adopted instead: nothing was created, so there is no
-		// fact to record — and the owner must not silently get an unmarked
-		// project where they asked for a managed one.
+		// --managed asked for a managed creation and this run created no
+		// project: nothing was created, so there is no fact to record — and
+		// the owner must not silently get an unmarked project where they asked
+		// for a managed one.
+		//
+		// The warning says what this run knows, which is that it created
+		// nothing, and no more than that. Naming the reason is tempting and
+		// wrong: the project stage adopts a project that already existed, but
+		// that is only one of the ways to arrive here with Created empty — the
+		// stage never applied at all under --plan-only, in a session that
+		// cannot type, and after a confirmation that was declined, and in each
+		// of those the project may not exist and this run never looked. It is
+		// also the case an operator reads this warning in: --plan-only is
+		// where a managed creation is previewed before it is committed to, and
+		// this line is the only thing that tells them --managed was not
+		// applied. A sentence that asserts the project is there, in the one
+		// run that did not look, is false in exactly the place it is read.
 		if r.o.managed {
-			r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed", r.gcpProject))
+			r.warn(fmt.Sprintf("--managed was not applied: this run created no project, so no creation fact was written for %s and it is not managed", r.gcpProject))
 		}
 		return
 	}
@@ -755,7 +768,7 @@ func (r *initRun) checkEnv(lc *localcfg.Config) (string, error) {
 	}
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
-		return "", userErr("fugaro init needs terraform (>= 1.7, < 2) on PATH: %v", err)
+		return "", userErr("fugaro init needs terraform (>= 1.9, < 2) on PATH: %v", err)
 	}
 	for _, w := range lc.Warnings() {
 		r.warn(w)

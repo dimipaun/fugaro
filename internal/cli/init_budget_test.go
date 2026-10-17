@@ -242,6 +242,35 @@ func TestManagedBudgetHasNoDefault(t *testing.T) {
 	}
 	noMarker(t, r.gcs, bucket)
 	r.nothingDone(t, "a managed creation refused for its missing amount")
+
+	// The same property where a fallback has room to live: the amount is
+	// absent while the other two flags are there, so a refusal that only
+	// counts flags sees a complete trio. Nothing else in this file reaches
+	// that state — the subtest above passes none of the three and the one in
+	// TestManagedBudgetIsRequiredAtCreation passes an amount without its
+	// currency — and it is the state a constant such as
+	// `if o.budget <= 0 { o.budget = 50 }` turns into a managed project whose
+	// monthly line nobody chose. An absent amount and `--budget 0` are the
+	// same run (the flag defaults to 0), and D64 refuses both: the refusal is
+	// the amount's, not the other two flags'.
+	t.Run("--managed with a currency and a billing account and no amount", func(t *testing.T) {
+		r, bucket := newManagedCreateRig(t)
+		out, errOut, err := r.run(t, true, createStdin,
+			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+			"--managed", "--budget-currency", "USD", "--billing-account", billingAcc)
+		if err == nil {
+			t.Fatalf("a managed creation with no amount was accepted because the other two flags were there:\n%s", refusalText(out, errOut, nil))
+		}
+		s := refusalText(out, errOut, err)
+		if code := ExitCode(err); code != ExitUserError {
+			t.Errorf("exit %d, want %d: a missing amount is the caller's to fix:\n%s", code, ExitUserError, s)
+		}
+		if !strings.Contains(s, "--budget ") {
+			t.Errorf("the refusal does not name the missing amount:\n%s", s)
+		}
+		r.nothingDone(t, "a managed creation refused for its missing amount")
+		noMarker(t, r.gcs, bucket)
+	})
 }
 
 // --create-project --managed on a project that already exists: the project
@@ -287,4 +316,37 @@ func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
 	if !strings.Contains(all, "no creation fact was written") {
 		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
 	}
+}
+
+// The warning --managed prints when the run created nothing says what the
+// run knows, and a run that created no project knows only that. There are
+// two ways it happens: the project stage adopted a project that already
+// existed, or it never applied at all — --plan-only, a session that cannot
+// type, a confirmation that was declined. Naming the first in the second is
+// simply false, and --plan-only is where an operator previews a managed
+// creation before committing to it: nothing is created, the project is not
+// there, and this warning is the only thing that tells them --managed was
+// not applied.
+func TestManagedNotAppliedSaysWhatTheRunKnows(t *testing.T) {
+	r, bucket := newManagedCreateRig(t)
+	out, errOut, err := r.run(t, true, createStdin,
+		"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+		"--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc, "--plan-only")
+	all := refusalText(out, errOut, err)
+	if n := len(r.crm.Creates()); n != 0 {
+		t.Fatalf("--plan-only created %d project(s): it applies nothing:\n%s", n, all)
+	}
+	if !strings.Contains(all, "--managed was not applied") {
+		t.Errorf("a managed creation that created nothing did not say --managed was not applied:\n%s", all)
+	}
+	if !strings.Contains(all, "this run created no project") {
+		t.Errorf("the warning does not say what the run knows (that it created no project):\n%s", all)
+	}
+	// The project does not exist and this run never looked: the rig seeds no
+	// project, and --plan-only creates none. A warning that says it "already
+	// existed" is a claim about a project that is not there.
+	if strings.Contains(all, "already existed") {
+		t.Errorf("the warning says the project already existed, and nothing this run did could know that:\n%s", all)
+	}
+	noMarker(t, r.gcs, bucket)
 }
