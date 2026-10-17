@@ -31,8 +31,8 @@ const (
 // can be handed to: it is what a test of the guard's own refusal reaches for,
 // because it never refuses a delete itself, so the refusal the verdict carries
 // is the guard's. It is not the cover a managed apply hands Gate — that is
-// tf.ManagedCover, which judges the resource (managedCover below) — and deletes
-// hands it the list Gate passed, so a test can see the wiring.
+// tf.ManagedCover, which judges the resource (managedCover below) — and its
+// WithDeleteList records the list Gate handed it, so a test can see the wiring.
 type admitAll struct{ deletes *[]string }
 
 func (admitAll) NotCovered(*tf.Plan, []tf.ImportKey) []string { return nil }
@@ -90,9 +90,14 @@ func managedChange(addr, typ string, actions []string, before, after map[string]
 
 // deleted is one entry of a managed plan's resource_changes for a resource the
 // plan removes: the resource in before and null in after, which is what the
-// managed cover judges the resource itself on.
+// managed cover judges the resource itself on. The null is set here rather
+// than left to change, which writes an empty object in place of a missing
+// after: a destroy's after is null in terraform's own JSON, and a fixture that
+// put a resource there would not be the shape the rule is written about.
 func deleted(addr, typ string, before map[string]any) map[string]any {
-	return managedChange(addr, typ, []string{"delete"}, before, nil)
+	ch := managedChange(addr, typ, []string{"delete"}, before, nil)
+	ch["change"].(map[string]any)["after"] = nil
+	return ch
 }
 
 // bucket is a storage bucket as the installation's module writes it: the one

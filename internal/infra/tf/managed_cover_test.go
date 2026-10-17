@@ -1587,9 +1587,11 @@ func TestManagedCoverReplacesAreJudgedLikeDeletes(t *testing.T) {
 			if out := listed.NotCovered(managedPlan(replacing(prefixed, fugaro)), nil); len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
 				t.Fatalf("a listed replace whose created resource is not the plan's gives %q, want the prefix rule", out)
 			}
-			// The unlisted replace, whose resources are the plan's own: the
-			// list is what refuses it.
-			if out := managedTestCover().NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 1 || strings.Contains(out[0], "prefix") {
+			// The unlisted replace, whose resources are both the plan's own:
+			// the list is the whole of the refusal, and the resource rules
+			// have nothing to say about it.
+			if out := managedTestCover().NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 1 ||
+				!strings.Contains(out[0], "not on the owner's delete list") {
 				t.Fatalf("an unlisted replace of two allowed resources gives %q, want the delete-list rule", out)
 			}
 		})
