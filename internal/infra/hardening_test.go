@@ -24,6 +24,10 @@ func TestRunsBucketFindings(t *testing.T) {
 		{Role: "roles/storage.objectUser", Members: []string{a}, Condition: launcherCond},
 		{Role: "roles/storage.objectUser", Members: []string{"serviceAccount:fugaro-acme-web-1a2b3c4d@proj-1234.iam.gserviceaccount.com"},
 			Condition: &storage.Expr{Title: "fugaro-x", Expression: gcp.BucketCondition(b, gcp.JobBucketPrefixes, "acme-web-0123456789abcdef")}},
+		// The job's read-only grant on its own tokens/<slug>/ (the budget
+		// token's move, budget-token-channel.md §7.2): a read, not a finding.
+		{Role: "roles/storage.objectViewer", Members: []string{"serviceAccount:fugaro-acme-web-1a2b3c4d@proj-1234.iam.gserviceaccount.com"},
+			Condition: &storage.Expr{Title: "fugaro-tokens-x", Expression: gcp.TokenBucketCondition(b, "acme-web-0123456789abcdef")}},
 		{Role: "roles/storage.legacyBucketOwner", Members: []string{"projectOwner:proj-1234", "projectEditor:proj-1234"}},
 	}
 	sev := func(fs []BucketFinding, s string) (n int) {
@@ -38,6 +42,25 @@ func TestRunsBucketFindings(t *testing.T) {
 		fs := RunsBucketFindings(&storage.Policy{Bindings: hardened}, b, hardeningProject, []string{a, o}, []string{o})
 		if sev(fs, "warning") != 0 || sev(fs, "info") != 1 {
 			t.Fatalf("findings %+v", fs)
+		}
+	})
+	// An installation not re-initialised since the budget token moved to
+	// tokens/: its launchers still carry the runs/-only write, so they cannot
+	// write the sealed token. The install guard says so, and its fix is
+	// fugaro init, which replaces the grant.
+	t.Run("the launchers' pre-seal runs/-only write", func(t *testing.T) {
+		old := &storage.Expr{Title: "fugaro-launchers-runs", Expression: `resource.name.startsWith("projects/_/buckets/` + b + `/objects/runs/")`}
+		p := &storage.Policy{Bindings: slices.Clone(hardened)}
+		p.Bindings[2] = &storage.PolicyBindings{Role: "roles/storage.objectUser", Members: []string{a}, Condition: old}
+		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
+		found := false
+		for _, f := range fs {
+			if f.Severity == "warning" && strings.Contains(f.Problem, "lacks") && strings.Contains(f.Problem, "tokens/") && strings.Contains(f.Fix, "fugaro init") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("a launcher without the tokens/ write is not reported: %+v", fs)
 		}
 	})
 	t.Run("not hardened: a launcher with objectAdmin and no launcher grants", func(t *testing.T) {
@@ -94,7 +117,7 @@ func TestRunsBucketFindings(t *testing.T) {
 		}
 		var sawBadCondition bool
 		for _, f := range fs {
-			if strings.Contains(f.Problem, "under a condition that is not the launchers' runs/ condition") {
+			if strings.Contains(f.Problem, "under a condition that is not the launchers' runs/ and tokens/ condition") {
 				sawBadCondition = true
 			}
 		}
@@ -115,7 +138,7 @@ func TestRunsBucketFindings(t *testing.T) {
 		if sev(fs, "warning") != 1 {
 			t.Fatalf("findings %+v", fs)
 		}
-		if !strings.Contains(fs[0].Problem, "condition that is not the launchers' runs/ condition") {
+		if !strings.Contains(fs[0].Problem, "condition that is not the launchers' runs/ and tokens/ condition") {
 			t.Errorf("not flagged as an unrecognized condition: %+v", fs)
 		}
 	})

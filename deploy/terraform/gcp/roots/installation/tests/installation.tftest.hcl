@@ -36,8 +36,8 @@ variables {
   launchers              = ["user:launcher@example.com"]
   operators              = ["user:operator@example.com"]
   launcher_bucket_condition = {
-    title      = "fugaro-launchers-runs"
-    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+    title      = "fugaro-launchers-runs-tokens"
+    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
   }
 }
 
@@ -355,14 +355,14 @@ run "people" {
   }
   assert {
     condition     = keys(google_storage_bucket_iam_member.runs_launcher) == ["user:launcher@example.com"]
-    error_message = "launchers who are not operators write runs/"
+    error_message = "launchers who are not operators write runs/ and tokens/"
   }
   assert {
     condition = alltrue([for m in google_storage_bucket_iam_member.runs_launcher :
       m.role == "roles/storage.objectUser" && m.bucket == "fugaro-runs-proj-1234" &&
-      one(m.condition).title == "fugaro-launchers-runs" &&
-    one(m.condition).expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"])
-    error_message = "the launchers' write grant is objectUser on runs/ only"
+      one(m.condition).title == "fugaro-launchers-runs-tokens" &&
+    one(m.condition).expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"])
+    error_message = "the launchers' write grant is objectUser on runs/ and tokens/ only"
   }
   assert {
     condition     = keys(google_storage_bucket_iam_member.state) == ["user:operator@example.com"] && google_storage_bucket_iam_member.state["user:operator@example.com"].bucket == "fugaro-tfstate-proj-1234"
@@ -405,7 +405,7 @@ run "launcher_who_is_an_operator" {
   }
 }
 
-# A condition that is not runs/ of this bucket fails the plan.
+# A condition that is not runs/ and tokens/ of this bucket fails the plan.
 run "launcher_condition_must_be_this_buckets_runs" {
   command = plan
 
@@ -415,8 +415,47 @@ run "launcher_condition_must_be_this_buckets_runs" {
 
   variables {
     launcher_bucket_condition = {
-      title      = "fugaro-launchers-runs"
+      title      = "fugaro-launchers-runs-tokens"
       expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/\")"
+    }
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.runs_launcher]
+}
+
+# The pre-seal condition, runs/ alone under its old title, fails the plan: the
+# launcher writes the sealed budget token under tokens/
+# (docs/design/budget-token-channel.md section 7.2), and the precondition is
+# where the Terraform and gcp.LauncherBucketCondition must agree.
+run "launcher_condition_must_cover_tokens" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "fugaro-launchers-runs"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+    }
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.runs_launcher]
+}
+
+# Widened past tokens/ (a third prefix) fails the plan too.
+run "launcher_condition_not_past_tokens" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "fugaro-launchers-runs-tokens"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/fugaro/\")"
     }
   }
 
@@ -435,7 +474,7 @@ run "launcher_condition_title_must_match" {
   variables {
     launcher_bucket_condition = {
       title      = "other"
-      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
     }
   }
 
@@ -636,7 +675,7 @@ run "bad_launcher_bucket_condition" {
 
   variables {
     launcher_bucket_condition = {
-      title      = "fugaro-launchers-runs"
+      title      = "fugaro-launchers-runs-tokens"
       expression = "true"
     }
   }
@@ -851,9 +890,9 @@ run "budget_token_objects_expire" {
   assert {
     condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
       one(r.action).type == "Delete" && one(r.condition).age == 1 &&
-      one(r.condition).matches_prefix == tolist(["runs/"]) &&
+      one(r.condition).matches_prefix == tolist(["runs/", "tokens/"]) &&
     one(r.condition).matches_suffix == tolist(["/budget-token"])])
-    error_message = "runs/*/*/budget-token must be deleted after a day, and only that suffix"
+    error_message = "tokens/*/*/budget-token (and a pre-seal runs/*/*/budget-token) must be deleted after a day, and only that suffix"
   }
   assert {
     condition = length([for r in google_storage_bucket.runs.lifecycle_rule :

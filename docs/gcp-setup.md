@@ -245,8 +245,8 @@ Since 0.7.0 ([design/bucket-iam.md](design/bucket-iam.md)) launchers and operato
 | Principal | `fugaro/` | `builds/<slug>/` | `runs/` | `cache/`, `locks/` | How |
 |---|---|---|---|---|---|
 | Operator | read, write | read, write | read, write | read, write | `roles/storage.objectAdmin`, no condition |
-| Launcher (not an operator) | read | read | read, write | read | `roles/storage.objectViewer` (no condition) plus `roles/storage.objectUser` conditioned on `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")` (`gcp.LauncherBucketCondition`) |
-| Job account | none | none | its slug only | its slug only | unchanged, conditioned on its own slug |
+| Launcher (not an operator) | read | read | read, write | read | `roles/storage.objectViewer` (no condition) plus `roles/storage.objectUser` conditioned on `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") \|\| resource.name.startsWith("projects/_/buckets/<bucket>/objects/tokens/")` (`gcp.LauncherBucketCondition`; `tokens/` holds the sealed budget token, [design/budget-token-channel.md](design/budget-token-channel.md) §7.2) |
+| Job account | none | none | its slug only | its slug only | unchanged, conditioned on its own slug; plus **read only** on `tokens/<its slug>/` (`roles/storage.objectViewer` conditioned by `gcp.TokenBucketCondition`), so a run reads its sealed budget token and cannot delete or replace a queued run's |
 | Build account | none | its slug only | none | none | unchanged, conditioned on its own slug |
 | History account | read | read | read | read | `roles/storage.objectViewer`, unconditioned |
 

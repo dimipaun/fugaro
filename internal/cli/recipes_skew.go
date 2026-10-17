@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -181,6 +182,35 @@ const gitSecretIDSince = "0.7.5"
 // recipesSince and layeredSince.
 const namedTokensSince = "0.6.5"
 
+// sealSince is the first fugaro release whose runner reads a sealed budget
+// token (docs/design/budget-token-channel.md §7.1): the marker's value is the
+// launch's seal key, parsed strictly and never echoed, the key is registered
+// with the run's redactor before anything can print it, and the token object
+// is read from tokens/, never from runs/ and never as plaintext. A runner
+// before it does none of that — an image built before the seal's runner half
+// formats a marker value it cannot parse into its bootstrap error, so the
+// launch's key would land in the run's record (§7.4, D19) — so a launch that
+// mints a budget token is refused against a job image older than this, before
+// the claim, the mint or the object (sealGate). It is D19's "runner and image
+// first, launcher second" as a gate rather than as an ordering of
+// deployments, which the owner accepted as the alternative. It names the
+// release the seal ships in (0.9.0, the design's "Which release" paragraph);
+// docs/release.md's ("Before you tag") checklist verifies it the way it does
+// for the other *Since constants.
+const sealSince = "0.9.0"
+
+// sealRunnerIntroduced is when the seal's runner half (#417, Slice A) reached
+// the integration branch (its merge into next-0.9, 2026-10-17 17:45:33 UTC).
+// A job image whose base is not a release has no version to compare with
+// sealSince; the one thing its build record can show is when it was built,
+// and an image built before this cannot hold a runner that reads the sealed
+// token, so the seal gate refuses it (the owner's answer of 2026-10-17: a
+// development image that predates the seal is refused, one that cannot be
+// shown either way is warned about). An image built after it may still have
+// been built FROM an older base, which the record cannot show: that one is
+// only warned about.
+var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).
@@ -239,6 +269,14 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // without base_ref, is refused. kind is the workflow's base kind, "" when
 // unknown.
 func checkImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, since, subject, knows, alt string, warn io.Writer) error {
+	return checkImageSinceDev(ctx, env, slug, spec, kind, since, subject, knows, alt, nil, warn)
+}
+
+// checkImageSinceDev is checkImageSince with a judge for an image whose base
+// is not a release: devRefusal returns the refusal of such an image when its
+// record shows it cannot know knows, and nil when that cannot be shown (the
+// warning then stands). A nil devRefusal only warns, as checkImageSince does.
+func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, since, subject, knows, alt string, devRefusal func(rec *imagecheck.Record, ref string) error, warn io.Writer) error {
 	base := "this release's base image"
 	if kind != "" {
 		base = "this release's " + kind + " base image"
@@ -272,6 +310,11 @@ func checkImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task
 	// not judged here; init and image build own that.
 	switch rel, ok := releaseOf(rec.BaseRef); {
 	case !ok:
+		if devRefusal != nil {
+			if err := devRefusal(rec, ref); err != nil {
+				return err
+			}
+		}
 		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows %s is not checked\n", spec.Repo, spec.Workflow, ref, knows)
 	case imagePredates(rel, since):
 		return refuse(fmt.Sprintf("was built from base image %s, release %s", ref, rel))

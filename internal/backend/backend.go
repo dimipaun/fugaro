@@ -77,6 +77,17 @@ type LaunchSpec struct {
 	// launch, not about the job's deploy-time environment, so it cannot come
 	// from init --repo (internal/runner's BudgetTokenEnv, plan R2-8(a)).
 	Env []string
+	// SecretEnv are "NAME=value" variables like Env, for this execution only,
+	// whose value is a secret: today the one entry is the budget marker of a
+	// launch that sealed its token, whose value is the launch's seal key
+	// (docs/design/budget-token-channel.md §7.1, D15). A backend carries a
+	// secret entry only where the design accepts its audience — Cloud Run's
+	// execution override, priced in §7.1 — and refuses the launch where it
+	// cannot (Batch, whose only carrier is the job definition's plain
+	// variables, readable through the Batch API by every launcher (roles/batch.jobsEditor, conditioned on the Fugaro job prefix) and by the reaper (batch.jobs.get), and possibly in the CreateJob audit record — not by a peer run, whose account holds only agentReporter and logWriter, and kept for the job's whole retention). No backend
+	// quotes a secret entry's value in an error. A name may not be in both
+	// Env and SecretEnv.
+	SecretEnv []string
 	// Docker is what the workflow asked for: `docker: true` (design
 	// compute-backend.md §4.2, C16), a real Docker daemon for the run's own
 	// containers. It is the workflow's ask and not a capability, so a backend

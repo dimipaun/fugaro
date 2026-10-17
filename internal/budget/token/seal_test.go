@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 )
 
@@ -238,10 +237,9 @@ func TestParseKeyIsStrict(t *testing.T) {
 	}
 }
 
-// TestSealedObjectRoundTripConsumes: PutObject seals what TakeObject unseals,
-// and the take still consumes the object (consume-once is unchanged by the
-// seal).
-func TestSealedObjectRoundTripConsumes(t *testing.T) {
+// TestSealedObjectRoundTrip: PutObject seals what TakeObject unseals, and
+// the bucket holds ciphertext, not the token.
+func TestSealedObjectRoundTrip(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	_, b := bucket(t)
@@ -251,7 +249,6 @@ func TestSealedObjectRoundTripConsumes(t *testing.T) {
 	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, key); err != nil {
 		t.Fatal(err)
 	}
-	// The bucket holds ciphertext, not the token.
 	data, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run))
 	if err != nil {
 		t.Fatal(err)
@@ -263,19 +260,11 @@ func TestSealedObjectRoundTripConsumes(t *testing.T) {
 	if err != nil || got != tok {
 		t.Fatalf("take = %q, %v", got, err)
 	}
-	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run, key); !errors.Is(err, token.ErrNoToken) {
-		t.Fatalf("the take did not consume the sealed object: %v", err)
-	}
-	if _, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); !errors.Is(err, blobx.ErrNotExist) {
-		t.Fatalf("the sealed object is still there: %v", err)
-	}
-	// A second put does not replace it, sealed or not: the object is the run's
-	// identity and a replacement is an identity swap (PutObject's contract).
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, sealKey(0x61)); err != nil {
-		t.Fatal(err)
-	}
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, nil); !errors.Is(err, token.ErrObjectExists) {
-		t.Fatalf("a plaintext put replaced a sealed object: %v", err)
+	// A second put does not replace it: the object is the run's identity and
+	// a replacement is an identity swap (PutObject's contract); the launcher's
+	// retry deletes the earlier object first (DeleteObject).
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, sealKey(0x61)); !errors.Is(err, token.ErrObjectExists) {
+		t.Fatalf("a second put replaced the sealed object: %v", err)
 	}
 }
 
@@ -289,7 +278,8 @@ func TestTakeObjectRefusesAPlaintextObjectWhenAKeyIsPresented(t *testing.T) {
 	_, b := bucket(t)
 	c := claims()
 	tok := e.mint(t, c, t0)
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, nil); err != nil {
+	// Written straight to the object: PutObject has no plaintext form.
+	if _, err := b.Create(ctx, token.ObjectKey(c.Slug, c.Run), []byte(tok), "text/plain"); err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range [][]byte{sealKey(0x70), sealKey(0x71)} {
@@ -299,10 +289,6 @@ func TestTakeObjectRefusesAPlaintextObjectWhenAKeyIsPresented(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), tok) {
 			t.Fatal("the refusal carries the token")
-		}
-		// Put it back: the take deleted it before it refused.
-		if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, nil); err != nil {
-			t.Fatal(err)
 		}
 	}
 }
@@ -323,6 +309,9 @@ func TestTakeObjectRefusesASealedObjectWithNoKeyOrTheWrongKey(t *testing.T) {
 			return token.TakeObject(ctx, b, c.Slug, c.Run, sealKey(0x81))
 		},
 	} {
+		if err := token.DeleteObject(ctx, b, c.Slug, c.Run); err != nil {
+			t.Fatal(err)
+		}
 		if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, key); err != nil {
 			t.Fatal(err)
 		}

@@ -11,12 +11,15 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -24,9 +27,18 @@ import (
 //
 //   - It is the only holder of the signer permission. It mints the run's
 //     Firebase custom token after winning the launch claim and leaves it in
-//     the runs bucket; the runner takes it. The token is never in the
-//     jobs.run request (the request reaches audit logs), an env var, an
-//     error or a message.
+//     the runs bucket, sealed under a key it draws for this launch alone
+//     (docs/design/budget-token-channel.md §7.1); the runner takes it. The
+//     token is never in the jobs.run request (the request reaches audit
+//     logs), an env var, an error or a message.
+//   - The seal key is not the token and grants nothing by itself: it opens
+//     one object, for the one execution this launch starts, and it travels
+//     as the value of that execution's marker (FUGARO_BUDGET_TOKEN, D15).
+//     Its audience is therefore the override's — the project's readers:
+//     launchers, anyone with log read, and (unverified, U2) anyone with
+//     execution read — and not a peer run of the job, which holds the
+//     object and no Cloud Run permission. It is never printed: the launch's
+//     own errors are redacted of it (sealRedact), and it is never logged.
 //   - The mint names exactly this run: fs, fr (the keys of the slug and run
 //     id; the runner refuses a run whose names are not their own keys), fx
 //     (the end of the identity), fp (the Fugaro project, which must equal
@@ -306,27 +318,84 @@ func (e *cloudEnv) batchBudgetPrecheck(ctx context.Context, slug, repo string, n
 	return nil
 }
 
-// mintBudgetToken mints the run's custom token and leaves it in the runs
-// bucket. minted is false when the project has no budget backend. A token
-// object left by an earlier attempt is replaced (PutObject never overwrites,
-// and the new mint supersedes the old identity's delivery). On error nothing
-// of this attempt remains in the bucket.
-func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.Spec) (minted bool, err error) {
+// sealGate refuses a launch that will mint a budget token when the job's image
+// runs a fugaro older than sealSince: such a runner formats a marker value it
+// cannot parse into its bootstrap error — the launch's seal key, into the
+// run's record — and reads the token from runs/, where the launcher no longer
+// writes it (D19, §7.4). A launch that mints nothing is not judged. The judge
+// is the one every *Since gate uses (checkImageSince, or checkCloneImageSince
+// for a checkout: clone workflow): a release older than sealSince and a
+// missing build record refuse. An image built from a base that is not a
+// release (a development build) is refused when its build record shows it was
+// built before the seal's runner half existed (sealDevRefusal), and is
+// otherwise only warned about, because whether it supports the seal cannot be
+// shown (the owner's answer of 2026-10-17). A checkout: clone job has no build
+// record, so a development base there is only warned about.
+func (e *cloudEnv) sealGate(ctx context.Context, slug string, spec *task.Spec, kind string, clone bool, warn io.Writer) error {
+	mint, err := e.budgetMintOn(ctx)
+	if err != nil || !mint {
+		return err
+	}
+	const subject = "a launch that mints a budget token (the token is sealed and its key is in FUGARO_BUDGET_TOKEN)"
+	const knows = "the sealed budget token"
+	if clone {
+		return checkCloneImageSince(e.lc, spec, sealSince, subject, knows, "", warn)
+	}
+	return checkImageSinceDev(ctx, e, slug, spec, kind, sealSince, subject, knows, "", sealDevRefusal(spec), warn)
+}
+
+// sealDevRefusal judges a job image built from a base that is not a release
+// (a development or hand-pushed image) for the seal gate: one whose build
+// record says it was built before the seal's runner half existed
+// (sealRunnerIntroduced) cannot run a runner that reads the sealed token, and
+// is refused with the image named. One built after, or with no build time,
+// cannot be shown either way and is left to checkImageSinceDev's warning.
+func sealDevRefusal(spec *task.Spec) func(rec *imagecheck.Record, ref string) error {
+	return func(rec *imagecheck.Record, ref string) error {
+		if rec.BuiltAt.IsZero() || !rec.BuiltAt.Before(sealRunnerIntroduced) {
+			return nil
+		}
+		return userErr("a launch that mints a budget token (the token is sealed and its key is in FUGARO_BUDGET_TOKEN) needs a job image whose runner knows the sealed budget token, "+
+			"but the job image of %s workflow %s was built from %s, which is not a release base image, on %s, and so predates the seal (its runner half was introduced on %s): "+
+			"its runner would echo the seal key into the run's record. Rebuild the base image from a checkout that has the seal and then the job image from it with fugaro image build --repo %s --workflow %s, "+
+			"or move the workflow to a release base image (fugaro %s or later) with fugaro image refresh in its checkout, in your own terminal window",
+			spec.Repo, spec.Workflow, ref, rec.BuiltAt.UTC().Format(time.RFC3339), sealRunnerIntroduced.UTC().Format(time.RFC3339), spec.Repo, spec.Workflow, sealSince)
+	}
+}
+
+// newSealKey draws the seal key of one launch (token.NewKey). Tests replace
+// it to make the draw fail.
+var newSealKey = token.NewKey
+
+// mintBudgetToken mints the run's custom token, seals it under a key drawn
+// for this launch and leaves it in the runs bucket. key is nil when the
+// project has no budget backend, and is otherwise the key the execution
+// must be handed (the marker's value, D15) — the only copy: it is in no
+// object, no log and no error.
+//
+// Every mint draws a new key (D17): a --retry, or a takeover of a stale
+// claim, re-mints and re-seals, and the earlier attempt's object is deleted
+// before the new one is written, so no key is ever in front of two
+// executions of the run and the earlier key opens nothing that is left. On
+// error nothing of this attempt remains in the bucket, and there is no path
+// that writes the token unsealed (§7.4: a plaintext object is the exposure
+// the seal exists to close).
+func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.Spec) (key []byte, err error) {
 	on, err := e.budgetMintOn(ctx)
 	if err != nil || !on {
-		return false, err
+		return nil, err
 	}
 	run := spec.RunID
 	if budget.Key(slug) != slug || budget.Key(run) != run {
-		return false, userErr("the repository slug %q or run id %q cannot be used as keys of the budget database", slug, run)
+		return nil, userErr("the repository slug %q or run id %q cannot be used as keys of the budget database", slug, run)
 	}
 	me, err := e.lc.Me(ctx)
 	if err != nil {
-		return false, userErr("%v", err)
+		return nil, userErr("%v", err)
 	}
 	signer, err := e.tokenSigner(ctx)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	// The identity window is the target job's own timeout (a long job
 	// elsewhere must not lengthen it): the job a named run actually starts,
@@ -344,10 +413,17 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 		jobTimeout, err = backend.DefaultTaskTimeout, nil
 	}
 	if err != nil {
-		return false, remote(err)
+		return nil, remote(err)
 	}
 	if o := launchTimeoutOf(spec); o > 0 {
 		jobTimeout = max(jobTimeout, o+backend.TaskTimeoutSlack)
+	}
+	// The key is drawn before the mint, so a draw that fails costs no
+	// signature and leaves nothing to clean up. Its error names no value
+	// (there is none yet).
+	k, err := newSealKey()
+	if err != nil {
+		return nil, remote(fmt.Errorf("the run's budget token cannot be sealed, because its seal key could not be drawn, so nothing is launched: %w", err))
 	}
 	// RB is the launcher's own, self-asserted name (config user or git
 	// email): attribution only, nothing in the rules trusts it.
@@ -355,34 +431,60 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	tok, err := token.Mint(ctx, signer, claims)
 	switch {
 	case errors.Is(err, token.ErrNotMinter):
-		return false, userErr("%v", err)
+		return nil, userErr("%v", err)
 	case errors.Is(err, token.ErrUnavailable):
-		return false, remote(err)
+		return nil, remote(err)
 	case err != nil:
-		return false, remote(fmt.Errorf("minting the run's budget token: %w", err))
+		return nil, remote(fmt.Errorf("minting the run's budget token: %w", err))
 	}
 	// Minted: only now replace what an earlier attempt left (a --retry, or a
-	// takeover of a stale claim), so a failed mint leaves it alone.
+	// takeover of a stale claim), so a failed mint leaves it alone. The
+	// earlier object was sealed under the earlier attempt's key; deleting it
+	// before the put is what keeps the new key the only one with anything
+	// to open (D17).
 	if err := token.DeleteObject(ctx, e.bucket, slug, run); err != nil {
-		return false, remote(err)
+		return nil, remote(err)
 	}
-	// The nil key is deliberate and is this slice's whole launcher-side
-	// change: the token still goes into the bucket as plaintext, because a
-	// launcher that seals must hand its key to the execution it starts, and
-	// the fleet has to carry a runner that never echoes a marker's value and
-	// registers the key with its redactor first (D19: runner and image first,
-	// launcher second, in separate deployments). Sealing here is the next
-	// slice's change, together with the re-seal a --retry needs (D17).
-	if err := token.PutObject(ctx, e.bucket, slug, run, tok, nil); err != nil {
-		// A put that failed after writing leaves an untaken token valid
-		// for an hour: remove it, best effort.
+	if err := token.PutObject(ctx, e.bucket, slug, run, tok, k); err != nil {
+		// A put that failed after writing leaves an untaken object: remove
+		// it, best effort. PutObject's errors carry the object's name and the
+		// bucket's status, never the token or the key.
 		if !errors.Is(err, token.ErrObjectExists) {
 			e.dropBudgetToken(ctx, slug, run)
 		}
-		return false, remote(err)
+		return nil, remote(err)
 	}
-	return true, nil
+	return k, nil
 }
+
+// sealMarker is the marker entry of a launch that minted: the variable's name
+// and the launch's seal key in its one spelling (token.EncodeKey), which is
+// the spelling the runner parses and registers with its redactor.
+func sealMarker(key []byte) string {
+	return runner.BudgetTokenEnv + "=" + token.EncodeKey(key)
+}
+
+// sealRedact returns err with every spelling of key removed from its text:
+// the encoded one, which is what a backend error quoting the launch request
+// would carry, and the raw bytes. Unwrap still reaches err, so errors.Is
+// finds backend.ErrRejected and the launcher drops its claim and object on
+// a refusal exactly as before. A nil key, or a nil err, is returned as is.
+func sealRedact(err error, key []byte) error {
+	if err == nil || len(key) == 0 {
+		return err
+	}
+	return redactedError{err: err, text: agent.Redact(err.Error(), []string{token.EncodeKey(key), string(key)})}
+}
+
+// redactedError is an error whose text has had a secret removed; Unwrap is
+// the original, so its kinds are still found.
+type redactedError struct {
+	err  error
+	text string
+}
+
+func (e redactedError) Error() string { return e.text }
+func (e redactedError) Unwrap() error { return e.err }
 
 // dropBudgetToken removes the run's token object after a launch that
 // definitely did not start. Best effort: an untaken token is dead within an
