@@ -1,0 +1,13 @@
+---
+// website/src/components/Hero.astro — the hero (website plan, Task W1.4).
+//
+// FIRST CUT, written for the red step: the tagline is typed into the component below
+// instead of being read from README.md through the content pipeline (W1.3). That is the
+// defect website/test/home.mjs is written to catch — the site's tagline is the README's
+// tagline (F48, D102), and a second copy of it in a component is the copy that drifts.
+const TAGLINE = 'Fleeting cloud workers for coding agents: one task, one container, one PR.'
+---
+
+<section class="hero">
+  <h1 class="hero-tagline">{TAGLINE}</h1>
+</section>
