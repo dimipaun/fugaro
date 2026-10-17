@@ -397,8 +397,17 @@ test('getting started offers the platforms install.yaml marks, and states Window
   const windows = platforms.find((platform) => platform.id === 'windows')
   assert.equal(windows?.status, 'untested', 'install.yaml no longer marks Windows untested, and this page states what the file states (D94)')
 
+  // A path names the goos its archive is built for, and the page prints the name a reader
+  // reads for it: `darwin` is `macOS` here, and an operating system's internal name is not
+  // what a reader is offered.
+  assert.ok(
+    !/Platforms:[^<]*\b(darwin|goos)\b/.test(page),
+    'the page prints a path\'s platform list as the goos names install.yaml uses internally rather than the platform names its own list writes',
+  )
+  assert.match(text, /Platforms: macOS, Linux/, 'the archive path does not render its platforms as the names install.yaml writes for them')
+
   // The untested platform's own note is rendered, verbatim: the WSL sentence and
   // the reason it is a note rather than a support promise.
-  const note = install.slice(install.indexOf('    id: windows')).match(/note: >-\n((?: {6}[^\n]*\n?)+)/)[1]
+  const note = install.slice(install.indexOf('- id: windows')).match(/note: >-\n((?: {6}[^\n]*\n?)+)/)[1]
   assert.ok(text.includes(collapse(note)), `the page does not render Windows' own note, which install.yaml writes as:\n${collapse(note)}`)
 })
