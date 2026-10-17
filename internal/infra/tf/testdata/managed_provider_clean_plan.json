@@ -1,11 +1,6 @@
 {
  "format_version": "1.2",
  "terraform_version": "1.16.4",
- "variables": {
-  "project": {
-   "value": "proj-1"
-  }
- },
  "planned_values": {
   "root_module": {
    "resources": [
@@ -174,9 +169,7 @@
       }
      },
      "project": {
-      "references": [
-       "var.project"
-      ]
+      "constant_value": "proj-1"
      },
      "region": {
       "constant_value": "us-east5"
@@ -205,15 +198,10 @@
      },
      "schema_version": 4
     }
-   ],
-   "variables": {
-    "project": {
-     "default": "proj-1"
-    }
-   }
+   ]
   }
  },
- "timestamp": "2026-10-17T10:49:45Z",
+ "timestamp": "2026-10-17T15:07:59Z",
  "applyable": true,
  "complete": true,
  "errored": false

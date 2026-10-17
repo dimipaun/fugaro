@@ -477,9 +477,7 @@
     "version_constraint": "8.4.0",
     "expressions": {
      "project": {
-      "references": [
-       "var.project"
-      ]
+      "constant_value": "proj-1"
      },
      "region": {
       "constant_value": "us-east5"
@@ -492,9 +490,7 @@
     "module_address": "module.a.module.b",
     "expressions": {
      "project": {
-      "references": [
-       "var.project"
-      ]
+      "constant_value": "proj-1"
      }
     }
    },
@@ -504,9 +500,7 @@
     "module_address": "module.d",
     "expressions": {
      "project": {
-      "references": [
-       "var.project"
-      ]
+      "constant_value": "proj-1"
      }
     }
    },
@@ -516,9 +510,7 @@
     "module_address": "module.m",
     "expressions": {
      "project": {
-      "references": [
-       "var.project"
-      ]
+      "constant_value": "proj-1"
      }
     }
    }
@@ -537,7 +529,7 @@
      "module": {
       "module_calls": {
        "b": {
-        "source": "./b",
+        "source": "../b",
         "expressions": {
          "project": {
           "references": [
@@ -636,12 +628,16 @@
     }
    },
    "variables": {
-    "other": {},
-    "project": {}
+    "other": {
+     "default": "proj-1"
+    },
+    "project": {
+     "default": "proj-1"
+    }
    }
   }
  },
- "timestamp": "2026-10-17T14:47:43Z",
+ "timestamp": "2026-10-17T15:08:03Z",
  "applyable": true,
  "complete": true,
  "errored": false

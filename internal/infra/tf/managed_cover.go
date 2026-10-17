@@ -188,7 +188,8 @@ var managedGrantRules = map[string]bool{
 //     list live (Task 1.4);
 //   - the attributes, two of them and no more (managedProject, managedBilling
 //     and managedProviderProject, which is the same project rule read on the
-//     provider block that decides the project of a resource left to it): the
+//     provider block that decides the project of a resource left to it, and
+//     which admits that block's project written out and nothing else): the
 //     project every resource is in, kept as the wider rule Cover.Projects is,
 //     and the billing account the review showed. Every other attribute check
 //     init's cover makes is re-justified there, and the ones that only make
@@ -212,7 +213,8 @@ var managedGrantRules = map[string]bool{
 // configuration and each change's mode and provider, which is why a plan
 // without a configuration is refused (managedConfiguration). Nor does the
 // plan choose who applies, who is billed or where the requests go: a provider
-// block sets project, region, zone and labels alone (managedProviderAllowed).
+// block sets project, region, zone and labels alone (managedProviderAllowed),
+// and its project always, written out (managedProviderProject).
 // No action, deferred change or ephemeral resource either, and any key of the
 // plan, the configuration or a module the cover does not know is refused
 // rather than read as inert (managedPlanFields). What the plan JSON does not
@@ -461,8 +463,9 @@ var managedProviderAllowed = map[string]bool{
 // allowed one whose value is neither written out nor read from variables
 // alone — a local, a resource, a data source or an ephemeral resource can
 // carry what the plan does not show, and a function call of no variable shows
-// as neither. (One whose arguments read a variable shows as that variable:
-// managedProviderProject says what that leaves unproven.)
+// as neither. (One whose arguments read a variable shows as that variable,
+// which is why the project, the one setting whose value decides where the
+// resources land, is admitted written out alone: managedProviderProject.)
 func managedProviderSettings(pc ProviderConfig) []string {
 	var out []string
 	if pc.Alias != "" {
@@ -479,7 +482,11 @@ func managedProviderSettings(pc ProviderConfig) []string {
 			continue
 		}
 		if !managedSettingForm(pc.Expressions[k]) {
-			out = append(out, fmt.Sprintf("setting %s from something other than a literal or variables alone: write it out, or read it from a variable", k))
+			fix := "write it out, or read it from a variable"
+			if k == "project" {
+				fix = "write it out"
+			}
+			out = append(out, fmt.Sprintf("setting %s from something other than a literal or variables alone: %s", k, fix))
 		}
 	}
 	return out
@@ -494,7 +501,8 @@ type managedExpr struct {
 // managedSettingForm: the expression is written out, or read from variables
 // alone. A function call with no reference writes neither and fails it; one
 // whose arguments read a variable writes that variable's reference and
-// nothing else, exactly as the variable itself does (managedProviderProject).
+// nothing else, exactly as the variable itself does, so for the project this
+// is the form check alone and managedProviderProject admits a literal only.
 func managedSettingForm(raw json.RawMessage) bool {
 	var e managedExpr
 	if json.Unmarshal(raw, &e) != nil {
@@ -779,12 +787,12 @@ func (c ManagedCover) managedBilling(rc ResourceChange) string {
 	return ""
 }
 
-// managedProviderProject says why a provider block may land its resources in
-// a project that is not this run's, one refusal per block: one whose project
-// is proven to be another, and one whose project the plan does not prove is
-// one of this run's. A block that sets no project is not read here, and nor
-// is one whose project's form Task 1.1's managedProviderSettings already
-// refuses.
+// managedProviderProject says why a provider configuration may land its
+// resources in a project that is not this run's, one refusal per
+// configuration: one whose project is written out and is another, and one
+// whose project the plan does not prove — read from anything, or not set at
+// all. One whose project's form managedProviderSettings already refuses is
+// left to that refusal.
 //
 // It is the second half of managedProject, and the reason that rule is not
 // bypassed by moving a project one line up: a resource that leaves its project
@@ -792,176 +800,59 @@ func (c ManagedCover) managedBilling(rc ResourceChange) string {
 // unknown), so the block's project is the one that decides — and
 // managedProviderSettings reads only the setting's form, never its value.
 //
-// A project is proven when it resolves to a string the plan carries: written
-// out in the block, or read from a variable of the block's module. A root
-// variable's value is in the plan's own variables. A module variable's is in
-// the call that passes it — terraform writes a module call's arguments as
-// configuration.root_module.module_calls.<name>.expressions, and a module's
-// variables, with their defaults, as module.variables — so a module block's
-// var.project is read through its call's argument, and that argument, if it
-// reads a variable in turn, through the calling module's own call, up to the
-// root (managedResolve). terraform's own output for the three ways a call can
-// hand a module block proj-2 — written out in the call, through a root
-// variable two calls down, and as the variable's default — is
-// testdata/managed_provider_module_project_plan.json. Anything that does not
-// resolve is refused rather than left to the deployer's IAM: a variable whose
-// value the plan does not carry, a module the configuration does not call, a
-// call that neither passes nor defaults the variable, an argument read from
-// anything but a single variable (a local, each.value, a resource, two
-// variables, a variable's attribute), a value that is not a string, and a
-// variables document or a call's arguments that do not decode.
+// A project is proven only when the block writes it out: the expression is a
+// constant_value, with no reference, that is a string naming one of this
+// run's projects. Nothing read from a variable is admitted, however plainly
+// the plan shows the variable's value, because the plan cannot show that the
+// block reads the variable bare: terraform writes an expression's references
+// and nothing else, so replace(var.project, "1", "2"), "${var.project}-x",
+// lower(var.project), tostring(var.project) and var.project == "a" ? "b" :
+// "c" are each written exactly as var.project is, {"references":
+// ["var.project"]} (terraform 1.16.4's own output for all six is
+// testdata/managed_provider_wrapped_project_plan.json). Resolving the
+// variable would read the function's argument as its result, so an earlier
+// revision that followed var.project through module calls to its value
+// admitted a block landing its resources in proj-2. A module call's argument
+// is not read for the same reason: it feeds a provider block only through a
+// reference, which is already refused. A refused block falls back to the
+// typed confirmation, and the agent can always write the project out — a
+// constant_value is the value terraform evaluated, templates over literals
+// included.
 //
-// What the plan cannot show is one residual, and Task 3.1's: terraform writes
-// an expression's references and nothing else, so a function or a template
-// over a variable — replace(var.project, "1", "2"), "${var.project}-x" — is
-// written exactly as var.project is (verified on terraform 1.16.4's output),
-// and resolves here to the variable's value rather than the function's. The
-// form is in the working directory's .tf files, where Task 3.1 reads before
-// init; past it, the deployer's IAM (D75) reaches the managed project alone.
+// And a configuration with no project at all is refused, the one terraform
+// configures by itself when the plan declares no provider block included: its
+// resources land in whatever project the environment of whoever applies names
+// (GOOGLE_PROJECT and its aliases, then gcloud's configuration), which the
+// plan does not show and the review did not.
 func (c ManagedCover) managedProviderProject(p *Plan) []string {
-	var out []string
-	vars, varsOK := managedRootVariables(p)
-	if !varsOK {
-		out = append(out, "the plan (variables that do not decode: a provider block's var.project is read from them, so a plan whose variables cannot be read is refused rather than read as having none)")
-	}
 	cfg := p.Configuration
 	if cfg == nil {
-		return out
+		return nil
 	}
+	var out []string
 	for _, key := range slices.Sorted(maps.Keys(cfg.ProviderConfig)) {
-		pc := cfg.ProviderConfig[key]
-		raw, set := pc.Expressions["project"]
-		if !set || !managedSettingForm(raw) {
+		where := "provider_config." + key + " (lands resources in "
+		raw, set := cfg.ProviderConfig[key].Expressions["project"]
+		if !set {
+			out = append(out, "provider_config."+key+" (sets no project, so it lands resources in whatever project the environment of whoever applies names, which the plan does not show: it is not proven to be this run's — write the project out)")
 			continue
 		}
-		where := "provider_config." + key + " (lands resources in "
-		val, steps, why := managedResolve(cfg, vars, varsOK, pc.ModuleAddress, raw)
-		from := ""
-		if len(steps) > 0 {
-			from = ", read from " + strings.Join(steps, ", then ")
+		if !managedSettingForm(raw) {
+			continue
 		}
+		var e managedExpr
+		_ = json.Unmarshal(raw, &e) // managedSettingForm decoded it
 		var proj string
 		switch {
-		case why != "":
-			out = append(out, where+"a project"+strings.TrimPrefix(from, ",")+": "+why+", so it is not proven to be this run's)")
-		case json.Unmarshal(val, &proj) != nil || proj == "":
-			out = append(out, where+"project "+string(val)+from+", which is not a string the plan names, so it is not proven to be this run's)")
+		case len(e.References) > 0:
+			out = append(out, where+"a project read from "+strings.Join(e.References, ", ")+", not written out: terraform writes a function or a template over a variable exactly as it writes the variable, so the plan does not prove the value and it is not proven to be this run's — write the project out)")
+		case json.Unmarshal(e.ConstantValue, &proj) != nil || proj == "":
+			out = append(out, where+"project "+string(e.ConstantValue)+", which is not a string the plan names, so it is not proven to be this run's)")
 		case !slices.Contains(c.Projects, proj):
-			out = append(out, where+"project "+proj+from+", which is not this run's)")
+			out = append(out, where+"project "+proj+", which is not this run's)")
 		}
 	}
 	return out
-}
-
-// managedRootVariables are the root module's variable values the plan
-// carries, each as terraform writes it. ok is false when the document does
-// not decode, which managedProviderProject refuses.
-func managedRootVariables(p *Plan) (map[string]json.RawMessage, bool) {
-	vars := map[string]json.RawMessage{}
-	raw := p.fields["variables"]
-	if len(raw) == 0 {
-		return vars, true
-	}
-	var doc map[string]struct {
-		Value json.RawMessage `json:"value"`
-	}
-	if json.Unmarshal(raw, &doc) != nil {
-		return vars, false
-	}
-	for name, v := range doc {
-		if v.Value != nil {
-			vars[name] = v.Value
-		}
-	}
-	return vars, true
-}
-
-// managedResolve reads raw, an expression of the module at addr ("" for the
-// root), down to the value it is: written out, or a single variable whose
-// value the plan carries — a root variable's in the plan's variables, a module
-// variable's in the argument its call passes, read in turn in the calling
-// module, or, when the call passes none, in the variable's default. steps are
-// the variables it read through, outermost first; why says what it could not
-// resolve, "" when it resolved the value.
-func managedResolve(cfg *Configuration, vars map[string]json.RawMessage, varsOK bool, addr string, raw json.RawMessage) (json.RawMessage, []string, string) {
-	var steps []string
-	for {
-		var e managedExpr
-		if json.Unmarshal(raw, &e) != nil {
-			return nil, steps, "an expression the plan does not write as one"
-		}
-		if e.ConstantValue != nil && len(e.References) == 0 {
-			return e.ConstantValue, steps, ""
-		}
-		if e.ConstantValue != nil || len(e.References) != 1 || !managedVarName(e.References[0]) {
-			refs := "no reference"
-			if len(e.References) > 0 {
-				refs = strings.Join(e.References, ", ")
-			}
-			return nil, steps, "read from " + refs + ", which is neither written out nor a single variable"
-		}
-		ref, name := e.References[0], strings.TrimPrefix(e.References[0], "var.")
-		if addr == "" {
-			steps = append(steps, ref)
-			v, ok := vars[name]
-			switch {
-			case !varsOK:
-				return nil, steps, "the plan's variables do not decode"
-			case !ok:
-				return nil, steps, "the plan carries no value for it"
-			}
-			return v, steps, ""
-		}
-		steps = append(steps, ref+" of "+addr)
-		parent, call, ok := managedModuleCall(cfg.RootModule, addr)
-		if !ok {
-			return nil, steps, "the configuration does not call that module"
-		}
-		var args map[string]json.RawMessage
-		if len(call.Expressions) > 0 && json.Unmarshal(call.Expressions, &args) != nil {
-			return nil, steps, "its call's arguments do not decode"
-		}
-		if arg, ok := args[name]; ok {
-			raw, addr = arg, parent
-			continue
-		}
-		var decl map[string]struct {
-			Default json.RawMessage `json:"default"`
-		}
-		if v := call.Module.fields["variables"]; len(v) > 0 && json.Unmarshal(v, &decl) != nil {
-			return nil, steps, "its module's variables do not decode"
-		}
-		if d := decl[name].Default; d != nil {
-			return d, append(steps, "its default"), ""
-		}
-		return nil, steps, "its call neither passes nor defaults it"
-	}
-}
-
-// managedVarName: the reference is a variable itself, var.<name>, rather than
-// an attribute or an element of one.
-func managedVarName(ref string) bool {
-	name, ok := strings.CutPrefix(ref, "var.")
-	return ok && name != "" && !strings.ContainsAny(name, ".[")
-}
-
-// managedModuleCall finds the call of the module at addr (module.a.module.b)
-// from root, and the address of the module that makes it ("" for the root).
-func managedModuleCall(root ConfigModule, addr string) (string, ModuleCall, bool) {
-	parts := strings.Split(addr, ".")
-	if len(parts)%2 != 0 {
-		return "", ModuleCall{}, false
-	}
-	m := root
-	var call ModuleCall
-	for i := 0; i < len(parts); i += 2 {
-		c, ok := m.ModuleCalls[parts[i+1]]
-		if parts[i] != "module" || !ok {
-			return "", ModuleCall{}, false
-		}
-		call, m = c, c.Module
-	}
-	return strings.Join(parts[:len(parts)-2], "."), call, true
 }
 
 // managedBucketLock says why a bucket's retention policy is one a managed

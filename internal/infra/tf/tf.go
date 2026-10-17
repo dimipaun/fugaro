@@ -144,11 +144,6 @@ type ConfigResource struct {
 type ModuleCall struct {
 	Source string       `json:"source"`
 	Module ConfigModule `json:"module"`
-	// Expressions are the arguments the call passes, by the called module's
-	// variable names, each as terraform writes an expression. Kept raw, as a
-	// provider block's are, so a call of any shape is read rather than failing
-	// the whole plan; only the managed cover reads them.
-	Expressions json.RawMessage `json:"expressions"`
 }
 
 // Change is what a plan will do to one resource instance.
