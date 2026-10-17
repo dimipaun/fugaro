@@ -14,6 +14,7 @@ import (
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // markerMaxBytes bounds the marker read: the object is a few dozen bytes, and
@@ -71,6 +72,16 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // it against anything, and a later task that made it a condition would be
 // adding a check this design does not have.
 //
+// **The verdict therefore rests entirely on gcpProject, so every caller
+// (Task 0.3 and the 3.x tasks) MUST take it from the installation's own
+// trusted configuration — the local config, or the shared config the
+// installation published — and never from a repository's fugaro.yaml, from a
+// local-config field a run can write, or from an environment variable.** A
+// caller that lets a repository or a run choose gcpProject has handed the
+// answer away: pointing this read at a managed project of the attacker's own
+// is all it takes to be told true, and the confirmations are then skipped for
+// a project that was never created by a Fugaro run.
+//
 // err is set only when the read could not be made at all: a caller's own
 // mistake (no clients, no project), or an API that did not answer (a 5xx,
 // which the storage client does not retry into an answer). It is never the
@@ -79,6 +90,12 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // err == nil and managed == true, and a caller that wants to explain itself
 // prints the reason whenever managed is false, error or not.
 func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (ok bool, reason string, err error) {
+	// The reason is one line wherever a caller prints it, and both a name out
+	// of a config file and an API's error text can carry a control character
+	// or a newline (a 5xx body does): safetext.OneLine is the boundary, so no
+	// return below has to remember it.
+	defer func() { reason = safetext.OneLine(reason) }()
+
 	bucket := runsBucketName(gcpProject)
 	switch {
 	case project == "":
@@ -105,6 +122,14 @@ func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project,
 			return false, fmt.Sprintf("GCP project %s cannot be read, so gs://%s cannot be proved to be its own runs bucket (%s is not managed)", gcpProject, bucket, project), nil
 		}
 		return false, fmt.Sprintf("reading project %s for %s: %v", gcpProject, project, err), err
+	}
+	// A project whose number came back as zero is a project the read cannot
+	// check anything against — and zero is the one number a bucket of the
+	// same name in a stranger's project could also report, so believing it
+	// would make the check pass by itself. internal/infra/project.go refuses
+	// the same value for the same reason.
+	if number == 0 {
+		return false, fmt.Sprintf("GCP project %s came back with no number, so gs://%s cannot be proved to be its own runs bucket (%s is not managed)", gcpProject, bucket, project), nil
 	}
 
 	b, err := s.Buckets.Get(bucket).Context(ctx).Do()
@@ -152,6 +177,9 @@ func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project,
 	if _, err := dec.Token(); err != io.EOF {
 		return false, fmt.Sprintf("gs://%s/%s is not a marker: it holds more than one JSON value", bucket, MarkerObject), nil
 	}
+	if err := checkMarkerShape(data); err != nil {
+		return false, fmt.Sprintf("gs://%s/%s is not a marker: %v", bucket, MarkerObject, err), nil
+	}
 	if m.Version != MarkerVersion {
 		return false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows version %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, project), nil
 	}
@@ -159,6 +187,49 @@ func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project,
 		return false, fmt.Sprintf("gs://%s/%s names project %s, not %s: the fact is about another project, so %s is not managed", bucket, MarkerObject, m.GCPProject, gcpProject, project), nil
 	}
 	return true, "", nil
+}
+
+// checkMarkerShape walks the object's keys and refuses anything but the two
+// Marker writes, each once, spelled as it writes them. DisallowUnknownFields
+// alone does not: Go's decoder matches a key to a field case-insensitively
+// ("VERSION" fills Version) and lets the last of two duplicate keys win, so
+// `{"VERSION":1,"GCP_PROJECT":"<p>"}` and a repeated gcp_project both decode
+// into a Marker this build never wrote — and, with a duplicate, into one
+// whose deciding field is not the one a reader of the object sees.
+func checkMarkerShape(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return errors.New("it is not a JSON object")
+	}
+	seen := map[string]bool{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := tok.(string)
+		if !ok {
+			return errors.New("it has a key that is not a name")
+		}
+		switch name {
+		case "version", "gcp_project": // the whole shape, spelled as Marker writes it
+		default:
+			return fmt.Errorf("it has a field this build does not write (%q)", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("it has %q twice", name)
+		}
+		seen[name] = true
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // gcpProjectNumber is the GCP project's own number, which its buckets carry.

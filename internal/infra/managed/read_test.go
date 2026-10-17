@@ -1,7 +1,10 @@
 package managed
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -46,6 +49,64 @@ func managedWorld(t *testing.T) (*storage.Service, *gcpfake.GCS, *crm.Service, *
 	return s, f, c, cf
 }
 
+// roundTripFunc answers the calls this package makes without a server behind
+// them, which is how the two failures no fake serves are arranged: a body
+// that dies mid-read, and a request the context ends.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// storageWithTransport is a storage service whose every call is answered by
+// transport.
+func storageWithTransport(t *testing.T, transport roundTripFunc) *storage.Service {
+	t.Helper()
+	s, err := storage.NewService(context.Background(), option.WithoutAuthentication(),
+		option.WithHTTPClient(&http.Client{Transport: transport}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// bucketResponse is the bucket read answered as the JSON API answers it — the
+// number is a string there — so that a row can fail the object read alone.
+func bucketResponse(req *http.Request, number uint64, labels map[string]string) *http.Response {
+	body, err := json.Marshal(map[string]any{"projectNumber": strconv.FormatUint(number, 10), "labels": labels})
+	if err != nil {
+		panic(err)
+	}
+	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK",
+		Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body:   io.NopCloser(bytes.NewReader(body)), Request: req}
+}
+
+// shortBody serves data and then fails, as a connection that dies
+// mid-download does: the request itself succeeded, so the failure lands where
+// the caller reads the body (read.go's io.ReadAll) and not at the request.
+type shortBody struct {
+	data []byte
+	err  error
+}
+
+func (b *shortBody) Read(p []byte) (int, error) {
+	if len(b.data) == 0 {
+		return 0, b.err
+	}
+	n := copy(p, b.data)
+	b.data = b.data[n:]
+	return n, nil
+}
+
+func (b *shortBody) Close() error { return nil }
+
+// cancelledCtx is a context that is already done, as a caller's own timeout
+// leaves one.
+func cancelledCtx() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}
+
 // The happy path: the fact is there, the bucket it is in is the project's
 // own, and it names the project asked about. The read is a read — it writes
 // nothing and asks for nothing but the project's number, the bucket and the
@@ -83,16 +144,22 @@ func TestIsManagedReadsTheCreationFact(t *testing.T) {
 // task names — no bucket, a bucket in another project, an unlabelled
 // bucket, an absent object, an unreadable object, one naming another
 // project, one of a version this build does not know — plus the ones the
-// fail-closed rule adds: a project whose number cannot be read, an object
-// this build cannot parse, and an object that parses but is not the whole
-// document. A row whose read fails outright (a 5xx, which is not an answer)
-// is marked, and is still not managed.
+// fail-closed rule adds: a project whose number cannot be read or is zero, an
+// object this build cannot parse (an unknown field, a key spelled
+// differently, a key that appears twice, a second value after it), and the
+// object read itself failing every way it can — a 403, a 404, a 5xx, a body
+// that dies mid-read, a request the context ends — because a fail-open
+// mutation of that one branch is the mutation a table that only ever failed
+// the bucket read would not catch. A row whose read fails outright (a 5xx, or
+// a dead context: not an answer) is marked, and is still not managed.
 func TestIsManagedRefusesEveryMismatch(t *testing.T) {
-	ctx := context.Background()
 	for name, tc := range map[string]struct {
 		// world is the installation as this row has it, the object
 		// included: the mismatch is whatever the row leaves out or changes.
 		world func(t *testing.T) (*storage.Service, *crm.Service)
+		// ctx is the context the row's read is made with; nil is a live
+		// one.
+		ctx context.Context
 		// reason is what the refusal must say, a substring: a refusal a
 		// person cannot act on is the same as no refusal.
 		reason string
@@ -149,7 +216,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 			},
 			reason: MarkerObject,
 		},
-		"an object that cannot be read": {
+		"an object the read is not allowed (403)": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
 				f.Put(testBucket, MarkerObject, []byte(markerJSON))
@@ -157,6 +224,67 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				return s, c
 			},
 			reason: MarkerObject,
+		},
+		"an object the read is told is not there (404)": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				f.RefusePath(MarkerObject, http.StatusNotFound, "NOT_FOUND", "", "no such object")
+				return s, c
+			},
+			reason: MarkerObject,
+		},
+		"the object read fails (500)": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				f.RefusePath(MarkerObject, http.StatusInternalServerError, "INTERNAL", "", "backend error")
+				return s, c
+			},
+			reason: "reading gs://" + testBucket + "/" + MarkerObject,
+			fails:  true,
+		},
+		"the object's body dies mid-read": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				c, cf := newCRM(t)
+				cf.AddProject(testProject, testProjectNumber)
+				s := storageWithTransport(t, func(r *http.Request) (*http.Response, error) {
+					if strings.Contains(r.URL.Path, "/o/") {
+						return &http.Response{StatusCode: http.StatusOK, Status: "200 OK",
+							Header: http.Header{"Content-Type": []string{"application/json"}},
+							Body:   &shortBody{data: []byte(markerJSON), err: io.ErrUnexpectedEOF}, Request: r}, nil
+					}
+					return bucketResponse(r, testProjectNumber, testManaged), nil
+				})
+				return s, c
+			},
+			reason: "reading gs://" + testBucket + "/" + MarkerObject,
+			fails:  true,
+		},
+		"a context that is already done": {
+			ctx: cancelledCtx(),
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				return s, c
+			},
+			reason: "reading project " + testProject,
+			fails:  true,
+		},
+		"a context that ends while the object is read": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				c, cf := newCRM(t)
+				cf.AddProject(testProject, testProjectNumber)
+				s := storageWithTransport(t, func(r *http.Request) (*http.Response, error) {
+					if strings.Contains(r.URL.Path, "/o/") {
+						return nil, context.Canceled
+					}
+					return bucketResponse(r, testProjectNumber, testManaged), nil
+				})
+				return s, c
+			},
+			reason: "reading gs://" + testBucket + "/" + MarkerObject,
+			fails:  true,
 		},
 		"an object that is not there when read": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -223,6 +351,33 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 			},
 			reason: "not a marker",
 		},
+		"a project and a bucket with no number": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f := newStorage(t)
+				f.AddBucket(testBucket, 0, testManaged)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				c, cf := newCRM(t)
+				cf.AddProject(testProject, 0)
+				return s, c
+			},
+			reason: "no number",
+		},
+		"keys spelled differently": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"VERSION":1,"GCP_PROJECT":"`+testProject+`"}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		"a key that appears twice": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":1,"gcp_project":"proj-9999","gcp_project":"`+testProject+`"}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
 		"a project whose number is denied": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, cf := managedWorld(t)
@@ -264,6 +419,10 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			ctx := tc.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
 			s, c := tc.world(t)
 			ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
 			if ok {
