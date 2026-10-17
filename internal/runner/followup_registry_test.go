@@ -58,11 +58,11 @@ func mintFor(t *testing.T, b *bk, run string, at time.Time) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: bkSlug, Run: run, FX: token.ExpiryFX(at, 3*time.Hour), FP: "aurora", RB: bkRB}, at)
+	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: repoSlug, Run: run, FX: token.ExpiryFX(at, 3*time.Hour), FP: "aurora", RB: bkRB}, at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := token.PutObject(context.Background(), b.bucket, bkSlug, run, tok); err != nil {
+	if err := token.PutObject(context.Background(), b.bucket, repoSlug, run, tok); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -70,7 +70,7 @@ func mintFor(t *testing.T, b *bk, run string, at time.Time) {
 // entryFor is the registry entry of a run other than the package's shared
 // runID constant, which (b *bk) entry() is hard-coded to.
 func entryFor(b *bk, run string) map[string]any {
-	m, _ := b.db.Value(budget.PathAgent(bkSlug, run)).(map[string]any)
+	m, _ := b.db.Value(budget.PathAgent(repoSlug, run)).(map[string]any)
 	return m
 }
 

@@ -533,7 +533,10 @@ func validateBudget(b *Budget) []Problem {
 		add("budget.per_day_usd", "%v: it rounds to nothing; the smallest cap is $0.000001", b.PerDayUSD)
 	}
 	if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
-		add("budget.allowed_models", "must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")
+		// The layers below still apply to a key this one leaves out, so an
+		// omitted list means "the ceiling's stands", never "nothing is
+		// restricted" (H1, L-a of the security review of PR #379).
+		add("budget.allowed_models", "must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out to keep the allow-list the ceiling already has")
 	}
 	for i, m := range b.AllowedModels {
 		path := fmt.Sprintf("budget.allowed_models[%d]", i)

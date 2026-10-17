@@ -594,7 +594,7 @@ func (r *run) stageArtifacts(out *recipe.Outputs) (artifactSet, error)
 func (r *run) uploadArtifacts(ctx context.Context, set artifactSet) ([]runstore.ArtifactFile, error)
 ```
 
-The sanitiser is one function with one refusal list (design §8.2): the name is the match's path **relative to the deepest common root of the recipe's globs**, cleaned with `path.Clean`, and it must be non-empty, must not be absolute, must not contain a `..` element or a NUL/newline, **must not begin with a dot**, must be at most 200 bytes, and must not collide with a name already taken (after cleaning). **The dot rule is a matched pair with `fugaro artifacts get`'s** (design §9): `get` refuses a dot-named entry, and Go's `filepath.Glob`/`Match` — unlike a shell — match a leading dot, so without the rule here `out/*.mp4` would upload and record a `.hidden.mp4` the retriever can never hand back. Nothing else about a dot is affected: `sizzle.v2.mp4` and `clips/a.mp4` are both names this accepts. A symlink in the checkout whose target is outside the outputs root is skipped with a warning rather than followed — a refusal, not a copy, because the bytes would then be a file the run never rendered.
+The sanitiser is one function with one refusal list (design §8.2, and it is the list the code enforces — `runner.ArtifactName` and `firstControl`): the name is the match's path **relative to the deepest common root of the recipe's globs**, cleaned with `path.Clean`, and it must be non-empty, must not be absolute, must not contain a `..` element, **must not hold a control character** (every C0, DEL and C1 byte, and the bidi overrides — not only a NUL or a newline), **must not hold a backslash** (a path separator on Windows and a character elsewhere, so one name would be two paths depending on the machine), **must not begin with a dot**, must be at most 200 bytes, and must not collide with a name already taken — **where "collide" is decided by the standard's canonical caseless form — NFD of the FULL case fold of NFD (Unicode D145)** (`ArtifactCollisionKey`: `ß` folds to `ss`, `ﬁ` to `fi`, so `straße.png` and `strasse.png` are one name on APFS), because a simple fold or `strings.ToLower` gives those pairs two keys and stages a set `fugaro artifacts get` then writes over itself. **The dot rule is a matched pair with `fugaro artifacts get`'s** (design §9): `get` refuses a dot-named entry, and Go's `filepath.Glob`/`Match` — unlike a shell — match a leading dot, so without the rule here `out/*.mp4` would upload and record a `.hidden.mp4` the retriever can never hand back. Nothing else about a dot is affected: `sizzle.v2.mp4` and `clips/a.mp4` are both names this accepts. A symlink in the checkout whose target is outside the outputs root is skipped with a warning rather than followed — a refusal, not a copy, because the bytes would then be a file the run never rendered.
 
 The caps, and the order they are checked in: match count against `max_files`, then each match's size against `max_bytes` (**per artifact**), then the set's total against `max_total_bytes` (**the set cap, its own key and not `max_bytes × max_files`** — a cap derived from two other caps is a cap the owner cannot set). Nothing is staged until every check passes — **so a refused set leaves the staging directory empty and the bucket untouched** (Review Focus 4).
 
@@ -657,7 +657,7 @@ func (r *run) runProbe(ctx context.Context, set artifactSet) (runstore.ProbeResu
 
 The probe runs through `procgroup.Run` with `Dir: s.RepoDir`, `Env: append(r.env, "FUGARO_OUT_DIR=…", "FUGARO_ARTIFACTS_FILE=…")` and `Grace: commandGrace` — the same call shape `verify.Run` uses (`internal/verify/verify.go:242-246`) — under `timeouts.verify`, since it is a check and not a render. Its output is captured as a redacted log tail (`logtail`, already imported by the gate) and quoted in the report when it fails.
 
-`outputs.probe: none` (or a blank `commands.probe`) means the probe is skipped and the record says `{ran: false}` (Review Focus 6's second half) — the design's §3 choice: the structural checks are still there, and the report says no probe ran.
+`outputs.probe: none` means the probe is skipped and the record says `{ran: false}` (Review Focus 6's second half) — the design's §3 choice: the structural checks are still there, and the report says no probe ran. **A blank `commands.probe` is not a skip.** `outputs.probe: probe` over a blank `commands.probe` is refused at launch — Task 1's `gateCommandProblems` refusal, which `fugaro validate` reports too — because an empty command through `sh -c` exits 0, so running it would record a check that never ran as a pass. Task 5's own `commands.probe is empty` arm is the fail-closed backup behind that gate, not a reachable launch: it is what a caller that skipped the gate gets, and the run ends `failed` with no artifacts rather than succeeding with `{ran: true, exit_code: 0}`. (The plan text originally folded the blank command into the skip; the gate makes the refusal the safer reading, and the two are now stated apart.)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -728,14 +728,16 @@ func attachInputs(ctx context.Context, b *blobx.Bucket, prefix string, paths []s
 //     runner.ProvidersEnv applies when it builds the job's own
 //     FUGARO_MODEL_PROVIDERS (internal/runner/providers.go:29-51) — the
 //     launcher computes what the job will have, and nothing more; and
-//   - "Anthropic (direct)" whenever any of those models is not claimed by one
-//     of those providers, which is exactly config.NeedsAnthropicKey
+//   - the run's own auth route whenever any of those models is not claimed by
+//     one of those providers, which is exactly config.NeedsAnthropicKey
 //     (internal/config/providers.go:613-631) and is the case a default Claude
-//     workflow always takes.
+//     workflow always takes: agent.auth decides which destination that is —
+//     vertex (the default applyDefaults writes) is Google Vertex AI, api-key is
+//     Anthropic (direct), oauth is Anthropic (oauth token).
 //
-// The empty set therefore means "no Anthropic path and no claiming provider",
+// The empty set therefore means "no auth route and no claiming provider",
 // which the current Agent.PinnedModels cannot actually produce (three models,
-// and an unclaimed one is an Anthropic path) — the branch is defensive, and
+// and an unclaimed one takes the auth route) — the branch is defensive, and
 // the warning says so by printing the local wording rather than claiming the
 // file stays on the machine.
 func attachProviders(lc *localcfg.Config, ag config.Agent, repo string) []string
@@ -782,7 +784,8 @@ func TestAttachNeedsAResolvableRepo(t *testing.T) // the origin is enough (P7); 
 func TestAttachGatesOnTheImageThatKnowsInputs(t *testing.T)   // P9
 func TestAttachNamesTheProvidersThatMayReceiveTheFile(t *testing.T) // D9: the sentence, with both providers listed
 func TestAttachProviderWarningIsSilentWithoutAttachments(t *testing.T) // D9: a plain launch prints nothing
-func TestAttachProviderWarningNamesAnthropicDirect(t *testing.T)      // D9's round-3 correction: a default Claude workflow — lc.Providers empty — prints "Anthropic (direct)", never "routes nowhere"
+func TestAttachProviderWarningNamesTheDefaultAuthRoute(t *testing.T)  // D9, rounds 3 and 4: a default Claude workflow — lc.Providers empty, agent.auth vertex — prints the Vertex route, never "routes nowhere" and never "Anthropic (direct)"
+func TestAttachNamesTheRouteTheAuthModeActuallyTakes(t *testing.T)    // D9, round 4: vertex (and unset) name Google Vertex AI, api-key names Anthropic (direct), oauth names Anthropic (oauth token)
 func TestAttachProviderWarningSaysLocalOnlyWhenNothingRoutes(t *testing.T) // D9: the empty set (no claiming provider AND no Anthropic path) prints the local wording, not a blank name
 func TestAttachProviderWarningIsNotAGate(t *testing.T) // D9: the launch proceeds — the line is printed, never returned as an error
 ```
@@ -796,6 +799,10 @@ func TestInputsOverTheFileCapFailTheRun(t *testing.T) // max_bytes: one spec ent
 func TestInputsOverTheTotalCapFailTheRun(t *testing.T) // max_total_bytes: the spec's entries sum over it although every one is under max_bytes — nothing written under inputs/
 func TestAnInputNameThatEscapesInputsIsRefused(t *testing.T) // Review Focus 3's list, on the spec's side: ../../.git/hooks/pre-commit, absolute, NUL, over-long
 func TestAnInputNameIsNeverCleanedIntoSomethingPlausible(t *testing.T) // refused and the run failed, not silently rewritten
+// round 4 and 5; in internal/runner/inputs_test.go, where the input tests are
+func TestACommittedInputsDirectoryIsRefused(t *testing.T) // a directory the CHECKOUT COMMITS under inputs/ is refused (git ls-files, not "not empty")
+func TestASecondRunReplacesTheInputsTheFirstOneLeft(t *testing.T) // a reused checkout: the run's own inputs/ is emptied and reused, never refused, and a stale file does not survive as an input
+func TestInputsDifferingOnlyInCaseAreRefused(t *testing.T) // the folded-name rule on the spec's side, the same rule Task 4's artifacts are keyed on
 ```
 Run: `go test ./internal/cli -run 'TestAttach' -count=1` and `go test ./internal/runner -run 'TestInputs|TestAnInput' -count=1`
 Expected: **FAIL**.
@@ -825,25 +832,35 @@ Expected: **FAIL**.
 //
 // get downloads one artifact (or all of them with no NAME), verifying the
 // byte count and the sha256 against the
-// record. blobx.GetFile takes the record's hash as its expected sum and
-// strict: true — a launcher or an operator holds unconditional
-// objectAdmin, which includes storage.objects.list, so a 403 here is an
-// access problem and must not be reported as "no such artifact" (design
-// §3) — and renames into place only once it matches, so a mismatch is an
-// error naming both hashes with nothing ever written at the destination
-// path. An existing file needs --force. Nothing downloaded is ever
+// record. blobx.GetFileExactly takes the record's hash as its expected sum,
+// its byte count as the exact size to check (not a ceiling: the check
+// happens on the temporary file, before the placement, because comparing it
+// afterwards either leaves a file the record does not describe or deletes
+// what was at that path) and strict: true — a launcher or an operator holds
+// unconditional objectAdmin, which includes storage.objects.list, so a 403
+// here is an access problem and must not be reported as "no such artifact"
+// (design §3) — and puts the file in place only once both match, without
+// replacing what is there unless --force asked for it (a file that appears
+// after the check, or one this filesystem folds the name onto, is refused
+// rather than overwritten), so a mismatch is an error naming both hashes
+// with nothing ever written at the destination path. An existing file needs
+// --force. Nothing downloaded is ever
 // opened, executed or unpacked: the command prints the recorded type, the
 // size and the hash and stops there.
 //
 // The destination is a fresh directory this command creates and then
 // defaults to (./<run>-artifacts/, with --out naming its PARENT), never
 // ".": the record was written by an untrusted, model-driven run, so a name
-// that is absolute, has a ".." element, begins with a dot or escapes that
-// root is refused — otherwise `get` run inside a checkout could drop
-// .git/hooks/pre-commit or .claude/settings.json for the user's next
-// command to run (design §8.2, §9). The refusal is a refusal: a record
-// naming .git/hooks/pre-commit is an error, never a flattened
-// "pre-commit".
+// that is absolute, has a ".." element, holds a control character (every
+// C0, DEL and C1 byte, and the bidi overrides) or a backslash, begins with
+// a dot or escapes that root is refused — and two names that fold to one
+// (NFD of the full case fold of NFD, the uploader's own key: straße.png
+// with strasse.png) are refused as the duplicate they are, because the
+// destination is a filesystem that folds — otherwise `get` run inside a
+// checkout could drop .git/hooks/pre-commit or .claude/settings.json for
+// the user's next command to run (design §8.2, §9). The refusal is a
+// refusal: a record naming .git/hooks/pre-commit is an error, never a
+// flattened "pre-commit".
 func newArtifactsCmd() *cobra.Command
 ```
 

@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -317,6 +318,54 @@ func TestTaskSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaInputs: the attached-files list a launcher writes (design
+// artifact-runs.md §4, plan Task 6) is an array of closed {name, bytes,
+// sha256} objects, and an absent list stays absent. The name's own shape
+// (no ".." element, no NUL, a length limit) is deliberately not a schema
+// rule: the launcher and the runner are where a name becomes a path, and
+// they refuse it there (design §8.2).
+//
+// The ONE exception is emptiness, which the schema can express and which the
+// decoder refuses anyway (Spec.Validate's required-name check): minLength 1
+// does not catch a name of nothing but whitespace, so the pattern below asks
+// for at least one non-whitespace character — the same rule as
+// task.InputNameBlank, which the launcher applies before it uploads.
+//
+// Mutation (drop the inputs property from schemas/task.schema.json): the
+// valid instance below is rejected as an unknown key and this test fails.
+func TestTaskSchemaInputs(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261015-100000-abcd","repo":"acme/app","ref":"main","task":"x","mode":"artifact"`
+	ok := head + `,"inputs":[{"name":"shot.png","bytes":1024,"sha256":"` + strings.Repeat("a", 64) + `"}]` + `}`
+	if err := validate(ok); err != nil {
+		t.Fatalf("schema rejects a task carrying inputs: %v", err)
+	}
+	if err := validate(head + `}`); err != nil {
+		t.Fatalf("schema rejects a task carrying none: %v", err)
+	}
+	for _, tc := range []struct{ name, lit string }{
+		{"not an array", `,"inputs":{}`},
+		{"empty name", `,"inputs":[{"name":"","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"whitespace-only name", `,"inputs":[{"name":"   ","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"negative bytes", `,"inputs":[{"name":"a.png","bytes":-1,"sha256":"` + strings.Repeat("a", 64) + `"}]`},
+		{"short sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"abc"}]`},
+		{"upper-case sha256", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"` + strings.Repeat("A", 64) + `"}]`},
+		{"unknown key", `,"inputs":[{"name":"a.png","bytes":1,"sha256":"` + strings.Repeat("a", 64) + `","content_type":"image/png"}]`},
+		{"missing sha256", `,"inputs":[{"name":"a.png","bytes":1}]`},
+	} {
+		if err := validate(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+}
+
 func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
@@ -342,6 +391,13 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Stages:    []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, Model: "claude-sonnet-5-5"}},
 		StartedAt: at, Deadline: &deadline, FinishedAt: &finished,
 		FinalizeReserveS: 90,
+		// The artifact fields ride along on the fully-populated record so a
+		// new one that is not in the schema fails this test: that is what
+		// keeps runstore.Record and result.schema.json in step.
+		Render: &runstore.RenderRecord{Command: "sh render.sh", CommandSHA256: strings.Repeat("a", 64),
+			Tree: "working", ExitCode: 0, DurationS: 12.5, StartedAt: at.Format(time.RFC3339)},
+		Artifacts: []runstore.ArtifactFile{{Name: "sizzle.mp4", Bytes: 4096, SHA256: strings.Repeat("b", 64),
+			ContentType: "video/mp4", Probe: &runstore.ProbeResult{Ran: true, ExitCode: 1, Warning: "w"}}},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -384,9 +440,10 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 // command_sha256 that is not a hash, an unknown tree), and an outcome or a
 // stage the artifact mode never writes.
 //
-// Mutation (drop "artifacts" from the outcome enum, or the render property,
-// in schemas/result.schema.json): this test fails, the schema refusing the
-// success record it marshals.
+// Mutation (drop "artifacts" from the outcome enum, or the render property, or
+// the artifacts property's minItems, in schemas/result.schema.json): this test
+// fails — the first two on the success record it marshals, the last on the
+// present-but-empty array it builds.
 func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
@@ -398,6 +455,9 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Workflow: "app",
 		Status: runstore.StatusSucceeded, Stage: "render", Outcome: runstore.OutcomeArtifacts,
 		StartedAt: at, Render: render,
+		Inputs: []runstore.InputFile{{Name: "shot.png", Bytes: 2048, SHA256: strings.Repeat("b", 64)}},
+		Artifacts: []runstore.ArtifactFile{{Name: "sizzle.png", Bytes: 6, SHA256: strings.Repeat("b", 64),
+			ContentType: "image/png", Probe: &runstore.ProbeResult{Ran: true, ExitCode: 0}}},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -409,6 +469,25 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 	}
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("schema rejects a succeeded artifact run: %v\n%s", err, data)
+	}
+	// A present-but-empty artifacts array is refused: the field is ABSENT when
+	// a run delivered none (it is omitempty on the record, and a run whose
+	// globs matched nothing fails before it stages anything), so a reader that
+	// finds the key knows there is at least one entry to read and does not
+	// have to fold "no artifacts" and "an empty list of them" together.
+	empty := map[string]any{}
+	if err := json.Unmarshal(data, &empty); err != nil {
+		t.Fatal(err)
+	}
+	empty["artifacts"] = []any{}
+	raw, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	} else if err := sch.Validate(inst); err == nil {
+		t.Fatalf("schema accepts an empty artifacts array; the field is absent when there are none: %s", raw)
 	}
 	timedOut := *render
 	timedOut.TimedOut, timedOut.ExitCode = true, -1
@@ -426,11 +505,21 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 	}
 	// The render object is closed and its hash is a hash: a hand-edited
 	// result.json cannot smuggle a free-form command_sha256 into the one
-	// field a reviewer is meant to be able to recompute.
+	// field a reviewer is meant to be able to recompute. The artifact
+	// entries and their probes are closed the same way, and an entry
+	// without a name, a size or a hash is not an artifact a reader could
+	// verify what it downloads against.
 	for _, tc := range []struct{ name, old, new string }{
 		{"bad hash", strings.Repeat("a", 64), "not-a-hash"},
 		{"bad tree", `"tree":"working"`, `"tree":"head"`},
 		{"unknown key", `"exit_code":-1`, `"exit_code":-1,"extra":1`},
+		{"negative input size", `"bytes":2048`, `"bytes":-1`},
+		{"input without a hash", `"sha256":"` + strings.Repeat("b", 64) + `"`, `"sha256":"abc"`},
+		{"artifact without a name", `"name":"sizzle.png"`, `"nope":"sizzle.png"`},
+		{"artifact unknown key", `"bytes":6`, `"bytes":6,"extra":1`},
+		{"artifact bad content type", `"content_type":"image/png"`, `"content_type":7`},
+		{"probe with no exit code", `"probe":{"ran":true,"exit_code":0}`, `"probe":{"ran":true}`},
+		{"probe that is not a probe", `"exit_code":0`, `"exit_code":"zero"`},
 	} {
 		raw := strings.Replace(string(data), tc.old, tc.new, 1)
 		if raw == string(data) {
@@ -443,6 +532,113 @@ func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
 		if err := sch.Validate(inst); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, raw)
 		}
+	}
+}
+
+// TestResultSchemaStatesTheNoProbeVerdict is Review Focus 6's schema half for
+// the probe: a record this runner writes carries a probe verdict for every
+// artifact it uploaded, and a recipe that asked for no probe records
+// {ran: false, exit_code: -1} rather than leaving the key out — "no probe
+// ran" is stated in the record, not inferred from a field that is not there
+// (plan Task 5). The schema says the same thing in the one place it can
+// enforce it: a verdict that did not run must carry the -1 that marks it, so
+// a record — hand-edited, or written by something that got this wrong — can
+// never read as a probe that ran and passed with exit code 0.
+//
+// The key itself stays out of the item's required list, and the description
+// says why: a record written before the probe step existed carries none, the
+// same reason the artifacts array is optional at the record level. What is
+// required is the shape of a verdict that IS there.
+//
+// Mutation (drop the allOf from the schema's probe object, or set its const
+// to 0): this test fails on the {ran: false, exit_code: 0} document it
+// builds, which the schema then accepts.
+func TestResultSchemaStatesTheNoProbeVerdict(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20261016-100000-abcd", Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeArtifacts,
+		StartedAt: at,
+		Artifacts: []runstore.ArtifactFile{{
+			Name: "sizzle.png", Bytes: 6, SHA256: strings.Repeat("b", 64), ContentType: "image/png",
+			Probe: &runstore.ProbeResult{Ran: false, ExitCode: -1},
+		}},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"probe":{"ran":false,"exit_code":-1}`) {
+		t.Fatalf("the record does not carry the no-probe verdict this test is about: %s", data)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a no-probe verdict: %v\n%s", err, data)
+	}
+	// The same artifact with the exit code a PASSING probe would have: the
+	// schema must refuse it, because a reader cannot tell the two apart
+	// otherwise and the whole point of the -1 is that it is not 0.
+	raw := strings.Replace(string(data), `"exit_code":-1`, `"exit_code":0`, 1)
+	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader([]byte(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Fatalf("the schema accepts a probe that did not run with a passing exit code: %s", raw)
+	}
+	// A verdict that ran is unconstrained on the far side: a probe killed by
+	// its deadline is {ran: true, exit_code: -1}, which is also what
+	// procgroup reports for a signalled process.
+	raw = strings.Replace(string(data), `"ran":false,"exit_code":-1`, `"ran":true,"exit_code":-1`, 1)
+	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader([]byte(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a probe that ran and was killed: %v\n%s", err, raw)
+	}
+}
+
+// TestResultSchemaAcceptsARecordWithoutArtifacts is Review Focus 8's schema
+// half: a result.json written before this change validates without an
+// artifacts key at all, so an old record is never refused for a field that
+// did not exist when it was written, and the new field is not in the
+// schema's required list.
+//
+// Mutation (add artifacts to the schema's required list): this test fails,
+// the schema refusing the pre-change record.
+func TestResultSchemaAcceptsARecordWithoutArtifacts(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	const pre = `{
+	  "version": 1,
+	  "run_id": "20260926-221530-abcd",
+	  "repo": "acme/app",
+	  "workflow": "app",
+	  "status": "succeeded",
+	  "stage": "writeback",
+	  "outcome": "ready",
+	  "branch": "fugaro/add-a-feature",
+	  "head_sha": "abcdef1234567",
+	  "cost_usd": 4.12,
+	  "started_at": "2026-09-26T22:15:30Z"
+	}`
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(pre))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a pre-change record: %v", err)
+	}
+	var rec runstore.Record
+	if err := json.Unmarshal([]byte(pre), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Artifacts != nil || rec.Render != nil {
+		t.Fatalf("a pre-change record gained fields: %+v", rec)
 	}
 }
 
@@ -815,6 +1011,21 @@ func TestPolicyRecordSchema(t *testing.T) {
 		t.Errorf("schema rejects a record without policy: %v", err)
 	}
 	// An empty allow-list (forbid everything) is valid and is written.
+	// PR #379's own layer: a key the project's published node set is written
+	// with the source "policy" (internal/policy.SourcePolicy, set by the
+	// runner's policySources), including the source of an ignored value the
+	// node's ceiling replaced. A run of a project-centric installation
+	// writes this, and internal/runner's TestHaltedRecordSchema validates a
+	// stored record against this schema, so the enum has to have it.
+	policied := &runstore.PolicyRecord{
+		Effective: runstore.PolicyEffective{Mode: "enforce", PerRunUSD: 5},
+		Sources:   map[string]string{"mode": policy.SourcePolicy, "per_run_usd": policy.SourcePolicy, "max_run_tokens": policy.SourceCeiling},
+		Ignored: []runstore.PolicyIgnored{{Key: "per_run_usd", Value: "500", Effective: "5",
+			Source: policy.SourcePolicy, From: policy.SourceBranch}},
+	}
+	if err := check(policied); err != nil {
+		t.Errorf("schema rejects a record whose ceiling came from the project's policy: %v", err)
+	}
 	empty := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{AllowedModels: []string{}}}
 	if err := check(empty); err != nil {
 		t.Errorf("schema rejects an empty allow-list: %v", err)
@@ -841,6 +1052,60 @@ func TestPolicyRecordSchema(t *testing.T) {
 	inst, _ := jsonschema.UnmarshalJSON(strings.NewReader(doc))
 	if err := sch.Validate(inst); err == nil {
 		t.Error("schema accepts an unknown key in policy")
+	}
+}
+
+// The schema's layer names and internal/policy's are one list. The runner
+// writes whichever the merge produced — "policy" for a key the project's
+// published node named (PR #379), the rest for the ceiling, the default
+// branch and the run's branch — so a Go constant the schema does not carry is
+// a stored result.json the repository's own validator rejects. `from` stays
+// without "policy" on purpose: the node is not a later layer that can ask for
+// a looser value, it *is* the first layer, and its keys are replaced rather
+// than loosened (plan task 1.3, H1).
+func TestPolicyRecordSchemaLayersAgreeWithGo(t *testing.T) {
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	at := func(v any, path ...string) any {
+		for _, k := range path {
+			m, ok := v.(map[string]any)
+			if !ok {
+				t.Fatalf("schema has no %v", path)
+			}
+			v = m[k]
+		}
+		return v
+	}
+	enum := func(v any) []string {
+		var out []string
+		for _, x := range v.([]any) {
+			out = append(out, x.(string))
+		}
+		slices.Sort(out)
+		return out
+	}
+	pol := at(doc, "properties", "policy", "properties")
+	for _, where := range []struct {
+		name string
+		got  []string
+		want []string
+	}{
+		{"policy.sources", enum(at(pol, "sources", "additionalProperties", "enum")),
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+		{"policy.ignored[].source", enum(at(pol, "ignored", "items", "properties", "source", "enum")),
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+		{"policy.ignored[].from", enum(at(pol, "ignored", "items", "properties", "from", "enum")),
+			slices.Sorted(slices.Values([]string{policy.SourceDefaultBranch, policy.SourceBranch}))},
+	} {
+		if !slices.Equal(where.got, where.want) {
+			t.Errorf("schema's %s = %v, internal/policy's layers are %v", where.name, where.got, where.want)
+		}
 	}
 }
 

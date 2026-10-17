@@ -403,6 +403,12 @@ func TestGitHubAppCheckRefusesOddRepoNames(t *testing.T) {
 // project-wide github-app-key, the fix therefore has to say so and name
 // --project-wide as the alternative, or the person following it silently
 // moves this repository off the project-wide key for good.
+//
+// D2 (plan Task 2.1 step 2) makes that the ordinary state: the App key is
+// one of the reserved names swept into project scope, so it is covered by an
+// empty local config as much as by a project_secrets entry. Both cases below
+// therefore warn; the second is the one every installation is in on the day
+// this ships.
 func TestCheckGitHubAppFixWarnsOnProjectCoveredName(t *testing.T) {
 	covered := func(t *testing.T) *localcfg.Config {
 		t.Helper()
@@ -413,8 +419,9 @@ func TestCheckGitHubAppFixWarnsOnProjectCoveredName(t *testing.T) {
 		lc   func(*testing.T) *localcfg.Config
 		warn bool
 	}{
-		"covered by the project copy": {covered, true},
-		"not covered":                 {func(t *testing.T) *localcfg.Config { return &localcfg.Config{Name: "aurora", GCPProject: initProject} }, false},
+		"covered by an entry of project_secrets": {covered, true},
+		"covered by the sweep, with no entry at all": {
+			func(t *testing.T) *localcfg.Config { return &localcfg.Config{Name: "aurora", GCPProject: initProject} }, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newGitHubRig(t)

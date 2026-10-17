@@ -87,13 +87,17 @@ func docFlagToken(f string) string {
 	return strings.TrimRight(name, "-")
 }
 
-// trackedDocCommands maps the exact doc phrase of a base-image-related
-// fugaro command to the cobra command it names, for TestBaseImageDocCommandFlagsAreReal.
+// trackedDocCommands maps the exact doc phrase of a fugaro command the scanned
+// docs quote flags of to the cobra command it names, for
+// TestBaseImageDocCommandFlagsAreReal.
 var trackedDocCommands = map[string]func() *cobra.Command{
 	"fugaro init":          newInitCmd,
 	"fugaro image build":   newImageBuildCmd,
 	"fugaro image render":  newImageRenderCmd,
 	"fugaro image refresh": newImageRefreshCmd,
+	"fugaro run":           newRunCmd,
+	"fugaro artifacts ls":  newArtifactsLsCmd,
+	"fugaro artifacts get": newArtifactsGetCmd,
 }
 
 // mustBeAbsentFlags lists, per tracked command phrase, flag names a doc may
@@ -116,7 +120,7 @@ var mustBeAbsentFlags = map[string]map[string]bool{
 // "runs" must precede "run" in the alternation: Go's regexp alternation is
 // leftmost-first, not longest-match, so the shorter alternative would win
 // and leave a dangling "s" otherwise.
-var commandBoundaryRE = regexp.MustCompile(`fugaro (image (?:build|render|refresh|check|gate|record|status|selftest|git-credential)|version|validate|config|verify|exec|image|runs|run|ls|logs|diagnose|cancel|secrets|init|budget|watch|report|update-skills|upgrade|doctor)\b`)
+var commandBoundaryRE = regexp.MustCompile(`fugaro (artifacts (?:ls|get)|image (?:build|render|refresh|check|gate|record|status|selftest|git-credential)|version|validate|config|verify|exec|image|runs|run|ls|logs|diagnose|cancel|secrets|init|budget|watch|report|update-skills|upgrade|doctor)\b`)
 
 // otherToolBoundaryRE closes a tracked command's flag window at the next
 // mention of another real CLI this repo's docs quote flags of (gcloud,
@@ -158,22 +162,46 @@ var commandFlagExceptions = map[string]map[string]map[string]bool{
 			// repeating "fugaro" (already established at the top of the
 			// same bullet).
 			"base": true},
+		// "without them nobody holds the launcher or token-minter role and
+		// the first `fugaro run` fails with ... Passing `--launcher` or
+		// `--operator` replaces that default entirely ... and `init` stops
+		// with the one line naming `--launcher` and `--operator`." --
+		// launcher/operator here are fugaro init's own flags, and this
+		// sentence reaches them by writing bare `init`, which
+		// commandBoundaryRE does not match ("fugaro init" does not recur
+		// before them, and the next "fugaro run" mention on the line is only
+		// at `--launcher user:you@example.com`'s own aside, past every one of
+		// them).
+		"fugaro run": {"launcher": true, "operator": true,
+			// "fugaro run \"add a --verbose flag to the export command\"" --
+			// the flag is inside a QUOTED TASK TEXT, which is a sentence for
+			// the agent and not a command line: no fugaro command has
+			// --verbose, and none should.
+			"verbose": true},
+	},
+	"README.md": {
+		// The same quoted example task as docs/gcp-setup.md's above:
+		// `fugaro run "add a --verbose flag to the export command"`.
+		"fugaro run": {"verbose": true},
 	},
 }
 
 // TestBaseImageDocCommandFlagsAreReal: every --flag token that follows a
-// mention of fugaro init, image build, image render or image refresh in
+// mention of a trackedDocCommands phrase -- fugaro init, image build, image
+// render, image refresh, run, artifacts ls, artifacts get -- in
 // docs/base-image.md, docs/base-image-migration.md, docs/gcp-setup.md,
-// docs/release.md, docs/dogfooding.md and README.md -- up to the next
-// mention of ANY fugaro command or other CLI, or the end of the line -- is
-// checked with Flags().Lookup against THAT command's real cobra flag set,
-// not a union of the four. A flag renamed on either side (the doc's text or
-// the command's own definition), or one attributed to the wrong command by
-// name, fails.
+// docs/release.md, docs/dogfooding.md, docs/artifact-runs.md and README.md --
+// up to the next mention of ANY fugaro command or other CLI, or the end of
+// the line -- is checked with Flags().Lookup against THAT command's real
+// cobra flag set, not a union of them. A flag renamed on either side (the
+// doc's text or the command's own definition), or one attributed to the wrong
+// command by name, fails. docs/artifact-runs.md is scanned from the release
+// that documents the feature, so every flag it names -- --attach above all --
+// is checked against the command that actually has it.
 func TestBaseImageDocCommandFlagsAreReal(t *testing.T) {
 	for _, path := range []string{
 		"docs/base-image.md", "docs/base-image-migration.md", "docs/gcp-setup.md",
-		"docs/release.md", "docs/dogfooding.md", "README.md",
+		"docs/release.md", "docs/dogfooding.md", "README.md", "docs/artifact-runs.md",
 	} {
 		doc := readDoc(t, path)
 		for _, line := range strings.Split(doc, "\n") {

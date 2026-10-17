@@ -45,6 +45,11 @@ const (
 	Secrets       = "secrets"
 	Plugin        = "plugin"
 	Repository    = "repository"
+	// Compute is the Batch backend's installation-level provisioning
+	// (design docs/design/compute-backend.md §8.1 task 6). It is last
+	// because it is the only stage that may not run before everything else
+	// is done: what it provisions is for a backend no run can select yet.
+	Compute = "compute"
 )
 
 // slot is a stage's place in the canonical order: what it needs ahead of
@@ -75,6 +80,10 @@ var order = []slot{
 	{name: Secrets, needs: []string{Installation2}, noYes: true},
 	{name: Plugin, needs: []string{Preflight}},
 	{name: Repository, needs: []string{Installation2, Secrets}},
+	// The compute backend's provisioning is money, permanent and owner-run,
+	// so --yes never covers it; it comes last, after every stage that
+	// builds the identity, the registry and the installation it reads.
+	{name: Compute, needs: []string{Repository}, noYes: true},
 }
 
 // runCovered are the stages whose ordinary steps the run's one confirmation

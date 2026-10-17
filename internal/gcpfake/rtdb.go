@@ -25,17 +25,19 @@ import (
 type RTDB struct {
 	*Server
 
-	mu       sync.Mutex
-	root     any
-	denyNext int
-	deny     []string
-	denyKeys []string
-	clock    func() time.Time
-	creds    []string
-	streams  map[*rtdbStream]struct{}
-	rules    []byte
-	rulePuts int
-	holds    []*rtdbHold
+	mu        sync.Mutex
+	root      any
+	denyNext  int
+	denyRules int
+	deny      []string
+	denyRead  []string
+	denyKeys  []string
+	clock     func() time.Time
+	creds     []string
+	streams   map[*rtdbStream]struct{}
+	rules     []byte
+	rulePuts  int
+	holds     []*rtdbHold
 }
 
 type rtdbHold struct {
@@ -97,6 +99,16 @@ func (f *RTDB) DenyNext(n int) {
 	f.denyNext = n
 }
 
+// DenyRules makes the next n deployments of the security rules
+// (PUT /.settings/rules) answer 401 and change nothing; every other call is
+// unaffected. It is how a test drives the one write that must not be allowed
+// to succeed silently.
+func (f *RTDB) DenyRules(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.denyRules = n
+}
+
 // Deny makes any write that touches path, or a node above or below it, answer
 // 401 and change nothing (the whole multi-path update is rejected). An empty
 // path lifts every Deny.
@@ -108,6 +120,21 @@ func (f *RTDB) Deny(path string) {
 		return
 	}
 	f.deny = append(f.deny, strings.Join(split(path), "/"))
+}
+
+// DenyRead makes any *read* of path, or of a node above or below it, answer
+// 401, as a rule that does not grant the read would. Deny is the write-side
+// twin; an empty path lifts every DenyRead. It is how a test drives the one
+// case that must halt a run rather than fall back to a wider ceiling: a node
+// the rules no longer let it read.
+func (f *RTDB) DenyRead(path string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if path == "" {
+		f.denyRead = nil
+		return
+	}
+	f.denyRead = append(f.denyRead, strings.Join(split(path), "/"))
 }
 
 // DenyKeys makes any write whose value is an object carrying one of keys (at
@@ -212,6 +239,16 @@ func (f *RTDB) Rules() []byte {
 	return append([]byte(nil), f.rules...)
 }
 
+// SetRules plants a deployed rules document without a PUT: the state an
+// older CLI's `fugaro init --firebase` leaves behind (rules that predate the
+// policy nodes, while config/limits/policyRules stays), which is what
+// doctor's policy-rules-skew check reads. It does not count as a deployment.
+func (f *RTDB) SetRules(rules []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rules = append([]byte(nil), rules...)
+}
+
 // RulePuts is the number of rules deployments.
 func (f *RTDB) RulePuts() int {
 	f.mu.Lock()
@@ -258,6 +295,19 @@ func (f *RTDB) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	switch r.Method {
 	case http.MethodGet:
+		f.mu.Lock()
+		denied := false
+		for _, d := range f.denyRead {
+			if touches(strings.Join(path, "/"), d) {
+				denied = true
+				break
+			}
+		}
+		f.mu.Unlock()
+		if denied {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
+			return
+		}
 		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 			f.serveStream(w, r, path)
 			return
@@ -641,6 +691,17 @@ func (f *RTDB) settingsRules(w http.ResponseWriter, r *http.Request, body []byte
 	defer f.mu.Unlock()
 	switch r.Method {
 	case http.MethodGet:
+		// DenyRead is honored here too. The rules document is not part of the
+		// data tree, so a read of it is served before the branch above that
+		// consults the deny list — but a real rule can refuse it (reading
+		// /.settings/rules is what the admin credential is for), and doctor
+		// has a state for a rules read that fails.
+		for _, d := range f.denyRead {
+			if touches(".settings/rules", d) {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
+				return
+			}
+		}
 		if f.rules == nil {
 			writeJSON(w, http.StatusOK, map[string]any{"rules": map[string]any{".read": false, ".write": false}})
 			return
@@ -654,6 +715,11 @@ func (f *RTDB) settingsRules(w http.ResponseWriter, r *http.Request, body []byte
 		}
 		if f.denyNext > 0 {
 			f.denyNext--
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
+			return
+		}
+		if f.denyRules > 0 {
+			f.denyRules--
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
 			return
 		}

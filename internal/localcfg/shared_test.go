@@ -67,8 +67,12 @@ providers:
     base_url: https://openrouter.ai/api
     auth: bearer
     secret: openrouter-api-key
-    models: ["deepseek/*"]
+    models: ["deepseek/*", "anthropic/claude-sonnet-5.5"]
     allow_data_to: [acme/web]
+routing:
+  claude:
+    via: openrouter
+    models: [claude-sonnet-5-5]
 claude_accounts:
   acme-personal:
     allow_data_to: [acme/web]
@@ -94,7 +98,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "base_branch", "service_account", "claude_accounts:", "acme-personal", "update_check"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "service_account", "claude_accounts:", "acme-personal", "update_check"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -103,8 +107,11 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	if _, err := Parse(out); err != nil {
 		t.Errorf("published file does not parse: %v", err)
 	}
-	// The receiver is untouched.
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil {
+	// The receiver is untouched — including the routing switch, which is the
+	// operator's own and stays in their config after it has been published to
+	// the node (nothing here reads it again, but Shared must not be the thing
+	// that clears it).
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }
@@ -204,7 +211,7 @@ func TestMergeSharedDoesNotMutateInputsOrLeak(t *testing.T) {
 		t.Errorf("input repos changed: %v %v", local.Repos, existing.Repos)
 	}
 	out, _ := got.Marshal()
-	for _, f := range []string{"terraform:", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "claude_accounts:"} {
+	for _, f := range []string{"terraform:", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "routing:", "claude_accounts:"} {
 		if strings.Contains(string(out), f) {
 			t.Errorf("merged output contains %q", f)
 		}
@@ -260,6 +267,33 @@ func TestMergeSharedNeverCarriesClaudeAccounts(t *testing.T) {
 	}
 	if len(local.ClaudeAccounts) != 1 {
 		t.Error("MergeShared cleared the local claude_accounts")
+	}
+}
+
+// TestMergeSharedNeverCarriesRouting: the routing switch is the provider
+// decision from the switch's side (which Claude IDs may leave for a third
+// party), and it resolves through providers, which are local-only. Neither the
+// local nor a published routing block reaches the output — the merge starts
+// from local.Shared(), which clears the field, and nothing fills it back in
+// from published.
+func TestMergeSharedNeverCarriesRouting(t *testing.T) {
+	block := "routing:\n  claude:\n    via: direct\n    models: [claude-sonnet-5-5]\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, block)
+	if existing.Routing == nil || local.Routing == nil {
+		t.Fatalf("fixtures: %+v %+v", existing.Routing, local.Routing)
+	}
+	for name, got := range map[string]*Config{"merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, ""))} {
+		if got.Routing != nil {
+			t.Errorf("%s: routing = %+v, want it dropped", name, got.Routing)
+		}
+		out, _ := got.Marshal()
+		if strings.Contains(string(out), "routing") {
+			t.Errorf("%s: output carries routing:\n%s", name, out)
+		}
+	}
+	if local.Routing == nil {
+		t.Error("MergeShared cleared the local routing block")
 	}
 }
 

@@ -9,15 +9,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 
 	"github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -338,14 +341,26 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	for _, a := range acts {
 		paths = append(paths, a.Path)
 	}
-	if want := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules"}; !slices.Equal(paths, want) {
-		t.Fatalf("actions = %v, want %v (the rules last)", paths, want)
+	// The rules are last of the database's own writes; the one action after
+	// them is the rules-generation marker, which must not be written unless
+	// the deploy succeeded (TestRulesMarkerOnlyAfterTheRulesDeploy in
+	// internal/cli drives the failing case through init).
+	wantPaths := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules", projectpolicy.PathRulesMarker()}
+	if !slices.Equal(paths, wantPaths) {
+		t.Fatalf("actions = %v, want %v (the rules last, their marker after them)", paths, wantPaths)
 	}
 	if f.Value("fugaro/project") != "aurora" || f.Value("config/mode") != "observe" || f.RulePuts() != 1 {
 		t.Errorf("database = %v, rules %d", f.Value(""), f.RulePuts())
 	}
+	if got := f.Value(projectpolicy.PathRulesMarker()); got != json.Number(strconv.Itoa(projectpolicy.RulesVersion)) {
+		t.Errorf("%s = %#v, want %d (RulesVersion)", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
+	}
+	lim, _ := f.Value(budget.PathLimits).(map[string]any)
+	if len(lim) != 2 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the marker beside maxReserveMicros", lim)
+	}
 	want, _ := rules.Generate()
-	if !sameJSON(f.Rules(), want) {
+	if !SameJSON(f.Rules(), want) {
 		t.Error("the deployed rules are not the generated ones")
 	}
 	d2 := NewDB(d.c, "aurora", "proj-1234", "")
@@ -406,6 +421,65 @@ func TestDBLimitsKeepOwnerValues(t *testing.T) {
 	acts, _, err := NewDB(d.c, "aurora", "proj-1234", "").Plan(context.Background())
 	if err != nil || slices.ContainsFunc(acts, func(a DBAction) bool { return a.Path == "config/limits" }) {
 		t.Errorf("the owner's max reserve would be rewritten: %v, %v", acts, err)
+	}
+}
+
+// A deployed marker *above* this binary's RulesVersion is a newer Fugaro's
+// rules. init --firebase deploys the rules the binary carries, so an older
+// binary would put its own, older document over the newer installation's and
+// record generation RulesVersion in the marker over the newer number — the
+// downgrade `fugaro doctor` warns about and tells the owner not to cause
+// ("do not re-run 'fugaro init --firebase' with this binary", doctorRulesSkew).
+// The deploy path refuses instead: nothing is planned, nothing is written, and
+// the rules and the marker are left exactly as the newer installation left
+// them.
+//
+// RulesVersion is 1 today, so a marker above it needs a future release's
+// write; the boundary is what this test pins before that release exists.
+//
+// Hand mutation this fails on: dropping the refusal (or widening it to `>=`),
+// which plans the rules deploy over the newer document and the marker write
+// down to this generation.
+func TestDBRefusesToDeployOverNewerRules(t *testing.T) {
+	d, f := newDB(t, "")
+	deploy(t, d)
+	if n := f.RulePuts(); n != 1 {
+		t.Fatalf("rules deployed %d times, want 1 (the fixture)", n)
+	}
+	// A newer Fugaro has been here: its marker, and (in a real installation) its
+	// rules document.
+	newer := projectpolicy.RulesVersion + 1
+	f.Set(projectpolicy.PathRulesMarker(), newer)
+	before, _ := json.Marshal(f.Value(""))
+	puts := len(f.Requests())
+
+	acts, _, err := d.Plan(context.Background())
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("Plan = (%v, %v), want a refusal: an older binary must not deploy its rules over a newer installation's", acts, err)
+	}
+	for _, want := range []string{projectpolicy.PathRulesMarker(), strconv.Itoa(newer), strconv.Itoa(projectpolicy.RulesVersion)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if len(acts) != 0 {
+		t.Errorf("acts = %v, want none: a refused plan proposes nothing to apply", acts)
+	}
+	after, _ := json.Marshal(f.Value(""))
+	if string(before) != string(after) || f.RulePuts() != 1 {
+		t.Errorf("the refusal wrote: database %s -> %s, rules put %d times", before, after, f.RulePuts())
+	}
+	for _, q := range f.Requests()[puts:] {
+		if q.Method == "PUT" || q.Method == "PATCH" {
+			t.Errorf("the refused plan wrote %s /%s", q.Method, q.Path)
+		}
+	}
+	// The state is still the newer installation's, so the database is not left
+	// in a half-read state either: a marker at this generation plans normally.
+	f.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	if _, _, err := NewDB(d.c, "aurora", "proj-1234", "").Plan(context.Background()); err != nil {
+		t.Errorf("a database at this generation is refused: %v", err)
 	}
 }
 

@@ -189,6 +189,29 @@ func TestClaimsOnRoutes(t *testing.T) {
 	}
 }
 
+// UnknownClaimNames is ApplyClaudeClaims' P8 rule on its own, for the callers
+// that merge over a narrowed table: it reports exactly the names providers
+// does not define, in sorted order, and nothing about a name they do — so
+// `fugaro validate`, whose merge runs over the routes a repository's runs
+// carry, can still refuse a claim naming a provider the installation config
+// does not define (the filter drops such a name like any other route this
+// repository does not have).
+func TestUnknownClaimNames(t *testing.T) {
+	providers := claimProviders()
+	if ps := UnknownClaimNames(providers, map[string][]string{"openrouter": {"anthropic/claude-sonnet-5.5"}}); len(ps) != 0 {
+		t.Fatalf("a claim on a defined provider: %v", ps)
+	}
+	ps := UnknownClaimNames(providers, map[string][]string{"zzz": {"anthropic/claude-opus-5.5"}, "openrouter": {"anthropic/claude-sonnet-5.5"}, "aaa": {"anthropic/claude-haiku-4.5"}})
+	if len(ps) != 2 || ps[0].Path != "claude_models.aaa" || ps[1].Path != "claude_models.zzz" {
+		t.Fatalf("problems = %v", ps)
+	}
+	// The message is the merge's own, so an operator sees one sentence for
+	// this rule whichever surface reports it.
+	if _, merged := ApplyClaudeClaims(providers, map[string][]string{"aaa": {"anthropic/claude-haiku-4.5"}}); len(merged) != 1 || merged[0].Message != ps[0].Message {
+		t.Fatalf("the message differs from the merge's: %v vs %v", merged, ps[0])
+	}
+}
+
 // No claims: providers come back exactly as they were, so every path
 // without a layer is unchanged.
 func TestApplyClaudeClaimsWithoutClaims(t *testing.T) {

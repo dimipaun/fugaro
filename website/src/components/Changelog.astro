@@ -1,0 +1,183 @@
+---
+/**
+ * website/src/components/Changelog.astro — the release entries (website plan, W1.9).
+ *
+ * One entry per release, newest first, each one rendered from the lines W0.6's
+ * `src/lib/changelog.mjs` read out of `docs/releases/vX.Y.Z.md` at build time. The
+ * component writes nothing of its own: the tag comes from the filename, the bullets and
+ * the operator steps are the file's own lines, and the only words it adds are the
+ * "not yet released" marker below and the "For operators" heading the file itself
+ * carries (`### For operators`).
+ *
+ * Four decisions are worth stating rather than leaving in the code:
+ *
+ *   1. **No date, and no summary.** The release files carry neither a title nor a date,
+ *      the site's build is network-free, and the newest entry has no tag to read one from,
+ *      so each heading links to its GitHub release — which is where the date is stated
+ *      (D100). The page adds no "what's new" prose: the sentence a reader reads is the
+ *      file's, and `website/test/changelog-page.mjs` refuses one that is not.
+ *   2. **The file's own line structure is kept.** A line the file writes as a bullet
+ *      becomes a list item and any other line becomes a paragraph of its own, so a note
+ *      that is prose does not gain a bullet and a list does not lose one.
+ *   3. **The file's inline markup is rendered, not printed.** `` `code` `` becomes a
+ *      `<code>` element and `**bold**` a `<strong>` one: the markers are markup and not
+ *      text, and printing them would put backticks in front of a reader. The files carry
+ *      no link, no image and no other construct — the generator hands the lines over as
+ *      written — so this is the whole of the inline rendering, and it is applied to text
+ *      that is escaped first.
+ *   4. **A release with no tag is not a release that happened.** `released` is false where
+ *      the checkout the build ran in has no such tag — which is every entry in a shallow
+ *      checkout, and the newest entry everywhere, because a Highlights file is committed
+ *      to `main` before its tag exists. The entry says so rather than reading as shipped.
+ */
+
+/** One release, as W0.6's generator returns it: the file's own text and nothing else. */
+interface Entry {
+  /** The tag, from the filename: `vX.Y.Z`. */
+  tag: string
+  /** The tag without its `v`, which is the version the filename carries. */
+  version: string
+  /** True only where the checkout the build ran in has this tag. */
+  released: boolean
+  /** The file's lines before its `### For operators` heading, verbatim. */
+  highlights: string[]
+  /** The file's lines after it, verbatim, or empty when the file has no such block. */
+  for_operators: string[]
+}
+
+interface Props {
+  entries: Entry[]
+  /**
+   * The repository every entry links its GitHub release at: site.yaml's own fact (W0.2),
+   * so the page builds the URL and never types it.
+   */
+  repository: string
+}
+
+const { entries, repository } = Astro.props
+
+/** One element of an entry's body, in the order the file writes it. */
+type Element = { kind: 'list'; items: string[] } | { kind: 'paragraph'; text: string } | { kind: 'heading'; text: string }
+
+/**
+ * The text of a line, escaped for HTML. The release notes carry `<` in their own prose
+ * (`fugaro init --firebase <firebase-project-id>`, `--repo <owner/name>`), which is text
+ * to a reader and must not become an element in the page.
+ */
+function escapeHTML(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/**
+ * The file's inline markup, rendered: `code` as `<code>`, **bold** as `<strong>`. The
+ * text is escaped before the markers are turned into elements, so a `<` in a code span
+ * stays a `<`.
+ */
+function inline(text: string): string {
+  return escapeHTML(text)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+}
+
+/**
+ * The lines as the elements a reader sees: consecutive bullets become one list, and every
+ * other line is a paragraph of its own, with the bullet marker left to the list that
+ * renders it and everything else kept as written (an operator step's own `1.`, for one).
+ */
+function elements(lines: string[]): Element[] {
+  const out: Element[] = []
+  for (const line of lines) {
+    const bullet = /^[-*]\s+(.*)$/.exec(line)
+    if (bullet !== null) {
+      const last = out[out.length - 1]
+      if (last !== undefined && last.kind === 'list') last.items.push(bullet[1])
+      else out.push({ kind: 'list', items: [bullet[1]] })
+      continue
+    }
+    out.push({ kind: 'paragraph', text: line })
+  }
+  return out
+}
+
+/** An entry's whole body: its highlights, then the operator steps when the file has them. */
+function body(entry: Entry): Element[] {
+  const out = elements(entry.highlights)
+  if (entry.for_operators.length > 0) {
+    out.push({ kind: 'heading', text: 'For operators' })
+    out.push(...elements(entry.for_operators))
+  }
+  return out
+}
+---
+
+<div class="changelog">
+  {entries.map((entry) => (
+    <article class="release">
+      {/* The tag is the entry's own heading and its anchor, and it links to the GitHub
+          release: the one place a date and the artifacts are stated (D100). */}
+      <h2 id={entry.tag}>
+        <a href={`${repository}/releases/tag/${entry.tag}`} rel="noopener">{entry.tag}</a>
+      </h2>
+
+      {/* Not a release that happened: the file is on main, its tag is not in the checkout
+          the build ran in (D100). */}
+      {!entry.released && <p class="release-status" data-status="not-yet-released">not yet released</p>}
+
+      {body(entry).map((element) =>
+        element.kind === 'list' ? (
+          <ul>
+            {element.items.map((item) => (
+              <li set:html={inline(item)}></li>
+            ))}
+          </ul>
+        ) : element.kind === 'heading' ? (
+          <h3>{element.text}</h3>
+        ) : (
+          <p set:html={inline(element.text)}></p>
+        ),
+      )}
+    </article>
+  ))}
+</div>
+
+<style>
+  /* The page's own shape, and nothing else: the spacing, the type scale and the measure
+     come from W1.2's tokens, and this component names **no colour** — the palette layer
+     paints the site, and a colour chosen here would be a second copy of it that the
+     contrast check cannot see. A declaration whose token is not in the build (the styles
+     land in W1.2, which the shell reads) resolves to nothing rather than to a value this
+     file invented. */
+  .changelog {
+    max-width: var(--measure);
+  }
+
+  .release {
+    padding-block: var(--space-lg);
+  }
+
+  .release h2 {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .release h3 {
+    margin-block: var(--space-md) var(--space-2xs);
+    font-size: var(--font-size-base);
+  }
+
+  .release-status {
+    margin-block: var(--space-2xs) 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .release ul {
+    padding-inline-start: var(--space-md);
+  }
+
+  .release li,
+  .release p {
+    line-height: var(--leading-normal);
+  }
+</style>

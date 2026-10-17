@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -54,6 +55,27 @@ func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.
 func routeRun(t *testing.T, cfg, mode, capUSD string, models []string, pricesJSON string, script []anthropicfake.Reply, allow ...string) *gw {
 	t.Helper()
 	g := newGW(t, cfg, mode, capUSD)
+	wireRoutes(t, g, models, pricesJSON, script, allow...)
+	return g
+}
+
+// wireProviders gives a harness the owner's provider: the route the job
+// carries (Deps.Providers and FUGARO_MODEL_PROVIDERS, which the run's price
+// table is built from), the key mounted as the job does it, and the fake
+// upstream the provider's calls reach. It is separate from providerRun because
+// a test may already have built its harness for another reason (the policy
+// node's, say) and still want the route.
+func wireProviders(t *testing.T, g *gw, script []anthropicfake.Reply, allow ...string) {
+	t.Helper()
+	wireRoutes(t, g, []string{"deepseek/*"}, "", script, allow...)
+}
+
+// wireRoutes is wireProviders with the route's models and the owner's
+// model_prices overrides (FUGARO_MODEL_PRICES as init --repo writes it, "" for
+// none) given outright, so a claimed fixture prices its ID through the shipped
+// parse path and not around it.
+func wireRoutes(t *testing.T, g *gw, models []string, pricesJSON string, script []anthropicfake.Reply, allow ...string) {
+	t.Helper()
 	compat, up := anthropicfake.New(t, script...)
 	g.compat = compat
 	providers := map[string]config.ModelProvider{"openrouter": {
@@ -70,7 +92,13 @@ func routeRun(t *testing.T, cfg, mode, capUSD string, models []string, pricesJSO
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{runner.BudgetModeEnv: mode, runner.MaxRunUSDEnv: capUSD, runner.ModelProvidersEnv: string(raw)}
+	// The mode and the cap the harness already carries, read back off its
+	// Spend: the caller passed them to newGW, and this rebuild is about the
+	// routes.
+	env := map[string]string{runner.BudgetModeEnv: g.deps.Spend.Mode, runner.ModelProvidersEnv: string(raw)}
+	if g.deps.Spend.Cap > 0 {
+		env[runner.MaxRunUSDEnv] = strconv.FormatFloat(g.deps.Spend.Cap.USD(), 'f', -1, 64)
+	}
 	if pricesJSON != "" {
 		env[runner.ModelPricesEnv] = pricesJSON
 	}
@@ -95,7 +123,6 @@ func routeRun(t *testing.T, cfg, mode, capUSD string, models []string, pricesJSO
 	}
 	g.deps.Spend = spend
 	withProviderKey(g.harness)
-	return g
 }
 
 // providerPinned has the provider's model as the coder. Its first-line
@@ -260,6 +287,27 @@ func TestNoCallBeforeRefusal(t *testing.T) {
 		g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "enforce", runner.MaxRunUSDEnv, "5",
 			runner.AllowedModelsEnv, sonnet+","+haiku, runner.ModelProvidersEnv, string(raw))
 		refusedBeforeAnyCall(t, g, "agent.models.coder", "allowed_models from ceiling")
+	})
+}
+
+// TestAllowDataToStillGatesProviderRoutes (plan Task 2.1, Review Focus 8; the
+// plan files it under internal/gateway, where it cannot live: internal/gateway
+// has no repository identity at all and never reads allow_data_to -- the gate
+// is the runner's provider-policy check, enforced before any call, and this
+// file is where the rest of that check is tested). D2 stores keys
+// project-wide, and this pins that it changes nothing about which
+// repositories' code a provider route may carry: the data-policy gate is
+// unchanged, and a key mounted in a shared job is still no permission.
+func TestAllowDataToStillGatesProviderRoutes(t *testing.T) {
+	t.Run("a repository the list does not name is refused", func(t *testing.T) {
+		refusedBeforeAnyCall(t, providerGW(t, providerPinned(t), "acme/other"), "allow_data_to", "acme/app")
+	})
+	t.Run("a repository the list names runs", func(t *testing.T) {
+		g := providerGW(t, providerPinned(t), "acme/app")
+		rec, err := g.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
 	})
 }
 

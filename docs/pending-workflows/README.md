@@ -1,8 +1,6 @@
 # Pending workflow changes
 
-**Two files are pending: `images.yml` and `console-tests.yml`.**
-
-**`images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
+**One file is pending: `console-tests.yml`.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier and is no longer staged. The `## images.yml` section below is kept as the record of that change.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
 
@@ -48,6 +46,12 @@ and *must* contain the base jobs, so deleting them (by hand, by a bad
 merge, anything) fails the tests immediately.
 `TestReadWorkflowFallsBackOnlyWhilePending` pins this fallback directly,
 against temp files, independent of the real repository state.
+`images/cloudbuild_test.go`'s `TestCIWorkflowTestsEveryTerraformRoot` reads
+`ci.yml` the same way, through the same `readWorkflow`: while the pending
+copy exists it is what the root loop is checked against, and once it is gone
+the real `ci.yml` must name every root under `deploy/terraform/gcp/roots/`
+on its own, so a copy that dropped `compute` (or a later deletion of it)
+fails that test rather than leaving the root untested.
 
 ## `console-tests.yml`
 
@@ -293,6 +297,10 @@ Two honest limits of this diff, both deliberate:
   check. A package is private until the owner makes it public once
   (`docs/release.md`), so if `-pinned` were ever private, the copy-time
   resolve would fail loudly rather than silently — but not at release time.
+
+## `ci.yml`
+
+Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now loops over `installation firebase repo compute`. The staged copy is removed, so `images/cloudbuild_test.go` reads the real file on its own: `TestCIWorkflowTestsEveryTerraformRoot` requires it to name every root under `deploy/terraform/gcp/roots/`, and `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` skips while the staged copy is absent. A future change to `ci.yml` that a run needs is staged here again, as the real file plus the change.
 
 ## Before you copy: check the action pins
 

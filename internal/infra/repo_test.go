@@ -197,6 +197,55 @@ func TestSecretVersions(t *testing.T) {
 	}
 }
 
+// D2 (plan Task 2.1): a name whose only copy is the project-wide one
+// Readiness resolved has a version the job mounts, so nothing is missing.
+// SecretVersions is what NeedsBuild gates the first image build on, so
+// without this a credential stored with `fugaro secrets set <name>
+// --project-wide` leaves the workflow unbuildable and its job undeployed,
+// and the "still missing" list prints the repository-copy command for a
+// secret that already exists.
+//
+// The name is bitbucket-token, which the sweep does not take in on its own:
+// the project copy is here because the owner's local config allow-lists this
+// repository for it (config.PerRepositorySecret, owner ruling of 2026-10-15).
+//
+// spec is the spec Readiness returned, so ProjectSecrets is its decision,
+// read back rather than resolved live again (B1: the grants the apply made
+// were fixed for exactly that choice).
+//
+// Mutation (run, restore): make SecretVersions ignore spec.ProjectSecrets
+// and report hasEnabledVersion's answer alone; the project-resolved name
+// comes back false and this test fails.
+func TestSecretVersionsCountsAProjectResolvedName(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	spec, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token: { allow_data_to: [acme/sandbox] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.seedVersions(spec) // the repository's own copies exist, none has a version
+	id := spec.ProjectSecretCandidates["bitbucket-token"]
+	if id == "" {
+		t.Fatal("fixture: bitbucket-token is not a project-wide candidate of this repository")
+	}
+	f.sm.Seed(id, map[string]string{"fugaro": "managed", "fugaro_project": "aurora", "fugaro_secret": "bitbucket-token"}, []byte("project-value"))
+	ready := spec
+	ready.ProjectSecrets = map[string]string{"bitbucket-token": id}
+	got, err := SecretVersions(ctx, f.c, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"bitbucket-token": true, "claude-oauth-token": false, "sandbox-probe": false}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("versions[%s] = %v, want %v", k, got[k], v)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("versions = %v, want %v", got, want)
+	}
+}
+
 // A workflow is built when it has no build record and every secret it
 // mounts has a version; one with a record, or a secret still missing, isn't.
 func TestNeedsBuild(t *testing.T) {
@@ -327,6 +376,49 @@ func TestNeedsBuildDedupesNamedAccountVariants(t *testing.T) {
 	}
 }
 
+// D2 (plan Task 2.1 step 3b, the message half of finding 13): the command
+// a name with a project-wide meaning is missing is the project-scope one,
+// the same `fugaro secrets set <name>` its own prompt prints, because
+// that is what storing it by default now means. A name with no
+// project-wide meaning — a repository's own application secret, the bare
+// claude-oauth-token, refused project scope by name, and bitbucket-token,
+// whose credential is issued for one repository — keeps the
+// repository-copy command, which is the only scope it has.
+//
+// The second half allow-lists this repository for bitbucket-token in the
+// local config, which is the owner's explicit opt-in and the only way that
+// name gets a project copy (config.PerRepositorySecret, owner ruling of
+// 2026-10-15); the project-scope command comes back with it.
+//
+// Mutation (run, restore): drop the ProjectSecretCandidates lookup from
+// SecretCommands (always `--repo <name>`) and this test fails on the
+// allow-listed bitbucket-token line; make it unconditional the other way
+// (never `--repo`) and it fails on the claude-oauth-token and
+// sandbox-probe lines.
+func TestSecretCommandsFollowTheScopeOfEachName(t *testing.T) {
+	versions := map[string]bool{"bitbucket-token": false, "claude-oauth-token": false, "sandbox-probe": false}
+	spec := sandboxSpec(t)
+	got := SecretCommands(spec, versions, "fugaro", func(s string) string { return s })
+	want := []SecretStep{
+		{Name: "bitbucket-token", What: spec.Secrets["bitbucket-token"], Commands: []string{"fugaro secrets set bitbucket-token --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"}},
+		{Name: "claude-oauth-token", What: spec.Secrets["claude-oauth-token"], Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/sandbox"}},
+		{Name: "sandbox-probe", What: spec.Secrets["sandbox-probe"], Commands: []string{"fugaro secrets set sandbox-probe --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands:\n%+v\nwant:\n%+v", got, want)
+	}
+
+	listed, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token: { allow_data_to: [acme/sandbox] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = SecretCommands(listed, versions, "fugaro", func(s string) string { return s })
+	want[0] = SecretStep{Name: "bitbucket-token", What: listed.Secrets["bitbucket-token"], Commands: []string{"fugaro secrets set bitbucket-token < PATH-TO-THE-VALUE-FILE"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands with the allow-list entry:\n%+v\nwant:\n%+v", got, want)
+	}
+}
+
 // The commands are the bootstrap's: the value from stdin or a hidden
 // prompt, never argv, and claude setup-token run by the user; every command
 // is a line of its own.
@@ -390,7 +482,7 @@ func TestMissingKinds(t *testing.T) {
 	spec := sandboxSpec(t)
 	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
 	f.seedVersions(spec, "bitbucket-token")
-	_, missing, err := Readiness(ctx, f.c, spec, Existing{})
+	_, missing, err := Readiness(ctx, f.c, spec, Existing{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
