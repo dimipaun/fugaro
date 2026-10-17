@@ -271,10 +271,12 @@ func readPlanFixture(t *testing.T, name string) *Plan {
 // invention): a provider block in the root that impersonates Fugaro's
 // scheduler and sends the storage API — and the bearer token with it — to an
 // outside address, an aliased block whose impersonated account comes from an
-// ephemeral resource, and a module's own block that bills another project.
-// Each setting is refused for what it carries, and so is the resource the
-// module block writes: it is in proj-2, which is not this run's project, and
-// Task 1.2's project rule refuses it by address.
+// ephemeral resource, and a module's own block that bills another project and
+// lands its resources in it. Each setting is refused for what it carries, and
+// so is the resource the module block writes: it is in proj-2, which is not
+// this run's project, and Task 1.2's project rule refuses it by address — as
+// it refuses the block itself for the project it lands them in, which is the
+// same rule read where a resource leaves the choice to its provider.
 func TestManagedCoverRefusesTerraformsOwnProviderSettings(t *testing.T) {
 	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_settings_plan.json"), nil)
 	for _, want := range [][]string{
@@ -284,6 +286,7 @@ func TestManagedCoverRefusesTerraformsOwnProviderSettings(t *testing.T) {
 		{"provider_config.google.other (", "impersonate_service_account"},
 		{"provider_config.module.m:google (", "billing_project"},
 		{"provider_config.module.m:google (", "user_project_override"},
+		{"provider_config.module.m:google (", "lands resources in project proj-2"},
 		{"configuration (references ephemeral.google_service_account_access_token.t:"},
 		{"module.m.google_project_service.s (", "in project proj-2, which is not this run's"},
 	} {

@@ -186,11 +186,14 @@ var managedGrantRules = map[string]bool{
 //   - the runs bucket, by name: a bucket grant on it is refused before the
 //     prefix is read, because that is where the marker and the owner's delete
 //     list live (Task 1.4);
-//   - the attributes, two of them and no more (managedAttributes): the project
-//     every resource is in, kept as the wider rule Cover.Projects is, and the
-//     billing account the review showed. Every other attribute check init's
-//     cover makes is re-justified there, and the ones that only make sense for
-//     Fugaro's own embedded modules are dropped rather than inherited.
+//   - the attributes, two of them and no more (managedProject, managedBilling
+//     and managedProviderProject, which is the same project rule read on the
+//     provider block that decides the project of a resource left to it): the
+//     project every resource is in, kept as the wider rule Cover.Projects is,
+//     and the billing account the review showed. Every other attribute check
+//     init's cover makes is re-justified there, and the ones that only make
+//     sense for Fugaro's own embedded modules are dropped rather than
+//     inherited.
 //
 // Nor does a managed plan lock anything: a bucket's locked retention policy or
 // an object's Locked retention can never be undone, so it is refused whatever
@@ -220,18 +223,21 @@ type ManagedCover struct {
 }
 
 // NotCovered lists why a managed project's plan is not covered, empty when it
-// is. The configuration comes first (managedConfiguration), then each
-// change's mode and provider, and then Cover.NotCovered's own walk — the
-// action set, the authoritative IAM resources, the imports and the two halves
-// in that order — with the four
+// is. The configuration comes first (managedConfiguration) and the provider
+// blocks' own projects with it (managedProviderProject), then each change's
+// mode and provider, and then Cover.NotCovered's own walk — the action set,
+// the authoritative IAM resources, the imports and the two halves in that
+// order — with the four
 // managed rules above in place of init's type list and grant table, and with
-// managedAttributes' two checks in place of the embedded modules' own: the
-// project every resource is in, and the billing account the review showed.
+// the two attribute checks in place of the embedded modules' own: the billing
+// account a resource names (managedBilling, read before the type rule so that
+// it is read at all) and the project it is in (managedProject).
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
 	}
 	out := append(managedPlanFields(p), managedConfiguration(p)...)
+	out = append(out, c.managedProviderProject(p)...)
 	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -262,6 +268,11 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "an authoritative IAM resource")
 		case t == "google_service_account_key":
 			add(rc, "a service account key")
+		case c.managedBilling(rc) != "":
+			// Before the type rule: google_billing_budget is off the managed
+			// list, so read after it the billing account would never be read
+			// (managedBilling).
+			add(rc, c.managedBilling(rc))
 		case !managedTypes[t]:
 			add(rc, c.managedTypeReason(t))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
@@ -270,8 +281,8 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
 		case c.managedResource(rc) != "":
 			add(rc, c.managedResource(rc))
-		case c.managedAttributes(rc) != "":
-			add(rc, c.managedAttributes(rc))
+		case c.managedProject(rc) != "":
+			add(rc, c.managedProject(rc))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.managedGrant(rc); why != "" {
 				add(rc, why)
@@ -654,15 +665,15 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 	return ""
 }
 
-// managedAttributes says why a managed resource points at something it may
-// not: the project it is in, or the billing account it bills. "" when it
-// points at what the review showed. It is Task 1.2's re-derivation of
-// Cover.attributes (cover.go:713-827) for an agent-authored plan, and it is
-// deliberately shorter than init's: each of init's checks is re-justified here
-// rather than inherited, the ones that only make sense for Fugaro's own
-// embedded modules are dropped and said to be dropped, and no check outside
-// this set is added — D61 fixes the checkable set and closes it, so a rule
-// that is not on it is a new decision rather than an implementation detail.
+// managedProject says why a managed resource is in a project that is not this
+// run's. "" when it is in one, or when the plan does not say which one it is
+// in. It is the first of Task 1.2's two retained attribute checks, and this
+// comment is the whole re-derivation of Cover.attributes (cover.go:713-827)
+// for an agent-authored plan: each of init's checks is re-justified rather
+// than inherited, the ones that only make sense for Fugaro's own embedded
+// modules are dropped and said to be dropped, and no check outside this set is
+// added — D61 fixes the checkable set and closes it, so a rule that is not on
+// it is a new decision rather than an implementation detail.
 //
 //   - the project every resource is in: KEPT, and kept as the WIDER rule it
 //     is in Cover.Projects — the review's projects, not the managed project
@@ -673,16 +684,12 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 //     leaves it to its provider block (testdata/managed_provider_clean_plan.json
 //     is terraform's own output and shows it), so refusing an unknown project
 //     would refuse every real managed plan. Such a resource lands in the
-//     project its provider block defaults to, and that block is Task 1.1's:
-//     managedProviderSettings admits a project written out or read from
-//     variables alone, and the deployer's IAM reaches the managed project
-//     alone, so a plan defaulting elsewhere cannot be applied.
-//   - the billing account the review showed: KEPT, which is what makes a plan
-//     that moves billing refuse. It is read where it lives rather than through
-//     NotCovered: google_billing_budget is off the managed list (managedDropped
-//     — a billing-account permission no project role can hold), so a plan
-//     carrying one is refused for its type first, and this is the second line
-//     a re-decided type would meet.
+//     project its provider block decides, which is why that block's own
+//     project is read too (managedProviderProject) rather than left to Task
+//     1.1's form check: the escape this rule would otherwise have is a plan
+//     that moves the project one line up.
+//   - the billing account the review showed: KEPT, in managedBilling beside
+//     this, which says why it is read before the type rule rather than after.
 //   - the image a job runs, the command and args the modules set and the
 //     FUGARO_CHECK_SPEC it carries: dropped. They are Fugaro's own images,
 //     commands and check specs — init's cover reads them because its plans are
@@ -716,24 +723,127 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 // on. Admitting those modes is the decision that would owe those checks (a
 // prefixed repository of the managed project, and a prefixed secret), and it
 // is the owner's rather than this cover's.
-func (c ManagedCover) managedAttributes(rc ResourceChange) string {
+func (c ManagedCover) managedProject(rc ResourceChange) string {
 	a := rc.Change.After
-	if a == nil {
-		a = map[string]any{}
-	}
 	if p := str(a["project"]); p != "" && !slices.Contains(c.Projects, p) {
 		return "in project " + p + ", which is not this run's"
 	}
-	if rc.Type == "google_billing_budget" {
-		acct := strings.TrimPrefix(str(a["billing_account"]), "billingAccounts/")
-		switch {
-		case acct == "":
-			return "a budget on no billing account"
-		case !slices.Contains(c.Billing, acct):
-			return "a budget on billing account " + acct + ", which the review did not show"
-		}
+	return ""
+}
+
+// managedBilling says why a resource names a billing account that is not the
+// one the review showed. "" when it names none and when it names the review's.
+// It is the second of Task 1.2's two retained attribute checks, and it is read
+// before the type rule in NotCovered because google_billing_budget — the
+// resource that carries a billing account — is off the managed list
+// (managedDropped: a billing-account permission no project role can hold).
+// Read after it, this rule could never fire: every budget would be refused for
+// its type first and the account would go unread, which is a rule that exists
+// only on paper. Read before it, a plan that moves billing is refused for the
+// account it moves it to, which is this check's own reason for existing; a
+// budget on the review's own account is still refused, for its type.
+//
+// It reads the attribute rather than the type, so it holds for whatever
+// resource a later decision lets carry a billing account: a plan naming one
+// outside the review is refused whether or not its type is admitted.
+func (c ManagedCover) managedBilling(rc ResourceChange) string {
+	a := rc.Change.After
+	raw, ok := a["billing_account"]
+	if !ok {
+		return ""
+	}
+	acct := strings.TrimPrefix(str(raw), "billingAccounts/")
+	switch {
+	case acct == "":
+		return "a billing account the plan does not name"
+	case !slices.Contains(c.Billing, acct):
+		return "billing account " + acct + ", which the review did not show"
 	}
 	return ""
+}
+
+// managedProviderProject says why a provider block lands its resources in a
+// project that is not this run's, one refusal per block. "" when every block
+// leaves them in one of the run's projects, or does not say where.
+//
+// It is the second half of managedProject, and the reason that rule is not
+// bypassed by moving a project one line up: a resource that leaves its project
+// to its provider block is admitted there (terraform writes the attribute as
+// unknown), so the block's project is the one that decides — and Task 1.1's
+// managedProviderSettings reads only the setting's form, never its value. A
+// plan whose root block says project = "proj-2", or says var.project while the
+// plan's own variables carry "proj-2" for it, therefore wrote into proj-2
+// while every resource in it was covered. Both are read here, and refused by
+// the block's own address.
+//
+// What is not read is a value the plan does not carry: a variable with no
+// value in the plan's variables (Task 1.1 admits a setting read from variables
+// alone, and this changes nothing about which forms are admitted), or a
+// module's own block reading a module variable, whose value terraform does not
+// write into the plan's configuration — it writes the module's resources and
+// its provider blocks, not the arguments the call passes. Those stay with
+// Task 1.1's form check and, past it, with the deployer's IAM (D75), which
+// reaches the managed project alone: a plan the gate cannot read a project
+// from is not thereby a plan that can apply somewhere else.
+func (c ManagedCover) managedProviderProject(p *Plan) []string {
+	cfg := p.Configuration
+	if cfg == nil {
+		return nil
+	}
+	vars := map[string]string{}
+	if raw := p.fields["variables"]; len(raw) > 0 {
+		var doc map[string]struct {
+			Value any `json:"value"`
+		}
+		if json.Unmarshal(raw, &doc) == nil {
+			for name, v := range doc {
+				if s, ok := v.Value.(string); ok {
+					vars[name] = s
+				}
+			}
+		}
+	}
+	var out []string
+	for _, key := range slices.Sorted(maps.Keys(cfg.ProviderConfig)) {
+		raw := cfg.ProviderConfig[key].Expressions["project"]
+		if len(raw) == 0 {
+			continue
+		}
+		var e struct {
+			ConstantValue json.RawMessage `json:"constant_value"`
+			References    []string        `json:"references"`
+		}
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		proj, from := "", ""
+		switch {
+		case e.ConstantValue != nil:
+			// A project written out. Anything but a string is not a project
+			// terraform would plan with; managedProviderSettings has already
+			// admitted the form, and there is no value here to read.
+			_ = json.Unmarshal(e.ConstantValue, &proj)
+		case len(e.References) == 1 && strings.HasPrefix(e.References[0], "var.") && !strings.Contains(e.References[0][len("var."):], "."):
+			// A root variable's value is in the plan's own variables; a
+			// module's is not, and a module's block reads its own scope, so
+			// resolving one from the root's would be reading the wrong
+			// variable.
+			if cfg.ProviderConfig[key].ModuleAddress == "" {
+				if v, ok := vars[strings.TrimPrefix(e.References[0], "var.")]; ok {
+					proj, from = v, e.References[0]
+				}
+			}
+		}
+		if proj == "" || slices.Contains(c.Projects, proj) {
+			continue
+		}
+		why := "lands resources in project " + proj
+		if from != "" {
+			why += ", read from " + from
+		}
+		out = append(out, "provider_config."+key+" ("+why+", which is not this run's)")
+	}
+	return out
 }
 
 // managedBucketLock says why a bucket's retention policy is one a managed

@@ -1044,7 +1044,7 @@ func TestManagedCoverRefusesAForeignProjectInAProviderBlock(t *testing.T) {
 	for name, tc := range refuses {
 		t.Run("refuses a provider block whose project is "+name+" and is not this run's", func(t *testing.T) {
 			out := managedTestCover().NotCovered(providerProjectPlan(t, tc.project, tc.variables), nil)
-			if !refusedWith(out, "provider_config.google (", "in project proj-2, which is not this run's") {
+			if !refusedWith(out, "provider_config.google (", "lands resources in project proj-2", "which is not this run's") {
 				t.Fatalf("gives %q, want the provider block refused for the project its resources land in", out)
 			}
 		})
