@@ -614,7 +614,9 @@ row of its own — a missing secret has no container to be listed from, so it
 has no secret ID, and its SECRET, LATEST and CREATED read "-". The same marks
 a container that exists with no enabled version behind it, which resolves to
 nothing as surely as no container at all. Run this from a checkout of the
-repository to check the names its own configuration declares as well.
+repository to check the names its own configuration declares as well; a
+checkout whose fugaro.yaml does not parse says so on stderr, since then only
+the reserved names could be checked.
 
 --project-wide lists the installation's project-wide containers instead,
 with the repositories the local config allows to use each one. It has no
@@ -705,7 +707,17 @@ func listRepoScope(cmd *cobra.Command, env *cloudEnv, o secretsOptions, r *secre
 		}
 		entries = append(entries, secretEntry{Name: name, Scope: scopeProject, SecretInfo: shared[name]})
 	}
-	entries = markMissingRequired(entries, r.checkout())
+	// The repository's own half of "required" comes from its checkout's
+	// fugaro.yaml, and a file that does not parse contributes nothing: say so
+	// rather than listing the reserved names alone, which reads as an
+	// all-clear for the names that file declares. A working directory that is
+	// no checkout of this repository at all is the ordinary case the help
+	// states, and it gets no note.
+	cfg, problems := checkoutParse(ctx, r.repo)
+	if cfg == nil && len(problems) > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: this checkout's fugaro.yaml has %d problem(s), so the secrets its workflows declare were not checked; see fugaro validate\n", len(problems))
+	}
+	entries = markMissingRequired(entries, cfg)
 	sortSecretEntries(entries)
 	return printSecrets(cmd.OutOrStdout(), r.repo, entries, o.asJSON, false)
 }

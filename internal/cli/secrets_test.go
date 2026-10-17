@@ -1178,3 +1178,31 @@ func TestSecretsLsMissingColumnIsRepoScopeOnly(t *testing.T) {
 		t.Errorf("project-wide table = %q, %v", text, err)
 	}
 }
+
+// TestSecretsLsSaysWhenTheRepositorysOwnListCouldNotBeRead: the checkout's
+// fugaro.yaml is half of "required", and a listing that quietly dropped it
+// would read as an all-clear for the names it declares. From this repository's
+// checkout with an unreadable fugaro.yaml the command still lists (it is a
+// listing, not a gate), and says on stderr what it could not check.
+func TestSecretsLsSaysWhenTheRepositorysOwnListCouldNotBeRead(t *testing.T) {
+	secretsFixture(t)
+	appCheckout(t)
+	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nproject: aurora\nnot_a_key: [\n  x\n]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, errOut, err := execute(t, "secrets", "ls", "--repo", "acme/app")
+	if err != nil {
+		t.Fatalf("secrets ls: %v", err)
+	}
+	if !strings.Contains(errOut, "problem(s)") || !strings.Contains(errOut, "fugaro.yaml") {
+		t.Errorf("stderr = %q, want the note about the unread repository half", errOut)
+	}
+	// A checkout of another repository, or none at all, is the ordinary case
+	// the help states: no note.
+	if err := os.Remove("fugaro.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, err := execute(t, "secrets", "ls", "--repo", "acme/app"); err != nil || strings.Contains(errOut, "note:") {
+		t.Errorf("stderr = %q, %v, want no note", errOut, err)
+	}
+}
