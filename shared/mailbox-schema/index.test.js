@@ -81,8 +81,13 @@ test('the accepted message is a copy, not the caller\'s object', () => {
   const { message } = validateMessage(raw);
   assert.notEqual(message, raw);
   assert.equal(Object.getPrototypeOf(message), Object.prototype, 'a plain, unpolluted object');
-  // And the schema never coerces: what the caller wrote is what the consumer reads.
-  const spaced = validateMessage(good({ text: '  padded  ', sender: ' phone ' }));
+  // And the schema never coerces: what the caller wrote is what the consumer
+  // reads, for every field. A space is a legal database-key character, so a
+  // padded id is a legal id — and it is the id that was written, not a
+  // repaired one, because two agents disagreeing about an id is exactly the
+  // failure at-least-once delivery cannot survive.
+  const spaced = validateMessage(good({ id: ' m-0001 ', text: '  padded  ', sender: ' phone ' }));
+  assert.equal(spaced.message.id, ' m-0001 ', 'id is not trimmed');
   assert.equal(spaced.message.text, '  padded  ', 'text is not trimmed');
   assert.equal(spaced.message.sender, ' phone ', 'sender is not trimmed');
 });
