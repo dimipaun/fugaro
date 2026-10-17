@@ -416,7 +416,10 @@ test('every malformed input is refused with its own code, and never coerced', ()
     { input: { ...good, intervalMs: String(INTERVAL) }, code: REFUSAL.INVALID_INTERVAL },
     { input: { ...good, intervalMs: 0 }, code: REFUSAL.INVALID_INTERVAL },
     { input: { ...good, intervalMs: INTERVAL + 0.5 }, code: REFUSAL.INVALID_INTERVAL },
-    { input: { ...good, intervalMs: MAX_INTERVAL_MS + 1 }, code: REFUSAL.INVALID_INTERVAL },
+    {
+      input: { ...good, intervalMs: MAX_INTERVAL_MS + 1 },
+      code: REFUSAL.INTERVAL_ABOVE_CEILING,
+    },
     { input: { ...good, missedIntervals: '3' }, code: REFUSAL.INVALID_BAND },
     { input: { ...good, missedIntervals: 0 }, code: REFUSAL.INVALID_BAND },
     { input: { ...good, missedIntervals: MAX_BAND + 1 }, code: REFUSAL.INVALID_BAND },
