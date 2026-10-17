@@ -43,6 +43,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
 // The refusals this file's own rules make. They are values as well as
@@ -77,6 +78,12 @@ var (
 	// ErrRequest is a Request this command cannot run at all: no workdir, no
 	// terraform, no gate inputs.
 	ErrRequest = errors.New("the managed apply has nothing to run")
+	// ErrNotConfirmed is D55's confirmation rule refusing the step: the
+	// session asking for the apply is not one that may apply a plan of this
+	// class — a coding agent's session in a project the read did not say is
+	// managed, or a session with neither a terminal nor a marker. It is a
+	// refusal and not a fallback: nothing is applied.
+	ErrNotConfirmed = errors.New("this session may not confirm the apply")
 )
 
 // Fact is the creation fact's read, as infra/managed.IsManaged answered it:
@@ -140,6 +147,15 @@ type Request struct {
 	// function that runs an apply rather than left to each caller, and
 	// anything here is refused by name whatever the owner's object says.
 	Session []string
+	// Conditions is what the session asking for the apply says about who is
+	// there (initflow.Conditions: the marker its environment carries, a
+	// terminal, --yes). It is the third input of D55's confirmation rule, and
+	// it is a field rather than a caller's decision because the rule has to be
+	// asked where all three of its inputs exist at once: the fact read above,
+	// the gate's verdict, and this. Apply asks it (confirm) after the verdict
+	// and before the apply, and the zero value is refused — a caller that
+	// passes nothing is not a session that may confirm anything.
+	Conditions initflow.Conditions
 	// Imports are the import blocks the root's discovery wrote: an import is
 	// admitted only when its address and ID are exactly one of them.
 	Imports []tf.ImportKey
@@ -206,9 +222,11 @@ func (e *RefusedError) Unwrap() error { return ErrRefused }
 //     configuration's;
 //  6. the deployer account of D75 assumed, and everything below inside that
 //     assumption: terraform's own environment is built around its credential,
-//     the init and the plan run as it, the plan is gated, and the saved file
-//     is applied. Nothing runs outside the assumption, and a refused or
-//     unassumable deployer runs no terraform at all.
+//     the init and the plan run as it, the plan is gated, the session's own
+//     leg of D55's confirmation rule is asked (confirm, which is where the
+//     managed case is reached), and the saved file is applied. Nothing runs
+//     outside the assumption, and a refused or unassumable deployer runs no
+//     terraform at all.
 func Apply(ctx context.Context, r Request) (Result, error) {
 	if err := r.Enable.Refuse(); err != nil {
 		return Result{}, err
@@ -393,6 +411,13 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// the session a managed apply runs in means the step does not proceed.
 		return res, &RefusedError{Verdict: v}
 	}
+	// The session's own leg of D55's rule, asked here because this is the one
+	// moment all three of its inputs exist: the fact was read before terraform
+	// ran, the verdict that admits the plan has just been read, and Conditions
+	// is what the session says about who is there.
+	if err := r.confirm(v); err != nil {
+		return res, err
+	}
 	// The verdict is about a plan and not about a file name (Verdict's own
 	// contract), so the bytes are hashed again here, after the gate and
 	// immediately before the apply.
@@ -411,6 +436,38 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		return res, err
 	}
 	return res, nil
+}
+
+// confirm is D55's rule, and this is the caller that reaches its managed case:
+// initflow.CanConfirmManaged is the one predicate, its zero Managed is today's
+// rule word for word, and the value asked with here is this apply's own two
+// facts — the creation fact the marker read answered and the verdict that
+// admitted the plan.
+//
+// The step's class is YesOrTyped because that is the class this apply is: the
+// gate judged a saved plan, which is what a YesOrTyped step is, and money or
+// permanent — a project, billing, a secret — is not something this command
+// does at all. The zero Conditions is refused, which is the direction a caller
+// that forgot falls in: a session with neither a marker nor a terminal has no
+// confirmation to give, and the answer to that is no apply rather than an
+// apply nobody confirmed.
+//
+// The refusal names what refused in the words initflow already produces, and
+// the sentence for the case that proceeds is initflow's own too
+// (AgentProceeded): the reason is decided in one place, and a caller that
+// printed its own version of it would be the second copy of the rule this
+// whole shape exists to avoid.
+func (r Request) confirm(v Verdict) error {
+	if !initflow.CanConfirmManaged(initflow.YesOrTyped, r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK}) {
+		if marker := r.Conditions.Agent; marker != "" {
+			return fmt.Errorf("%w: %s", ErrNotConfirmed, initflow.AgentRefusal(marker))
+		}
+		return fmt.Errorf("%w: %s", ErrNotConfirmed, initflow.NeedsTerminal("applying the saved plan of "+r.what()))
+	}
+	if marker := r.Conditions.Agent; marker != "" && r.Out != nil {
+		fmt.Fprintln(r.Out, initflow.AgentProceeded(marker))
+	}
+	return nil
 }
 
 // planHash is the saved plan's own bytes, hex-encoded: what the gate admitted

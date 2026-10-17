@@ -169,10 +169,14 @@ func (r *applyRig) request(t *testing.T) Request {
 	t.Helper()
 	_, access, imp, _ := deployRig()
 	return Request{
-		Enable:       Enable{Open: true},
-		Project:      project,
-		GCPProject:   gcpProject,
-		Fact:         Fact{Managed: true},
+		Enable:     Enable{Open: true},
+		Project:    project,
+		GCPProject: gcpProject,
+		Fact:       Fact{Managed: true},
+		// A person at a terminal: the session D55's rule leaves alone, so
+		// every test that is not about the rule itself reads the apply's own
+		// sequence rather than the confirmation in front of it.
+		Conditions:   initflow.Conditions{Terminal: true},
 		Workdir:      r.wd,
 		Terraform:    r.bin(t),
 		Cover:        admitAll{},
@@ -625,6 +629,82 @@ func TestApplyRefusesARequestItCannotRun(t *testing.T) {
 				t.Errorf("the refused request ran terraform: %v", calls)
 			}
 		})
+	}
+}
+
+// D55's rule is asked by the apply itself, at the one moment all three of its
+// inputs exist (the fact, the verdict, and what the session says about who is
+// there), and this is the caller that reaches its managed case.
+//
+// The rows: a coding agent's session applies a managed project's admitted plan
+// and reads initflow's own sentence for why it proceeded; a session with
+// neither a marker nor a terminal is refused, because it has no confirmation to
+// give; and a session that passes nothing at all — the zero Conditions, which
+// is what a caller that forgot falls in — is refused too. Every refusal runs no
+// terraform and applies nothing.
+func TestApplyAsksD55sRuleForTheSessionsOwnConditions(t *testing.T) {
+	// The managed case: a coding agent's session, a managed project, a plan
+	// the gate admitted.
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	var out strings.Builder
+	req := r.request(t)
+	req.Conditions = initflow.Conditions{Agent: "CLAUDECODE"}
+	req.Out = &out
+	if _, err := Apply(context.Background(), req); err != nil {
+		t.Fatalf("a managed project's admitted plan was refused in a coding agent's session: %v", err)
+	}
+	if applied := r.applied(t); len(applied) != 1 {
+		t.Fatalf("the managed case applied nothing: %v", r.calls(t))
+	}
+	// The sentence is initflow's own, produced where the reason is decided: a
+	// caller that wrote its own would be the second copy of this rule.
+	if want := initflow.AgentProceeded("CLAUDECODE"); !strings.Contains(out.String(), want) {
+		t.Errorf("the apply printed\n%s\nwant initflow's own sentence for the case that proceeds:\n%s", out.String(), want)
+	}
+	if strings.Contains(out.String(), initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the case that proceeds printed the refusal as well:\n%s", out.String())
+	}
+
+	// And the same plan under a session that may not confirm it: no marker and
+	// no terminal, which is neither a person at a terminal nor a coding agent.
+	for _, tc := range []struct {
+		name string
+		cond initflow.Conditions
+	}{
+		{"the zero Conditions", initflow.Conditions{}},
+		{"no marker and no terminal", initflow.Conditions{NonInteractive: true}},
+		{"--json and no terminal", initflow.Conditions{JSON: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, bucket(planBucket))
+			req := r.request(t)
+			req.Conditions = tc.cond
+			if _, err := Apply(context.Background(), req); !errors.Is(err, ErrNotConfirmed) {
+				t.Fatalf("conditions %+v: %v, want the confirmation rule's refusal", tc.cond, err)
+			} else if !strings.Contains(err.Error(), initflow.NoTerminalAdvice) {
+				t.Errorf("refusal %v does not say what to do about it (initflow's own advice)", err)
+			}
+			if applied := r.applied(t); len(applied) != 0 {
+				t.Errorf("the refused confirmation applied the plan: %v", applied)
+			}
+		})
+	}
+
+	// The refusal of a coding agent's session is the one that says why, and it
+	// is initflow's: reached here through the fact the read did not answer
+	// managed for, which is the same leg D55's rule refuses on.
+	r2 := newApplyRig(t, plainRoot())
+	r2.planWithChanges(t, bucket(planBucket))
+	req2 := r2.request(t)
+	req2.Conditions = initflow.Conditions{Agent: "CLAUDECODE"}
+	req2.Fact = Fact{Managed: false, Reason: "no creation fact"}
+	if _, err := Apply(context.Background(), req2); !errors.Is(err, ErrNotManaged) {
+		t.Fatalf("a project the read did not say is managed: %v, want the marker's own refusal", err)
+	}
+	if applied := r2.applied(t); len(applied) != 0 {
+		t.Errorf("an unmanaged project applied the plan: %v", applied)
 	}
 }
 

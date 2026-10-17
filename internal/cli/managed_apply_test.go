@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -635,6 +637,7 @@ func TestManagedApplyRefusalsMapToExitCodes(t *testing.T) {
 		{name: "no deployer account", err: managedmode.ErrNoDeployerAccount, want: ExitUserError},
 		{name: "no impersonation grant", err: managedmode.ErrNoImpersonationGrant, want: ExitUserError},
 		{name: "the request cannot run", err: managedmode.ErrRequest, want: ExitUserError},
+		{name: "the session may not confirm the apply", err: managedmode.ErrNotConfirmed, want: ExitUserError},
 		{name: "the impersonation failed", err: managedmode.ErrImpersonationFailed, want: ExitRemoteError},
 		{name: "terraform failed", err: &tf.ExitError{Command: "apply", Code: 1, Stderr: "Error: something"}, want: ExitRemoteError},
 		{name: "the API failed", err: errors.New("googleapi: Error 503"), want: ExitRemoteError},
@@ -657,6 +660,34 @@ func TestManagedApplyRefusalsMapToExitCodes(t *testing.T) {
 		if !strings.Contains(got.Error(), want) {
 			t.Errorf("the refusal does not carry %q:\n%v", want, got)
 		}
+	}
+}
+
+// What this command tells the apply about the session it runs in — the input
+// of D55's rule that only the caller has. It is read from the environment and
+// from this command's own stdin, and it carries no --yes and no
+// --non-interactive, because the command registers neither.
+func TestManagedConditionsReadTheSessionAndNothingElse(t *testing.T) {
+	cmd := newManagedApplyCmd()
+	for _, tc := range []struct {
+		name string
+		env  string
+		term bool
+		want initflow.Conditions
+	}{
+		{"a coding agent's session", "CLAUDECODE", false, initflow.Conditions{Agent: "CLAUDECODE"}},
+		{"a person at a terminal", "", true, initflow.Conditions{Terminal: true}},
+		{"a pipe", "", false, initflow.Conditions{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CLAUDECODE", tc.env)
+			old := stdinIsTerminal
+			stdinIsTerminal = func(io.Reader) bool { return tc.term }
+			t.Cleanup(func() { stdinIsTerminal = old })
+			if got := managedConditions(cmd); got != tc.want {
+				t.Errorf("conditions %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
 

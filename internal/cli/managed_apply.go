@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
@@ -235,6 +236,12 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		Cover: managedCover(lc, bucket),
 		// The addresses the owner approved and nothing else.
 		AllowDelete: allowed,
+		// What this session says about who is there: the marker its
+		// environment carries and whether its own terminal is one. It is the
+		// input of D55's confirmation rule that only the caller has, and the
+		// apply asks the rule once the gate has a verdict (managed.Request's
+		// own comment).
+		Conditions: managedConditions(cmd),
 		// Session is nil, and it is written out rather than left to the zero
 		// value because the field is the assertion: this command registers no
 		// flag and no argument that names an address, so there is no way to
@@ -266,6 +273,23 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	fmt.Fprintf(w, "applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries\n",
 		rootArg, managedmode.DeployerAccount(lc.GCPProject))
 	return nil
+}
+
+// managedConditions is what this session says about who is there, and it is
+// the same pair internal/cli already reads for its other applying steps
+// (image.go's conds): a coding agent's marker in the environment, which is the
+// only thing that reaches D55's managed case (initflow.Managed.Removes), and
+// whether this command's own stdin is a terminal. It decides nothing here — it
+// is not read until the plan has been gated, and managed.Apply asks the rule
+// once (managed.Request's own comment).
+//
+// The command registers no --yes and no --non-interactive, so neither appears
+// here: a person at a terminal confirms a YesOrTyped step by having one, and a
+// session with no marker and no terminal has no confirmation to give. That is
+// the fail-closed direction, and the refusal a person then reads is
+// initflow's own NoTerminalAdvice.
+func managedConditions(cmd *cobra.Command) initflow.Conditions {
+	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Agent: agentMarker(os.Getenv)}
 }
 
 // managedRoot is ROOT as the apply reads it: an absolute directory inside the
@@ -789,6 +813,11 @@ func managedApplyErr(lc *localcfg.Config, root string, res managedmode.Result, e
 	case errors.Is(err, managedmode.ErrPreflight):
 		return userErr("nothing was applied: %v", err)
 	case errors.Is(err, managedmode.ErrPlanChanged):
+		return userErr("nothing was applied: %v", err)
+	case errors.Is(err, managedmode.ErrNotConfirmed):
+		// D55's rule, refusing the session rather than the plan: exit 1,
+		// because what to do about it is the person's (a terminal) and not a
+		// remote failure's.
 		return userErr("nothing was applied: %v", err)
 	case errors.Is(err, managedmode.ErrProviderSetting):
 		return userErr("nothing was applied: %v", err)
