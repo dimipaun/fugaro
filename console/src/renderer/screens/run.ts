@@ -302,14 +302,18 @@ export interface RunModel {
  * reading of the lines is `parseLogWindow` below, and a caller that read a
  * document longer than the cap hands the whole list over -- the cap is this
  * screen's, so this screen is where it is applied); `logLink` is `logs RUN
- * --url`'s one line. `replay` is the ring, and `scrubAt` is the moment a person
- * scrubbed to.
+ * --url`'s one line. `replay` is the ring the caller **keeps** (a
+ * `ReplayBuffer` it observes each arrival into once, so what it holds is
+ * bounded), and `scrubAt` is the moment a person scrubbed to. A list of
+ * arrivals is accepted too, and a fresh ring is built from it -- for a test or
+ * a one-off draw; a caller that kept every arrival to redraw from would be
+ * keeping an unbounded list, which is what the ring exists to avoid.
  */
 export interface RunInputs {
   readonly diagnosis: unknown
   readonly logs: unknown
   readonly logLink: string | null
-  readonly replay?: readonly ReplayArrival[] | undefined
+  readonly replay?: ReplayBuffer | readonly ReplayArrival[] | undefined
   readonly scrubAt?: string | null | undefined
   readonly sentences?: Partial<Record<OperationName, string>> | undefined
 }
@@ -589,8 +593,8 @@ export function buildRunModel(inputs: RunInputs): RunModel {
   const window = parseLogWindow(inputs.logs)
   const shown = window.lines.slice(Math.max(0, window.lines.length - RUN_LOG_CAP))
 
-  const buffer = new ReplayBuffer()
-  for (const arrival of inputs.replay ?? []) buffer.observe(arrival)
+  // The kept ring is read, never fed: drawing a screen is not an arrival.
+  const buffer = inputs.replay instanceof ReplayBuffer ? inputs.replay : ringOf(inputs.replay ?? [])
   const bounds = buffer.bounds()
   const scrubAt = inputs.scrubAt ?? null
   const scrubbed = scrubAt === null ? null : buffer.scrub(scrubAt)
@@ -644,7 +648,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
     diagnosis: diagnosisOf(document),
     replay: {
       records: measured(bounds.records),
-      windowSeconds: measured(REPLAY_WINDOW_SECONDS),
+      windowSeconds: measured(bounds.windowSeconds),
       dropped: measured(bounds.dropped),
       from: bounds.from,
       to: bounds.to,
@@ -658,6 +662,13 @@ export function buildRunModel(inputs: RunInputs): RunModel {
     },
     warnings: [...textsAt(document['warnings']), ...textsAt(row['warnings'])],
   }
+}
+
+/** ringOf is a fresh ring over a list of arrivals (see `RunInputs.replay`). */
+function ringOf(arrivals: readonly ReplayArrival[]): ReplayBuffer {
+  const buffer = new ReplayBuffer()
+  for (const arrival of arrivals) buffer.observe(arrival)
+  return buffer
 }
 
 /** replayBoundsNote is the sentence the panel carries about the ring's own

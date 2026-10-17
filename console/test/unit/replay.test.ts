@@ -39,7 +39,7 @@ import { describe, expect, it } from 'vitest'
 
 import { buildLiveModel } from '../../src/renderer/screens/live'
 import { decodeSnapshot } from '../../src/shared/schema'
-import { REPLAY_MAX_RECORDS, REPLAY_WINDOW_SECONDS, ReplayBuffer } from '../../src/shared/replay'
+import { REPLAY_MAX_BYTES, REPLAY_MAX_RECORDS, REPLAY_WINDOW_SECONDS, ReplayBuffer } from '../../src/shared/replay'
 import type { ReplayRecord } from '../../src/shared/replay'
 import { FixtureSource, loadFixture, writeFixture } from '../../src/source/fixture'
 import type { FixtureMeta, LoadedFixture } from '../../src/source/fixture'
@@ -207,6 +207,37 @@ describe('the replay buffer', () => {
     expect(buffer.records().map((record) => record.at)).toEqual(
       Array.from({ length: 8 }, (_, index) => stamp(BASE, 12 + index)),
     )
+  })
+
+  it('bounds the ring by bytes as well as by records', () => {
+    // The record cap alone lets 900 documents of 4 MiB each sit in a renderer.
+    // A third bound, on the serialized size of what is held, is what stops it.
+    expect(REPLAY_MAX_BYTES).toBe(64 * 1024 * 1024)
+    expect(new ReplayBuffer().bounds().maxBytes).toBe(REPLAY_MAX_BYTES)
+    const padding = 'x'.repeat(1000)
+    const sized = (at: string, value: number) => ({ ...anArrival(at, value), document: { padding, counted_usd: value } })
+    const one = new ReplayBuffer({ windowSeconds: 3600 })
+    one.observe(sized(stamp(BASE, 0), 0))
+    const size = one.bounds().bytes
+    expect(size).toBe(Buffer.byteLength(one.export()))
+    // Room for three and a half records: the fourth arrival pushes out the oldest.
+    const buffer = new ReplayBuffer({ windowSeconds: 3600, maxRecords: 100, maxBytes: Math.floor(size * 3.5) })
+    for (let second = 0; second < 10; second += 1) buffer.observe(sized(stamp(BASE, second), second))
+    const bounds = buffer.bounds()
+    expect(bounds.records).toBe(3)
+    expect(bounds.dropped).toBe(7)
+    expect(bounds.bytes).toBeLessThanOrEqual(bounds.maxBytes)
+    expect(bounds.bytes).toBe(Buffer.byteLength(buffer.export()) - (bounds.records - 1))
+    expect(buffer.records().map((record) => record.at)).toEqual([7, 8, 9].map((s) => stamp(BASE, s)))
+  })
+
+  it('keeps no record that is larger than the whole byte bound, and counts it', () => {
+    const buffer = new ReplayBuffer({ maxBytes: 200 })
+    buffer.observe(anArrival(stamp(BASE, 0), 1))
+    buffer.observe({ ...anArrival(stamp(BASE, 1), 2), document: { padding: 'x'.repeat(500) } })
+    expect(buffer.bounds().records).toBe(1)
+    expect(buffer.bounds().dropped).toBe(1)
+    expect(buffer.records()[0]?.at).toBe(stamp(BASE, 0))
   })
 
   it('files a late arrival where its stamp belongs, so the export stays loadable', () => {
