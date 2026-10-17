@@ -31,6 +31,7 @@ import (
 //     mailbox, RulesVersion). Gating on RulesVersion would answer "not found"
 //     for a node that is there, which every caller of this function reads as an
 //     empty ceiling (the review finding on P2.1).
+//
 //   - With the marker deployed, the node decides: absent (or null) is
 //     "installed, not adopted", today's behaviour; anything else that cannot
 //     be read or decoded is an error the caller must treat as a halt, never

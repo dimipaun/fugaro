@@ -65,6 +65,18 @@ func TestMailboxPhoneWritesItsOwnInbox(t *testing.T) {
 	h.mustAllow(alice, "the phone's own inbox message", put(inbox(mbAlice, "m1"), aMessage("m1", mbAlice)))
 	h.wantValue(inbox(mbAlice, "m1")+"/text", `"the build is green"`)
 
+	// A message is written once (`!data.exists()` on the message node): the
+	// phone cannot rewrite what it has sent, with the same words or others, and
+	// neither can the consumer, which holds no grant on the inbox at all.
+	h.mustDeny(alice, "rewriting its own sent inbox message, unchanged",
+		put(inbox(mbAlice, "m1"), aMessage("m1", mbAlice)))
+	edited := aMessage("m1", mbAlice)
+	edited["text"] = "the build is red"
+	h.mustDeny(alice, "rewriting its own sent inbox message with other words", put(inbox(mbAlice, "m1"), edited))
+	h.mustDeny(alice, "rewriting one field of its own sent inbox message", put(inbox(mbAlice, "m1")+"/text", "edited"))
+	h.mustDeny(h.consumer(mbAlice), "the consumer rewriting a sent inbox message", put(inbox(mbAlice, "m1"), edited))
+	h.wantValue(inbox(mbAlice, "m1")+"/text", `"the build is green"`)
+
 	// Another account's mailbox: `$mb == auth.uid` fails on the location, so
 	// neither its inbox nor its outbox message nor its ack is reachable.
 	h.mustDeny(alice, "an inbox message in another account's mailbox",
@@ -103,25 +115,26 @@ func TestMailboxMessageShape(t *testing.T) {
 	node := inbox(mbAlice, "m1")
 	h.mustAllow(alice, "a well-formed message", put(node, aMessage("m1", mbAlice)))
 
+	// Every case below writes a node of its own whose id matches its key, so
+	// each refusal is the rule the case names and not `id == $msg` or the
+	// write-once guard of a node an earlier case wrote (mutation-checked: flip
+	// the rule a case names and that case fails).
+	//
 	// The required fields, one missing at a time.
 	for _, missing := range []string{"id", "sender", "text", "at"} {
-		m := aMessage("m1", mbAlice)
+		m := aMessage("m2-"+missing, mbAlice)
 		delete(m, missing)
-		h.mustDeny(alice, "a message with no "+missing, put(inbox(mbAlice, "m2"), m))
+		h.mustDeny(alice, "a message with no "+missing, put(inbox(mbAlice, "m2-"+missing), m))
 	}
 	// An unknown field, and the ack on an inbox message: the inbox's `$other`
 	// refuses `acked` like any other field it does not name (D113's second
 	// phone write is the ack of a message the phone has *spoken*, which is an
 	// outbox message — design §6.2).
-	for _, extra := range []map[string]any{
-		{"acked": true},
-		{"kind": "text"},
-	} {
-		m := aMessage("m1", mbAlice)
-		for k, v := range extra {
-			m[k] = v
-		}
-		h.mustDeny(alice, "a message carrying an unknown field", put(inbox(mbAlice, "m3"), m))
+	for _, extra := range []string{"acked", "kind"} {
+		id := "m3-" + extra
+		m := aMessage(id, mbAlice)
+		m[extra] = true
+		h.mustDeny(alice, "a message carrying the unknown field "+extra, put(inbox(mbAlice, id), m))
 	}
 
 	// id is the node key, within the tree's key bound.
@@ -132,36 +145,38 @@ func TestMailboxMessageShape(t *testing.T) {
 	h.mustDeny(alice, "a 101-character id", put(inbox(mbAlice, long+"k"), aMessage(long+"k", mbAlice)))
 
 	// sender is the writer's identity: the rules bind it to the mailbox.
-	m = aMessage("m5", mbBob)
-	h.mustDeny(alice, "the sender of another account", put(inbox(mbAlice, "m5"), m))
-	m = aMessage("m5", strings.Repeat("s", 201))
-	h.mustDeny(alice, "a sender over 200 characters", put(inbox(mbAlice, "m5"), m))
+	m = aMessage("m5a", mbBob)
+	h.mustDeny(alice, "the sender of another account", put(inbox(mbAlice, "m5a"), m))
+	m = aMessage("m5b", strings.Repeat("s", 201))
+	h.mustDeny(alice, "a sender over 200 characters", put(inbox(mbAlice, "m5b"), m))
 
 	// text: non-empty, at most the schema's TEXT_MAX.
-	m = aMessage("m6", mbAlice)
-	m["text"] = ""
-	h.mustDeny(alice, "an empty text", put(inbox(mbAlice, "m6"), m))
-	m["text"] = strings.Repeat("t", MaxText)
-	h.mustAllow(alice, "a text exactly at TEXT_MAX", put(inbox(mbAlice, "m6"), m))
-	m["text"] = strings.Repeat("t", MaxText+1)
-	h.mustDeny(alice, "a text one over TEXT_MAX", put(inbox(mbAlice, "m6"), m))
-	m = aMessage("m6", mbAlice)
-	m["text"] = 42
-	h.mustDeny(alice, "a text that is a number", put(inbox(mbAlice, "m6"), m))
+	withText := func(id string, text any) map[string]any {
+		m := aMessage(id, mbAlice)
+		m["text"] = text
+		return m
+	}
+	h.mustDeny(alice, "an empty text", put(inbox(mbAlice, "m6a"), withText("m6a", "")))
+	h.mustDeny(alice, "a text one over TEXT_MAX",
+		put(inbox(mbAlice, "m6b"), withText("m6b", strings.Repeat("t", MaxText+1))))
+	h.mustDeny(alice, "a text that is a number", put(inbox(mbAlice, "m6c"), withText("m6c", 42)))
+	h.mustAllow(alice, "a text exactly at TEXT_MAX",
+		put(inbox(mbAlice, "m6d"), withText("m6d", strings.Repeat("t", MaxText))))
 
 	// at: a non-negative integer instant, at most the schema's AT_MAX — which
 	// is what the rules apply (TIMESTAMP, MaxTimestamp) and no longer the
 	// amount bound. An instant the phone's validator accepts must be one the
 	// database stores: this row is the review finding that made the two agree.
-	m = aMessage("m7", mbAlice)
-	for _, bad := range []any{"1700000000000", -1, 1.5} {
-		m["at"] = bad
-		h.mustDeny(alice, "at of the wrong shape", put(inbox(mbAlice, "m7"), m))
+	withAt := func(id string, at any) map[string]any {
+		m := aMessage(id, mbAlice)
+		m["at"] = at
+		return m
 	}
-	m["at"] = MaxTimestamp
-	h.mustAllow(alice, "at exactly at AT_MAX", put(inbox(mbAlice, "m7"), m))
-	m["at"] = MaxTimestamp + 1
-	h.mustDeny(alice, "at one over AT_MAX", put(inbox(mbAlice, "m7"), m))
+	for i, bad := range []any{"1700000000000", -1, 1.5, MaxTimestamp + 1} {
+		id := "m7-" + string(rune('a'+i))
+		h.mustDeny(alice, "at of the wrong shape or over AT_MAX", put(inbox(mbAlice, id), withAt(id, bad)))
+	}
+	h.mustAllow(alice, "at exactly at AT_MAX", put(inbox(mbAlice, "m7-max"), withAt("m7-max", MaxTimestamp)))
 
 	// A delete is not a write: validation does not run on one, which is why
 	// every grant carries newData.exists().
@@ -184,6 +199,23 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 	h.mustAllow(consumer, "its own outbox message", put(outbox(mbAlice, "c1"), aMessage("c1", mbAlice)))
 	h.mustAllow(consumer, "its own heartbeat", put(beat(mbAlice), aHeartbeat()))
 	h.wantValue(beat(mbAlice)+"/boot", `"boot-1"`)
+	// The heartbeat is the one node overwritten by design: it is the latest
+	// liveness, not a record.
+	h.mustAllow(consumer, "its heartbeat again", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-1"}))
+
+	// An outbox message is written once: the consumer cannot rewrite history,
+	// with the same words, other words, or one field at a time.
+	h.mustDeny(consumer, "rewriting its own outbox message, unchanged", put(outbox(mbAlice, "c1"), aMessage("c1", mbAlice)))
+	edited := aMessage("c1", mbAlice)
+	edited["text"] = "the build is red"
+	h.mustDeny(consumer, "rewriting its own outbox message with other words", put(outbox(mbAlice, "c1"), edited))
+	h.mustDeny(consumer, "rewriting one field of its own outbox message", put(outbox(mbAlice, "c1")+"/text", "edited"))
+	h.wantValue(outbox(mbAlice, "c1")+"/text", `"the build is green"`)
+
+	// An unknown field on an outbox message, under a fresh matching id.
+	m3 := aMessage("c3", mbAlice)
+	m3["kind"] = "text"
+	h.mustDeny(consumer, "an outbox message carrying an unknown field", put(outbox(mbAlice, "c3"), m3))
 
 	// The inbox is the phone's: no ancestor of it grants the consumer
 	// anything, and the message's own grant is MAILBOX.
@@ -199,23 +231,22 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 	h.mustDeny(consumer, "a sender that is not the mailbox", put(outbox(mbAlice, "c2"), m))
 	m["sender"] = mbAlice
 	h.mustAllow(consumer, "a second outbox message", put(outbox(mbAlice, "c2"), m))
+	h.mustDeny(consumer, "an outbox id that is not the node it is stored under",
+		put(outbox(mbAlice, "c5"), aMessage("other-id", mbAlice)))
 
 	// The heartbeat's shape: both fields, at an instant, unknown refused.
 	h.mustDeny(consumer, "a heartbeat with no boot", put(beat(mbAlice), map[string]any{"at": msgAt}))
 	h.mustDeny(consumer, "a heartbeat with an unknown field",
 		put(beat(mbAlice), map[string]any{"at": msgAt, "boot": "b", "pid": 7}))
 
-	// The ack is the one field inside the outbox the consumer can reach, and
-	// the reason is the tree's shape rather than a grant of its own: `.write`
-	// cascades downward, so the consumer's grant on the message node covers
-	// that message's `acked` child too. What it can set is a boolean on a
-	// message it wrote itself, in a mailbox it already writes, and the value
-	// says "the phone has spoken this" — a claim the consumer is the only
-	// reader of. Pinned here because §6.4 used to say the consumer could not
-	// write an ack at all, which the cascade makes untrue (the phone's ack
-	// itself is unaffected: it is the phone that must be able to reach it).
-	h.mustAllow(consumer, "the acked child of its own message (its message-node grant cascades)",
-		put(outbox(mbAlice, "c1")+"/acked", true))
+	// The ack is the phone's alone. The consumer's grant on the message node
+	// cascades to `acked`, but that grant is write-once (`!data.exists()`), so
+	// on a message that is already there it grants nothing; and a message
+	// created already acked is refused by `acked`'s own `data.parent().exists()`.
+	h.mustDeny(consumer, "the acked child of its own existing message", put(outbox(mbAlice, "c1")+"/acked", true))
+	pre := aMessage("c4", mbAlice)
+	pre["acked"] = true
+	h.mustDeny(consumer, "an outbox message created already acked", put(outbox(mbAlice, "c4"), pre))
 	h.mustDeny(consumer, "an ack on another account's outbox message", put(outbox(mbBob, "c1")+"/acked", true))
 	h.mustDeny(consumer, "an ack of the wrong type", put(outbox(mbAlice, "c1")+"/acked", "yes"))
 }
@@ -228,9 +259,20 @@ func TestMailboxPhoneAcksWhatItSpoke(t *testing.T) {
 	alice, consumer := h.phone(mbAlice), h.consumer(mbAlice)
 	h.mustAllow(consumer, "an outbox message to ack", put(outbox(mbAlice, "c1"), aMessage("c1", mbAlice)))
 
+	h.mustAllow(consumer, "a second outbox message", put(outbox(mbAlice, "c2"), aMessage("c2", mbAlice)))
+	h.mustAllow(consumer, "a third outbox message", put(outbox(mbAlice, "c3"), aMessage("c3", mbAlice)))
+
 	h.mustAllow(alice, "the ack on a message in its own outbox", put(outbox(mbAlice, "c1")+"/acked", true))
 	h.wantValue(outbox(mbAlice, "c1")+"/acked", "true")
-	h.mustAllow(alice, "taking the ack back", put(outbox(mbAlice, "c1")+"/acked", false))
+
+	// The ack is written once, and only as true: it cannot be taken back or
+	// written again (`!data.exists()` on acked), and a first write of false is
+	// refused by `newData.val() == true` (on a message with no ack yet, so that
+	// is the rule that refuses it).
+	h.mustDeny(alice, "taking the ack back", put(outbox(mbAlice, "c1")+"/acked", false))
+	h.mustDeny(alice, "acking the same message again", put(outbox(mbAlice, "c1")+"/acked", true))
+	h.mustDeny(alice, "a first ack of false", put(outbox(mbAlice, "c2")+"/acked", false))
+	h.wantValue(outbox(mbAlice, "c1")+"/acked", "true")
 
 	// The ack is one field and nothing beside it: the phone cannot write the
 	// message it is acking (that is the consumer's), and it cannot write a
@@ -238,7 +280,7 @@ func TestMailboxPhoneAcksWhatItSpoke(t *testing.T) {
 	h.mustDeny(alice, "rewriting the message it acked",
 		put(outbox(mbAlice, "c1"), aMessage("c1", mbAlice)))
 	h.mustDeny(alice, "an unknown field beside the ack", put(outbox(mbAlice, "c1")+"/spokeAt", msgAt))
-	h.mustDeny(alice, "an ack of the wrong type", put(outbox(mbAlice, "c1")+"/acked", 1))
+	h.mustDeny(alice, "an ack of the wrong type", put(outbox(mbAlice, "c3")+"/acked", 1))
 	h.mustDeny(alice, "an ack on an outbox message that does not exist", put(outbox(mbAlice, "c9")+"/acked", true))
 	h.mustDeny(alice, "deleting an ack", map[string]any{outbox(mbAlice, "c1") + "/acked": nil})
 }
@@ -265,6 +307,15 @@ func TestMailboxClaimMismatchIsAdmittedNowhere(t *testing.T) {
 		put(outbox(mbAlice, "c1")+"/acked", true))
 	h.mustReadDenied(forged, "mailbox/"+mbAlice+"/outbox")
 	h.mustReadDenied(forged, beat(mbAlice))
+	// The mailbox rows above are also refused by `$mb == auth.uid`; these are
+	// refused by USER's own `mu == auth.uid` and nothing else, since the read
+	// grants on caps, kill and spend name no mailbox. The token carries no fp
+	// here, or TOKEN (a run's read) would admit it and the row would not be
+	// about USER.
+	forgedUser := h.as(claims{mu: mbAlice, uid: mbBob, fp: "-"})
+	for _, p := range []string{budget.PathCapsGlobal, budget.PathKillGlobal, budget.PathSpendGlobal(w.day)} {
+		h.mustReadDenied(forgedUser, p)
+	}
 
 	// A plain signed-in user: a uid and nothing else, no mu and no mc — which
 	// is also why it carries no fp here (a token with fp is a run's, and the
@@ -381,4 +432,51 @@ func TestMailboxReadsAreTheGrantedSet(t *testing.T) {
 	h.set(other+"/counted", 5)
 	h.mustRead(alice, other)
 	h.mustRead(alice, budget.PathSpendGlobal(day+1))
+}
+
+// TestMailboxResidualMintedTokenPassesUntilPhase6 documents an accepted
+// residual, and asserts it so that no later change alters it silently.
+//
+// USER binds mu to auth.uid, and a client cannot choose either. But phones
+// sign in with custom tokens only (T5, D165), and whoever mints a custom token
+// chooses the uid and every claim: a launcher (signJwt, iam.tf's token_minter)
+// or any holder of a key of one of the project's service accounts. So a token
+// minted with uid == mu == alice is, to the rules, alice's phone: it reads
+// alice's outbox and heartbeat and writes her inbox. A token minted with
+// mc == alice is alice's consumer and can fake her heartbeat. The rules
+// cannot tell these apart from the real ones; no claim they could read would
+// help, because the minter writes that claim too. (Launchers also read every
+// mailbox through roles/firebasedatabase.viewer, which bypasses the rules:
+// mobile reconciliation G13.)
+//
+// What closes it is phase 6, by owner decision: the admin-only device node
+// config/admin/devices/$uid that USER will also require (D166, plan P6.4),
+// and a per-pairing MAC on every inbox message and action record that
+// `fugaro mailbox` verifies before it acts (D169, D171, plan P6.3, P6.7), so
+// a minted inbox write cannot make the consumer act. When P6.4 lands, the
+// device-node half of this test must change on purpose (a minted token
+// without the node is refused); the MAC half is the consumer's, not the
+// rules'.
+func TestMailboxResidualMintedTokenPassesUntilPhase6(t *testing.T) {
+	h := newHarness(t)
+	h.mustAllow(h.consumer(mbAlice), "alice's outbox message", put(outbox(mbAlice, "c1"), aMessage("c1", mbAlice)))
+	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+
+	// A token a launcher minted for alice's uid, carrying alice's mu. It
+	// also names the launcher in rb, which the mailbox rules do not read.
+	minted := h.as(claims{uid: mbAlice, mu: mbAlice, fp: "-", rb: "mallory@example.invalid"})
+	h.mustRead(minted, "mailbox/"+mbAlice+"/outbox")
+	h.mustRead(minted, beat(mbAlice))
+	h.mustAllow(minted, "an inbox message in alice's mailbox from a minted token",
+		put(inbox(mbAlice, "m1"), aMessage("m1", mbAlice)))
+	h.mustAllow(minted, "an ack of alice's outbox message from a minted token",
+		put(outbox(mbAlice, "c1")+"/acked", true))
+
+	// A token minted with mc == alice: it writes alice's heartbeat, so the
+	// heartbeat's integrity is not the rules' to keep until a signed
+	// heartbeat lands in phase 6.
+	forgedConsumer := h.as(claims{mc: mbAlice, fp: "-", rb: "mallory@example.invalid"})
+	h.mustAllow(forgedConsumer, "alice's heartbeat from a minted mc token",
+		put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "forged"}))
+	h.wantValue(beat(mbAlice)+"/boot", `"forged"`)
 }

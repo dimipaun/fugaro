@@ -277,7 +277,7 @@
       "$mb": {
         "inbox": {
           "$msg": {
-            ".write": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid) && $mb == auth.uid) && newData.exists()",
+            ".write": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid) && $mb == auth.uid) && newData.exists() && !data.exists()",
             ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && $msg.length <= 100",
             "id": {
               ".validate": "newData.isString() && newData.val().length <= 100 && newData.val() == $msg"
@@ -299,7 +299,7 @@
         "outbox": {
           ".read": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid) && $mb == auth.uid)",
           "$msg": {
-            ".write": "(auth != null && auth.token.mc != null && auth.token.mc == $mb) && newData.exists()",
+            ".write": "(auth != null && auth.token.mc != null && auth.token.mc == $mb) && newData.exists() && !data.exists()",
             ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && $msg.length <= 100",
             "id": {
               ".validate": "newData.isString() && newData.val().length <= 100 && newData.val() == $msg"
@@ -314,8 +314,8 @@
               ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
             },
             "acked": {
-              ".write": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid) && $mb == auth.uid) && newData.exists()",
-              ".validate": "newData.isBoolean()"
+              ".write": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid) && $mb == auth.uid) && newData.exists() && !data.exists()",
+              ".validate": "newData.isBoolean() && newData.val() == true && data.parent().exists()"
             },
             "$other": {
               ".validate": false

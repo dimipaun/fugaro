@@ -194,7 +194,7 @@
       "$mb": {
         "inbox": {
           "$msg": {
-            ".write": "MAILBOX && newData.exists()",
+            ".write": "MAILBOX && newData.exists() && !data.exists()",
             ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && $msg.length <= {{.MaxKeyLength}}",
             "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
             "sender": { ".validate": "STR && newData.val() == $mb" },
@@ -206,15 +206,15 @@
         "outbox": {
           ".read": "MAILBOX",
           "$msg": {
-            ".write": "CONSUMER && newData.exists()",
+            ".write": "CONSUMER && newData.exists() && !data.exists()",
             ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && $msg.length <= {{.MaxKeyLength}}",
             "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
             "sender": { ".validate": "STR && newData.val() == $mb" },
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
             "at": { ".validate": "TIMESTAMP" },
             "acked": {
-              ".write": "MAILBOX && newData.exists()",
-              ".validate": "newData.isBoolean()"
+              ".write": "MAILBOX && newData.exists() && !data.exists()",
+              ".validate": "newData.isBoolean() && newData.val() == true && data.parent().exists()"
             },
             "$other": { ".validate": false }
           }

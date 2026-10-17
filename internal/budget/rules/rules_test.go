@@ -628,16 +628,22 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 // and $mb naming the token's own uid), the consumer's are CONSUMER (mc naming
 // the mailbox it serves), and all four require newData.exists(), because
 // validation does not run on a delete and a delete of a message is therefore
-// denied. TestMailboxWritesAreExactlyTheFour pins the list against the
-// generated rules and TestRunTokenWritesSurviveThePolicyEdit's sweep fails on
-// any mailbox write that is not in it.
+// denied. The two message nodes and the ack also require !data.exists():
+// a message, and its ack, are written once, so neither writer can rewrite
+// history (the phone a sent message, the consumer an outbox message or its
+// ack). The heartbeat is the one node that is overwritten by design: it is
+// the consumer's latest liveness, not a record. TestMailboxWritesAreExactlyTheFour
+// pins the list against the generated rules and
+// TestRunTokenWritesSurviveThePolicyEdit's sweep fails on any mailbox write
+// that is not in it.
 func mailboxWrites() map[string][]string {
 	phone := []string{"auth.token.mu != null", "auth.token.mu == auth.uid", "$mb == auth.uid", "newData.exists()"}
 	consumer := []string{"auth.token.mc != null", "auth.token.mc == $mb", "newData.exists()"}
+	once := func(f []string) []string { return append(slices.Clone(f), "!data.exists()") }
 	return map[string][]string{
-		"mailbox/$mb/inbox/$msg":        phone,
-		"mailbox/$mb/outbox/$msg/acked": phone,
-		"mailbox/$mb/outbox/$msg":       consumer,
+		"mailbox/$mb/inbox/$msg":        once(phone),
+		"mailbox/$mb/outbox/$msg/acked": once(phone),
+		"mailbox/$mb/outbox/$msg":       once(consumer),
 		"mailbox/$mb/heartbeat":         consumer,
 	}
 }

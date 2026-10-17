@@ -30,7 +30,8 @@
 // The mailbox (docs/design/m9-budget-and-dashboard §6.4) is granted to two
 // other identities, and the rules read both claims rather than minting either:
 // mu, the mobile app's user claim, which names the mailbox its holder owns and
-// must agree with auth.uid, the identity Firebase itself minted; and mc, the
+// must agree with auth.uid (which binds against clients, not against whoever
+// mints the custom token: see userClaim); and mc, the
 // mailbox consumer's claim (D113b), which names the mailbox that writer
 // serves. Nothing else in the tree reads mu or mc, and a signed-in user who
 // carries neither is admitted nowhere.
@@ -321,13 +322,35 @@ func runDelta(slug, run string, depth int) (string, error) {
 }
 
 // userClaim is the mobile app's user claim (D112, D113): a custom claim mu
-// that names the mailbox its holder owns, and that must agree with auth.uid —
-// the identity Firebase mints itself, which no client can choose. The
-// agreement is what makes the claim unusable to reach another account's
-// mailbox: a token carrying a claim for someone else's uid satisfies this
-// nowhere. It is read, never minted: nothing here writes a claim, and setting
-// mu on an Auth user is the owner's own step when an account is added by hand
-// (D114).
+// that names the mailbox its holder owns, and that must agree with auth.uid.
+// It is read, never minted: nothing here writes a claim, and setting mu on an
+// Auth user is the owner's own step when an account is added by hand (D114).
+//
+// What the agreement binds, exactly. A client cannot choose its uid or its
+// claims: both come from the custom token it signed in with. But phones sign
+// in with custom tokens only (owner decision T5, D165), and whoever mints a
+// custom token chooses both the uid and every claim in it. That is any
+// principal that can sign for the project — a launcher (signJwt through
+// deploy/terraform/gcp/modules/firebase/iam.tf's token_minter role), or
+// anyone holding a key of one of the project's service accounts, since
+// Firebase accepts custom tokens signed by any of them. Such a principal can
+// mint uid == mu == another account's mailbox and pass USER and MAILBOX: read
+// that account's outbox and heartbeat and write its inbox. So the
+// agreement keeps one client out of another's mailbox and binds nothing
+// against a minter. Against launcher-level principals the confidentiality of
+// the outbox and heartbeat is not protected by these rules (launchers also
+// hold roles/firebasedatabase.viewer, an IAM read that bypasses the rules,
+// mobile reconciliation G13), and neither is the integrity of the heartbeat
+// (CONSUMER's mc is minted the same way). Phase 6 closes what can be closed:
+// a device node under config/admin/devices/$uid that USER will require
+// (D166, plan P6.4), a per-pairing MAC on every inbox message and action that
+// fugaro mailbox verifies before acting (D169, D171, P6.3, P6.7), so a minted
+// inbox write cannot make the consumer act. Until then this is an accepted
+// residual, pinned by TestMailboxResidualMintedTokenPassesUntilPhase6.
+//
+// No claim the rules could add closes it: any claim they read (an fp, an
+// expiry) is one the minter writes too, and Firebase already ties a token to
+// one project by its signature and audience.
 //
 // A signed-in user who carries no mu is admitted nowhere, which is F11's
 // property kept: no grant admits a signed-in user on its own.
