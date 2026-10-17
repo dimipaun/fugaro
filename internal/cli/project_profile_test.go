@@ -5,6 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -209,8 +213,9 @@ func TestPublishRefusesASecretValueInAProfile(t *testing.T) {
 // the empty list on the way in). Read as "the project's list applies", it
 // would hand the profile every repository the project enrolls — the one
 // direction a profile's list must never move — so the publisher refuses it.
-// The mutation is a policyProfiles that copies the carrier and lets the
-// projectpolicy-level refusal try (and fail) to see the empty list.
+// Through the CLI it is localcfg's validate that refuses the file, before the
+// publisher's own check runs; that check (defence in depth) has its own test,
+// TestBuildProjectPolicyRefusesAnEmptyProfileAllowRepos.
 func TestPublishRefusesAnEmptyProfileAllowRepos(t *testing.T) {
 	f := newProjectFixture(t, "profiles:\n  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [] }\n")
 	out, _, err := execute(t, "project", "policy", "publish")
@@ -228,5 +233,35 @@ func TestPublishRefusesAnEmptyProfileAllowRepos(t *testing.T) {
 	// exists to prevent.
 	if strings.Contains(out, "acme/other") && err == nil {
 		t.Errorf("the empty list was widened to the project's allow-list:\n%s", out)
+	}
+}
+
+// TestBuildProjectPolicyRefusesAnEmptyProfileAllowRepos: the publisher's own
+// door on the empty-list rule, reached directly. Through the CLI localcfg's
+// validate refuses the file first (TestPublishRefusesAnEmptyProfileAllowRepos
+// passes on that refusal alone), so this builds the config in code — a profile
+// decoded on its own, never validated — and hands it to buildProjectPolicy.
+// The mutation is dropping the AllowReposWritten check from
+// buildProjectPolicy: the profile then publishes with no list, which the node
+// reads as the project's whole allow_repos.
+func TestBuildProjectPolicyRefusesAnEmptyProfileAllowRepos(t *testing.T) {
+	var pr config.JobProfile
+	if err := yaml.Unmarshal([]byte("{ provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [] }"), &pr); err != nil {
+		t.Fatal(err)
+	}
+	if !pr.AllowReposWritten() {
+		t.Fatal("the fixture's profile does not record its written allow_repos")
+	}
+	lc := &localcfg.Config{
+		Name:     "acme",
+		Budget:   &localcfg.Budget{Mode: "observe"},
+		Profiles: map[string]config.JobProfile{projectpolicy.DefaultProfileName: pr},
+	}
+	pol, err := buildProjectPolicy(lc, []string{"github/acme/app"}, nil)
+	if err == nil {
+		t.Fatalf("an empty profile allow_repos was built into a policy: %+v", pol.Profiles)
+	}
+	if !strings.Contains(err.Error(), "profiles.standard.allow_repos") {
+		t.Errorf("the refusal does not name the key it refused: %v", err)
 	}
 }
