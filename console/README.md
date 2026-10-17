@@ -1235,7 +1235,7 @@ fails on the first line matching a credential shape — the forges' prefixes, th
 vendors' keys, a JWT's first segment, a PEM header — with the patterns themselves
 assembled from fragments and the scan checked against a planted line, so a scan
 that cannot fail is not mistaken for one that passes. Turning the rule on it
-found and removed twenty-one literal lines left by Task 1.4's own suites, across
+found and removed twenty literal lines left by Task 1.4's own suites, across
 five files, one of them a 36-character body that is exactly what a leaked GitHub
 token looks like -- and every test that had been running against them still runs
 against the same strings, assembled at run time. And
@@ -1254,16 +1254,21 @@ fragments, character-for-character the expression it was.
   fixture whose header, redaction marker or hash does not verify (Task 1.4); this
   task reads none of that and adds no second format.
 
-### A failing test, inherited, with the evidence
+### The deep-nesting failure, and how it was closed
 
 `test/unit/redact-persons.test.ts` — "refuses a document nested 10000 deep as a
-`RedactionRefusal`, and the loader as a `FixtureRefusal`" — fails with
+`RedactionRefusal`, and the loader as a `FixtureRefusal`" — used to fail with
 `RangeError: Maximum call stack size exceeded` from `JSON.stringify` in
-`src/source/fixture.ts:208`. It is **not** this task's: it fails identically at
-`43c6dd7` (this branch's head before Task 2.0 began), which was checked out in a
-worktree and run there against the same Node. The rest of the suite is green
-(1013 passing, 1 failing). Fixing it belongs to the recorder's own task, and this
-task's diff does not touch `fixture.ts`, `redact.ts` or that suite.
+`src/source/fixture.ts`. It was inherited: it failed identically at `43c6dd7`,
+this branch's head before Task 2.0 began. It is **now green**, and the fix is in
+the writer rather than in the test: `writeFixture` serialises with
+`stringifyDeep`, which walks the document with an explicit stack instead of the
+engine's recursion, so a document deep enough to exhaust the stack is
+serialised and the loader refuses it as the `FixtureRefusal` the suite expects.
+`fixture.test.ts` holds the new writer to `JSON.stringify`'s bytes on a table of
+awkward cases — empty containers, `undefined` in objects and in arrays,
+non-finite numbers, escaping, `toJSON` nested and returning `undefined` — and
+carries the 10 000-deep document as its own case.
 
 ## `docs/pending-workflows/console-tests.yml`
 

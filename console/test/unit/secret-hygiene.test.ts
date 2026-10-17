@@ -47,6 +47,7 @@ const SHAPES: readonly { readonly what: string; readonly re: RegExp }[] = [
   { what: 'an AWS access-key id', re: new RegExp(inert('AK', 'IA', '[0-9A-Z]{12}')) },
   { what: 'a PEM private key', re: new RegExp(inert('BEGIN ', '[A-Z ]*PRIVATE KEY-----')) },
   { what: 'a Google refresh token', re: /1\/\/0[0-9A-Za-z_-]{8}/ },
+  { what: 'a JSON Web Token', re: new RegExp(inert('ey', 'J[A-Za-z0-9_-]{8,}', '\\.', '[A-Za-z0-9_-]{8,}')) },
 ]
 
 /** SCANNED are the directories and files this rule covers: everything a reader
