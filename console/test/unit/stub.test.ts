@@ -104,6 +104,19 @@ describe('a scenario the stub cannot answer', () => {
     expect(message).toContain('"version"')
   })
 
+  it('is refused when it is written in a second time, not only at install', () => {
+    // `write` replaces the scenario, which is how a test asks the same stub for
+    // something else mid-run. It ran no guard, so a misspelling there reached
+    // the child and was answered by `default` -- the fallback this whole guard
+    // exists to refuse (review). The call sites are `spawn.test.ts` and
+    // `spend-controls.test.ts`.
+    const stub = installStub(freshDirectory(), { commands: { version: { stdout: '1.4.2\n' } } })
+    expect(() => stub.write({ commands: { 'logs --json': { stdout: '{}' } } })).toThrow(
+      /did you mean "logs"\?/,
+    )
+    expect(() => stub.write({ commands: { 'runs ls': { stdout: '{}' } } })).not.toThrow()
+  })
+
   it('accepts the keys it derives, and a scenario with no commands at all', () => {
     for (const key of STUB_COMMAND_KEYS) {
       expect(() => installStub(freshDirectory(), { commands: { [key]: { stdout: '' } } }), key).not.toThrow()

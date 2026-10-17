@@ -158,6 +158,13 @@ export function installStub(directory: string, scenario: StubScenario): Stub {
         .map((line) => JSON.parse(line) as StubKill)
     },
     write(next: StubScenario): void {
+      // The same guard `installStub` runs, for the same reason: a second
+      // scenario is written by a test that has just changed what it wants, and a
+      // misspelled `logs --json` there would be answered by `default` -- a green
+      // assertion about the fallback. It is refused here rather than at the
+      // child, which cannot tell a miss from a command the fixture deliberately
+      // leaves out.
+      refuseUnknownCommands(next)
       writeFileSync(scenarioPath, JSON.stringify(next, null, 2))
     },
   }
