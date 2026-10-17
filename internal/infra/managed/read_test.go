@@ -353,6 +353,22 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 			reason: "reading gs://" + testBucket + "/" + MarkerObject,
 			fails:  true,
 		},
+		// The API's own error text is untrusted like any other text this
+		// package prints, and it is the one place a control character really
+		// arrives (a 5xx body, or a proxy's): this row's message carries a
+		// newline and an escape sequence, so the assertion below is about
+		// safetext.OneLine rather than about the fixtures holding no control
+		// character — deleting that boundary fails here and nowhere else.
+		"the object read fails with a body that is not one line": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				f.RefusePath(MarkerObject, http.StatusInternalServerError, "INTERNAL", "", "backend error\n\x1b[31mred")
+				return s, c
+			},
+			reason: "reading gs://" + testBucket + "/" + MarkerObject,
+			fails:  true,
+		},
 		"the object's body dies mid-read": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				c, cf := newCRM(t)
@@ -595,14 +611,25 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 			if reason == "" {
 				t.Fatal("no reason: a refusal a person cannot act on is the same as no refusal")
 			}
-			if strings.Contains(reason, "\n") {
+			// One line, and one line because safetext.OneLine made it one: the
+			// row above hands the reason an API message with a newline and an
+			// escape sequence in it, so this fails when that boundary is
+			// removed rather than passing on fixtures that never carry one.
+			if strings.ContainsAny(reason, "\n\r\x1b") {
 				t.Errorf("the reason is not one line: %q", reason)
 			}
 			if !strings.Contains(reason, tc.reason) {
 				t.Errorf("reason = %q, want it to say %q", reason, tc.reason)
 			}
-			if !strings.Contains(reason, testFugaroProject) && !strings.Contains(reason, testProject) {
-				t.Errorf("reason = %q: it names neither the project nor the GCP project it is about", reason)
+			// The Fugaro project name alone, because the GCP project's is no
+			// evidence at all: the runs bucket is fugaro-runs-<gcp project>, so
+			// nearly every reason holds the GCP project's name as a substring
+			// of the bucket's, and an assertion that accepted either would pass
+			// without the reason being about the project at all — which is what
+			// it is documented to be (read.go: "project ... appears in every
+			// reason").
+			if !strings.Contains(reason, testFugaroProject) {
+				t.Errorf("reason = %q: it does not name the Fugaro project %q it is about", reason, testFugaroProject)
 			}
 			if tc.fails && err == nil {
 				t.Error("want an error: the API did not answer, so the caller should be told the read failed")

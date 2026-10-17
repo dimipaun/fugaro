@@ -209,13 +209,13 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&m); err != nil {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker: %v", bucket, MarkerObject, err), nil
+		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err), nil
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker: it holds more than one JSON value", bucket, MarkerObject), nil
+		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker for %s: it holds more than one JSON value", bucket, MarkerObject, project), nil
 	}
 	if err := checkMarkerShape(data, m.Version); err != nil {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker: %v", bucket, MarkerObject, err), nil
+		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err), nil
 	}
 	// The versions this build knows, each with what it has to carry. Any
 	// other version is refused rather than partly believed, which is the

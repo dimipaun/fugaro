@@ -219,9 +219,16 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 		// typed name is the whole of the confirmation here, which is also the
 		// right way round: an approval is removed by a person reading what
 		// goes, not by a flag typed in advance.
+		//
+		// The question says what is lost: the approvals named above, or, for
+		// an unreadable object, whatever it held — dropped is empty then
+		// because nothing could be read, not because nothing is removed.
+		what := fmt.Sprintf("this replaces %s's list, removing %d address(es) it approved: every delete or replacement of them is refused again", lc.Name, len(dropped))
+		if state.Unreadable {
+			what = fmt.Sprintf("this replaces gs://%s/%s, an object that is not a list this command reads: nothing it held could be read, so any approval it carried for %s is lost and every delete or replacement it allowed is refused again", bucket, managed.AllowDeleteObject, lc.Name)
+		}
 		if err := confirmTypedStrict(cmd, lc,
-			"removing an approval is confirmed by typing the project's name at a terminal, and by nothing else",
-			fmt.Sprintf("this replaces %s's list, removing %d address(es) it approved: every delete or replacement of them is refused again", lc.Name, len(dropped))); err != nil {
+			"removing an approval is confirmed by typing the project's name at a terminal, and by nothing else", what); err != nil {
 			return err
 		}
 	}

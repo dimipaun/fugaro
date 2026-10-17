@@ -278,15 +278,54 @@ func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
 	if _, ok := deleteListAt(t, s, bucket); ok {
 		t.Errorf("gs://%s/%s is there: a refused write must write nothing", bucket, AllowDeleteObject)
 	}
-	// And the read of what such a write would have produced is the empty
-	// list, so the refusal above is the difference between an approval and
-	// nothing rather than between two shapes of the same answer.
+	// And the read of what such a write would have produced is no list, for
+	// the length and for nothing else: the fixture is a list this package
+	// writes in every way but its size (strictFields accepts it, and the same
+	// list one address shorter, under the cap, parses), so parseDeleteList's
+	// length case (deletelist.go:237) is the only thing that refuses it. It is
+	// handed to parseDeleteList whole, because the reader never sees it whole.
+	body, under := oversizedDeleteList(t)
+	if err := strictFields(body); err != nil {
+		t.Fatalf("the oversized fixture is not a list this package writes (%v), so this row would pass before reaching the cap", err)
+	}
+	if got := parseDeleteList(under, testProject); len(got) == 0 {
+		t.Fatalf("the same list under the cap (%d bytes) does not parse, so the cap is not what refuses the oversized one", len(under))
+	}
+	if got := parseDeleteList(body, testProject); got != nil {
+		t.Errorf("parseDeleteList over a %d-byte list = %d address(es), want none: the read's cap is not the write's", len(body), len(got))
+	}
+	// Through AllowDelete the same object is no addresses as well, but for a
+	// different reason: the read takes at most allowDeleteMaxBytes+1 bytes, so
+	// a body past the cap reaches parseDeleteList cut mid-value and strictFields
+	// refuses it first. The length case is reached through AllowDelete only by
+	// a body whose first allowDeleteMaxBytes+1 bytes are still a whole list —
+	// TestAllowDeleteFailsClosed's "padding past the cap" row.
 	over, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
-	f.Put(testBucket, AllowDeleteObject, []byte(strings.Repeat("x", allowDeleteMaxBytes+1)))
+	f.Put(testBucket, AllowDeleteObject, body)
 	list, err := AllowDelete(ctx, over, testBucket, testProject, testProjectNumber)
 	if err != nil || len(list) != 0 {
 		t.Errorf("AllowDelete() over an oversized body = %v, %v; want no addresses and no error", list, err)
+	}
+}
+
+// oversizedDeleteList is a list this package writes in every way but one: it
+// is past allowDeleteMaxBytes. It is marshalled from the same DeleteList the
+// writer writes, and returned with the same list one address shorter, which
+// is the last one at or under the cap.
+func oversizedDeleteList(t *testing.T) (over, under []byte) {
+	t.Helper()
+	d := DeleteList{Version: AllowDeleteVersion, GCPProject: testProject}
+	for i := 0; ; i++ {
+		d.Addresses = append(d.Addresses, fmt.Sprintf("google_cloud_run_v2_job.web_%08d", i))
+		b, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(b) > allowDeleteMaxBytes {
+			return b, under
+		}
+		under = b
 	}
 }
 
@@ -366,6 +405,79 @@ func TestAllowDeleteFailsClosed(t *testing.T) {
 	}
 	if err := tf.Guard(deletePlan(deleteListAddresses[0], address), list); err == nil {
 		t.Error("a plan deleting an address the owner did not name was applied")
+	}
+}
+
+// TestAllowDeleteRefusesWhatItCannotRead: AllowDelete's fail-closed branches
+// that are not about the object's content — an argument that does not
+// identify a bucket to read, no storage client, and a read that fails — are
+// the empty list for the same reason the content rows above are: the gate
+// that acts on the answer refuses every delete it is not told about, so an
+// error a caller could read as "nothing to check" is the shape this package
+// removes. Each row here is a branch of AllowDelete no other test reaches,
+// and the positive control at the end is that the same fixture read with the
+// arguments right is the owner's list.
+func TestAllowDeleteRefusesWhatItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		read            func(t *testing.T) *storage.Service
+		bucket, project string
+		number          uint64
+	}{
+		"no storage client": {func(t *testing.T) *storage.Service { return nil }, testBucket, testProject, testProjectNumber},
+		"no bucket named": {func(t *testing.T) *storage.Service {
+			s, _ := seedDeleteList(t, deleteListJSON)
+			return s
+		}, "", testProject, testProjectNumber},
+		"no project named": {func(t *testing.T) *storage.Service {
+			s, _ := seedDeleteList(t, deleteListJSON)
+			return s
+		}, testBucket, "", testProjectNumber},
+		"no project number": {func(t *testing.T) *storage.Service {
+			s, _ := seedDeleteList(t, deleteListJSON)
+			return s
+		}, testBucket, testProject, 0},
+		"the bucket read fails": {func(t *testing.T) *storage.Service {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			f.Put(testBucket, AllowDeleteObject, []byte(deleteListJSON))
+			f.Refuse(http.StatusInternalServerError, "INTERNAL", "", "backend error")
+			return s
+		}, testBucket, testProject, testProjectNumber},
+		"the object read fails": {func(t *testing.T) *storage.Service {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			f.Put(testBucket, AllowDeleteObject, []byte(deleteListJSON))
+			f.FailObjectGetsAfter(testBucket, AllowDeleteObject, 0)
+			return s
+		}, testBucket, testProject, testProjectNumber},
+		"the object's body dies mid-read": {func(t *testing.T) *storage.Service {
+			return storageWithTransport(t, func(r *http.Request) (*http.Response, error) {
+				if strings.Contains(r.URL.Path, "/o/") {
+					return &http.Response{StatusCode: http.StatusOK, Status: "200 OK",
+						Header: http.Header{"Content-Type": []string{"application/json"}},
+						Body:   &shortBody{data: []byte(deleteListJSON), err: io.ErrUnexpectedEOF}, Request: r}, nil
+				}
+				return bucketResponse(r, testProjectNumber, testManaged), nil
+			})
+		}, testBucket, testProject, testProjectNumber},
+	} {
+		t.Run(name, func(t *testing.T) {
+			list, err := AllowDelete(ctx, tc.read(t), tc.bucket, tc.project, tc.number)
+			if err != nil {
+				t.Fatalf("AllowDelete() = %v with an error (%v): a read that fails is no addresses, never an error a caller might read as proceed", list, err)
+			}
+			if len(list) != 0 {
+				t.Fatalf("AllowDelete() = %v, want no addresses", list)
+			}
+		})
+	}
+	// The fixture the rows above are built on is one AllowDelete reads, so
+	// they cannot be passing by every read being empty.
+	s, bucket := seedDeleteList(t, deleteListJSON)
+	list, err := AllowDelete(ctx, s, bucket, testProject, testProjectNumber)
+	if err != nil || !slices.Equal(list, deleteListAddresses) {
+		t.Fatalf("AllowDelete() = %v, %v; want the owner's %v", list, err, deleteListAddresses)
 	}
 }
 
@@ -564,5 +676,182 @@ func TestReadDeleteListForWriteFailsClosed(t *testing.T) {
 	f2.AddBucket(testBucket, testProjectNumber+1, testManaged)
 	if _, err := ReadDeleteListForWrite(ctx, s2, testBucket, testProject, testProjectNumber); !errors.Is(err, ErrRefused) {
 		t.Errorf("over another project's bucket: %v, want ErrRefused", err)
+	}
+}
+
+// countingBody serves n bytes — data, then spaces — and counts what is read
+// from it, so a test can tell a capped read from one that drains the body.
+type countingBody struct {
+	data []byte
+	n    int
+	read int
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	if b.read >= b.n {
+		return 0, io.EOF
+	}
+	if len(p) > b.n-b.read {
+		p = p[:b.n-b.read]
+	}
+	for i := range p {
+		if b.read+i < len(b.data) {
+			p[i] = b.data[b.read+i]
+		} else {
+			p[i] = ' '
+		}
+	}
+	b.read += len(p)
+	return len(p), nil
+}
+
+func (b *countingBody) Close() error { return nil }
+
+// deleteListTransport answers the bucket read with the project's own runs
+// bucket, the object's metadata read with generation 5, and the media read
+// with body(r), the request it answers.
+func deleteListTransport(body func(r *http.Request) io.ReadCloser) roundTripFunc {
+	return func(r *http.Request) (*http.Response, error) {
+		switch {
+		case !strings.Contains(r.URL.Path, "/o/"):
+			return bucketResponse(r, testProjectNumber, testManaged), nil
+		case r.URL.Query().Get("alt") != "media":
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK",
+				Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body:   io.NopCloser(strings.NewReader(`{"name":"` + AllowDeleteObject + `","generation":"5"}`)), Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK",
+			Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body(r), Request: r}, nil
+	}
+}
+
+// TestTheDeleteListReadsAreCapped: both reads stop at the cap plus one byte
+// however long the body is — the length check after the read is what refuses
+// an oversized list, and the cap is what keeps a planted 16 MB object from
+// being read whole into memory first. A body exactly one byte past the cap,
+// whose first allowDeleteMaxBytes are a valid list, is refused by both: a
+// read capped one byte short would see only the valid list.
+func TestTheDeleteListReadsAreCapped(t *testing.T) {
+	ctx := context.Background()
+	reads := map[string]func(s *storage.Service) ([]string, error){
+		"AllowDelete": func(s *storage.Service) ([]string, error) {
+			return AllowDelete(ctx, s, testBucket, testProject, testProjectNumber)
+		},
+		"ReadDeleteListForWrite": func(s *storage.Service) ([]string, error) {
+			st, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber)
+			if err == nil && !st.Unreadable {
+				return st.Addresses, errors.New("an oversized body read as a list")
+			}
+			return st.Addresses, err
+		},
+	}
+	for name, read := range reads {
+		t.Run(name, func(t *testing.T) {
+			for _, size := range []int{16 << 20, allowDeleteMaxBytes + 1} {
+				body := &countingBody{data: []byte(deleteListJSON), n: size}
+				list, err := read(storageWithTransport(t, deleteListTransport(func(*http.Request) io.ReadCloser { return body })))
+				if err != nil || len(list) != 0 {
+					t.Errorf("a %d-byte body gives %v, %v; want no addresses", size, list, err)
+				}
+				if body.read > allowDeleteMaxBytes+1 {
+					t.Errorf("a %d-byte body: read %d bytes, past the cap of %d+1", size, body.read, allowDeleteMaxBytes)
+				}
+			}
+		})
+	}
+}
+
+// TestReadDeleteListForWriteReadsTheGenerationItReports: the media read is
+// pinned to the generation the metadata read returned, so the generation the
+// write is conditioned on is the one whose list the command showed — never a
+// newer list read under an older generation, which would let the write drop
+// approvals the owner was never shown.
+func TestReadDeleteListForWriteReadsTheGenerationItReports(t *testing.T) {
+	newer := `{"version":1,"gcp_project":"` + testProject + `","addresses":["google_storage_bucket.newer"]}`
+	s := storageWithTransport(t, deleteListTransport(func(r *http.Request) io.ReadCloser {
+		if r.URL.Query().Get("generation") == "5" {
+			return io.NopCloser(strings.NewReader(deleteListJSON))
+		}
+		return io.NopCloser(strings.NewReader(newer))
+	}))
+	st, err := ReadDeleteListForWrite(context.Background(), s, testBucket, testProject, testProjectNumber)
+	if err != nil || st.Generation != 5 || !slices.Equal(st.Addresses, deleteListAddresses) {
+		t.Fatalf("ReadDeleteListForWrite() = %+v, %v; want generation 5's list %v", st, err, deleteListAddresses)
+	}
+}
+
+// TestReadDeleteListForWriteCallsAnEmptyListUnreadable: an object with no
+// addresses is not one this package writes (Bytes refuses it), so the writer's
+// read reports it as unreadable, and replacing it asks for the typed
+// confirmation as any other object the command cannot read does.
+func TestReadDeleteListForWriteCallsAnEmptyListUnreadable(t *testing.T) {
+	s, bucket := seedDeleteList(t, `{"version":1,"gcp_project":"`+testProject+`","addresses":[]}`)
+	st, err := ReadDeleteListForWrite(context.Background(), s, bucket, testProject, testProjectNumber)
+	if err != nil || !st.Unreadable || st.Addresses != nil {
+		t.Fatalf("over an empty list: %+v, %v; want Unreadable and no addresses", st, err)
+	}
+}
+
+// TestTheDeleteListRefusesWhenTheBucketReadFails: the bucket read that proves
+// the runs bucket the project's own failing is a refusal for every caller of
+// proveRunsBucket, never "nothing to prove". The object reads and the write
+// beside it all succeed here, so a proof that returned nil on a failed bucket
+// read would read the planted list as the owner's and write over it.
+func TestTheDeleteListRefusesWhenTheBucketReadFails(t *testing.T) {
+	ctx := context.Background()
+	wrote := false
+	s := storageWithTransport(t, func(r *http.Request) (*http.Response, error) {
+		json := func(code int, body string) *http.Response {
+			return &http.Response{StatusCode: code, Status: http.StatusText(code),
+				Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body:   io.NopCloser(strings.NewReader(body)), Request: r}
+		}
+		switch {
+		case r.Method == http.MethodPost:
+			wrote = true
+			return json(http.StatusOK, `{"name":"`+AllowDeleteObject+`","generation":"6"}`), nil
+		case !strings.Contains(r.URL.Path, "/o/"):
+			return json(http.StatusForbidden, `{"error":{"code":403,"message":"forbidden"}}`), nil
+		case r.URL.Query().Get("alt") != "media":
+			return json(http.StatusOK, `{"name":"`+AllowDeleteObject+`","generation":"5"}`), nil
+		}
+		return json(http.StatusOK, deleteListJSON), nil
+	})
+	if list, err := AllowDelete(ctx, s, testBucket, testProject, testProjectNumber); err != nil || len(list) != 0 {
+		t.Errorf("AllowDelete() with the bucket read failing = %v, %v; want no addresses and no error", list, err)
+	}
+	if st, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber); err == nil {
+		t.Errorf("ReadDeleteListForWrite() with the bucket read failing = %+v and no error", st)
+	}
+	if err := WriteDeleteList(ctx, s, testBucket, testProject, testProjectNumber, deleteListAddresses, 5); err == nil || wrote {
+		t.Errorf("WriteDeleteList() with the bucket read failing = %v (wrote: %v); want an error and no write", err, wrote)
+	}
+}
+
+// TestReadDeleteListForWriteRefusesNoClient: the writer's strict read refuses
+// a missing storage client, as it refuses a missing bucket, project or
+// number, rather than reaching a read it cannot make.
+func TestReadDeleteListForWriteRefusesNoClient(t *testing.T) {
+	ctx := context.Background()
+	s, _ := seedDeleteList(t, deleteListJSON)
+	for name, call := range map[string]func() error{
+		"no client": func() error {
+			_, err := ReadDeleteListForWrite(ctx, nil, testBucket, testProject, testProjectNumber)
+			return err
+		},
+		"no bucket":         func() error { _, err := ReadDeleteListForWrite(ctx, s, "", testProject, testProjectNumber); return err },
+		"no project":        func() error { _, err := ReadDeleteListForWrite(ctx, s, testBucket, "", testProjectNumber); return err },
+		"no project number": func() error { _, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, 0); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("panicked instead of refusing: %v", r)
+				}
+			}()
+			if err := call(); !errors.Is(err, ErrRefused) {
+				t.Errorf("ReadDeleteListForWrite() = %v, want ErrRefused", err)
+			}
+		})
 	}
 }
