@@ -43,6 +43,8 @@ import (
 func (o *initOptions) checkCreateProject() error {
 	if !o.createProject {
 		switch {
+		case o.managed:
+			return userErr("--managed goes with --create-project: it is what a project this run creates is, and only a creation can be one — a project that already exists is flagged managed by an owner-run command of its own (never by init --firebase, which adds Firebase to a project someone else made). To create a managed project: fugaro init --create-project --gcp-project <id> --managed --budget <amount> --budget-currency <code> --billing-account <id>")
 		case o.linkBilling != "":
 			return userErr("--link-billing goes with --create-project (both flags, explicitly: init links billing only to a project it was asked to create or adopt). To link billing yourself: gcloud billing projects link <project> --billing-account=<account>")
 		case o.parent != "" || o.displayName != "":
@@ -51,6 +53,17 @@ func (o *initOptions) checkCreateProject() error {
 		return nil
 	}
 	switch {
+	// A managed creation has no amount to fall back on (D64, Task 4.2): the
+	// monthly budget is required, and the refusal says what to pass and what
+	// a value to start from looks like. There is deliberately **no constant
+	// here and none anywhere else** — the 50 below is a sentence in a
+	// refusal, not a value any code path can use, because a silent default
+	// is a number the owner did not choose that then reads as a promise.
+	// This case is why it comes before the ordinary trio rule in check():
+	// the same missing flags are a different answer for a managed creation,
+	// and this is the one that says why the amount is being asked for.
+	case o.managed && (o.budget <= 0 || o.budgetCurrency == "" || o.billingAccount == ""):
+		return userErr("--managed creates a project Fugaro manages, and a managed project's monthly budget amount is required at creation — with no default, because an amount you did not choose reads as a promise and one that is too low is discovered by a bill. Pass all three: --budget <amount> --budget-currency <code> --billing-account <id>. For a first installation --budget 50 --budget-currency USD is a reasonable start (the alerts fire at 50%%, 90%% and 100%% of it); raise it once you have seen a month of spend. The amount and the currency are recorded in the project's creation fact, so a later run and a restore can read what was chosen")
 	case o.forget || o.configOnly || o.printVars:
 		return userErr("--create-project creates a project; it excludes --forget, --config-only and --print-vars")
 	case o.cloud.gcpProject == "":

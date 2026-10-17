@@ -68,6 +68,15 @@ const (
 // operator's credentials were refused" (an operator's or IAM's).
 var ErrRefused = errors.New("refused")
 
+// ErrTooLarge is the one ErrRefused that is about the list itself rather than
+// about where it would be written: the body is over allowDeleteMaxBytes, the
+// size the read refuses whole, so approving fewer addresses is the whole of
+// the fix. It wraps ErrRefused, so a caller that only knows the wider error
+// still sees a refusal; a caller that has an owner to advise can tell this one
+// from "the bucket is not this project's" and send them to the list rather
+// than to two settings that are fine.
+var ErrTooLarge = fmt.Errorf("%w: the list is over the size this package reads back", ErrRefused)
+
 // ErrChanged is what WriteDeleteList wraps when the object is not the
 // generation the caller read: another writer changed the list in between, and
 // writing over it would drop whatever that writer approved without anyone
@@ -114,8 +123,8 @@ func (d DeleteList) Bytes() ([]byte, error) {
 	// hold the same limit, so nothing this command records is a list its own
 	// read will not believe.
 	if len(data) > allowDeleteMaxBytes {
-		return nil, refusedf("%s: %d bytes, over the %d this package reads back, so this list would be written and then read as no addresses: approve fewer addresses",
-			AllowDeleteObject, len(data), allowDeleteMaxBytes)
+		return nil, fmt.Errorf("%w: %s: %d bytes, over the %d this package reads back, so this list would be written and then read as no addresses: approve fewer addresses",
+			ErrTooLarge, AllowDeleteObject, len(data), allowDeleteMaxBytes)
 	}
 	return data, nil
 }
