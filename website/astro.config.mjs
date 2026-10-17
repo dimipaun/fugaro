@@ -25,6 +25,12 @@ export default defineConfig({
   markdown: { smartypants: false },
   // Static output: no server, no adapter, nothing rendered per request.
   output: 'static',
+  // Every stylesheet is inlined into the page that uses it. The site's CSS is a few
+  // kilobytes, so a page that carries its own styles costs one request instead of two, and a
+  // built page is self-contained: the tests over `dist/*.html` (the reduced-motion base, the
+  // base stylesheet) read what a browser receives without following a `<link>`. Without this
+  // Astro inlines only below 4 kB, and the base stylesheet tipped the bundle over it.
+  build: { inlineStylesheets: 'always' },
   // Stated rather than omitted, because "the shell ships no integration" is a rule this
   // site is held to and not a consequence of an absent line. An island that needs one
   // adds it in the task that needs it, with the byte budget that task carries.

@@ -8,16 +8,16 @@ D50's operative rulings: the code lives **in this repository**, it is **not an n
 `package.json` is `private` and the version is `0.0.0`, so nothing here is published and
 nothing here is a public API — and there is **no `fugaro voice` command**.
 
-**Status: the skeleton and the first module, and nothing else.** What exists today is the
-runner, the trivial skeleton module with its test, `shared/lease/` (the consumer lease,
-**P1.2**, with its tests and its own README), and this document. The message schema (P0.2),
-the URL validator (P0.3), the mailbox state machine (P1.1), the digest and its redactor
-(P1.3), the staleness rule (P1.4) and the mailbox simulator (P1.5) are planned, unbuilt, and
-each is its own directory. **This paragraph is P0.1's, and P0.1 is the only task the plan's
-"shared files" table gives the package's manifest to — so a task that lands a module here
-corrects this line in its own change rather than leaving the merged document false.**
+**Status: the skeleton, and `mailbox-schema/` (P0.2, the message schema).** The
+URL validator (P0.3), the mailbox state machine (P1.1), the consumer lease
+(P1.2), the digest and its redactor (P1.3), the staleness rule (P1.4) and the mailbox
+simulator (P1.5) are planned, unbuilt, and each is its own directory. What exists today is
+the runner, the skeleton module and `mailbox-schema/`, each with its test, and this document. No task of that plan is
+approved, and this directory is not evidence that one is.
 
-No task of that plan is approved, and this directory is not evidence that one is.
+`lease/` (P1.2) is the consumer lease, in the shape of `runstore.Claim`: built, with no consumer yet; see `lease/README.md`.
+
+`url/` (P0.3) is the URL validator: built, with an empty host allow-list until the owner answers D124; see `url/README.md`.
 
 ## The runner, and the glob
 
@@ -72,9 +72,9 @@ everything that can be one.
 ## What belongs here
 
 Pure logic and nothing that needs a runtime (D119): the message schema and its validation,
-the mailbox's semantics, the consumer lease, the digest, the classifier, the redactor, the
-staleness rule and the URL validator. Nothing in this package imports Electron, React Native,
-a database client or a network client — and the reason is not tidiness: the console and the phone must not be able
+the mailbox's semantics, the digest, the classifier, the redactor, the staleness rule and the
+URL validator. Nothing in this package imports Electron, React Native, a database client or a
+network client — and the reason is not tidiness: the console and the phone must not be able
 to disagree about what is safe to say out loud, which is why the redactor lives here rather
 than in either consumer (P1.3).
 
@@ -95,10 +95,9 @@ is `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
   refuses Fugaro's push of workflow changes. Until it exists, this package's tests run only
   where someone runs them, which the plan records as a real gap in its coverage rather than a
   detail.
-- **The package has no consumer today**, the lease included — it is pure logic with its tests,
-  and the tasks that call it (P1.5's simulator, P3.5's voice screen, P4.1's consumer) are
-  unbuilt. "Shared" is a claim about the future: the console's voice module does not exist
-  (Voice D50, D53), so the second consumer is a plan, not a directory (plan open item 7).
+- **The package has no consumer today.** "Shared" is a claim about the future: the console's
+  voice module does not exist (Voice D50, D53), so the second consumer is a plan, not a
+  directory (plan open item 7).
 
 Where the reasoning lives: [implementation-plan.md](../docs/mobile/implementation-plan.md)
 (P0.1, and the "shared files" table that gives this package's manifest to this task alone),
