@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"io"
 )
 
 // The seal is the second factor the token object gets
@@ -51,14 +52,19 @@ const (
 	minEnvelope = 1 + nonceSize + tagSize
 )
 
+// keyReader is NewKey's random source: crypto/rand, replaced only by tests.
+var keyReader io.Reader = rand.Reader
+
 // NewKey draws a fresh seal key from crypto/rand: KeySize bytes, one per
 // launch. The launcher calls it for every mint, a --retry included, so no key
 // is ever in front of two executions (D17), and the key is never derived from
 // anything a peer could compute (the run's names, the token). A failed draw is
 // an error and never a fallback to a plaintext object.
 func NewKey() ([]byte, error) {
+	// io.ReadFull, not a single Read: every one of the KeySize bytes is
+	// drawn, or there is no key.
 	key := make([]byte, KeySize)
-	if _, err := rand.Read(key); err != nil {
+	if _, err := io.ReadFull(keyReader, key); err != nil {
 		return nil, fmt.Errorf("budget token: generating the seal key failed: %w", err)
 	}
 	return key, nil

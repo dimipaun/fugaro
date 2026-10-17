@@ -344,3 +344,29 @@ func writeBuildRecordAt(t *testing.T, f *cloudFixture, slug, workflow, baseRef s
 func removeBuildRecord(f *cloudFixture) error {
 	return os.Remove(filepath.Join(f.dir, "runs", filepath.FromSlash(imagecheck.RecordKey(appSlug, "web"))))
 }
+
+// TestSealRedactRemovesBothSpellings: sealRedact takes the key out of an
+// error in its marker spelling (unpadded base64url) and as its raw bytes, and
+// the result still unwraps to the original (a refusal stays ErrRejected).
+// The key here is printable on purpose, so its raw spelling can be found in
+// the text at all.
+//
+// Mutation (run, restored): drop string(key) from sealRedact's list — the raw
+// subtest fails.
+func TestSealRedactRemovesBothSpellings(t *testing.T) {
+	key := []byte(strings.Repeat("0123456789abcdef", 2))
+	for name, spelled := range map[string]string{"encoded": token.EncodeKey(key), "raw": string(key)} {
+		t.Run(name, func(t *testing.T) {
+			err := sealRedact(fmt.Errorf("refused env=FUGARO_BUDGET_TOKEN=%s: %w", spelled, backend.ErrRejected), key)
+			if strings.Contains(err.Error(), spelled) {
+				t.Fatalf("the redacted error carries the key's %s spelling: %v", name, err)
+			}
+			if !errors.Is(err, backend.ErrRejected) {
+				t.Fatalf("the redacted error lost its kind: %v", err)
+			}
+		})
+	}
+	if sealRedact(nil, key) != nil {
+		t.Fatal("a nil error is not nil after redaction")
+	}
+}

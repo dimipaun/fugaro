@@ -1,6 +1,8 @@
 package backend
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -42,5 +44,35 @@ func TestLaunchEnvCarriesSecretEntriesAndNeverQuotesThem(t *testing.T) {
 		if strings.Contains(err.Error(), v) {
 			t.Errorf("%s: the refusal quotes the secret's value: %v", name, err)
 		}
+	}
+}
+
+// TestLaunchSpecNeverPrintsASecretValue: a LaunchSpec printed with any fmt
+// verb, or marshalled to JSON, shows a SecretEnv entry's name and never its
+// value (the budget seal key, D15), so a future debug line or error that
+// formats a spec cannot leak it. Env's values, which are not secrets, still
+// print, and the spec itself is unchanged.
+func TestLaunchSpecNeverPrintsASecretValue(t *testing.T) {
+	secret := strings.Repeat("S", 43)
+	spec := LaunchSpec{RunID: "r1", Env: []string{"PLAIN=visible"}, SecretEnv: []string{"FUGARO_BUDGET_TOKEN=" + secret, "MALFORMED" + secret}}
+	js, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outs := map[string]string{
+		"%v": fmt.Sprintf("%v", spec), "%+v": fmt.Sprintf("%+v", spec), "%#v": fmt.Sprintf("%#v", spec), "%s": fmt.Sprintf("%s", spec),
+		"&%+v": fmt.Sprintf("%+v", &spec), "String": spec.String(), "GoString": spec.GoString(), "json": string(js),
+		"nested": fmt.Sprintf("%+v", struct{ S LaunchSpec }{spec}),
+	}
+	for how, out := range outs {
+		if strings.Contains(out, secret) {
+			t.Errorf("%s prints the secret value: %s", how, out)
+		}
+		if !strings.Contains(out, "FUGARO_BUDGET_TOKEN") || !strings.Contains(out, "visible") || !strings.Contains(out, "r1") {
+			t.Errorf("%s lost what is not secret: %s", how, out)
+		}
+	}
+	if spec.SecretEnv[0] != "FUGARO_BUDGET_TOKEN="+secret {
+		t.Fatal("formatting changed the spec")
 	}
 }
