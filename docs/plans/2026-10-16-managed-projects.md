@@ -307,6 +307,8 @@ Each row is one mergeable PR, green on its own:
 
 **Steps.** One function, `Gate(ctx, planPath, spec) (Verdict, error)`, that runs `Guard` first and `Cover`-managed second, in that order, and returns a verdict carrying **every** refusal with the address and the rule that refused it — the shape `Guard` already uses (it lists every refused address rather than the first). `Verdict.OK` is false if either gate refuses, and **the caller's only permitted action on a false verdict is to fall back to a confirmation, never to apply**: the API offers no "apply anyway" and a test asserts the refusal path returns before any apply call. The `spec` is the managed project, its GCP project, the region, the buckets, the registry and the billing account the review showed — the same inputs `Cover` takes (`cover.go:127-154`).
 
+**The cost list is a third check in this verdict (added by Task 1.3's fix round).** `Gate` also runs `tf.ManagedCostRefusals` on the plan, always and whatever the cover said, and carries its refusals as `Refusal{Gate: "cost"}`; a plan stating a blocked cost attribute is not `OK`. The verdict is the one place the block bites, and Task 3.1's apply consumes it only through `Gate`; `TestGateRefusesABlockedCostAttribute` fails if the wiring is dropped.
+
 **Tests:** a refusal from `Guard` alone; a refusal from the managed `Cover` alone; both refusing; a plan both allow — asserting only that the function returns `OK` and that no apply was invoked, since applying is Task 3.1's.
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/managed -run 'Gate|Plan' -count=1`
