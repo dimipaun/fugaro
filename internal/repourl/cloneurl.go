@@ -43,7 +43,7 @@ import (
 // remoteOfAnotherKind, remoteOfAnotherRepo).
 func CloneURL(provider, repo, given string) (string, error) {
 	if given == "" {
-		host := map[string]string{gitprov.KindGitHub: "github.com", gitprov.KindBitbucket: "bitbucket.org"}[provider]
+		host := ProviderHost(provider)
 		if host == "" {
 			return "", fmt.Errorf("git provider %q is not bitbucket or github", provider)
 		}
@@ -76,6 +76,15 @@ func CloneURL(provider, repo, given string) (string, error) {
 		return "", fmt.Errorf("the repository URL %s is not %s", given, repo)
 	}
 	return given, nil
+}
+
+// ProviderHost is the one host a provider kind's repositories are cloned
+// from: github.com for github, bitbucket.org for bitbucket, "" for any other
+// kind. The runner holds a launcher-set remote to exactly this host (review
+// C3 of plan task 3.3), since the git credential is scoped to the remote's
+// host and an alias spelling names a repository it cannot verify.
+func ProviderHost(kind string) string {
+	return map[string]string{gitprov.KindGitHub: "github.com", gitprov.KindBitbucket: "bitbucket.org"}[kind]
 }
 
 // redactURL is a URL as a refusal may quote it: without its userinfo, so a

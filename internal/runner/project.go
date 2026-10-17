@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -183,6 +184,49 @@ func remoteOfAnotherKind(derived, remote string) string {
 		return kind
 	}
 	return ""
+}
+
+// remoteOffTheKindsHost is the host (with its port, when it names one) of a
+// remote that names a host other than exactly the derived kind's own
+// (repourl.ProviderHost: github.com, bitbucket.org), and "" for a remote on
+// that host with no port, or one that names no host at all. A remote with no
+// host is a local path or a file URL: the run sends it no credential
+// (gitops.CredentialURL is empty for it), and the end-to-end and runner
+// fixtures clone from one.
+//
+// The comparison is on the hostname as the URL spells it, case-insensitively
+// (DNS is), with nothing else: "github.com." and "www.github.com" are other
+// names, however they resolve, and an explicit port is refused too, since the
+// deployer never writes one (repourl.CloneURL refuses it) and a credential
+// helper keyed on the bare host would not match it anyway. A derived kind
+// with no host of its own is refused for any host (fail closed).
+func remoteOffTheKindsHost(derived, remote string) string {
+	host, port := remoteHost(remote)
+	if host == "" {
+		return ""
+	}
+	if want := repourl.ProviderHost(derived); want != "" && strings.EqualFold(host, want) && port == "" {
+		return ""
+	}
+	if port != "" {
+		return host + ":" + port
+	}
+	return host
+}
+
+// remoteHost is the host and port a remote names: a URL's, or the host of an
+// scp-like remote ("git@github.com:acme/app.git", which has no port). Both are
+// "" for a remote that names no host, such as a local path.
+func remoteHost(remote string) (host, port string) {
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		return u.Hostname(), u.Port()
+	}
+	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
+		if h, _, ok := strings.Cut(rest, ":"); ok {
+			return h, ""
+		}
+	}
+	return "", ""
 }
 
 // remoteOfAnotherRepo names what a remote on the derived kind's own host
@@ -381,6 +425,17 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		if other := remoteOfAnotherKind(kind, remote); other != "" {
 			return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 				remoteDisplay(remote), other, slug, repo, kind, RemoteEnv)
+		}
+		if host := remoteOffTheKindsHost(kind, remote); host != "" {
+			// The kind check above knows only the hosts gitprov.KindForURL
+			// recognises; every other host was "no disagreement" (review C3).
+			// The git credential is scoped to the remote's host
+			// (gitops.CredentialURL), so a host that is not exactly the
+			// provider's own would receive the provider's token, and an alias
+			// spelling of it (a trailing dot, www., the ssh-over-443 host)
+			// names a repository the run cannot verify.
+			return fmt.Errorf("the run would clone from %s, whose host %s is not %s's own host %s, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and the provider's credential goes only to the provider's own host, so the run stops before any git credential is requested",
+				remoteDisplay(remote), host, kind, repourl.ProviderHost(kind), slug, repo, kind, RemoteEnv)
 		}
 		if other := remoteOfAnotherRepo(kind, repo, remote); other != "" {
 			// internal/infra's repoURL refuses this at deploy time — "it must be
