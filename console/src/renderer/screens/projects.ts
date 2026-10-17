@@ -58,6 +58,7 @@ import { measured, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
 import type { KillView } from '../../shared/schema'
+import { sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
@@ -843,6 +844,14 @@ function numberCell(
   return element
 }
 
+/** sanitizedKey is a document string bound for an **attribute value** rather
+ * than a text cell -- the same door `putText` uses (`live.ts` has the twin), or
+ * null when the sanitizer refuses the string. */
+function sanitizedKey(raw: string): string | null {
+  const result = sanitizeText(raw, 'slug', 'repos[].slug')
+  return result.ok && result.text !== '' ? result.text : null
+}
+
 /** note is one of the console's own sentences, in a cell of its own. */
 function note(parent: ScreenElement, factory: ScreenFactory, text: string, ...classes: string[]): ScreenElement {
   return literal(cell(parent, factory, 'p', 'projects-note', ...classes), text)
@@ -895,7 +904,11 @@ function panelShell(factory: ScreenFactory, panel: ProjectsPanel): ScreenElement
 function capRowLine(factory: ScreenFactory, row: ProjectCapRow): ScreenElement {
   const element = make(factory, 'li', 'projects-cap')
   element.setAttribute('data-scope', row.scope)
-  if (row.slug !== null) element.setAttribute('data-slug', row.slug)
+  // The slug is the document's string, and an attribute is as much the
+  // document's DOM as a text cell: it is written only as the sanitizer drew it,
+  // and a slug the sanitizer refuses leaves no attribute at all.
+  const slug = row.slug === null ? null : sanitizedKey(row.slug)
+  if (slug !== null) element.setAttribute('data-slug', slug)
   if (row.repo !== null) textCell(element, factory, 'span', row.repo, 'repository', 'repo', 'projects-cap-repo')
   else literal(cell(element, factory, 'span', 'projects-cap-scope'), row.scope)
   numberCell(element, factory, 'span', row.dailyCap, 'usd', 'projects-cap-value')

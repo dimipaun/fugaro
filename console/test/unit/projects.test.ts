@@ -570,6 +570,23 @@ describe('renderProjects', () => {
     expect(keys[1]).not.toMatch(/[\u0000-\u001f\u202a-\u202e]/)
   })
 
+  it('writes no document string into an attribute without the sanitizer', () => {
+    // A cap row's slug is the document's string, and an attribute is as much
+    // the document's DOM as a text cell: a token-shaped slug, or one carrying a
+    // control or an invisible character, may not reach any attribute raw.
+    const token = githubToken()
+    const hidden = ['r-1a2b3c4d/r-', '‮', '5e6f7a8b', '\u0007'].join('')
+    for (const slug of [token, hidden]) {
+      const budget = { ...BUDGET, repos: [{ ...BUDGET.repos[0], slug }, BUDGET.repos[1]] }
+      const tree = renderProjects(factory, buildProjectsModel(inputs({ budget })), 'light')
+      const values = walk(tree).flatMap((node) => [...node.attributes.values()])
+      for (const value of values) {
+        expect(value).not.toContain(token)
+        expect(value).not.toMatch(/[\u0000-\u001f‪-‮]/)
+      }
+    }
+  })
+
   it('puts the CLI\'s refusal sentence through the sanitizer before a panel draws it', () => {
     // A refused read's reason is the CLI's stderr sentence: text the console
     // did not write, so a credential echoed into it is redacted, not drawn.
