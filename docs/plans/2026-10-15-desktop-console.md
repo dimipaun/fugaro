@@ -151,7 +151,7 @@ Each row is one mergeable PR, green on its own:
 | D | 2.0 | **SECURITY-SENSITIVE** (the text path) |
 | E | 2.1, 2.2, 2.3 | |
 | F | 3.1, 3.2 | |
-| F2 | **3.3** | **SECURITY-SENSITIVE** (the startup gate that decides whether a dashboard is drawn); **not approved to implement**, see the task |
+| F2 | **3.3** | **SECURITY-SENSITIVE** (the startup gate that decides whether a dashboard is drawn); **approved by the owner 2026-10-17**, see the task |
 | G | 4.1, 4.2, 4.4 | **SECURITY-SENSITIVE** (supply chain) |
 | H | 4.3, 4.5 | **OWNER-RUN**, no agent performs any step of either; 4.5 copies in the **signing** workflow |
 | I | 4.6 | the release gate; **merges only after C2**, and refuses a tag until the console job runs |
