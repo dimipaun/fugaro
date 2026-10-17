@@ -158,6 +158,6 @@ installs from the committed lockfile, and the last two are build output.
 The deploy comes later and it is **not a Fugaro run's to write**: W2.1 stages a workflow
 under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to deploy
 to the Firebase project created for the website only (D91, D109) — a run may not change
-`.github/workflows/`. `docs/pending-workflows/` holds other pending workflows today (`ci.yml`),
-but no deploy workflow and no `firebase.json` exists yet: they are W2.1's, and this document describes them in advance
+`.github/workflows/`. `docs/pending-workflows/` holds no pending workflow today,
+and no deploy workflow and no `firebase.json` exists yet: they are W2.1's, and this document describes them in advance
 rather than claiming them.
