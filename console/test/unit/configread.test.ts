@@ -173,6 +173,26 @@ describe('the app never reads the operator’s config', () => {
     expect(codeOnly(spawn)).not.toMatch(/readFileSync|readFile\(|createReadStream/)
   })
 
+  it('lets the installation store stat a config path, and never open one', () => {
+    // Task 3.4b added `src/main/installations.ts`, the first module in the
+    // console that handles a config path at all -- and the plan's red step for
+    // this half is a planted `readFileSync` of it. The line the store makes is
+    // a `stat`: "is this an existing file", which is what rule 7 allows, and
+    // nothing about what is in it. The scan is per line and keyed on the
+    // variable, so a later edit that swapped the `stat` for a read fails here
+    // by name.
+    const code = codeOnly(readFileSync(join(SOURCE_ROOT, 'main', 'installations.ts'), 'utf8'))
+    expect(code).toContain('fs.stat(configPath)')
+    for (const line of code.split('\n')) {
+      if (!/configPath/.test(line)) continue
+      expect(line.trim(), line.trim()).not.toMatch(/readFileSync|readFile\(|createReadStream|openSync|open\(/)
+    }
+    // ...and the planted mutation, against the same scan, so the check above is
+    // not vacuous.
+    const planted = "isFile = readFileSync(configPath, 'utf8').length > 0"
+    expect(/configPath/.test(planted) && /readFileSync/.test(planted)).toBe(true)
+  })
+
   it('leaves the reading to the CLI, which is the only thing that names the file', () => {
     // The console names `fugaro.yaml` in exactly one place, and it is a comment:
     // the file itself is read by `localcfg.Select` in the CLI, whose refusal is

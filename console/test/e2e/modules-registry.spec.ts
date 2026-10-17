@@ -20,7 +20,7 @@
 // builds first, so `dist/` is always the tree under test.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join, posix } from 'node:path'
+import { basename, join, posix } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 
@@ -52,10 +52,23 @@ const specs = readdirSync(e2eDir)
   .filter((spec): spec is { name: string; registry: readonly string[] } => spec.registry !== null)
 
 test.describe('the hand-built module registries', () => {
-  test('there are registries to check, so this guard is not vacuous', () => {
-    expect(specs.map((spec) => spec.name)).toEqual(
-      expect.arrayContaining(['degraded.spec.ts', 'live.spec.ts', 'skew.spec.ts', 'spend.spec.ts']),
-    )
+  test('there are registries to check, and this guard names every one of them', () => {
+    // **Derived, not listed.** Round 2 of Task 3.3 wrote this as
+    // `arrayContaining(['degraded.spec.ts', 'live.spec.ts', 'skew.spec.ts',
+    // 'spend.spec.ts'])`, which named four of the six specs that declare a
+    // registry: the other two were checked by the loop below and *unasserted*
+    // here, so a seventh spec could have joined them silently. The set is
+    // therefore read off the directory -- every spec in it that declares a
+    // `MODULES` list, this guard file excepted -- and compared exactly.
+    const declaring = readdirSync(e2eDir)
+      .filter((name) => name.endsWith('.spec.ts'))
+      .filter((name) => name !== basename(__filename))
+      .filter((name) => /const MODULES[^=]*=\s*Object\.freeze\(\[/.test(readFileSync(join(e2eDir, name), 'utf8')))
+      .sort()
+    expect(specs.map((spec) => spec.name)).toEqual(declaring)
+    // ...and the floor, so a directory that somehow read as empty fails here
+    // rather than making the assertion above vacuously true.
+    expect(declaring.length).toBeGreaterThanOrEqual(6)
   })
 
   for (const spec of specs) {
