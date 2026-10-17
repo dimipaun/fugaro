@@ -45,8 +45,9 @@ the deploy workflow to run (that workflow is W2.1's: it is not written yet, it w
 `.github/workflows/`), and it is hermetic: it reads this
 repository, builds, and asserts over the artifact — no cloud, no credential, no deployed
 site. The live checks — the real domain, DNS, TLS and the deployed HTML — are the owner's,
-and W2.2 and W2.3 write them as **checks 69a–69c** in `docs/gcp-live-checklist.md`, whose
-highest written section is 58 today.
+and W2.2 and W2.3 write them as **checks 69a–69c** in `docs/gcp-live-checklist.md`: 69a (the
+site is live and honest) and 69b (nothing phones home) are written by W2.2, and 69c (the
+published ranges are real) is W2.3's, in the level after it.
 
 ## Nothing loads from a third party
 
@@ -61,6 +62,40 @@ the gate that decides whether anything is fetched and its own tests for no reque
 consent, no cookie before consent, withdrawal and keyboard reachability. `readme.mjs`
 refuses a third-party font or script host in the shell's own sources today, and W1.11
 asserts the same over the built HTML's script, link, iframe and image origins.
+
+## The gates
+
+Four checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+with fixtures that keep its refusals running, and none of them needs the network:
+
+- `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
+  `#anchor` to an id in its target, every external link is `https:` on `site.yaml`'s
+  `allowed_hosts`, and every GitHub link into this repository names a path and heading that
+  exist.
+- `test/origins.mjs` — nothing loads from a host that is not this site (images and embeds
+  may also come from `allowed_hosts`), inline scripts are on a hash allow-list, and the one
+  third-party origin D93 admits appears only in the layout's consent-gated loader.
+- `test/a11y.mjs` — after W1.2's contrast cases: lang, one `h1`, no heading jumps,
+  landmarks, a skip link, names and labels, keyboard reachability, focus outlines, a
+  `prefers-reduced-motion` path for every animation, and the shipped tokens equal to the
+  palette in force.
+- `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
+  deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
+  each is about three times what the build of 2026-10-17 needs, and a later optimisation
+  pass tightens them.** The gate itself is not loose: a page or a site over the number
+  fails, and the test keeps a case that proves it. The original derivation (that build plus
+  25%) is in the test's header; a task that needs more raises the number here, in the commit
+  that needs it:
+  - **JavaScript per page:** 100,000 bytes. The site ships no script today; the allowance
+    leaves room for W1.12's consent banner and the logo work without a budget edit.
+  - **Page weight per page:** 662,766 bytes. Three times 220,922 (the heaviest page, the
+    docs hub at 176,737 bytes, plus 25%).
+  - **Whole site:** 1,454,826 bytes. Three times 484,942 (every file in `dist/`, 387,953
+    bytes, plus 25%).
+
+**Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
+best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
+requests and the tests here are hermetic, so a browser-driven audit is not one of them.
 
 The site's other gate is the Go side, which holds every fact to the file it is derived
 from:
@@ -180,9 +215,43 @@ home-screen icons, the manifest's colours (the palette's `--ground`), the header
 (`script-src 'self'`, inline styles allowed because Astro inlines small stylesheets),
 `nosniff`, a referrer policy, a one-year immutable cache for the hashed `/_astro/` files,
 a day for icons and fonts, and five minutes for HTML. It names no project and there is no
-`.firebaserc`. It landed ahead of W2.1 with the owner's deploy script; W2.1 and W2.2 extend it
-(the staged workflow, the redirect block), and W1.12 or W3.2 must widen the CSP when the
-consented analytics script is switched on, because the policy blocks it today.
+`.firebaserc`. It landed ahead of W2.1 with the owner's deploy script; W2.1 extends it (the
+staged workflow), and W1.12 or W3.2 must widen the CSP when the consented analytics script
+is switched on, because the policy blocks it today. **It carries no `redirects` block, and
+that is deliberate** — see the next section.
+
+### The canonical domain, and why the redirect is not in `firebase.json`
+
+`data/site.yaml`'s `canonical_url` is the one origin the canonical `<link>`, the sitemap, the
+OpenGraph tag and every absolute link on the site are built from, and it is the real domain
+the owner registered and connected Firebase Hosting to (owner ruling 2026-10-17; the site's
+own project is `fugaro-prod`, D91). `secondary_domain` names the second domain the owner
+acquired, and it **redirects to the canonical one**: the direction is the whole point of it,
+so the site links nothing on it and it is not on `allowed_hosts`. Both are named in
+`data/site.yaml` and nowhere else under `website/` — `TestWebsiteDomainsAppearOnlyInSiteYaml`
+in `internal/cli/docs_website_boundary_test.go` scans every file under `website/` for each of
+the two hosts (and the control beside it, `TestWebsiteHostScanSeesAPlantedCopy`, plants one in
+a page to prove the scan sees it), which is why this page does not print either domain.
+
+**The redirect is a property of the attached domain and not a `firebase.json` rule, and that
+is a fact about Firebase Hosting rather than a preference.** A Hosting redirect rule is
+matched against the request **path**, and firebase-tools' config schema for one admits only
+`destination`, one of `source`/`glob`/`regex`, and `type` (`schema/firebase-config.json`,
+`definitions/HostingRedirects`, `additionalProperties: false`): there is no field that could
+condition a rule on the request's host. A rule that sent every path to the canonical origin
+would therefore fire on the canonical origin too, answering a request with a redirect to
+itself — a loop. So the redirect is set where the domain is attached: the Firebase console's
+own redirect option when the second domain is added to the site's project, or the Hosting
+API's custom-domain redirect. **Registering a domain, attaching it and writing its DNS
+records are the owner's steps** — no agent registers a domain, touches DNS or changes the
+project — and until the domain is attached and that redirect is set, `secondary_domain` names
+a domain nothing answers on: the site is simply live on the canonical URL, and nothing in
+this repository changes that. `TestWebsiteFirebaseRedirectsDoNotLoop` also refuses a
+`firebase.json` redirect whose source matches its own destination — a path redirected to
+itself, a wildcard pointing inside its own match set, or either spelling of Firebase's
+catch-all (`/**`, `**`) pointed at any path on a host this site serves — so the looping rule
+cannot be added later by a task that assumes the domain step was already done, and check 69a
+in `docs/gcp-live-checklist.md` is where the live result is recorded.
 
 `scripts/deploy-website.sh` deploys from the owner's machine with the Firebase CLI, using
 whatever `firebase login` the owner already did — it never reads, prints or takes a token

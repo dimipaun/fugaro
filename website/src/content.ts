@@ -538,7 +538,9 @@ export function loadSiteFacts(): SiteFacts {
 
   // The canonical URL: the origin alone, because the canonical <link>, the sitemap, the
   // OpenGraph tag and every absolute link the site prints are built from it. The Go
-  // boundary test pins it to a reserved placeholder host until W2.2 writes the real one.
+  // boundary test refuses a reserved placeholder host here since W2.2 wrote the real
+  // domain, so a build with the placeholder back in this line fails there rather than
+  // shipping a canonical link to a name that cannot resolve.
   const written = asString(doc.canonical_url, file, 'canonical_url')
   const canonical = new URL(asURL(doc.canonical_url, file, 'canonical_url'))
   if (written !== canonical.origin) {
@@ -944,9 +946,9 @@ export function loadFonts(): { href: string; type: string }[] {
  * pointer at a file, and the site's rule about pointers is the one Global Constraint 9
  * states for downloads: a page names an artifact that exists. The sitemap arrives with
  * the integration that produces it — `@astrojs/sitemap`, declared in astro.config.mjs,
- * which no Part 1 task adds and W2.2's canonical-URL work is where it belongs — so the
- * link is emitted from the canonical origin the moment that line is there, and not
- * before.
+ * which no task adds yet (W2.2 set the canonical URL the sitemap would be built from and
+ * added no integration) — so the link is emitted from the canonical origin the moment
+ * that line is there, and not before.
  */
 export function loadSitemapHref(canonicalURL: string): string | null {
   const config = path.join(SITE_ROOT, 'astro.config.mjs')

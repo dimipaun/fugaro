@@ -15,6 +15,12 @@ simulator (P1.5) are planned, unbuilt, and each is its own directory. What exist
 the runner, the skeleton module and `mailbox-schema/`, each with its test, and this document. No task of that plan is
 approved, and this directory is not evidence that one is.
 
+`digest/` (P1.3) is the digest, the severity rule and the redactor: built, with its own tests; see `digest/README.md`.
+
+`lease/` (P1.2) is the consumer lease, in the shape of `runstore.Claim`: built, with no consumer yet; see `lease/README.md`.
+
+`presence/` (P1.4) is the staleness and offline rule: built; see `presence/README.md`.
+
 `url/` (P0.3) is the URL validator: built, with an empty host allow-list until the owner answers D124; see `url/README.md`.
 
 ## The runner, and the glob
