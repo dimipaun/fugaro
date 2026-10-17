@@ -225,7 +225,7 @@ C1.11 ← C1.2, C1.8, C1.9, C1.10      C1.12 ← C1.11, C1.13
 C1.13 ← C1.11                        C1.14 ← C1.11
 C1.15 ← C1.7, C1.10                  C1.16 ← C1.3, C1.15, C1.17
 C1.17 ← C1.2, C1.3, C1.10            C1.18 ← G
-C1.19 ← C1.1, C1.2, C1.15, C1.17     C1.20 ← C1.1, C1.18
+C1.19 ← C1.1, C1.2, C1.15, C1.17     C1.20 ← C1.1, C1.3, C1.18
 C1.21 ← C1.3, C1.9                   C1.22 ← C1.19, C1.20, C1.21
 C1.23 ← C1.6, C1.14, C1.19, C1.20, C1.21
 C1.24 ← C1.12, C1.13, C1.16, C1.22, C1.23 (owner; plus a release)
@@ -255,7 +255,7 @@ C2.5  ← C2.4, C1.24 (owner; plus a release)
 
 ### The critical path
 
-**C0.3 → C0.4 (owner) → G (0.9.0's seal) → C1.2 → C1.9 → C1.11 → C1.13 → C2.1 → C2.2 → C2.4 → C2.5 (owner)** — ten steps, two of them owner-run (C0.4, C2.5), and the seal's wait between C0.4 and C1.2. An equal-length alternative runs C1.7 → C1.8 → C1.11. Slice 1's own end, C1.2 → C1.17 → C1.19 → C1.22 → C1.23 → C1.24 (owner), is two steps shorter (C1.24 at L7, C2.5 at L9). The longest wait on it is not a task at all: **the seal, held for 0.9.0**. Two things shorten the rest: C1.9 is a pure package (keep it small), and the owner-run checks are scheduled as soon as their text is written. The release that carries a runner change is a hidden step before every owner-run check of runner behaviour (C1.24, C2.5): the check runs a released or owner-built image.
+**C0.3 → C0.4 (owner) → G (0.9.0's seal) → C1.2 → C1.9 → C1.11 → C1.13 → C2.1 → C2.2 → C2.4 → C2.5 (owner)** — ten steps, two of them owner-run (C0.4, C2.5), and the seal's wait between C0.4 and C1.2. An equal-length alternative runs C1.7 → C1.8 → C1.11. Slice 1's own end, C1.3 → C1.4 → C1.5 → C1.6 (owner) → C1.23 → C1.24 (owner), is two steps shorter (C1.24 at L7, C2.5 at L9). The longest wait on it is not a task at all: **the seal, held for 0.9.0**. Two things shorten the rest: C1.9 is a pure package (keep it small), and the owner-run checks are scheduled as soon as their text is written. The release that carries a runner change is a hidden step before every owner-run check of runner behaviour (C1.24, C2.5): the check runs a released or owner-built image.
 
 ### What must be sequential
 
@@ -301,12 +301,12 @@ Writing the answers approves no task.
 
 ### Task C0.4: Check 90 — OWNER-RUN
 
-**Files.** None (the owner records the FACT lines in the register). **Depends on.** C0.3. **Reviewer.** owner. **No agent performs any step.**
+**Files.** None (the owner records the FACT lines in the register). **Depends on.** C0.3. **Verification.** The owner runs Check 90 on the owner's own machine and Check 90 is recorded in the register. **Reviewer.** owner. **No agent performs any step.**
 **If it fails:** Global Constraint 4.
 
 ### Task C0.5: Check 91 — OWNER-RUN
 
-**Files.** None. **Depends on.** C0.3. **Reviewer.** owner. **No agent performs any step.**
+**Files.** None. **Depends on.** C0.3. **Verification.** The owner runs Check 91 on installation `fugaro`, its Restore ends in the all-`0` assertion, and Check 91 is recorded in the register. **Reviewer.** owner. **No agent performs any step.**
 
 ### Task C0.6: `creds/` denied to every run token, pinned against today's rules — SECURITY-SENSITIVE (test only)
 
@@ -347,12 +347,12 @@ Writing the answers approves no task.
 
 ### Task C1.3: The rules — `creds/` denied, the run's new children, by-tier counters — SECURITY-SENSITIVE
 
-**Files.** `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/testdata/rules.golden.json`, `internal/budget/rules/parity_test.go` (if a mirror is needed), `internal/budget/rules/creds_emulator_test.go` (extended), `internal/budget/rules/marker.go` (**new**: `CredsRulesVersion` = 1 and the path `config/limits/credsRules`), `internal/infra/firebasedb.go` (`DB.Plan` writes that marker after `PutRules` succeeds, beside `policyRules`), `internal/budget/model.go` (`AgentEntry` gains the two optional fields below), `docs/design/m9-budget-and-dashboard.md` §6.2/§6.4.
+**Files.** `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/testdata/rules.golden.json`, `internal/budget/rules/parity_test.go` (if a mirror is needed), `internal/budget/rules/creds_emulator_test.go` (extended), `internal/budget/rules/marker.go` (**new**: `CredsRulesVersion` = 1 and the path `config/limits/credsRules`), `internal/infra/firebasedb.go` (`DB.Plan` writes that marker after `PutRules` succeeds, beside `policyRules`, and refuses a `credsRules` above `CredsRulesVersion`), `internal/budget/model.go` (`AgentEntry` gains the two optional fields below), `docs/design/m9-budget-and-dashboard.md` §6.2/§6.4.
 **Rules change.** (1) An explicit `creds` node, `.read`/`.write` false, like today's `fugaro` node — **no run token reads or writes anything under it**; the service writes it as its own account (admin, rules bypassed, F17). (2) `agents/$slug/$run` gains two validated children its own run writes: `credential` (the current credential's **name**, never a value) and `waiting_until` (a timestamp, for the `oauth-only` "waiting, expected resume time" view — spec, D152). (3) The per-run and per-day counters gain a **by-tier split** of real spend (tier B and tier C nodes under `runs/$slug/$run` and `spend/$day/…`, validated like today's `spent`; tier A stays on the existing `notional` nodes) — the template is a closed allowlist, so these must be added here (review finding M5).
-**Non-adopters (review finding M3), and no `RulesVersion` bump.** `rules.Generate()` takes no input, so one template serves every installation. **`projectpolicy.RulesVersion` stays 1**: it gates the policy nodes (`version.go`), which this change does not touch, and bumping it would make `projectpolicy.Read` (`gen < RulesVersion` → not found) drop every published policy — caps, `allow_repos`, routing, prices — on any installation whose owner has not redeployed the rules yet, and make `requirePolicyRules` refuse to publish there: not harmless to an installation that has not opted in. Instead: `creds/` is denied to everyone (no behaviour change: it is denied today); the new children are optional, validated children of nodes a run already writes; **only a `cascade` run writes them** (C1.16, C1.17, C1.19), so no non-cascade run ever needs the new rules; and the same owner-run deploy records a separate marker, `config/limits/credsRules` (readable by every run token, like `config/limits`), which the `cascade` launch (C1.19), the init stage (C1.20) and `doctor` (C1.21) require — a `cascade` run on an installation whose rules predate the children is refused before launch, never halted mid-run on a denied write. A test pins that every pre-existing path's rule is unchanged.
-**Tests.** `TestRulesGolden`, `TestGeneratedRulesParse`, `TestRulesParity`, `TestRulesPreexistingPathsUnchanged` (every path of today's golden has a byte-identical rule after the change), `TestRulesVersionUnchanged` (`RulesVersion` is still 1), `TestFirebaseDeployWritesCredsMarker` (`internal/infra`); emulator (tag `firebase`): the C0.6 cases still pass, plus `TestAgentEntryCredentialNameValidated`, `TestAgentEntryWaitingUntilValidated`, `TestByTierCountersOwnRunOnly`, `TestByTierCountersMonotonic`, and the existing emulator suite unchanged (a non-opted-in run's writes behave identically).
+**Non-adopters (review finding M3), and no `RulesVersion` bump.** `rules.Generate()` takes no input, so one template serves every installation. **`projectpolicy.RulesVersion` stays 1**: it gates the policy nodes (`version.go`), which this change does not touch, and bumping it would make `projectpolicy.Read` (`gen < RulesVersion` → not found) drop every published policy — caps, `allow_repos`, routing, prices — on any installation whose owner has not redeployed the rules yet, and make `requirePolicyRules` refuse to publish there: not harmless to an installation that has not opted in. Instead: `creds/` is denied to everyone (no behaviour change: it is denied today); the new children are optional, validated children of nodes a run already writes; **only a `cascade` run writes them** (C1.16, C1.17, C1.19), so no non-cascade run ever needs the new rules; and the same owner-run deploy records a separate marker, `config/limits/credsRules` (readable by every run token, like `config/limits`), which the `cascade` launch (C1.19), the init stage (C1.20) and `doctor` (C1.21) require — a `cascade` run on an installation whose rules predate the children is refused before launch. The marker is written the way `policyRules` is: after `PutRules` succeeds, and also on the no-deploy path when it is absent (the deployed rules already equal the generated ones). A test pins that every pre-existing path's rule is unchanged. **KNOWN GAP — a rules downgrade.** An older Fugaro running `fugaro init --firebase` reads `policyRules` 1, equal to its own `RulesVersion`, so its downgrade refusal (`markerGen > RulesVersion` in `infra/firebasedb.go`) does not fire; it redeploys its older rules, which lack the new children, and leaves `credsRules` at 1, which it does not know. `cascade` launches then pass the marker gate and the run's first write of `credential`, `waiting_until` or a by-tier counter is denied mid-run. Mitigation: that denial is a **named halt** (C1.17's `HaltCredsRulesDenied`: the run fails with a message naming the rules redeploy, no silent retry), never a silent drop. This task's own refusal in `DB.Plan` of a `credsRules` marker above `CredsRulesVersion` guards only **future** releases; releases before this one cannot be taught it.
+**Tests.** `TestRulesGolden`, `TestGeneratedRulesParse`, `TestRulesParity`, `TestRulesPreexistingPathsUnchanged` (every path of today's golden has a byte-identical rule after the change), `TestRulesVersionUnchanged` (`RulesVersion` is still 1), `TestFirebaseDeployWritesCredsMarker` and `TestFirebaseNoDeployWritesAbsentCredsMarker` (`internal/infra`), `TestFirebasePlanRefusesNewerCredsMarker`; emulator: `TestRunCannotWriteCredsRulesMarker` and `TestRunCannotWritePolicyRulesMarker` (a run token cannot write either marker under `config/limits`; `policyRules` has no such pin today, so this adds it); emulator (tag `firebase`): the C0.6 cases still pass, plus `TestAgentEntryCredentialNameValidated`, `TestAgentEntryWaitingUntilValidated`, `TestByTierCountersOwnRunOnly`, `TestByTierCountersMonotonic`, and the existing emulator suite unchanged (a non-opted-in run's writes behave identically).
 **Red step.** `TestAgentEntryCredentialNameValidated` first (fails: no such child).
-**Verification.** `go test ./internal/budget/rules/... -count=1 && go test -tags firebase -count=1 ./internal/budget/rules/...`.
+**Verification.** `go test ./internal/budget/rules/... -count=1 && GOFLAGS=-p=2 go test ./internal/infra/... -count=1 && go test -tags firebase -count=1 ./internal/budget/rules/...`.
 **Depends on.** G; C0.6. **Reviewer.** opus + **MANDATORY** independent review (it changes what the database permits).
 **Commit.** `rules: creds/ denied to every run token, the agent entry's credential name and waiting time, by-tier counters; the credsRules marker, RulesVersion unchanged`
 
@@ -467,8 +467,8 @@ Writing the answers approves no task.
 ### Task C1.17: Review-stage sessions saved, and the runner's wait — SECURITY-SENSITIVE
 
 **Files.** `internal/runner/session.go` (save the review stage's session too, redacted), `internal/runner/runner.go` (`stage`: on `ExhaustedUntil` end the stage, wait within the job's remaining timeout, resume with `--resume`; under `oauth-only` wait for the earliest reset whatever the threshold; write `waiting_until` on the run's agent entry while waiting (a `cascade` run only, C1.3) and clear it on resume; halt with a named reason when the wait would exceed the timeout), `internal/runstore/runstore.go` (the new halt reason), tests.
-**Interfaces.** A new halt reason for "no credential before the job's timeout". No resume after job death (C3.1). The runner only reacts to the service's answer; it writes no mark.
-**Tests.** `TestReviewSessionSaved`, `TestStageWaitsAndResumes`, `TestOAuthOnlyIgnoresThreshold`, `TestWaitingUntilWrittenAndCleared`, `TestWaitBeyondTimeoutHalts`, `TestSessionRedacted` (existing redaction applies).
+**Interfaces.** Two new halt reasons: one for "no credential before the job's timeout", and `HaltCredsRulesDenied` for a `cascade` run whose write of `credential`, `waiting_until` or a by-tier counter is refused by the deployed rules (C1.3's known gap: the run fails with a message naming `fugaro init --firebase` with this release, and the write is not retried); C1.16 and C1.19 halt with it too. No resume after job death (C3.1). The runner only reacts to the service's answer; it writes no mark.
+**Tests.** `TestReviewSessionSaved`, `TestStageWaitsAndResumes`, `TestOAuthOnlyIgnoresThreshold`, `TestWaitingUntilWrittenAndCleared`, `TestWaitBeyondTimeoutHalts`, `TestDeniedCascadeWriteHaltsNamed`, `TestSessionRedacted` (existing redaction applies).
 **Red step.** `TestStageWaitsAndResumes` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/runner/... ./internal/runstore/... -count=1`.
 **Depends on.** C1.2 (threshold, `fallback`), C1.3 (`waiting_until`), C1.10 (the error's wire form). **Reviewer.** opus + mandatory independent review.
@@ -493,8 +493,8 @@ Writing the answers approves no task.
 
 ### Task C1.20: The mounts and the owner-run init stage — SECURITY-SENSITIVE
 
-**Files.** `internal/infra/spec.go`, `readiness.go` (no model secret mounted when the service is on; a `cascade` workflow mounts no tier-A token in any case), `internal/cli/init.go` and `internal/cli/init_credentials.go` (**new**, on the `init_compute.go` precedent: a flag like `--provision-batch`, typed at a real terminal, never covered by `--yes`, refused under `agentMarker`; the service's image is a Terraform variable of C1.18's `credentials.tf`, on the `history.tf` precedent (`var.history.image`), which the stage fills with the released image's reference, so this task needs C1.14's image only when the owner applies it, C1.24), the upgrade note in `internal/cli/upgrade_cloud.go` (a note on `fugaro upgrade`'s cloud step, on the `jobConfigCopyPolicyNote` precedent), tests.
-**Tests.** `TestNoModelMountsWithService`, `TestCascadeMountsNoOAuthToken`, `TestInitCredentialsStageRefusedInAgent`, `TestInitCredentialsStageNotCoveredByYes`, `TestUpgradeNoteNamesTheStage`. **Red step.** `TestInitCredentialsStageRefusedInAgent`. **Verification.** `GOFLAGS=-p=2 go test ./internal/infra/... ./internal/cli -run 'Credentials|Mount|Init|Upgrade' -count=1`. **Depends on.** C1.1, C1.18. **Reviewer.** opus + mandatory independent review.
+**Files.** `internal/infra/spec.go`, `readiness.go` (no model secret mounted when the service is on; a `cascade` workflow mounts no tier-A token in any case), `internal/cli/init.go` and `internal/cli/init_credentials.go` (**new**, on the `init_compute.go` precedent: a flag like `--provision-batch`, typed at a real terminal, never covered by `--yes`, refused under `agentMarker`; **refused without the `credsRules` marker of C1.3**, naming `fugaro init --firebase`; the service's image is a Terraform variable of C1.18's `credentials.tf`, on the `history.tf` precedent (`var.history.image`), which the stage fills with the released image's reference, so this task needs C1.14's image only when the owner applies it, C1.24), the upgrade note in `internal/cli/upgrade_cloud.go` (a note on `fugaro upgrade`'s cloud step, on the `jobConfigCopyPolicyNote` precedent), tests.
+**Tests.** `TestNoModelMountsWithService`, `TestCascadeMountsNoOAuthToken`, `TestInitCredentialsStageRefusedInAgent`, `TestInitCredentialsStageNotCoveredByYes`, `TestInitCredentialsStageRefusedWithoutCredsMarker`, `TestUpgradeNoteNamesTheStage`. **Red step.** `TestInitCredentialsStageRefusedInAgent`. **Verification.** `GOFLAGS=-p=2 go test ./internal/infra/... ./internal/cli -run 'Credentials|Mount|Init|Upgrade' -count=1`. **Depends on.** C1.1, C1.3 (the marker), C1.18. **Reviewer.** opus + mandatory independent review.
 **Commit.** `infra, init: no model-secret mounts with the service on; an owner-run init stage to apply it`
 
 ### Task C1.21: Visibility — `watch`, `fugaro accounts ls`, `doctor`; clearing a mark — SECURITY-SENSITIVE
@@ -525,7 +525,7 @@ Writing the answers approves no task.
 
 ### Task C1.24: The init stage, Checks 94, 95 and 99 — OWNER-RUN
 
-**Files.** None. **Depends on.** C1.12, C1.13, C1.16, C1.22, C1.23, and a release (or owner-built image) carrying Slice 1. **Reviewer.** owner. **No agent performs any step.**
+**Files.** None. **Depends on.** C1.12, C1.13, C1.16, C1.22, C1.23, and a release (or owner-built image) carrying Slice 1. **Verification.** The owner runs the init stage and Checks 94, 95 and 99 on installation `fugaro`, each Restore ends in the all-`0` assertion, and Checks 94, 95 and 99 are recorded in the register. **Reviewer.** owner. **No agent performs any step.**
 
 ---
 
@@ -553,7 +553,7 @@ Writing the answers approves no task.
 
 ### Task C2.5: Check 96 — OWNER-RUN
 
-**Files.** None. **Depends on.** C2.4, C1.24, a release carrying Slice 2. **Reviewer.** owner.
+**Files.** None. **Depends on.** C2.4, C1.24, a release carrying Slice 2. **Verification.** The owner runs Check 96 on installation `fugaro` and the sandbox repository, its Restore ends in the all-`0` assertion, and Check 96 is recorded in the register. **Reviewer.** owner.
 
 ---
 
