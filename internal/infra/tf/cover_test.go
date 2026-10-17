@@ -19,6 +19,20 @@ func grant(typ, member, role string) ResourceChange {
 	return rc(typ, map[string]any{"member": member, "role": role}, map[string]any{}, "create")
 }
 
+// grantOnAccount is grant with the account the role is granted on: what
+// deployerGrant reads for the token creator role, and what a plan that leaves
+// it out does not say.
+func grantOnAccount(typ, member, role, account string) ResourceChange {
+	return rc(typ, map[string]any{"member": member, "role": role, "service_account_id": account}, map[string]any{}, "create")
+}
+
+// deployerAccountName is the deployer account of a run's project in the form a
+// plan names it (the resource's own name attribute), which is the form the
+// module writes as a literal.
+func deployerAccountName(project string) string {
+	return "projects/" + project + "/serviceAccounts/" + DeployerAccount(project)
+}
+
 var testCover = Cover{Projects: []string{"proj-1", "fp-2"}, Listed: []string{"user:me@example.com", "group:ops@example.com", "domain:example.com", "allUsers"},
 	Registry: "us-east5-docker.pkg.dev", Region: "us-east5", Buckets: []string{"fugaro-runs-proj-1"}, Billing: []string{"AAAA-BBBB"},
 	Ghcr: "fugaro-ghcr", Owner: "dimipaun"}
@@ -165,9 +179,24 @@ func TestCoverNotCovered(t *testing.T) {
 		// person the review listed — the grant that lets the owner assume the
 		// deployer account. To a stranger, or on the project, is still refused
 		// (the two rows below), and it stays refused on every other type.
-		"tokenCreator to a listed member":  {[]ResourceChange{grant("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator")}, true},
-		"tokenCreator to a stranger":       {[]ResourceChange{grant("google_service_account_iam_member", "user:eve@example.com", "roles/iam.serviceAccountTokenCreator")}, false},
-		"tokenCreator on the project":      {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator")}, false},
+		"tokenCreator to a listed member": {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("proj-1"))}, true},
+		"tokenCreator to a stranger":      {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:eve@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("proj-1"))}, false},
+		"tokenCreator on the project":     {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator")}, false},
+		// The account is the half grantRules cannot see: this role on a
+		// person's behalf is covered only on the deployer account of this run
+		// (deployerGrant), so the scheduler's account, a stranger's, another
+		// project's deployer and an unnamed account are all refused.
+		"tokenCreator on the scheduler account":                {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("fugaro-scheduler"))}, false},
+		"tokenCreator on an unrelated account":                 {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", "projects/proj-1/serviceAccounts/eve@proj-1.iam.gserviceaccount.com")}, false},
+		"tokenCreator on another project's deployer account":   {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("other"))}, false},
+		"tokenCreator on an account named without its project": {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", DeployerAccount("proj-1"))}, false},
+		"tokenCreator on an email of another project":          {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", "projects/proj-1/serviceAccounts/"+DeployerAccount("other"))}, false},
+		"tokenCreator on no account":                           {[]ResourceChange{grant("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator")}, false},
+		"tokenCreator on an unknown account":                   {[]ResourceChange{rc("google_service_account_iam_member", map[string]any{"member": "user:me@example.com", "role": "roles/iam.serviceAccountTokenCreator"}, map[string]any{"service_account_id": true}, "create")}, false},
+		// The account rule is the token creator role's alone: the actAs grants
+		// on the job and build accounts name their accounts however the module
+		// does, and are not this check's business.
+		"serviceAccountUser on a computed account": {[]ResourceChange{rc("google_service_account_iam_member", map[string]any{"member": "user:me@example.com", "role": "roles/iam.serviceAccountUser"}, map[string]any{"service_account_id": true}, "create")}, true},
 		"keyAdmin":                         {[]ResourceChange{grant("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountKeyAdmin")}, false},
 		"resourcemanager admin":            {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "roles/resourcemanager.projectIamAdmin")}, false},
 		"serviceAccountUser to a stranger": {[]ResourceChange{grant("google_service_account_iam_member", "user:eve@example.com", "roles/iam.serviceAccountUser")}, false},
@@ -898,7 +927,7 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 // The module writes the fence, so the module's text and Go's copy of it must
 // be the same bytes: the clauses one by one, in order, under the same title,
 // and one binding per role — the scoped one conditioned, the other one not.
-// This is what makes the plan review's byte comparison (deployerCondition)
+// This is what makes the plan review's byte comparison (deployerGrant)
 // check the condition the module actually applies.
 func TestDeployerBindingsAreTheModules(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"))
@@ -981,10 +1010,19 @@ func TestDeployerBindingsAreTheModules(t *testing.T) {
 			continue
 		}
 		grants++
-		for _, want := range []string{`service_account_id = google_service_account.fugaro_deployer.name`, `member             = each.value`, `for_each = toset(var.operators)`} {
+		// The account is a literal built from var.project and the fixed ID,
+		// not the account resource's own name attribute: that attribute is
+		// unknown at plan time, and deployerGrant covers this role only when
+		// the plan names the account it is on. The literal is what the review
+		// reads, so it is pinned here to the form deployerAccountName builds.
+		want := `service_account_id = "projects/${var.project}/serviceAccounts/` + DeployerAccountID + `@${var.project}.iam.gserviceaccount.com"`
+		for _, want := range []string{want, `member             = each.value`, `for_each = toset(var.operators)`} {
 			if !strings.Contains(blk[2], want) {
 				t.Errorf("%s is not the operators' grant on the deployer account: %s", blk[1], want)
 			}
+		}
+		if strings.Contains(blk[2], "google_service_account.fugaro_deployer.name") {
+			t.Errorf("%s names the account through its resource attribute, which is unknown at plan time: the grant has to say which account it is on", blk[1])
 		}
 	}
 	if grants != 1 {
@@ -1041,6 +1079,17 @@ func TestDeployerRoleCreationRefusesComputedProjectRoles(t *testing.T) {
 		"a computed project role beside another custom role": {[]ResourceChange{
 			customRole("fugaroJobRunner", "proj-1", []any{"run.jobs.run", "run.jobs.runWithOverrides"}),
 			rc("google_project_iam_member", map[string]any{"member": "user:me@example.com"}, map[string]any{"role": true}, "create")}, true},
+		// The refusal is a PROJECT grant's, and only a project grant's: the
+		// fence it is about is binding (2)'s condition on a project-level
+		// binding, so a computed role at a narrower scope is not it. This is
+		// the shape the installation module plans on every installation that
+		// deploys the history job — history.tf's
+		// google_cloud_run_v2_job_iam_member, whose role is the custom role
+		// created beside it — and refusing it would move that job out of the
+		// run's confirmation and into one of its own.
+		"a computed job role beside the scoped role": {[]ResourceChange{deployerRole,
+			customRole("fugaroJobRunner", "proj-1", []any{"run.jobs.run", "run.jobs.runWithOverrides"}),
+			rc("google_cloud_run_v2_job_iam_member", map[string]any{"member": "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com"}, map[string]any{"role": true}, "create")}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := testCover.NotCovered(&Plan{ResourceChanges: tc.changes}, nil); (len(got) == 0) != tc.covered {

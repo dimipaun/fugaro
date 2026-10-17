@@ -85,10 +85,11 @@ type Impersonator interface {
 
 // DeployerAccount is the email of the deployer account in gcpProject: the
 // fixed account ID the installation module creates (tf.DeployerAccountID),
-// in the project the marker names.
-func DeployerAccount(gcpProject string) string {
-	return tf.DeployerAccountID + "@" + gcpProject + ".iam.gserviceaccount.com"
-}
+// in the project the marker names. It is tf.DeployerAccount, the same function
+// the plan review uses to check which account an impersonation grant is on, so
+// the account this package assumes and the account that review accepts cannot
+// drift apart.
+func DeployerAccount(gcpProject string) string { return tf.DeployerAccount(gcpProject) }
 
 // Deployer is the only path in this package that runs an apply, and what it
 // hands work is a credential for the deployer account of gcpProject or

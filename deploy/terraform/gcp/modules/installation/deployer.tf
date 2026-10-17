@@ -224,7 +224,17 @@ resource "google_project_iam_member" "fugaro_deployer_scoped" {
 resource "google_service_account_iam_member" "fugaro_deployer_token_creator" {
   for_each = toset(var.operators)
 
-  service_account_id = google_service_account.fugaro_deployer.name
+  # The account is a literal path built from var.project, not the account
+  # resource's own name attribute: that attribute is unknown at plan time (the
+  # account is created by this same apply), and a grant whose account nobody
+  # can name is a grant nobody can check. internal/infra/tf covers this role
+  # only on the deployer account (deployerGrant), so the plan has to say which
+  # account it is on — and the ID is fixed (tf.DeployerAccountID,
+  # "fugaro-deployer"), so the literal cannot name anything but the account
+  # above.
+  service_account_id = "projects/${var.project}/serviceAccounts/fugaro-deployer@${var.project}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = each.value
+
+  depends_on = [google_service_account.fugaro_deployer]
 }

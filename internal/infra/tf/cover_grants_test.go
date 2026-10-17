@@ -36,7 +36,7 @@ func bucketCondFor(typ, role string, person bool) []any {
 }
 
 // deployerCondFor is the condition a project grant of one of the deployer's
-// roles needs so that deployerCondition never flips a cell this matrix tests
+// roles needs so that deployerGrant never flips a cell this matrix tests
 // only at the table level: binding (2)'s exact condition for the scoped role,
 // which is bound with none for the other one. Every other role needs none.
 func deployerCondFor(typ, role string) []any {
@@ -44,6 +44,17 @@ func deployerCondFor(typ, role string) []any {
 		return nil
 	}
 	return []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}
+}
+
+// deployerGrantAccountFor is the account a grant of role through typ needs so
+// that deployerGrant never flips a cell this matrix tests only at the table
+// level: the token creator role is granted on the deployer account and on
+// nothing else, and every other grant needs no account named.
+func deployerGrantAccountFor(typ, role string) string {
+	if typ != "google_service_account_iam_member" || role != DeployerTokenCreatorRole {
+		return ""
+	}
+	return deployerAccountName("proj-1")
 }
 
 // Every (type, role, kind of principal) triple is covered exactly when the
@@ -68,6 +79,9 @@ func TestGrantRulesMatrix(t *testing.T) {
 			for kind, member := range map[who]string{toPeople: person, toAccounts: account} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
+				if acct := deployerGrantAccountFor(typ, role); acct != "" {
+					after["service_account_id"] = acct
+				}
 				if cond := bucketCondFor(typ, role, kind == toPeople); cond != nil {
 					after["condition"] = cond
 				} else if cond := deployerCondFor(typ, role); cond != nil {
@@ -83,6 +97,9 @@ func TestGrantRulesMatrix(t *testing.T) {
 			// module is an account.
 			sa := rc("google_service_account", map[string]any{}, map[string]any{}, "create")
 			after := map[string]any{"role": role, "bucket": "fugaro-runs-proj-1"}
+			if acct := deployerGrantAccountFor(typ, role); acct != "" {
+				after["service_account_id"] = acct
+			}
 			if cond := bucketCondFor(typ, role, false); cond != nil {
 				after["condition"] = cond
 			} else if cond := deployerCondFor(typ, role); cond != nil {
