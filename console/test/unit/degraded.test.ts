@@ -42,7 +42,7 @@ import {
 import { loadFixture } from '../../src/source/fixture'
 import { refusalFrom } from '../../src/source/source'
 import { githubToken } from '../support/fakeSecrets'
-import { UNAVAILABLE_MARK, formatReading } from '../../src/shared/availability'
+import { ESTIMATED_MARK, UNAVAILABLE_MARK, estimated, formatReading, measured, unavailable } from '../../src/shared/availability'
 import { sanitizeRefusal, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeDocument } from '../../src/shared/schema'
 import type { DegradedDocument, LiveDocument } from '../../src/shared/schema'
@@ -331,6 +331,41 @@ describe('the no-Firebase screen', () => {
     expect(row?.computeUsd.value).toBeNull()
   })
 
+  it('marks compute as estimated, the state design section 6.1 rule 1 requires', () => {
+    // Review round 5 of PR 478: this screen drew a row whose `compute_estimated`
+    // was true as a plain measured figure -- `$0.90` -- where `projects.ts` and
+    // `run.ts` draw `est. $0.90` on the same field. Compute is an estimate by
+    // design, and a figure that is an estimate drawn as a measurement is the
+    // wrong number that looks right.
+    const document = theDegradedDocument()
+    const estimated = document.runs.find((run) => run.cost.computeEstimated)
+    expect(estimated, 'the fixture has a run whose compute was estimated').toBeDefined()
+    const model = buildNoFirebaseModel(document)
+    const row = model.runs.find((one) => one.runId === (estimated?.runId ?? ''))
+    expect(row?.computeUsd.state).toBe('estimated')
+    const tree = renderNoFirebase(factory, model, 'light')
+    expect(drawn(tree)).toContain(ESTIMATED_MARK)
+    // The row's own cell, not the totals row's: the totals are the CLI's own
+    // sums and carry the lower-bound mark instead.
+    expect(all(tree, 'degraded-run-compute')[0]?.textContent).toBe(`${ESTIMATED_MARK} $0.90`)
+  })
+
+  it('draws a non-zero compute whose flag is off as the number it is', () => {
+    // The other half of the same helper: the zero is the case the flag exists
+    // for, and a figure that is present is the figure -- hiding it would be the
+    // worse of the two errors, which is what `projects.ts` says on this field.
+    const document = theDegradedDocument()
+    const row = document.runs.find((run) => run.cost.computeEstimated)
+    if (row === undefined) throw new Error('the fixture has an estimated row')
+    const odd: DegradedDocument = {
+      ...document,
+      runs: [{ ...row, cost: { ...row.cost, computeEstimated: false, computeUsd: measured(0.9) } }],
+    }
+    const model = buildNoFirebaseModel(odd)
+    expect(model.runs[0]?.computeUsd.state).toBe('measured')
+    expect(model.runs[0]?.computeUsd.value).toBe(0.9)
+  })
+
   it('marks a total built over unknown compute as a lower bound', () => {
     const document = theDegradedDocument()
     expect(document.totals.computeNotEstimated.value ?? 0).toBeGreaterThan(0)
@@ -338,6 +373,44 @@ describe('the no-Firebase screen', () => {
     expect(model.totals.totalUsd.lowerBound).toBe(true)
     const tree = renderNoFirebase(factory, model, 'light')
     expect(one(tree, 'degraded-total-usd').textContent).toContain('≥')
+  })
+
+  it('keeps the lower bounds when the count itself is unavailable', () => {
+    // Review round 5 of PR 478: `computeNotEstimated.value ?? 0` read an
+    // *unavailable* count as "nothing was unestimated", so the totals lost their
+    // `>=` mark while the note beside them still promised lower bounds -- the
+    // skew case Task 3.2 exists for. `0` is the only value that makes a sum
+    // exact; an unavailable count is an unknown, and an unknown makes the figure
+    // a lower bound.
+    const document = theDegradedDocument()
+    const skewed: DegradedDocument = {
+      ...document,
+      totals: { ...document.totals, computeNotEstimated: unavailable('the count is not in this document') },
+    }
+    const model = buildNoFirebaseModel(skewed)
+    expect(model.totals.computeNotEstimated.value).toBeNull()
+    expect(model.totals.totalUsd.lowerBound).toBe(true)
+    expect(model.totals.computeUsd.lowerBound).toBe(true)
+    const tree = renderNoFirebase(factory, model, 'light')
+    expect(one(tree, 'degraded-total-usd').textContent).toContain('≥')
+    // The count is drawn `n/a`, not as a zero, and the note goes with the marks.
+    expect(one(tree, 'degraded-compute-unknown').textContent).toBe('n/a')
+    expect(all(tree, 'degraded-compute-word')).toHaveLength(1)
+  })
+
+  it('draws a counted zero as an exact sum, with no lower-bound note', () => {
+    // The one document that makes these figures exact, and the note follows the
+    // marks rather than contradicting them.
+    const document = theDegradedDocument()
+    const counted: DegradedDocument = {
+      ...document,
+      totals: { ...document.totals, computeNotEstimated: measured(0) },
+    }
+    const model = buildNoFirebaseModel(counted)
+    expect(model.totals.totalUsd.lowerBound).toBe(false)
+    const tree = renderNoFirebase(factory, model, 'light')
+    expect(one(tree, 'degraded-total-usd').textContent).not.toContain('≥')
+    expect(all(tree, 'degraded-compute-word')).toEqual([])
   })
 
   it('shows the CLI’s notice and every line that was not JSON', () => {

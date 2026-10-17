@@ -49,10 +49,13 @@ import {
 } from '../../src/source/cli'
 import type { FeedSilence, NoInstallationState } from '../../src/source/cli'
 import { loadFixture } from '../../src/source/fixture'
+import { refusalFrom } from '../../src/source/source'
 import type { JSONDoc } from '../../src/source/source'
+import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
+import { githubToken } from '../support/fakeSecrets'
 import { LIVE_STALE_AFTER_SECONDS } from '../../src/renderer/screens/live'
 import type { FeedHealth } from '../../src/renderer/screens/live'
-import { NO_BINARY_HEADLINE, PICKER_LEAD } from '../../src/renderer/screens/degraded'
+import { NO_BINARY_HEADLINE, PICKER_LEAD, refusedState } from '../../src/renderer/screens/degraded'
 import type { NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -178,12 +181,13 @@ return { mounted: true };
 `)
 }
 
-/** drawLive is the Live screen with a feed that has gone quiet: every frame of
- * the fixture observed into one burn window, in the order they arrived, and the
- * last of them drawn while the console has heard nothing for longer than the
- * threshold. This is the condition the design states on the Live screen rather
- * than on a screen of its own. */
-function drawLive(frames: readonly JSONDoc[], feed: FeedHealth, theme: string): string {
+/** drawLive is the Live screen with a feed reading: every frame of the fixture
+ * observed into one burn window, in the order they arrived, and the last of them
+ * drawn while the console has heard nothing for longer than the threshold (or
+ * with `feed` null, which is the caller that keeps no reading at all -- every
+ * drawing the earlier specs and the goldens take). This is the condition the
+ * design states on the Live screen rather than on a screen of its own. */
+function drawLive(frames: readonly JSONDoc[], feed: FeedHealth | null, theme: string): string {
   return bundle(`
 var schema = load('/shared/schema.js');
 var live = load('/renderer/screens/live.js');
@@ -203,16 +207,27 @@ return { mounted: true };
 }
 
 /** drawUnavailable is the console's screen when there is no source to read: no
- * binary, or a read the CLI refused. It also reads back what the sanitizer
- * would have done to the refusal, which is the assertion that explains why that
- * one string is not drawn through it. */
+ * binary, or a read the CLI refused. It also asks the window what each of the
+ * two doors would do with the refusal sentence -- the `sentence` class, which
+ * would eat the remedy, and `sanitizeRefusal`, which is the one the screen
+ * uses. That is the assertion that explains why the refusal is not drawn
+ * through `putText`, read off the running renderer rather than argued here.
+ *
+ * The state is built the way a caller builds it: `refusedState` is what runs
+ * the refusal door, so a test that wants the raw sentence for the comparison
+ * passes its own state and reads `drawnRefusal` back. */
 function drawUnavailable(state: NoBinaryState | RefusedState, theme: string): string {
   return bundle(`
 var sanitize = load('/shared/sanitize.js');
 var degraded = load('/renderer/screens/degraded.js');
 mount(degraded.renderUnavailable(domFactory(), ${JSON.stringify(state)}, ${JSON.stringify(theme)}));
 var sentenced = ${JSON.stringify(state.kind === 'refused' ? state.sentence : '')};
-return { mounted: true, sanitized: sanitize.sanitizeText(sentenced, 'sentence', 'the CLI sentence').text };
+return {
+  mounted: true,
+  sanitized: sanitize.sanitizeText(sentenced, 'sentence', 'the CLI sentence').text,
+  refusalDrawn: sanitize.sanitizeRefusal(sentenced, 'the CLI refusal sentence').text,
+  refusedState: degraded.refusedState('budget.show', { sentence: sentenced }).sentence
+};
 `)
 }
 
@@ -351,6 +366,11 @@ function theLiveFrames(): readonly JSONDoc[] {
  * that failed, the two roles that remedy it, and the error the client
  * returned. It is written out here because it is the *input* to this spec --
  * what is asserted is that the screen draws it unchanged. */
+/** THE_TOKEN is a credential-shaped value assembled at run time -- never
+ * written down, see `test/support/fakeSecrets.ts` -- used for the one assertion
+ * that a refusal which echoed a token does not put it on the screen. */
+const THE_TOKEN = githubToken()
+
 const THE_REFUSAL =
   "project <project>'s spend history refused the read: you need the Cloud Datastore Viewer role " +
   '(roles/datastore.viewer) on its Firebase project sandbox-db, plus the Service Usage Consumer role ' +
@@ -416,11 +436,16 @@ test.describe('the console with nothing to read', () => {
 
   /** mount draws one screen and fails with the window's own words if the
    * console's decoder refused the document. */
-  async function mount(source: string): Promise<{ sanitized?: string }> {
+  async function mount(source: string): Promise<{ sanitized?: string; refusalDrawn?: string; refusedState?: string }> {
     const result = await app.evaluate(async ({ BrowserWindow }, body) => {
       const window = BrowserWindow.getAllWindows()[0]
       if (window === undefined) return { error: 'the console has no window' }
-      return (await window.webContents.executeJavaScript(body, true)) as { error?: string; sanitized?: string }
+      return (await window.webContents.executeJavaScript(body, true)) as {
+        error?: string
+        sanitized?: string
+        refusalDrawn?: string
+        refusedState?: string
+      }
     }, source)
     expect(result.error).toBeUndefined()
     return result
@@ -472,12 +497,34 @@ test.describe('the console with nothing to read', () => {
     expect(screen.text).toContain('—')
   })
 
-  test('draws no stale banner when nobody is keeping the console\'s clock', async () => {
-    // The caller that keeps no feed reading is every drawing the earlier specs
-    // and the goldens take, and it must not grow a banner it cannot fill in.
-    await mount(drawLive(theLiveFrames(), asFeedHealth(feedSilence({ receivedAt: '2026-10-15T13:00:00Z' }, new Date('2026-10-15T13:00:01Z'))), 'light'))
+  test('draws no stale banner for a feed that has just spoken', async () => {
+    // The fresh side of the threshold, in the real window: a frame one second
+    // old is a feed nobody needs a banner about.
+    await mount(
+      drawLive(
+        theLiveFrames(),
+        asFeedHealth(feedSilence({ receivedAt: '2026-10-15T13:00:00Z' }, new Date('2026-10-15T13:00:01Z'))),
+        'light',
+      ),
+    )
     const screen = await drawn(page)
     expect(screen.stale).toBeNull()
+  })
+
+  test('draws no stale banner when nobody is keeping the console\'s clock', async () => {
+    // The caller that keeps no feed reading at all is every drawing the earlier
+    // specs and the goldens take, and it must not grow a banner it cannot fill
+    // in. Review round 5 of PR 478: the test that carried this name passed a
+    // *fresh* reading, which is a different case -- the null path its comment
+    // described was never exercised in the window. It is this test now.
+    await mount(drawLive(theLiveFrames(), null, 'light'))
+    const screen = await drawn(page)
+    expect(screen.stale).toBeNull()
+    expect(screen.staleSilence).toBeNull()
+    expect(screen.sinceAt).toBeNull()
+    // The dashboard is still drawn: no reading is not no screen.
+    expect(screen.liveRoots).toBe(1)
+    expect(screen.bars.length).toBeGreaterThan(2)
   })
 
   test('draws the CLI\'s no-Firebase mode with the caps unavailable and not zero', async () => {
@@ -573,11 +620,33 @@ test.describe('the console with nothing to read', () => {
     expect(screen.refusal).toBe(THE_REFUSAL)
     expect(screen.refusal).toContain('roles/datastore.viewer')
     expect(screen.refusal).toContain('roles/serviceusage.serviceUsageConsumer')
-    // The screen is the operator's only copy, and this is why it is not drawn
-    // through the sanitizer: the same sentence read as prose loses both roles.
-    // The window that just drew it is the one that says so.
+    // The screen is the operator's only copy, and this is why it does not go
+    // through the `sentence` class: the same sentence read as prose loses both
+    // roles. The window that just drew it is the one that says so -- and it
+    // says the other half too, that the door the screen really uses drew it
+    // character for character (review round 5 of PR 478: that door is
+    // `sanitizeRefusal`, the credential rules, so a token is still redacted).
     expect(result.sanitized).not.toBe(THE_REFUSAL)
     expect(result.sanitized).not.toContain('roles/datastore.viewer')
+    expect(result.refusalDrawn).toBe(THE_REFUSAL)
+    // And the model is where the sentence is sanitized, so the drawing reads
+    // exactly what the door produced.
+    expect(result.refusedState).toBe(THE_REFUSAL)
+    expect(screen.refusal).toBe(result.refusalDrawn)
+
+    // A refusal that echoed a credential is the case the old raw `literal`
+    // missed: the token never reaches the screen.
+    const withToken = `${THE_REFUSAL} (token ${THE_TOKEN})`
+    const refused = await mount(
+      drawUnavailable(
+        refusedState('budget.show', refusalFrom('budget.show', withToken)),
+        'light',
+      ),
+    )
+    const tokenScreen = await drawn(page)
+    expect(tokenScreen.refusal).not.toContain(THE_TOKEN)
+    expect(tokenScreen.refusal).toContain(TOKEN_PLACEHOLDER)
+    expect(refused.refusalDrawn).not.toContain(THE_TOKEN)
     // And still no dashboard behind it.
     expect(screen.liveRoots).toBe(0)
     expect(screen.degradedRoots).toBe(0)

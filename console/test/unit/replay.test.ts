@@ -214,12 +214,25 @@ describe('the replay buffer', () => {
     // A third bound, on the serialized size of what is held, is what stops it.
     expect(REPLAY_MAX_BYTES).toBe(64 * 1024 * 1024)
     expect(new ReplayBuffer().bounds().maxBytes).toBe(REPLAY_MAX_BYTES)
-    const padding = 'x'.repeat(1000)
+    // The padding is multi-byte on purpose (review round 5 of PR 478). The
+    // module counts UTF-8 bytes with its own `utf8Length` -- it loads in the
+    // renderer as well as in Node, so it cannot use `Buffer` -- and an ASCII
+    // padding of `'x'.repeat(1000)` could not tell that count apart from
+    // `String.length`, which made the assertions below hold for a
+    // character-counting implementation. Two bytes for the accent, and an
+    // astral character, which is a surrogate pair: the branch a naive count gets
+    // wrong twice over.
+    const padding = 'é'.repeat(400) + '𝄞'
+    expect(Buffer.byteLength(padding)).toBeGreaterThan(padding.length)
     const sized = (at: string, value: number) => ({ ...anArrival(at, value), document: { padding, counted_usd: value } })
     const one = new ReplayBuffer({ windowSeconds: 3600 })
     one.observe(sized(stamp(BASE, 0), 0))
     const size = one.bounds().bytes
+    // The real encoding of the line, not the buffer's own arithmetic: this is
+    // where a size counted in characters fails, and where a surrogate pair
+    // counted as two three-byte characters (six, not four) fails.
     expect(size).toBe(Buffer.byteLength(one.export()))
+    expect(size).toBeGreaterThan(one.export().length)
     // Room for three and a half records: the fourth arrival pushes out the oldest.
     const buffer = new ReplayBuffer({ windowSeconds: 3600, maxRecords: 100, maxBytes: Math.floor(size * 3.5) })
     for (let second = 0; second < 10; second += 1) buffer.observe(sized(stamp(BASE, second), second))
@@ -227,7 +240,13 @@ describe('the replay buffer', () => {
     expect(bounds.records).toBe(3)
     expect(bounds.dropped).toBe(7)
     expect(bounds.bytes).toBeLessThanOrEqual(bounds.maxBytes)
-    expect(bounds.bytes).toBe(Buffer.byteLength(buffer.export()) - (bounds.records - 1))
+    // The held lines' own sizes, made from the public export rather than from
+    // the buffer's running total: a `#dropOldest` that shifted a line without
+    // subtracting its size would leave the two disagreeing, and a byte per line
+    // that dropped or double-counted the join's newline would too.
+    const lines = buffer.export().split('\n')
+    expect(lines.length).toBe(bounds.records)
+    expect(bounds.bytes).toBe(lines.reduce((total, line) => total + Buffer.byteLength(line), 0))
     expect(buffer.records().map((record) => record.at)).toEqual([7, 8, 9].map((s) => stamp(BASE, s)))
   })
 

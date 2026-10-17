@@ -595,7 +595,27 @@ const TOTAL_KEYS = [
   'runs',
   'run_hours',
 ]
-const REPO_KEYS = ['slug', 'repo', ...TOTAL_KEYS]
+/** REPO_KEYS is `JSONRepo`'s own key set (`internal/watch/json.go:42`): a
+ * repository is a total, and the two keys it does *not* carry are `runs` and
+ * `run_hours`, which are on `JSONTotal` alone. Review round 5 of PR 478: this
+ * was `['slug', 'repo', ...TOTAL_KEYS]`, so `closed()` accepted those two on a
+ * `repos[]` entry -- keys the struct cannot write, decoded as understood rather
+ * than becoming the skew state this module promises for a key it does not know
+ * ("the live half of this file closes every object it decodes"). The list is
+ * written out rather than spread, so a later key added to a *total* is a
+ * decision about repositories too. Exported so `schema.test.ts` can pin it
+ * against the struct the way it pins `RECORD_KEYS`. */
+export const REPO_KEYS = [
+  'slug',
+  'repo',
+  'counted_usd',
+  'spent_usd',
+  'notional_usd',
+  'daily_cap_usd',
+  'percent',
+  'burn',
+  'kill',
+]
 const RUN_KEYS = [
   'run',
   'slug',

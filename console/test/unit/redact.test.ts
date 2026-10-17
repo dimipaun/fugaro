@@ -29,6 +29,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import * as fake from '../support/fakeSecrets'
 import { inert } from '../support/fakeSecrets'
 
 import {
@@ -224,6 +225,59 @@ describe('the redactor', () => {
     expect(str(list(out, 'secrets')[0] ?? {}, 'token')).toBe(TOKEN_MARKER)
     expect(str(obj(out, 'report'), 'authorization')).toBe(TOKEN_MARKER)
     expect(str(obj(out, 'report'), 'api_key')).toBe(TOKEN_MARKER)
+  })
+
+  it('redacts one value of every family the corpus of fake shapes names', () => {
+    // Review round 5 of PR 478: the corpus in `test/support/fakeSecrets.ts` was
+    // consumed by the *sanitizer's* suite and by the e2e specs, while this
+    // file -- the suite of the pass that decides what may enter a committed
+    // fixture -- built its own inputs with `inert()`. A half-token is not a
+    // family, so a mutation that deleted a whole pattern from `TOKEN_RES` (say
+    // AWS's) passed every test here: nothing in this file had an AWS key id to
+    // lose. This test is the negative control that closes it, one value per
+    // family, and the values are chosen so that no *other* rule can cover for a
+    // deleted pattern:
+    //
+    //   - every one is a low-entropy run of one character behind its family's
+    //     prefix, so the entropy net does not fire on it;
+    //   - the bearer header's body is `z` repeated, which is no other family's
+    //     shape -- `bearerHeader()` with its default body carries a Google
+    //     access token, and the access-token pattern runs first, so the Bearer
+    //     pattern would survive the test by never being the rule that fired;
+    //   - the PEM block's body is a run of `A`, which is not a key in any
+    //     encoding.
+    //
+    // The entropy values are the corpus's other half: they are not in
+    // `TOKEN_RES` at all, and they fail here if the entropy net or the
+    // split-token rule is the one that goes.
+    const families: readonly (readonly [string, string])[] = [
+      ['a GitHub token', fake.githubToken()],
+      ['a GitHub fine-grained token', fake.githubPat()],
+      ['a GitLab token', fake.gitlabToken()],
+      ['an npm token', fake.npmToken()],
+      ['an assistant API key', fake.providerApiKey()],
+      ['a Slack token', fake.slackToken()],
+      ['an AWS access-key id', fake.awsKeyId()],
+      ['a Google API key', fake.googleApiKey()],
+      ['a Google access token', fake.googleAccessToken()],
+      ['a Google refresh token', fake.googleRefreshToken()],
+      ['a JSON Web Token', fake.jwt()],
+      ['a bearer header', fake.bearerHeader('z'.repeat(24))],
+      ['a PEM private-key block', fake.pemBlock()],
+      ['a high-entropy run', fake.highEntropyRun()],
+      ['a hex digest', fake.hexDigest()],
+    ]
+    const redactor = createRedactor([], { pseudonymKey: TEST_KEY })
+    for (const [what, value] of families) {
+      // The whole value, not a part of it: the replacement is the marker and
+      // nothing of the value is left beside it.
+      expect(redactor.redactText(value), what).toBe(TOKEN_MARKER)
+      // And the same through a document, where most of a recording's strings
+      // actually arrive: a pattern wired into free text alone would pass the
+      // line above and fail this one.
+      const out = redactor.redactDocument({ message: `pushing with ${value}` })
+      expect(str(out as Record<string, unknown>, 'message'), what).toBe(`pushing with ${TOKEN_MARKER}`)
+    }
   })
 
   it('redacts URLs with userinfo, and every other URL too', () => {

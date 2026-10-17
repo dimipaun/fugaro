@@ -35,6 +35,7 @@ import {
   DEGRADED_KEYS,
   LIVE_KEYS,
   RECORD_KEYS,
+  REPO_KEYS,
   LIVE_MARKERS,
   NON_TEXT_STRING_KEYS,
   WIRE_TEXT_CLASSES,
@@ -364,6 +365,43 @@ describe('both document shapes decode', () => {
     const refusal = refusalFor(patched(DEGRADED_REAL, ['runs', 0, 'rogue'], 1))
     expect(refusal.name).toBe('unknown-key')
     expect(refusal.field).toBe('runs[0].rogue')
+  })
+
+  it("lists every key of `JSONRepo`, and refuses the two a total carries alone", () => {
+    // Review round 5 of PR 478. `REPO_KEYS` was `['slug', 'repo', ...TOTAL_KEYS]`,
+    // and a `repos[]` entry is *not* a total: `runs` and `run_hours` are written
+    // by `JSONTotal` alone (`internal/watch/json.go:42`). Spreading the total's
+    // list in meant the console accepted those two on a repository -- keys no
+    // version of the CLI can write there -- and decoded the document as
+    // understood instead of becoming the skew state, which is the one thing the
+    // live half of this module promises for a key it does not know.
+    const fromTheStruct = [
+      'slug', 'repo', 'counted_usd', 'spent_usd', 'notional_usd',
+      'daily_cap_usd', 'percent', 'burn', 'kill',
+    ]
+    expect([...REPO_KEYS].sort()).toEqual([...fromTheStruct].sort())
+    expect(REPO_KEYS.length).toBe(fromTheStruct.length)
+    for (const notARepository of ['runs', 'run_hours']) {
+      expect(REPO_KEYS, notARepository).not.toContain(notARepository)
+      // The same two keys are the total's, and the document above still writes
+      // them there: dropping them from `repos[]` must not have dropped them
+      // from `total`, where they are accepted (read as neither yet, which is
+      // what `TotalsView` says) rather than refused.
+      expect(Object.keys(first.total ?? {}), notARepository).toContain(notARepository)
+      const refusal = refusalFor(patched(first, ['repos', 0, notARepository], 1))
+      expect(refusal.name, notARepository).toBe('unknown-key')
+      expect(refusal.field, notARepository).toBe(`repos[0].${notARepository}`)
+    }
+    // And the entry the fixture does carry still decodes, key by key: the list
+    // is what the struct writes, not merely what the test asserts.
+    const value = decoded(first)
+    const repo = value.repos[0]
+    expect(repo).toBeDefined()
+    const wireRepo = (first as { repos?: readonly Record<string, unknown>[] }).repos?.[0] ?? {}
+    expect(Object.keys(wireRepo).sort()).toEqual([...fromTheStruct].sort())
+    expect(repo?.repo).toBe('r-4c25cf20/r-f1aa9214')
+    expect(repo?.countedUsd.value).toBeGreaterThan(0)
+    expect(value.total.countedUsd.state).toBe('measured')
   })
 
   it('carries notional as the wire wrote it, and never infers it from auth', () => {

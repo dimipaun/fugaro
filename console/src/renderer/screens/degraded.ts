@@ -560,9 +560,13 @@ function noBinary(factory: ScreenFactory, state: NoBinaryState): ScreenElement {
   // `spawn.ts` rather than by a document: it goes through `putText` like every
   // other string this screen did not author itself. As prose it is read as
   // prose, so the path fragments inside the "looked at ..." form are redacted
-  // (`ABS_PATH_RE`) -- deliberately, and without loss: the sentence carries the
-  // fact and the list below carries the places, each one drawn as the path it
-  // is.
+  // (`ABS_PATH_RE`) -- deliberately, and without loss: the resolution already
+  // says how many places it looked in, and `searched` below draws that count
+  // rather than the paths, so no place is lost with the redaction.
+  //
+  // Review round 5 of PR 478: this comment used to end "the list below carries
+  // the places, each one drawn as the path it is", which stopped being true when
+  // the list became a count.
   textCell(element, factory, 'p', state.reason, 'sentence', 'the resolution reason', 'unavailable-reason')
   const install = cell(element, factory, 'div', 'unavailable-install')
   literal(cell(install, factory, 'span', 'unavailable-install-lead'), INSTALL_LEAD)

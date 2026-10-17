@@ -792,7 +792,12 @@ describe('the class rules', () => {
     expect(flags('fixture.invalid', 'host')).toContain('host-placeholder')
     expect(text('192.0.2.10', 'host')).toBe(HOST_PLACEHOLDER)
     expect(text('10.0.0.1', 'host')).toBe(HOST_PLACEHOLDER)
-    // A name with no dot is not a hostname, so it is not shown as one.
+    // Even the one name with no dot that is obviously not anybody's machine is
+    // still redacted: the class is deny-by-default, so `localhost` gets the
+    // placeholder like every other value rather than an exception that would
+    // have to be told apart from `zoras-laptop` (review round 5 of PR 478: the
+    // comment here used to claim a name with no dot is not a hostname and so is
+    // not shown as one, which its own assertion two lines down disproved).
     expect(text('localhost', 'host')).toBe(HOST_PLACEHOLDER)
     expect(flags('192.0.2.10', 'host')).toContain('host-placeholder')
   })
@@ -1209,13 +1214,30 @@ const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 
 const RENDERER_DIR = path.join(SRC, 'renderer')
 const SHARED_DIR = path.join(SRC, 'shared')
 
-/** sourceFiles lists the `.ts` files under a directory, so a scan runs over
- * what is actually there rather than over a list a task forgot to update. */
+/**
+ * sourceFiles lists the `.ts` files under a directory **and its subdirectories**,
+ * so a scan runs over what is actually there rather than over a list a task
+ * forgot to update.
+ *
+ * Review round 5 of PR 478: this read one directory level, and
+ * `src/renderer/` holds only `app.ts` -- so the three scans below never read the
+ * five screens in `src/renderer/screens/`, while `app.ts`'s own header and this
+ * file's comment claimed "no file under `src/renderer/`". The guard below only
+ * required a non-empty list, which `app.ts` alone satisfied. It is
+ * `ipc.test.ts`'s recursive walk now, and the guard names the directory the
+ * screens live in so that moving them fails the test rather than the scan.
+ */
 function sourceFiles(directory: string): readonly string[] {
-  return readdirSync(directory)
-    .filter((name) => name.endsWith('.ts'))
-    .sort()
-    .map((name) => path.join(directory, name))
+  const walk = (current: string): string[] => {
+    const found: string[] = []
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name)
+      if (entry.isDirectory()) found.push(...walk(full))
+      else if (entry.name.endsWith('.ts')) found.push(full)
+    }
+    return found
+  }
+  return walk(directory).sort()
 }
 
 /**
@@ -1242,6 +1264,27 @@ const FORBIDDEN_FORMATTERS: readonly string[] = Object.freeze([
   ['Intl', '.NumberFormat'].join(''),
 ])
 
+/** NAVIGATING_ATTRIBUTE is the attribute a screen must never write, assembled
+ * from two halves so that this file -- which is not under `src/renderer/` -- can
+ * name it without the scan's own source being a spelling of the thing it looks
+ * for. The URL belongs in `data-href` (`DESTINATION_ATTRIBUTE`), which the main
+ * process turns into a destination it allows. */
+const NAVIGATING_ATTRIBUTE = ['h', 'ref'].join('')
+
+/** navigatingOffences reports the lines of a source that write that attribute:
+ * the assignment, and the literal attribute name in a `setAttribute` call. A
+ * comment may name it, and `data-href` is not it. */
+function navigatingOffences(source: string): readonly string[] {
+  return source
+    .split('\n')
+    .filter(
+      (line) =>
+        line.includes(`.${NAVIGATING_ATTRIBUTE} =`) ||
+        line.includes(`setAttribute('${NAVIGATING_ATTRIBUTE}'`) ||
+        line.includes(`setAttribute("${NAVIGATING_ATTRIBUTE}"`),
+    )
+}
+
 /** offenders reports the lines of a source that contain a forbidden token. */
 function offenders(source: string, forbidden: readonly string[]): readonly string[] {
   const found: string[] = []
@@ -1255,8 +1298,13 @@ function offenders(source: string, forbidden: readonly string[]): readonly strin
 
 describe('src/renderer/', () => {
   it('has files for these scans to look at', () => {
-    // Without this, a scan over a directory that moved passes vacuously.
-    expect(sourceFiles(RENDERER_DIR).length).toBeGreaterThan(0)
+    // Without this, a scan over a directory that moved passes vacuously --
+    // and it names the screens rather than merely asserting a non-empty list,
+    // because `app.ts` alone satisfied that while the five files the scans are
+    // really about went unread (review round 5 of PR 478).
+    expect(sourceFiles(RENDERER_DIR)).toContain(path.join(RENDERER_DIR, 'app.ts'))
+    expect(sourceFiles(RENDERER_DIR)).toContain(path.join(RENDERER_DIR, 'screens', 'live.ts'))
+    expect(sourceFiles(RENDERER_DIR).length).toBeGreaterThanOrEqual(6)
     expect(sourceFiles(SHARED_DIR).length).toBeGreaterThan(0)
   })
 
@@ -1268,6 +1316,15 @@ describe('src/renderer/', () => {
     expect(offenders(planted, FORBIDDEN_IN_RENDERER)).toHaveLength(1)
     expect(offenders('element.textContent = jobTitle', FORBIDDEN_IN_RENDERER)).toEqual([])
     expect(offenders('const text = value.toFixed(2)', FORBIDDEN_FORMATTERS)).toHaveLength(1)
+    expect(offenders('const text = value.toLocaleString()', FORBIDDEN_FORMATTERS)).toHaveLength(1)
+    // The navigating attribute has a rule of its own, so it has a red step of
+    // its own: the assignment, the literal attribute name -- and `data-href`,
+    // which is where the URL actually goes and is not an offence.
+    expect(navigatingOffences(`link.${NAVIGATING_ATTRIBUTE} = row.prUrl`)).toHaveLength(1)
+    expect(navigatingOffences(`link.setAttribute('${NAVIGATING_ATTRIBUTE}', row.prUrl)`)).toHaveLength(1)
+    expect(navigatingOffences(`link.setAttribute("${NAVIGATING_ATTRIBUTE}", row.prUrl)`)).toHaveLength(1)
+    expect(navigatingOffences(`link.setAttribute('data-${NAVIGATING_ATTRIBUTE}', row.prUrl)`)).toEqual([])
+    expect(navigatingOffences('// the URL goes in data-href, never in href')).toEqual([])
   })
 
   it('never interprets a string as markup', () => {
@@ -1285,15 +1342,11 @@ describe('src/renderer/', () => {
   })
 
   it('never writes a destination into a navigating attribute', () => {
-    const navigating = ['h', 'ref'].join('')
+    // The forbidden spellings are the assignment and the literal attribute
+    // name, not the word: a comment may explain which attribute is refused, and
+    // `data-href` is where the URL actually goes.
     for (const file of sourceFiles(RENDERER_DIR)) {
-      const source = readFileSync(file, 'utf8')
-      // The forbidden spellings are the assignment and the literal attribute
-      // name, not the word: a comment may explain which attribute is refused,
-      // and `data-href` is where the URL actually goes.
-      expect(source, file).not.toContain(`.${navigating} =`)
-      expect(source, file).not.toContain(`setAttribute('${navigating}'`)
-      expect(source, file).not.toContain(`setAttribute("${navigating}"`)
+      expect(navigatingOffences(readFileSync(file, 'utf8')), file).toEqual([])
     }
   })
 })
