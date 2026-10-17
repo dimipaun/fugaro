@@ -99,6 +99,10 @@ a.skip-link:focus {
 }
 
 .site-wordmark {
+  /* The logo (layouts/Base.astro) sits beside the name, centred on its line. */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
   color: var(--text);
   font-size: var(--font-size-lg);
   font-weight: var(--weight-semibold);
