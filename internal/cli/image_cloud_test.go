@@ -730,7 +730,7 @@ func TestImageRenderCloudOutputs(t *testing.T) {
 	}
 	// The render step runs the BASE image's own fugaro, so this field is the
 	// base's statement that its runner reads the sealed budget token: the
-	// seal gate's proof for a development base (sealDevRefusal).
+	// statement the seal gate trusts for a development base (sealDevRefusal).
 	if !rec.SealedBudgetToken {
 		t.Error("record.json does not say this runner reads the sealed budget token")
 	}

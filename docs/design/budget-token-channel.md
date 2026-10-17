@@ -54,7 +54,15 @@ built before the seal's runner half (`sealRunnerIntroduced`). A development base
 `sealed_budget_token` and a later or missing `built_at`, which is the job image's build time and
 not the base's — cannot be shown either way and **only warns**, so a launch against an old
 development base rebuilt today still goes ahead; the exact list is `docs/release.md`'s `sealSince`
-line. A runner handed a marker of `1` — a launcher from before the seal — refuses at the take with
+line. **What the record shows, and what it does not:** `sealed_budget_token` and `base_ref` are
+written by the base image's own fugaro during the image build — they say only that the base image's
+own build step recorded them. The launch runs the repository's `:latest`, which no launch compares
+with the record's `image_digest`, and a `dockerfile:` workflow's image is the repository's own to
+build, its fugaro included. So a hand-pushed `:latest`, or a `dockerfile:` image that ships an
+older fugaro, still gets the key echoed into `result.json` (where peer runs of the repository can
+read it), whatever its record says. **Unscheduled follow-up, for after 0.9.0 (the round-2
+reviewer's suggestion, not decided):** once 0.9.0 is released, refuse a development record that
+lacks `sealed_budget_token` instead of warning about it. A runner handed a marker of `1` — a launcher from before the seal — refuses at the take with
 the old side named, never reading a plaintext object.
 The grants moved with the object (§7.2, §7.5): the job account's `tokens/<slug>/` is
 `roles/storage.objectViewer` (`google_storage_bucket_iam_member.job_tokens`, in the workflow
