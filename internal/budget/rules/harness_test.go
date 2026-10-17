@@ -314,11 +314,18 @@ func (h *harness) run(slug, run string) *rtdb.Client { return h.as(claims{slug: 
 // phone is the mobile app's client for the account mb: a user token whose mu
 // claim names the mailbox it owns (D112), with auth.uid equal to it — which
 // is the only thing that makes the claim usable.
-func (h *harness) phone(mb string) *rtdb.Client { return h.as(claims{mu: mb}) }
+//
+// fp is "-" because a phone's token is a Firebase Auth user's, not a
+// Fugaro-minted one: it carries the claim the owner set by hand (D114) and no
+// run's fp/fs/fr. That matters to the tests, not just to the picture — a token
+// that also carried fp would satisfy TOKEN and read the project's families as
+// a run does, which would make a read case pass for the wrong reason.
+func (h *harness) phone(mb string) *rtdb.Client { return h.as(claims{mu: mb, fp: "-"}) }
 
 // consumer is the mailbox consumer's client for the mailbox it serves
-// (D113b): an mc claim and no mailbox of its own.
-func (h *harness) consumer(mb string) *rtdb.Client { return h.as(claims{mc: mb}) }
+// (D113b): an mc claim and no mailbox of its own, and no fp for the same
+// reason.
+func (h *harness) consumer(mb string) *rtdb.Client { return h.as(claims{mc: mb, fp: "-"}) }
 
 // set writes a value with admin rights (which bypass the rules, as IAM does).
 func (h *harness) set(path string, v any) {

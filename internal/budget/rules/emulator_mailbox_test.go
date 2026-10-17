@@ -255,19 +255,23 @@ func TestMailboxClaimMismatchIsAdmittedNowhere(t *testing.T) {
 	h.mustAllow(h.phone(mbAlice), "alice's own inbox message", put(inbox(mbAlice, "m1"), aMessage("m1", mbAlice)))
 	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
 
-	// mu names alice's mailbox; the uid Firebase minted is bob's.
+	// mu names alice's mailbox; the uid Firebase minted is bob's. The token is
+	// otherwise an ordinary one for this project (it keeps fp), because that is
+	// the token an attacker would have: the claim is what must not help it.
 	forged := h.as(claims{mu: mbAlice, uid: mbBob})
 	h.mustDeny(forged, "an inbox message under a claim that is not this token's uid",
 		put(inbox(mbAlice, "m2"), aMessage("m2", mbAlice)))
 	h.mustDeny(forged, "an ack under a claim that is not this token's uid",
 		put(outbox(mbAlice, "c1")+"/acked", true))
 	h.mustReadDenied(forged, "mailbox/"+mbAlice+"/outbox")
-	h.mustReadDenied(forged, budget.PathCapsGlobal)
+	h.mustReadDenied(forged, beat(mbAlice))
 
-	// A plain signed-in user: a uid, no mu, no mc. It reads none of the four
-	// granted families and writes nothing — this is the row that keeps the
-	// read grants from being a grant to "any signed-in user".
-	plain := h.as(claims{uid: mbAlice})
+	// A plain signed-in user: a uid and nothing else, no mu and no mc — which
+	// is also why it carries no fp here (a token with fp is a run's, and the
+	// question this row asks is about a user's). It reads none of the four
+	// granted families and writes nothing: the row that keeps the read grants
+	// from being a grant to "any signed-in user".
+	plain := h.as(claims{uid: mbAlice, fp: "-"})
 	for _, p := range []string{budget.PathCapsGlobal, budget.PathCapsDefaults, budget.PathCapsRepo("aurora"),
 		budget.PathKillGlobal, budget.PathKillRepo("aurora"), budget.PathSpendGlobal(w.day),
 		budget.PathSpendRepo(w.day, "aurora"), budget.PathSpendRun(w.day, "aurora", "r1"),
