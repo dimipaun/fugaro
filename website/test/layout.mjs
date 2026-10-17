@@ -184,6 +184,57 @@ test('the pipeline reads an inline comment as a comment, not as part of the fact
   assert.ok(!page.includes('tested on macOS 15'), 'the comment was adopted into a fact the page renders')
 })
 
+/** Build with one replacement in a data file, and fail the test if the fixture did not apply. */
+function buildWithData(t, name, from, to) {
+  return buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'data', name)
+    const before = readFileSync(file, 'utf8')
+    const after = before.replace(from, to)
+    assert.notEqual(after, before, `the fixture did not change ${name}, so this test would pass on anything`)
+    writeFileSync(file, after)
+  })
+}
+
+const HOMEBREW_NOTE = '    note: The Homebrew cask (tested on macOS).'
+
+/** The data-note of the probe page, with HTML's own escaping of a quote undone. */
+function renderedNote(page) {
+  const m = /data-note="([^"]*)"/.exec(page)
+  assert.ok(m, 'the page carries no data-note')
+  return m[1].replaceAll('&#39;', "'").replaceAll('&#x27;', "'").replaceAll('&quot;', '"')
+}
+
+test('an apostrophe in a plain scalar does not hide the comment after it', async (t) => {
+  // Only a quote that OPENS a scalar is a quote in YAML. In `The cask's page ...` the
+  // apostrophe is text, so the ` # ...` after it is still a comment.
+  const built = buildWithData(t, 'install.yaml', HOMEBREW_NOTE, "    note: The cask's page is the tap   # not part of the note")
+
+  assert.equal(renderedNote(builtPage(built)), "The cask's page is the tap")
+})
+
+test('a # inside a quoted scalar is content, and a quote can be escaped inside one', async (t) => {
+  const double = buildWithData(t, 'install.yaml', HOMEBREW_NOTE, '    note: "say \\"hi\\" # kept"   # dropped')
+  assert.equal(renderedNote(builtPage(double)), 'say "hi" # kept')
+
+  const single = buildWithData(t, 'install.yaml', HOMEBREW_NOTE, "    note: 'it''s # kept'   # dropped")
+  assert.equal(renderedNote(builtPage(single)), "it's # kept")
+})
+
+test('the build refuses a misspelled key in every nested map the loader reads', async (t) => {
+  const cases = [
+    ['site.yaml', '  enabled: false\n', '  enabled: false\n  enabeld: true\n', 'enabeld', 'analytics'],
+    ['site.yaml', '  video: false\n', '  video: false\n  vidoe: true\n', 'vidoe', 'features'],
+    ['install.yaml', '  arch: [amd64, arm64]\n', '  arch: [amd64, arm64]\n  archs: []\n', 'archs', 'build'],
+    ['install.yaml', '    status: supported\n', '    status: supported\n    stauts: untested\n', 'stauts', 'platforms[]'],
+    ['install.yaml', '    tap_repository: dimipaun/homebrew-tap\n', '    tap_repository: dimipaun/homebrew-tap\n    devonly: true\n', 'devonly', 'paths[]'],
+  ]
+  for (const [name, from, to, key, map] of cases) {
+    const built = buildWithData(t, name, from, to)
+    assert.notEqual(built.status, 0, `the build accepted the misspelled key "${key}" in ${map}, and used its default:\n${built.output}`)
+    assert.match(built.output, new RegExp(`the key "${key}" is not one the site's pages read`), `the failure for ${map} does not name the key`)
+  }
+})
+
 test('the build refuses a data file that uses a construct the reader has not been taught', async (t) => {
   // The reader's contract is "refuse what you do not understand rather than guessing at
   // it". An alias is the clearest case: taken for text, `- *cask` becomes a command a
@@ -385,6 +436,17 @@ test('the head points at the files the build ships, and at nothing else', async 
   })
   assert.equal(withFont.status, 0, `the build failed with a font in public/fonts:\n${withFont.output}`)
   assert.match(builtPage(withFont), /<link rel="preload" as="font" type="font\/woff2" href="\/fonts\/fugaro\.woff2" crossorigin/)
+})
+
+test('a comment that mentions the sitemap package does not make the head point at a sitemap', async (t) => {
+  // The config is a module: only an integration it declares produces a sitemap, and a
+  // comment (or a string) that names the package is not one.
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'astro.config.mjs')
+    writeFileSync(file, `// @astrojs/sitemap arrives with W2.2.\n${readFileSync(file, 'utf8')}`)
+  })
+
+  assert.ok(!builtPage(built).includes('rel="sitemap"'), 'the page points at a sitemap the build does not produce')
 })
 
 test("the page description is README.md's own tagline line", async (t) => {

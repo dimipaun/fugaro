@@ -49,7 +49,8 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { spawnSync } from 'node:child_process'
 
 /**
  * The site's own directory: `website/`.
@@ -200,18 +201,31 @@ const BLOCK_SCALAR = /^[|>][-+]?$/
  * the command a reader copies.
  */
 function stripComment(text: string): string {
+  // YAML's rule: a quote is a quote only where it OPENS a scalar. In a plain scalar an
+  // apostrophe is text (`the cask's page`), so it protects nothing. A flow sequence opens
+  // a scalar after its `[` and after each `,`, so a quote there opens one too.
+  const flow = text.startsWith('[')
   let quote = ''
+  let opens = true
   for (let at = 0; at < text.length; at++) {
     const ch = text[at]
     if (quote !== '') {
-      if (ch === quote) quote = ''
+      if (quote === '"' && ch === '\\') at++
+      else if (ch === quote && quote === "'" && text[at + 1] === "'") at++
+      else if (ch === quote) {
+        quote = ''
+        opens = false
+      }
       continue
     }
-    if (ch === '"' || ch === "'") {
+    if ((ch === '"' || ch === "'") && opens) {
       quote = ch
       continue
     }
     if (ch === '#' && (at === 0 || /\s/.test(text[at - 1]))) return text.slice(0, at).trimEnd()
+    // Whether the next character may open a quoted scalar: at the start, and in a flow
+    // sequence after `[` or `,` (spaces between do not change it).
+    if (!/\s/.test(ch)) opens = flow && (ch === '[' || ch === ',')
   }
   return text
 }
@@ -239,7 +253,8 @@ function parseYAML(raw: string, file: string): Value {
       if (text.length < 2 || !text.endsWith(text[0])) {
         fail(`the quoted scalar ${JSON.stringify(text)} does not close on this line`, at)
       }
-      return text.slice(1, -1)
+      const inner = text.slice(1, -1)
+      return text[0] === '"' ? inner.replace(/\\(["\\])/g, '$1') : inner.replaceAll("''", "'")
     }
     if (text.startsWith('[')) {
       if (!text.endsWith(']')) fail(`the flow sequence ${JSON.stringify(text)} does not close on this line`, at)
@@ -537,6 +552,7 @@ export function loadSiteFacts(): SiteFacts {
   // agree. The Go boundary test pins the same pair, and W3.2 moves both in one commit
   // (D93) — which is why this is an agreement rather than "both off".
   const analytics = asMap(doc.analytics, file, 'analytics')
+  refuseUnknownKeys(analytics, ['enabled', 'measurement_id'], `${file} analytics`)
   const enabled = asBool(analytics.enabled, file, 'analytics.enabled')
   const measurementID = asString(analytics.measurement_id, file, 'analytics.measurement_id')
   if (enabled !== (measurementID.trim() !== '')) {
@@ -546,6 +562,7 @@ export function loadSiteFacts(): SiteFacts {
   }
 
   const features = asMap(doc.features, file, 'features')
+  refuseUnknownKeys(features, ['console_downloads', 'video'], `${file} features`)
 
   const allowedHosts = asList(doc.allowed_hosts, file, 'allowed_hosts').map((host, index) =>
     asString(host, file, `allowed_hosts[${index}]`),
@@ -640,11 +657,13 @@ export function loadInstallFacts(): InstallFacts {
   }
 
   const build = asMap(doc.build, file, 'build')
+  refuseUnknownKeys(build, ['arch', 'os'], `${file} build`)
   const strings = (value: Value, what: string): string[] =>
     asList(value, file, what).map((entry, index) => asString(entry, file, `${what}[${index}]`))
 
   const platforms = asList(doc.platforms, file, 'platforms').map((entry, index) => {
     const platform = asMap(entry, file, `platforms[${index}]`)
+    refuseUnknownKeys(platform, ['goos', 'id', 'name', 'note', 'status'], `${file} platforms[${index}]`)
     return {
       id: asString(platform.id, file, `platforms[${index}].id`),
       name: asString(platform.name, file, `platforms[${index}].name`),
@@ -662,6 +681,7 @@ export function loadInstallFacts(): InstallFacts {
   // file writes or it renders none, and it never invents one (Global Constraint 6).
   const paths = asList(doc.paths, file, 'paths').map((entry, index) => {
     const installPath = asMap(entry, file, `paths[${index}]`)
+    refuseUnknownKeys(installPath, ['commands', 'dev_only', 'extension', 'id', 'name', 'name_template', 'note', 'platforms', 'release_page', 'source', 'tap_repository'], `${file} paths[${index}]`)
     const what = `paths[${index}]`
     // A path a reader can follow: the commands they type, or the page they download from.
     // The release archive has the second and no command (W0.1), and a path with neither is
@@ -931,7 +951,16 @@ export function loadFonts(): { href: string; type: string }[] {
 export function loadSitemapHref(canonicalURL: string): string | null {
   const config = path.join(SITE_ROOT, 'astro.config.mjs')
   if (!existsSync(config)) return null
-  if (!readFileSync(config, 'utf8').includes('@astrojs/sitemap')) return null
+  // The config is a module, so it is imported (in a child process, because this loader is
+  // synchronous) and its declared integrations are read: a comment or a string that
+  // merely names the package is not an integration, and must not make the head point at a
+  // sitemap the build does not produce.
+  const script = `import(${JSON.stringify(pathToFileURL(config).href)}).then((mod) => process.stdout.write(JSON.stringify((mod.default.integrations ?? []).flat().map((entry) => entry && entry.name))))`
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: SITE_ROOT, encoding: 'utf8' })
+  if (result.status !== 0) {
+    throw new Error(`website/astro.config.mjs could not be loaded to read its integrations: ${result.stderr || result.error}`)
+  }
+  if (!(JSON.parse(result.stdout) as unknown[]).includes('@astrojs/sitemap')) return null
   return new URL('/sitemap-index.xml', canonicalURL).href
 }
 
