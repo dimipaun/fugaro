@@ -49,6 +49,7 @@ import {
   REDUCED_VIEWS,
   SKEW_HEADLINES,
   SUPPORTED_CLI_MINORS,
+  UNREADABLE_VERSION,
   classifyCliVersion,
   hidesView,
   skewSentence,
@@ -462,7 +463,7 @@ test.describe('the version skew handshake', () => {
     expect(result['cliVersion']).toBeNull()
     expect(screen.mode).toBe('refused')
     expect(screen.skew).toBe('unreadable')
-    expect(screen.cliVersion).toBe('a version line the console could not read')
+    expect(screen.cliVersion).toBe(UNREADABLE_VERSION)
     expect(screen.text).not.toContain('usage')
     expect(screen.liveRoots).toBe(0)
   })
@@ -491,7 +492,7 @@ test.describe('the version skew handshake', () => {
     if (shapedScreen.cliVersion === shaped) {
       expect(shapedScreen.text).toContain(shaped)
     } else {
-      expect(shapedScreen.cliVersion).toBe('n/a')
+      expect(shapedScreen.cliVersion).toBe(UNREADABLE_VERSION)
     }
   })
 

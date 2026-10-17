@@ -36,9 +36,9 @@
 // it would put it one writer away from a screen. A line the console cannot
 // parse becomes `unreadable` with the console's own sentence and a `null`
 // version, and the string is dropped where it was read. And the version strings
-// that *do* enter the model are drawn through the same door every other string
-// from outside the console goes through (`putVersionText` below), because a
-// version line is a string the CLI chose.
+// that *do* enter the model are drawn through `sanitizeText`, the same door
+// every other string from outside the console goes through (`versionText`
+// below), because a version line is a string the CLI chose.
 //
 // **Why the drawing is here and not in a screen.** The skew state is the
 // console's own -- it is a fact about the version comparison, not about any
@@ -50,14 +50,16 @@
 //
 // This is the one file in `shared/` that draws, and it is also imported by the
 // **main** process (`src/main/window.ts` runs the handshake with it), so it
-// depends on nothing in `renderer/`: the one writer below takes `sanitizeText`
-// directly rather than `renderer/app.ts`'s `putText`, which is six lines over
-// the same call, and the element shape it draws into is declared here as the
-// three DOM members it uses rather than imported from a screen. Both are the
-// same rule: the renderer depends on `shared/`, and `shared/` does not depend on
-// the renderer.
+// depends on nothing in `renderer/`: the one writer below (`literal`) is this
+// file's own rather than `renderer/app.ts`'s, the string a binary chose is
+// sanitized by the `versionText` reader above it rather than by `putText`, and
+// the element shape it draws into is declared here as the six DOM members it
+// uses rather than imported from a screen. All of that is one rule: the renderer
+// depends on `shared/`, and `shared/` does not depend on the renderer -- and the
+// consequence for a reviewer is that this file's drawing is audited by
+// `test/unit/screen-literals.test.ts`, which reads it from
+// `src/shared/version.ts` with the same rules it holds the screens to.
 
-import { UNAVAILABLE_MARK } from './availability'
 import { sanitizeText } from './sanitize'
 
 /**
@@ -481,28 +483,38 @@ export function skewSentence(compatibility: CliCompatibility): string {
 }
 
 /**
- * putVersionText writes a string the CLI chose into an element, and it is
- * `renderer/app.ts`'s `putText` by the same means: `sanitizeText` with the
- * `'label'` class, the text when it is accepted, and `n/a` plus the reason in
- * the `title` attribute when it is not -- so a version line this console will not
- * draw says why under the cursor instead of disappearing. It is written out here
- * rather than imported because `src/main/window.ts` imports this module and the
- * main process must not pull the renderer in (see the note at the top); the
- * substance is the same one door every other string from outside goes through.
+ * UNREADABLE_VERSION is what a version cell draws when there is no version to
+ * draw: the line was unreadable, or `sanitizeText` refused the one that was
+ * read. It is the console's own sentence, and it is deliberately the same
+ * sentence in both cases -- from a screen's side "the console could not read a
+ * version" is one fact, and two spellings of it would be two things to keep in
+ * step.
  */
-function putVersionText(element: SkewElement, raw: string, field: string): void {
+export const UNREADABLE_VERSION = 'a version line the console could not read'
+
+/**
+ * versionText is the text a version cell draws, and it is the one door a string
+ * the binary chose goes through: `sanitizeText` with the `'label'` class --
+ * the same class `renderer/app.ts`'s `putText` uses, so the version line is held
+ * to the same rules as every other label -- and the console's own sentence when
+ * it is refused. It returns text rather than writing an element, so this file
+ * has exactly one writer (`literal` below) and no second place a slot is
+ * assigned.
+ *
+ * The refused case is not drawn as `n/a` with the reason in a tooltip, which is
+ * what `putText` does: a version line the console will not draw is not a value
+ * with an explanation, it is the same "no version" the unreadable line is, and
+ * the sentence says so on screen where an operator will see it.
+ */
+function versionText(raw: string, field: string): string {
   const result = sanitizeText(raw, 'label', field)
-  if (result.ok) {
-    element.textContent = result.text
-    return
-  }
-  element.textContent = UNAVAILABLE_MARK
-  element.setAttribute('title', result.reason)
+  return result.ok ? result.text : UNREADABLE_VERSION
 }
 
 /** literal writes the console's own vocabulary into an element. Nothing a
  * document or a binary wrote reaches this function: every argument is a string
- * literal or a module constant of this file. */
+ * literal, a module constant of this file, or the sanitized text `versionText`
+ * returned. */
 function literal(element: SkewElement, text: string): SkewElement {
   element.textContent = text
   return element
@@ -523,7 +535,7 @@ function cell(
 
 /**
  * versionRow draws one labelled version. The CLI's version goes through
- * `putVersionText` -- it is a string a binary chose -- and `null` (the unreadable
+ * `versionText` -- it is a string a binary chose -- and `null` (the unreadable
  * case) is drawn as the console's own sentence, because there is no value to
  * draw and an `n/a` with a title nobody can see would be less than the truth.
  */
@@ -539,11 +551,7 @@ function versionRow(
   const row = cell(parent, factory, 'div', 'skew-row')
   literal(cell(row, factory, 'span', 'skew-label', labelClass), label)
   const value = cell(row, factory, 'span', valueClass)
-  if (version === null) {
-    literal(value, 'a version line the console could not read')
-    return
-  }
-  putVersionText(value, version, field)
+  literal(value, version === null ? UNREADABLE_VERSION : versionText(version, field))
 }
 
 /**

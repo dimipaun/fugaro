@@ -100,6 +100,25 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
   },
+  // The one drawer outside `src/renderer/screens`: `src/shared/version.ts` draws
+  // the version skew banner and the refusal screen (Task 3.2), because the main
+  // process runs the handshake with it and a screen is not the only thing that
+  // writes to the console's document. It is keyed by the path `join(SCREENS, ...)`
+  // resolves, which is how every read in this file finds it.
+  '../../shared/version.ts': {
+    'SKEW_HEADLINES[compatibility.mode]':
+      "`SKEW_HEADLINES`, the console's own heading table, keyed by the closed `CliCompatibilityMode` union (`ok`, `reduced`, `refused`)",
+    'skewSentence(compatibility)':
+      "`skewSentence`, which composes the sentence from this console's own constants -- the version it was built against, the supported range, the hard floor, the CLI's own brew command -- and never from the version the binary reported",
+    'HIDDEN_VIEW_WORDS[view]':
+      "`HIDDEN_VIEW_WORDS`, the console's own word for a withheld view, keyed by the closed `ReducedView` union",
+    label: {
+      within: 'versionRow',
+      reason: 'the parameter of the `versionRow` helper itself; both call sites pass a string literal',
+    },
+    'version === null ? UNREADABLE_VERSION : versionText(version, field)':
+      "`UNREADABLE_VERSION`, a console constant, or `versionText`: the version line **through `sanitizeText`** (the `label` class), which returns the sanitized text or the console's own sentence -- so the raw line a binary printed never reaches the sink",
+  },
   'run.ts': {
     'stage.deadline': '`deadlineState` keeps a word only when it is on `DEADLINE_STATES`, else null',
     '`#${String(model.number)}`': 'a pull request number the model read as a finite integer (`prNumberOf`)',
@@ -287,6 +306,13 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     theme: { within: 'renderRun', reason: 'a `RunTheme`, the closed theme tuple' },
+  },
+  '../../shared/version.ts': {
+    "classes.join(' ')": { within: 'cell', reason: 'the class list of the `cell` helper; every call site passes string-literal class names' },
+    theme: { within: 'renderVersionSkew', reason: 'a `SkewTheme`, the closed two-word theme union' },
+    'compatibility.mode': { within: 'renderVersionSkew', reason: '`CliCompatibilityMode`, the closed union of the three things the console can do about a skew' },
+    'compatibility.skew': { within: 'renderVersionSkew', reason: '`CliSkewName`, the closed list of the six ways a version line can be placed' },
+    view: { within: 'renderVersionSkew', reason: 'a `ReducedView`, from the closed `REDUCED_VIEWS` tuple' },
   },
   'spend.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -565,6 +591,17 @@ function attributeOtherUses(code: string): number[] {
 
 const FILES = readdirSync(SCREENS).filter((name) => name.endsWith('.ts'))
 
+/** SHARED_DRAWER is the one file outside `src/renderer/screens` that writes to
+ * the console's document: `src/shared/version.ts`, which draws the version skew
+ * banner and the refusal screen (Task 3.2). It paths through `SCREENS` so that
+ * every read and every vocabulary lookup in this file finds it the same way it
+ * finds a screen.
+ *
+ * A new file with a `literal` of its own is a new place for the defect the
+ * review of Task 2.3 found four times, so the same scan reads it: the reason
+ * `offences` takes a file argument at all is that this list could grow. */
+const SHARED_DRAWER = '../../shared/version.ts'
+
 describe('a screen writes only its own vocabulary through literal', () => {
   it('reads the five screens', () => {
     expect(FILES.sort()).toEqual(['degraded.ts', 'live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
@@ -653,6 +690,47 @@ describe('a screen writes only its own vocabulary through literal', () => {
     }
     const missed = Object.entries(mutants)
       .filter(([, mutant]) => offences('projects.ts', mutant).length <= before)
+      .map(([name]) => name)
+    expect(missed, 'mutants the scan let through').toEqual([])
+  })
+})
+
+describe('the shared drawer that draws is held to the same rules', () => {
+  const source = readFileSync(join(SCREENS, SHARED_DRAWER), 'utf8')
+
+  it('hands literal no document-controlled argument and writes no text slot outside it', () => {
+    // The same scan, the same vocabulary rules, the same refusal of every
+    // bypass spelling -- over `src/shared/version.ts`, which Task 3.2 added as
+    // the file that draws the version skew banner and the refusal screen.
+    expect(offences(SHARED_DRAWER, source)).toEqual([])
+  })
+
+  it('finds the shared drawer\'s sink calls, so the scan above cannot pass by finding nothing', () => {
+    expect(sinkCalls(source).length).toBeGreaterThan(2)
+  })
+
+  it('fails on the same defects in that file (MUTATION)', () => {
+    // One mutant per way in: a document string handed to the sink under a
+    // parameter name, a text slot and an attribute written by hand, the sink
+    // under another name, and the five spellings the review of Task 2.3 named.
+    const before = offences(SHARED_DRAWER, source).length
+    const mutants: Record<string, string> = {
+      argument: `${source}\nfunction m1(p: SkewElement, line: string) {\n  literal(p, line)\n}\n`,
+      textContent: `${source}\nfunction m2(p: SkewElement, line: string) {\n  cell(p, factory, 'span', 'x').textContent = line\n}\n`,
+      innerHTML: `${source}\nfunction m3(p: { innerHTML: string }, line: string) {\n  p.innerHTML = line\n}\n`,
+      alias: `${source}\nconst say = literal\nfunction m4(p: SkewElement, line: string) {\n  say(p, line)\n}\n`,
+      setAttribute: `${source}\nfunction m5(p: SkewElement, line: string) {\n  p.setAttribute('data-skew', line)\n}\n`,
+      title: `${source}\nfunction m6(p: { title: string }, line: string) {\n  p.title = line\n}\n`,
+      computedText: `${source}\nfunction m7(p: SkewElement, line: string) {\n  p['textContent'] = line\n}\n`,
+      computedAttribute: `${source}\nfunction m8(p: SkewElement, line: string) {\n  p['setAttribute']('data-skew', line)\n}\n`,
+      optionalAttribute: `${source}\nfunction m9(p: SkewElement, line: string) {\n  p.setAttribute?.('data-skew', line)\n}\n`,
+      assignedAttribute: `${source}\nfunction m10(p: SkewElement, line: string) {\n  const write = p.setAttribute\n  write.call(p, 'data-skew', line)\n}\n`,
+      objectAssign: `${source}\nfunction m11(p: SkewElement, line: string) {\n  Object.assign(p, { textContent: line })\n}\n`,
+      reflectSet: `${source}\nfunction m12(p: SkewElement, line: string) {\n  Reflect.set(p, 'textContent', line)\n}\n`,
+      defineProperty: `${source}\nfunction m13(p: SkewElement, line: string) {\n  Object.defineProperty(p, 'textContent', { value: line })\n}\n`,
+    }
+    const missed = Object.entries(mutants)
+      .filter(([, mutant]) => offences(SHARED_DRAWER, mutant).length <= before)
       .map(([name]) => name)
     expect(missed, 'mutants the scan let through').toEqual([])
   })

@@ -41,6 +41,7 @@ import {
   REDUCED_VIEWS,
   SKEW_HEADLINES,
   SUPPORTED_CLI_MINORS,
+  UNREADABLE_VERSION,
   classifyCliVersion,
   compareMinors,
   hidesView,
@@ -505,7 +506,7 @@ describe('renderVersionSkew', () => {
 
   it('says the console could not read a version rather than drawing a blank', () => {
     const root = renderVersionSkew(factory, classifyCliVersion('usage: fugaro version'), 'light')
-    expect(one(root, 'skew-cli-version').textContent).toBe('a version line the console could not read')
+    expect(one(root, 'skew-cli-version').textContent).toBe(UNREADABLE_VERSION)
     expect(drawn(root)).not.toContain('usage')
   })
 
@@ -545,16 +546,14 @@ describe('renderVersionSkew', () => {
     const cell = one(root, 'skew-cli-version')
     const text = cell.textContent ?? ''
     const attribute = cell.getAttribute('title')
-    // Either it is drawn as it was read, or it is not drawn and a reason is
-    // there instead -- but it is never drawn *and* refused, and never drawn
-    // without the sanitizer having run: `putText` is the only writer in this
-    // tree that sets `textContent` from a value, and it either sets the text or
-    // sets `n/a` plus a title.
+    // Either it is drawn as the sanitizer drew it, or the console's own
+    // sentence is drawn instead -- and the raw line is never on screen in the
+    // refused case.
     if (text === long) {
-      expect(attribute === null || typeof attribute === 'string').toBe(true)
+      expect(attribute).toBeNull()
     } else {
-      expect(text).toBe('n/a')
-      expect(typeof attribute).toBe('string')
+      expect(text).toBe(UNREADABLE_VERSION)
+      expect(drawn(root)).not.toContain(long)
     }
   })
 
