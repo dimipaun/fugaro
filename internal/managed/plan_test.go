@@ -481,10 +481,11 @@ func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 
 // The red step of Task 1.2a, and the rule it is about: the owner's delete list
 // is one half of the decision and the resource is the other. A cover that
-// judges no delete — the shape the managed cover had while the list alone was
-// taken to decide — must not have a listed delete admitted through it: the
-// resource is never read, and an address on the owner's list is not a
-// judgement of it. Before the rule, this verdict is OK.
+// judges no delete at all — the shape a cover would have to have for the
+// address alone to decide, and the fail-closed case the wiring exists for —
+// must not have a listed delete admitted through it: the resource is never
+// read, and an address on the owner's list is not a judgement of it. Before
+// the rule, this verdict is OK.
 func TestGateRefusesAListedDeleteTheCoverDoesNotJudge(t *testing.T) {
 	r := newRig(t)
 	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
@@ -498,6 +499,36 @@ func TestGateRefusesAListedDeleteTheCoverDoesNotJudge(t *testing.T) {
 	got := v.Refusals[0]
 	if got.Gate != coverGate || got.Address != planBucket || !strings.Contains(got.Why, "not judged") {
 		t.Errorf("refusal %+v, want the cover's refusal of %s saying the resource was not judged", got, planBucket)
+	}
+	// And only a listed address is that case: the same unjudging cover with an
+	// address that is not on the list leaves the guard's own refusal as the
+	// only one, which is the rule the guard was already making.
+	if v := gate(t, r, spec(t, r, judgesNothing{})); len(v.Refusals) != 1 || v.Refusals[0].Gate != guardGate {
+		t.Errorf("refusals %v, want the guard's one refusal for an address that is not listed", v.Refusals)
+	}
+}
+
+// A replace is a delete here as it is everywhere else in the rule: the remove
+// half of either of terraform's two orders is what the list is read for, so a
+// cover that judges nothing refuses a listed replace exactly as it refuses a
+// listed destroy — the created half being read elsewhere is not the point.
+func TestGateRefusesAListedReplaceTheCoverDoesNotJudge(t *testing.T) {
+	for _, order := range [][]string{{"delete", "create"}, {"create", "delete"}} {
+		t.Run(strings.Join(order, ","), func(t *testing.T) {
+			r := newRig(t)
+			r.show(t, change(planBucket, "google_storage_bucket", order, map[string]any{"name": "fugaro-runs-" + gcpProject}))
+			v := gate(t, r, spec(t, r, judgesNothing{}, planBucket))
+			if v.OK {
+				t.Fatal("a replace of an address on the owner's list was admitted by a cover that judges no delete")
+			}
+			if len(v.Refusals) != 1 {
+				t.Fatalf("refusals %v, want the cover's one", v.Refusals)
+			}
+			got := v.Refusals[0]
+			if got.Gate != coverGate || got.Address != planBucket || !strings.Contains(got.Why, "not judged") {
+				t.Errorf("refusal %+v, want the cover's refusal of %s saying the resource was not judged", got, planBucket)
+			}
+		})
 	}
 }
 

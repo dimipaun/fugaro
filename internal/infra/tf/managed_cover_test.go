@@ -1469,8 +1469,9 @@ func TestManagedCoverAdmitsAListedDeleteOfAnAllowedResource(t *testing.T) {
 	}
 }
 
-// TestManagedCoverRefusesAListedDeleteOfATypeOutsideTheAllowlist: the red step.
-// The address alone is not the decision: a listed delete whose type the managed
+// TestManagedCoverRefusesAListedDeleteOfATypeOutsideTheAllowlist: the rule at
+// the cover, where the resource is judged. The address alone is not the
+// decision: a listed delete whose type the managed
 // list does not carry is refused, and the refusal names the type rule rather
 // than the actions, so a cover that admitted a listed delete unjudged would
 // fail here. The first two are dropped entries and the third is a type neither
@@ -1498,6 +1499,42 @@ func TestManagedCoverRefusesAListedDeleteOfATypeOutsideTheAllowlist(t *testing.T
 				t.Errorf("a listed delete of %s is refused for its actions (%q), want the resource judged", tc.typ, out[0])
 			}
 		})
+	}
+}
+
+// TestManagedCoverRefusesAnActionSetTerraformDoesNotWrite: managedActions'
+// sets are terraform's own, whole and in order, and a delete mixed with
+// another action is not one of them. The listed address does not make it a
+// replace: the set is refused for its actions rather than read as the delete
+// it resembles, so a set no terraform writes never reaches the resource rules.
+func TestManagedCoverRefusesAnActionSetTerraformDoesNotWrite(t *testing.T) {
+	for _, acts := range [][]string{{"delete", "update"}, {"update", "delete"}, {"create", "delete", "update"}} {
+		t.Run(strings.Join(acts, ","), func(t *testing.T) {
+			rc := managedKeptFixture["google_storage_bucket"]
+			rc.Change.Actions = acts
+			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			out := c.NotCovered(managedPlan(rc), nil)
+			if len(out) != 1 || !strings.Contains(out[0], "actions "+strings.Join(acts, ", ")) {
+				t.Fatalf("the action set %v of a listed address gives %q, want the actions rule", acts, out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverJudgesTheRemovedViewFromBefore: the removed view is the
+// resource the plan takes away, and nothing of the after is carried onto it —
+// a destroy's after_unknown describes a resource that will not exist, and an
+// import is about the resource a plan takes over rather than one it removes.
+// The listed destroy below is admitted on before alone, which is what removed
+// builds.
+func TestManagedCoverJudgesTheRemovedViewFromBefore(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket"])
+	rc.Change.AfterUnknown = map[string]any{"name": true,
+		"retention_policy": []any{map[string]any{"is_locked": true}}}
+	rc.Change.Importing = &Importing{ID: "fugaro-tfstate-proj-1"}
+	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
+		t.Fatalf("a listed destroy of a prefixed bucket gives %q, want it covered: the removed view is before and nothing of the after", out)
 	}
 }
 
