@@ -270,19 +270,51 @@ test('a wrong type is refused, never coerced', () => {
   assert.equal(takeLease(emptyLeaseState(), 'consumer-a').code, LEASE_CODES.BAD_TYPE);
 });
 
-test('a blank, padded, control-character or oversize holder is refused', () => {
+test('a blank, padded, invisible or oversize holder is refused', () => {
   assert.equal(validateLease({ holder: '', at: AT }).code, LEASE_CODES.BAD_HOLDER);
   assert.equal(validateLease({ holder: '   ', at: AT }).code, LEASE_CODES.BAD_HOLDER);
   // Whitespace is refused, not trimmed: a holder is an identity, and
   // " consumer-a" is not the identity "consumer-a".
   assert.equal(validateLease({ holder: ' consumer-a', at: AT }).code, LEASE_CODES.BAD_HOLDER);
   assert.equal(validateLease({ holder: 'consumer-a\n', at: AT }).code, LEASE_CODES.BAD_HOLDER);
-  // A control character in an identity is a way to make two different
-  // holders print the same, so it is refused too.
-  assert.equal(
-    validateLease({ holder: `consumer${String.fromCharCode(0)}a`, at: AT }).code,
-    LEASE_CODES.BAD_HOLDER,
-  );
+
+  // An invisible or direction-changing character is a way to make two
+  // different identities print as one, so the set is the one
+  // `internal/pluginwire/wire.go`'s Printable escapes: Cc (the C0 controls,
+  // DEL, and the C1 block), Cf (zero-width and bidi overrides, the soft
+  // hyphen, the BOM), and the two line separators. This test first covered
+  // NUL alone, and the C1 block and every format character went through it.
+  const invisible = [
+    0x00, 0x07, 0x09, 0x1b, // Cc: NUL, BEL, TAB, ESC
+    0x7f, // DEL
+    0x85, 0x9b, // C1: NEL, CSI
+    0xad, // Cf: soft hyphen
+    0x200b, 0x200e, 0x202e, 0xfeff, // Cf: zero-width space, LRM, RLO, BOM
+    0x2028, 0x2029, // Zl/Zp: the line separators
+  ];
+  for (const point of invisible) {
+    const holder = `consumer${String.fromCodePoint(point)}a`;
+    assert.equal(
+      validateLease({ holder, at: AT }).code,
+      LEASE_CODES.BAD_HOLDER,
+      `U+${point.toString(16).padStart(4, '0')} was accepted in a holder`,
+    );
+    assert.equal(
+      takeLease(emptyLeaseState(), { holder, at: AT }).code,
+      LEASE_CODES.BAD_HOLDER,
+      `U+${point.toString(16).padStart(4, '0')} was accepted by a take`,
+    );
+  }
+
+  // An unpaired surrogate too: a JS string can hold one where a Go string
+  // cannot, and Printable escapes it as RuneError.
+  const lone = `consumer${String.fromCharCode(0xd800)}a`;
+  assert.equal(validateLease({ holder: lone, at: AT }).code, LEASE_CODES.BAD_HOLDER);
+
+  // The positive control: an identity that is not ASCII is not thereby
+  // refused. Only the invisible ones are.
+  assert.equal(validateLease({ holder: 'konsumé', at: AT }).ok, true);
+  assert.equal(validateLease({ holder: 'consumer-中', at: AT }).ok, true);
 
   const oversize = 'h'.repeat(MAX_HOLDER_LENGTH + 1);
   assert.equal(validateLease({ holder: oversize, at: AT }).code, LEASE_CODES.OVERSIZE);

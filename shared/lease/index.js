@@ -39,10 +39,10 @@
 //
 // **Fail closed.** Every input is either exactly the shape documented here or
 // a refusal carrying a code of its own: an unknown field, a missing one, a
-// wrong type, a blank, padded, control-character or oversize holder, a
-// timestamp that is not a whole number of milliseconds, a TTL that is not a
-// positive whole number of milliseconds, and a held claim this module cannot
-// read. Nothing is coerced, nothing is defaulted, and nothing is "close
+// wrong type, a blank, padded, invisible or oversize holder, a timestamp that
+// is not a whole number of milliseconds, a TTL that is not a positive whole
+// number of milliseconds, and a held claim this module cannot read. Nothing is
+// coerced, nothing is defaulted, and nothing is "close
 // enough" -- a timestamp that arrives as a string is refused rather than
 // parsed, because a guessed timestamp is how a lease goes stale early.
 //
@@ -99,9 +99,20 @@ const STATE_FIELDS = ['claim', 'ttl'];
 const TAKE_FIELDS = ['holder', 'at'];
 const RELEASE_FIELDS = ['holder'];
 
-// A control character in a holder is a way to make two different holders print
-// as one; a padded one is a second identity that looks like the first.
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+// A holder that is invisible or direction-changing is a way to make two
+// different identities print as one; a padded one is a second identity that
+// looks like the first.
+//
+// The set is `internal/pluginwire/wire.go`'s `Printable`, which is this tree's
+// own answer to "what may be printed": **Cc** (which is the C0 controls *and*
+// the C1 block, U+0080-U+009F, and DEL), **Cf** (zero-width and bidi-override
+// characters, the soft hyphen, the BOM), and the two line separators, which
+// are **Zl** and **Zp**. Two differences from `Printable`, both deliberate:
+// an unpaired surrogate is refused too (**Cs** -- `Printable` escapes it as
+// RuneError, and a JS string can hold one where a Go string cannot), and
+// `Printable`'s tab is not exempt here. It has to print something readable;
+// a holder is an identity and has nothing to print.
+const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
 
 function refusal(code, message, extra) {
   return Object.freeze({ ok: false, code, message, ...extra });
@@ -139,8 +150,11 @@ function validateHolder(holder) {
   if (holder !== holder.trim()) {
     return refusal(LEASE_CODES.BAD_HOLDER, 'a lease holder is not padded with whitespace');
   }
-  if (CONTROL_CHARACTERS.test(holder)) {
-    return refusal(LEASE_CODES.BAD_HOLDER, 'a lease holder carries no control characters');
+  if (NON_PRINTABLE.test(holder)) {
+    return refusal(
+      LEASE_CODES.BAD_HOLDER,
+      'a lease holder carries no control, format or line-separator characters',
+    );
   }
   if (holder.length > MAX_HOLDER_LENGTH) {
     return refusal(LEASE_CODES.OVERSIZE, `a lease holder is at most ${MAX_HOLDER_LENGTH} characters`);

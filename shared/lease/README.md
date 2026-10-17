@@ -77,7 +77,7 @@ is refused rather than parsed, because a guessed timestamp is how a lease goes s
 | `unknown-field` | a lease, a state, a take or a release carries a field this module does not define |
 | `missing-field` | one of the fields above is absent |
 | `bad-type` | the value is not a plain object at all (null, an array, a string, a class instance) |
-| `bad-holder` | the holder is not a string, is blank, is padded with whitespace, or carries a control character |
+| `bad-holder` | the holder is not a string, is blank, is padded with whitespace, or carries an invisible or direction-changing character (below) |
 | `oversize` | the holder is longer than `MAX_HOLDER_LENGTH` (256) |
 | `bad-timestamp` | `at` is not a whole, non-negative number of milliseconds |
 | `bad-ttl` | the state's TTL is not a positive whole number of milliseconds (zero included: a TTL of zero makes every claim stale the instant it is taken, which is the same as no lease at all) |
@@ -85,6 +85,17 @@ is refused rather than parsed, because a guessed timestamp is how a lease goes s
 | `already-claimed` | a lease is held, by anyone, and the TTL has not run out |
 | `not-holder` | a release names a holder other than the one holding the lease |
 | `no-lease` | a release names a holder and nothing is held |
+
+**What "invisible" means, and where the set comes from.** An invisible or direction-changing
+character is how two different identities print as one, so the set is the one this tree already
+uses for "what may be printed": `internal/pluginwire/wire.go`'s `Printable` — **Cc** (the C0
+controls, DEL, and the C1 block, U+0080–U+009F), **Cf** (zero-width and bidi-override characters,
+the soft hyphen, the BOM) and the two line separators, **Zl** and **Zp**. Two differences from
+`Printable`, both deliberate: an unpaired surrogate is refused too (**Cs** — `Printable` escapes
+it as RuneError, and a JS string can hold one where a Go string cannot), and `Printable`'s tab is
+not exempt, because it has to print something readable while a holder is an identity with nothing
+to print. A holder that is merely **not ASCII** — an accented or CJK name — is not refused, and a
+test asserts that as the positive control, so the rule cannot quietly become "ASCII only".
 
 **Two fail-closed choices worth naming.**
 
