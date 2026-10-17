@@ -14,19 +14,14 @@
 //
 // There is deliberately no mean here, and no field for one: an average of a
 // long-tailed distribution describes nobody (reconciliation D97).
-//
-// RED STEP (website task W0.3). This is the stub the identifier test is
-// written against: Aggregate groups by the key the caller hands it, and the
-// caller hands it the run's repository slug. The published group key is
-// therefore an identifier, which is exactly the leak the test must catch.
-// The real implementation maps the run's recipe and drops the names the tree
-// does not ship.
 package stats
 
 import (
 	"maps"
 	"math"
 	"slices"
+
+	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
 // MinRuns is the least runs a group may carry a range from (reconciliation
@@ -105,7 +100,9 @@ type Result struct {
 
 // Aggregate groups runs by recipe and computes each group's figures. A group
 // with fewer than minRuns runs is suppressed: its runs are counted in
-// RunsBelowMinRuns and no range is published for it.
+// RunsBelowMinRuns and no range is published for it. A run whose recipe the
+// tree does not ship is counted in RunsUnknownRecipe and not grouped at all:
+// a group key is a name a reader can look up (reconciliation D96).
 func Aggregate(runs []Run, minRuns int) Result {
 	var res Result
 	type acc struct {
@@ -122,10 +119,15 @@ func Aggregate(runs []Run, minRuns int) Result {
 		if r.ComputeNotEstimated {
 			res.ComputeNotEstimated++
 		}
-		g := groups[r.Recipe]
+		name, shipped := ShippedName(r.Recipe)
+		if !shipped {
+			res.RunsUnknownRecipe++
+			continue
+		}
+		g := groups[name]
 		if g == nil {
 			g = &acc{}
-			groups[r.Recipe] = g
+			groups[name] = g
 		}
 		g.durations = append(g.durations, r.DurationS)
 		g.costs = append(g.costs, r.CostUSD)
@@ -148,6 +150,22 @@ func Aggregate(runs []Run, minRuns int) Result {
 		})
 	}
 	return res
+}
+
+// ShippedName maps a record's recipe name to the name the tree ships today,
+// and reports false for a name it does not ship: a recipe renamed in 0.5.0
+// (recipe.Renamed) keeps its figures under the name the catalog carries now,
+// and a name neither the catalog nor the rename table knows -- a recipe of a
+// project layer's own, or a record whose recipe is empty -- is one a reader
+// cannot look up, so it is never published as a group key.
+func ShippedName(name string) (string, bool) {
+	if to, ok := recipe.Renamed[name]; ok {
+		name = to
+	}
+	if !slices.Contains(recipe.CatalogNames(), name) {
+		return "", false
+	}
+	return name, true
 }
 
 // PercentilesOf is the min, median and 90th percentile of xs, interpolated

@@ -180,7 +180,7 @@ func runStatsRuns(cmd *cobra.Command, o *statsOptions) error {
 		return err
 	}
 	res := stats.Aggregate(runs, o.minRuns)
-	return writeStats(cmd.OutOrStdout(), env.lc.Name, from, until, since, o.minRuns, res, o.asJSON)
+	return writeStats(cmd.OutOrStdout(), env.lc.Name, from, until, o.since, o.minRuns, res, o.asJSON)
 }
 
 // readStatsRuns reads every run record in the window and maps each to the
@@ -217,13 +217,16 @@ func readStatsRuns(ctx context.Context, env *cloudEnv, since time.Time) ([]stats
 // statsRun is the narrow view of one record: a recipe, a duration, a cost and
 // whether the compute part is an estimate. Nothing that identifies the run,
 // its repository or its pull request is carried across, so no field of the
-// published aggregate can hold one.
+// published aggregate can hold one -- this function is where the record's
+// repository, run ID, branch, pull request and account are left behind.
 func statsRun(rec *runstore.Record) stats.Run {
 	r := stats.Run{NoFigure: true}
-	// RED STEP (website task W0.3): the stub groups the run under its
-	// repository slug, which is the leak TestStatsRunsJSONCarriesNoIdentifiers
-	// exists to catch. The real implementation uses the record's recipe.
-	r.Recipe = rec.Repo
+	// The recipe is the group key, and it is read from the record's recipe
+	// rather than from anything that names the run. A record from before
+	// 0.5.0 has none, and internal/stats drops the empty name as unknown.
+	if rec.Recipe != nil {
+		r.Recipe = rec.Recipe.Name
+	}
 	if rec.StartedAt.IsZero() || rec.FinishedAt == nil || rec.Cost == nil {
 		return r
 	}
@@ -239,8 +242,9 @@ func statsRun(rec *runstore.Record) stats.Run {
 }
 
 // writeStats prints the figures as a table with their disclaimer, or as one
-// JSON document.
-func writeStats(w io.Writer, project string, from, until time.Time, since time.Duration, minRuns int, res stats.Result, asJSON bool) error {
+// JSON document. sinceLabel is --since as the operator wrote it, so the window
+// reads back as asked for rather than as a duration's own spelling.
+func writeStats(w io.Writer, project string, from, until time.Time, sinceLabel string, minRuns int, res stats.Result, asJSON bool) error {
 	doc := statsDoc{
 		Project: project,
 		Since:   from.Format("2006-01-02"),
@@ -277,8 +281,8 @@ func writeStats(w io.Writer, project string, from, until time.Time, since time.D
 
 	fmt.Fprintf(w, "project: %s\n", project)
 	window := "the whole bucket"
-	if since > 0 {
-		window = fmt.Sprintf("%s to %s (%s)", doc.Since, doc.Until, since)
+	if !from.IsZero() {
+		window = fmt.Sprintf("%s to %s (%s)", doc.Since, doc.Until, sinceLabel)
 	}
 	fmt.Fprintf(w, "window:  %s, at least %d runs per recipe\n\n", window, minRuns)
 	if len(res.Groups) == 0 {
