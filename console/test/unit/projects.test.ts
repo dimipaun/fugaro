@@ -344,7 +344,60 @@ describe('buildProjectsModel', () => {
     )
     expect(model.repositories.seen.map((entry) => entry.slug)).toEqual(['example-owner/example-repo', 'example-owner/other-repo'])
     expect(model.repositories.onlySeen).toEqual([])
-    expect(model.repositories.enrolledNote).toBeNull()
+    // Both documents arrived, so the panel is a read and the difference between
+    // the two lists is a fact about the project rather than about an absence.
+    const panel_ = model.panels.find((entry) => entry.key === 'repositories')
+    expect(panel_?.state).toBe('read')
+    expect(panel_?.because).toBeNull()
+  })
+
+  it('draws no repository claim from half of its two documents', () => {
+    // The two lists come from one document each, and the panel's claims are
+    // about the *difference* between them: without the cap document every seen
+    // repository would read as running with no cap row, and without the run list
+    // the enrolled set would read as having no runs at all. Neither claim was
+    // made by anything that arrived.
+    const withoutCaps = buildProjectsModel(inputs({ budget: null }))
+    const noCaps = withoutCaps.panels.find((entry) => entry.key === 'repositories')
+    expect(noCaps?.state).toBe('unavailable')
+    expect(noCaps?.count).toBeNull()
+    expect(noCaps?.because).toContain('the enrolled repositories are unknown')
+    expect(withoutCaps.repositories.onlySeen).toEqual([])
+    expect(withoutCaps.repositories.onlyEnrolled).toEqual([])
+    // And the count is not a zero: it is the reading the missing document owes.
+    expect(withoutCaps.repositories.enrolledCount.value).toBeNull()
+    expect(withoutCaps.repositories.enrolledCount.because).toContain('enrolled')
+
+    const withoutRuns = buildProjectsModel(inputs({ runs: null }))
+    const noRuns = withoutRuns.panels.find((entry) => entry.key === 'repositories')
+    expect(noRuns?.state).toBe('unavailable')
+    expect(noRuns?.count).toBeNull()
+    expect(noRuns?.because).toContain('the repositories with a recorded run are unknown')
+    expect(withoutRuns.repositories.onlySeen).toEqual([])
+    expect(withoutRuns.repositories.seenCount.value).toBeNull()
+
+    // Both missing: the reason names both, and a sentence the CLI printed for a
+    // refused read is carried as it was worded.
+    const neither = buildProjectsModel({
+      budget: null,
+      runs: null,
+      accounts: null,
+      secrets: null,
+      sentences: { 'budget.show': 'permission denied' },
+    })
+    const both = neither.panels.find((entry) => entry.key === 'repositories')
+    expect(both?.because).toContain('permission denied')
+    expect(both?.because).toContain('the repositories with a recorded run are unknown')
+  })
+
+  it('names both documents the repositories panel reads', () => {
+    const model = buildProjectsModel(inputs())
+    const entry = model.panels.find((candidate) => candidate.key === 'repositories')
+    // It is the one panel with two sources, and naming one of them would be a
+    // claim about where the other list came from.
+    expect(entry?.source).toContain('fugaro budget show --json')
+    expect(entry?.source).toContain('fugaro runs ls --json')
+    expect(model.panels.filter((candidate) => candidate.source.includes('+'))).toHaveLength(1)
   })
 
   it('names a repository the run list knows and the cap document does not', () => {
@@ -510,6 +563,46 @@ describe('renderProjects', () => {
     expect(texts(caps[0] as FakeScreen, 'projects-cap-value')).toEqual(['$40.00', '$8.00'])
   })
 
+  it('draws an unavailable repositories panel as its reason, with no list and no zero', () => {
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ budget: null })), 'light')
+    const drawn_ = panel(tree, 'repositories')
+    expect(drawn_.getAttribute('data-state')).toBe('unavailable')
+    // No count, no list of either kind, and no claim about a cap nobody read.
+    expect(all(drawn_, 'projects-count')).toEqual([])
+    expect(all(drawn_, 'projects-enrolled-repo')).toEqual([])
+    expect(all(drawn_, 'projects-seen-repo')).toEqual([])
+    expect(all(drawn_, 'projects-only-seen')).toEqual([])
+    const text = drawnText(drawn_)
+    expect(text).toContain('enrolled repositories are unknown')
+    expect(text).toContain('fugaro budget show --json')
+    expect(text).not.toContain('running with no cap row')
+  })
+
+  it('draws a compute the document did not estimate as n/a, never as a free $0.00', () => {
+    const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    const rows = all(tree, 'projects-job')
+    expect(rows).toHaveLength(2)
+    // `RUNS[1]` is the run whose cost carries `compute_usd: 0` with
+    // `compute_estimated: false`, and `runstore.Cost`'s own comment is the rule:
+    // "when false, ComputeUSD is 0 and means 'not estimated', not free"
+    // (`internal/runstore/cost.go:15`). A measured `$0.00` would read as free.
+    const drawn_ = drawn(rows[1] as FakeScreen)
+    expect(texts(rows[1] as FakeScreen, 'projects-job-compute')).toEqual(['n/a'])
+    expect(drawn_).not.toContain('$0.00')
+    // The estimated arm is still drawn as the estimate it is.
+    expect(texts(rows[0] as FakeScreen, 'projects-job-compute')).toEqual(['est. $0.50'])
+  })
+
+  it('puts a run record\'s status through the sanitizer like any other string', () => {
+    // `status` is a string the record carries, not a word this console chose: a
+    // token-shaped one is redacted in place rather than drawn.
+    const token = githubToken()
+    const runs = { ...RUNS, runs: [{ ...RUNS.runs[0], status: token }] }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    expect(texts(tree, 'projects-job-status')).toEqual([TOKEN_PLACEHOLDER])
+    expect(drawn(tree)).not.toContain(token)
+  })
+
   it('draws a kill with its operator, its time and its reason', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     const kill = one(tree, 'projects-kill')
@@ -652,6 +745,25 @@ describe('buildRunModel', () => {
     expect(model.stages[0]?.deadline).toBeNull()
     expect(model.stages[0]?.deadlineBecause).toBe('the document has no row.deadline')
     expect(model.halt?.reason).toBe('the daily cap was reached')
+  })
+
+  it('reads a compute the document did not estimate as unavailable, not as a free zero', () => {
+    // `runstore.Cost`'s own comment is the rule: `ComputeEstimated` "is true
+    // only when prices and resources were known; when false, ComputeUSD is 0 and
+    // means 'not estimated', not free" (`internal/runstore/cost.go:15`). A
+    // measured `$0.00` in the ledger would read as a run that cost nothing to
+    // compute, which is the one thing design section 10.1 forbids.
+    const notEstimated = {
+      ...DIAGNOSIS,
+      row: { ...DIAGNOSIS.row, cost: { ...DIAGNOSIS.row.cost, compute_usd: 0, compute_estimated: false } },
+    }
+    const model = buildRunModel(runInputs({ diagnosis: notEstimated }))
+    expect(model.ledger.compute.value).toBeNull()
+    expect(model.ledger.compute.state).toBe('unavailable')
+    expect(model.ledger.compute.because).toContain('not estimated')
+    // The two other accounts are untouched by the flag.
+    expect(model.ledger.model.value).toBe(1.25)
+    expect(model.ledger.total.value).toBe(1.75)
   })
 
   it('draws a deadline the row does carry, and only then', () => {
@@ -800,6 +912,38 @@ describe('renderRun', () => {
     const tree = renderRun(factory, buildRunModel(runInputs({ logs })), 'light')
     expect(drawnText(tree)).not.toContain(token)
     expect(one(one(tree, 'run-log-line'), 'run-log-message').textContent).toBe(`using ${TOKEN_PLACEHOLDER}`)
+  })
+
+  it('draws the ledger\'s not-estimated compute as n/a, never as a free $0.00', () => {
+    const notEstimated = {
+      ...DIAGNOSIS,
+      row: { ...DIAGNOSIS.row, cost: { ...DIAGNOSIS.row.cost, compute_usd: 0, compute_estimated: false } },
+    }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: notEstimated })), 'light')
+    expect(one(tree, 'run-ledger-compute-value').textContent).toBe('n/a')
+    // The sentence is in the cell's title, the way every unavailable reading
+    // carries its reason, and `$0.00` is nowhere on the screen.
+    expect(one(tree, 'run-ledger-compute-value').getAttribute('title')).toContain('not estimated')
+    expect(drawnText(tree)).not.toContain('$0.00')
+  })
+
+  it('puts a provider\'s log severity through the sanitizer, like the message beside it', () => {
+    // `severity` is the cloud logging API's own word, not one of this console's
+    // constants, so it is a document string like any other: a token-shaped one
+    // is redacted in place rather than written into the document raw.
+    const token = githubToken()
+    const logs = [{ time: '2026-10-15T11:00:00Z', severity: token, stage: 'verify', message: 'ok' }]
+    const tree = renderRun(factory, buildRunModel(runInputs({ logs })), 'light')
+    expect(one(tree, 'run-log-severity').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(drawnText(tree)).not.toContain(token)
+  })
+
+  it('puts the run record\'s status through the sanitizer too', () => {
+    const token = githubToken()
+    const status = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, status: token } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: status })), 'light')
+    expect(one(tree, 'run-status').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(drawnText(tree)).not.toContain(token)
   })
 
   it('writes only the console\'s own text into the reading cells', () => {

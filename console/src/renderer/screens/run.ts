@@ -357,10 +357,28 @@ function prNumberOf(row: Record<string, unknown>): number | null {
   return numberAt(row['pr']) ?? numberAt(row['pr_number'])
 }
 
+/**
+ * COMPUTE_NOT_ESTIMATED is the sentence a not-estimated compute carries.
+ * `ComputeEstimated` "is true only when prices and resources were known; when
+ * false, ComputeUSD is 0 and means 'not estimated', not free"
+ * (`internal/runstore/cost.go:15`), so the flag off is neither a measured
+ * `$0.00` -- which reads as free, the one thing design section 10.1 forbids --
+ * nor a bare `n/a`, which would leave out why. The Projects screen declares its
+ * own copy of this sentence for the same field; the two screens are siblings and
+ * neither imports the other, so the wording is held equal by the tests of both
+ * rather than by a shared module that is not this task's to add.
+ */
+const COMPUTE_NOT_ESTIMATED =
+  'compute is not estimated for this run: the price table or the run\'s resources were unknown, and a `compute_usd` of 0 with `compute_estimated` false means "not estimated", not free'
+
 /** costOf reads `runstore.Cost`. `model_usd` is a list price when the basis is
- * a subscription (never billed, never capped), and compute is an estimate when
- * the dog says so -- `ComputeEstimated` is the flag, and a `compute_usd` of
- * zero with the flag false means "not estimated", not "nothing". */
+ * a subscription (never billed, never capped), and compute is what
+ * `ComputeEstimated` says it is: an estimate when the flag is on, and **not an
+ * estimate** -- `unavailable`, with the CLI's own sentence -- when it is off,
+ * because the flag off is a `compute_usd` of 0 that means "not estimated", not
+ * free (`internal/runstore/cost.go:15`, design section 10.1). The sentence is
+ * the Projects screen's own constant: the two screens draw the same field and
+ * say the same thing about it. */
 function ledgerOf(row: Record<string, unknown>): RunLedger {
   const cost = objectAt(row['cost']) ?? {}
   const basis = textAt(cost['model_basis'])
@@ -368,7 +386,14 @@ function ledgerOf(row: Record<string, unknown>): RunLedger {
   const compute = readNumber(cost['compute_usd'], 'row.cost.compute_usd')
   return {
     model: basis === 'subscription' && model.value !== null ? { ...model, state: 'notional' } : model,
-    compute: compute.value !== null && cost['compute_estimated'] === true ? { ...compute, state: 'estimated' } : compute,
+    compute:
+      cost['compute_estimated'] === true
+        ? compute.value === null
+          ? compute
+          : { ...compute, state: 'estimated' }
+        : compute.value === null || compute.value === 0
+          ? unavailable(COMPUTE_NOT_ESTIMATED)
+          : compute,
     total: readNumber(cost['total_usd'], 'row.cost.total_usd'),
   }
 }
@@ -690,7 +715,9 @@ function header(factory: ScreenFactory, model: RunModel): ScreenElement {
   putText(heading, model.row.run, 'runId', 'row.run')
   if (model.row.repo !== null) textCell(element, factory, 'span', model.row.repo, 'repository', 'row.repo', 'run-repo')
   if (model.row.workflow !== null) textCell(element, factory, 'span', model.row.workflow, 'label', 'row.workflow', 'run-workflow')
-  literal(cell(element, factory, 'span', 'run-status'), model.row.status)
+  // `status` is a string the run's record carries, not a word this console
+  // chose, so it goes through `putText` like every other document string.
+  textCell(element, factory, 'span', model.row.status, 'label', 'row.status', 'run-status')
   if (model.row.outcome !== null) textCell(element, factory, 'span', model.row.outcome, 'label', 'row.outcome', 'run-outcome')
   if (model.row.stage !== null) textCell(element, factory, 'span', model.row.stage, 'label', 'row.stage', 'run-stage')
   if (model.row.branch !== null) textCell(element, factory, 'span', model.row.branch, 'branch', 'row.branch', 'run-branch')
@@ -792,7 +819,11 @@ function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
   for (const line of model.lines) {
     const row = cell(list, factory, 'li', 'run-log-line')
     if (line.time !== null) textCell(row, factory, 'span', line.time, 'label', 'logs[].time', 'run-log-time')
-    literal(cell(row, factory, 'span', 'run-log-severity'), line.severity)
+    // `severity` is the cloud logging API's own word (`logLine`), not one of
+    // this console's constants, so it goes through `putText` exactly as the
+    // `message` beside it does -- a provider that wrote a token or an invisible
+    // character into a severity does not get it drawn.
+    textCell(row, factory, 'span', line.severity, 'label', 'logs[].severity', 'run-log-severity')
     if (line.stage !== null) textCell(row, factory, 'span', line.stage, 'label', 'logs[].stage', 'run-log-stage')
     // A `message` is text a job wrote (`logs.go`'s own comment), so it is
     // re-sanitized here like any other free text.

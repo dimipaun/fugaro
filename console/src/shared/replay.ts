@@ -33,6 +33,18 @@
 // measured from the newest arrival in the ring -- so a test drives a replay
 // across fifteen minutes without waiting, and a system clock that steps
 // backwards cannot rewind the ring.
+//
+// **The ring is held in stamp order, and a late frame is filed where it
+// belongs.** For a feed that arrives in order the two are the same thing, but
+// an arrival can carry a stamp older than records already held -- a document
+// from a moment the feed had already passed. Appending it would break the two
+// properties this module promises at once: the export would no longer be a body
+// `loadFixture` accepts (it refuses records stamped backwards,
+// `src/source/fixture.ts`'s order check) and `scrub`'s walk from the newest
+// record would stop at the late one and return an older frame than the newest
+// at or before the moment. It is still a frame the console drew, so it is filed
+// by its stamp rather than dropped; among records sharing a stamp, arrival order
+// is kept.
 
 /**
  * ReplayDocument is one document as it arrived, with the console's own stamp.
@@ -106,10 +118,10 @@ export interface ReplayBounds {
  * ReplayBuffer is the ring. It is fed snapshots in arrival order and it keeps
  * the last `windowSeconds` of them, up to `maxRecords`.
  *
- * Arrival order is preserved: the ring is what the console was shown, in the
- * order it was shown it, which is what an export has to be if it is to load as
- * a fixture (the loader refuses records stamped backwards). An arrival whose own
- * stamp is already outside the window is not stored at all -- it is a record
+ * Records are held **in stamp order** rather than in arrival order, for the
+ * reason the module header gives: that is what makes an export loadable as a
+ * fixture and `scrub` the newest frame at or before a moment. An arrival whose
+ * own stamp is already outside the window is not stored at all -- it is a record
  * from before the window that arrived late, and a ring that kept it would hold
  * one frame no scrubber could reach.
  */
@@ -187,7 +199,8 @@ export class ReplayBuffer {
     return this.#records.map((record) => JSON.stringify(record)).join('\n')
   }
 
-  /** #store appends a record if it belongs in the window, and prunes after. */
+  /** #store files a record where its stamp belongs if it is in the window, and
+   * prunes after. */
   #store(record: ReplayRecord): void {
     const at = Date.parse(record.at)
     if (!Number.isFinite(at)) return
@@ -198,7 +211,14 @@ export class ReplayBuffer {
       this.#dropped += 1
       return
     }
-    this.#records.push(record)
+    // The ring is sorted, so the place is found by walking back from the end:
+    // an arrival in order -- the normal case -- costs one comparison, and a late
+    // one is filed under its own stamp instead of appending out of order. A
+    // record sharing a stamp goes after the ones already held, so arrivals that
+    // are indistinguishable by time stay in the order they arrived.
+    let index = this.#records.length
+    while (index > 0 && Date.parse((this.#records[index - 1] as ReplayRecord).at) > at) index -= 1
+    this.#records.splice(index, 0, record)
     const floor = this.#newestMs - this.#windowMs
     while (this.#records.length > 0 && Date.parse((this.#records[0] as ReplayRecord).at) < floor) {
       this.#records.shift()

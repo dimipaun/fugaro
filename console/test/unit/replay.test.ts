@@ -209,6 +209,28 @@ describe('the replay buffer', () => {
     )
   })
 
+  it('files a late arrival where its stamp belongs, so the export stays loadable', () => {
+    const buffer = new ReplayBuffer()
+    buffer.observe(anArrival(stamp(BASE, 0), 1, 1))
+    buffer.observe(anArrival(stamp(BASE, 240), 2, 2))
+    buffer.observe(anArrival(stamp(BASE, 600), 3, 3))
+    // A frame from a moment the feed had already passed. It is inside the window
+    // and it is a frame the console was shown, so it is kept -- but not appended:
+    // appending it would leave the ring stamped backwards, and both of this
+    // module's promises are about the ring as it is held.
+    buffer.observe(anArrival(stamp(BASE, 120), 4, 4))
+    expect(buffer.records().map((record) => record.at)).toEqual([0, 120, 240, 600].map((s) => stamp(BASE, s)))
+    // `scrub` walks back from the newest record, so a ring holding the late
+    // frame out of order would return the 240 s frame for a scrub to 200 s.
+    expect(buffer.scrub(stamp(BASE, 200))?.at).toBe(stamp(BASE, 120))
+    // And the export is still a body the real loader accepts: it refuses records
+    // stamped backwards (`src/source/fixture.ts`), which is the property the
+    // fixture-format half of this module rests on.
+    const meta: FixtureMeta = { ...theFixture().header, synthetic: true }
+    const loaded = loadFixture(writeFixture(buffer.records(), meta), 'the late arrival')
+    expect(loaded.records).toEqual(buffer.records())
+  })
+
   it('keeps the notices of a snapshot, stamped where they arrived', () => {
     const buffer = new ReplayBuffer()
     buffer.observe({

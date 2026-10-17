@@ -94,6 +94,14 @@ export const POLICY_SOURCE_LINE = 'fugaro project show --json'
 export const ENROLLMENT_SOURCE_LINE = 'no command on this tree (project-centric phase 1 and 4)'
 
 /**
+ * REPOSITORIES_SOURCE_LINE names **both** documents the repositories panel
+ * reads: the enrolled set is the cap document's and the seen set is the run
+ * list's. It is the one panel with two sources, and naming only one of them
+ * would be a claim about where the other list came from.
+ */
+export const REPOSITORIES_SOURCE_LINE = `${PROJECTS_SOURCE_LINES['budget.show'] as string} + ${PROJECTS_SOURCE_LINES['runs.list'] as string}`
+
+/**
  * SECRETS_ARRAY_NOTE is the console's own sentence about the one document whose
  * *shape* this build's reader cannot carry. It is drawn on the secrets panel
  * always, because it is a fact about the panel and not about the read: an
@@ -245,9 +253,6 @@ export interface ProjectRepositories {
   readonly onlySeen: readonly string[]
   readonly enrolledCount: Reading
   readonly seenCount: Reading
-  /** set when the cap document did not arrive: the enrolled set is unknown,
-   * which is not the same as empty */
-  readonly enrolledNote: string | null
 }
 
 /** ProjectAccounts is `accounts ls --json`: the names, and whether the project
@@ -396,20 +401,41 @@ function costOf(raw: unknown, where: string): ProjectJobCost {
   const model = readNumber(cost['model_usd'], `${where}.model_usd`)
   return {
     model: basis === 'subscription' && model.value !== null ? { ...model, state: 'notional' } : model,
-    compute: estimatedCompute(cost, `${where}.compute_usd`),
+    compute: computeReading(cost, `${where}.compute_usd`),
     total: readNumber(cost['total_usd'], `${where}.total_usd`),
   }
 }
 
-/** estimatedCompute is compute, which is an estimate by design
- * (`runstore.Cost.ComputeEstimated`): when the flag is false the figure is a
- * zero that means "not estimated" rather than a measurement, and the reading
- * says so. */
-function estimatedCompute(cost: Record<string, unknown>, field: string): Reading {
+/**
+ * computeReading is compute, which the flag decides and not the number
+ * (`runstore.Cost`): `ComputeEstimated` "is true only when prices and resources
+ * were known; **when false, ComputeUSD is 0 and means 'not estimated', not
+ * free**" (`internal/runstore/cost.go:15`). So the flag off is **not** a
+ * measured `$0.00` -- that reads as free, which is the one thing the design's
+ * section 10.1 forbids -- and it is not a zero-hiding `n/a` either: it is
+ * unavailable, with the CLI's own sentence, which is what `runs ls` prints
+ * ("compute not estimated") and what the report's `compute_not_estimated` count
+ * is about.
+ *
+ * A figure that is present with the flag off is not a shape the CLI writes; the
+ * number is still the number, and hiding it would be the worse error of the
+ * two, so it is drawn as the measurement it is.
+ */
+function computeReading(cost: Record<string, unknown>, field: string): Reading {
   const reading = readNumber(cost['compute_usd'], field)
-  if (reading.value !== null && cost['compute_estimated'] === true) return { ...reading, state: 'estimated' }
+  if (cost['compute_estimated'] === true) {
+    return reading.value === null ? reading : { ...reading, state: 'estimated' }
+  }
+  if (reading.value === null || reading.value === 0) return unavailable(COMPUTE_NOT_ESTIMATED)
   return reading
 }
+
+/** COMPUTE_NOT_ESTIMATED is that sentence. The Run detail screen declares its
+ * own copy rather than importing this one: the four screens are siblings and
+ * none owns another, and a constant shared across two of them would be the first
+ * thread of a dependency the file layouts deliberately do not have. */
+const COMPUTE_NOT_ESTIMATED =
+  'compute is not estimated for this run: the price table or the run\'s resources were unknown, and a `compute_usd` of 0 with `compute_estimated` false means "not estimated", not free'
 
 /** capRow is one row of the caps panel, from either of the three shapes the
  * document uses (the project's own block, the defaults block, a repository
@@ -438,11 +464,17 @@ function capRow(
  * The three are separate doors so that a caller cannot build a `read` panel
  * with no count, or a not-built one with a count -- the shape the plan's
  * "never as a zero" rule depends on. */
-function readPanel(key: ProjectsPanelKey, title: string, operation: OperationName, count: number): ProjectsPanel {
+function readPanel(
+  key: ProjectsPanelKey,
+  title: string,
+  operation: OperationName,
+  count: number,
+  source?: string,
+): ProjectsPanel {
   return {
     key,
     title,
-    source: PROJECTS_SOURCE_LINES[operation] ?? `fugaro ${operation}`,
+    source: source ?? PROJECTS_SOURCE_LINES[operation] ?? `fugaro ${operation}`,
     operation,
     state: 'read',
     because: null,
@@ -455,11 +487,12 @@ function unavailablePanel(
   title: string,
   operation: OperationName,
   because: string,
+  source?: string,
 ): ProjectsPanel {
   return {
     key,
     title,
-    source: PROJECTS_SOURCE_LINES[operation] ?? `fugaro ${operation}`,
+    source: source ?? PROJECTS_SOURCE_LINES[operation] ?? `fugaro ${operation}`,
     operation,
     state: 'unavailable',
     because,
@@ -486,6 +519,37 @@ function absent(operation: OperationName, sentences: ProjectsInputs['sentences']
   const sentence = sentences?.[operation]
   if (sentence !== undefined && sentence.trim() !== '') return sentence
   return `no document arrived for \`${PROJECTS_SOURCE_LINES[operation] ?? operation}\``
+}
+
+/**
+ * repositoriesBecause is why the repositories panel has nothing to draw. **Its
+ * two lists come from two documents** -- the enrolled set from the cap document
+ * and the seen set from the run list -- so either one missing leaves the panel
+ * unable to make either claim, and it says which is missing rather than drawing
+ * the half it has:
+ *
+ *   - without the cap document, every repository the run list knows would be
+ *     drawn as **running with no cap row**, which is a false statement about a
+ *     project whose caps nobody read;
+ *   - without the run list, the enrolled set would be drawn as having **no runs
+ *     at all**, `seen 0`, which is a fabricated zero of the same kind.
+ *
+ * The reason carries the CLI's own sentence for the refused read when it printed
+ * one (`absent`), and the console's account of what the absence means otherwise.
+ */
+function repositoriesBecause(
+  budgetMissing: boolean,
+  runsMissing: boolean,
+  sentences: ProjectsInputs['sentences'],
+): string {
+  const parts: string[] = []
+  if (budgetMissing) {
+    parts.push(`the enrolled repositories are unknown: ${absent('budget.show', sentences)}`)
+  }
+  if (runsMissing) {
+    parts.push(`the repositories with a recorded run are unknown: ${absent('runs.list', sentences)}`)
+  }
+  return parts.join('; ')
 }
 
 /**
@@ -554,17 +618,30 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
   }
   const enrolledKeys = new Set(enrolled.flatMap((entry) => [entry.slug, entry.repo ?? entry.slug]))
   const seenKeys = new Set(seen.flatMap((entry) => [entry.slug, entry.repo ?? entry.slug]))
+  // A difference needs **both** sides. With one document missing the list that
+  // would have come from it is empty, and every entry of the other list would
+  // read as the difference -- "running with no cap row" for a project whose caps
+  // nobody read. So neither difference is computed until both documents are
+  // here, and neither count is a zero: it is the reading the missing document
+  // owes (`Reading.because` says which).
+  const bothKnown = budget !== null && runs !== null
   const repositories: ProjectRepositories = {
     enrolled,
     seen,
-    onlyEnrolled: enrolled.filter((entry) => !seenKeys.has(entry.slug) && !seenKeys.has(entry.repo ?? '')).map(labelOf),
-    onlySeen: seen.filter((entry) => !enrolledKeys.has(entry.slug) && !enrolledKeys.has(entry.repo ?? '')).map(labelOf),
-    enrolledCount: measured(enrolled.length),
-    seenCount: measured(seen.length),
-    enrolledNote:
+    onlyEnrolled: bothKnown
+      ? enrolled.filter((entry) => !seenKeys.has(entry.slug) && !seenKeys.has(entry.repo ?? '')).map(labelOf)
+      : [],
+    onlySeen: bothKnown
+      ? seen.filter((entry) => !enrolledKeys.has(entry.slug) && !enrolledKeys.has(entry.repo ?? '')).map(labelOf)
+      : [],
+    enrolledCount:
       budget === null
-        ? 'the cap document did not arrive: the enrolled repositories are unknown, which is not the same as none'
-        : null,
+        ? unavailable('the cap document did not arrive: how many repositories are enrolled is unknown')
+        : measured(enrolled.length),
+    seenCount:
+      runs === null
+        ? unavailable('the run list did not arrive: how many repositories have a run is unknown')
+        : measured(seen.length),
   }
 
   // The jobs: `runs ls --json`'s rows, capped. The newest are the ones a person
@@ -625,9 +702,18 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     budget === null
       ? unavailablePanel('kill', 'kill switches', 'budget.show', absent('budget.show', inputs.sentences))
       : readPanel('kill', 'kill switches', 'budget.show', killRows.filter((row) => row.kill !== null).length),
-    budget === null && runs === null
-      ? unavailablePanel('repositories', 'repositories', 'runs.list', absent('runs.list', inputs.sentences))
-      : readPanel('repositories', 'repositories', 'budget.show', enrolled.length),
+    // Read only when **both** documents arrived: the panel's two lists are one
+    // from each, and a panel drawn from half a pair makes claims about the other
+    // half out of nothing (`repositoriesBecause`).
+    budget === null || runs === null
+      ? unavailablePanel(
+          'repositories',
+          'repositories',
+          budget === null ? 'budget.show' : 'runs.list',
+          repositoriesBecause(budget === null, runs === null, inputs.sentences),
+          REPOSITORIES_SOURCE_LINE,
+        )
+      : readPanel('repositories', 'repositories', 'budget.show', enrolled.length, REPOSITORIES_SOURCE_LINE),
     runs === null
       ? unavailablePanel('jobs', 'jobs', 'runs.list', absent('runs.list', inputs.sentences))
       : readPanel('jobs', 'jobs', 'runs.list', jobs.length),
@@ -861,7 +947,6 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
   for (const entry of model.enrolled) {
     textCell(enrolledList, factory, 'li', labelOf(entry), 'repository', 'repo', 'projects-enrolled-repo')
   }
-  if (model.enrolledNote !== null) note(enrolled, factory, model.enrolledNote)
 
   const seen = cell(element, factory, 'div', 'projects-seen')
   literal(cell(seen, factory, 'span', 'projects-repos-label'), 'seen (a run has been recorded)')
@@ -897,7 +982,10 @@ function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
     textCell(line, factory, 'span', job.run, 'runId', 'runs[].run', 'projects-job-run')
     if (job.repo !== null) textCell(line, factory, 'span', job.repo, 'repository', 'runs[].repo', 'projects-job-repo')
     if (job.workflow !== null) textCell(line, factory, 'span', job.workflow, 'label', 'runs[].workflow', 'projects-job-workflow')
-    literal(cell(line, factory, 'span', 'projects-job-status'), job.status)
+    // `status` is a string from the run record, so it goes through `putText`
+    // like every other one: a value a document chose is not vocabulary the
+    // console may write into the document unwatched.
+    textCell(line, factory, 'span', job.status, 'label', 'runs[].status', 'projects-job-status')
     if (job.stage !== null) textCell(line, factory, 'span', job.stage, 'label', 'runs[].stage', 'projects-job-stage')
     if (job.requestedBy !== null) {
       textCell(line, factory, 'span', job.requestedBy, 'person', 'runs[].requested_by', 'projects-job-by')
@@ -931,8 +1019,9 @@ function accountsPanel(factory: ScreenFactory, model: ProjectAccounts): ScreenEl
   return element
 }
 
-/** secretsPanel is the inventory: names, scopes, labels and version counts, and
- * the console's sentence about the document's shape. */
+/** secretsPanel is the inventory: names, scopes, labels and version counts. The
+ * console's sentence about the document's *shape* is drawn by `renderProjects`
+ * beside this body, so that it is on the panel whether or not entries arrived. */
 function secretsPanel(factory: ScreenFactory, model: ProjectSecrets): ScreenElement {
   const element = make(factory, 'div', 'projects-secrets')
   const list = cell(element, factory, 'ol', 'projects-secret-list')
@@ -954,7 +1043,6 @@ function secretsPanel(factory: ScreenFactory, model: ProjectSecrets): ScreenElem
       textCell(line, factory, 'span', allowed, 'repository', 'secrets[].allowed', 'projects-secret-allowed')
     }
   }
-  note(element, factory, model.note)
   return element
 }
 
@@ -989,8 +1077,18 @@ export function renderProjects(factory: ScreenFactory, model: ProjectsModel, the
   root.append(header(factory, model))
   for (const panel of model.panels) {
     const element = panelShell(factory, panel)
-    const body = PANEL_BODIES[panel.key](factory, model)
+    // A body is drawn only for a panel that **read a document**: the body is the
+    // read's own content, and a panel with none draws its frame and its reason
+    // instead. That is what keeps a document that did not arrive from being
+    // drawn as an empty list, as a `0`, or as a claim about a set no document
+    // reported (`repositoriesBecause`).
+    const body = panel.state === 'read' ? PANEL_BODIES[panel.key](factory, model) : null
     if (body !== null) element.append(body)
+    // The one thing drawn on a panel whatever its state is the console's own
+    // sentence about the panel's *shape* rather than about the read: an operator
+    // looking at an empty secrets inventory is owed the reason it is empty, and
+    // that reason is as true of a refused read as of an arrived one.
+    if (panel.key === 'secrets') note(element, factory, model.secrets.note)
     root.append(element)
   }
   for (const warning of model.warnings) {
