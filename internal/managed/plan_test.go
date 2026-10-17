@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -296,6 +297,15 @@ func TestGateReportsBothGatesRefusals(t *testing.T) {
 	if guard != 1 || coverRefusals != 1 {
 		t.Fatalf("refusals %v, want the guard's for %s and the cover's for %s", v.Refusals, planBucket, planVM)
 	}
+	// The guard's refusals come before the cover's, as Gate documents.
+	seenCover := false
+	for _, ref := range v.Refusals {
+		if ref.Gate == coverGate {
+			seenCover = true
+		} else if seenCover {
+			t.Fatalf("refusals %v: a guard refusal follows a cover refusal", v.Refusals)
+		}
+	}
 }
 
 // The verdict never carries the guard's advice to name an address with
@@ -384,5 +394,56 @@ func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
 	want = Refusal{Gate: guardGate, Why: "guard: no plan"}
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("refusals %+v, want the refusal whole", got)
+	}
+}
+
+// A guard that errs fails closed even when its message says nothing: OK is not
+// read off the refusals the message turns into.
+func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
+	for _, msg := range []string{"", "  \n "} {
+		old := guard
+		guard = func(*tf.Plan, []string) error { return errors.New(msg) }
+		r := newRig(t)
+		r.show(t, bucket(planBucket))
+		v := gate(t, r, spec(t, r, admitAll{}))
+		guard = old
+		if v.OK {
+			t.Errorf("a guard that refused with %q was admitted", msg)
+		}
+	}
+}
+
+// An address on the owner's AllowDelete list is admitted for a delete; one not
+// on it is refused.
+func TestGateAdmitsADeleteOnlyForAListedAddress(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	if v := gate(t, r, spec(t, r, admitAll{}, planBucket)); !v.OK {
+		t.Errorf("a delete of a listed address was refused: %v", v.Refusals)
+	}
+	if v := gate(t, r, spec(t, r, admitAll{}, "module.managed.google_storage_bucket.other")); v.OK {
+		t.Error("a delete of an address not listed was admitted")
+	}
+	if v := gate(t, r, spec(t, r, admitAll{})); v.OK {
+		t.Error("a delete with an empty list was admitted")
+	}
+}
+
+// The cover receives Spec.Imports: an import discovery did not list is refused,
+// one it listed is admitted.
+func TestGateImportsMustBeOnTheSpecList(t *testing.T) {
+	id := gcpProject + "/data-bucket"
+	imp := bucket(planBucket)
+	imp["change"].(map[string]any)["importing"] = map[string]any{"id": id}
+	imp["change"].(map[string]any)["actions"] = []string{"no-op"}
+	r := newRig(t)
+	r.show(t, imp)
+	s := spec(t, r, cover())
+	if v := gate(t, r, s); v.OK {
+		t.Error("an import discovery did not find was admitted")
+	}
+	s.Imports = []tf.ImportKey{{Address: planBucket, ID: id}}
+	if v := gate(t, r, s); !v.OK {
+		t.Errorf("an import discovery found was refused: %v", v.Refusals)
 	}
 }

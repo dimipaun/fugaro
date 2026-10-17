@@ -82,6 +82,10 @@ type Spec struct {
 // the guard's first, each with the gate that made it, the address and the
 // rule's own words for why.
 //
+// A Verdict is not bound to the plan's bytes: it says nothing about which file
+// it judged. Task 3.1 must hash the saved plan at gate time and re-check that
+// hash at apply, or a plan swapped in between is applied on this verdict.
+//
 // There is no "apply anyway", here or in the caller: the only action a false
 // verdict permits is to fall back to a confirmation, which in the session a
 // managed apply runs in means the step does not proceed.
@@ -89,6 +93,10 @@ type Verdict struct {
 	OK       bool
 	Refusals []Refusal
 }
+
+// guard is tf.Guard; a variable only so a test can make it refuse in words the
+// real guard never writes.
+var guard = tf.Guard
 
 // Refusal is one refusal of one address: the gate that made it, the address it
 // is about, and the rule's own words for why — the actions the guard would
@@ -121,11 +129,15 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 		return Verdict{}, err
 	}
 	var v Verdict
-	if err := tf.Guard(plan, spec.AllowDelete); err != nil {
-		v.Refusals = append(v.Refusals, refusals(guardGate, err.Error())...)
+	guardErr := guard(plan, spec.AllowDelete)
+	if guardErr != nil {
+		v.Refusals = append(v.Refusals, refusals(guardGate, guardErr.Error())...)
 	}
-	v.Refusals = append(v.Refusals, refusals(coverGate, strings.Join(spec.notCovered(plan), "\n"))...)
-	v.OK = len(v.Refusals) == 0
+	notCovered := spec.notCovered(plan)
+	v.Refusals = append(v.Refusals, refusals(coverGate, strings.Join(notCovered, "\n"))...)
+	// Fail closed on the errors themselves, not on the refusals they were
+	// turned into: a guard that errs with an empty message refuses all the same.
+	v.OK = guardErr == nil && len(notCovered) == 0
 	return v, nil
 }
 
