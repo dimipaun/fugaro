@@ -170,10 +170,13 @@ function fakeChild(): SpawnedChildLike {
     // here depend on is the same (a spawn-log line exists before the child's
     // first byte), without a tick for every test to wait out. `scriptedChild`
     // below does the same, and `childThatNeverSpawns` is the other half.
-    on: (event: string, listener: () => void) => {
+    on: ((
+      event: 'spawn' | 'error' | 'exit' | 'close',
+      listener: (...args: unknown[]) => void,
+    ) => {
       if (event === 'spawn') listener()
       return undefined
-    },
+    }) as SpawnedChildLike['on'],
     kill: () => true,
   }
 }
@@ -2062,7 +2065,10 @@ function childThatNeverSpawns(): SpawnedChildLike {
   return {
     stdout: { on: () => undefined },
     stderr: { on: () => undefined },
-    on: (event: string, listener: (error?: Error) => void) => {
+    on: ((
+      event: 'spawn' | 'error' | 'exit' | 'close',
+      listener: (...args: unknown[]) => void,
+    ) => {
       if (event !== 'error') return undefined
       queueMicrotask(() => {
         const error = new Error('spawn /opt/homebrew/bin/fugaro ENOENT') as Error & { code?: string }
@@ -2070,7 +2076,7 @@ function childThatNeverSpawns(): SpawnedChildLike {
         listener(error)
       })
       return undefined
-    },
+    }) as SpawnedChildLike['on'],
     kill: () => true,
   }
 }
