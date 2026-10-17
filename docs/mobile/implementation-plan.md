@@ -28,7 +28,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | The sweeper shape | `internal/budget/sweep.go` (F26) | P4.1 |
 | The check register | `docs/gcp-live-checklist.md` (F30) | P4.2 |
 
-**No existing CLI command changes its behaviour.** The only Go this plan touches is the rules template and its tests (P2.1, P2.2), a **new** consumer command or helper (P4.1) — which also adds **one line to `internal/cli/root.go`** to register itself — and the boundary allow-list's one deliberate entry (P3.1). Nothing here rewrites a command that exists.
+**No existing CLI command changes its behaviour.** The only Go this plan touches is `internal/projectpolicy/version.go` (the `RulesVersion` bump, P2.1), the rules template's **tests** (P2.1, P2.2 — the template itself is JSON, not Go), a **new** consumer command or helper (P4.1) — which also adds **one line to `internal/cli/root.go`** to register itself — and the boundary allow-list's one deliberate entry (P3.1). Nothing here rewrites a command that exists.
 
 ---
 
