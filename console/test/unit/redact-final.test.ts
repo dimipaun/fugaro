@@ -131,12 +131,26 @@ describe('every rule runs in linear time, and a string has a hard cap (review it
     expect(time(shape(1_000_000))).toBeLessThan(5_000)
   })
 
-  it.each(Object.keys(shapes))('scales %s linearly: 4x the input is nowhere near 16x the time', (name) => {
+  it.each(Object.keys(shapes))('scales %s linearly: 16x the input is nowhere near 256x the time', (name) => {
+    // This was 4x the input under a 10x bound, one timing each, and it failed
+    // when the whole unit suite ran in parallel (a measured 12.7 for `sk`):
+    // one descheduled slice on the small run moved the ratio past the bound.
+    // Two changes keep the property and drop the load sensitivity: the inputs
+    // are 16x apart, so linear is 16 and quadratic 256 and the bound (64) sits
+    // a factor of 4 from each; and each size is timed three times, interleaved,
+    // keeping the fastest -- load only ever adds time, so the minimum is the
+    // run closest to the work itself.
     const shape = shapes[name] ?? ((): string => '')
-    time(shape(10_000)) // warm up
-    const small = Math.max(time(shape(100_000)), 5)
-    const large = time(shape(400_000))
-    expect(large / small).toBeLessThan(10)
+    const smallText = shape(25_000)
+    const largeText = shape(400_000)
+    time(smallText) // warm up
+    let small = Number.POSITIVE_INFINITY
+    let large = Number.POSITIVE_INFINITY
+    for (let round = 0; round < 3; round += 1) {
+      small = Math.min(small, time(smallText))
+      large = Math.min(large, time(largeText))
+    }
+    expect(large / Math.max(small, 2)).toBeLessThan(64)
   })
 
   it('refuses a string over the cap before any rule runs, with a clear message', () => {

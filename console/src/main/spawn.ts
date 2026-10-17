@@ -878,6 +878,9 @@ export interface ReadableLike {
    * `StringDecoder`, so a UTF-8 character split across two chunks is one
    * character either way. */
   setEncoding?(encoding: BufferEncoding): unknown
+  /** Present on every real stream; the supervisor calls it to let go of a pipe
+   * a grandchild still holds once the child itself has exited (`startSidecar`). */
+  destroy?(): unknown
 }
 
 /** readText subscribes to a child's stream as text. `chunk.toString()` on a
@@ -1021,7 +1024,6 @@ export function runToCompletion(
   const grace = deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS
   const binary = plan.argv[0]
   if (binary === undefined) refused('a spawn plan with no binary is not a plan')
-  deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
   const what = plan.argv.slice(1).filter((word) => !word.startsWith('-')).slice(0, 2).join(' ')
 
   return new Promise<RunResult>((resolve, reject) => {
@@ -1037,6 +1039,10 @@ export function runToCompletion(
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
+    // Recorded once the spawner has handed back a child, never before: the
+    // log is one line per child process (`spawnlog.ts`), and a spawn that threw
+    // (the binary removed between resolution and spawn) produced none.
+    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
     let stdout = ''
     let stderr = ''
     let settled = false
@@ -1086,7 +1092,22 @@ export function runToCompletion(
       clearDeadline()
       reject(error)
     })
-    child.on('exit', (code, signal) => {
+    // `exit` is recorded but does not settle the read. Node fires it when the
+    // child is reaped, and its stdio streams may still be open at that moment:
+    // a last chunk that arrives afterwards belongs to the value, and a reader
+    // that resolved on `exit` would hand back a torn document -- a screen then
+    // refuses a read that actually succeeded. `close` is the event that says
+    // every byte has been read, which is what this function's name promises and
+    // what `SpawnedChildLike`'s own comment above already states (and what
+    // `tools/record-fixture/index.ts` settles on for exactly this reason).
+    //
+    // The deadline stays the backstop for the other side of the trade: a stream
+    // a stray grandchild holds open past the child's exit is refused with
+    // `SpawnTimeout` rather than resolved with whatever had arrived.
+    child.on('exit', () => {
+      exited = true
+    })
+    child.on('close', (code, signal) => {
       exited = true
       if (settled) return
       settled = true
@@ -1102,9 +1123,21 @@ export class SpawnTimeout extends Error {
   override readonly name = 'SpawnTimeout'
 }
 
+/** boundAppend keeps the last `limit` code units of `current + chunk`: stderr's
+ * tail is where a CLI puts its refusal, and a screen shows the sentence that
+ * comes out of it (`cliSentence`). The cut can land between the two halves of a
+ * surrogate pair, and half a pair is not text -- it is a lone surrogate, which
+ * one drawer renders as a replacement character and another as nothing at all.
+ * A leading *low* surrogate is the proof of such a cut, so it is dropped, the
+ * same step `src/main/ipc.ts`'s `boundReason` takes at the other end of its
+ * string. */
 function boundAppend(current: string, chunk: string, limit: number): string {
   const next = current + chunk
-  return next.length > limit ? next.slice(next.length - limit) : next
+  if (next.length <= limit) return next
+  let from = next.length - limit
+  const first = next.charCodeAt(from)
+  if (first >= 0xdc00 && first <= 0xdfff) from += 1
+  return next.slice(from)
 }
 
 /** VersionProbe is what `resolveBinary` learned about a candidate. */
@@ -1475,13 +1508,42 @@ export function startSidecar(
     }
   }
 
+  // drain is the end of one child's stdout: a last line the child wrote
+  // without a newline is still a line, so it is decoded like any other; a
+  // fragment that is not a whole document (a child killed mid-write) is said
+  // as a notice -- without its text -- rather than lost in silence.
+  const drain = (): void => {
+    const rest = buffer
+    const wasDiscarding = discarding
+    buffer = ''
+    discarding = false
+    if (wasDiscarding || rest.trim() === '') return
+    if (rest.length > maxLine) {
+      events.onNotice({ text: `a feed line longer than ${maxLine} characters was dropped`, receivedAt: stamp() })
+      return
+    }
+    const decoded = decodeFeedLine(rest)
+    if (decoded.kind === 'document') {
+      events.onFrame(tracker.push(decoded.document, stamp()))
+      return
+    }
+    if (decoded.kind === 'notice' && !rest.trimStart().startsWith('{')) {
+      // A sentence, as `consume` would have said it had the newline come.
+      events.onNotice({ text: decoded.text, receivedAt: stamp() })
+      return
+    }
+    events.onNotice({
+      text: `the feed's last line ended without a newline and was not a whole document; it was dropped (${String(rest.length)} characters)`,
+      receivedAt: stamp(),
+    })
+  }
+
   const spawnOnce = (): void => {
     const binary = plan.argv[0]
     if (binary === undefined) {
       finish({ reason: 'unstartable', code: null, signal: null, sentence: 'the spawn plan has no binary', spawns })
       return
     }
-    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
     spawns += 1
     let started: SpawnedChildLike
     try {
@@ -1501,6 +1563,8 @@ export function startSidecar(
       })
       return
     }
+    // After the spawner returned, as in `runToCompletion`: one line per child.
+    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
     child = started
     stderr = ''
     buffer = ''
@@ -1512,7 +1576,30 @@ export function startSidecar(
     started.on('error', (error) => {
       finish({ reason: 'unstartable', code: null, signal: null, sentence: error.message, spawns })
     })
-    started.on('exit', (code, signal) => {
+    // `close`, not `exit`, for the same reason as the one-shot reader above:
+    // the last frame of a `watch` can arrive after the child is reaped, and a
+    // supervisor that decided `lost` on `exit` would both drop that frame and
+    // read an empty stderr into the sentence it gives the screen. `close` is
+    // the point at which there is nothing left to read from this child, so it
+    // is also where `drain` hands on a last line that had no newline.
+    //
+    // `exit` still arms a backstop, the counterpart of `runToCompletion`'s
+    // deadline: a grandchild (or a shim) that inherited the pipe can hold
+    // stdout open after the child is reaped, and then `close` never comes --
+    // no restart, no `lost`, and a `stop()` that never settles, which hangs
+    // `CliSource.close()` and app quit with it. After `exit` the streams get
+    // the shutdown grace to drain; then they are destroyed and the child is
+    // decided on its exit status as if `close` had come.
+    let decided = false
+    let drainTimer: ReturnType<typeof setTimeout> | null = null
+    const decide = (code: number | null, signal: string | null): void => {
+      if (decided) return
+      decided = true
+      if (drainTimer !== null) {
+        timers.clearTimeout(drainTimer)
+        drainTimer = null
+      }
+      drain()
       child = null
       const decision = restartDecision({ code, signal, stopped, attempt, backoff: plan.backoff })
       if (!decision.restart) {
@@ -1525,7 +1612,18 @@ export function startSidecar(
         timer = null
         if (!stopped) spawnOnce()
       }, decision.delayMs)
+    }
+    started.on('exit', (code, signal) => {
+      if (decided || drainTimer !== null) return
+      drainTimer = timers.setTimeout(() => {
+        drainTimer = null
+        if (decided) return
+        started.stdout?.destroy?.()
+        started.stderr?.destroy?.()
+        decide(code, signal)
+      }, grace)
     })
+    started.on('close', decide)
   }
 
   // `stop()` is idempotent, and *the promise is what is cached*, not just the

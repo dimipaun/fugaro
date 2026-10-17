@@ -70,17 +70,32 @@ import {
 import {
   ALLOWED_EXTERNAL_HOSTS,
   CONSOLE_WINDOW_TITLE,
+  HANDSHAKE_UNREADABLE,
   consoleWebPreferences,
   consoleWindowOptions,
+  consoleWindowTitle,
   createConsoleWindow,
+  createRefusalWindow,
   denyEveryPermission,
   denyNavigation,
+  denyPageTitleUpdate,
   denyWebviewAttach,
   denyWindowOpen,
   installWebContentsSecurity,
   openExternalValidated,
+  runVersionHandshake,
+  startupWindow,
   validateExternalUrl,
 } from '../../src/main/window'
+import type { NavigationEvent } from '../../src/main/window'
+import {
+  CLI_VERSION_BUILT_AGAINST,
+  SKEW_HEADLINES,
+  classifyCliVersion,
+  hidesView,
+  unreadableReason,
+} from '../../src/shared/version'
+import { githubToken } from '../support/fakeSecrets'
 
 // The two files of the bundle, read from this test's own location rather than
 // from the working directory: the protocol handler's root is the source tree
@@ -89,6 +104,15 @@ import {
 const bundleRoot = fileURLToPath(new URL('../../src/renderer', import.meta.url))
 const indexHTMLPath = fileURLToPath(new URL('../../src/renderer/index.html', import.meta.url))
 const indexHTML = readFileSync(indexHTMLPath, 'utf8')
+
+/**
+ * DOCUMENT_TITLE is the title the loaded document defines, read out of the
+ * document itself rather than written down again: it is the value Electron
+ * offers to the window in place of the `title` option, so a test that wants to
+ * assert what a window's title *ends up* as has to know it. The assertion below
+ * (`is the document the window loads`) pins it as the console's plain title.
+ */
+const DOCUMENT_TITLE = /<title>([^<]*)<\/title>/.exec(indexHTML)?.[1] ?? ''
 
 // The design's own CSP string, section 5.1 rule 3, copied by hand rather than
 // built from the constant it is compared against: a test that assembled its
@@ -591,6 +615,9 @@ describe('createConsoleWindow', () => {
 
     const fakeWindow = {
       webContents: contents.value,
+      on(event: string, listener: () => void) {
+        listeners.set(event, listener)
+      },
       once(event: string, listener: () => void) {
         listeners.set(event, listener)
       },
@@ -633,5 +660,353 @@ describe('createConsoleWindow', () => {
     expect(shown).toBe(false)
     listeners.get('ready-to-show')?.()
     expect(shown).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The version skew handshake (desktop-console plan Task 3.2; design section 7.1
+// and D7).
+//
+// The handshake's *placement* is `src/shared/version.ts`'s and is tested there
+// boundary by boundary. What is held here is the half that only this module can
+// be wrong about: that the refusal is real -- that a console which will not read
+// the CLI it found builds **no window**, so there is no dashboard to draw and
+// nothing to misreport spend into. That is the plan's red step, and it is
+// asserted by counting the constructors rather than by reading a flag, because a
+// flag is exactly what a console that drew the dashboard anyway would have set
+// correctly.
+// ---------------------------------------------------------------------------
+
+/**
+ * FakeConsoleWindow is one window of `fakeWindowFactory`, and `title` is the
+ * point of it: Electron sets a window's title from the `title` option it was
+ * constructed with and then **replaces** it with the loaded document's
+ * `<title>` unless a `page-title-updated` listener prevents the default. That
+ * rule is modelled here, because it is what makes the assertion about the mode
+ * an assertion about the *outcome* -- the title the window ends up with -- and
+ * not about the option Electron discards when the document defines one (which
+ * `src/renderer/index.html` does; the test below pins it).
+ */
+interface FakeConsoleWindow {
+  /** `title` is the window's current title, as `BrowserWindow.getTitle()` would
+   * report it. */
+  title: string
+  readonly webContents: WebContents
+  /** `pageTitleOffers` is every title the document offered, and whether the
+   * console refused it. */
+  pageTitleOffers: { title: string; prevented: boolean }[]
+  on(event: string, listener: (event: NavigationEvent, title: string) => void): void
+  once(): void
+  show(): void
+  loadURL(url: string): Promise<void>
+}
+
+/** fakeWindowFactory counts every window constructed, records every load, and
+ * hands back the fake `webContents` and the fake window of each, so the handler
+ * wiring and the title a window ends up with can be checked on the window that
+ * was actually built. */
+function fakeWindowFactory(): {
+  BrowserWindow: new (options: BrowserWindowConstructorOptions) => BrowserWindow
+  options: BrowserWindowConstructorOptions[]
+  loaded: string[]
+  built: FakeConsoleWindow[]
+  contents: FakeWebContents[]
+} {
+  const options: BrowserWindowConstructorOptions[] = []
+  const loaded: string[] = []
+  const built: FakeConsoleWindow[] = []
+  const contents: FakeWebContents[] = []
+  const WindowClass = function (given: BrowserWindowConstructorOptions): object {
+    options.push(given)
+    const webContents = fakeWebContents()
+    contents.push(webContents)
+    const titleListeners: ((event: NavigationEvent, title: string) => void)[] = []
+    const window: FakeConsoleWindow = {
+      title: typeof given.title === 'string' ? given.title : '',
+      webContents: webContents.value,
+      pageTitleOffers: [],
+      on(event: string, listener: (event: NavigationEvent, title: string) => void) {
+        if (event === 'page-title-updated') titleListeners.push(listener)
+      },
+      once() {},
+      show() {},
+      async loadURL(url: string) {
+        loaded.push(url)
+        // Electron's rule, in the order Electron applies it: the document's
+        // title (`DOCUMENT_TITLE`, what `src/renderer/index.html` defines) is
+        // offered to the window and becomes its title unless a listener refuses
+        // it -- which is why the `title` option alone is not enough.
+        let prevented = false
+        for (const listener of titleListeners) {
+          listener(
+            {
+              preventDefault: () => {
+                prevented = true
+              },
+            },
+            DOCUMENT_TITLE,
+          )
+        }
+        window.pageTitleOffers.push({ title: DOCUMENT_TITLE, prevented })
+        if (!prevented) window.title = DOCUMENT_TITLE
+      },
+    }
+    built.push(window)
+    return window
+  } as unknown as new (options: BrowserWindowConstructorOptions) => BrowserWindow
+  return { BrowserWindow: WindowClass, options, loaded, built, contents }
+}
+
+/** nothingToRead is a reader that failed before it could read: the shape
+ * `src/main/spawn.ts`'s `probeVersion` returns when no binary resolved. */
+const nothingToRead = async (): Promise<{ ok: false; reason: string }> => ({
+  ok: false,
+  reason: 'no fugaro binary was found',
+})
+
+describe('runVersionHandshake', () => {
+  it('proceeds for a CLI inside the supported range', async () => {
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }),
+    })
+    expect(compatibility.mode).toBe('ok')
+    expect(compatibility.skew).toBe('supported')
+    expect(compatibility.cliVersion).toBe(CLI_VERSION_BUILT_AGAINST)
+  })
+
+  it('proceeds in a reduced mode for a CLI outside it, naming what it read', async () => {
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: true, stdout: '0.9.0\n' }),
+    })
+    expect(compatibility.mode).toBe('reduced')
+    expect(compatibility.skew).toBe('newer')
+    expect(compatibility.cliVersion).toBe('0.9.0')
+    expect(hidesView(compatibility, 'spend')).toBe(true)
+  })
+
+  it('refuses a CLI below the floor', async () => {
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: true, stdout: '0.5.0\n' }),
+    })
+    expect(compatibility.mode).toBe('refused')
+    expect(compatibility.skew).toBe('below-floor')
+  })
+
+  it('refuses, with the reader\'s own reason, when there is no version to read', async () => {
+    const compatibility = await runVersionHandshake({ readVersion: nothingToRead })
+    expect(compatibility.mode).toBe('refused')
+    expect(compatibility.skew).toBe('unreadable')
+    // The reason a screen or a title shows is the console's own sentence: the
+    // reader's, which is `probeVersion`'s, and never the child's output.
+    expect(unreadableReason(compatibility)).toBe('no fugaro binary was found')
+  })
+
+  it('refuses rather than crashing when the read itself throws', async () => {
+    // A subprocess that misbehaves must not take the console down with it, and
+    // must not be upgraded into a dashboard either: the outcome of a throw is the
+    // same refusal a failed read gets.
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => {
+        throw new Error('spawn failed')
+      },
+    })
+    expect(compatibility.mode).toBe('refused')
+    expect(compatibility.skew).toBe('unreadable')
+    expect(unreadableReason(compatibility)).toBe(HANDSHAKE_UNREADABLE)
+  })
+
+  it('carries no part of a line it could not read', async () => {
+    // The line a wrapper echoed is a string a binary chose. It is dropped where
+    // it was read: the compatibility, its reason and its title all have no place
+    // for it, so nothing downstream can draw it.
+    const output = `${githubToken()}\n`
+    const compatibility = await runVersionHandshake({ readVersion: async () => ({ ok: true, stdout: output }) })
+    expect(compatibility.cliVersion).toBeNull()
+    expect(JSON.stringify(compatibility)).not.toContain(githubToken())
+    expect(consoleWindowTitle(compatibility)).not.toContain(githubToken())
+  })
+})
+
+describe('consoleWindowTitle', () => {
+  it('is the plain title before a handshake has run, and inside the range', () => {
+    expect(consoleWindowTitle(null)).toBe(CONSOLE_WINDOW_TITLE)
+    expect(consoleWindowTitle(classifyCliVersion(CLI_VERSION_BUILT_AGAINST))).toBe(CONSOLE_WINDOW_TITLE)
+  })
+
+  it('says which mode the console is in, in its own words', () => {
+    const reduced = consoleWindowTitle(classifyCliVersion('0.9.0'))
+    expect(reduced).toContain(CONSOLE_WINDOW_TITLE)
+    expect(reduced).toContain(SKEW_HEADLINES.reduced)
+    const refused = consoleWindowTitle(classifyCliVersion('0.5.0'))
+    expect(refused).toContain(CONSOLE_WINDOW_TITLE)
+    expect(refused).toContain(SKEW_HEADLINES.refused)
+  })
+
+  it('never carries the version the binary reported, because the OS chrome draws it', () => {
+    // A window title is not drawn by this console's writers, so it is not a
+    // place `sanitize.ts` can reach and not a place a string from outside goes.
+    // The reported version is drawn in the document instead, by
+    // `renderVersionSkew`, through the sanitizer.
+    const compatibility = classifyCliVersion('v0.9.0-3-gabc1234')
+    expect(compatibility.cliVersion).toBe('v0.9.0-3-gabc1234')
+    expect(consoleWindowTitle(compatibility)).not.toContain('gabc1234')
+    expect(consoleWindowTitle(compatibility)).not.toContain('0.9.0')
+  })
+})
+
+/**
+ * The mode reaches a real window's header. The review of this task found the
+ * `title` option inert: `src/renderer/index.html` defines a `<title>`, and
+ * Electron's own typings say the option "will be ignored" then, so a window
+ * asserted only on the option it was handed proves nothing about what an
+ * operator sees. `fakeWindowFactory`'s window therefore models Electron's rule
+ * (the document's title replaces the option's unless a `page-title-updated`
+ * listener prevents it) and these tests assert the title the window *ends up*
+ * with. `test/e2e/skew.spec.ts` asserts the same thing in a real window, where
+ * Electron itself applies the rule.
+ */
+describe('the title the window ends up with', () => {
+  it('is the console\'s own, with the mode on it, after the document has loaded', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: '0.6.9\n' }),
+    })
+    const window = factory.built[0]
+    expect(window?.title).toBe(consoleWindowTitle(startup.compatibility))
+    expect(window?.title).toContain(SKEW_HEADLINES.reduced)
+    expect(window?.title).not.toBe(DOCUMENT_TITLE)
+    // The document offered its title and the console refused it -- so this is
+    // the denial doing the work, and not a document that stayed silent.
+    expect(window?.pageTitleOffers).toEqual([{ title: DOCUMENT_TITLE, prevented: true }])
+  })
+
+  it('says what it refused on the window the refusal screen is drawn in', async () => {
+    const factory = fakeWindowFactory()
+    const built = await createRefusalWindow(
+      { BrowserWindow: factory.BrowserWindow, session: fakeSession().value },
+      classifyCliVersion('0.5.0'),
+    )
+    expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.refused)
+    expect(factory.built[0]?.title).toBe(consoleWindowTitle(classifyCliVersion('0.5.0')))
+    expect(factory.built[0]?.title).not.toBe(DOCUMENT_TITLE)
+    expect(built.title).toContain(SKEW_HEADLINES.refused)
+  })
+
+  it('is the document\'s title when the console does not refuse it -- which is why it does', async () => {
+    // The mutation, as a test: the same options, the same document, and no
+    // `page-title-updated` denial -- exactly what `buildConsoleWindow` did
+    // before the review. The window ends up with the document's plain title and
+    // the mode is gone, so the assertions above are about the denial and not
+    // about the option, the fake, or Electron happening to agree.
+    const factory = fakeWindowFactory()
+    const window = new factory.BrowserWindow(
+      consoleWindowOptions(classifyCliVersion('0.5.0')),
+    ) as unknown as FakeConsoleWindow
+    await window.loadURL(APP_ENTRY_URL)
+    expect(window.title).toBe(DOCUMENT_TITLE)
+    expect(window.title).not.toContain(SKEW_HEADLINES.refused)
+    expect(window.pageTitleOffers).toEqual([{ title: DOCUMENT_TITLE, prevented: false }])
+  })
+
+  it('refuses a page title through the one handler, whatever the page says', () => {
+    const event = recordingEvent()
+    denyPageTitleUpdate(event)
+    expect(event.prevented).toBe(true)
+  })
+})
+
+describe('startupWindow', () => {
+  it('builds the dashboard window for a CLI inside the range', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }),
+    })
+    expect(startup.compatibility.mode).toBe('ok')
+    expect(factory.options).toHaveLength(1)
+    expect(factory.built).toEqual([startup.window])
+    expect(factory.options[0]?.title).toBe(CONSOLE_WINDOW_TITLE)
+    // ...and that is what the window *ends up* as: the document offered its own
+    // `<title>` and the console refused it (see the block below).
+    expect(factory.built[0]?.title).toBe(CONSOLE_WINDOW_TITLE)
+    expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+    expect(factory.loaded).toEqual([APP_ENTRY_URL])
+  })
+
+  it('builds the window in a reduced mode too, because a reduced console is a console', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: '0.6.9\n' }),
+    })
+    expect(startup.compatibility.mode).toBe('reduced')
+    expect(startup.window).not.toBeNull()
+    expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.reduced)
+    expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.reduced)
+    // The window is still the hardened one: a reduced mode is not a reason to
+    // relax anything.
+    expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+  })
+
+  it('builds no window at all below the floor -- the plan\'s red step', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: '0.5.0\n' }),
+    })
+    expect(startup.compatibility.mode).toBe('refused')
+    expect(startup.window).toBeNull()
+    // The stronger half: nothing was *constructed*. A console that built a
+    // window and decided later not to draw a dashboard in it would pass a
+    // `window === null` check written the other way round, and would still be
+    // one renderer bug away from a spend figure nothing vouched for.
+    expect(factory.options).toHaveLength(0)
+    expect(factory.built).toHaveLength(0)
+    expect(factory.loaded).toEqual([])
+  })
+
+  it('builds no window when the version could not be read either', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: nothingToRead,
+    })
+    expect(startup.compatibility.mode).toBe('refused')
+    expect(startup.window).toBeNull()
+    expect(factory.options).toHaveLength(0)
+  })
+})
+
+describe('createRefusalWindow', () => {
+  it('builds the hardened window, with a title that says what it refused', async () => {
+    const factory = fakeWindowFactory()
+    const session = fakeSession()
+    const compatibility = classifyCliVersion('0.5.0')
+    const built = await createRefusalWindow(
+      { BrowserWindow: factory.BrowserWindow, session: session.value },
+      compatibility,
+    )
+    expect(factory.built).toEqual([built])
+    expect(factory.options).toHaveLength(1)
+    expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.refused)
+    expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.refused)
+    expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+    expect(factory.options[0]?.show).toBe(false)
+    // The same single load over the console's own scheme, the same handlers and
+    // the same denied permissions as the dashboard window: the refusal screen is
+    // drawn by the renderer in a window that is hardened exactly as much.
+    expect(factory.loaded).toEqual([APP_ENTRY_URL])
+    expect(session.requestHandler()).not.toBeNull()
+    expect(session.checkHandler()).not.toBeNull()
+    const navigate = recordingEvent()
+    factory.contents[0]?.emit('will-navigate', navigate, 'https://example.invalid/fugaro')
+    expect(navigate.prevented).toBe(true)
+    expect(factory.contents[0]?.windowOpenHandler()?.()).toEqual({ action: 'deny' })
   })
 })

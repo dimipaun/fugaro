@@ -87,7 +87,12 @@
 import { createHmac, randomBytes } from 'node:crypto'
 
 import { decodeFeedLine } from '../main/spawn'
-import { ABS_PATH_SOURCE, resolveAmbiguousSequences, stripTerminalSequences } from '../shared/sanitize'
+import {
+  ABS_PATH_SOURCE,
+  invisibleOrSeparatorRe,
+  resolveAmbiguousSequences,
+  stripTerminalSequences,
+} from '../shared/sanitize'
 
 /**
  * REDACTOR_VERSION is the marker written into every fixture's header and checked
@@ -168,14 +173,16 @@ function tooLong(what: string, bound: number): string {
 }
 
 /**
- * INVISIBLE_RE is what `prepare` strips before any rule runs: every default-
- * ignorable code point (zero-width space and joiners, the soft hyphen, the word
- * joiner, variation selectors), every bidi control, and every C0/C1 control but
- * tab, line feed and carriage return. None of them is visible, so none of them
- * may split an address or a literal into pieces no rule recognises.
+ * INVISIBLE_RE is what `prepare` strips before any rule runs: the shared set of
+ * invisible characters (`src/shared/sanitize.ts`: every format character,
+ * default-ignorable code point, bidi control and C0/C1 control but tab, line
+ * feed and carriage return) plus the line and paragraph separators, which the
+ * display layer removes as well. None of them is visible, so none of them may
+ * split an address or a literal into pieces no rule recognises. It is imported,
+ * not copied: a copy here once lacked U+FFF9..U+FFFB, and a key split by one was
+ * written into a fixture verbatim while the screen joined it back.
  */
-const INVISIBLE_RE =
-  /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
+const INVISIBLE_RE = invisibleOrSeparatorRe()
 
 /** prepare is the form every rule reads: NFKC first (so a fullwidth `＠` *is*
  * an `@` before the address rule looks), then every terminal escape sequence

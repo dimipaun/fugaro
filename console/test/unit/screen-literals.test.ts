@@ -52,12 +52,18 @@
 // naming it (`MUTATION` below runs the same scan over a doctored copy), and one
 // doctored copy per way around the `literal(` scan.
 
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, relative, sep } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
 const SCREENS = join(__dirname, '..', '..', 'src', 'renderer', 'screens')
+
+/** SHARED is the other directory that may draw: `src/shared` already holds one
+ * drawer (`version.ts`), and a module added there with a `literal` of its own
+ * would be a place this scan exists for. */
+const SHARED = join(__dirname, '..', '..', 'src', 'shared')
 
 /** SINKS are the functions whose argument is written to the screen unsanitized,
  * with the index of that argument. `note` is `projects.ts`'s wrapper around
@@ -99,6 +105,27 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
+  },
+  // The one drawer outside `src/renderer/screens`: `src/shared/version.ts` draws
+  // the version skew banner and the refusal screen (Task 3.2), because the main
+  // process runs the handshake with it and a screen is not the only thing that
+  // writes to the console's document. It is keyed by the path `join(SCREENS, ...)`
+  // resolves, which is how every read in this file finds it.
+  '../../shared/version.ts': {
+    'SKEW_HEADLINES[compatibility.mode]':
+      "`SKEW_HEADLINES`, the console's own heading table, keyed by the closed `CliCompatibilityMode` union (`ok`, `reduced`, `refused`)",
+    'skewSentence(compatibility)':
+      "`skewSentence`, which composes the sentence from this console's own constants -- the version it was built against, the supported range, the hard floor, the CLI's own brew command -- and never from the version the binary reported",
+    'HIDDEN_VIEW_WORDS[view]':
+      "`HIDDEN_VIEW_WORDS`, the console's own word for a withheld view, keyed by the closed `ReducedView` union",
+    label: {
+      within: 'versionRow',
+      reason: 'the parameter of the `versionRow` helper itself; both call sites pass a string literal',
+    },
+    'version === null ? UNREADABLE_VERSION : versionText(version, field)':
+      "`UNREADABLE_VERSION`, a console constant, or `versionText`: the version line **through `sanitizeText`** (the `label` class), which returns the sanitized text or the console's own sentence -- so the raw line a binary printed never reaches the sink",
+    because:
+      "`unreadableReason(compatibility)`: the reader's own reason for a failed read, **through `sanitizeText`** (the `sentence` class) inside that function, and `null` when there is none or the sanitizer refuses it -- in which case `renderVersionSkew` creates no element at all, so nothing raw and nothing empty reaches the sink",
   },
   'run.ts': {
     'stage.deadline': '`deadlineState` keeps a word only when it is on `DEADLINE_STATES`, else null',
@@ -287,6 +314,13 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     theme: { within: 'renderRun', reason: 'a `RunTheme`, the closed theme tuple' },
+  },
+  '../../shared/version.ts': {
+    "classes.join(' ')": { within: 'cell', reason: 'the class list of the `cell` helper; every call site passes string-literal class names' },
+    theme: { within: 'renderVersionSkew', reason: 'a `SkewTheme`, the closed two-word theme union' },
+    'compatibility.mode': { within: 'renderVersionSkew', reason: '`CliCompatibilityMode`, the closed union of the three things the console can do about a skew' },
+    'compatibility.skew': { within: 'renderVersionSkew', reason: '`CliSkewName`, the closed list of the six ways a version line can be placed' },
+    view: { within: 'renderVersionSkew', reason: 'a `ReducedView`, from the closed `REDUCED_VIEWS` tuple' },
   },
   'spend.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -563,11 +597,88 @@ function attributeOtherUses(code: string): number[] {
   return out
 }
 
-const FILES = readdirSync(SCREENS).filter((name) => name.endsWith('.ts'))
+/** SOURCE_EXTENSIONS is every extension a module that could draw may have. A
+ * single `.ts` test was the review's finding: a drawer added as `x.tsx` or
+ * `x.mts` was neither scanned nor noticed, so the defect this file exists for
+ * could be reintroduced in a new file with the suite green. */
+const SOURCE_EXTENSIONS: readonly string[] = Object.freeze(['.ts', '.tsx', '.mts', '.cts'])
+
+/**
+ * walkFiles lists every module under `directory`, **recursively**, as a path
+ * relative to `from`. A walk rather than a one-level `readdirSync`: the review
+ * found that `screens/<sub>/x.ts` -- and any extension this file did not name --
+ * was invisible to the scan, and a drawer in a directory nobody listed is the
+ * Task 2.3 defect back again in a new file. Paths are returned with `/` on every
+ * platform, because they are keys into the vocabulary tables below.
+ */
+function walkFiles(directory: string, from: string = directory): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) out.push(...walkFiles(path, from))
+    else if (SOURCE_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) {
+      out.push(relative(from, path).split(sep).join('/'))
+    }
+  }
+  return out
+}
+
+/** SCREEN_FILES are the screens, and they are the files that must each have a
+ * sink call: an empty or renamed scan must fail rather than pass quietly. */
+const SCREEN_FILES: readonly string[] = Object.freeze(
+  walkFiles(SCREENS).sort((a, b) => a.localeCompare(b)),
+)
+
+/** SHARED_FILES are the modules outside `src/renderer/screens` that may draw --
+ * `src/shared/version.ts` does, and draws the version skew banner and the
+ * refusal screen (Task 3.2). They are scanned exactly as a screen is, but they
+ * are not required to have a sink: most of them draw nothing at all. Their paths
+ * are relative to `SCREENS` (`../../shared/version.ts`), so every read and every
+ * vocabulary lookup in this file finds them the way it finds a screen. */
+const SHARED_FILES: readonly string[] = Object.freeze(
+  walkFiles(SHARED, SCREENS).sort((a, b) => a.localeCompare(b)),
+)
+
+/** FILES is everything the scan reads: the screens, and the shared modules. */
+const FILES: readonly string[] = Object.freeze([...SCREEN_FILES, ...SHARED_FILES])
+
+/** SHARED_DRAWER is the shared module that draws today, kept as its own name
+ * because the block below is about it. */
+const SHARED_DRAWER = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
   it('reads the five screens', () => {
-    expect(FILES.sort()).toEqual(['degraded.ts', 'live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
+    expect([...SCREEN_FILES]).toEqual(['degraded.ts', 'live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
+  })
+
+  it('reads the shared modules as well, so a drawer outside the screens is scanned', () => {
+    expect([...SHARED_FILES]).toEqual([
+      '../../shared/availability.ts',
+      '../../shared/replay.ts',
+      '../../shared/sanitize.ts',
+      '../../shared/schema.ts',
+      '../../shared/stringify.ts',
+      '../../shared/version.ts',
+    ])
+    expect(FILES).toContain(SHARED_DRAWER)
+  })
+
+  it('walks into subdirectories and reads every module extension (MUTATION)', () => {
+    // The review's finding, as a test: with the one-level `.ts` listing this
+    // walk replaces, none of these files was found -- a nested `range.ts`, a
+    // `panel.tsx`, a `sink.mts`. The tree is a temporary directory rather than
+    // the repository's own, so the test proves the walk without adding a file
+    // to `src/` for the walk to find.
+    const root = mkdtempSync(join(tmpdir(), 'fugaro-console-scan-'))
+    mkdirSync(join(root, 'spend'), { recursive: true })
+    mkdirSync(join(root, 'panels', 'deep'), { recursive: true })
+    writeFileSync(join(root, 'live.ts'), '')
+    writeFileSync(join(root, 'spend', 'range.ts'), '')
+    writeFileSync(join(root, 'panels', 'deep', 'bar.mts'), '')
+    writeFileSync(join(root, 'panel.tsx'), '')
+    writeFileSync(join(root, 'notes.md'), '') // not a module: not scanned
+    writeFileSync(join(root, 'spend', 'data.json'), '')
+    expect(walkFiles(root).sort()).toEqual(['live.ts', 'panel.tsx', 'panels/deep/bar.mts', 'spend/range.ts'])
   })
 
   it('hands literal no document-controlled argument', () => {
@@ -600,7 +711,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
   })
 
   it('finds a sink call in every screen, so an empty scan cannot pass', () => {
-    for (const file of FILES) {
+    for (const file of SCREEN_FILES) {
       expect(sinkCalls(readFileSync(join(SCREENS, file), 'utf8')).length, file).toBeGreaterThan(2)
     }
   })
@@ -653,6 +764,47 @@ describe('a screen writes only its own vocabulary through literal', () => {
     }
     const missed = Object.entries(mutants)
       .filter(([, mutant]) => offences('projects.ts', mutant).length <= before)
+      .map(([name]) => name)
+    expect(missed, 'mutants the scan let through').toEqual([])
+  })
+})
+
+describe('the shared drawer that draws is held to the same rules', () => {
+  const source = readFileSync(join(SCREENS, SHARED_DRAWER), 'utf8')
+
+  it('hands literal no document-controlled argument and writes no text slot outside it', () => {
+    // The same scan, the same vocabulary rules, the same refusal of every
+    // bypass spelling -- over `src/shared/version.ts`, which Task 3.2 added as
+    // the file that draws the version skew banner and the refusal screen.
+    expect(offences(SHARED_DRAWER, source)).toEqual([])
+  })
+
+  it('finds the shared drawer\'s sink calls, so the scan above cannot pass by finding nothing', () => {
+    expect(sinkCalls(source).length).toBeGreaterThan(2)
+  })
+
+  it('fails on the same defects in that file (MUTATION)', () => {
+    // One mutant per way in: a document string handed to the sink under a
+    // parameter name, a text slot and an attribute written by hand, the sink
+    // under another name, and the five spellings the review of Task 2.3 named.
+    const before = offences(SHARED_DRAWER, source).length
+    const mutants: Record<string, string> = {
+      argument: `${source}\nfunction m1(p: SkewElement, line: string) {\n  literal(p, line)\n}\n`,
+      textContent: `${source}\nfunction m2(p: SkewElement, line: string) {\n  cell(p, factory, 'span', 'x').textContent = line\n}\n`,
+      innerHTML: `${source}\nfunction m3(p: { innerHTML: string }, line: string) {\n  p.innerHTML = line\n}\n`,
+      alias: `${source}\nconst say = literal\nfunction m4(p: SkewElement, line: string) {\n  say(p, line)\n}\n`,
+      setAttribute: `${source}\nfunction m5(p: SkewElement, line: string) {\n  p.setAttribute('data-skew', line)\n}\n`,
+      title: `${source}\nfunction m6(p: { title: string }, line: string) {\n  p.title = line\n}\n`,
+      computedText: `${source}\nfunction m7(p: SkewElement, line: string) {\n  p['textContent'] = line\n}\n`,
+      computedAttribute: `${source}\nfunction m8(p: SkewElement, line: string) {\n  p['setAttribute']('data-skew', line)\n}\n`,
+      optionalAttribute: `${source}\nfunction m9(p: SkewElement, line: string) {\n  p.setAttribute?.('data-skew', line)\n}\n`,
+      assignedAttribute: `${source}\nfunction m10(p: SkewElement, line: string) {\n  const write = p.setAttribute\n  write.call(p, 'data-skew', line)\n}\n`,
+      objectAssign: `${source}\nfunction m11(p: SkewElement, line: string) {\n  Object.assign(p, { textContent: line })\n}\n`,
+      reflectSet: `${source}\nfunction m12(p: SkewElement, line: string) {\n  Reflect.set(p, 'textContent', line)\n}\n`,
+      defineProperty: `${source}\nfunction m13(p: SkewElement, line: string) {\n  Object.defineProperty(p, 'textContent', { value: line })\n}\n`,
+    }
+    const missed = Object.entries(mutants)
+      .filter(([, mutant]) => offences(SHARED_DRAWER, mutant).length <= before)
       .map(([name]) => name)
     expect(missed, 'mutants the scan let through').toEqual([])
   })

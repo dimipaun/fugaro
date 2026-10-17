@@ -78,6 +78,7 @@
 //     before there is anything behind it. The wiring is one line in
 //     `src/main/window.ts` and belongs with the task that brings the handlers.
 
+import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
 import { APP_HOST, APP_SCHEME } from './protocol'
 import { validateExternalUrl } from './window'
 
@@ -185,8 +186,8 @@ export const REPORT_MAX_WEEKS = 522
  *     (`internal/cli/report.go:40`, `reportRange` at `report.go:93`). A window
  *     in hours or minutes is *not* one of its forms, and neither is `0`;
  *   - `runSince` -- `runs ls --since`'s own forms, which are `parseSince`'s
- *     exactly (`internal/cli/runs.go:496`): `0` for no bound, `Nd` with at
- *     least one day, or a *positive Go duration* in any of `time.ParseDuration`'s
+ *     exactly (`internal/cli/runs.go:502`): `0` for no bound, `Nd` with one to 106751
+ *     days, or a *positive Go duration* in any of `time.ParseDuration`'s
  *     units (`36h`, `90m`, `1h30m`, `1.5h`, `300ms`). **A UTC calendar day is
  *     not one of them** -- `parseSince` has no date branch, so `--since
  *     2026-10-16` is a `runs ls` refusal and this grammar refuses it before a
@@ -862,7 +863,7 @@ const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // as its own kind so neither can admit a value its own command refuses. `report`
 // takes days and weeks but not hours (`reportRange`, `internal/cli/report.go:93`
 // -- an `h` suffix falls through to the date parser there); `runs ls` takes
-// `parseSince`'s own forms (`internal/cli/runs.go:496`), which is what the two
+// `parseSince`'s own forms (`internal/cli/runs.go:502`), which is what the two
 // patterns below are: its grammar rather than a summary of it. `parseSince`
 // tries the `d` suffix *first* (so `7d5h` is not a duration), then hands
 // anything else to Go's `time.ParseDuration`, whose units are `ns`, `us`,
@@ -952,16 +953,14 @@ function hiddenCharacterReason(value: string): string | null {
   return null
 }
 
-/** isFormatCharacter is Unicode's `Cf` range as it matters here: the characters
- * that change how a string is read without being read. */
+/** isFormatCharacter is the shared set of invisible characters
+ * (`INVISIBLE_CLASS` in `src/shared/sanitize.ts`: every `Cf`, every
+ * default-ignorable code point, every bidi control) plus the line and paragraph
+ * separators: the characters that change how a string is read without being
+ * read. It is the same definition the recorder and the display layer strip, so
+ * an argument cannot carry a character one of them would remove. */
 function isFormatCharacter(code: number): boolean {
-  if (code === 0x00ad || code === 0x061c || code === 0x180e) return true
-  if (code >= 0x200b && code <= 0x200f) return true
-  if (code >= 0x202a && code <= 0x202e) return true
-  if (code >= 0x2060 && code <= 0x2064) return true
-  if (code >= 0x2066 && code <= 0x2069) return true
-  if (code === 0xfeff || code === 0xfff9 || code === 0xfffa || code === 0xfffb) return true
-  return false
+  return isInvisibleCodePoint(code) || isSeparatorCodePoint(code)
 }
 
 /** isCalendarDay is `day`'s grammar plus a real date: `2026-02-30` is refused,
@@ -978,7 +977,20 @@ function isCalendarDay(value: string): boolean {
 }
 
 /**
- * isRunsSince mirrors `parseSince` (`internal/cli/runs.go:496`) branch for
+ * LONGEST_RUNS_SINCE is the longest canonical runs window the CLI accepts: the
+ * largest duration `time.ParseDuration` reads (`1<<63-1` nanoseconds), spelled
+ * out with its optional plus. Every other canonical form is shorter -- the
+ * largest `Nd` count `strconv.Atoi` reads is `+9223372036854775807d`, 21
+ * characters -- so its length is `runSince`'s bound. It used to be ten, which
+ * refused `1000h30m15s` and an eleven-digit day count the CLI takes (review
+ * round 2 of PR 514). A value longer than this is one padded with leading
+ * zeros, surplus fraction digits or repeated units; the CLI would read it, and
+ * the console refuses it before the grammar, as the price of a bound.
+ */
+const LONGEST_RUNS_SINCE = '+2562047h47m16.854775807s'
+
+/**
+ * isRunsSince mirrors `parseSince` (`internal/cli/runs.go:502`) branch for
  * branch, and it exists because the console used to accept two things that
  * function always refuses: **a UTC calendar day** (there is no date branch) and
  * **a zero window** (`0d`, `0h`, `0m` -- `days < 1` and `d <= 0`). Both were
@@ -988,19 +1000,27 @@ function isCalendarDay(value: string): boolean {
  * The branches, in the CLI's order:
  *
  *   1. `"0"` exactly -- no bound;
- *   2. a `d` suffix, whose digits `strconv.Atoi` reads and which must be at
- *      least one. The console's ten-character bound on a string argument is
- *      what keeps those digits inside `Atoi`'s range, so no integer bound is
- *      repeated here;
+ *   2. a `d` suffix, whose digits `strconv.Atoi` reads, and which must be at
+ *      least one and at most `maxSinceDays` (106751): past it
+ *      `time.Duration(days) * 24 * time.Hour` would wrap int64 nanoseconds, so
+ *      the CLI refuses it and the schema refuses it here first;
  *   3. anything else is a Go duration, and `parseSince` refuses `d <= 0`. A
  *      leading `-` is that case, and so is a duration whose every digit is
  *      zero (`0s`, `0h0m`); `+5h` is a positive duration the CLI accepts.
  */
+/** MAX_SINCE_DAYS is `parseSince`'s `maxSinceDays` (`internal/cli/runs.go`):
+ * `floor((1<<63-1) / (24h in ns))`. */
+const MAX_SINCE_DAYS = 106751n
+
 function isRunsSince(value: string): boolean {
   if (value === '0') return true
   if (value.endsWith('d')) {
     const days = value.slice(0, -1)
-    return SINCE_DAYS_RE.test(days) && Number(days) >= 1
+    if (!SINCE_DAYS_RE.test(days)) return false
+    // `parseSince`'s `maxSinceDays`: the last day count whose duration fits
+    // int64 nanoseconds. BigInt, so a count of any length is compared exactly.
+    const count = BigInt(days.replace(/^\+/, ''))
+    return count >= 1n && count <= MAX_SINCE_DAYS
   }
   if (!GO_DURATION_RE.test(value)) return false
   if (value.startsWith('-')) return false
@@ -1037,9 +1057,8 @@ const GO_INT64_EDGE = 1n << 63n
  * float64 and truncated, each term and the running sum refused past `1<<63`, and
  * a positive total refused past `1<<63-1`. It returns null where Go returns
  * `time: invalid duration`, so a window the CLI would refuse after the spawn is
- * refused here, before it -- the ten-character bound keeps the *digits* inside
- * `Atoi`'s range but not the *magnitude* inside an int64 of nanoseconds
- * (`999999999h`; review round 2 of PR 478).
+ * refused here, before it -- a length bound keeps no *magnitude* inside an
+ * int64 of nanoseconds (`999999999h`; review round 2 of PR 478).
  */
 function goDurationNanos(value: string): bigint | null {
   let rest = value
@@ -1239,12 +1258,11 @@ function kindLimit(kind: ArgumentKind): number {
       // longer of the two, and the grammar decides which one a value is.
       return 10
     case 'runSince':
-      // The longest accepted form is a duration like `1h30m15s`; the bound is
-      // also what keeps a `Nd` day count inside `strconv.Atoi`'s range. It does
-      // not keep a *duration* inside an int64 of nanoseconds (`999999999h`), so
-      // `isRunsSince` bounds that magnitude itself, as `time.ParseDuration`
-      // does (`goDurationNanos`).
-      return 10
+      // The grammar's longest canonical value (`LONGEST_RUNS_SINCE`). It is a
+      // length bound only: the magnitude of a duration and of a `Nd` count is
+      // decided by `isRunsSince`, as `time.ParseDuration` and `strconv.Atoi`
+      // decide it.
+      return LONGEST_RUNS_SINCE.length
     case 'reportDimension':
       return 8
     case 'secretScope':
@@ -1573,11 +1591,13 @@ function replacePath(_match: string, url: string | undefined, anchor: string | u
   return `${anchor ?? ''}${PATH_PLACEHOLDER}`
 }
 
-/** INVISIBLE_RE is the format characters `hiddenCharacterReason` refuses in an
+/** INVISIBLE_RE is the shared set of invisible characters
+ * (`src/shared/sanitize.ts`), the ones `hiddenCharacterReason` refuses in an
  * argument -- bidi overrides and isolates, zero-width characters, the BOM, the
- * soft hyphen -- which a refusal drops for the same reason: a right-to-left
- * override makes a screen show a sentence other than the one that was sent. */
-const INVISIBLE_RE = /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb]/g
+ * soft hyphen, the variation selectors, the interlinear annotation characters
+ * -- which a refusal drops for the same reason: a right-to-left override makes
+ * a screen show a sentence other than the one that was sent. */
+const INVISIBLE_RE = invisibleRe()
 
 /** LONE_SURROGATE_RE is half a character: a high surrogate with no low one
  * after it, or a low one with no high one before it. */

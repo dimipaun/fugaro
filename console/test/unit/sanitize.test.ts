@@ -617,32 +617,9 @@ describe('the free-text classes are the recorder\u2019s, class for class', () =>
     }
   })
 
-  it('strips every invisible character the IPC layer refuses, and then some', () => {
-    // The claim in `sanitize.ts`\u2019s header: this layer\u2019s set is the
-    // recorder\u2019s, and the IPC layer\u2019s refusal list is a subset of it.
-    // The subset half is read off `src/main/ipc.ts` rather than restated, so the
-    // two cannot drift apart in silence.
-    const ipc = readFileSync(path.join(SRC, 'main', 'ipc.ts'), 'utf8')
-    const classSource = /const INVISIBLE_RE = \/(\[[^\]]+\])/.exec(ipc)?.[1] ?? ''
-    expect(classSource).not.toBe('')
-    const refused = new RegExp(classSource, 'u')
-    const found: number[] = []
-    for (let point = 0; point <= 0xffff; point += 1) {
-      if (refused.test(String.fromCharCode(point))) found.push(point)
-    }
-    expect(found.length).toBeGreaterThan(10)
-    for (const point of found) {
-      const character = String.fromCharCode(point)
-      expect(text(`a${character}b`, 'sentence'), `U+${point.toString(16)}`).toBe('ab')
-    }
-    // And the characters the IPC list does not carry, which is the whole reason
-    // this set is the recorder\u2019s: a variation selector, a word joiner and a
-    // Mongolian vowel separator are invisible to a reader and to every rule, so a
-    // token split by one is a token that has to be found again.
-    for (const point of [0xfe00, 0xfe0f, 0x2060, 0x180e, 0x061c]) {
-      expect(text(`a${String.fromCharCode(point)}b`, 'sentence'), `U+${point.toString(16)}`).toBe('ab')
-    }
-  })
+  // The three layers' sets of invisible characters are one definition now
+  // (`INVISIBLE_CLASS`); `invisible.test.ts` walks the whole Unicode range over
+  // the recorder, this layer and the IPC check.
 
   it('leaves the validating classes their own values', () => {
     // The split the recorder makes too: a value whose key says what it is runs
@@ -754,6 +731,35 @@ describe('the class rules', () => {
     expect(text(ADDRESS_MARKER, 'person')).toBe(ADDRESS_MARKER)
     for (const bad of ['', 'a person', 'a b@example.invalid']) {
       expect(refused(bad, 'person'), bad).toContain('not a valid person')
+    }
+  })
+
+  it('refuses a credential that fits the login grammar, rather than drawing it', () => {
+    // The login grammar is `[A-Za-z0-9-]{1,39}` and every one of these fits
+    // inside it, which made the `person` class the single door a token could
+    // come out whole: `TOKEN_SHAPES` redacts each of them in a title, a reason
+    // and a stage, and the recorder pseudonymises the same value, so a live
+    // document's `kill.by` or `requested_by` was the one place they survived --
+    // and design section 5.1 rule 7 makes this layer the last line of defence
+    // for live data. Each value is assembled at run time (`fakeSecrets.ts`), so
+    // no line of this repository holds the shape.
+    const shaped: readonly string[] = [
+      fake.awsKeyId(),
+      fake.googleApiKey(),
+      fake.gitlabToken(),
+      fake.slackToken(),
+      fake.highEntropyRun(),
+    ]
+    for (const value of shaped) {
+      // `refused` throws when the value is accepted at all, so this fails if the
+      // credential check is deleted: each of these fits the login grammar
+      // (`[A-Za-z0-9-]{1,39}`) and would otherwise be drawn whole.
+      expect(refused(value, 'person')).toContain('shaped like a credential')
+    }
+    // ...and an ordinary login is still a login, so the class is not "refuse
+    // everything long": the three people the design's own screens draw.
+    for (const good of ['fixture-operator', 'zora-kell', 'person-2f9a4c1e', 'Ana']) {
+      expect(text(good, 'person'), good).toBe(good)
     }
   })
 

@@ -242,24 +242,71 @@ function refuse(reason: string): Sanitized {
 // ---------------------------------------------------------------------------
 
 /**
- * INVISIBLE_RE matches what `prepare` strips before any rule runs: every
- * default-ignorable code point (zero-width spaces and joiners, the soft hyphen,
- * the variation selectors), every bidi control, and every C0/C1 control but
- * tab, line feed and carriage return. None of them is visible, so none of them
- * may split a token, an address or a literal into pieces no rule recognises.
- *
- * It is the recorder's own set (`src/source/redact.ts`), copied here rather than
- * approximated: the hand-written list this replaced carried U+200B..U+200F and
- * U+FEFF but not the variation selectors, so `gh` + U+FE0F + `p_...` was a token
- * the recorder redacted and this layer drew. The one addition is U+FFF9..U+FFFB,
- * the interlinear annotation anchors: the IPC layer refuses them and the Unicode
- * property does not carry them, and a character that is invisible to every rule
- * must not be able to split one. The IPC layer's refusal list (`src/main/ipc.ts`)
- * is a subset of this set, and a test reads that list off the file and holds it
- * to exactly that.
+ * The one definition of the characters the console treats as invisible, shared
+ * by the three readers of CLI-derived text: this layer, the recorder's redactor
+ * (`src/source/redact.ts`) and the IPC argument check (`src/main/ipc.ts`), which
+ * both import it from here (this module imports nothing, so it is the end of
+ * the chain). It used to be three copies, and the copies drifted: the
+ * recorder's lacked U+FFF9..U+FFFB, so a credential split by an interlinear
+ * annotation character was neither redacted nor caught by the audit while this
+ * layer stripped the character and drew the credential joined back.
+ * `test/unit/invisible.test.ts` walks the whole Unicode range and holds every
+ * layer to the categories below, so a narrower copy cannot come back unseen.
  */
-const INVISIBLE_RE =
-  /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\ufff9-\ufffb\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
+
+/**
+ * INVISIBLE_CLASS is a regular-expression character class (for the `u` flag):
+ * every format character (`Cf`: zero-width spaces and joiners, the soft hyphen,
+ * the BOM, the bidi embeddings, overrides and isolates, the interlinear
+ * annotation characters, the tag characters, the prepended concatenation
+ * marks), every other default-ignorable code point (variation selectors,
+ * fillers, the Mongolian free variation selectors), every bidi control, and
+ * every C0/C1 control but tab, line feed and carriage return, which every
+ * layer handles as line structure. U+FFF9..U+FFFB and U+180E are `Cf` already;
+ * they are named so a reader of this line finds them.
+ */
+export const INVISIBLE_CLASS = String.raw`[\p{Cf}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u{fff9}-\u{fffb}\u{180e}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]`
+
+/** SEPARATOR_CLASS is the line and paragraph separators (`Zl`, `Zp`): not
+ * invisible, but a line break no rule expects inside a value, so the display
+ * layer removes them and the recorder must too. */
+export const SEPARATOR_CLASS = String.raw`[\p{Zl}\p{Zp}]`
+
+/** invisibleRe is a fresh global matcher for `INVISIBLE_CLASS`. */
+export function invisibleRe(): RegExp {
+  return new RegExp(INVISIBLE_CLASS, 'gu')
+}
+
+/** invisibleOrSeparatorRe is a fresh global matcher for both classes, merged
+ * into one class (one test per character rather than an alternation). */
+export function invisibleOrSeparatorRe(): RegExp {
+  return new RegExp(`${INVISIBLE_CLASS.slice(0, -1)}${SEPARATOR_CLASS.slice(1)}`, 'gu')
+}
+
+const ONE_INVISIBLE = new RegExp(`^${INVISIBLE_CLASS}$`, 'u')
+const ONE_SEPARATOR = new RegExp(`^${SEPARATOR_CLASS}$`, 'u')
+
+/** isInvisibleCodePoint answers for one code point. */
+export function isInvisibleCodePoint(code: number): boolean {
+  return ONE_INVISIBLE.test(String.fromCodePoint(code))
+}
+
+/** isSeparatorCodePoint answers for one code point. */
+export function isSeparatorCodePoint(code: number): boolean {
+  return ONE_SEPARATOR.test(String.fromCodePoint(code))
+}
+
+/**
+ * INVISIBLE_RE matches what `prepare` strips before any rule runs: the shared
+ * set above. None of them is visible, so none of them may split a token, an
+ * address or a literal into pieces no rule recognises.
+ */
+const INVISIBLE_RE = invisibleRe()
+
+/** PREPARE_STRIP_RE is everything `prepare` and the resolver's prepared form
+ * drop after the sequences: `INVISIBLE_RE` and the two separators `CONTROL_RE`
+ * removes. */
+const PREPARE_STRIP_RE = invisibleOrSeparatorRe()
 
 /**
  * AmbiguousSite is one place where a sequence the scanner removed swallowed
@@ -482,22 +529,22 @@ function scanTerminalSequences(text: string, sites: AmbiguousSite[] | null): str
 }
 
 /**
- * CONTROL_RE matches the line and paragraph separators -- the two separators a
- * screen must not draw, and the two the recorder's set deliberately keeps. They
+ * CONTROL_RE matches the line and paragraph separators (`SEPARATOR_CLASS`) --
+ * the two separators a screen must not draw. They
  * are removed rather than flattened, so a sentence that used one to smuggle a
  * second row past a single-line check has already lost it.
  */
-const CONTROL_RE = /[\u2028\u2029]/g
+const CONTROL_RE = new RegExp(SEPARATOR_CLASS, 'gu')
 
 /**
  * prepare is the form every rule reads: NFKC first, so a fullwidth `＠` *is* an
  * `@` before the address rule looks and a fullwidth `ｓｋ-` prefix is the `sk-`
  * the token table looks for; then the invisible characters gone, so none of them
- * can split a shape into pieces no rule recognises. It is the recorder's
- * `prepare`, copied.
+ * can split a shape into pieces no rule recognises, and the line and paragraph
+ * separators with them. It is the recorder's `prepare`, copied.
  */
 function prepare(text: string): string {
-  return stripTerminalSequences(text.normalize('NFKC')).replace(INVISIBLE_RE, '')
+  return stripTerminalSequences(text.normalize('NFKC')).replace(PREPARE_STRIP_RE, '')
 }
 
 /**
@@ -889,6 +936,23 @@ function containsSecret(text: string): boolean {
   return false
 }
 
+/** holdsCredential answers whether a whole value a *validating* class is about
+ * to accept is credential-shaped: a token family's own shape, a bearer header,
+ * a PEM header, an assignment, or a run the entropy rule calls a secret -- which
+ * is the pair `containsSecret` and `isHighEntropy`, and the same pair the URL
+ * class asks of a form it is about to link (`applyUrl`). The classes that
+ * *redact* rather than validate run the whole rule list and would replace such a
+ * run; a class that draws its value whole or not at all has to ask this instead,
+ * because a placeholder in a login cell is a login that never existed. */
+function holdsCredential(text: string): boolean {
+  if (containsSecret(text)) return true
+  ENTROPY_RE.lastIndex = 0
+  for (const match of text.matchAll(ENTROPY_RE)) {
+    if (isHighEntropy(match[0])) return true
+  }
+  return false
+}
+
 /** Changed is what one run of the rules did: the text, and which classes fired
  * on it. */
 interface Changed {
@@ -1216,10 +1280,6 @@ export function tracedRefusalRules(text: string): string {
   const origin = new Int32Array(text.length).map((_, index) => index)
   return traceCredentials({ text, origin }, false, new Uint8Array(text.length)).text
 }
-
-/** PREPARE_STRIP_RE is everything the resolver's prepared form drops after the
- * sequences: `INVISIBLE_RE` and the two separators `CONTROL_RE` removes. */
-const PREPARE_STRIP_RE = new RegExp(`${INVISIBLE_RE.source.slice(0, -1)}\\u2028\\u2029]`, 'gu')
 
 /**
  * MAX_AMBIGUOUS_COMBINATIONS bounds how many ways the sites of one cluster are
@@ -1900,6 +1960,19 @@ export function sanitizeText(
       return ok(ADDRESS_PLACEHOLDER, [...flags, 'address-marker'])
     }
     if (isMarkerText(text)) return ok(text, flags)
+    // The login grammar is `[A-Za-z0-9-]{1,39}`, and every token family in
+    // `TOKEN_SHAPES` fits inside it: an AWS key id (`AKIA` + 16), a Google API
+    // key (`AIza` + 35, exactly 39), a GitLab PAT, a Slack token -- and so does
+    // any long high-entropy run, which is the one shape no pattern can find.
+    // Every one of those is redacted in a title, a reason and a stage, and the
+    // recorder pseudonymises the same value, so this class was the single place
+    // a credential came out whole: design section 5.1 rule 7 makes this layer
+    // the last line of defence for live (non-fixture) documents. A validating
+    // class draws the value whole or not at all, so this is a refusal and never
+    // a placeholder -- half of a login is not a person.
+    if (holdsCredential(text)) {
+      return refuse(`${field} is shaped like a credential and not like a person, so the console will not draw it`)
+    }
     if (LOGIN_RE.test(text)) return ok(text, flags)
     return refuse(`${field} is not a valid person, so the console will not draw it`)
   }
