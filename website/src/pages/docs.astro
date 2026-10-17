@@ -1,30 +1,348 @@
 ---
 /**
- * website/src/pages/docs.astro — the docs hub (website plan, Task W1.7).
+ * website/src/pages/docs.astro — the docs hub (website plan, Task W1.7;
+ * reconciliation finding 37, decision D98, Global Constraints 6 and 8).
  *
- * The hub links the guides this repository holds and renders the generated CLI reference.
- * Nothing is written yet except the page's own title and a first paragraph, and that
- * paragraph is pasted from docs/recipes.md on purpose: it is the defect
- * `website/test/docs-hub.mjs` exists to refuse (finding 37, D98), and the red step of this
- * task is that check's first failure.
+ * The hub's job is to be a hub, and this file is written to make that a property rather
+ * than an intention. The guides the site could not keep in step with the repository are
+ * **linked**, not copied: each entry is the link, the document's own title, the path it
+ * lives at and one line of the hub's own about what the document answers — and
+ * `website/test/docs-hub.mjs` refuses a paragraph of any document under `docs/` (or of
+ * README.md) that appears on this page verbatim, and refuses an entry line that is a
+ * sentence of the guide it is about. A page that restates a guide is a second copy of it,
+ * and the copy a reader lands on is the one that drifts (finding 37, D98).
+ *
+ * Three facts this page renders rather than types:
+ *
+ *   1. **The repository.** Every GitHub URL here is `site.yaml`'s `repository` plus a
+ *      path, so the site and the module name one repository
+ *      (internal/cli/docs_website_boundary_test.go pins that value to go.mod's module
+ *      path). The path is the one thing written here, and `website/test/docs-hub.mjs`
+ *      resolves each one against this checkout — a guide that moves fails the site's own
+ *      check rather than 404ing for a reader.
+ *   2. **The entries' titles.** Each title is read out of the document itself — a file's
+ *      `#` heading, or, for the quick start, the `##` heading the anchor names — so the
+ *      hub cannot call a guide something the guide no longer calls itself.
+ *   3. **The CLI reference.** The reference is generated from the command tree by W0.4,
+ *      and this page **renders** it (step 3): a command that lands in the tree appears
+ *      here the day the file is regenerated, with no edit to this page. Its own title line
+ *      is rendered as a section heading of this page rather than as a second `h1` — the
+ *      page's `h1` is the hub's — and the anchors its headings carry survive that move, so
+ *      `#fugaro-budget-set` still lands where it says.
+ *
+ * Nothing here fetches anything: the documents are read from this repository at build
+ * time, and the GitHub URLs are checked against the working tree by the site's own tests
+ * rather than by a request (Global Constraints 4 and 8). No font, script, stylesheet,
+ * image or embed reaches a reader from anywhere but this build (D106): the page links
+ * nothing but this repository and the anchor it renders itself.
  */
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+
 import Base from '../layouts/Base.astro'
 import { loadSite, REPO_ROOT } from '../content.ts'
 
+// The generated reference is imported as a document rather than read as bytes: Astro
+// compiles markdown at build time, which is what turns the file into the headings, tables
+// and code spans a reader reads — and into the anchors those headings carry. Nothing is
+// added to `package.json` for it (Global Constraint 5): markdown is the site's own
+// toolchain, already installed.
+import * as cliReference from '../../content/cli-reference.md'
+
 const site = loadSite()
+const facts = site.facts
+
+/**
+ * The one part of a GitHub URL that is not a fact in `site.yaml`: the ref the link
+ * carries. `HEAD` is git's own name for the repository's default branch — resolved by
+ * GitHub when a reader clicks rather than written down here — so the hub carries no second
+ * copy of a branch name that could move without this page noticing.
+ */
+const REF = 'HEAD'
+
+/** A file of this repository, by its path relative to the repository root. */
+function repositoryFile(relative: string, what: string): string {
+  const file = path.join(REPO_ROOT, relative)
+  if (!existsSync(file)) {
+    throw new Error(
+      `${relative} is missing: ${what}. The hub links the guides this repository holds, and a link to a file that is not there is a 404 for a reader — so the build fails here rather than rendering it (W1.7 step 1).`,
+    )
+  }
+  return readFileSync(file, 'utf8')
+}
+
+const HEADING = /^(#{1,6})\s+(.*)$/
+
+/** The anchor a heading text becomes, by GitHub's own rule. */
+function slug(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/`/g, '')
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .trim()
+    .replace(/\s+/g, '-')
+}
+
+/**
+ * A document's own title: the text of its first `#` heading, or of the heading an anchor
+ * names when the entry is a section of a document rather than a whole one (README.md's
+ * quick start is `## Getting started`, and the hub links that section and not the file's
+ * top). A missing heading is a build error naming the file: the hub renders the document's
+ * title rather than typing one, so a document whose title moved fails the build instead of
+ * being mislabelled.
+ */
+function titleOf(relative: string, anchor: string | null): string {
+  const text = repositoryFile(relative, 'the hub links it')
+  for (const line of text.split('\n')) {
+    const match = HEADING.exec(line.trim())
+    if (match === null) continue
+    const heading = match[2].trim().replace(/`/g, '')
+    if (anchor === null) {
+      if (match[1].length === 1) return heading
+      continue
+    }
+    if (slug(heading) === anchor) return heading
+  }
+  throw new Error(
+    anchor === null
+      ? `${relative} carries no "# " title, and the hub renders each document's own title rather than typing one (W1.7 step 1).`
+      : `${relative} carries no heading at the anchor #${anchor}, and the hub links that section by name. The path and the anchor are one fact: a section the document renamed is a link this page must change (W1.7 step 1).`,
+  )
+}
+
+/**
+ * One entry of the hub: where the document lives, the anchor within it, and the hub's own
+ * line about what it answers. The line is the hub's own sentence and not the document's —
+ * `website/test/docs-hub.mjs` refuses an entry whose line repeats a sentence of the
+ * document it links — because the guide is one click away and a second copy of it here is
+ * the copy that drifts.
+ */
+interface Guide {
+  path: string
+  anchor: string | null
+  answers: string
+}
+
+// The guides, and the one place they are listed (W1.7 step 1). This list is the page's
+// only hand-kept fact: the paths and anchors, which `website/test/docs-hub.mjs` resolves
+// against this checkout, and the hub's own line about each.
+const GUIDES: Guide[] = [
+  {
+    path: 'README.md',
+    anchor: 'getting-started',
+    answers: 'The quick start: what a reader needs installed, and the two steps from a checkout to a first run.',
+  },
+  {
+    path: 'docs/gcp-setup.md',
+    anchor: null,
+    answers: 'The cloud side, one confirmed step at a time, with the rollback and the offboarding at the end.',
+  },
+  {
+    path: 'docs/recipes.md',
+    anchor: null,
+    answers: 'How to choose the loop a run follows after the first implementation, per run or per repository.',
+  },
+  {
+    path: 'docs/project-layer.md',
+    anchor: null,
+    answers: 'Project-wide defaults and named workflow profiles, and which layer wins for a key.',
+  },
+  {
+    path: 'docs/multi-model.md',
+    anchor: null,
+    answers: 'Running a model served by OpenRouter through the gateway that prices and caps every call.',
+  },
+  {
+    path: 'docs/git-providers.md',
+    anchor: null,
+    answers: 'The two providers Fugaro opens pull requests on, and the credentials each one is given.',
+  },
+]
+
+const guides = GUIDES.map((guide) => ({
+  ...guide,
+  title: titleOf(guide.path, guide.anchor),
+  href: `${facts.repository}/blob/${REF}/${guide.path}${guide.anchor === null ? '' : `#${guide.anchor}`}`,
+}))
+
+// The generated reference, and the entry that says where it is: this page renders it, so
+// its entry is an anchor of this page rather than a link away from it (W1.7 step 3).
 const reference = site.documents['cli-reference.md']
+const referenceHeading = HEADING.exec(reference.body.split('\n')[0] ?? '')
+if (referenceHeading === null || referenceHeading[1].length !== 1) {
+  throw new Error(
+    `${reference.path} does not open with a "# " title, and the hub renders that title as the reference's section heading (W1.7 step 3).`,
+  )
+}
+const referenceTitle = referenceHeading[2].trim().replace(/`/g, '')
+
+const referenceEntry = {
+  path: reference.path,
+  // No anchor: the reference is rendered on this page, so the entry shows the file it is
+  // generated into rather than a fragment of it (the anchor in `href` is this page's own).
+  anchor: null,
+  answers: 'Every command and flag the binary ships, generated from the command tree and rendered below.',
+  title: referenceTitle,
+  href: '#cli-reference',
+}
+
+/**
+ * The rendered reference with its own title moved one level down.
+ *
+ * The document is a page-shaped thing — it opens with an `h1` — and it is rendered inside
+ * a page that already has one, so the title becomes the section heading it is on this
+ * page. Nothing else is touched: the heading keeps its anchor, and the sections below it
+ * are the generated file's own. A document that does not open with exactly one `h1` is a
+ * build error naming the file, because the build has nothing to move and would otherwise
+ * render a page with two titles.
+ */
+function demotedTitle(html: string, file: string, title: string): string {
+  const titles = [...html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/g)]
+  if (titles.length !== 1) {
+    throw new Error(
+      `${file} renders ${titles.length} "h1" headings and the page moves its title to a section heading: the generated document and this file have to agree on what its title is (W1.7 step 3).`,
+    )
+  }
+  const rendered = titles[0][0].replace(/^<h1/, '<h2').replace(/<\/h1>$/, '</h2>')
+  if (rendered.replace(/<[^>]*>/g, '').trim() !== title) {
+    throw new Error(
+      `${file}'s "# " title is ${JSON.stringify(title)} and its rendered title reads ${JSON.stringify(rendered.replace(/<[^>]*>/g, '').trim())}: the page renders the generated document, and the two disagree about its own title (W1.7 step 3).`,
+    )
+  }
+  return html.replace(titles[0][0], rendered)
+}
+
+const referenceHTML = demotedTitle(await cliReference.compiledContent(), reference.path, referenceTitle)
+
+const entries = [...guides, referenceEntry]
 ---
 
 <Base title="Documentation" description="The guides this repository holds, and the generated CLI reference.">
   <h1>Documentation</h1>
 
   <p class="lead">
-    A Fugaro run implements the task, then loops: an optional first-line review by the
-    coder's model, then the senior review, each followed by a fix when the review asks for
-    changes. A recipe names that loop after implement so you can pick it per run, per
-    repository or per project. A repository that names no recipe runs the default recipe,
-    which is the loop Fugaro has always had.
+    Every guide below is a document of this repository, where it changes with the code that
+    makes it true; this page says what each one answers, points at it, and renders the one
+    document that is generated rather than written.
   </p>
 
-  <section id="cli-reference" data-generated-document={reference.path}></section>
+  <section id="guides">
+    <h2>Guides</h2>
+
+    <ul class="guides">
+      {entries.map((entry) => (
+        <li class="guide">
+          <a href={entry.href}>{entry.title}</a>
+          <code class="path">{entry.path}{entry.anchor === null ? '' : `#${entry.anchor}`}</code>
+          <p class="answers">{entry.answers}</p>
+        </li>
+      ))}
+    </ul>
+  </section>
+
+  {/* The one guide that lives on this page rather than behind a link. `data-generated-document`
+      names the file it was rendered from, and `website/test/docs-hub.mjs` reads it as the
+      boundary between the hub's own words and a generated document — because the two rules
+      are opposite: the hub may not repeat a document's prose, and this document is here to
+      be read as it was generated. */}
+  <section id="cli-reference" data-generated-document={reference.path}>
+    <Fragment set:html={referenceHTML} />
+  </section>
+
+  <p class="generated">
+    The reference above is rendered as it is generated, by <code>{reference.generator}</code>;
+    the site's own README is where its build and its generated files are documented.
+  </p>
 </Base>
+
+<style is:global>
+  /* The hub's own layout. It is `is:global` rather than scoped on purpose: the reference
+     below is rendered from a generated document and its elements carry none of the
+     compiler's scope attributes, so a scoped rule could not reach them — every selector
+     here is anchored on a class this file writes, which is the scoping a rendered document
+     needs. Only the design tokens are named (W1.2's `tokens.css`); no colour, spacing or
+     type size is written as a literal, so a palette change is that file's business. */
+  .lead {
+    max-width: var(--measure);
+    color: var(--text-muted);
+  }
+
+  .guides {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-sm);
+    max-width: var(--measure);
+  }
+
+  .guide {
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .guide a {
+    color: var(--accent);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-medium);
+  }
+
+  .guide .path,
+  .generated code {
+    display: block;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+  }
+
+  .answers {
+    margin: var(--space-2xs) 0 0;
+  }
+
+  .generated {
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .generated code {
+    display: inline;
+  }
+
+  /* The rendered reference: a long generated document, given the typography a reader
+     needs to follow a command, a flag table and a code span — and nothing that would make
+     it look like anything other than the document it is. */
+  #cli-reference {
+    max-width: var(--measure);
+  }
+
+  #cli-reference h2 {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-lg);
+    margin-top: var(--space-lg);
+  }
+
+  #cli-reference h3,
+  #cli-reference h4 {
+    margin-top: var(--space-md);
+  }
+
+  #cli-reference code {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+  }
+
+  #cli-reference table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  #cli-reference th,
+  #cli-reference td {
+    border: var(--border-width) solid var(--border);
+    padding: var(--space-3xs) var(--space-2xs);
+    text-align: left;
+    vertical-align: top;
+  }
+</style>
