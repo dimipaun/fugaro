@@ -132,8 +132,8 @@ func TestIsManagedReadsTheCreationFact(t *testing.T) {
 	}
 	// The bucket is located from the GCP project alone, under the name the
 	// installation module gives it and the name init's marker write uses
-	// (init.go:672, which warns rather than writes anywhere else for this
-	// reason).
+	// (initEngine.markCreated in internal/cli/init.go, which warns rather
+	// than writes anywhere else for this reason).
 	if got := runsBucketName(testProject); got != testBucket {
 		t.Errorf("runsBucketName(%q) = %q, want %q", testProject, got, testBucket)
 	}
@@ -498,6 +498,31 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				return s, c
 			},
 			reason: "records no budget amount",
+		},
+		// The amount is a monthly line above 0, so a negative one is no more
+		// an amount than 0 is.
+		"version 2 with a negative amount": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":-5,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		// A version-1 object carries no budget: version 1 is a creation that
+		// was never required to choose one, so a budget in it is a field
+		// someone else wrote. The shape check refuses it first ("not a
+		// marker"); readFact's version-1 case refuses it again, with its own
+		// reason, so the rule does not rest on the shape check alone — and a
+		// shape check that let the budget through for version 1 changes the
+		// reason this row sees, which is what fails it.
+		"version 1 with a budget": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":1,"gcp_project":"`+testProject+`","budget":{"amount":50,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "not a marker",
 		},
 		"version 2 with a budget field spelled differently": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {

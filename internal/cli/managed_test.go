@@ -315,7 +315,11 @@ func managedPropertyWorlds() []managedPropertyWorld {
 		{"a creation fact whose read fails (500)", false, managedWorld(managedWorldOpts{refuseObject: http.StatusInternalServerError})},
 		{"a malformed creation fact", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":`)})},
 		{"a creation fact with a field this build does not write", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":"` + managedPropertyGCP + `","managed":true}`)})},
-		{"a creation fact of an unknown version", false, managedWorld(managedWorldOpts{object: []byte(`{"version":2,"gcp_project":"` + managedPropertyGCP + `"}`)})},
+		// 99, not 2: version 2 is the budget version (managed.MarkerVersionBudget),
+		// so a 2 here would be a known version with a missing budget, and the
+		// unknown-version refusal would go untested.
+		{"a creation fact of an unknown version", false, managedWorld(managedWorldOpts{object: []byte(`{"version":99,"gcp_project":"` + managedPropertyGCP + `"}`)})},
+		{"a budget-version creation fact with no budget", false, managedWorld(managedWorldOpts{object: []byte(`{"version":2,"gcp_project":"` + managedPropertyGCP + `"}`)})},
 		{"a creation fact about another project", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":"someone-elses-project"}`)})},
 		{"a runs bucket in another project (wrong project number)", false, managedWorld(managedWorldOpts{bucketNumber: managedPropertyNumber + 1})},
 		{"a creation fact in a bucket without the label", false, managedWorld(managedWorldOpts{noLabel: true})},

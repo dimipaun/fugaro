@@ -25,8 +25,9 @@ const markerMaxBytes = 4 << 10
 
 // runsBucketName is where an installation's runs bucket lives: the name the
 // installation module gives it, the name init's marker write insists on
-// (internal/cli/init.go:672 refuses to mark a project whose runs bucket is
-// anything else, for exactly this reason), and the name this read looks in.
+// (initEngine.markCreated in internal/cli/init.go refuses to mark a project
+// whose runs bucket is anything else, for exactly this reason), and the name
+// this read looks in.
 // One name, so a marker cannot be written somewhere the read does not look —
 // and, the other way round, so a marker in a bucket of another name is simply
 // not found, which is the fail-closed direction.
@@ -226,6 +227,12 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// new version rather than made lenient about versions).
 	switch m.Version {
 	case MarkerVersion:
+		// Version 1 carries no budget. checkMarkerShape already refuses the
+		// key for this version; this says it again here, where the versions
+		// are decided, so the rule does not rest on the shape check alone.
+		if m.Budget != nil {
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records a budget, which only version %d carries, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBudget, project), nil
+		}
 	case MarkerVersionBudget:
 		// The amount is what version 2 is for, so an object of this version
 		// without one is not a fact this build wrote — and believing it would

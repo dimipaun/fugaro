@@ -650,7 +650,7 @@ func runInit(r *initRun) error {
 func (e *initEngine) markCreated(ctx context.Context) {
 	r := e.r
 	// Created is set by the project stage alone, inside its create branch
-	// (init_project.go:421): "" means this run created no project, whatever
+	// (projectStage.Apply in init_project.go): "" means this run created no project, whatever
 	// else it did, and then there is no fact to record. This is the gate the
 	// task's own test at the call site pins (init_managed_test.go): every
 	// ordinary run of an existing installation — fugaro's own, belong, the
@@ -675,7 +675,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		return
 	}
 	// The bucket must be the project's own, under the default name, for the
-	// same reason init's owner() refuses any other (init_review.go:183): a
+	// same reason init's owner() refuses any other (initEngine.owner in init_review.go): a
 	// custom --runs-bucket would take the marker where the read of Task 0.2
 	// does not look — owner() reads fugaro-runs-<project>, and Task 0.2's
 	// IsManaged locates the bucket the same way. A marker in a custom bucket
