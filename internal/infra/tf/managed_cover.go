@@ -457,6 +457,15 @@ var managedProviderAllowed = map[string]bool{
 	"add_terraform_attribution_label": true, "terraform_attribution_label_addition_strategy": true,
 }
 
+// ManagedProviderSetting reports whether a managed root's provider block may
+// carry the setting name: the same list the cover reads the plan's provider
+// configuration with (managedProviderAllowed), for the managed apply's
+// preflight, which reads the root's own files BEFORE init — the provider is
+// configured at plan time with the deployer's credential, so a custom endpoint
+// or a credential setting has to be refused before the plan the cover reads
+// exists (internal/managed's preflight).
+func ManagedProviderSetting(name string) bool { return managedProviderAllowed[name] }
+
 // managedProviderSettings says why a provider block carries what a managed
 // plan's may not: an alias (a second configuration of the provider is a
 // second set of settings a module can be handed), a field of the entry the

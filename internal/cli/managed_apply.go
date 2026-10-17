@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -230,8 +231,8 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// state bucket (D77), which the deployer holds and the operator's
 		// identity need not, so init, plan, the show the gate reads and the
 		// apply are one identity's.
-		Terraform: func(cred managedmode.Credential) (*tf.TF, error) {
-			return managedTerraform(cmd, lc, wd, bin, cache, imp, cred)
+		Terraform: func(cred managedmode.Credential) (*tf.TF, func(), error) {
+			return managedTerraform(cmd, lc, wd, bin, cache, cred)
 		},
 		Cover: managedCover(lc, bucket),
 		// The addresses the owner approved and nothing else.
@@ -242,6 +243,12 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// apply asks the rule once the gate has a verdict (managed.Request's
 		// own comment).
 		Conditions: managedConditions(cmd),
+		// And the person's own answer, when the session is a person's: the
+		// project's name typed at the terminal, after a question that names
+		// the saved plan's hash and what it changes. A coding agent's session
+		// is never asked (D55), and a session with no terminal never reaches
+		// this (the rule refuses it first).
+		Ask: managedAsk(cmd, lc),
 		// Session is nil, and it is written out rather than left to the zero
 		// value because the field is the assertion: this command registers no
 		// flag and no argument that names an address, so there is no way to
@@ -284,12 +291,28 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 // once (managed.Request's own comment).
 //
 // The command registers no --yes and no --non-interactive, so neither appears
-// here: a person at a terminal confirms a YesOrTyped step by having one, and a
-// session with no marker and no terminal has no confirmation to give. That is
-// the fail-closed direction, and the refusal a person then reads is
-// initflow's own NoTerminalAdvice.
+// here: a person at a terminal is ASKED (managedAsk: the project's name typed
+// after a question naming the plan's hash and counts), and a session with no
+// marker and no terminal has no confirmation to give. That is the fail-closed
+// direction, and the refusal a person then reads is initflow's own
+// NoTerminalAdvice.
 func managedConditions(cmd *cobra.Command) initflow.Conditions {
 	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Agent: agentMarker(os.Getenv)}
+}
+
+// managedAsk is the question a person at a terminal answers before a managed
+// apply: the apply's own words (the project, the saved plan's hash and its
+// counts), and the project's name typed back. Anything else is a no.
+func managedAsk(cmd *cobra.Command, lc *localcfg.Config) func(string) (bool, error) {
+	return func(question string) (bool, error) {
+		out := cmd.ErrOrStderr()
+		fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\nType %s to confirm: ", lc.Name, question, lc.Name)
+		line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return false, err
+		}
+		return strings.TrimSpace(line) == lc.Name, nil
+	}
 }
 
 // managedRoot is ROOT as the apply reads it: an absolute directory inside the
@@ -364,7 +387,11 @@ func managedCover(lc *localcfg.Config, bucket string) tf.ManagedCover {
 }
 
 // managedTerraform builds the terraform the apply runs, around the credential
-// the deployer's assumption produced.
+// the deployer's assumption produced, and returns the cleanup that removes
+// that credential's file — which the apply runs once every terraform it built
+// has finished (managed.Request.Terraform's own contract). The file has to
+// outlive this function: init, plan, show and apply all run later, each with
+// GOOGLE_APPLICATION_CREDENTIALS naming it.
 //
 // The environment is managedmode.TerraformEnv's (tf.Env's allowlist, and the
 // assertion that no provider setting of the applier's shell is in it), with the
@@ -376,39 +403,60 @@ func managedCover(lc *localcfg.Config, bucket string) tf.ManagedCover {
 // happens BEFORE TerraformEnv is called, so the assertion runs over exactly the
 // environment terraform will run with.
 //
-// The file is removed when the apply returns: it holds the operator's own
-// refresh token (wrapped, not copied: it is the source_credentials of an
-// impersonated credential, and the impersonation URL names the deployer), and
-// it has no business outliving the apply that needed it.
-func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir, bin, cache string, imp deployerImpersonator, cred managedmode.Credential) (*tf.TF, error) {
-	account := cred.Account()
-	if account != managedmode.DeployerAccount(lc.GCPProject) {
+// The file is the credential itself, not a copy of a claim about it: what it
+// holds is the impersonation URL the credential was minted through
+// (deployerImpersonationURL), and the account that URL names is checked again
+// here against the deployer account and against cred.Account() before a byte is
+// written. It lives in a directory of its own (credentialDir), never in the
+// workdir — the root's parent, which an agent-written configuration names as
+// ".." — and the managed preflight refuses every function that could read a
+// file anyway.
+func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir, bin, cache string, cred managedmode.Credential) (*tf.TF, func(), error) {
+	none := func() {}
+	want := managedmode.DeployerAccount(lc.GCPProject)
+	ic, ok := cred.(impersonatedCredential)
+	if !ok {
+		return nil, none, fmt.Errorf("the credential for %s does not name the impersonation it was minted through, and terraform's credential file is that impersonation or nothing", cred.Account())
+	}
+	u := ic.ImpersonationURL()
+	account, err := impersonationAccount(u)
+	switch {
+	case err != nil:
+		return nil, none, err
+	case account != want || cred.Account() != want:
 		// The credential is checked against the deployer account by
 		// managed.Deployer before this runs; this is the second check, in the
 		// one place that would otherwise write another account's credential
-		// file.
-		return nil, fmt.Errorf("the credential is for %s, not for the deployer account of %s", account, lc.GCPProject)
+		// file — and it reads the account out of the file's own URL.
+		return nil, none, fmt.Errorf("the credential is for %s (its impersonation names %s), not for the deployer account of %s", cred.Account(), account, lc.GCPProject)
 	}
-	file, cleanup, err := writeImpersonationFile(wd.Dir, account, imp.endpoint)
+	file, cleanup, err := writeImpersonationFile(u)
 	if err != nil {
-		return nil, err
+		return nil, none, err
 	}
-	defer cleanup()
 	parent := replaceEnv(os.Environ(), "GOOGLE_APPLICATION_CREDENTIALS", file)
 	env, err := managedmode.TerraformEnv(parent, wd.Dir, cache)
 	if err != nil {
-		return nil, userErr("%v", err)
+		cleanup()
+		return nil, none, userErr("%v", err)
 	}
 	t, err := tf.New(bin, wd.Root, env)
 	if err != nil {
+		cleanup()
 		var ee *tf.ExitError
 		if errors.As(err, &ee) {
-			return nil, remote(err)
+			return nil, none, remote(err)
 		}
-		return nil, userErr("%v", err)
+		return nil, none, userErr("%v", err)
 	}
 	t.Out = cmd.ErrOrStderr()
-	return t, nil
+	return t, cleanup, nil
+}
+
+// impersonatedCredential is a credential that names the impersonation it was
+// minted through: the URL terraform's credential file carries.
+type impersonatedCredential interface {
+	ImpersonationURL() string
 }
 
 // impersonationFile is the file terraform's credential variable names: the ADC
@@ -422,15 +470,21 @@ type impersonationFile struct {
 	SourceCredentials              json.RawMessage `json:"source_credentials"`
 }
 
-// writeImpersonationFile writes that file into dir (this command's workdir,
-// mode 0600) and returns its path and the function that removes it.
+// credentialDir is where the credential file's own directory is made: the
+// system's temporary directory, and a variable so tests make it under theirs.
+// It is never the workdir: the workdir is the root's parent.
+var credentialDir = ""
+
+// writeImpersonationFile writes that file into a directory of its own (mode
+// 0700, the file 0600) and returns its path and the function that removes
+// both.
 //
 // What it refuses: an operator whose credential is not a person's. The
 // impersonation grant of D75 is on var.operators, which are user members, and
 // the identity this command reports (managedCaller) is a person's — so a
 // service account's credential, or no credential at all, is a refusal here
 // rather than a file whose source is something else.
-func writeImpersonationFile(dir, account, endpoint string) (string, func(), error) {
+func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 	none := func() {}
 	path, err := adcFile()
 	if err != nil {
@@ -451,30 +505,36 @@ func writeImpersonationFile(dir, account, endpoint string) (string, func(), erro
 	}
 	body, err := json.Marshal(impersonationFile{
 		Type:                           "impersonated_service_account",
-		ServiceAccountImpersonationURL: strings.TrimRight(endpoint, "/") + "/v1/projects/-/serviceAccounts/" + url.PathEscape(account) + ":generateAccessToken",
+		ServiceAccountImpersonationURL: impersonationURL,
 		SourceCredentials:              json.RawMessage(src),
 	})
 	if err != nil {
 		return "", none, err
 	}
-	// A directory of this command's own, and a name of its own inside it: the
-	// workdir already holds terraform's CLI config and data directory.
-	out := filepath.Join(dir, "fugaro_deployer_credentials.json")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	dir, err := os.MkdirTemp(credentialDir, "fugaro-deployer-")
+	if err != nil {
+		return "", none, userErr("making the credential file's directory: %v", err)
+	}
+	remove := func() {
+		// The file is removed whether or not the apply succeeded: what it
+		// holds is the operator's refresh token, and the apply is the only
+		// thing that needed it. A file that cannot be removed is reported
+		// rather than ignored, because the operator is the only one who can
+		// delete it.
+		if err := os.RemoveAll(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s could not be removed (%v): it holds your own credentials, wrapped for the deployer account, and nothing needs it again\n", dir, err)
+		}
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		remove()
 		return "", none, userErr("%v", err)
 	}
+	out := filepath.Join(dir, "credentials.json")
 	if err := os.WriteFile(out, body, 0o600); err != nil {
+		remove()
 		return "", none, userErr("writing %s: %v", out, err)
 	}
-	// The file is removed whether or not the apply succeeded: what it holds is
-	// the operator's refresh token, and the apply is the only thing that
-	// needed it. A file that cannot be removed is reported rather than
-	// ignored, because the operator is the only one who can delete it.
-	return out, func() {
-		if err := os.Remove(out); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "warning: %s could not be removed (%v): it holds your own credentials, wrapped for the deployer account, and nothing needs it again\n", out, err)
-		}
-	}, nil
+	return out, remove, nil
 }
 
 // adcFile is the file Application Default Credentials come from: what
@@ -567,42 +627,116 @@ type deployerImpersonator struct {
 // identity the deployer's impersonation grant has to name.
 func (i deployerImpersonator) Self() string { return i.self }
 
-// Impersonate mints the deployer's credential: an access token for the apply's
-// own API clients, and the identity that token is for.
+// Impersonate mints the deployer's credential: the impersonation terraform's
+// credential file names, an access token minted through it, and the account
+// both are for.
 //
-// Why an ID token is minted as well, and why Account is not simply the account
-// this call was made for: the access token is opaque, so an Account taken from
-// the request would be this code asserting its own identity, and
-// managed.Deployer's check — that the credential really is the deployer's —
-// could not fail. The ID token is a JWT Google signs for the account the token
-// was minted FOR, and its email claim is what Account returns: the account is
-// read out of a token rather than out of this function's own argument, so a
-// proxy, a misconfigured endpoint or a bug that minted for another account is
-// refused by Deployer rather than applied with. Both calls are the same grant
-// (roles/iam.serviceAccountTokenCreator includes iam.serviceAccounts.getOpenIdToken).
+// Where the account comes from, and what is checked: the credential terraform
+// actually runs with is the impersonation file, and what decides whose tokens
+// that file yields is the URL in it — Google's IAM Credentials API mints for
+// the account that URL names, or refuses. So Account is read out of that URL
+// (impersonationAccount), and two independent answers have to agree with it
+// before a credential is returned at all: the account this call was asked for,
+// and the email claim of an ID token minted through the same grant. Any
+// disagreement — a proxy, a misconfigured endpoint, a bug that minted for
+// another account — is a refusal, never a credential.
+//
+// What remains trusted, stated rather than implied: the ID token's signature
+// is not verified (that needs Google's signing keys, which are fetched online;
+// this command makes no call it does not need), so its claim is a cross-check
+// of the endpoint's answer and not a proof; the proof is that the IAM
+// Credentials API, reached over TLS at impersonationEndpoint, mints only for
+// the account a URL names and only for a caller holding the grant on it. The
+// access token is opaque and is not inspected: it is minted to prove the grant
+// works before terraform runs, and nothing in this command hands it to a
+// client (terraform mints its own through the file).
 func (i deployerImpersonator) Impersonate(ctx context.Context, account string) (managedmode.Credential, error) {
+	u := deployerImpersonationURL(i.endpoint, account)
+	named, err := impersonationAccount(u)
+	if err != nil {
+		return nil, err
+	}
+	if named != account {
+		return nil, fmt.Errorf("the impersonation URL names %s, not the deployer account %s", named, account)
+	}
 	first, err := i.accessToken(ctx, account)
 	if err != nil {
 		return nil, err
 	}
-	email, err := i.identity(ctx, account)
-	if err != nil {
+	// identity refuses an ID token whose email is not account, which is the
+	// account the URL names (checked above): the three agree or there is no
+	// credential.
+	if _, err := i.identity(ctx, account); err != nil {
 		return nil, err
 	}
-	return deployerCredential{account: email, ctx: ctx, first: first,
+	return deployerCredential{url: u, ctx: ctx, first: first,
 		mint: func(ctx context.Context) (*oauth2.Token, error) { return i.accessToken(ctx, account) }}, nil
 }
 
-// deployerCredential is an assumed credential: the account a token names, the
-// token itself, and the call that mints the next one.
-type deployerCredential struct {
-	account string
-	ctx     context.Context
-	first   *oauth2.Token
-	mint    func(context.Context) (*oauth2.Token, error)
+// deployerImpersonationURL is the generateAccessToken URL of account at
+// endpoint: the URL terraform's credential file carries.
+func deployerImpersonationURL(endpoint, account string) string {
+	return strings.TrimRight(endpoint, "/") + "/v1/projects/-/serviceAccounts/" + url.PathEscape(account) + ":generateAccessToken"
 }
 
-func (c deployerCredential) Account() string { return c.account }
+// impersonationAccount is the account an impersonation URL names: the one
+// generateAccessToken mints for. A URL that is not one is an error, never an
+// empty account.
+func impersonationAccount(u string) (string, error) {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return "", fmt.Errorf("the impersonation URL %q: %w", u, err)
+	}
+	const prefix = "/v1/projects/-/serviceAccounts/"
+	rest, ok := strings.CutPrefix(parsed.EscapedPath(), strings.TrimRight(parsedPathPrefix(parsed), "/")+prefix)
+	if !ok || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("the impersonation URL %q is not a generateAccessToken URL", u)
+	}
+	escaped, ok := strings.CutSuffix(rest, ":generateAccessToken")
+	if !ok || escaped == "" || strings.Contains(escaped, "/") {
+		return "", fmt.Errorf("the impersonation URL %q is not a generateAccessToken URL", u)
+	}
+	account, err := url.PathUnescape(escaped)
+	if err != nil || account == "" || strings.ContainsAny(account, "/:") {
+		return "", fmt.Errorf("the impersonation URL %q names no account", u)
+	}
+	return account, nil
+}
+
+// parsedPathPrefix is the path the endpoint itself carries before the API's
+// own path (a test server's is empty, and so is Google's).
+func parsedPathPrefix(u *url.URL) string {
+	p := u.EscapedPath()
+	if i := strings.Index(p, "/v1/projects/-/serviceAccounts/"); i > 0 {
+		return p[:i]
+	}
+	return ""
+}
+
+// deployerCredential is an assumed credential: the impersonation it was minted
+// through, its first token, and the call that mints the next one.
+type deployerCredential struct {
+	url   string
+	ctx   context.Context
+	first *oauth2.Token
+	mint  func(context.Context) (*oauth2.Token, error)
+}
+
+// Account is the account the credential's impersonation names: the account
+// Google mints for through it. Impersonate refused a credential whose URL, the
+// requested account and the ID token's claim did not all agree, so a URL that
+// cannot be read here is not one it returned; it is read again rather than
+// stored, so Account cannot drift from the file terraform is given.
+func (c deployerCredential) Account() string {
+	a, err := impersonationAccount(c.url)
+	if err != nil {
+		return ""
+	}
+	return a
+}
+
+// ImpersonationURL is the URL terraform's credential file carries.
+func (c deployerCredential) ImpersonationURL() string { return c.url }
 
 // Source re-mints on expiry: an impersonated access token lives at most an
 // hour, and a token source handed to a client that outlives it has to be able

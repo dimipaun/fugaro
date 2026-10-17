@@ -209,6 +209,83 @@ func (w *Workdir) WriteBackendBlock() error {
 	return os.WriteFile(filepath.Join(w.Root, BackendBlockFile), []byte(hcl), 0o600)
 }
 
+// managedLockSource is the embedded lock file a managed root's own is cut
+// from: the Firebase root's, the one embedded root that pins both of Google's
+// providers (hashicorp/google and hashicorp/google-beta), with the versions
+// and hashes this release of fugaro was built and tested against.
+const managedLockSource = "gcp/roots/firebase/.terraform.lock.hcl"
+
+// LockFile is the name of terraform's dependency lock file in a root.
+const LockFile = ".terraform.lock.hcl"
+
+// WriteManagedLock writes the root's dependency lock file: the entries of the
+// embedded lock for exactly the providers named (registry addresses, such as
+// "registry.terraform.io/hashicorp/google"), in that file's own words.
+//
+// Why this program writes it rather than taking the root's: terraform init
+// runs with -lockfile=readonly (tf.Init), so the lock file decides which
+// provider package is accepted — its hashes are what a downloaded or cached
+// package is checked against — and a lock the agent wrote would let the agent
+// choose the binary that runs, at init and plan, with the deployer's
+// credential. The root's own lock is refused by the managed preflight before
+// this runs, and this one names the embedded versions and nothing else.
+//
+// Only the providers the root uses are written, because terraform refuses a
+// read-only lock file that carries a provider the configuration does not
+// require. A provider the embedded lock does not carry is an error: there is
+// no hash this program can vouch for.
+func (w *Workdir) WriteManagedLock(providers []string) error {
+	src, err := fs.ReadFile(terraform.FS, managedLockSource)
+	if err != nil {
+		return err
+	}
+	blocks, err := lockBlocks(string(src))
+	if err != nil {
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("# Written by fugaro managed apply from the lock file embedded in fugaro.\n\n")
+	for i, p := range providers {
+		body, ok := blocks[p]
+		if !ok {
+			return fmt.Errorf("the lock file embedded in fugaro carries no entry for %s, so its package cannot be checked", p)
+		}
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(body)
+	}
+	return os.WriteFile(filepath.Join(w.Root, LockFile), []byte(b.String()), 0o600)
+}
+
+// lockBlocks splits a lock file into its provider blocks, by address. The
+// file is terraform's own output (embedded, never a root's), so the shape is
+// fixed: a block opens with `provider "ADDR" {` at the start of a line and
+// closes with `}` alone on a line.
+func lockBlocks(src string) (map[string]string, error) {
+	out := map[string]string{}
+	lines := strings.SplitAfter(src, "\n")
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		if !strings.HasPrefix(l, "provider \"") {
+			continue
+		}
+		addr, _, ok := strings.Cut(strings.TrimPrefix(l, "provider \""), "\"")
+		if !ok {
+			return nil, fmt.Errorf("the embedded lock file: a provider line with no closing quote")
+		}
+		var b strings.Builder
+		for ; i < len(lines); i++ {
+			b.WriteString(lines[i])
+			if strings.TrimRight(lines[i], "\r\n") == "}" {
+				break
+			}
+		}
+		out[addr] = b.String()
+	}
+	return out, nil
+}
+
 // CopyRoot prepares dir as the workdir of an agent-authored root read from
 // src: the root's files are copied into dir/root afresh, so no file of an
 // earlier run (or an older fugaro) is planned, and terraform's data directory

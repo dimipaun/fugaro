@@ -254,13 +254,10 @@ func TestManagedCoverIsTheConfigsOwnAllowlist(t *testing.T) {
 	}
 }
 
-// TestManagedApplyWritesTheDeployersCredentialFileAndRemovesIt: terraform's
-// only channel for "run as the deployer" is the credential file its provider
-// reads, so this is the file the apply hands it: the ADC library's own
-// impersonated_service_account form, carrying the operator's own credential as
-// its source, mode 0600, and gone when the apply returns.
-func TestManagedApplyWritesTheDeployersCredentialFileAndRemovesIt(t *testing.T) {
-	noAgentSession(t)
+// operatorADC writes an operator's own ADC file and points
+// GOOGLE_APPLICATION_CREDENTIALS at it, returning its bytes.
+func operatorADC(t *testing.T) []byte {
+	t.Helper()
 	adc := filepath.Join(t.TempDir(), "adc.json")
 	src := []byte(`{"type":"authorized_user","client_id":"` + fixtureToken("id-") +
 		`","client_secret":"` + fixtureToken("secret-") +
@@ -269,24 +266,51 @@ func TestManagedApplyWritesTheDeployersCredentialFileAndRemovesIt(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", adc)
-	dir := t.TempDir()
-	account := managedmode.DeployerAccount(initProject)
-	const endpoint = "https://iamcredentials.example.test"
+	return src
+}
 
-	path, cleanup, err := writeImpersonationFile(dir, account, endpoint)
+// isolateCredentialDir points credentialDir at a directory of the test's own
+// and returns it.
+func isolateCredentialDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	old := credentialDir
+	credentialDir = dir
+	t.Cleanup(func() { credentialDir = old })
+	return dir
+}
+
+// TestManagedApplyWritesTheDeployersCredentialFileAndRemovesIt: terraform's
+// only channel for "run as the deployer" is the credential file its provider
+// reads, so this is the file the apply hands it: the ADC library's own
+// impersonated_service_account form, carrying the operator's own credential as
+// its source and the impersonation the credential was minted through, mode
+// 0600 in a directory of its own (0700, never the workdir, which is the root's
+// parent), and gone — directory and all — when the cleanup runs.
+func TestManagedApplyWritesTheDeployersCredentialFileAndRemovesIt(t *testing.T) {
+	noAgentSession(t)
+	src := operatorADC(t)
+	base := isolateCredentialDir(t)
+	account := managedmode.DeployerAccount(initProject)
+	u := deployerImpersonationURL("https://iamcredentials.example.test", account)
+
+	path, cleanup, err := writeImpersonationFile(u)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	if filepath.Dir(path) != dir {
-		t.Errorf("the credential file is at %s, want it in this command's own workdir %s", path, dir)
+	dir := filepath.Dir(path)
+	if filepath.Dir(dir) != base {
+		t.Errorf("the credential file is at %s, want it in a directory of its own under %s", path, base)
 	}
-	st, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode().Perm() != 0o600 {
-		t.Errorf("the credential file's mode is %v, want 0600: it holds the operator's own refresh token", st.Mode().Perm())
+	for p, want := range map[string]os.FileMode{dir: 0o700, path: 0o600} {
+		st, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode().Perm() != want {
+			t.Errorf("%s's mode is %v, want %v: it holds the operator's own refresh token", p, st.Mode().Perm(), want)
+		}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -299,16 +323,15 @@ func TestManagedApplyWritesTheDeployersCredentialFileAndRemovesIt(t *testing.T) 
 	if f.Type != "impersonated_service_account" {
 		t.Errorf("its type is %q, want the ADC library's impersonated_service_account form", f.Type)
 	}
-	if want := endpoint + "/v1/projects/-/serviceAccounts/" + account + ":generateAccessToken"; f.ServiceAccountImpersonationURL != want {
+	if want := "https://iamcredentials.example.test/v1/projects/-/serviceAccounts/" + account + ":generateAccessToken"; f.ServiceAccountImpersonationURL != want {
 		t.Errorf("its impersonation URL is\n%s\nwant\n%s", f.ServiceAccountImpersonationURL, want)
 	}
 	if string(f.SourceCredentials) != string(src) {
 		t.Errorf("its source_credentials are %s, want the operator's own ADC file byte for byte", f.SourceCredentials)
 	}
-	// Removed when the apply returns, whatever it did.
 	cleanup()
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the credential file is still at %s after the apply's cleanup", path)
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the credential directory is still at %s after the cleanup", dir)
 	}
 }
 
@@ -319,7 +342,7 @@ func TestManagedApplyWritesTheDeployersCredentialFileAndRemovesIt(t *testing.T) 
 // refusal leaves a file behind.
 func TestManagedApplyRefusesACredentialItCannotImpersonateWith(t *testing.T) {
 	noAgentSession(t)
-	account := managedmode.DeployerAccount(initProject)
+	u := deployerImpersonationURL("https://iamcredentials.example.test", managedmode.DeployerAccount(initProject))
 	for _, tc := range []struct {
 		name, body string
 		unset      bool
@@ -339,8 +362,8 @@ func TestManagedApplyRefusesACredentialItCannotImpersonateWith(t *testing.T) {
 				path = filepath.Join(t.TempDir(), "absent.json")
 			}
 			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", path)
-			dir := t.TempDir()
-			out, cleanup, err := writeImpersonationFile(dir, account, "https://iamcredentials.example.test")
+			base := isolateCredentialDir(t)
+			out, cleanup, err := writeImpersonationFile(u)
 			cleanup()
 			if err == nil {
 				t.Fatalf("the credential file was written (%s) for %s", out, tc.name)
@@ -348,19 +371,50 @@ func TestManagedApplyRefusesACredentialItCannotImpersonateWith(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("the refusal is %v, want it to say %q", err, tc.want)
 			}
-			entries, err := os.ReadDir(dir)
+			entries, err := os.ReadDir(base)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if len(entries) != 0 {
-				t.Errorf("a refused credential file left %d file(s) in the workdir", len(entries))
+				t.Errorf("a refused credential file left %d entr(ies) behind", len(entries))
 			}
 		})
 	}
 }
 
+// fakeCalls are the fake terraform's recorded calls: the arguments, the
+// environment, and whether the credential file was there when it ran.
+func (r *initRig) fakeCalls(t *testing.T) []struct {
+	Args        []string `json:"args"`
+	Env         []string `json:"env"`
+	Credentials bool     `json:"credentials"`
+} {
+	t.Helper()
+	b, err := os.ReadFile(r.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []struct {
+		Args        []string `json:"args"`
+		Env         []string `json:"env"`
+		Credentials bool     `json:"credentials"`
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		var c struct {
+			Args        []string `json:"args"`
+			Env         []string `json:"env"`
+			Credentials bool     `json:"credentials"`
+		}
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 // TestManagedTerraformRunsWithTheDeployerCredentialAlone: the residual (c) of
-// PR #483, as this command wires it.
+// PR #483, as this command wires it, and the credential file's lifetime.
 //
 // The protection is the allowlist, not a refusal: tf.Env builds terraform's
 // environment from scratch, so the provider settings of the applier's shell —
@@ -371,6 +425,11 @@ func TestManagedApplyRefusesACredentialItCannotImpersonateWith(t *testing.T) {
 // adds is the one variable the allowlist does pass: the credential file, put in
 // the parent BEFORE managed.TerraformEnv is called, so the assertion it makes
 // is about exactly the environment terraform will run with.
+//
+// And the order: the file outlives managedTerraform — every terraform built
+// with it (init, plan, show, apply, all later) finds it there — and the
+// cleanup it returns is what removes it; every refusal on the way removes it
+// too.
 func TestManagedTerraformRunsWithTheDeployerCredentialAlone(t *testing.T) {
 	noAgentSession(t)
 	r := newInitRig(t)
@@ -378,26 +437,24 @@ func TestManagedTerraformRunsWithTheDeployerCredentialAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adc := filepath.Join(t.TempDir(), "adc.json")
-	if err := os.WriteFile(adc, []byte(`{"type":"authorized_user","client_id":"`+fixtureToken("id-")+`","client_secret":"`+fixtureToken("secret-")+`","refresh_token":"`+fixtureToken("refresh-")+`"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", adc)
+	operatorADC(t)
+	base := isolateCredentialDir(t)
 	dir, cache := t.TempDir(), filepath.Join(t.TempDir(), "plugins")
 	account := managedmode.DeployerAccount(initProject)
-	file, cleanup, err := writeImpersonationFile(dir, account, "https://iamcredentials.example.test")
+	u := deployerImpersonationURL("https://iamcredentials.example.test", account)
+
+	// The environment, on its own: the shell's credential file and the
+	// provider settings it may hold.
+	file, cleanupFile, err := writeImpersonationFile(u)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleanup()
-
-	// The shell's own credential file and the provider settings it may hold.
-	base := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GOOGLE_APPLICATION_CREDENTIALS=/somewhere/else.json"}
+	defer cleanupFile()
+	base2 := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GOOGLE_APPLICATION_CREDENTIALS=/somewhere/else.json"}
 	for _, k := range []string{"GOOGLE_OAUTH_ACCESS_TOKEN", "GOOGLE_CREDENTIALS", "GOOGLE_BILLING_PROJECT", "GOOGLE_COMPUTE_CUSTOM_ENDPOINT"} {
-		base = append(base, k+"="+fixtureToken("shell-"))
+		base2 = append(base2, k+"="+fixtureToken("shell-"))
 	}
-
-	env, err := managedmode.TerraformEnv(replaceEnv(base, "GOOGLE_APPLICATION_CREDENTIALS", file), dir, cache)
+	env, err := managedmode.TerraformEnv(replaceEnv(base2, "GOOGLE_APPLICATION_CREDENTIALS", file), dir, cache)
 	if err != nil {
 		t.Fatalf("building terraform's environment: %v", err)
 	}
@@ -412,45 +469,81 @@ func TestManagedTerraformRunsWithTheDeployerCredentialAlone(t *testing.T) {
 	// GOOGLE_IMPERSONATE_SERVICE_ACCOUNT is refused rather than dropped, so a
 	// run that meant to be someone else stops instead of quietly applying as
 	// the deployer (tf.Env's own rule, reached through TerraformEnv).
-	if _, err := managedmode.TerraformEnv(replaceEnv(base, "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT", account), dir, cache); err == nil {
+	if _, err := managedmode.TerraformEnv(replaceEnv(base2, "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT", account), dir, cache); err == nil {
 		t.Error("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT in the applier's shell was not refused")
 	}
+	cleanupFile()
 
-	// And the function that builds terraform: the credential file is in the
-	// environment terraform was launched with, terraform really ran, and the
-	// file is gone when the function returns.
+	// And the function that builds terraform.
 	wd := &infra.Workdir{Dir: dir, Root: filepath.Join(dir, "root")}
 	if err := os.MkdirAll(wd.Root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cmd := newManagedApplyCmd()
 	cmd.SetErr(&strings.Builder{})
-	imp := deployerImpersonator{self: "user:op@example.com", ts: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: fixtureToken("op-")}), endpoint: "https://iamcredentials.example.test", hc: http.DefaultClient}
 	bin := filepath.Join(r.dir, "bin", "terraform")
-	if _, err := managedTerraform(cmd, lc, wd, bin, cache, imp, testCredential{account: account}); err != nil {
+	tfr, cleanup, err := managedTerraform(cmd, lc, wd, bin, cache, testCredential{account: account, url: u})
+	if err != nil {
 		t.Fatalf("building terraform for the deployer: %v", err)
 	}
-	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the credential file %s survives the terraform it was written for", file)
+	// After the build and before the cleanup, terraform still runs with the
+	// file: this is the init, plan, show and apply that come later.
+	if err := tfr.Init(t.Context(), nil); err != nil {
+		t.Fatalf("the fake's init: %v", err)
 	}
-	if calls := r.calls(t); len(calls) == 0 {
-		t.Error("no terraform call was recorded: the fake was not launched with the built environment")
+	calls := r.fakeCalls(t)
+	if len(calls) == 0 {
+		t.Fatal("no terraform call was recorded: the fake was not launched with the built environment")
 	}
-	// A credential that is not the deployer's is refused before any file is
-	// written: the check that matters is managed.Deployer's, and this one is
-	// the second, in the one place that writes another account's file.
-	if _, err := managedTerraform(cmd, lc, wd, bin, cache, imp, testCredential{account: "someone-else@" + initProject + ".iam.gserviceaccount.com"}); err == nil {
-		t.Error("a credential for another account was accepted")
+	last := calls[len(calls)-1]
+	if last.Args[0] != "init" || !last.Credentials {
+		t.Errorf("terraform %v ran with the credential file there = %v, want an init that finds it", last.Args, last.Credentials)
+	}
+	used := envValue(last.Env, "GOOGLE_APPLICATION_CREDENTIALS")
+	if used == "" {
+		t.Fatal("terraform ran with no credential file named")
+	}
+	if rel, err := filepath.Rel(dir, used); err == nil && !strings.HasPrefix(rel, "..") {
+		t.Errorf("the credential file %s is inside the workdir %s, the root's parent", used, dir)
+	}
+	cleanup()
+	if _, err := os.Stat(used); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the credential file %s survives its cleanup", used)
+	}
+	if entries, _ := os.ReadDir(base); len(entries) != 0 {
+		t.Errorf("the cleanup left %d entr(ies) behind", len(entries))
+	}
+
+	// Every refusal on the way leaves nothing behind either.
+	for _, tc := range []struct {
+		name string
+		bin  string
+		cred managedmode.Credential
+	}{
+		{"a credential for another account", bin, testCredential{account: "someone-else@" + initProject + ".iam.gserviceaccount.com", url: u}},
+		{"a credential whose impersonation names another account", bin, testCredential{account: account, url: deployerImpersonationURL("https://iamcredentials.example.test", "someone-else@"+initProject+".iam.gserviceaccount.com")}},
+		{"a credential that names no impersonation", bin, plainCredential{account: account}},
+		{"a terraform that does not start", filepath.Join(t.TempDir(), "absent"), testCredential{account: account, url: u}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, cleanup, err := managedTerraform(cmd, lc, wd, tc.bin, cache, tc.cred); err == nil {
+				cleanup()
+				t.Fatal("accepted")
+			}
+			if entries, _ := os.ReadDir(base); len(entries) != 0 {
+				t.Errorf("the refusal left %d entr(ies) behind", len(entries))
+			}
+		})
 	}
 }
 
-// TestManagedApplyAssumesTheDeployerReadsTheAccountOutOfTheToken: the account
-// the credential reports is read from the ID token Google signs for the account
-// it was minted FOR, never from the request this command made — an access token
-// is opaque, so a request's own argument would be the code asserting its own
-// identity, and managed.Deployer's check could not fail. The calls go out with
-// the operator's own credential, to the API's own path.
-func TestManagedApplyAssumesTheDeployerReadsTheAccountOutOfTheToken(t *testing.T) {
+// TestManagedApplyAssumesTheDeployerFromItsImpersonation: the account the
+// credential reports is read out of the impersonation URL terraform's file
+// carries — the one Google mints for — and two answers must agree with it: the
+// account asked for, and the email of an ID token minted through the same
+// grant. A disagreement is a refusal. The calls go out with the operator's own
+// credential, to the API's own path.
+func TestManagedApplyAssumesTheDeployerFromItsImpersonation(t *testing.T) {
 	noAgentSession(t)
 	account := managedmode.DeployerAccount(initProject)
 	operator, minted := fixtureToken("op-"), fixtureToken("minted-")
@@ -472,7 +565,10 @@ func TestManagedApplyAssumesTheDeployerReadsTheAccountOutOfTheToken(t *testing.T
 		case strings.HasSuffix(r.URL.Path, ":generateAccessToken"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": minted, "expireTime": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
 		case strings.HasSuffix(r.URL.Path, ":generateIdToken"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"token": idToken(email)})
+			mu.Lock()
+			e := email
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": idToken(e)})
 		default:
 			t.Errorf("unexpected call %s", r.URL.Path)
 		}
@@ -492,6 +588,13 @@ func TestManagedApplyAssumesTheDeployerReadsTheAccountOutOfTheToken(t *testing.T
 	if cred.Account() != account {
 		t.Errorf("Credential.Account() = %q, want %q", cred.Account(), account)
 	}
+	ic, ok := cred.(impersonatedCredential)
+	if !ok {
+		t.Fatal("the credential names no impersonation, so terraform's file could not be written from it")
+	}
+	if got, err := impersonationAccount(ic.ImpersonationURL()); err != nil || got != account {
+		t.Errorf("the credential's impersonation names %q (%v), want %q", got, err, account)
+	}
 	tok, err := cred.Source().Token()
 	if err != nil {
 		t.Fatal(err)
@@ -506,6 +609,11 @@ func TestManagedApplyAssumesTheDeployerReadsTheAccountOutOfTheToken(t *testing.T
 	if _, err := imp.Impersonate(t.Context(), account); err == nil || !strings.Contains(err.Error(), "someone-else") {
 		t.Errorf("a credential minted for another account is %v, want a refusal naming it", err)
 	}
+	// And the account comes from the impersonation alone: a credential whose
+	// URL cannot be read reports no account, which managed.Deployer refuses.
+	if a := (deployerCredential{url: "https://example.test/not-an-impersonation"}).Account(); a != "" {
+		t.Errorf("a credential with no readable impersonation reports %q, want no account", a)
+	}
 	// The two calls are the API's own, on the project wildcard its own
 	// documentation uses: the account is the path's, not this run's.
 	mu.Lock()
@@ -515,6 +623,56 @@ func TestManagedApplyAssumesTheDeployerReadsTheAccountOutOfTheToken(t *testing.T
 	}
 	if want := "/v1/projects/-/serviceAccounts/" + account + ":generateAccessToken"; calls[0] != want {
 		t.Errorf("the first call was %s, want %s", calls[0], want)
+	}
+}
+
+// The impersonation URL is read strictly: the account it names, or an error.
+func TestImpersonationAccountReadsTheURLStrictly(t *testing.T) {
+	account := managedmode.DeployerAccount(initProject)
+	if got, err := impersonationAccount(deployerImpersonationURL("https://iamcredentials.googleapis.com", account)); err != nil || got != account {
+		t.Errorf("got (%q, %v), want %q", got, err, account)
+	}
+	for _, bad := range []string{
+		"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/:generateAccessToken",
+		"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/" + account + ":generateIdToken",
+		"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/" + account + ":generateAccessToken?x=1",
+		"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/a%2Fb:generateAccessToken",
+		"https://iamcredentials.googleapis.com/v2/" + account + ":generateAccessToken",
+		"::",
+	} {
+		if got, err := impersonationAccount(bad); err == nil {
+			t.Errorf("%s read as %q, want an error", bad, got)
+		}
+	}
+}
+
+// A person at a terminal types the project's name after the apply's own
+// question; anything else is a no.
+func TestManagedAskWantsTheProjectsNameTyped(t *testing.T) {
+	r := newInitRig(t)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{lc.Name + "\n", true},
+		{"yes\n", false},
+		{"", false},
+	} {
+		cmd := newManagedApplyCmd()
+		var out strings.Builder
+		cmd.SetErr(&out)
+		cmd.SetIn(strings.NewReader(tc.in))
+		ok, err := managedAsk(cmd, lc)("apply the saved plan (sha256 abc): 1 to create")
+		if err != nil || ok != tc.want {
+			t.Errorf("typed %q: (%v, %v), want %v", tc.in, ok, err, tc.want)
+		}
+		if !strings.Contains(out.String(), "sha256 abc") || !strings.Contains(out.String(), "Type "+lc.Name) {
+			t.Errorf("the prompt does not carry the question and what to type:\n%s", out.String())
+		}
 	}
 }
 
@@ -704,12 +862,24 @@ func idToken(email string) string {
 }
 
 // testCredential is a Credential for the paths that need one and do not make
-// one: the account it reports, and a source that mints nothing.
-type testCredential struct{ account string }
+// one: the account it reports, the impersonation it names, and a source that
+// mints nothing.
+type testCredential struct{ account, url string }
 
 func (c testCredential) Account() string { return c.account }
 
+func (c testCredential) ImpersonationURL() string { return c.url }
+
 func (c testCredential) Source() oauth2.TokenSource {
+	return oauth2.StaticTokenSource(&oauth2.Token{AccessToken: fixtureToken("assumed-")})
+}
+
+// plainCredential is a Credential that names no impersonation.
+type plainCredential struct{ account string }
+
+func (c plainCredential) Account() string { return c.account }
+
+func (c plainCredential) Source() oauth2.TokenSource {
 	return oauth2.StaticTokenSource(&oauth2.Token{AccessToken: fixtureToken("assumed-")})
 }
 

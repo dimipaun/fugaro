@@ -38,6 +38,13 @@ type applyRig struct {
 	// this is what keeps that an implementation detail.
 	mu    sync.Mutex
 	creds []string
+	// cleanups counts the credential cleanups the apply ran, and asked the
+	// questions a person was asked (Request.Ask).
+	cleanups int
+	asked    []string
+	// credFiles are the credential files the rig's terraform was built
+	// around, one per build.
+	credFiles []string
 }
 
 // newApplyRig builds the rig with one root (rootFiles) in the checkout.
@@ -64,29 +71,88 @@ func newApplyRig(t *testing.T, rootFiles map[string]string) *applyRig {
 // Request.Terraform closure's own body, and it is handed the credential the
 // apply assumed — which it puts in the environment the way the command does,
 // so a test can assert that what terraform ran with is what the deployer's
-// credential says.
-func (r *applyRig) bin(t *testing.T) func(Credential) (*tf.TF, error) {
+// credential says. Like the command, it writes a credential file of its own
+// outside the workdir and returns the cleanup that removes it, and the fake
+// records whether the file was there at every call.
+func (r *applyRig) bin(t *testing.T) func(Credential) (*tf.TF, func(), error) {
 	t.Helper()
-	return func(cred Credential) (*tf.TF, error) {
+	base := t.TempDir()
+	return func(cred Credential) (*tf.TF, func(), error) {
 		r.mu.Lock()
 		r.creds = append(r.creds, cred.Account())
 		r.mu.Unlock()
-		env, err := TerraformEnv(withoutImpersonation(os.Environ()), r.wd.Dir, filepath.Join(r.wd.Dir, "cache"))
+		dir, err := os.MkdirTemp(base, "cred-")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		file := filepath.Join(dir, "credentials.json")
+		if err := os.WriteFile(file, []byte("{}"), 0o600); err != nil {
+			return nil, nil, err
+		}
+		r.mu.Lock()
+		r.credFiles = append(r.credFiles, file)
+		r.mu.Unlock()
+		cleanup := func() {
+			r.mu.Lock()
+			r.cleanups++
+			r.mu.Unlock()
+			_ = os.RemoveAll(dir)
+		}
+		parent := slices.DeleteFunc(withoutImpersonation(os.Environ()), func(kv string) bool {
+			return strings.HasPrefix(kv, "GOOGLE_APPLICATION_CREDENTIALS=")
+		})
+		env, err := TerraformEnv(append(parent, "GOOGLE_APPLICATION_CREDENTIALS="+file), r.wd.Dir, filepath.Join(r.wd.Dir, "cache"))
+		if err != nil {
+			return nil, cleanup, err
 		}
 		script, err := json.Marshal(r.script)
 		if err != nil {
-			return nil, err
+			return nil, cleanup, err
 		}
 		env = append(env, "FAKE_TERRAFORM_LOG="+r.log, "FAKE_TERRAFORM_SCRIPT="+string(script))
 		bin, err := tf.New(fakeTerraform(t), r.wd.Root, env)
 		if err != nil {
-			return nil, err
+			return nil, cleanup, err
 		}
 		bin.Out = io.Discard
-		return bin, nil
+		return bin, cleanup, nil
 	}
+}
+
+// cleanupsRun is how many credential cleanups the apply ran.
+func (r *applyRig) cleanupsRun() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cleanups
+}
+
+// credentialsAtEachCall is, per recorded terraform call of the root, whether
+// the credential file was there when it ran.
+func (r *rig) credentialsAtEachCall(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile(r.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		var c struct {
+			Args        []string
+			Credentials bool
+		}
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Args) == 0 || strings.Join(c.Args, " ") == "version -json" {
+			continue
+		}
+		key := c.Args[0]
+		if prev, ok := out[key]; ok {
+			c.Credentials = c.Credentials && prev
+		}
+		out[key] = c.Credentials
+	}
+	return out
 }
 
 // creds are the accounts the terraform of this rig was built around, in
@@ -176,7 +242,15 @@ func (r *applyRig) request(t *testing.T) Request {
 		// A person at a terminal: the session D55's rule leaves alone, so
 		// every test that is not about the rule itself reads the apply's own
 		// sequence rather than the confirmation in front of it.
-		Conditions:   initflow.Conditions{Terminal: true},
+		Conditions: initflow.Conditions{Terminal: true},
+		// And the person at it says yes, after reading the question (the
+		// rows about the question itself set their own).
+		Ask: func(q string) (bool, error) {
+			r.mu.Lock()
+			r.asked = append(r.asked, q)
+			r.mu.Unlock()
+			return true, nil
+		},
 		Workdir:      r.wd,
 		Terraform:    r.bin(t),
 		Cover:        admitAll{},
