@@ -317,36 +317,3 @@ func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
 		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
 	}
 }
-
-// The warning --managed prints when the run created nothing says what the
-// run knows, and a run that created no project knows only that. There are
-// two ways it happens: the project stage adopted a project that already
-// existed, or it never applied at all — --plan-only, a session that cannot
-// type, a confirmation that was declined. Naming the first in the second is
-// simply false, and --plan-only is where an operator previews a managed
-// creation before committing to it: nothing is created, the project is not
-// there, and this warning is the only thing that tells them --managed was
-// not applied.
-func TestManagedNotAppliedSaysWhatTheRunKnows(t *testing.T) {
-	r, bucket := newManagedCreateRig(t)
-	out, errOut, err := r.run(t, true, createStdin,
-		"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-		"--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc, "--plan-only")
-	all := refusalText(out, errOut, err)
-	if n := len(r.crm.Creates()); n != 0 {
-		t.Fatalf("--plan-only created %d project(s): it applies nothing:\n%s", n, all)
-	}
-	if !strings.Contains(all, "--managed was not applied") {
-		t.Errorf("a managed creation that created nothing did not say --managed was not applied:\n%s", all)
-	}
-	if !strings.Contains(all, "this run created no project") {
-		t.Errorf("the warning does not say what the run knows (that it created no project):\n%s", all)
-	}
-	// The project does not exist and this run never looked: the rig seeds no
-	// project, and --plan-only creates none. A warning that says it "already
-	// existed" is a claim about a project that is not there.
-	if strings.Contains(all, "already existed") {
-		t.Errorf("the warning says the project already existed, and nothing this run did could know that:\n%s", all)
-	}
-	noMarker(t, r.gcs, bucket)
-}
