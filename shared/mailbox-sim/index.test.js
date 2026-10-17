@@ -257,6 +257,37 @@ test('the simulator drops the ack and the consumer re-delivers, recognises the d
   );
 });
 
+test('a retry that lands after the ack does not clear it', () => {
+  // The store's ack is not the phone's field to clear. The phone re-sends its
+  // own message until the outbox answers it, so a retry can land *after* a
+  // consumer has acked that very record — and a write that replaced the record
+  // would leave the store saying "unacked" while the ledger holds it as
+  // consumed, which nothing repairs: the ledger's ack step only acks a record
+  // it has acted on. The message would then be redelivered for ever, and the
+  // store would disagree with the ledger about whether it was ever consumed.
+  const run = simulator();
+  run.consumer('consumer-1');
+  run.phone.writeInbox({ id: 'm1', text: 'hello' });
+  run.tick();
+  assert.equal(run.store.inbox.get('m1').acked, true);
+
+  // The same message again, `at` included: the retry the caller's duty allows.
+  run.phone.writeInbox({ id: 'm1', text: 'hello' });
+  run.drain();
+  assert.equal(run.store.inbox.get('m1').acked, true, 'the retry cleared the ack');
+
+  // And the outcome is what it was: one action, one answer, one record.
+  run.advance(SECOND);
+  run.tick();
+  const report = run.report();
+  assert.equal(report.actings.filter((acting) => acting.outcome === 'acted').length, 1);
+  assert.equal(report.store.outbox.length, 1);
+  assert.deepEqual(
+    report.store.mailbox.seen.map((entry) => [entry.id, entry.status]),
+    [['m1', 'acked']],
+  );
+});
+
 // ---------------------------------------------------------------------------
 // The properties, over many seeded schedules
 // ---------------------------------------------------------------------------
@@ -276,22 +307,13 @@ test('at most once acting per (sender,id), under any duplicate, reorder or drop 
   }
 });
 
-test('at least once delivery of an unacked message, and every written message is delivered', () => {
+test('at least once delivery: every message the phone wrote reaches the ledger', () => {
   for (let seed = 0; seed < 120; seed += 1) {
     const report = sweep(seeded(seed));
-    // A holder that won the commit delivered every unacked message it could
-    // see: delivery is never skipped, whatever the wire did.
-    for (const pass of report.passes) {
-      if (!pass.held || !pass.ok) continue;
-      assert.equal(
-        pass.delivered,
-        pass.unacked,
-        `pass ${pass.pass} delivered ${pass.delivered} of ${pass.unacked}\n${failure(report)}`,
-      );
-    }
-    // And every message the phone wrote was delivered at least once, accepted
-    // or answered as a duplicate.
     for (const message of report.phone.written) {
+      // The delivery was accepted or answered as a duplicate — an outcome the
+      // *ledger* gave, not a count the harness kept — so a message lost on the
+      // wire, or one the consumer never got round to delivering, fails here.
       assert.ok(
         report.deliveries.some(
           (delivery) =>
@@ -300,8 +322,39 @@ test('at least once delivery of an unacked message, and every written message is
         ),
         `${message.id} was never delivered\n${failure(report)}`,
       );
+      // And it is in the ledger, which is where "delivered" is recorded.
+      assert.ok(
+        report.store.mailbox.seen.some((entry) => entry.id === message.id),
+        `${message.id} never reached the ledger\n${failure(report)}`,
+      );
     }
   }
+});
+
+test('a holder delivers every unacked message it can see, and never one that is already acked', () => {
+  // Driven a pass at a time, because this is a fact about one pass and the
+  // sweep only reports the end of the run. Three messages arrive; the holder
+  // delivers all three in its first pass, and by its second every one of them
+  // is acked — so a loop that delivered an acked message, or that stopped at
+  // the oldest, would fail here.
+  const run = simulator();
+  run.consumer('consumer-1');
+  for (const id of ['m1', 'm2', 'm3']) run.phone.writeInbox({ id, text: `turn ${id} on` });
+  run.tick();
+  run.advance(SECOND);
+  run.tick();
+  const report = run.report();
+
+  const deliveriesOf = (pass) =>
+    report.deliveries.filter((delivery) => delivery.pass === pass).map((delivery) => delivery.id).sort();
+  assert.deepEqual(deliveriesOf(1), ['m1', 'm2', 'm3'], failure(report));
+  assert.deepEqual(deliveriesOf(2), [], failure(report));
+  assert.ok(report.store.inbox.every((message) => message.acked === true));
+  // And each of them was acted on exactly once, in the pass that delivered it.
+  assert.deepEqual(
+    report.actings.map((acting) => [acting.id, acting.outcome]),
+    [['m1', 'acted'], ['m2', 'acted'], ['m3', 'acted']],
+  );
 });
 
 test('one lease holder at a time: one consumer wins the commit per pass, and only a winner acts', () => {
@@ -434,9 +487,12 @@ test('an expired prompt takes the safe path, and the harness invents no expiry r
   assert.equal(lateReport.actings.length, 0);
   assert.equal(lateReport.store.outbox.length, 0);
 
-  // Delivered in time, acted on too late: acted once, told it is stale, and
-  // nothing performed — what a late prompt *delivers* is P6.5's and P6.7's
-  // rule, and the harness does not invent one.
+  // Delivered in time, acted on too late. The ledger consumes it exactly once
+  // and says so — `stale-pending` — and the harness performs **nothing** with
+  // it: what a late prompt *delivers* is P6.5's and P6.7's rule, both proposed
+  // and NOT APPROVED, so no answer is invented for it. The store is settled
+  // (every write the consumer owed has landed) before it is read, because a
+  // half-flushed wire is not the run's outcome.
   const stale = simulator();
   const consumer = stale.consumer('consumer-1');
   stale.phone.writeInbox({ id: 'q2', text: 'are you up?', kind: KIND.PROMPT });
@@ -447,12 +503,31 @@ test('an expired prompt takes the safe path, and the harness invents no expiry r
   stale.advance(PROMPT_TTL + 1);
   consumer.actPlan();
   consumer.actCommit();
+  stale.drain();
   const staleReport = stale.report();
   assert.deepEqual(
     staleReport.actings.map((acting) => [acting.id, acting.outcome, acting.action]),
     [['q2', 'stale-pending', null]],
   );
-  assert.equal(staleReport.store.outbox.length, 0);
+  assert.deepEqual(staleReport.store.outbox, [], 'the harness answered a prompt it has no rule for');
+  // The ack is not the work: the ledger holds the record as `acted` — "an ack
+  // is still owed" — so the consumer writes it, and the ledger's own ack step
+  // runs on the next pass, once the store shows it.
+  assert.equal(staleReport.store.inbox.find((message) => message.id === 'q2').acked, true);
+  assert.deepEqual(
+    staleReport.store.mailbox.seen.map((entry) => [entry.id, entry.status]),
+    [['q2', 'acted']],
+  );
+  assert.deepEqual(staleReport.phone.pending.map((message) => message.id), ['q2']);
+
+  consumer.pass();
+  stale.drain();
+  const ackedReport = stale.report();
+  assert.deepEqual(
+    ackedReport.store.mailbox.seen.map((entry) => [entry.id, entry.status]),
+    [['q2', 'acked']],
+  );
+  assert.deepEqual(ackedReport.store.outbox, []);
 });
 
 test('a command older than the window is refused as a replay, and nothing is acted on', () => {
@@ -562,6 +637,29 @@ test('a run is reproducible from its seed and from the schedule a failure prints
   const printed = JSON.parse(first.scheduleText);
   assert.deepEqual(printed.faults, first.faults.map((fault) => fault.applied));
   assert.equal(scheduleText(parseScheduleText(first.scheduleText)), first.scheduleText);
+});
+
+test('the printed schedule is canonical: equal schedules print equal text, faults in frame order', () => {
+  // The same schedule, written two ways. A failure message prints this text, so
+  // two runs that differ only in how their schedule was typed must print the
+  // same line — otherwise a printed schedule would not be a replay of the run
+  // that failed.
+  const forward = {
+    ...emptySchedule({ seed: 2 }),
+    faults: [
+      { frame: 1, op: FAULT.DROP },
+      { frame: 3, op: FAULT.DUPLICATE },
+      { frame: 4, op: FAULT.DELAY, delayMs: 5 * SECOND },
+    ],
+  };
+  const backward = { ...forward, faults: [...forward.faults].reverse() };
+  assert.equal(scheduleText(backward), scheduleText(forward));
+  assert.deepEqual(
+    JSON.parse(scheduleText(backward)).faults.map((fault) => fault.frame),
+    [1, 3, 4],
+  );
+  // And a schedule this module refuses prints nothing rather than half of it.
+  assert.equal(scheduleText({ ...forward, rate: 0.5 }), '');
 });
 
 test('a report survives JSON, so a failure message can print it', () => {

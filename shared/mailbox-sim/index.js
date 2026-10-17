@@ -60,9 +60,13 @@
 //   * a **consumer** takes the lease, and if it does not hold it, writes
 //     nothing and acts on nothing. If it holds it, it writes the heartbeat,
 //     delivers every unacked inbox message to the ledger, acts on the oldest
-//     un-acted delivery, and — for each record it has acted on — writes the
-//     reply and the ack. The ledger's transition is committed **before** the
-//     action is performed, so a lost race performs nothing.
+//     un-acted delivery, and then writes what it owes: a reply for every record
+//     it **performed** on, and the ack for every record the ledger holds as
+//     `acted`. The two are not the same set — a stale record is `acted` and was
+//     not performed — and the ledger can only speak for the second, which is
+//     why the reply obligation lives with the consumer that performed (see
+//     `actCommit`). The ledger's transition is committed **before** the action
+//     is performed, so a lost race performs nothing.
 //   * a **retry re-sends the same message**, `at` included: the caller's duty
 //     the mailbox's README states ("the phone must never retry an id with a
 //     new `at`"), and the reason a duplicated frame is harmless.
@@ -356,7 +360,11 @@ export function faultFor(schedule, frame) {
 /**
  * scheduleText is the schedule as one line of JSON: the replayable form, and
  * what a failure message prints. Its keys are written in a fixed order and its
- * `clocks` and `faults` are sorted, so two equal schedules have equal text.
+ * `clocks` and `faults` are sorted, so two equal schedules have equal text —
+ * including two that name the same faults in a different order, which is the
+ * same schedule. Sorting the faults by frame is stable, so two faults on one
+ * frame keep the order they were written in, which is the order `faultFor`
+ * reads them in.
  *
  * @param {object} schedule
  * @returns {string} JSON, or '' for a schedule this module refuses
@@ -367,13 +375,14 @@ export function scheduleText(schedule) {
   const plan = read.schedule;
   const clocks = {};
   for (const actor of Object.keys(plan.clocks).sort()) clocks[actor] = plan.clocks[actor];
+  const faults = [...plan.faults].sort((left, right) => left.frame - right.frame);
   return JSON.stringify({
     seed: plan.seed,
     rate: plan.rate,
     ops: plan.ops,
     clocks,
     maxDelayMs: plan.maxDelayMs,
-    faults: plan.faults,
+    faults,
   });
 }
 
@@ -914,7 +923,21 @@ export function createSimulator(options = {}) {
 
   function applyFrame(target, frame) {
     if (frame.op === 'inbox-write') {
-      target.inbox.set(frame.payload.id, frame.payload);
+      // A write is a **merge**, not a replacement, and the field it preserves
+      // is the ack. The phone re-sends a message until the outbox answers it,
+      // so the same frame can arrive again after a consumer has written the
+      // ack into that very record — and a replacement would clear the ack while
+      // the ledger still holds the record as `acted`/`acked`. Nothing would
+      // repair that: the ledger's ack step only acks a record it has acted on,
+      // so the message would look unacked to every later pass and be delivered
+      // for ever. The ack is not the phone's field to clear, which is what
+      // makes a duplicated write idempotent rather than merely harmless.
+      const held = target.inbox.get(frame.payload.id);
+      const acked = held !== undefined && held.acked === true;
+      target.inbox.set(
+        frame.payload.id,
+        acked ? Object.freeze({ ...frame.payload, acked: true }) : frame.payload,
+      );
     } else if (frame.op === 'reply-write') {
       target.outbox.set(frame.payload.id, frame.payload);
     } else if (frame.op === 'ack-write') {
@@ -1185,18 +1208,35 @@ export function createSimulator(options = {}) {
         for (const record of plan.acks) logs.acks.push(record);
         // The writes this consumer owes the store, built now that the commit
         // has won: a consumer that lost the race owes nothing, so it builds
-        // nothing. Every record it has acted on owes a reply; every record the
-        // store shows acked owes the ledger's ack.
-        for (const entry of plan.state.seen) {
-          if (entry.status === STATUS.ACCEPTED) continue;
-          const key = replyId(entry.id);
+        // nothing.
+        //
+        // A reply is owed for a record this consumer **performed** on, and for
+        // no other. The ledger cannot tell the two apart: the mailbox moves a
+        // stale record to `acted` exactly as it moves a performed one, and
+        // reports the difference in the outcome alone (its README: "what late
+        // means — perform it anyway, or tell the sender it expired — is the
+        // consumer's to decide"), so no holder can re-derive "was this
+        // performed?" from the store. A reply for every consumed record would
+        // therefore invent an answer to a prompt the harness has no rule for —
+        // what a late prompt *delivers* is P6.5's and P6.7's, both proposed and
+        // NOT APPROVED. The obligation lives here instead, with the consumer
+        // that performed, and is re-sent until the store shows it.
+        for (const acting of plan.actings) {
+          if (acting.outcome !== OUTCOME.ACTED) continue;
+          const key = replyId(acting.id);
           if (!store.outbox.has(key) && !replies.has(key)) {
             const validated = validateMessage(
-              Object.freeze({ id: key, sender: id, text: `answer to ${entry.id}`, at: stamp(id) }),
+              Object.freeze({ id: key, sender: id, text: `answer to ${acting.id}`, at: stamp(id) }),
             );
             if (validated.ok) replies.set(key, validated.message);
           }
         }
+        // The ack is the other half, and it **is** the ledger's to say: an
+        // `acted` record is one an ack is still owed for (the mailbox's own
+        // table), so any holder owes it, for a stale record exactly as for a
+        // performed one. The ack says the delivery is consumed, not that the
+        // work was done, which is why the safe path acks an expired prompt and
+        // still performs nothing with it.
         for (const entry of plan.state.seen) {
           if (entry.status !== STATUS.ACTED) continue;
           if (!isAcked(store.inbox, entry.id) && !acks.has(entry.id)) {

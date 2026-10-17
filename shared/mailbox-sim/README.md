@@ -76,7 +76,14 @@ cryptographic determinism, because the MAC is P6.3's and does not exist yet.
 **The store** holds the account's inbox, its outbox, the consumer's heartbeat, the consumer
 lease and the mailbox's ledger. The three message families are plain maps, written by
 whoever writes them and keyed by message id, which is what makes a duplicated write
-idempotent. The **lease and the ledger are one persisted value**, replaced only by
+idempotent — and an inbox write is a **merge, not a replacement**: it never clears the `acked`
+flag a consumer has already written into that record. That flag is not the phone's field, and
+the phone re-sends its own message until the outbox answers it, so a retry can land after the
+ack. A replacement would leave the store saying "unacked" about a message the ledger has
+already consumed, and nothing would repair it — the ledger's ack step only acks a record it
+has acted on — so the message would be redelivered for ever.
+
+The **lease and the ledger are one persisted value**, replaced only by
 compare-and-swap: a consumer reads a generation, decides against that snapshot, and commits
 only if the generation has not moved. That is the caller's duty the lease's README states
 ("two consumers that both read the same state and both get `ok: true` from `takeLease` must
@@ -114,8 +121,11 @@ derives the decision from `(seed, frame)` — so asking for frame 9 before frame
 A run therefore records every fault it applied, and `sim.schedule()` hands back the
 **expanded** schedule: the same seed with every drawn fault written out by frame number.
 `sim.scheduleText()` is that as one line of JSON, and it is what a failing property prints,
-beside the seed. `parseScheduleText` reads it back, and a test replays a run from the seed
-and from the printed text and asserts the two reports are equal.
+beside the seed. It is **canonical** — fixed key order, `clocks` and `faults` sorted — so two
+schedules that differ only in how they were written print the same line, which is what makes
+the printed line a replay of the run that failed rather than a second schedule.
+`parseScheduleText` reads it back, and a test replays a run from the seed and from the printed
+text and asserts the two reports are equal.
 
 ## What the actors do
 
@@ -123,9 +133,21 @@ and from the printed text and asserts the two reports are equal.
   reads (speaks) every reply it can see. It writes no other path.
 - **A consumer** takes the lease; if it does not hold it, it writes nothing and acts on
   nothing. If it holds it, it writes the heartbeat, delivers every unacked inbox message to
-  the ledger, acts on the oldest un-acted delivery, and — for each record it has acted on —
-  writes the reply and the ack. The ledger's transition is committed **before** the action is
-  performed, so a lost race performs nothing.
+  the ledger, acts on the oldest un-acted delivery, and then writes what it owes: a reply for
+  every record it **performed** on, and the ack for every record the ledger holds as `acted`.
+  The ledger's transition is committed **before** the action is performed, so a lost race
+  performs nothing.
+
+  Those two sets are not the same set, and the difference is the point. A stale record is
+  `acted` in the ledger and was **not** performed, and the ledger cannot tell the two apart —
+  the mailbox moves both to `acted` and reports the difference in the outcome alone, its
+  README leaving "what late means" to the consumer. So a holder cannot re-derive "was this
+  performed?" from the store, and the reply obligation lives with the consumer that performed,
+  carried until the store shows the reply. Writing a reply for every consumed record instead
+  would invent an answer to a prompt this harness has no rule for (below). The **ack** is the
+  other half, and it *is* the ledger's to say: an `acted` record is one an ack is still owed
+  for, so any holder owes it — for a stale record exactly as for a performed one, because the
+  ack says the delivery was consumed, not that the work was done.
 - **A retry re-sends the same message**, `at` included. That is the caller's duty the
   mailbox's README states ("never retry an id with a new `at`"), and it is why a duplicated
   or delayed frame is harmless: the second arrival is the same message, and the ledger
@@ -145,17 +167,26 @@ Over 120 seeded schedules, each with three messages, two consumers and twelve pa
 - **At most once acting per `(sender, id)`**, under any duplicate, reorder or drop schedule —
   counted from every act the harness performed, `stale-pending` included, since a stale
   record is consumed exactly once too.
-- **At least once delivery** of an unacked message: a consumer that won the lease delivered
-  every unacked message it could see, and every message the phone wrote was delivered at
-  least once, accepted or answered as a duplicate.
+- **At least once delivery**: every message the phone wrote was delivered at least once —
+  accepted or answered as a duplicate, an outcome the *ledger* gave rather than a count the
+  harness kept — and it is in the ledger, which is where "delivered" is recorded. A separate
+  pass-by-pass test pins the delivery loop itself: a holder delivers every unacked message it
+  can see in one pass, and never one that is already acked.
 - **One lease holder at a time**: exactly one consumer wins the commit in a pass, and only a
   winner acts; no pass has two consumers acting in it. Under a hand-written schedule whose
   skews make a takeover available every pass, the property still holds — a takeover does not
   re-act a message, because the ledger is the mailbox's and not the consumer's.
 - **The safe path for an expired prompt**: delivered after its TTL it is refused `expired`
-  and never delivered at all; delivered in time and acted on too late it is acted on once and
-  answered `stale-pending` with nothing performed. What a late prompt *delivers* is P6.5's
-  and P6.7's rule, and those are proposed and **NOT APPROVED**, so this harness invents none.
+  and never delivered at all; delivered in time and acted on too late the ledger consumes it
+  exactly once and answers `stale-pending`, and the harness performs **nothing** with it — no
+  reply, and the store is settled (every write the consumer owed has landed) before that is
+  asserted, because a half-flushed wire is not the run's outcome. The ack is still written:
+  the ledger holds the record as `acted`, and an `acted` record is one an ack is owed for.
+  The phone is left waiting, because what a late prompt *delivers* is P6.5's and P6.7's rule,
+  and those are proposed and **NOT APPROVED**, so this harness invents none.
+- **A retry that lands after the ack does not clear it**: the store's ack survives the phone's
+  own re-send, so the store and the ledger cannot come to disagree about whether a message was
+  ever consumed.
 - **A stale `at` beyond the window is refused** `replay` for a command, and nothing is acted
   on.
 - And a **positive control**, so none of the above can pass vacuously: the seeded schedules

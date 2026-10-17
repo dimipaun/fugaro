@@ -211,6 +211,11 @@ run "another holder's claim is not this consumer's to act under" \
   "    if (result.code === LEASE_CODES.ALREADY_CLAIMED) {"
 
 # 6. The action, and the two writes that follow it.
+#
+#    The first of these is a log field, and it is kept because the log is what a
+#    failing run prints: a record the ledger consumed as stale must not be
+#    recorded as one the harness performed. The behaviour behind it is the third
+#    guard below, which is the one that can lose an answer.
 run "an expired prompt performs nothing (the safe path)" \
   "                outcome: OUTCOME.STALE_PENDING,
                 action: null," \
@@ -221,11 +226,27 @@ run "the ledger acks only the message the store shows acked" \
   "        if (acted !== undefined) {"
 run "the phone reads the replies it can see" \
   "        for (const reply of store.outbox.values()) spoken.add(reply.id);" ""
+#    A reply is owed for a record the harness *performed* on. The ledger cannot
+#    tell a performed record from a stale one -- both are `acted` -- so a reply
+#    for every consumed record is an answer to an expired prompt that no
+#    approved rule of this project has an answer for.
+run "a stale-pending record is consumed, not performed on, so it is not replied to" \
+  "          if (acting.outcome !== OUTCOME.ACTED) continue;" \
+  "          if (false) continue;"
 
 # 7. The retry duty the mailbox's README states: the same message, `at` included.
 run "a retry re-sends the same message, its at included" \
   "            send('inbox-write', 'inbox', PHONE, message.at, message);" \
   "            send('inbox-write', 'inbox', PHONE, clock.now(), message);"
+
+#    And the store's side of the same duty: a write is a **merge**, not a
+#    replacement. The ack in the record is not the phone's field to clear, so a
+#    retry that lands after the ack must leave it where it is. Clearing it makes
+#    the store say "unacked" about a message the ledger has already consumed,
+#    and nothing repairs that.
+run "a re-sent message does not clear the ack the inbox already carries" \
+  "      const acked = held !== undefined && held.acked === true;" \
+  "      const acked = false;"
 
 # 8. The wire: the four faults, each a property of one frame.
 run "a reorder swaps a frame with the frame beside it" \
@@ -260,6 +281,13 @@ run "a generated skew stays inside the tolerance the modules name" \
   "    const skew = rng.nextInt(2 * MAX_SKEW_MS + 1) - MAX_SKEW_MS;"
 run "a schedule is explicit or generated, never both" \
   "  if (faults.length > 0 && fields.rate > 0) return refuse(REFUSAL.MIXED_SCHEDULE, 'rate');" ""
+#    The printed schedule is canonical: two schedules that differ only in the
+#    order their faults were written are the same schedule, so they must print
+#    the same line -- otherwise the line a failure prints is not a replay of the
+#    run that failed.
+run "the printed schedule's faults are in frame order" \
+  "  const faults = [...plan.faults].sort((left, right) => left.frame - right.frame);" \
+  "  const faults = plan.faults;"
 run "a delay fault carries a delay, inside the schedule's bound" \
   "    if (!isDelay(fields.delayMs) || fields.delayMs > maxDelayMs) {" "    if (false) {"
 run "a fault's field set is closed" \
