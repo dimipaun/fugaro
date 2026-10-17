@@ -5,7 +5,7 @@
   "type": "module",
   "description": "The Fugaro website: a static Astro build of the facts in this repository.",
   "engines": {
-    "node": ">=22.22.0 <23",
+    "node": ">=22.22.0 <25",
     "npm": ">=10"
   },
   "scripts": {
