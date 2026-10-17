@@ -230,6 +230,14 @@ export const MAX_FEED_LINE_LENGTH = 4 * 1024 * 1024
  * has no checkout. See `privateWorkingDirectory`. */
 export const PRIVATE_DIR_MODE = 0o700
 
+/** PRIVATE_DIR_NAME is the name of that directory under the system temporary
+ * directory, and `PRIVATE_DIR_LEAF` the name of the directory inside it the
+ * child actually runs in. The base carries the uid (see
+ * `privateWorkingDirectory`): the leaf cannot, because the base is the level two
+ * users on one machine would otherwise share. */
+export const PRIVATE_DIR_NAME = 'fugaro-console'
+export const PRIVATE_DIR_LEAF = 'cwd'
+
 /** SpawnTarget is what `--project` and `--config` are read from: the
  * installation tuple's two argv-bearing halves (D13). The binary path and the
  * checkout directory are separate arguments because they are not argv values
@@ -795,8 +803,20 @@ export function childPath(binaryPath: string): string {
  * privateWorkingDirectory returns the private, empty directory the app owns and
  * spawns from when the installation has no checkout (design section 3.4 rule 5).
  * It is created with mode `0700` under the system temporary directory, with the
- * uid in the name so two users on one machine cannot collide, and it is never
- * `/`, never the app bundle and never the operator's home.
+ * uid in the **base** directory's name (`fugaro-console-<uid>`, and
+ * `fugaro-console` where the platform has no uid) so two users on one machine
+ * cannot collide, and it is never `/`, never the app bundle and never the
+ * operator's home.
+ *
+ * **The uid used to be only in the leaf, and that was a defect.** With one
+ * `fugaro-console` for the whole machine, the first user created the base 0700
+ * and every other user who ran the console found a directory owned by someone
+ * else at that name -- `assertSafeParent` refused it, correctly and with no way
+ * for them to fix it, so the console could not spawn at all for the second
+ * account and the per-uid leaf was never reached. A review found it; the base
+ * carries the uid now. `assertSafeParent` still runs, and still has a job: a
+ * directory or a symbolic link *someone else* planted at this user's own name is
+ * refused rather than spawned from.
  *
  * **On a fine point of section 5.1 rule 10, said out loud rather than left to be
  * noticed:** that rule calls the spawn log "the only thing the app ever writes
@@ -812,10 +832,19 @@ export function privateWorkingDirectory(options: {
   readonly base?: string
   readonly uid?: number | null
 } = {}): string {
-  const base = options.base ?? join(tmpdir(), 'fugaro-console')
   const ownUid = typeof process.getuid === 'function' ? process.getuid() : null
   const uid = options.uid === undefined ? ownUid : options.uid
-  const path = join(base, uid === null ? 'cwd' : `cwd-${uid}`)
+  // The uid is in the **base** name, which is the level two users on one machine
+  // would otherwise share. With one `fugaro-console` for everybody, the first
+  // user created it 0700 and every other user then found a directory owned by
+  // someone else at that name: `assertSafeParent` refused it -- correctly, and
+  // unfixably from their side, since it is not theirs to remove -- so the
+  // console could not spawn **at all** for the second account, and the per-uid
+  // leaf below was never reached. One operator per machine never notices
+  // (`tmpdir()` is per-user on macOS); a shared `/tmp` is the case that does.
+  const base =
+    options.base ?? join(tmpdir(), uid === null ? PRIVATE_DIR_NAME : `${PRIVATE_DIR_NAME}-${uid}`)
+  const path = join(base, PRIVATE_DIR_LEAF)
   // Each level is created only if it is missing, and then *checked* rather than
   // trusted: `mkdirSync({ recursive: true })` succeeds silently on a path that
   // already exists, so a directory -- or a symbolic link -- someone else put at

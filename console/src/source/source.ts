@@ -243,7 +243,7 @@ export function refusalFrom(operation: string, sentence: string | null): SourceR
 export function handlersFor(
   source: FugaroSource,
   deps: { readonly openExternal: (raw: unknown) => Promise<void> },
-): ConsoleHandlers {
+): CliBackedHandlers {
   // `satisfies` rather than a cast: the mapped type makes a missing handler a
   // compile error, which is the whole reason `ConsoleHandlers` is mapped. A cast
   // here would turn "one operation answers nothing" back into a runtime state.
@@ -267,5 +267,24 @@ export function handlersFor(
       await deps.openExternal(args['url'])
       return null
     },
-  } satisfies ConsoleHandlers
+  } satisfies CliBackedHandlers
 }
+
+/**
+ * CliBackedHandlers is the whole surface **minus the one operation that is not
+ * a read of the CLI**: `startup.compatibility` (desktop-console plan Task 3.3),
+ * whose answer is the handshake `src/main/index.ts` ran before it built any
+ * window. It is not a read this module can make -- the source spawns, and the
+ * compatibility is the console's own state -- so `handlersFor` leaves that key
+ * out on purpose and the entry point joins it in
+ * (`{ ...handlersFor(source, deps), 'startup.compatibility': startupCompatibility(read) }`,
+ * built by `startupCompatibility` in `src/main/ipc.ts`).
+ *
+ * The `Omit` is still a *closed* type: a key typed here that is not an operation
+ * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`
+ * takes its required key with it -- so the exhaustiveness `satisfies` gives the
+ * other twelve rows is unchanged. `registerConsoleHandlers` still demands the
+ * whole surface, so a console that forgets the join fails to register rather
+ * than answering one operation with nothing.
+ */
+export type CliBackedHandlers = Omit<ConsoleHandlers, 'startup.compatibility'>

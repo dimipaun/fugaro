@@ -47,6 +47,8 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import { APP_ENTRY_URL, APP_ORIGIN } from '../../src/main/protocol'
+import { inRangeCliStub } from '../support/cliStub'
+import type { CliStub } from '../support/cliStub'
 
 // PROBE_ORIGIN is a name that cannot resolve (RFC 2606's `.invalid`), so a probe
 // that somehow got past both gates still talks to nobody.
@@ -89,6 +91,7 @@ function consoleDocument(page: Page): Promise<ConsoleDocument> {
 test.describe('the hardened window', () => {
   let app: ElectronApplication
   let page: Page
+  let cli: CliStub
 
   // Every remote request the page makes, recorded by the second gate before it
   // aborts it. It must stay empty: a request that reached the route handler is a
@@ -96,9 +99,13 @@ test.describe('the hardened window', () => {
   const remoteRequests: string[] = []
 
   test.beforeAll(async () => {
+    // The app now reads a `fugaro` before it opens a window (plan Task 3.3), so
+    // this spec has to hand it one, or the document it launches on is the
+    // refusal one and every assertion below would be about the wrong page.
+    cli = inRangeCliStub()
     // `args: [consoleDir]` is the app directory: Electron reads its package.json
     // and runs `main` (`dist/main/index.js`, built by `npm run test:e2e`).
-    app = await electron.launch({ args: [consoleDir] })
+    app = await electron.launch({ args: [consoleDir], env: cli.env })
     page = await app.firstWindow()
 
     // The second gate, installed before the page is used: no `http(s)` request
@@ -112,6 +119,7 @@ test.describe('the hardened window', () => {
 
   test.afterAll(async () => {
     await app.close()
+    cli.remove()
   })
 
   test('serves the document over app://, and never over file://', async () => {

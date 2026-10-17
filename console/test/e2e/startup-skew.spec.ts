@@ -1,0 +1,292 @@
+// The handshake wired into startup, in a real Electron process (desktop-console
+// plan Task 3.3; design section 7.1, D7).
+//
+// Three files make claims about the same handshake, and it is worth being exact
+// about which claim each one can carry:
+//
+//   - `test/unit/version.test.ts` proves the *parse and the range*: what a line
+//     means, and where the floor and the ceiling are;
+//   - `test/e2e/skew.spec.ts` proves the *drawing*: it loads the compiled
+//     renderer into the running window and calls `renderVersionSkew`, so the
+//     refusal screen's words and the banner's are asserted there;
+//   - this file proves the *wiring*, and only that: the app is started the way a
+//     user starts it (`electron.launch`, no injected script), a stub `fugaro` is
+//     put where the console's own resolution will find it, and what is asserted
+//     is which **document** the window ended up on and what the **window's own
+//     title** was told. Those are the two things the app decides before any
+//     renderer code runs, and they are the whole of D7 at this level: a refused
+//     version never produces a dashboard window.
+//
+// **The premise, stated because it decides what can run here.** There is no
+// `FUGARO_BIN` and this task does not add one, so the stub is chosen the only
+// way the resolution allows: `PATH` (and `HOME`, so `~/.local/bin` is covered)
+// point at it. `binDirectories` searches `/opt/homebrew/bin`, `/usr/local/bin`
+// and `~/.local/bin` **before** every `PATH` entry, so on a machine that has a
+// real `fugaro` in one of those the stub never wins and the app reads the
+// machine's binary instead. `test/support/cliStub.ts`'s `resolveConsoleBinary`
+// asks the app's own question with the app's own arguments, so this file knows
+// which of the two it is in and asserts the document that binary calls for.
+// The stub-driven cases below -- below the floor, an unparsable line, an empty
+// one, a hostile one, an in-range one and a degraded one -- therefore skip with
+// that reason printed when the stub is not the winner, which is the case on a
+// developer machine with a `fugaro` installed and never the case in CI (no
+// well-known prefix holds one there).
+//
+// Nothing here reaches the network and nothing here runs a real `fugaro` read:
+// the stub answers `version` and refuses every other argv, so a console that
+// asked it for anything else would fail here rather than pass on an answer it
+// should not have been able to get.
+
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { _electron as electron, expect, test } from '@playwright/test'
+import type { ElectronApplication, Page } from '@playwright/test'
+
+import { APP_ENTRY_URL, REFUSAL_ENTRY_URL } from '../../src/main/protocol'
+import { CONSOLE_WINDOW_TITLE } from '../../src/main/window'
+import { CLI_VERSION_BUILT_AGAINST, SKEW_HEADLINES, classifyCliVersion } from '../../src/shared/version'
+import type { CliCompatibilityMode } from '../../src/shared/version'
+import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
+import type { CliStub } from '../support/cliStub'
+import type { BinaryResolution } from '../../src/main/spawn'
+
+// The console's own directory, from this file's location, as in the other
+// specs: `test/e2e/x.spec.ts` is two levels below it, and Playwright loads
+// these specs as CommonJS.
+const consoleDir = join(__dirname, '..', '..')
+
+/**
+ * documentMarker is the sentence a bundled document carries, **read out of the
+ * document itself** rather than retyped here.
+ *
+ * That is the fix for a real defect in the first version of this file: the
+ * dashboard's sentence was retyped with a typographic apostrophe ("console’s")
+ * where `index.html` has a straight one ("console's"), so `toContain` failed on
+ * the one test that always runs and -- far worse -- every `not.toContain` built
+ * on the same constant was true for the wrong reason. The negative half is the
+ * D7 claim ("a refused version never draws a dashboard"), so a marker that
+ * cannot match would have made the claim unasserted while the suite stayed
+ * green. Reading the bytes is what makes the two sides the same string.
+ */
+function documentMarker(file: string): string {
+  const html = readFileSync(join(consoleDir, 'src', 'renderer', file), 'utf8').replace(
+    /<!--[\s\S]*?-->/g,
+    '',
+  )
+  const paragraph = /<main>[\s\S]*?<p>([^<]+)<\/p>/.exec(html)
+  const sentence = paragraph?.[1]?.trim()
+  if (sentence === undefined || sentence === '') {
+    throw new Error(`${file} carries no <p> in its <main>: this spec's markers are read from the documents`)
+  }
+  return sentence
+}
+
+/** DASHBOARD_MARKER is the sentence `src/renderer/index.html` carries and the
+ * refusal document does not: the one string that tells the two documents apart
+ * from inside the page, whatever a later task's renderer does to either. */
+const DASHBOARD_MARKER = documentMarker('index.html')
+const REFUSAL_MARKER = documentMarker('refusal.html')
+
+/** HOSTILE is the line the plan asks for: an ANSI escape, a markup tag and a
+ * version-shaped run, in one line a binary chose. Nothing of it may be live on
+ * screen, and nothing of it may reach the window's title. */
+const HOSTILE = '\u001b[31m0.8.1\u001b[0m <h1>fugaro says hello</h1>'
+
+interface Launched {
+  readonly app: ElectronApplication
+  readonly page: Page
+}
+
+/** launch starts the app the way a user starts it, with the stub's environment
+ * (or the machine's, when a case wants the machine's own binary). */
+async function launch(env: Record<string, string>): Promise<Launched> {
+  const app = await electron.launch({ args: [consoleDir], env })
+  const page = await app.firstWindow()
+  await page.waitForLoadState('domcontentloaded')
+  return { app, page }
+}
+
+/** windowTitles is what the operating system's chrome was told. It is read in
+ * the main process, because a window title is drawn by the OS and not by this
+ * console's writers. */
+function windowTitles(app: ElectronApplication): Promise<string[]> {
+  return app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((one) => one.getTitle()))
+}
+
+/** pageShape is the loaded document, read from inside the frame: its URL, its
+ * text, and the shapes a dashboard view would need. */
+function pageShape(page: Page): Promise<{ url: string; text: string; dataShapes: number }> {
+  return page.evaluate(() => ({
+    url: window.location.href,
+    text: document.body.innerText,
+    // Every view this console draws is a list, a table, a `<canvas>` or an
+    // `<svg>`; the refusal document has none of them, which is D7's claim on the
+    // document rather than on the renderer: there is nothing to draw a figure
+    // into.
+    dataShapes: document.querySelectorAll('ul, ol, table, canvas, svg').length,
+  }))
+}
+
+let stub: CliStub
+let winner: BinaryResolution
+/** stubWins is true when the resolution this launch will run picks the stub --
+ * see this file's header for why it may not. */
+let stubWins = false
+let whyNotTheStub = ''
+
+test.describe('the startup handshake, in the real app', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  test.beforeAll(async () => {
+    stub = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    winner = await resolveConsoleBinary(stub.env)
+    stubWins = winner.ok && winner.path === join(stub.dir, 'fugaro')
+    whyNotTheStub =
+      `the console will resolve ${winner.ok ? winner.path : 'no binary at all'} rather than the stub: ` +
+      'the well-known prefixes (/opt/homebrew/bin, /usr/local/bin, ~/.local/bin) are searched before any ' +
+      'PATH entry, and there is no FUGARO_BIN by design. This case needs a machine with no fugaro in those ' +
+      'directories -- CI has none.'
+  })
+
+  test.afterAll(() => {
+    stub?.remove()
+  })
+
+  test('opens exactly one window, on the document the fugaro it found calls for', async () => {
+    // The case that always runs, whichever binary answers. It is the wiring
+    // claim in one test: the app resolved a binary, made a decision, and opened
+    // exactly one window on the document that decision calls for -- and the
+    // window's title says which console this is.
+    const { app, page } = await launch(stub.env)
+    try {
+      expect(app.windows()).toHaveLength(1)
+      const mode: CliCompatibilityMode = winner.ok ? classifyCliVersion(winner.version).mode : 'refused'
+      const shape = await pageShape(page)
+      expect(await windowTitles(app)).toEqual([
+        mode === 'ok'
+          ? CONSOLE_WINDOW_TITLE
+          : `${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES[mode]}`,
+      ])
+      if (mode === 'refused') {
+        expect(shape.url).toBe(REFUSAL_ENTRY_URL)
+        expect(shape.text).toContain(REFUSAL_MARKER)
+        expect(shape.text).not.toContain(DASHBOARD_MARKER)
+        expect(shape.dataShapes).toBe(0)
+      } else {
+        expect(shape.url).toBe(APP_ENTRY_URL)
+        expect(shape.text).toContain(DASHBOARD_MARKER)
+        // Both markers, each against the other document: this is the pair that
+        // makes the `not.toContain(DASHBOARD_MARKER)` above a claim rather than
+        // a spelling mistake. A dashboard that carried the refusal's sentence
+        // (or a marker that matched nothing) fails here.
+        expect(shape.text).not.toContain(REFUSAL_MARKER)
+      }
+    } finally {
+      await app.close()
+    }
+  })
+
+  test('a stub below the floor shows the refusal document and never the dashboard', async () => {
+    test.skip(!stubWins, whyNotTheStub)
+    stub.setVersion('0.5.0')
+    const { app, page } = await launch(stub.env)
+    try {
+      expect(app.windows()).toHaveLength(1)
+      expect(await windowTitles(app)).toEqual([`${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES.refused}`])
+      const shape = await pageShape(page)
+      expect(shape.url).toBe(REFUSAL_ENTRY_URL)
+      expect(shape.url).not.toBe(APP_ENTRY_URL)
+      expect(shape.text).toContain(REFUSAL_MARKER)
+      expect(shape.text).not.toContain(DASHBOARD_MARKER)
+      // No list, no table, no canvas: there is nothing in this document a spend
+      // figure could be drawn into even if a renderer tried.
+      expect(shape.dataShapes).toBe(0)
+    } finally {
+      await app.close()
+    }
+  })
+
+  test('a stub with no placeable version is refused too, and draws no dashboard', async () => {
+    test.skip(!stubWins, whyNotTheStub)
+    // The three lines a binary can print that are not a version: a word, an
+    // empty line, and a line longer than the console will read. All three are
+    // refused rather than "probably fine", which is what rule 4 says about a
+    // binary the console cannot identify.
+    for (const line of ['banana', '', 'x'.repeat(10_000)]) {
+      stub.setVersion(line)
+      const { app, page } = await launch(stub.env)
+      try {
+        const shape = await pageShape(page)
+        expect(shape.url, JSON.stringify(line.slice(0, 40))).toBe(REFUSAL_ENTRY_URL)
+        expect(shape.text, JSON.stringify(line.slice(0, 40))).not.toContain(DASHBOARD_MARKER)
+        // The line itself is nowhere: the refusal document is the console's own
+        // sentence, and it never carries what the binary printed.
+        expect(shape.text, 'the line is not drawn').not.toContain(line.slice(0, 40))
+        expect(shape.text.length).toBeLessThan(1000)
+      } finally {
+        await app.close()
+      }
+    }
+  })
+
+  test('a hostile line leaves nothing live on the screen, or in the title', async () => {
+    test.skip(!stubWins, whyNotTheStub)
+    stub.setVersion(HOSTILE)
+    const { app, page } = await launch(stub.env)
+    try {
+      const shape = await pageShape(page)
+      expect(shape.url).toBe(REFUSAL_ENTRY_URL)
+      // The escape sequence, the markup and the version-shaped run: none of them
+      // is in the document's text, and no markup element was created from the
+      // line (the tag is text, or it is nothing -- never an element).
+      expect(shape.text).not.toContain('\u001b')
+      expect(shape.text).not.toContain('fugaro says hello')
+      expect(await page.evaluate(() => document.querySelectorAll('h1').length)).toBe(1)
+      // The title is drawn by the operating system and not by the console's
+      // writers, so the console puts no binary-chosen string in it at all --
+      // which is the reason `consoleWindowTitle` carries the mode and never the
+      // version.
+      const titles = await windowTitles(app)
+      expect(titles).toEqual([`${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES.refused}`])
+    } finally {
+      await app.close()
+    }
+  })
+
+  test('a stub inside the range shows the dashboard document', async () => {
+    test.skip(!stubWins, whyNotTheStub)
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const { app, page } = await launch(stub.env)
+    try {
+      expect(app.windows()).toHaveLength(1)
+      expect(await windowTitles(app)).toEqual([CONSOLE_WINDOW_TITLE])
+      const shape = await pageShape(page)
+      expect(shape.url).toBe(APP_ENTRY_URL)
+      expect(shape.text).toContain(DASHBOARD_MARKER)
+    } finally {
+      await app.close()
+    }
+  })
+
+  test('a stub in the degraded band opens the dashboard, and says which console it is', async () => {
+    test.skip(!stubWins, whyNotTheStub)
+    stub.setVersion('0.9.0')
+    const { app, page } = await launch(stub.env)
+    try {
+      expect(app.windows()).toHaveLength(1)
+      // The reduced mode is a console, so the dashboard document loads -- and the
+      // window's title says which console this is and what it made of the CLI,
+      // which is design section 3.4 rule 8 ("the console knows which CLI it is
+      // driving, and says so in its header") read as far as this tree can carry
+      // it: no renderer draws a header yet, so the header is the title. What the *document* draws for a reduced
+      // mode -- the banner, and no withheld view -- is `renderVersionSkew`'s and
+      // is asserted in `skew.spec.ts`: nothing under `src/renderer/` is loaded
+      // into the app's document yet, and this spec does not pretend otherwise.
+      expect(await windowTitles(app)).toEqual([`${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES.reduced}`])
+      expect((await pageShape(page)).url).toBe(APP_ENTRY_URL)
+    } finally {
+      await app.close()
+    }
+  })
+})

@@ -43,7 +43,7 @@
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -63,6 +63,8 @@ import {
   isSafeArgumentValue,
   parseVersionLine,
   planFor,
+  PRIVATE_DIR_LEAF,
+  PRIVATE_DIR_NAME,
   privateWorkingDirectory,
   probeVersion,
   resolveBinary,
@@ -777,7 +779,28 @@ describe('the child’s working directory', () => {
 
 describe('the private working directory', () => {
   const uid = typeof process.getuid === 'function' ? process.getuid() : null
-  const name = uid === null ? 'cwd' : `cwd-${uid}`
+  const name = PRIVATE_DIR_LEAF
+
+  it('puts the uid in the base directory, so a second user never shares it', () => {
+    // The defect this test exists for: the base was `join(tmpdir(),
+    // 'fugaro-console')` for every user on the machine, created 0700 by whoever
+    // ran first. Every other user then found a directory owned by someone else
+    // at that name and `assertSafeParent` refused -- correctly, and unfixably
+    // from their side -- so the console could not spawn at all for them, and the
+    // uid-named leaf below it was never reached. A shared `/tmp` is the case.
+    const path = privateWorkingDirectory()
+    const expected = realpathSync(
+      join(
+        tmpdir(),
+        uid === null ? PRIVATE_DIR_NAME : `${PRIVATE_DIR_NAME}-${uid}`,
+      ),
+    )
+    expect(dirname(path)).toBe(expected)
+    expect(basename(path)).toBe(PRIVATE_DIR_LEAF)
+    // And the shared name is not what this user runs from: the first line of the
+    // defect was that everybody's base was the same path.
+    if (uid !== null) expect(dirname(path)).not.toBe(realpathSync(join(tmpdir(), PRIVATE_DIR_NAME)))
+  })
 
   it('refuses a symbolic link where the directory should be, even to a directory it would accept', () => {
     // mkdirSync({ recursive: true }) succeeds silently on an existing path and
