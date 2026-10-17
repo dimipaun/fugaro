@@ -93,6 +93,30 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // the console offers no link built from it, and `sanitize.ts`'s url class is
   // what keeps a `javascript:` one from becoming an attribute.
   pr_url: 'url',
+  // The rest of `runview.Row`'s strings: the CLI's own identifiers and short
+  // rendered fields, read off the struct (`internal/runview/runview.go:57`).
+  // `name` is `project_layer.name` -- the row carries no other `name` -- and
+  // `base_branch` and `previous_run` are a git ref and a run id, so they carry
+  // the classes those are.
+  name: 'label',
+  batch: 'label',
+  execution: 'label',
+  pushed_head: 'label',
+  base_branch: 'branch',
+  previous_run: 'runId',
+  // Provenance inside `runstore.Cost`: `model_source` is `gateway` or
+  // `claude-code`, and `compute_source` is the price table's own line for the
+  // figures the estimate came from. The console draws neither today; they are
+  // classified as labels rather than exempted, because a string the console
+  // *may* draw is a string that goes through the sanitizer when it does.
+  model_source: 'label',
+  compute_source: 'label',
+  // `queued_note` is the one live key the shape may leave out (`omitempty`), and
+  // leaving it out of *this* map was a hole with the same shape: a key the
+  // corpus omits is a key the classification walk never sees, so the map could
+  // claim to be total over the wire while missing exactly the key the corpus
+  // does not carry.
+  queued_note: 'sentence',
   // The degraded document's own fields.
   notice: 'sentence',
   // `warnings[]`: the lines a human listing prints before its table.
@@ -126,6 +150,13 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'at',
   'created',
   'model_basis',
+  // Digests and the rest of `runview.Row`'s stamps: a sha256 is a value the
+  // console compares, and a timestamp is one it sorts. None of them is text a
+  // job wrote, and none is drawn.
+  'sha256',
+  'config_sha256',
+  'started_at',
+  'pr_status_at',
 ])
 
 /**
@@ -433,10 +464,16 @@ export interface LiveDocument {
 /** CostView is the six fields of `runstore.Cost` the console reads. */
 export interface CostView {
   readonly modelUsd: Reading
-  readonly modelNotionalUsd: Reading
   readonly computeUsd: Reading
   readonly computeEstimated: boolean
   readonly totalUsd: Reading
+  /** modelBasis says what `modelUsd` *is*: billed when it is `api-list`, a
+   * subscription's notional spend when it is `subscription`
+   * (`runstore.BasisSubscription`). There is deliberately no
+   * `modelNotionalUsd` here: `runstore.Cost` has no such key -- the notional
+   * split exists once per *sum*, on `runview.Totals.model_notional_usd`, and
+   * reading it off a single row would have been a reading that is permanently
+   * unavailable on every document the CLI can produce. */
   readonly modelBasis: string
 }
 
@@ -585,23 +622,64 @@ const FINISHED_KEYS = [
   'age_seconds',
 ]
 const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', 'total_usd', 'compute_not_estimated']
-const RECORD_KEYS = [
+/**
+ * RECORD_KEYS is **every** JSON key of `runview.Row`
+ * (`internal/runview/runview.go:57`), in the struct's own order, and the four
+ * that carry no `omitempty` are among them: `terminal`, `settled`, `pushed` and
+ * `follow_up`. That is not politeness -- `closed` refuses a key the shape does
+ * not list, so a list that omits a key the CLI writes is a list that refuses a
+ * real `runs ls --json` document, which is exactly what an earlier revision of
+ * this file did: eleven keys, and every degraded document rejected at
+ * `runs[0].terminal`.
+ *
+ * The list is therefore derived from the struct rather than from the fields the
+ * console happens to read, and a key the CLI adds in a later version is *still*
+ * refused -- which is the point of closing the shape: a document the console
+ * does not fully understand becomes Task 3.2's skew state, not a half-drawn
+ * list. Keys accepted and not read (`project_layer`, `config_sha256`,
+ * `image_age_s`, `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`,
+ * `draft_fallback`, `pr_status_at`, `stale_draft`, `execution`, `batch`,
+ * `halt`, `previous_run`, `base_branch`) are the ones this screen has no use
+ * for yet; they are listed so that a document carrying them is read rather
+ * than thrown away.
+ */
+export const RECORD_KEYS = [
   'run',
-  'run_id',
   'repo',
   'workflow',
   'oauth_account',
   'recipe',
+  'project_layer',
+  'config_sha256',
+  'run_id',
   'status',
   'stage',
   'reason',
-  'branch',
-  'outcome',
-  'pr_url',
+  'halt',
+  'batch',
   'requested_by',
+  'pr_url',
+  'execution',
   'log_url',
   'created',
   'cost',
+  'image_age_s',
+  'terminal',
+  'settled',
+  'branch',
+  'outcome',
+  'task_pr',
+  'record_pr',
+  'pr',
+  'pushed',
+  'pushed_head',
+  'started_at',
+  'base_branch',
+  'previous_run',
+  'follow_up',
+  'draft_fallback',
+  'pr_status_at',
+  'stale_draft',
 ]
 
 function killAt(raw: unknown, field: string, where: string): KillView | null {
@@ -728,7 +806,6 @@ function costAt(raw: unknown, field: string, where: string): CostView {
   const cost = objectAt(raw, field, where)
   return {
     modelUsd: readingOf(cost, 'model_usd', `${field}.model_usd`),
-    modelNotionalUsd: readingOf(cost, 'model_notional_usd', `${field}.model_notional_usd`),
     computeUsd: readingOf(cost, 'compute_usd', `${field}.compute_usd`),
     // `compute_estimated`: when it is false, `compute_usd` 0 means "not
     // estimated", not "free" -- so the flag is the state of the number, exactly

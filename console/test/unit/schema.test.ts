@@ -34,6 +34,7 @@ import { UNAVAILABLE_MARK, formatReading, readNumber } from '../../src/shared/av
 import {
   DEGRADED_KEYS,
   LIVE_KEYS,
+  RECORD_KEYS,
   LIVE_MARKERS,
   NON_TEXT_STRING_KEYS,
   WIRE_TEXT_CLASSES,
@@ -149,12 +150,23 @@ const DEGRADED: JSONDoc = Object.freeze({
       log_url: 'https://example.invalid/logs/20261015-120000-aa01',
       created: '2026-10-15T10:15:00Z',
       cost: {
+        // `runstore.Cost` has no `model_notional_usd` (the notional split is on
+        // `runview.Totals`, once per sum): an earlier revision of this corpus
+        // carried one, which is how a reading that is permanently unavailable
+        // in production passed for tested.
         model_usd: 12.5,
-        model_notional_usd: 3.25,
         compute_usd: 0.4,
         compute_estimated: true,
         total_usd: 12.9,
+        estimate: true,
         model_basis: 'subscription',
+        model_source: 'gateway',
+        compute_source: 'n1-standard-4',
+        model_by: { 'claude-sonnet-4-5-20250929': 12.5 },
+        reported_usd: 12.4,
+        unreconciled: 0.1,
+        usage_unparsed: 2,
+        catalog_stale: false,
       },
     },
   ],
@@ -167,6 +179,82 @@ const DEGRADED: JSONDoc = Object.freeze({
     compute_not_estimated: 0,
   },
   warnings: ['the repository list came from the bucket'],
+  degraded: true,
+  notice: 'no budget backend: showing run records only',
+})
+
+/**
+ * FULL_ROW is a `runview.Row` as `runs ls --json` writes one: **every** key the
+ * struct can write, the four without `omitempty` (`terminal`, `settled`,
+ * `pushed`, `follow_up`) among them, and the optional ones populated
+ * (`internal/runview/runview.go:57`; contract section 5).
+ *
+ * It exists because the hand-built `DEGRADED` above is a *readable* document and
+ * not a *realistic* one: it was written from the fields this decoder read, so it
+ * could not catch a key the decoder's `closed()` did not know about -- and one
+ * did not (eleven of the thirty-six), which made every real degraded document
+ * refuse at `runs[0].terminal`. This is the same probe a reviewer would run.
+ */
+const FULL_ROW: JSONDoc = Object.freeze({
+  run: '20261015-120000-aa01',
+  repo: 'r-4c25cf20/r-f1aa9214',
+  workflow: 'web',
+  oauth_account: 'redacted@example.invalid',
+  recipe: 'console-text-path',
+  project_layer: { name: 'base', sha256: 'a'.repeat(64) },
+  config_sha256: 'b'.repeat(64),
+  run_id: '20261015-120000-aa01',
+  status: 'succeeded',
+  stage: 'done',
+  reason: '',
+  halt: { by: 'redacted@example.invalid', at: '2026-10-15T11:00:00Z', reason: 'budget kill <project>' },
+  batch: '2026-10-15',
+  requested_by: 'redacted@example.invalid',
+  pr_url: 'https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412',
+  execution: 'fugaro-20261015-120000-aa01',
+  log_url: 'https://example.invalid/logs/20261015-120000-aa01',
+  created: '2026-10-15T10:15:00Z',
+  cost: {
+    model_usd: 12.5,
+    compute_usd: 0.4,
+    compute_estimated: true,
+    total_usd: 12.9,
+    estimate: false,
+    model_basis: 'api-list',
+  },
+  image_age_s: 3600,
+  terminal: true,
+  settled: true,
+  branch: 'feat/console-fixtures',
+  outcome: 'ready',
+  task_pr: 411,
+  record_pr: 412,
+  pr: 412,
+  pushed: true,
+  pushed_head: 'c'.repeat(40),
+  started_at: '2026-10-15T10:20:00Z',
+  base_branch: 'main',
+  previous_run: '20261015-101500-aa02',
+  follow_up: true,
+  draft_fallback: false,
+  pr_status_at: '2026-10-15T11:30:00Z',
+  stale_draft: false,
+})
+
+/** DEGRADED_REAL is `watchDegradedDoc` carrying that row: the document the CLI
+ * actually writes for a project with no budget backend. */
+const DEGRADED_REAL: JSONDoc = Object.freeze({
+  project: '<project>',
+  runs: [FULL_ROW],
+  totals: {
+    runs: 1,
+    model_usd: 12.5,
+    model_notional_usd: 0,
+    compute_usd: 0.4,
+    total_usd: 12.9,
+    compute_not_estimated: 0,
+  },
+  warnings: [],
   degraded: true,
   notice: 'no budget backend: showing run records only',
 })
@@ -232,6 +320,50 @@ describe('both document shapes decode', () => {
     expect(result.value).not.toHaveProperty('total')
     expect(result.value).not.toHaveProperty('repos')
     expect(result.value).not.toHaveProperty('connection')
+  })
+
+  it('decodes a degraded document carrying every key `runview.Row` can write', () => {
+    // The finding this test exists for: `closed()` refuses a key the shape does
+    // not list, so a `RECORD_KEYS` written from the fields the console reads
+    // rather than from the struct refuses the very document this shape is for.
+    const result = decodeDocument(DEGRADED_REAL, 'a degraded document')
+    expect(result.ok, result.ok ? '' : result.skew.because).toBe(true)
+    if (!result.ok || result.value.shape !== 'degraded') return
+    const row = result.value.runs[0]
+    expect(row?.run).toBe('20261015-120000-aa01')
+    expect(row?.runId).toBe('20261015-120000-aa01')
+    expect(row?.status).toBe('succeeded')
+    expect(row?.cost.modelUsd.value).toBe(12.5)
+    expect(row?.cost.modelBasis).toBe('api-list')
+    // The optional keys it does not read are accepted rather than refused.
+    expect(row?.workflow).toBe('web')
+    expect(row?.prUrl).toBe('https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412')
+  })
+
+  it('lists every key of `runview.Row`, and refuses one the struct cannot write', () => {
+    // The list, pinned against the struct it was read off. A key added to
+    // `Row` and not to this list refuses real documents; a key removed from
+    // `Row` and kept here is a key the console accepts from nothing.
+    const fromTheStruct = [
+      'run', 'repo', 'workflow', 'oauth_account', 'recipe', 'project_layer',
+      'config_sha256', 'run_id', 'status', 'stage', 'reason', 'halt', 'batch',
+      'requested_by', 'pr_url', 'execution', 'log_url', 'created', 'cost',
+      'image_age_s', 'terminal', 'settled', 'branch', 'outcome', 'task_pr',
+      'record_pr', 'pr', 'pushed', 'pushed_head', 'started_at', 'base_branch',
+      'previous_run', 'follow_up', 'draft_fallback', 'pr_status_at', 'stale_draft',
+    ]
+    expect([...RECORD_KEYS].sort()).toEqual([...fromTheStruct].sort())
+    expect(RECORD_KEYS.length).toBe(fromTheStruct.length)
+    // The four without `omitempty` are the ones whose absence broke it.
+    for (const always of ['terminal', 'settled', 'pushed', 'follow_up']) {
+      expect(RECORD_KEYS, always).toContain(always)
+      expect(Object.keys(FULL_ROW), always).toContain(always)
+    }
+    // And a key no version of `Row` writes is still a refusal: the shape is
+    // closed, so a CLI the console does not understand is skew, not a list.
+    const refusal = refusalFor(patched(DEGRADED_REAL, ['runs', 0, 'rogue'], 1))
+    expect(refusal.name).toBe('unknown-key')
+    expect(refusal.field).toBe('runs[0].rogue')
   })
 
   it('carries notional as the wire wrote it, and never infers it from auth', () => {
@@ -553,11 +685,11 @@ describe('every wire string is classified', () => {
   }
 
   it('classifies every string leaf of every document', () => {
-    const all = [...documents, DEGRADED, patched(first, ['total', 'kill'], {
+    const all = [...documents, DEGRADED, DEGRADED_REAL, patched(first, ['total', 'kill'], {
       by: 'fixture-operator',
       at: '2026-10-15T12:00:00Z',
       reason: 'budget kill fixture-sandbox',
-    })]
+    }), patched(first, ['queued_note'], 'the bucket was read a minute ago')]
     for (const document of all) {
       expect(unclassified(document), JSON.stringify(stringLeaves(document).map((l) => l.path))).toEqual([])
     }
@@ -568,6 +700,16 @@ describe('every wire string is classified', () => {
     expect(leaves.some((leaf) => wireTextClass(leaf.key) === 'sentence')).toBe(true)
     expect(leaves.some((leaf) => NON_TEXT_STRING_KEYS.includes(leaf.key))).toBe(true)
     expect(leaves.map((leaf) => leaf.path)).toContain('runs[0].title')
+    // `queued_note` is the one live key the corpus omits, so it is the one key
+    // this walk could not otherwise see: it is asserted separately, with a
+    // document that carries it, because a map that is total over the corpus is
+    // not the same as a map that is total over the wire.
+    expect(wireTextClass('queued_note')).toBe('sentence')
+    const withNote = stringLeaves(patched(first, ['queued_note'], 'a note'))
+    expect(withNote.some((leaf) => leaf.key === 'queued_note')).toBe(true)
+    expect(unclassified(patched(first, ['queued_note'], 'a note'))).toEqual([])
+    // Every key of a realistic `runview.Row` is classified too.
+    expect(unclassified(DEGRADED_REAL)).toEqual([])
   })
 
   it('reports a key it has no class for, which is what makes the walk a test', () => {
