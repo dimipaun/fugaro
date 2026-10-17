@@ -225,11 +225,11 @@ const windowRecipes = countOf('recipes')
 <section id="costs">
   <h2>The measured figures</h2>
 
-  {costs === null ? (
+  {costs === null || costs.groups.length === 0 ? (
     <p class="empty">
       This page carries no figures yet — there are not enough runs behind them. A figure here
       is drawn from an aggregation the owner runs, read-only, over one named installation's own
-      run records, and until that has been run the honest state is this one: an empty figure is
+      run records, and until that has been run, or while no recipe has enough runs to publish, the honest state is this one: an empty figure is
       honest, an invented one is not.
     </p>
   ) : (

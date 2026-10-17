@@ -235,23 +235,89 @@ function blocksOf(html) {
     .filter((text) => text.trim() !== '')
 }
 
-test('every number on the page appears in costs.json', async (t) => {
+/** The numbers a string writes, as a reader reads them. */
+function numbersIn(text) {
+  return [...String(text).matchAll(NUMBER)].map((match) => match[0])
+}
+
+/** The costs section of a built page, split from the rest of it. */
+function splitCosts(page) {
+  const match = /<section id="costs"[\s\S]*?<\/section>/.exec(page)
+  assert.ok(match, 'the page has no costs section')
+  return { costs: match[0], rest: page.replace(match[0], ' ') }
+}
+
+test('every number on the page appears in costs.json, in the field it is rendered for', async (t) => {
   const built = buildWith(t, publish(FIGURES))
   const page = builtPage(built, '/caps-and-costs/')
-
-  // The page's own numbers, and the ones its own costs file carries — the dates,
-  // the sample sizes, every percentile and the disclaimer's own "0.9" included.
-  const allowed = numbersOf(FIGURES)
+  const { costs, rest } = splitCosts(page)
   const strays = []
-  for (const block of blocksOf(page)) {
-    if ([...block.matchAll(NUMBER)].some((match) => !allowed.has(match[0]))) strays.push(collapse(block))
+
+  // Outside the costs section no figure is written at all: a typed "Runs often cost 2 USD."
+  // there would pass a check that allowed any number the fixture holds anywhere.
+  for (const block of blocksOf(rest)) {
+    if (numbersIn(block).length > 0) strays.push(collapse(block))
+  }
+
+  // The table: every cell is the specific field its column renders, compared exactly.
+  const rows = [...costs.matchAll(/<tr data-recipe="([^"]+)"[\s\S]*?<\/tr>/g)]
+  assert.equal(rows.length, FIGURES.recipes.length, 'the table does not carry one row per group')
+  rows.forEach((row, index) => {
+    const group = FIGURES.recipes[index]
+    const cells = [...row[0].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)].map((m) => collapse(textOf(m[1])))
+    const expected = [
+      group.recipe,
+      String(group.runs),
+      `${group.duration_s.min} / ${group.duration_s.median} / ${group.duration_s.p90}`,
+      `${group.cost_usd.min} / ${group.cost_usd.median} / ${group.cost_usd.p90}`,
+      String(group.compute_not_estimated),
+    ]
+    if (JSON.stringify(cells) !== JSON.stringify(expected)) strays.push(`row ${group.recipe}: ${cells.join(' | ')} (expected ${expected.join(' | ')})`)
+  })
+
+  // Every other block of the section may carry only the numbers of the one field it
+  // renders: the window, the minimum, one counter, or the aggregation's own disclaimer.
+  const T = FIGURES.totals
+  const counters = [
+    [/^\d+ runs were below that threshold/, T.runs_below_min_runs],
+    [/^\d+ runs carried no finished figure/, T.runs_without_a_figure],
+    [/^\d+ runs named a recipe this binary does not ship/, T.runs_unknown_recipe],
+    [/^\d+ runs carried no compute estimate/, T.runs_not_estimated],
+  ]
+  const fieldsFor = (text) => {
+    if (text.startsWith('Measured over')) return [FIGURES.since, FIGURES.until, T.runs, T.recipes]
+    if (text.startsWith('A group thinner')) return [FIGURES.min_runs]
+    const counter = counters.find(([pattern]) => pattern.test(text))
+    if (counter) return [counter[1]]
+    if (text === collapse(FIGURES.not_a_promise)) return [FIGURES.not_a_promise]
+    return []
+  }
+  const withoutRows = costs.replace(/<tr data-recipe="[\s\S]*?<\/tr>/g, ' ').replace(/<caption[\s\S]*?<\/caption>/g, ' ')
+  for (const block of blocksOf(withoutRows).map(collapse)) {
+    const allowed = fieldsFor(block).flatMap(numbersIn)
+    if (numbersIn(block).some((n) => !allowed.includes(n))) strays.push(block)
   }
 
   assert.deepEqual(
     [...new Set(strays)],
     [],
-    `the page states ${[...new Set(strays)].map((s) => JSON.stringify(s)).join(', ')}, which costs.json does not carry (D97: the page publishes the aggregation's figures, and no figure of its own)`,
+    `the page states ${[...new Set(strays)].map((s) => JSON.stringify(s)).join(', ')}, which is not the costs.json field it is rendered for (D97: the page publishes the aggregation's figures, and no figure of its own)`,
   )
+})
+
+test('the costs section states the empty state when there is no group to render', async (t) => {
+  // D96: "not enough runs yet" is the state of zero renderable groups, not only of an
+  // absent file. A present file with no group would otherwise render an empty table.
+  const none = buildWith(t, publish({ ...FIGURES, recipes: [] }))
+  const page = builtPage(none, '/caps-and-costs/')
+  assert.match(collapse(textOf(page)), /not enough runs/, 'a costs.json with recipes: [] does not render the empty state')
+  assert.ok(!/<table\b/.test(splitCosts(page).costs), 'a costs.json with no group renders an empty table')
+
+  // Every group under the minimum is refused by the content pipeline: the build stops,
+  // naming the file, rather than rendering a table of nothing.
+  const thin = buildWith(t, publish({ ...FIGURES, recipes: [{ ...FIGURES.recipes[0], recipe: 'rare', runs: 4 }] }))
+  assert.notEqual(thin.status, 0, 'a costs.json with only under-minimum groups was published')
+  assert.match(thin.output, /costs\.json/)
 })
 
 test('the not-a-promise line is rendered with the figures', async (t) => {
