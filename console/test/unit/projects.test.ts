@@ -47,6 +47,7 @@ import { PROJECT_PANEL_KEYS, PROJECTS_THEMES, buildProjectsModel, renderProjects
 import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/renderer/screens/projects'
 import { RUN_LOG_CAP, buildRunModel, linkFor, pullRequestUrl, renderRun } from '../../src/renderer/screens/run'
 import type { RunInputs } from '../../src/renderer/screens/run'
+import { ReplayBuffer } from '../../src/shared/replay'
 import { ADDRESS_PLACEHOLDER, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { githubToken, highEntropyRun } from '../support/fakeSecrets'
 
@@ -595,7 +596,7 @@ describe('renderProjects', () => {
     const local = ['ana', 'lopez'].join('.')
     const shapes = [`"${local}"@example.invalid`, `Ana Lopez <${local}@example.invalid>`]
     for (const who of shapes) {
-      const kill = { ...BUDGET.repos[0].kill, by: who }
+      const kill = { ...BUDGET.repos[0]?.kill, by: who }
       const budget = { ...BUDGET, repos: [{ ...BUDGET.repos[0], kill }, BUDGET.repos[1]] }
       const runs = { ...RUNS, runs: [{ ...RUNS.runs[0], requested_by: who }, RUNS.runs[1]] }
       const accounts = { ...ACCOUNTS, accounts: [who] }
@@ -921,6 +922,19 @@ describe('buildRunModel', () => {
     expect(model.logs.lines.at(-1)?.message).toBe(`line ${String(RUN_LOG_CAP + 24)}`)
     // The link to the full transcript is the CLI's own `logs RUN --url` line.
     expect(model.logs.link).toBe('https://console.cloud.google.com/batch/jobs/example-job')
+  })
+
+  it('reads a ring the caller keeps, so arrivals need not be held to be redrawn', () => {
+    // A ring built per render would need every arrival since the screen opened:
+    // the caller keeps the bounded buffer and hands it over instead.
+    const buffer = new ReplayBuffer({ maxRecords: 2 })
+    for (const frame of REPLAY_FRAMES) buffer.observe(frame)
+    const model = buildRunModel(runInputs({ replay: buffer, scrubAt: '2026-10-15T12:05:00Z' }))
+    expect(model.replay.records.value).toBe(2)
+    expect(model.replay.dropped.value).toBe(1)
+    expect(model.replay.scrubbed?.at).toBe('2026-10-15T12:04:00Z')
+    // Drawing it does not feed it.
+    expect(buffer.bounds().records).toBe(2)
   })
 
   it('draws the replay buffer\'s bound, its span and the moment scrubbed to', () => {
