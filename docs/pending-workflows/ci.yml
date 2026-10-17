@@ -1,0 +1,153 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  # Pull requests are not merge-gated by CI (owner's ruling 2026-10-16: the
+  # in-run loop already runs the tests). Run it on demand against a branch with
+  # `gh workflow run ci --ref <branch>`; every push to main still runs it, and
+  # the release gate (scripts/release-gate.sh) requires it green on the tag's commit.
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # A pull request that changes only documentation (docs/ and top-level
+  # Markdown files) skips test, rules and terraform: they cannot fail on it.
+  # A skipped job is not a failure, so the pull request merges as usual. Every
+  # push to main runs them all, so a documentation guard test (a link, a
+  # command name, a legacy name) that a docs-only change breaks is caught
+  # there; run the guards locally before merging a docs-only change
+  # (go test ./internal/cli ./internal/config ./images -run 'Docs|Migration|BaseImageDoc|Design|SecurityMd|RecipesGuide|NoLegacy|Website|CliRef').
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: diff
+        run: |
+          docs_only=false
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # The checked-out merge commit's first parent is the base branch.
+            files=$(git diff --name-only HEAD^1 HEAD)
+            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(docs/|[^/]+\.md$)'; then
+              docs_only=true
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+  test:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go vet -tags docker ./...
+      # Type-checks the live tests (never runs them), so they can't rot.
+      - run: go vet -tags live ./...
+      # The live gateway test needs both tags.
+      - run: go vet -tags 'live docker' ./...
+      # Type-checks the terraform-tagged tests (the real-terraform ones).
+      - run: go vet -tags terraform ./...
+      # Type-checks the emulator tests of the database rules (the rules job runs them).
+      - run: go vet -tags firebase ./...
+      - run: go test -race -timeout 20m ./...
+  # The budget database rules are the only thing between a compromised run's
+  # token and every shared counter, so their tests run against the Realtime
+  # Database emulator: a firebase-tools pinned by
+  # internal/budget/rules/emulator/package-lock.json, Java 21 and Node 22. No
+  # step has a Firebase account or credential (the project id is a demo- id the
+  # emulator treats as local); the only network use is the package and
+  # emulator-jar downloads. FUGARO_REQUIRE_EMULATOR makes a missing emulator a
+  # failure instead of a skip, so this required check cannot pass vacuously.
+  rules:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # The lockfile is written by npm 11.19.0; the npm that ships with Node
+      # 22 resolves the optional picomatch peer differently and refuses it.
+      - name: pin npm to the version that wrote the lockfile
+        run: npm install --global npm@11.19.0
+      - name: install the pinned firebase-tools
+        working-directory: internal/budget/rules/emulator
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: cache the emulator jar
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}
+      - name: the generated rules and the emulator suite
+        env:
+          FUGARO_REQUIRE_EMULATOR: "1"
+        run: go test -tags firebase -count=1 -timeout 15m -v ./internal/budget/rules/...
+  # Lints and tests the Terraform with a mock provider. No step has cloud
+  # credentials: init -backend=false only downloads the provider the lock
+  # file pins.
+  terraform:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.4
+          terraform_wrapper: false
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.64.0
+      - run: terraform fmt -check -recursive deploy/terraform
+      # Terraform's data directory stays outside the tree: deploy/terraform
+      # embeds all of gcp/, so provider binaries under a root's .terraform
+      # would end up in the Go test binary of the last step.
+      - name: validate and test the roots
+        run: |
+          for r in installation firebase repo compute; do
+            [ -d "deploy/terraform/gcp/roots/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
+            export TF_DATA_DIR="$RUNNER_TEMP/tf-$r"
+            terraform -chdir=deploy/terraform/gcp/roots/$r init -backend=false -lockfile=readonly -input=false
+            terraform -chdir=deploy/terraform/gcp/roots/$r validate
+            terraform -chdir=deploy/terraform/gcp/roots/$r test
+          done
+      # tflint --init asks the GitHub API for the plugin's release: with the
+      # workflow's read-only token it isn't held to the 60 requests an hour an
+      # anonymous caller on a shared runner gets.
+      - run: tflint --chdir=deploy/terraform/gcp --init && tflint --chdir=deploy/terraform/gcp --recursive
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      # The Trivy image images/scan.sh pins, over the Terraform.
+      - run: sh deploy/terraform/scan.sh
+      # The tf wrapper's tests against a real terraform binary.
+      - run: go test -tags terraform ./internal/infra/...

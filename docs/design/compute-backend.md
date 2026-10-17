@@ -210,7 +210,43 @@ What the numbers are:
      2026-10-15). So a per-base-version image built on `batch-cos` goes stale
      on Google's schedule as well as Fugaro's, and the fleet's oldest VM is a
      base image that may be past its supported lifetime — so the preload is a
-     thing to **rebuild on a schedule** (Task 6), not build once. How a Docker
+     thing to **rebuild on a schedule** (Task 6), not build once.
+     **Built** (Task 6, `deploy/terraform/gcp/modules/compute/preload.tf` and
+     `preload.sh`): the module owns the pipeline and the account, and the
+     build itself is a committed script — boot a COS VM from Google's family,
+     pull into its Docker store, wait for the pull's marker on the serial
+     port, image its disk, delete the VM — run by Cloud Build as a narrow
+     account and started by a Cloud Scheduler job
+     (`fugaro-preload-rebuild`, weekly). The image's name carries
+     `sha256(base_image)[:8]`, so one pinned base is one image and a new pin
+     is a new name; the stage starts the first build itself, so a fresh
+     installation does not wait for the schedule. That name is an image
+     **family**, and every build makes a new **generation** inside it: the
+     runs boot `projects/<project>/global/images/family/<name>` (Task 7), a
+     family keeps serving its previous generation until the next one exists
+     and switches over the moment it does, so a rebuild never leaves the
+     installation without an image to boot
+     (cloud.google.com/compute/docs/images/image-families-best-practices,
+     checked 2026-10-16) — which is what makes creating before deleting safe,
+     rather than a window with no image in it. The name **cannot** carry
+     Google's side of it — the pin does not move when the family rolls — so
+     the release a generation was built from is recorded in its `base-release`
+     label and the rebuild decides API answer by API answer: a newest
+     generation that is this build's own, built from the family's current
+     release and younger than `preload_refresh_days` (default 30, inside the
+     60 days) is the only one it leaves alone; anything else it replaces,
+     creating the new generation first and sweeping the older ones afterwards.
+     The sweep is best-effort by design: a superseded image that a delete
+     cannot remove is left for the next weekly run, and whether Compute
+     Engine refuses to delete an image a running VM booted from is
+     **UNVERIFIED** — an earlier draft of this section asserted the refusal as
+     the reason a rebuild is a no-op while an image is in use, and nothing
+     depends on either reading now (Check 57b, §8.1). The family serves its
+     newest generation whether the old one goes or stays.
+     Terraform owns none of the
+     build, deliberately: no resource expresses the wait in the middle of the
+     procedure, and an image taken from a disk whose pull has not finished is
+     an image with nothing in it. How a Docker
      data root is baked into a COS-derived image is **no longer open**: 57a-3b
      did it by pulling into the VM's Docker store and imaging its disk, with no
      package manager involved, and the resulting image booted and ran the
@@ -600,6 +636,35 @@ the saving is smaller than it looks); a single-person installation that
 prefers simplicity can take the external IP and a deny-all ingress firewall
 instead (**C7**, §8.2).
 
+**Built** (Task 6, `deploy/terraform/gcp/modules/compute/network.tf`): the
+router and the NAT on the network and subnetwork the caller names, plus a
+**deny-all ingress** rule (`fugaro-run-deny-ingress`, priority 1000, source
+`0.0.0.0/0`) whose targets are the run-class service accounts — not a network
+tag, which the launcher would have to write on each job and which a rule that
+matches nothing would silently turn into no rule at all. The rule is defence
+in depth under this section's recommendation, not the posture itself: a
+default network arrives with `default-allow-internal` (priority 65534,
+10.128.0.0/9, all protocols) and often `default-allow-ssh`, so without it any
+VM in the project could open every port on a run's VM, which is a Docker
+**host** holding the run's secrets. What it does **not** isolate, precisely:
+(a) egress is untouched — a run still reaches the internet through the NAT and
+can still open connections to other VMs of the project; this stops them
+reaching it, not it reaching them. (b) The metadata server is link-local and
+is not subject to VPC firewall rules, so a run's VM still reads its own
+metadata — which is how it gets its service account's token, and is by
+design. (c) Instances on the network that do **not** run as one of
+`run_accounts` are not covered; the project's other VMs are the project's own
+business. (d) The run VM's own Docker host remains the trust boundary inside
+the VM (§2.2): anything that reaches the host's daemon controls the host.
+(e) A project rule with a priority below 1000 (lower number wins) still
+permits what it names, so the rule narrows the default network's blanket
+allows and does not override an operator's own deliberate one. UNVERIFIED
+live: no Batch document read for this task states whether a job's VM needs any
+**inbound** path for the Batch agent's task reporting — everything the agent
+does is documented as outbound, and 57b-1 is where it is confirmed; if one is
+needed the rule narrows to the network's internal ranges rather than being
+dropped.
+
 **Substrate verdict.** Identical.
 
 ### 1.8 Quotas and limits
@@ -647,9 +712,11 @@ What `fugaro init` would create for the VM backend, and how heavy that is:
 - **Cloud Batch:** enable the Batch API; the Batch service agent's IAM (Batch
   creates it on first use); **`containerfilesystem.googleapis.com` if image
   streaming is used** (cloud.google.com/batch/docs/use-image-streaming,
-  checked 2026-10-15); a Cloud NAT + router + subnet (§1.7); a **preloaded boot
-  image** per `fugaro-base` version (§1.2's measurement — it, not streaming,
-  is the fast-start path) — with the caveats §1.2 lists, i.e. a custom image
+  checked 2026-10-15); a Cloud NAT + router + subnet (§1.7) and a deny-all
+  ingress rule on the run-class accounts (§1.7); a **preloaded boot image
+  family** per `fugaro-base` version (§1.2's measurement — it, not streaming,
+  is the fast-start path), whose rebuilds add generations rather than replacing
+  a name in place — with the caveats §1.2 lists, i.e. a custom image
   Batch does not officially support and an image whose supported lifetime
   Google may end at 60 days from its starting date, which makes the preload a
   thing to **rebuild on a schedule**, not build once; the log sink/exclusion
@@ -670,6 +737,24 @@ What `fugaro init` would create for the VM backend, and how heavy that is:
   rather than bind once; and **disabling then re-enabling Compute fails with
   "currently being deactivated"** until the deactivation finishes, which is a
   retry, not an error.
+
+  **What a destroy leaves behind, for a week.** The stage's two **custom
+  roles** (the reaper's six permissions and the preload builder's) do not go
+  when the root does: a deleted custom role has "7 days to undelete", and
+  until it is permanently deleted it "still counts toward the custom role
+  limit"
+  (cloud.google.com/iam/docs/reference/rest/v1/projects.roles/delete, checked
+  2026-10-16). A destroy-then-re-apply inside that window is therefore an
+  apply against a role id that still exists, not a create of a fresh one —
+  the fix is `gcloud iam roles undelete <role_id> --project=<project>`
+  (cloud.google.com/iam/docs/creating-custom-roles, same date) or a new role
+  id, and both the module's `iam.tf` header and the checklist record it.
+  Whether a create with the same id inside the window is **refused**
+  (ALREADY_EXISTS) is **UNVERIFIED** — the pages read state that the role
+  still exists and counts, not what a create answers; the operator's recovery
+  is the same either way. The module carries no `prevent_destroy` for them,
+  deliberately: they are re-creatable, and a root that cannot be destroyed is
+  worse than this paragraph.
 - **Plain instances:** everything above **plus** an instance template (or a
   generated `instances.insert`), a startup script, a status/timeout watchdog
   and a **reaper** (§3) — because nothing else deletes a leaked VM.
@@ -1591,7 +1676,14 @@ What follows, plainly:
   The reaper reads no secret and needs no Secret Manager, storage or logging
   grant. Task 6 creates the role and grants it; nothing selects the backend
   before the enable task (9), so none of this is reachable in an installation
-  today.
+  today. **Built** (Task 6,
+  `deploy/terraform/gcp/modules/compute/iam.tf`): the custom role is exactly
+  the six permissions above, in a `google_project_iam_custom_role` the reaper
+  account and nobody else holds — never `roles/batch.jobsEditor`, never
+  `roles/compute.instanceAdmin.v1`. `TestComputeReaperRoleIsExactlySix`
+  (`deploy/terraform/terraform_test.go`) holds the list to those six and
+  refuses both built-ins, so widening it is a test failure rather than a
+  silent grant.
 
 **Recommendation (C22): give the launcher `batch.jobsEditor`,
 `serviceAccountUser` scoped to the run-class accounts, and nothing else; if
@@ -1603,7 +1695,28 @@ recommendation takes it (2026-10-15, Check 57a step 9):** a
 `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")`
 was **accepted and read back as written** — so Task 6 should narrow the
 launcher's job-editing grant to Fugaro-shaped job names rather than leave it
-project-wide. **What was measured is the binding's acceptance, not its reach**:
+project-wide. **Built that way** (Task 6,
+`deploy/terraform/gcp/modules/compute/iam.tf`): one
+`roles/batch.jobsEditor` binding per launcher, each with the
+`resource.name.startsWith(...)` condition built from the job prefix the
+module is given (`local.job_name_prefix`), and `serviceAccountUser` granted
+as the cross product of the launchers and the run accounts — actAs on the
+accounts this installation named and on no others, never on the project. The
+module refuses a launcher that is not people, or a group of them
+(`modules/compute/variables.tf`'s `launchers` validation): a `domain:` member
+would be handed both of those grants for every account in the domain, which
+is far wider than the runs bucket's `objectUser` — the grant the installation
+module accepts a `domain:` launcher for.
+`TestComputeLauncherJobsEditorIsConditioned` refuses a second
+`batch.jobsEditor` binding, a binding without the condition, and any
+`compute.instanceAdmin.v1`, `compute.admin`, `editor` or `owner` grant
+anywhere under the module. The other actAs in the module is the preload
+build's: the build step runs as the preload account, so it — not Cloud
+Build's own agent — holds `serviceAccountUser` on the run accounts whose
+names the builder VM is created with
+(`TestComputeThePreloadBuildActsAsTheRunAccountsOnly`); Cloud Build's agent
+holds actAs on the preload account alone, which is what running a build as it
+needs. **What was measured is the binding's acceptance, not its reach**:
 57a-9's purpose was to read *what the sandbox's IAM actually allows*, and **no
 request was ever made under the binding**, so no allow and no deny was ever
 observed — the enforcement below is **inferred from `resource.name`'s
@@ -1618,7 +1731,20 @@ constrain what a Fugaro-shaped job may contain — the launcher can still create
 from another repository's or a teammate's, since those jobs are `fugaro-`named
 too. So the "trusted to a greater degree than before" bullet above stands
 mostly **undone**, and the account split C22 asks for (launcher, reaper and
-run-class accounts kept apart) is what carries the rest. The same shape is to
+run-class accounts kept apart) is what carries the rest. **What the content
+gap leaves open is cost, and that is an accepted risk rather than something
+Task 6 closes:** a launcher who may name any image and any command may also
+ask for the largest machine type the region offers, for GPUs and for any task
+count in a `fugaro-`named job, and nothing in the binding, the module or the
+CLI caps them — the Condition is about `resource.name`, and Batch has no
+per-job spending limit. What caps the bill is the project's own quota: the
+regional CPU, GPU and VM-instance quotas refuse the job rather than running
+it (§1.4, Check 57a step 11), and the installation's budget alert reports
+rather than refuses. The honest statement of a launcher account's blast
+radius on this backend is therefore **"the project's quota"** — larger than a
+launcher's on Cloud Run, and the price of Batch's coarser IAM model. The
+mitigation is C22's account split and a project whose launchers are trusted
+with its quota, not a narrower grant. The same shape is to
 be used for `serviceAccountUser`,
 scoped to the `fugaro-*` run-class accounts. Veto alternative: one
 account for everything, simpler to provision and much harder to reason about —
@@ -1716,9 +1842,10 @@ Offline, following the existing model (`gcp.CheckResources` for Cloud Run):
    allowlist, no socket mount, for a workflow without `docker: true`.
 
 `fugaro doctor` gains the same checks against the live project (the Batch API
-enabled, the SA's grants, the boot image present, the log sink arm) in the
-style of the existing provisioning checks, and `fugaro backends ls` lists
-`cloud-run` and `cloud-batch` with which one the project uses.
+enabled, the SA's grants, the boot image **family** present (§1.2: the runs'
+`bootDisk.image` names the family, not one of its generations), the log sink
+arm) in the style of the existing provisioning checks, and `fugaro backends ls`
+lists `cloud-run` and `cloud-batch` with which one the project uses.
 
 ## 5. The budget
 
@@ -1983,10 +2110,11 @@ need the thing it gates cannot gate it, so this one is split:
   project (step 1 alone uses the *existing* Cloud Run backend, for the
   baseline the 120 s budget is measured against). It is the design's **go/no-go**, and the plan
   makes it Task 0 (§8.1): if it fails, nothing below it is built.
-- **57b — the post-build acceptance run.** Eight steps that only make sense once
-  `backend: cloud-batch` can be enabled, i.e. after the last task of §8.1. They
-  are the check's *acceptance* half, and the design's §4.4 `doctor` gate is what
-  stops anyone running them early.
+- **57b — the post-build acceptance run.** Nine steps that only make sense once
+  `backend: cloud-batch` can be enabled, i.e. after the last task of §8.1 —
+  except step 7, the preload family's rebuild, which needs only the compute
+  root. They are the check's *acceptance* half, and the design's §4.4 `doctor`
+  gate is what stops anyone running them early.
 
 The job JSON the probe submits is **committed with this design**, so 57a is
 reproducible and reviewable rather than improvised at the terminal (the
@@ -2230,7 +2358,7 @@ resources**.
 
 ```bash
 # === Check 57: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
-# step (57a-0, 0b, 0c, 1..12, 57b-1..8, Restore). It is idempotent, and nothing
+# step (57a-0, 0b, 0c, 1..12, 57b-1..9, Restore). It is idempotent, and nothing
 # below the three hard stops runs unless all three pass. ===
 P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and never read from gcloud
 L=us-east5                   # the sandbox installation's region
@@ -3112,10 +3240,30 @@ recipe — the one route it leaves, the gid baked into the image, is untested
 - **A newly created service account is not visible to IAM binding calls for a
   while.** Poll the account, then retry the bindings on "does not exist" —
   provisioning that binds once and gives up is a provisioning that fails on a
-  fresh project (§1.9, Task 6).
+  fresh project (§1.9, Task 6). **Built** (Task 6): the module's bindings are
+  `google_project_iam_member` resources that name the accounts it creates, so
+  Terraform orders the account before the binding — but ordering is not a
+  wait, so the stage also retries: an apply that fails with "Service account
+  … does not exist" waits (15 s, 30 s, 60 s, 120 s), re-plans, and applies
+  what is left, and only when the new plan passes the guard and the grant
+  rules and holds nothing the confirmed plan did not (`computeStage.apply`,
+  `TestComputeStageRetriesIAMPropagation`). Which message GCP gives for the
+  gap is what a live run (57b) has to confirm rather than a fake; a gap
+  reported in other words fails the stage, and rerunning it applies the rest.
+  What Task 6 also retries is the call that follows the apply: starting the preload
+  rebuild, whose scheduler agent's binding on the preload account is seconds
+  old (`infra.RunSchedulerJob`: a 403 is retried for about a minute, a 404 —
+  the job is not there — is not retried at all, and a refusal that outlasts
+  the retries is reported with the one `gcloud scheduler jobs run` line that
+  starts the job by hand).
 - **Disabling Compute and re-enabling it fails with "currently being
   deactivated"** until the deactivation completes. Retry for minutes; it is not
-  an error to work around (§1.9, Task 6).
+  an error to work around (§1.9, Task 6). **Built** (Task 6,
+  `internal/infra/apis.go`): `EnableService` retries the enable call itself on
+  that answer — the 400 whose message is "is currently being deactivated" —
+  for about two minutes before it reports the failure, and
+  `internal/gcpfake/serviceusage.go` answers it so the retry is tested
+  (`TestEnableServiceWaitsOutADeactivation`) rather than merely written.
 - **The preload base image family lives in project `batch-custom-image`**
   (family `batch-cos-stable-official`), **not** in the installation's project —
   the check read the family from that project, and a Task 6 implementation that
@@ -3209,8 +3357,16 @@ named individually.
 
 ### 57b. The post-build acceptance run (after the enable task)
 
-These eight need `backend: cloud-batch` selectable, so they run **last**
-(§8.1's task 9 is the enable task and task 10 is this section's second half).
+These nine need `backend: cloud-batch` selectable, so they run **last**
+(§8.1's task 9 is the enable task and task 10 is this section's second half) —
+except **step 7**, which needs only the compute root applied (Task 6's stage, or
+its own apply) and is worth running as soon as that is done, since the runs'
+boot reference depends on the image family it checks. Two of these steps are
+where the UNVERIFIEDs of §1.2 and §1.7 are settled: **step 7** for whether
+Compute Engine refuses to delete a superseded generation (§1.2), and **step 1**
+for whether the module's deny-all ingress rule leaves a run's VM able to report
+to the Batch agent (§1.7) — a real run is what tests that, so it takes the
+backend being enabled.
 They are the design's acceptance criteria, not its go/no-go.
 
 **These runs are the installation's jobs, and their labels are the
@@ -3241,7 +3397,14 @@ restore cannot find.
    set to `cloud-batch` and the workflow's `docker: true` (§4.2, C16), where the
    task's script runs a container. **FACT:** the run reached a terminal state,
    the container ran, and the runner's own uid and group (a root container
-   changes them, §2.2).
+   changes them, §2.2). **This is also the step that answers §1.7's UNVERIFIED:**
+   the module ships a deny-all ingress rule on the run-class accounts, and no
+   Batch document read for Task 6 states whether a job's VM needs any inbound
+   path for the Batch agent's task reporting. If this run does **not** reach a
+   terminal state with the rule in place, narrow the rule to the network's
+   internal range (10.128.0.0/9) and record that it was needed; if it does, the
+   rule stands as built. **FACT:** whether the run completed with the rule in
+   place, and the rule's final source ranges.
 2. **`fugaro logs`.** The run's lines come back through the Fugaro log view
    (the sink arm of step 10 applied), and the same lines are **absent** from
    `_Default`. **FACT:** entries found, and the `_Default` result.
@@ -3275,7 +3438,37 @@ restore cannot find.
    `OnCloudRun` and treat "not Cloud Run" as "not in the cloud". **FACT:**
    whether all four checks were closed without the marker, and which of them the
    run visibly hit.
-7. **The two status measurements the reaper decides by.** This is the step that
+7. **The preload family's rebuild, and what deleting a superseded generation
+   does.** Task 6's own acceptance, and the step that answers §1.2's
+   UNVERIFIED. The stage started the first build itself, so start here: the
+   family `fugaro-preload-<sha256(base_image)[:8]>` exists, holds one
+   generation labelled `fugaro=managed` with `base-release`, and
+   `gcloud compute images describe-from-family <family>` names it. Then, in
+   order: **(a)** re-run the schedule by hand
+   (`gcloud scheduler jobs run <preload_scheduler_job> --location <region>`)
+   and confirm the build **builds nothing** — the newest generation is this
+   build's own, matches the family's current release and is inside
+   `preload_refresh_days`, so the run is one API call and no image. **(b)**
+   Make the newest generation read as stale — `gcloud compute images update
+   <name> --update-labels=base-release=stale`, in the sandbox project only —
+   and re-run the schedule: a **new generation** appears in the same family,
+   the old one is gone, and `describe-from-family` names the new one. This is
+   the family handover §1.2 rests on, and it is what proves the runs' boot
+   reference (`projects/<project>/global/images/family/<family>`, Task 7)
+   never points at nothing. **(c)** With a real run's VM **alive** on the
+   family, force one more replacement (the same relabel) and read whether the
+   delete of the superseded generation is **accepted** — this is §1.2's
+   UNVERIFIED, an earlier draft asserted the API refuses it, and nothing in
+   the build depends on either answer (the sweep's deletes are best-effort and
+   the family serves its newest generation regardless): a refusal leaves the
+   image for the next weekly run, an acceptance means the old generation goes
+   while its VMs keep running off their own boot disks. **FACT:** the family
+   and the generation names before and after each step; whether (a) built
+   anything; whether (b)'s handover left the family serving; whether (c)'s
+   delete was refused or accepted, with the job's state at the time; and
+   whether the run's VM was still alive afterwards.
+
+8. **The two status measurements the reaper decides by.** This is the step that
    answers what §3.4's Built note has to mark **UNVERIFIED** today, and it needs
    no Fugaro change: describe a job while it is running
    (`gcloud batch jobs describe RUN --format=json`) and read two fields.
@@ -3299,7 +3492,7 @@ restore cannot find.
    just-scheduled job from being deleted for its queue wait. **FACT:** per
    state, whether a job-level event exists, the time it carries, and the
    `runDuration` read against the clock.
-8. **The largest `computeResource` that still schedules on `e2-standard-4`.**
+9. **The largest `computeResource` that still schedules on `e2-standard-4`.**
    The job a Fugaro run creates asks the task for a **share of the machine
    type**, not the whole of it: `taskSpec.computeResource` is half the type's
    vCPUs and a quarter of its memory (2000m/4096MiB on `e2-standard-4`), because
@@ -3332,7 +3525,12 @@ for each 57a-8 and 57b-4 path; the IAM bindings of 57a-9; the raw log entry of
 57a-10; the injected-signal values and the metadata answer of 57a-12; the job
 name **and the `fugaro_run` label value** of every 57b run (the Restore needs
 both: the name for the job, the label value for its VMs); which branch 57a-0b
-took for egress; and whether `fugaro logs` found the Batch run's lines.
+took for egress; whether `fugaro logs` found the Batch run's lines; whether a
+run reached a terminal state with the deny-all ingress rule in place (§1.7's
+UNVERIFIED, 57b-1); and the preload family's generation names before and after
+each rebuild of 57b-7, whether the handover left the family serving, and
+whether the delete of a superseded generation was refused or accepted while a
+run's VM was alive off it (§1.2's UNVERIFIED).
 
 **Paste back:** the FACT lines, verbatim, plus any correction the run found and
 **57a's go/no-go: build the VM backend only if 57a-2 or 57a-3's median is at
@@ -3685,6 +3883,92 @@ senior reviewer before merge, not just the normal one.
    `fugaro-ghcr`, not the `fugaro-base` constant); the NAT/router; and the
    sink arm of Task 4. (§7.2's setup findings are this task's input list.)
    **[review]**
+   **Built** (Task 6, this branch): the root is
+   `deploy/terraform/gcp/roots/compute` over
+   `deploy/terraform/gcp/modules/compute` (the APIs, the three accounts and
+   their roles, the NAT and router on the network and subnetwork named
+   explicitly, the deny-all ingress rule on the run-class accounts (§1.7),
+   the preload pipeline and its schedule — whose rebuild decides
+   from the family's newest generation, its own `base-release` label and its
+   creation date rather than from the pin-derived name, so a family roll or an
+   image past `preload_refresh_days` is replaced and only a current in-window
+   generation is left alone: the new generation is created **before** anything
+   is deleted, the family serves the newest one the moment it exists, and the
+   superseded ones are swept afterwards, which is what makes a rebuild leave no
+   window with no image to boot), the Go-side contract is
+   `internal/infra/compute.go` (the spec, the tfvars, the outputs, the run
+   accounts read out of the project by their display-name mark, the image
+   name's derivation, the two retries), and the stage is
+   `internal/cli/init_compute.go`, registered by
+   `internal/cli/init_stages.go` only when `--provision-batch` is given and
+   registered `noYes` in `internal/initflow/stage.go`, so `--yes` never
+   covers it: it is confirmed by the project's name typed at a real terminal,
+   like the project's creation and the secrets. It is a root, a workdir and a
+   state prefix of its own (`fugaro/compute`), so the installation's tfvars,
+   imports and saved plan are never rewritten by it, every apply passes
+   `tf.Guard` with `--allow-delete`, and an empty plan is "No changes" rather
+   than an apply — the stage is idempotent to rerun. **The root is a new
+   directory under `deploy/terraform/gcp/roots/`, and CI's `terraform` job
+   names the roots it validates and tests one by one
+   (`.github/workflows/ci.yml`, `for r in ...`): a Fugaro run cannot push a
+   workflow change, so the one-word addition that puts `compute` in that list
+   is staged as `docs/pending-workflows/ci.yml` for the owner to copy in
+   (that directory's README), and `images/cloudbuild_test.go`'s
+   `TestCIWorkflowTestsEveryTerraformRoot` reads the staged copy the same way
+   it reads `images.yml`'s — until the copy lands, CI checks the root's files
+   through `terraform fmt`, `tflint`, `scan.sh` and the Go-side pins, but does
+   not run its `validate` or its seventeen mock-provider runs.** Image
+   streaming is **not** enabled (C4: the preloaded boot image is the
+   fast-start path, and a Docker run's `options` needs streaming off), so
+   `containerfilesystem` is not among the APIs it enables. The preload
+   builder's custom role is the build's own calls, which is a longer list than
+   its four `gcloud` calls suggest — a
+   create is checked argument by argument, so the boot disk
+   (`compute.disks.create`), the interface on the named subnetwork
+   (`compute.subnetworks.use`), the startup script
+   (`compute.instances.setMetadata`), the labels, the run account the VM runs
+   as and the boot image are each their own permission — and each of those
+   calls then WAITS on an operation whose read is itself a permission
+   (`compute.zoneOperations.get` for the zonal calls on the instance and its
+   disk, `compute.globalOperations.get` for the image calls, images being
+   global resources: an image create without it IS created and the call still
+   fails, and the sweep's delete fails the same way into its `|| true`) — and
+   it holds no instance or image admin role and nothing that could create a
+   job or a second VM. `setMetadata` is the one permission there wider than
+   the build's use of it (it is also how SSH keys reach a VM) and it is
+   deliberate and bounded rather than dropped: a builder VM with no startup
+   script pulls nothing, so the build has no version of itself without it, and
+   its only holder is the preload account, which nothing but the scheduled
+   rebuild and its Cloud Build step runs as. Two things about the builder VM
+   are recorded here as **follow-ups, not fixes** — both from the independent
+   review of Task 6, and neither a blocker. **It boots as one of the run
+   accounts** (`preload.tf`'s `RUN_ACCOUNT`, `sort(run_accounts)[0]`) with
+   `--scopes=cloud-platform`, so the identity that pulls the base image is
+   also an account that holds that repository's secrets and its runs bucket
+   prefix; a dedicated pull-only account — `artifactregistry.reader` on the
+   one repository and nothing else — would be least privilege. It is not an
+   escalation of what the installation already hands out (a launcher holds
+   actAs on every run-class account and can run an arbitrary container as one
+   through Batch, §3.7), and it needs no interface change to close, which is
+   why it is a follow-up rather than a change in this task. **And the `EXIT`
+   trap is not the last word on the builder's lifetime**: Cloud Build's own
+   `timeout` (1800 s, `preload.tf`) kills the step's process tree when a build
+   overruns, and a SIGKILL runs no trap at all, so a build that times out can
+   leave its builder VM running until the next scheduled build's step 3 finds
+   it — same name, same `fugaro=managed` label — and deletes it. The leak is
+   bounded by the schedule rather than permanent, which is why it is accepted:
+   the alternative is a second sweeper for a case one build a week clears.
+   `TestComputePreloadBuilderRoleAreExactlyTheBuild` pins the list, so
+   widening it is a test failure. The installation's `operators` hold actAs on
+   the preload account and nothing else here: applying the root creates the
+   rebuild's Scheduler job, whose OAuth token is minted from that account, and
+   it is the same grant the installation module makes on its own scheduler
+   account. What it does not do, by design: no secret is
+   handled, the installation's own root and the belong installation are never
+   touched, and nothing selects the backend — `backend: cloud-batch` stays
+   refused until the enable task (9). **The live step is the owner's**: the
+   code is built and tested against the fakes only, the `[review]` above
+   stands, and Check 57b (task 10) is what runs it against a real project.
 7. **The job definition, `Launch` and the socket.** **[review]** The job JSON
    (labels in both fields, `secretVariables`, `maxRetryCount: 0`,
    `maxRunDuration`, `logsPolicy`, `blockProjectSshKeys`, **`network` AND
@@ -3737,8 +4021,8 @@ senior reviewer before merge, not just the normal one.
 8. **Config, `validate`, `doctor`, `backends ls`** — the plumbing for §4, with
    `cloud-batch` still refused. `doctor`'s live checks gain what Task 6 has to
    satisfy and 57a sharpened (§4.4): the **Compute and Batch APIs enabled**,
-   the preload image present, the job JSON's network/subnetwork named, the
-   sink arm applied, and the IAM as the Condition writes it — and, because a
+   the preload image **family** present, the job JSON's network/subnetwork
+   named, the sink arm applied, and the IAM as the Condition writes it — and, because a
    fresh account's bindings are not visible immediately, a check that reads an
    IAM binding must not read a just-created project's propagation gap as a
    missing grant.
@@ -3814,7 +4098,7 @@ reasoning lives; this table is the checklist.
 | C16 | The Docker key | `docker: true` (generic-tool §1's name) | `runtime: docker` (a second name for the same thing); or no key (every workflow gets a socket) |
 | C17 | What `compute_usd` covers | The VM's vCPU/memory; disk and NAT named as excluded | Fold disk/NAT in (a bigger change to the report shape) |
 | C18 | When to build | After the pre-build probe, **Check 57a** (which needs no Fugaro change); the fake-conformance task (Task 2) and the cost and log tasks may land before it answers, but the enable task is last (§8.1) | Build before the measurement (risks building the wrong substrate); or build the backend before logs, cost and the reaper exist (a run whose output lands in `_Default`, uncharted and unbilled) |
-| C19 | The preloaded image | **Yes — C4's measurement says so (66 s against 97 s streamed and 145 s plain)**: a script in `fugaro init`'s Batch stage, one image per base version, **rebuilt on a schedule** (the 60-day supported-lifetime caveat), with the base family read from Google's `batch-custom-image` project and the AR reader granted on the repository the pin names | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd, and it cannot carry the socket) — the alternative C4's measurement rejected, and 57a-3b is the build that decided it |
+| C19 | The preloaded image | **Yes — C4's measurement says so (66 s against 97 s streamed and 145 s plain)**: a committed script (`preload.sh`) run by Cloud Build as a narrow account and started by a Cloud Scheduler job, one image **family** per base version whose generations a rebuild replaces **creating before deleting** (so the family always serves one), **rebuilt on a schedule** (the 60-day supported-lifetime caveat), with the base family read from Google's `batch-custom-image` project and the AR reader granted on the repository the pin names | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd, and it cannot carry the socket) — the alternative C4's measurement rejected, and 57a-3b is the build that decided it |
 | C20 | Phase order | Independent of the project-centric phases; profiles (§4.3) adopted when phase 3 lands | Wait for phase 3 (cleaner, but delays a capability the owner needs) |
 | C21 | The service account's granularity | Keep the (`profile`, `account`) account and accept project-centric D4's cross-repository loss **unchanged** on the VM backend too (§3.1) | A per-repository account, expressible on Batch because every job names its own `allocationPolicy.serviceAccount`: it buys back 0.7.0's bucket and secret boundary for the repositories that opt in, at the per-repository weight project-centric removed, and it makes "which backend" a decision with a security consequence |
 | C22 | Launcher and reaper IAM | The launcher gets `batch.jobsEditor` **narrowed by an IAM Condition to Fugaro-shaped job names** (measured to be accepted and returned as written, 57a-9) plus `serviceAccountUser` on the run-class accounts and nothing else, in its own account if the project can carry one; the reaper gets a **separate** account carrying the six permissions §3.7 lists — the destructive, project-wide `batch.jobs.delete` and `compute.instances.delete` among them, and not the two built-in roles Google names for the same calls, which are far wider (§3.7) | One account for everything (simpler to provision, and it makes the reaper's destructive power ambient — rejected); a project-wide `batch.jobsEditor` for the launcher (simplest to provision, and it lets the launcher edit any job in the project — rejected now that the Condition is known to be accepted, 57a-9; its reach is inferred, §3.7/§9) |

@@ -263,7 +263,7 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 // nothing for any of those and would sit QUEUED. Check 57a's submissions asked
 // for exactly these shares on that type (2000m/4096MiB, design §7.2, the
 // committed job JSON) and every one of them scheduled, which is the whole of
-// the evidence there is: **Check 57b-8 is what measures the largest request
+// the evidence there is: **Check 57b-9 is what measures the largest request
 // that actually schedules on `e2-standard-4`**, and these two numbers move
 // only when it says they can.
 //
