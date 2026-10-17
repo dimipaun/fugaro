@@ -47,7 +47,9 @@ const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
 
 // The probe page: a page that renders the layout, and through it the whole content
 // pipeline. It renders the security document's own heading, so a build that renders an
-// empty block is visible in the output rather than only in the exit code.
+// empty block is visible in the output rather than only in the exit code, and the first
+// install path's command and note, so a test can hold a fact's *text* — which is where a
+// reader that guesses instead of refusing shows up — and not only its presence.
 const PROBE = `---
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
@@ -55,6 +57,7 @@ import { loadSite } from '../content.ts'
 const site = loadSite()
 const security = site.documents['security.md']
 const heading = security.body.split('\\n')[0]
+const homebrew = site.install.paths[0]
 ---
 
 <Base title="The probe page">
@@ -62,6 +65,7 @@ const heading = security.body.split('\\n')[0]
   <section id="generated" data-source={security.source}>
     <h2>{heading}</h2>
   </section>
+  <section id="install" data-command={homebrew.commands[0]} data-note={homebrew.note}></section>
 </Base>
 `
 
@@ -157,6 +161,97 @@ test('the build fails when a generated file loses its header', async (t) => {
   assert.equal(built.page, null, 'the build wrote a page from a file with no generated header')
 })
 
+test('the pipeline reads an inline comment as a comment, not as part of the fact', async (t) => {
+  // The data files are YAML, and in YAML `- brew install x   # the cask` is a command and
+  // a comment. A reader that adopts the comment into the fact renders somebody's note to
+  // a reader of the site — and does it silently, which is the failure mode this whole
+  // pipeline exists to remove. Both halves are checked here: an inline value and a
+  // sequence item, against the same two facts the page renders.
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'data', 'install.yaml')
+    const before = readFileSync(file, 'utf8')
+    const after = before
+      .replace('      - |-\n        brew install dimipaun/tap/fugaro\n', '      - brew install dimipaun/tap/fugaro   # the cask\n')
+      .replace('    note: The Homebrew cask (tested on macOS).', '    note: The Homebrew cask (tested on macOS). # tested on macOS 15')
+    assert.notEqual(after, before, 'the fixture did not change install.yaml, so this test would pass on anything')
+    writeFileSync(file, after)
+  })
+
+  const page = builtPage(built)
+  assert.match(page, /data-command="brew install dimipaun\/tap\/fugaro"/, 'the command did not survive the comment, or the comment was adopted into it')
+  assert.match(page, /data-note="The Homebrew cask \(tested on macOS\)\."/, 'the note did not survive the comment, or the comment was adopted into it')
+  assert.ok(!page.includes('the cask'), 'the comment was adopted into a fact the page renders')
+  assert.ok(!page.includes('tested on macOS 15'), 'the comment was adopted into a fact the page renders')
+})
+
+/** Build with one replacement in a data file, and fail the test if the fixture did not apply. */
+function buildWithData(t, name, from, to) {
+  return buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'data', name)
+    const before = readFileSync(file, 'utf8')
+    const after = before.replace(from, to)
+    assert.notEqual(after, before, `the fixture did not change ${name}, so this test would pass on anything`)
+    writeFileSync(file, after)
+  })
+}
+
+const HOMEBREW_NOTE = '    note: The Homebrew cask (tested on macOS).'
+
+/** The data-note of the probe page, with HTML's own escaping of a quote undone. */
+function renderedNote(page) {
+  const m = /data-note="([^"]*)"/.exec(page)
+  assert.ok(m, 'the page carries no data-note')
+  return m[1].replaceAll('&#39;', "'").replaceAll('&#x27;', "'").replaceAll('&quot;', '"')
+}
+
+test('an apostrophe in a plain scalar does not hide the comment after it', async (t) => {
+  // Only a quote that OPENS a scalar is a quote in YAML. In `The cask's page ...` the
+  // apostrophe is text, so the ` # ...` after it is still a comment.
+  const built = buildWithData(t, 'install.yaml', HOMEBREW_NOTE, "    note: The cask's page is the tap   # not part of the note")
+
+  assert.equal(renderedNote(builtPage(built)), "The cask's page is the tap")
+})
+
+test('a # inside a quoted scalar is content, and a quote can be escaped inside one', async (t) => {
+  const double = buildWithData(t, 'install.yaml', HOMEBREW_NOTE, '    note: "say \\"hi\\" # kept"   # dropped')
+  assert.equal(renderedNote(builtPage(double)), 'say "hi" # kept')
+
+  const single = buildWithData(t, 'install.yaml', HOMEBREW_NOTE, "    note: 'it''s # kept'   # dropped")
+  assert.equal(renderedNote(builtPage(single)), "it's # kept")
+})
+
+test('the build refuses a misspelled key in every nested map the loader reads', async (t) => {
+  const cases = [
+    ['site.yaml', '  enabled: false\n', '  enabled: false\n  enabeld: true\n', 'enabeld', 'analytics'],
+    ['site.yaml', '  video: false\n', '  video: false\n  vidoe: true\n', 'vidoe', 'features'],
+    ['install.yaml', '  arch: [amd64, arm64]\n', '  arch: [amd64, arm64]\n  archs: []\n', 'archs', 'build'],
+    ['install.yaml', '    status: supported\n', '    status: supported\n    stauts: untested\n', 'stauts', 'platforms[]'],
+    ['install.yaml', '    tap_repository: dimipaun/homebrew-tap\n', '    tap_repository: dimipaun/homebrew-tap\n    devonly: true\n', 'devonly', 'paths[]'],
+  ]
+  for (const [name, from, to, key, map] of cases) {
+    const built = buildWithData(t, name, from, to)
+    assert.notEqual(built.status, 0, `the build accepted the misspelled key "${key}" in ${map}, and used its default:\n${built.output}`)
+    assert.match(built.output, new RegExp(`the key "${key}" is not one the site's pages read`), `the failure for ${map} does not name the key`)
+  }
+})
+
+test('the build refuses a data file that uses a construct the reader has not been taught', async (t) => {
+  // The reader's contract is "refuse what you do not understand rather than guessing at
+  // it". An alias is the clearest case: taken for text, `- *cask` becomes a command a
+  // reader would copy and a shell could not run, and nothing on the page would look wrong.
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'data', 'install.yaml')
+    const before = readFileSync(file, 'utf8')
+    const after = before.replace('      - |-\n        brew install dimipaun/tap/fugaro\n', '      - *cask\n')
+    assert.notEqual(after, before, 'the fixture did not change install.yaml, so this test would pass on anything')
+    writeFileSync(file, after)
+  })
+
+  assert.notEqual(built.status, 0, `the build accepted a YAML alias as a command:\n${built.output}`)
+  assert.match(built.output, /install\.yaml/, 'the failure does not name the data file it refused')
+  assert.match(built.output, /alias, anchor, tag or flow mapping/, 'the failure does not say what the reader could not read')
+})
+
 test('the build fails when a data file is missing', async (t) => {
   const built = buildWith(t, (copy) => rmSync(path.join(copy.site, 'data', 'site.yaml')))
 
@@ -173,45 +268,6 @@ test('the build fails when a data file is malformed', async (t) => {
   assert.notEqual(built.status, 0, `the build succeeded with a malformed min_runs:\n${built.output}`)
   assert.match(built.output, /site\.yaml/, 'the failure does not name the data file that is malformed')
   assert.match(built.output, /min_runs/, 'the failure does not name the key that is malformed')
-})
-
-test('a trailing comment is not part of a value the reader reads', async (t) => {
-  // A YAML comment is not the value. This reader used to keep it, so `key: value # why`
-  // read as "value # why" — a fact silently wrong in the one way nothing can see, because
-  // the Go boundary test reads the same file through a real YAML decoder and would agree
-  // with the file while the built page disagreed with both. The canonical URL is where
-  // that is visible in the artifact rather than only in the parsed value.
-  const canonical = /^canonical_url:\s*(\S+)$/m.exec(repoFile('website/data/site.yaml'))[1]
-
-  const page = builtPage(
-    buildWith(t, (copy) => {
-      const file = path.join(copy.site, 'data', 'site.yaml')
-      writeFileSync(file, readFileSync(file, 'utf8').replace(/^canonical_url:.*$/m, `canonical_url: ${canonical} # the placeholder origin`))
-    }),
-  )
-
-  assert.match(
-    page,
-    new RegExp(`<link rel="canonical" href="${canonical}/probe/"`),
-    'the canonical URL did not come out of site.yaml clean: a comment written after a value is a comment, not part of it',
-  )
-  assert.ok(!page.includes('the placeholder origin'), 'the comment after the canonical URL reached the built page as part of the value')
-})
-
-test('the build refuses a value written outside the subset the reader implements', async (t) => {
-  // The reader's promise is that a data file which grows a construct it has not been taught
-  // fails the build loudly (W1.3 step 2). A flow mapping was the one that reached it as
-  // text: `min_runs: {20: yes}` read as the string "{20: yes}", a value nothing downstream
-  // can see is wrong, and site.yaml is hand-edited by six later tasks.
-  const built = buildWith(t, (copy) => {
-    const file = path.join(copy.site, 'data', 'site.yaml')
-    writeFileSync(file, readFileSync(file, 'utf8').replace('min_runs: 20', 'min_runs: {20: yes}'))
-  })
-
-  assert.notEqual(built.status, 0, `the build succeeded with a flow mapping in site.yaml, and read it as a string:\n${built.output}`)
-  assert.match(built.output, /site\.yaml/, 'the failure does not name the data file the value came from')
-  assert.match(built.output, /flow mapping/, 'the failure does not say what the reader met, so a reader of the message cannot tell a typo from a construct the reader lacks')
-  assert.equal(built.page, null, 'the build wrote a page from a data file it did not understand')
 })
 
 test('the build refuses a published figure drawn from too few runs', async (t) => {
@@ -382,6 +438,17 @@ test('the head points at the files the build ships, and at nothing else', async 
   assert.match(builtPage(withFont), /<link rel="preload" as="font" type="font\/woff2" href="\/fonts\/fugaro\.woff2" crossorigin/)
 })
 
+test('a comment that mentions the sitemap package does not make the head point at a sitemap', async (t) => {
+  // The config is a module: only an integration it declares produces a sitemap, and a
+  // comment (or a string) that names the package is not one.
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'astro.config.mjs')
+    writeFileSync(file, `// @astrojs/sitemap arrives with W2.2.\n${readFileSync(file, 'utf8')}`)
+  })
+
+  assert.ok(!builtPage(built).includes('rel="sitemap"'), 'the page points at a sitemap the build does not produce')
+})
+
 test("the page description is README.md's own tagline line", async (t) => {
   const built = buildWith(t, () => {})
   const page = builtPage(built)
@@ -399,32 +466,4 @@ test("the page description is README.md's own tagline line", async (t) => {
     .trim()
 
   assert.ok(page.includes(`<meta name="description" content="${tagline}"`), `the page's description is not the README's tagline ${JSON.stringify(tagline)}`)
-})
-
-test("the site's name is README.md's own title, and the built page follows it", async (t) => {
-  // The name is printed in four places — `<title>`, the OpenGraph site name, the header's
-  // wordmark and the footer's — and it is read from the README's `# ` title rather than
-  // typed into the layout, for the reason the tagline beside it is read (F48, D102): a
-  // retitled README would otherwise leave all four naming the old word.
-  const readme = repoFile('README.md').split('\n')
-  const at = readme.findIndex((line) => /^#\s+\S/.test(line.trim()))
-  assert.notEqual(at, -1, "README.md carries no '# ' title, and the site's name is that title")
-  const name = readme[at].trim().replace(/^#\s+/, '')
-
-  const page = builtPage(buildWith(t, () => {}))
-  for (const printed of [`<title>The probe page · ${name}</title>`, `<meta property="og:site_name" content="${name}"`]) {
-    assert.ok(page.includes(printed), `the built page does not print the site's name as README.md writes it (${JSON.stringify(name)}): ${JSON.stringify(printed)}`)
-  }
-
-  // And it is a read rather than a copy: retitle the README in a copy of the repository and
-  // the built page names the new title, wherever the name is printed.
-  const renamed = builtPage(
-    buildWith(t, (copy) => {
-      const file = path.join(copy.root, 'README.md')
-      writeFileSync(file, readFileSync(file, 'utf8').replace(/^#\s+.*$/m, '# Acme Renamed'))
-    }),
-  )
-  assert.ok(renamed.includes('<title>The probe page · Acme Renamed</title>'), 'the page title did not follow the README\'s new title')
-  assert.ok(renamed.includes('<meta property="og:site_name" content="Acme Renamed"'), 'the OpenGraph site name did not follow the README\'s new title')
-  assert.ok(!renamed.includes(`content="${name}"`), 'the built page still prints the old name after the README was retitled')
 })

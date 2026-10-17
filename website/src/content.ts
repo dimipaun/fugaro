@@ -49,7 +49,8 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { spawnSync } from 'node:child_process'
 
 /**
  * The site's own directory: `website/`.
@@ -183,17 +184,51 @@ const MAPPING_LINE = /^([^:#\s][^:#]*):(\s.*|)$/
 // A block scalar's indicator: `|` or `>` with an optional chomping sign.
 const BLOCK_SCALAR = /^[|>][-+]?$/
 
-// The start of a comment inside a plain scalar: a `#` that opens the value or follows
-// whitespace. YAML reads everything from there to the end of the line as a comment, and so
-// does this reader (see `stripComment` below) — `#` inside a word (`a#b`) is part of it.
-const PLAIN_COMMENT = /(?:^|\s)#/
-
-// The node starts this reader does not implement: a flow mapping (`{`), an anchor (`&`), an
-// alias (`*`), a tag (`!`), a directive (`%`) and the reserved `@`. Each one opens something
-// in YAML — `scalar()` refuses them rather than returning the line as a string, because a
-// value that is silently the text of a construct is a value nothing downstream can see is
-// wrong (the loud-failure rule this reader is written to).
-const UNIMPLEMENTED_NODE = /^[{}&*!%@]/
+/**
+ * A value line with its trailing `#` comment removed.
+ *
+ * The data files are YAML, and in YAML `- brew install dimipaun/tap/fugaro   # the cask`
+ * is a command and a comment, not a command with a comment glued to the end of it. This
+ * reader reads it the same way rather than adopting the comment into the fact: a fact that
+ * silently carries somebody's note is a fact the site renders wrongly, and it is the same
+ * class of defect as a missing file — except that nothing fails.
+ *
+ * Two of YAML's own rules are kept, and both matter here: a `#` starts a comment only at
+ * the start of the text or after whitespace, so a URL's fragment (`…#anchor`) is not one,
+ * and a `#` inside a quoted scalar is not one either, so a value may contain the character
+ * by quoting it. Block scalars never come through here: their lines are content, and
+ * install.yaml's verification commands carry a `# macOS` and a `# Linux` that are part of
+ * the command a reader copies.
+ */
+function stripComment(text: string): string {
+  // YAML's rule: a quote is a quote only where it OPENS a scalar. In a plain scalar an
+  // apostrophe is text (`the cask's page`), so it protects nothing. A flow sequence opens
+  // a scalar after its `[` and after each `,`, so a quote there opens one too.
+  const flow = text.startsWith('[')
+  let quote = ''
+  let opens = true
+  for (let at = 0; at < text.length; at++) {
+    const ch = text[at]
+    if (quote !== '') {
+      if (quote === '"' && ch === '\\') at++
+      else if (ch === quote && quote === "'" && text[at + 1] === "'") at++
+      else if (ch === quote) {
+        quote = ''
+        opens = false
+      }
+      continue
+    }
+    if ((ch === '"' || ch === "'") && opens) {
+      quote = ch
+      continue
+    }
+    if (ch === '#' && (at === 0 || /\s/.test(text[at - 1]))) return text.slice(0, at).trimEnd()
+    // Whether the next character may open a quoted scalar: at the start, and in a flow
+    // sequence after `[` or `,` (spaces between do not change it).
+    if (!/\s/.test(ch)) opens = flow && (ch === '[' || ch === ',')
+  }
+  return text
+}
 
 function parseYAML(raw: string, file: string): Value {
   const lines = splitLines(raw)
@@ -210,47 +245,34 @@ function parseYAML(raw: string, file: string): Value {
     while (i < lines.length && lines[i].blank) i++
   }
 
-  // A plain scalar ends where a comment starts: a `#` that opens the value or follows
-  // whitespace, with everything after it not part of the value. This reader used to keep
-  // the whole line, so `secondary_domain: none # here` read as "none # here" — a value
-  // wrong in the one way nothing can see, because the Go boundary test reads the same file
-  // through a real YAML decoder and would agree with the file while the site's own pages
-  // disagreed with both. site.yaml is hand-edited by six later tasks, and a commented
-  // `repository:` would have become a silently wrong URL whose host still passed the host
-  // checks. A value that is *only* a comment (`features: # the flags`) comes back empty,
-  // which is what it is in YAML: the caller then looks for the block on the lines below and
-  // refuses the key loudly when there is none, rather than reading the comment as the value.
-  //
-  // Block scalars are not affected, and that is why this rule is here rather than in the
-  // line loop above: inside a block scalar a `#` is content (install.yaml's verification
-  // commands carry `# macOS` and `# Linux`), and a value never reaches `scalar()` with one.
-  const stripComment = (text: string): string => {
-    const comment = PLAIN_COMMENT.exec(text)
-    if (comment === null) return text
-    return text.slice(0, comment.index + comment[0].length - 1).trim()
-  }
-
   const scalar = (text: string, at: Line): Scalar => {
-    // A construct outside the subset, refused by name rather than returned as text: the
-    // reader's promise is that a data file which grows something it has not been taught
-    // fails the build loudly (W1.3 step 2).
-    const unimplemented = UNIMPLEMENTED_NODE.exec(text)
-    if (unimplemented) {
-      fail(
-        `the value ${JSON.stringify(text)} starts with ${JSON.stringify(unimplemented[0])}, which opens a node this reader does not implement (a flow mapping, an anchor, an alias, a tag, a directive or a reserved character)`,
-        at,
-      )
+    text = stripComment(text).trim()
+    // Quoted scalars first: quoting is how a value carries a `#` or a `: ` that would
+    // otherwise be a comment or a nested mapping. Everything below this is a plain scalar.
+    if (text.startsWith('"') || text.startsWith("'")) {
+      if (text.length < 2 || !text.endsWith(text[0])) {
+        fail(`the quoted scalar ${JSON.stringify(text)} does not close on this line`, at)
+      }
+      const inner = text.slice(1, -1)
+      return text[0] === '"' ? inner.replace(/\\(["\\])/g, '$1') : inner.replaceAll("''", "'")
     }
     if (text.startsWith('[')) {
       if (!text.endsWith(']')) fail(`the flow sequence ${JSON.stringify(text)} does not close on this line`, at)
       const inner = text.slice(1, -1).trim()
       return inner === '' ? [] : inner.split(',').map((part) => scalar(part.trim(), at))
     }
-    if (text.startsWith('"') || text.startsWith("'")) {
-      if (text.length < 2 || !text.endsWith(text[0])) {
-        fail(`the quoted scalar ${JSON.stringify(text)} does not close on this line`, at)
-      }
-      return text.slice(1, -1)
+    // The constructs this reader has not been taught, refused by name rather than read as
+    // the string they look like: an alias, an anchor and a tag are YAML's own references
+    // and this reader resolves none of them, and a flow mapping is a shape it does not
+    // parse. Each of them, taken for text, is a fact that renders as `*defaults` or
+    // `{a: 1}` on a page — which is why the contract is "refuse", not "guess".
+    if (/^[*&!{}]/.test(text)) {
+      fail(`the value ${JSON.stringify(text)} is a YAML alias, anchor, tag or flow mapping, and this reader reads none of them`, at)
+    }
+    // A plain scalar cannot carry a nested mapping: `key: a: b` is a YAML error, and this
+    // reader refuses it rather than reading the value as the string "a: b".
+    if (/:\s/.test(text)) {
+      fail(`the value ${JSON.stringify(text)} carries ": ", which makes it a mapping rather than a value; quote it if it is meant as text`, at)
     }
     if (text === 'true') return true
     if (text === 'false') return false
@@ -303,12 +325,10 @@ function parseYAML(raw: string, file: string): Value {
 
   // The value on the right of a `key:` line: a scalar on the line itself, a block scalar,
   // or a nested block on the lines below it.
-  const readValue = (rawRest: string, at: Line, parentIndent: number): Value => {
-    // Every value of a `key: value` line and of a sequence item passes through here, so
-    // this is the one place a comment has to come off — including one written after a block
-    // scalar's indicator (`key: |  # the command`) and one written inside a flow sequence
-    // (`[a, b] # the hosts`), both of which are the line's trailing comment.
-    const rest = stripComment(rawRest)
+  const readValue = (rest: string, at: Line, parentIndent: number): Value => {
+    // The comment goes before the shape is decided: `key: |- # a literal block` is a block
+    // scalar with a comment on it, and `key: # only a comment` is a key with no value.
+    rest = stripComment(rest).trim()
     if (rest === '') {
       skip()
       const next = lines[i]
@@ -339,7 +359,7 @@ function parseYAML(raw: string, file: string): Value {
       const key = m[1].trim()
       const rest = m[2].trim()
       i++
-      put(key, rest, line)
+      put(key, rest, line) // readValue, which strips the value's comment before it shapes it
     }
     return map
   }
@@ -532,6 +552,7 @@ export function loadSiteFacts(): SiteFacts {
   // agree. The Go boundary test pins the same pair, and W3.2 moves both in one commit
   // (D93) — which is why this is an agreement rather than "both off".
   const analytics = asMap(doc.analytics, file, 'analytics')
+  refuseUnknownKeys(analytics, ['enabled', 'measurement_id'], `${file} analytics`)
   const enabled = asBool(analytics.enabled, file, 'analytics.enabled')
   const measurementID = asString(analytics.measurement_id, file, 'analytics.measurement_id')
   if (enabled !== (measurementID.trim() !== '')) {
@@ -541,6 +562,7 @@ export function loadSiteFacts(): SiteFacts {
   }
 
   const features = asMap(doc.features, file, 'features')
+  refuseUnknownKeys(features, ['console_downloads', 'video'], `${file} features`)
 
   const allowedHosts = asList(doc.allowed_hosts, file, 'allowed_hosts').map((host, index) =>
     asString(host, file, `allowed_hosts[${index}]`),
@@ -635,11 +657,13 @@ export function loadInstallFacts(): InstallFacts {
   }
 
   const build = asMap(doc.build, file, 'build')
+  refuseUnknownKeys(build, ['arch', 'os'], `${file} build`)
   const strings = (value: Value, what: string): string[] =>
     asList(value, file, what).map((entry, index) => asString(entry, file, `${what}[${index}]`))
 
   const platforms = asList(doc.platforms, file, 'platforms').map((entry, index) => {
     const platform = asMap(entry, file, `platforms[${index}]`)
+    refuseUnknownKeys(platform, ['goos', 'id', 'name', 'note', 'status'], `${file} platforms[${index}]`)
     return {
       id: asString(platform.id, file, `platforms[${index}].id`),
       name: asString(platform.name, file, `platforms[${index}].name`),
@@ -657,6 +681,7 @@ export function loadInstallFacts(): InstallFacts {
   // file writes or it renders none, and it never invents one (Global Constraint 6).
   const paths = asList(doc.paths, file, 'paths').map((entry, index) => {
     const installPath = asMap(entry, file, `paths[${index}]`)
+    refuseUnknownKeys(installPath, ['commands', 'dev_only', 'extension', 'id', 'name', 'name_template', 'note', 'platforms', 'release_page', 'source', 'tap_repository'], `${file} paths[${index}]`)
     const what = `paths[${index}]`
     // A path a reader can follow: the commands they type, or the page they download from.
     // The release archive has the second and no command (W0.1), and a path with neither is
@@ -862,62 +887,30 @@ function loadCosts(minRuns: number): CostsFacts | null {
 // ---------------------------------------------------------------------------------------
 
 /**
- * The site's name: **README.md's own `# ` title**, the word the tagline sits under.
- *
- * Read rather than typed, for the reason the tagline beside it is read (F48, D102): the
- * name is printed in every page's `<title>`, in the OpenGraph site name, in the header and
- * in the footer, and a name written into the layout would go on naming the old word the
- * day the README's title changes. Nothing else pins those four, so the reading is the pin
- * — `website/test/layout.mjs` retitles the README in a copy and reads the built page back.
- */
-export function loadSiteName(): string {
-  const file = 'README.md'
-  const lines = readBytes(
-    path.join(REPO_ROOT, file),
-    "the site's name: the README's own `# ` title, which the header, the footer and every page title render rather than restating (F48, D102)",
-  ).split('\n')
-
-  const title = lines.findIndex((line) => /^#\s+\S/.test(line.trim()))
-  if (title === -1) {
-    throw new Error(`${file}: no "# " title, and the site's name is that title rather than a word typed into the layout (F48, D102).`)
-  }
-  const name = lines[title].trim().replace(/^#\s+/, '').replace(/[*_`]/g, '').trim()
-  if (name === '') {
-    throw new Error(`${file}: its "# " title is empty, and the site's name is that title (F48, D102).`)
-  }
-  return name
-}
-
-/**
  * The tagline: **README.md's own tagline line, the line under its `# Fugaro` title**
  * (F48, D102). It is read rather than copied into a component, because a tagline typed
  * into a template is a second copy of the README's line and the one that drifts — and
  * because every other sentence the site prints has to be traceable to a document or a
  * command, starting with this one.
  *
- * The title it reads under is the site's name as `loadSiteName` reads it, rather than the
- * word `Fugaro` written out again here: the two are one fact about one line of one file,
- * and a second copy of the word would be the copy that drifts (the review of W1.7 caught
- * exactly that in the layout).
- *
  * The line's markdown emphasis is not part of the sentence, so the `**` that makes it
  * bold in the README is stripped: what a page renders is the text a reader reads.
  */
 export function loadTagline(): string {
   const file = 'README.md'
-  const lines = readBytes(path.join(REPO_ROOT, file), 'the tagline: the line under the README\'s "# " title, which the site renders rather than restating (F48, D102)').split('\n')
+  const lines = readBytes(path.join(REPO_ROOT, 'README.md'), 'the tagline: the line under its `# Fugaro` title, which the site renders rather than restating (F48, D102)').split('\n')
 
-  const title = lines.findIndex((line) => /^#\s+\S/.test(line.trim()))
+  const title = lines.findIndex((line) => line.trim() === '# Fugaro')
   if (title === -1) {
-    throw new Error(`${file}: no "# " title, and the site's tagline is the line under it (F48, D102, W1.3 step 1).`)
+    throw new Error(`${file}: no "# Fugaro" title, and the site's tagline is the line under it (F48, D102, W1.3 step 1).`)
   }
   const line = lines.slice(title + 1).find((candidate) => candidate.trim() !== '')
   if (line === undefined) {
-    throw new Error(`${file}: the "# " title is the last thing in the file, and the tagline is the line under it (F48, D102).`)
+    throw new Error(`${file}: the "# Fugaro" title is the last thing in the file, and the tagline is the line under it (F48, D102).`)
   }
   const tagline = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
   if (tagline === '') {
-    throw new Error(`${file}: the line under the "# " title is empty, and the site renders that line as its tagline (F48, D102).`)
+    throw new Error(`${file}: the line under the "# Fugaro" title is empty, and the site renders that line as its tagline (F48, D102).`)
   }
   return tagline
 }
@@ -958,7 +951,16 @@ export function loadFonts(): { href: string; type: string }[] {
 export function loadSitemapHref(canonicalURL: string): string | null {
   const config = path.join(SITE_ROOT, 'astro.config.mjs')
   if (!existsSync(config)) return null
-  if (!readFileSync(config, 'utf8').includes('@astrojs/sitemap')) return null
+  // The config is a module, so it is imported (in a child process, because this loader is
+  // synchronous) and its declared integrations are read: a comment or a string that
+  // merely names the package is not an integration, and must not make the head point at a
+  // sitemap the build does not produce.
+  const script = `import(${JSON.stringify(pathToFileURL(config).href)}).then((mod) => process.stdout.write(JSON.stringify((mod.default.integrations ?? []).flat().map((entry) => entry && entry.name))))`
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: SITE_ROOT, encoding: 'utf8' })
+  if (result.status !== 0) {
+    throw new Error(`website/astro.config.mjs could not be loaded to read its integrations: ${result.stderr || result.error}`)
+  }
+  if (!(JSON.parse(result.stdout) as unknown[]).includes('@astrojs/sitemap')) return null
   return new URL('/sitemap-index.xml', canonicalURL).href
 }
 
@@ -966,8 +968,6 @@ export function loadSitemapHref(canonicalURL: string): string | null {
 export interface Site {
   facts: SiteFacts
   install: InstallFacts
-  /** README.md's `# ` title, the site's name. */
-  siteName: string
   /** README.md's tagline line, the site's default page description. */
   tagline: string
   /** The generated documents under content/, keyed by file name. */
@@ -996,7 +996,6 @@ export function loadSite(): Site {
   loaded = {
     facts,
     install: loadInstallFacts(),
-    siteName: loadSiteName(),
     tagline: loadTagline(),
     documents: loadGeneratedDocuments(),
     costs: loadCosts(facts.minRuns),

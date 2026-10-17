@@ -6,15 +6,12 @@ build and its own schedule (D90): nothing under it is importable by the Go modul
 Go module gains no dependency from it. The boundary is a test, not a convention —
 `internal/cli/docs_website_boundary_test.go`.
 
-**What is here today:** the shell and the first page. The pinned toolchain, the static
-Astro configuration, the check that runs the build and every test file, and this document;
-`src/layouts/Base.astro` and `src/content.ts`, the base layout and the content pipeline
-(W1.3); and `src/pages/docs.astro`, the docs hub (W1.7), which builds `dist/docs/index.html`
-— the guides linked and the generated CLI reference rendered in full. `website/data/` and
-`website/content/` hold the facts Part 0 generates; the pages that render them land in
-W1.4 through W1.12. **Each page arrives with its own test**, so `npm run check` builds the
-pages that exist and asserts over their artifacts, and a page a later task adds arrives the
-same way.
+**What is here today:** the shell. The pinned toolchain, the static Astro configuration,
+the check that runs the build and every test file, and this document. `website/data/` and
+`website/content/` already hold the facts Part 0 generates; the pages that render them land
+in W1.3 (`src/layouts/`) through W1.12. **The build therefore produces no page yet**, which
+is why `npm run build` is green today and why the first page's own test arrives with the
+first page.
 
 ## Toolchain
 
@@ -150,7 +147,6 @@ website/
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ at build time
-  src/lib/github-slug.mjs          # GitHub's heading-anchor rule, shared with its test
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
   test/*.mjs                       # every one of them runs under `npm run check`
   dist/                            # the build output, not committed
