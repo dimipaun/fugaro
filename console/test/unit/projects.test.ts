@@ -553,6 +553,38 @@ describe('renderProjects', () => {
     expect(labels.map((node) => node.textContent)).toEqual([TOKEN_PLACEHOLDER])
   })
 
+  it('puts a secret label\'s key through the sanitizer, like its value', () => {
+    // The key is `Object.entries(labels)` of the document: a string the
+    // document chose, not the console's vocabulary. A token-shaped key is
+    // redacted in place, and a key carrying a control or an invisible character
+    // is not drawn as itself.
+    const token = githubToken()
+    const hidden = ['managed', '\u202e', 'by', '\u0007'].join('')
+    const secrets = [{ ...SECRETS[0], labels: { [token]: 'fugaro', [hidden]: 'fugaro' } }]
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ secrets })), 'light')
+    expect(drawn(tree)).not.toContain(token)
+    const keys = all(panel(tree, 'secrets'), 'projects-secret-label-key').map((node) => node.textContent ?? '')
+    expect(keys).toHaveLength(2)
+    expect(keys[0]).toBe(TOKEN_PLACEHOLDER)
+    expect(keys[1]).not.toBe(hidden)
+    expect(keys[1]).not.toMatch(/[\u0000-\u001f\u202a-\u202e]/)
+  })
+
+  it('puts the CLI\'s refusal sentence through the sanitizer before a panel draws it', () => {
+    // A refused read's reason is the CLI's stderr sentence: text the console
+    // did not write, so a credential echoed into it is redacted, not drawn.
+    const token = githubToken()
+    const sentence = `permission denied for ${token}`
+    const tree = renderProjects(
+      factory,
+      buildProjectsModel(inputs({ budget: null, sentences: { 'budget.show': sentence } })),
+      'light',
+    )
+    expect(drawn(tree)).not.toContain(token)
+    const reasons = all(panel(tree, 'caps'), 'projects-because').map((node) => node.textContent ?? '')
+    expect(reasons).toEqual([`permission denied for ${TOKEN_PLACEHOLDER}`])
+  })
+
   it('draws a cap the document does not carry as n/a, never as zero', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     const caps = all(tree, 'projects-cap')
@@ -895,6 +927,16 @@ describe('renderRun', () => {
     // process owns the allow-list (design section 5.1 rule 2).
     expect(link.getAttribute('data-href')).toBe('https://console.cloud.google.com/batch/jobs/example-job')
     expect(link.getAttribute(['h', 'ref'].join(''))).toBeNull()
+  })
+
+  it('puts the scrubbed-to moment through the sanitizer when the ring holds nothing then', () => {
+    // The moment is an input the console did not write; when the ring has
+    // nothing at or before it, the sentence that names it is drawn through
+    // `putText`, so a hostile moment is not drawn as itself.
+    const token = githubToken()
+    const tree = renderRun(factory, buildRunModel(runInputs({ replay: REPLAY_FRAMES, scrubAt: token })), 'light')
+    expect(drawnText(tree)).not.toContain(token)
+    expect(drawnText(tree)).toContain(TOKEN_PLACEHOLDER)
   })
 
   it('draws exactly the capped window of log lines', () => {

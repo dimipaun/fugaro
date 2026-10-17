@@ -883,7 +883,10 @@ function panelShell(factory: ScreenFactory, panel: ProjectsPanel): ScreenElement
   // A count exists only where a document was read, which is what keeps a
   // not-built panel from rendering as a zero: there is no reading to format.
   if (panel.count !== null) numberCell(element, factory, 'span', panel.count, 'count', 'projects-count')
-  if (panel.because !== null) literal(cell(element, factory, 'p', 'projects-because'), panel.because)
+  // `because` is the console's sentence *or* the CLI's own refusal sentence
+  // (`absent`), which is stderr text the console did not write: it goes through
+  // `putText` like every other string from outside.
+  if (panel.because !== null) textCell(element, factory, 'p', panel.because, 'sentence', 'because', 'projects-because')
   return element
 }
 
@@ -1033,10 +1036,11 @@ function secretsPanel(factory: ScreenFactory, model: ProjectSecrets): ScreenElem
     if (entry.latest !== null) textCell(line, factory, 'span', entry.latest, 'label', 'secrets[].latest', 'projects-secret-latest')
     for (const label of entry.labels) {
       const pair = cell(line, factory, 'span', 'projects-secret-label')
-      literal(cell(pair, factory, 'span', 'projects-secret-label-key'), label.key)
-      // A label's *value* is a string from the document like any other, and it
-      // goes through the same door: a label that held a credential would be
-      // refused here, which is the whole point of drawing it this way.
+      // A label's *key* and its *value* are both strings from the document --
+      // the key is `Object.entries(labels)`, not a console table -- and both go
+      // through the same door: a label that held a credential, or a control or
+      // invisible character, is refused or redacted here rather than drawn.
+      textCell(pair, factory, 'span', label.key, 'label', 'secrets[].labels', 'projects-secret-label-key')
       textCell(pair, factory, 'span', label.value, 'label', 'secrets[].labels', 'projects-secret-label-value')
     }
     for (const allowed of entry.allowed) {

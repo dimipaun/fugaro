@@ -946,7 +946,9 @@ function replayPanel(factory: ScreenFactory, model: RunReplay): ScreenElement {
     literal(scrubbed, 'showing the moment')
     textCell(scrubbed, factory, 'span', recordStamp(model.scrubbed), 'label', 'replay.at', 'run-replay-at')
   } else if (model.scrubbedBecause !== null) {
-    literal(scrubbed, model.scrubbedBecause)
+    // The sentence names the moment scrubbed to, which is an input the console
+    // did not write, so it is drawn through `putText`.
+    putText(scrubbed, model.scrubbedBecause, 'sentence', 'scrubbedBecause')
   }
   literal(cell(element, factory, 'p', 'run-replay-note'), REPLAY_BOUND_NOTE)
   return element
