@@ -248,16 +248,33 @@ func (h *harness) client(a rtdb.Auth) *rtdb.Client {
 	return c
 }
 
-// claims of a run's token. Zero fields take the usual values.
+// claims of a token. Zero fields take the usual values.
+//
+// The first four are a run's; the last three are the mailbox identities
+// (mobile plan D112, D113b), which are what the rules *read* and never mint.
+// A token normally carries none of the three, and that is the point of
+// keeping them separate fields rather than a mode: a phone's token is one
+// whose mu names an account, a consumer's is one whose mc does, and a plain
+// signed-in user's is one with neither — admitted nowhere.
 type claims struct {
 	slug, run string
 	fx        int64  // deadline in ms; 0 = an hour from now
 	fp        string // "" = the project's id; "-" = no fp claim
 	rb        string // "" = alice@example.invalid; "-" = no rb claim
+	mu        string // "" = no mu claim; otherwise the mailbox the token owns
+	mc        string // "" = no mc claim; otherwise the mailbox it serves
+	uid       string // "" = derived (mu when set, else r~slug~run); the raw uid
 }
 
 func (c claims) token() string {
-	m := map[string]any{"uid": "r~" + c.slug + "~" + c.run, "fs": c.slug, "fr": c.run}
+	uid := c.uid
+	if uid == "" {
+		uid = "r~" + c.slug + "~" + c.run
+		if c.mu != "" {
+			uid = c.mu
+		}
+	}
+	m := map[string]any{"uid": uid, "fs": c.slug, "fr": c.run}
 	m["fx"] = c.fx
 	if c.fx == 0 {
 		m["fx"] = time.Now().Add(time.Hour).UnixMilli()
@@ -276,16 +293,32 @@ func (c claims) token() string {
 	default:
 		m["rb"] = c.rb
 	}
+	if c.mu != "" {
+		m["mu"] = c.mu
+	}
+	if c.mc != "" {
+		m["mc"] = c.mc
+	}
 	return unsignedToken(m)
 }
 
-// as is a client holding the token of a run.
+// as is a client holding the token these claims describe: a run's, the
+// phone's or the consumer's.
 func (h *harness) as(c claims) *rtdb.Client {
 	tok := c.token()
 	return h.client(rtdb.Auth{IDToken: func() string { return tok }})
 }
 
 func (h *harness) run(slug, run string) *rtdb.Client { return h.as(claims{slug: slug, run: run}) }
+
+// phone is the mobile app's client for the account mb: a user token whose mu
+// claim names the mailbox it owns (D112), with auth.uid equal to it — which
+// is the only thing that makes the claim usable.
+func (h *harness) phone(mb string) *rtdb.Client { return h.as(claims{mu: mb}) }
+
+// consumer is the mailbox consumer's client for the mailbox it serves
+// (D113b): an mc claim and no mailbox of its own.
+func (h *harness) consumer(mb string) *rtdb.Client { return h.as(claims{mc: mb}) }
 
 // set writes a value with admin rights (which bypass the rules, as IAM does).
 func (h *harness) set(path string, v any) {

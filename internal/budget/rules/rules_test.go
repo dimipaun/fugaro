@@ -612,6 +612,101 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 			if !inList[p] {
 				t.Errorf("/%s is writable by a run token but is not one of this test's rows: add it", p)
 			}
+		case "mailbox":
+			// Not a run token's tree, and named here so that the sweep has no
+			// root it skips: the mailbox's writes are exactly four, and a
+			// fifth is a new grant to a phone or to a consumer (D113, D113b).
+			if _, listed := mailboxWrites()[p]; !listed {
+				t.Errorf("/%s is writable under the mailbox: a write there is one of the four mailboxWrites() lists, and this one is not", p)
+			}
+		}
+	}
+}
+
+// mailboxWrites is the mailbox's grant list: each writable location with the
+// fragments its predicate must carry. The phone's are MAILBOX (the user claim,
+// and $mb naming the token's own uid), the consumer's are CONSUMER (mc naming
+// the mailbox it serves), and all four require newData.exists(), because
+// validation does not run on a delete and a delete of a message is therefore
+// denied. TestMailboxWritesAreExactlyTheFour pins the list against the
+// generated rules and TestRunTokenWritesSurviveThePolicyEdit's sweep fails on
+// any mailbox write that is not in it.
+func mailboxWrites() map[string][]string {
+	phone := []string{"auth.token.mu != null", "auth.token.mu == auth.uid", "$mb == auth.uid", "newData.exists()"}
+	consumer := []string{"auth.token.mc != null", "auth.token.mc == $mb", "newData.exists()"}
+	return map[string][]string{
+		"mailbox/$mb/inbox/$msg":        phone,
+		"mailbox/$mb/outbox/$msg/acked": phone,
+		"mailbox/$mb/outbox/$msg":       consumer,
+		"mailbox/$mb/heartbeat":         consumer,
+	}
+}
+
+// TestMailboxWritesAreExactlyTheFour pins the mailbox's grant list without an
+// emulator: D113's two phone writes (its own inbox message, the ack on a
+// message it spoke), D113b's two consumer writes (the outbox message, the
+// heartbeat), and nothing else. The emulator proves what each identity can
+// reach through them (emulator_mailbox_test.go, plan task P2.2); this proves
+// the list did not grow, which is the half a later edit would change quietly.
+func TestMailboxWritesAreExactlyTheFour(t *testing.T) {
+	paths := generatedPaths(t)
+	want := mailboxWrites()
+	for p, frags := range want {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		w, _ := attrs[".write"].(string)
+		if w == "" {
+			t.Errorf("/%s carries no .write: one of the mailbox's four writes is gone", p)
+			continue
+		}
+		for _, f := range frags {
+			if !strings.Contains(w, f) {
+				t.Errorf("/%s .write = %q, want it to carry %q", p, w, f)
+			}
+		}
+	}
+
+	// No fifth: every writable location under the mailbox is one of the four.
+	// TestRunTokenWritesSurviveThePolicyEdit's sweep fails on any of them
+	// that is not listed here, so a new grant has to be argued for in both.
+	for p, attrs := range paths {
+		if p != "mailbox" && !strings.HasPrefix(p, "mailbox/") {
+			continue
+		}
+		if w, ok := attrs[".write"].(string); ok {
+			if _, listed := want[p]; !listed {
+				t.Errorf("/%s is writable (%s) and is not one of the mailbox's four writes", p, w)
+			}
+		}
+	}
+
+	// The read side, which is the other half of the fence: the phone reads its
+	// own outbox and heartbeat, and reads no inbox — its own included, since
+	// the consumer collects what the phone wrote (§6.4).
+	for _, p := range []string{"mailbox/$mb/outbox", "mailbox/$mb/heartbeat"} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		r, _ := attrs[".read"].(string)
+		for _, f := range []string{"auth.token.mu == auth.uid", "$mb == auth.uid"} {
+			if !strings.Contains(r, f) {
+				t.Errorf("/%s .read = %q, want it to carry %q", p, r, f)
+			}
+		}
+	}
+	for _, p := range []string{"mailbox", "mailbox/$mb", "mailbox/$mb/inbox", "mailbox/$mb/inbox/$msg"} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		if r, ok := attrs[".read"]; ok && r != false {
+			t.Errorf("/%s .read = %v: an RTDB grant on a parent cascades to its children", p, r)
 		}
 	}
 }
@@ -765,6 +860,63 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		slices.Sort(want)
 		if !slices.Equal(got, want) {
 			t.Errorf("/%s holds %v, the schema's field set for it is %v", c.path, got, want)
+		}
+	}
+}
+
+// TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
+// adds, and nothing else. The user claim reads the eight expressions a run
+// token already carried (each now `… || USER`) and the two nodes of its own
+// mailbox — and a grant anywhere else, on a family tension (b1) struck or on a
+// parent that would cascade to one, fails here as well as in the golden.
+//
+// F11's property is the half this pins from the other side: the eight are the
+// only families a signed-in user reaches, so an account with no mu claim reads
+// nothing (admitted nowhere), and no family of the run's own slices — agents
+// and outcomes above all — was widened by this change.
+func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
+	paths := generatedPaths(t)
+	// The eight, and the two mailbox nodes, which are scoped to the mailbox
+	// the claim owns.
+	// generatedPaths spells $slug as slugForPath (it is the one wildcard the
+	// tests substitute), so the keys below do too.
+	want := map[string]bool{
+		"config/caps/global":                       true,
+		"config/caps/defaults":                     true,
+		"config/caps/repos/" + slugForPath:         true,
+		"config/kill/global":                       true,
+		"config/kill/repos/" + slugForPath:         true,
+		"spend/$day/global":                        true,
+		"spend/$day/repos/" + slugForPath:          true,
+		"spend/$day/runs/" + slugForPath + "/$run": true,
+		"mailbox/$mb/outbox":                       true,
+		"mailbox/$mb/heartbeat":                    true,
+	}
+	got := map[string]string{}
+	for p, attrs := range paths {
+		if r, ok := attrs[".read"].(string); ok && strings.Contains(r, "auth.token.mu") {
+			got[p] = r
+		}
+	}
+	for p := range want {
+		r, ok := got[p]
+		if !ok {
+			t.Errorf("/%s does not carry the user claim's read grant: the app cannot read a family the owner granted it", p)
+			continue
+		}
+		if strings.HasPrefix(p, "mailbox/") {
+			if !strings.Contains(r, "$mb == auth.uid") {
+				t.Errorf("/%s .read = %q, want the mailbox-scoped predicate ($mb == auth.uid)", p, r)
+			}
+			continue
+		}
+		if strings.Contains(r, "$mb") {
+			t.Errorf("/%s .read = %q carries $mb: the dashboard families are the whole family, not one mailbox's", p, r)
+		}
+	}
+	for p, r := range got {
+		if !want[p] {
+			t.Errorf("/%s carries the user claim's read grant (%s) and is not one of the families tension (b1) names", p, r)
 		}
 	}
 }
