@@ -399,9 +399,13 @@ test('markup planted in the reference source is rendered as text and never as a 
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'docs-hub-'))
   try {
     // A throwaway copy of what the build reads, so the real reference is untouched.
-    cpSync(path.join(REPO, 'README.md'), path.join(tmp, 'README.md'))
-    cpSync(path.join(REPO, 'go.mod'), path.join(tmp, 'go.mod'))
-    cpSync(path.join(REPO, 'docs'), path.join(tmp, 'docs'), { recursive: true })
+    // Every page reads files from the repository (the FAQ its provenance documents, the
+    // community page ci.yml and the issue templates), so copy the repository minus what no
+    // page reads, as layout.mjs does; the site itself is copied entry by entry below.
+    const skip = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata', 'website'])
+    for (const entry of readdirSync(REPO)) {
+      if (!skip.has(entry)) cpSync(path.join(REPO, entry), path.join(tmp, entry), { recursive: true })
+    }
     const site = path.join(tmp, 'website')
     mkdirSync(site)
     for (const entry of ['astro.config.mjs', 'package.json', 'tsconfig.json', 'content', 'data', 'src']) {

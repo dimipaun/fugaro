@@ -1,3 +1,5 @@
+<p align="center"><img src="brand/fugaro-logo.png" alt="Fugaro logo" width="200"></p>
+
 # Fugaro
 
 **Fleeting cloud workers for coding agents: one task, one container, one PR, then gone.**
