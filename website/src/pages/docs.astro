@@ -41,6 +41,10 @@ import path from 'node:path'
 
 import Base from '../layouts/Base.astro'
 import { loadSite, REPO_ROOT } from '../content.ts'
+// GitHub's own anchor rule, and the one place it is written: this page resolves the
+// fragments it links and `test/docs-hub.mjs` resolves them again, so the two have to be
+// the same rule rather than two approximations of it (see the module's own note).
+import { headingAnchor, headingText } from '../lib/github-slug.mjs'
 
 // The generated reference is imported as a document rather than read as bytes: Astro
 // compiles markdown at build time, which is what turns the file into the headings, tables
@@ -73,14 +77,16 @@ function repositoryFile(relative: string, what: string): string {
 
 const HEADING = /^(#{1,6})\s+(.*)$/
 
-/** The anchor a heading text becomes, by GitHub's own rule. */
-function slug(text: string): string {
-  return text
-    .toLowerCase()
+/**
+ * The text a heading line renders as: its inline links reduced to their text, its code
+ * marks and its emphasis removed. An underscore is left alone — inside a word it is a
+ * character and not emphasis, and the anchor GitHub makes keeps it.
+ */
+function plain(line: string): string {
+  return headingText(line)
     .replace(/`/g, '')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/\*/g, '')
     .trim()
-    .replace(/\s+/g, '-')
 }
 
 /**
@@ -96,12 +102,11 @@ function titleOf(relative: string, anchor: string | null): string {
   for (const line of text.split('\n')) {
     const match = HEADING.exec(line.trim())
     if (match === null) continue
-    const heading = match[2].trim().replace(/`/g, '')
     if (anchor === null) {
-      if (match[1].length === 1) return heading
+      if (match[1].length === 1) return plain(match[2])
       continue
     }
-    if (slug(heading) === anchor) return heading
+    if (headingAnchor(match[2]) === anchor) return plain(match[2])
   }
   throw new Error(
     anchor === null
@@ -174,7 +179,7 @@ if (referenceHeading === null || referenceHeading[1].length !== 1) {
     `${reference.path} does not open with a "# " title, and the hub renders that title as the reference's section heading (W1.7 step 3).`,
   )
 }
-const referenceTitle = referenceHeading[2].trim().replace(/`/g, '')
+const referenceTitle = plain(referenceHeading[2])
 
 const referenceEntry = {
   path: reference.path,

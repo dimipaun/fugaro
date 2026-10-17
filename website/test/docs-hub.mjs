@@ -32,6 +32,11 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// The page's own anchor rule, imported rather than re-written: a check that carries its own
+// approximation of the rule it is checking agrees with the page's bug instead of catching
+// it (the module's header says what the two approximations got wrong).
+import { headingAnchor } from '../src/lib/github-slug.mjs'
+
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
 const BUILT_PAGE = path.join(SITE, 'dist', 'docs', 'index.html')
@@ -85,31 +90,21 @@ function siteFact(key) {
   return match[1]
 }
 
-/**
- * The anchor a heading text becomes, by GitHub's own rule (lowercase, punctuation
- * dropped, spaces to hyphens). It is used to resolve the anchors the hub links against the
- * headings of the file it links, which is what makes a link to a section that was renamed
- * fail here rather than 404 for a reader.
- */
-function slug(text) {
-  return text
-    .toLowerCase()
-    .replace(/`/g, '')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .trim()
-    .replace(/\s+/g, '-')
-}
-
 const HEADING = /^(#{1,6})\s+(.*)$/
 
-/** Every heading of a markdown file, as its text and the anchor it is reachable at. */
+/**
+ * Every heading of a markdown file, as its depth, the text it renders as and the anchor it
+ * is reachable at. The anchor comes from the same module the page imports
+ * (`src/lib/github-slug.mjs`): this file used to carry its own approximation of GitHub's
+ * rule, which is how a check comes to agree with the page's bug rather than with the
+ * `id`s a reader's browser finds.
+ */
 function headingsOf(markdown) {
   return markdown
     .split('\n')
     .map((line) => HEADING.exec(line.trim()))
     .filter((match) => match !== null)
-    .map((match) => ({ depth: match[1].length, text: match[2].trim().replace(/`/g, '') }))
+    .map((match) => ({ depth: match[1].length, text: match[2].trim(), anchor: headingAnchor(match[2]) }))
 }
 
 /**
@@ -203,7 +198,7 @@ test('every guide the hub links is a file in this repository, at the anchor it n
     const markdown = repoFile(relative)
 
     if (anchor === undefined) continue
-    const anchors = headingsOf(markdown).map((heading) => slug(heading.text))
+    const anchors = headingsOf(markdown).map((heading) => heading.anchor)
     assert.ok(
       anchors.includes(anchor),
       `${path.relative(REPO, BUILT_PAGE)} links ${relative}#${anchor}, and ${relative} has no heading at that anchor (it has ${anchors.join(', ')}): a link to a section that was renamed is a 404 for a reader, and the hub is a hub or it is a copy`,
@@ -301,11 +296,11 @@ test('the hub renders the generated CLI reference, command section for command s
   // is the hub's, so the rendered document sits a level below it, and the anchor the
   // document's title carries survives the move (F40's rule, applied to the built page).
   assert.ok(
-    page.includes(`<h2 id="${slug(title.text)}">`),
+    page.includes(`<h2 id="${title.anchor}">`),
     `${path.relative(REPO, BUILT_PAGE)} does not render ${REFERENCE}'s own title ${JSON.stringify(title.text)} as a section heading: the page renders the generated document, and the document's title is part of it`,
   )
 
-  const sections = [...page.matchAll(/<h2 id="([^"]*)">/g)].map((match) => match[1]).filter((id) => id !== slug(title.text))
+  const sections = [...page.matchAll(/<h2 id="([^"]*)">/g)].map((match) => match[1]).filter((id) => id !== title.anchor)
   const commands = generated.filter((heading) => heading.depth === 2)
   assert.equal(
     sections.length,
@@ -326,7 +321,30 @@ test('the docs page states one h1 of its own, and the rendered reference keeps i
   const anchors = new Set([...page.matchAll(/id="([^"]*)"/g)].map((match) => match[1]))
   const missing = headingsOf(markdown)
     .filter((heading) => heading.depth === 2)
-    .map((heading) => slug(heading.text))
+    .map((heading) => heading.anchor)
     .filter((anchor) => !anchors.has(anchor))
   assert.deepEqual(missing, [], `the built page renders no element at ${JSON.stringify(missing)}, and ${REFERENCE} reachable them as its command sections: a rendered document keeps the anchors its own headings carry`)
+})
+
+test("the anchor rule the hub links by is GitHub's own, not an approximation of it", () => {
+  // The cases below are the three details an approximation gets wrong, and each one is a
+  // heading a guide could carry tomorrow: an underscore (dropped by a rule that treats
+  // `\w` as the alphabet), a markdown link (unwrapped by a rule that reads the rendered
+  // text and left alone by one that reads the line), and a run of spaces or a tab (where
+  // only U+0020 is a hyphen and nothing is collapsed). `src/lib/github-slug.mjs` is the one
+  // place the rule is written, and the cases above resolve the generated reference's own
+  // command headings through it against the `id`s the built page carries — so a
+  // disagreement with the renderer fails here, on the headings a reader is sent to.
+  assert.equal(headingAnchor('`fugaro_run_id` in the ledger'), 'fugaro_run_id-in-the-ledger', 'an underscore is a character GitHub keeps in a heading anchor')
+  assert.equal(headingAnchor('The hub — and the guides'), 'the-hub--and-the-guides', 'an em dash is punctuation GitHub drops, and the spaces around it stay')
+  assert.equal(headingAnchor('[Getting started](#getting-started)'), 'getting-started', 'a markdown link anchors at its text, which is what GitHub renders')
+  assert.equal(headingAnchor('A  B'), 'a--b', 'each space becomes one hyphen: two spaces are two hyphens, not one')
+  assert.equal(headingAnchor('x\ty'), 'xy', 'a tab is not a space, and does not become a hyphen')
+  assert.equal(headingAnchor("Requirements: the C# toolchain"), 'requirements-the-c-toolchain', 'the punctuation of a heading is dropped and the letters around it are not')
+
+  // The two files that need the rule import this one: a page that resolved its own links by
+  // one rule and was checked by another is how the check came to agree with the bug.
+  for (const file of ['src/pages/docs.astro', 'test/docs-hub.mjs']) {
+    assert.match(repoFile(`website/${file}`), /from '.*github-slug\.mjs'/, `${file} does not import the shared anchor rule, so it carries a second copy of it`)
+  }
 })
