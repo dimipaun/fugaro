@@ -6,8 +6,11 @@
 // refuses a plan that would delete or replace anything the owner's own list
 // does not name; the managed instantiation of tf.Cover refuses a plan outside
 // the resource types, the grants, the roles and the attributes a managed
-// project admits (design D61). The model's review is not part of it: it is
-// advisory, recorded, and can only ever add a refusal (D60).
+// project admits (design D61) — and, for a delete or a replace, it refuses the
+// resource the change removes or creates unless that resource is one the
+// allowlist admits, so an address on the owner's list never admits a resource
+// nothing judged (Task 1.2a, D72/D74). The model's review is not part of it: it
+// is advisory, recorded, and can only ever add a refusal (D60).
 package managed
 
 import (
