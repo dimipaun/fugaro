@@ -1,6 +1,7 @@
 package tf
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -35,11 +36,24 @@ func mrc(typ string, after map[string]any) ResourceChange {
 }
 
 // managedPlan is a plan of changes with a configuration that declares Google's
-// provider and nothing else: the clean configuration every fixture of the
-// resource rules shares (managed_apply_test.go holds the configuration's own).
+// provider, its project written out, and nothing else: the clean configuration
+// every fixture of the resource rules shares (managed_apply_test.go holds the
+// configuration's own).
 func managedPlan(changes ...ResourceChange) *Plan {
 	return &Plan{FormatVersion: "1.2", ResourceChanges: changes, Configuration: &Configuration{
-		ProviderConfig: map[string]ProviderConfig{"google": {Name: "google", FullName: "registry.terraform.io/hashicorp/google"}}}}
+		ProviderConfig: map[string]ProviderConfig{"google": {Name: "google", FullName: "registry.terraform.io/hashicorp/google",
+			Expressions: map[string]json.RawMessage{"project": json.RawMessage(`{"constant_value":"proj-1"}`)}}}}}
+}
+
+// managedPlanConfigured is managedPlan with rc declared in the configuration,
+// in the module mrc's address names, with the given expressions: what
+// terraform writes for a resource, which says whether it sets project itself.
+func managedPlanConfigured(rc ResourceChange, expressions map[string]json.RawMessage) *Plan {
+	p := managedPlan(rc)
+	name := strings.TrimPrefix(rc.Address, "module.managed.")
+	p.Configuration.RootModule.ModuleCalls = map[string]ModuleCall{"managed": {Module: ConfigModule{
+		Resources: []ConfigResource{{Address: name, Mode: "managed", Type: rc.Type, Expressions: expressions}}}}}
+	return p
 }
 
 // managedAccount is the email of a managed service account of the managed
@@ -883,6 +897,537 @@ func TestManagedCoverRefusesLocks(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if out := managedTestCover().NotCovered(managedPlan(rc), nil); len(out) != 0 {
 				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+}
+
+// Task 1.2: the attributes a managed plan must still satisfy. Cover's own
+// attribute checks (cover.go:713-827) are re-derived for a managed project the
+// way Task 1.1 re-derived the type list: each is re-justified rather than
+// inherited, the two that carry the spec's step 3 are kept, and the ones that
+// only make sense for Fugaro's own embedded modules are dropped with a fixture
+// that now passes, so the dropping is a diff rather than a silence. The two
+// kept ones are read where they can fire: the project rule on the resource and
+// on the provider block that decides the project of a resource left to it, and
+// the billing rule before the type rule that would otherwise refuse every
+// budget before its account was read.
+
+// TestManagedCoverProjectScope is the first retained check: the project every
+// resource is in, kept as the WIDER rule Cover.Projects is — a resource is
+// refused when its project is not one of this run's, not merely when it is not
+// the managed project — so a resource in a second project Fugaro owns is
+// refused too (D61's "the project each resource is in", the spec's step 3).
+// The refusal is by address and names the project.
+func TestManagedCoverProjectScope(t *testing.T) {
+	const second = "proj-2"
+	bucket := func(project string) ResourceChange {
+		after := map[string]any{"name": ManagedPrefix + "bucket"}
+		if project != "" {
+			after["project"] = project
+		}
+		return mrc("google_storage_bucket", after)
+	}
+	twoProjects := managedTestCover()
+	twoProjects.Projects = []string{"proj-1", second}
+	for name, tc := range map[string]struct {
+		c  ManagedCover
+		rc ResourceChange
+	}{
+		"the managed project":               {managedTestCover(), bucket("proj-1")},
+		"a second project of this run":      {twoProjects, bucket(second)},
+		"no project, so the provider's own": {managedTestCover(), bucket("")},
+	} {
+		t.Run("admits "+name, func(t *testing.T) {
+			if out := tc.c.NotCovered(managedPlan(tc.rc), nil); len(out) != 0 {
+				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+	// A project known only after apply is two cases the plan's value cannot
+	// tell apart: the resource leaves project to its provider block, or sets it
+	// from something computed. Only the configuration tells them apart.
+	late := withUnknown(bucket(""), map[string]any{"project": true})
+	t.Run("admits a project known only after apply that the resource leaves to its provider block", func(t *testing.T) {
+		if out := managedTestCover().NotCovered(managedPlanConfigured(late, nil), nil); len(out) != 0 {
+			t.Fatalf("gives %q, want it covered", out)
+		}
+	})
+	for name, p := range map[string]*Plan{
+		"a project the resource sets, known only after apply": managedPlanConfigured(late,
+			map[string]json.RawMessage{"project": json.RawMessage(`{"references":["google_service_account.a.unique_id","google_service_account.a"]}`)}),
+		"a project the resource sets to a constant, yet known only after apply": managedPlanConfigured(late,
+			map[string]json.RawMessage{"project": json.RawMessage(`{"constant_value":"proj-1"}`)}),
+		"a project known only after apply, of a resource the configuration does not declare": managedPlan(late),
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(p, nil)
+			if len(out) != 1 || !strings.HasPrefix(out[0], late.Address+" (") || !strings.Contains(out[0], "project") {
+				t.Fatalf("gives %q, want one refusal at %s for its project", out, late.Address)
+			}
+		})
+	}
+	rc := bucket(second)
+	out := managedTestCover().NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 || !strings.HasPrefix(out[0], rc.Address+" (") ||
+		!strings.Contains(out[0], "in project "+second+", which is not this run's") {
+		t.Fatalf("a resource in %s gives %q, want one refusal at %s naming the project", second, out, rc.Address)
+	}
+}
+
+// TestManagedCoverRefusesAComputedProjectAResourceSets is terraform's own
+// output (terraform 1.16.4 and google 8.4.0, planned offline from the plugin
+// cache with a placeholder token and every proxy pointed at a closed port,
+// never applied): a resource that sets project = "${substr(
+// google_service_account.a.unique_id, 0, 0)}proj-2" is written with
+// after_unknown.project true, exactly as a resource that leaves its project
+// to its provider block, and applies into proj-2. The configuration is what
+// tells them apart — its project expression — so every such resource is
+// refused: in the root (a bucket and a secret), in a child module whose
+// project = var.p is fed the computed value by its call, and as count and
+// for_each instances, a module's for_each instance included, whose addresses
+// carry an index the configuration's do not. The control from the same
+// terraform is the same shapes with no project set at all: each inherits
+// proj-1 from the provider block and is admitted, so the rule refuses the
+// computed project and not the unknown one.
+func TestManagedCoverRefusesAComputedProjectAResourceSets(t *testing.T) {
+	for fixture, addrs := range map[string][]string{
+		"managed_resource_computed_project_plan.json": {
+			"google_secret_manager_secret.s", "google_storage_bucket.b"},
+		"managed_resource_computed_project_module_plan.json": {
+			"module.m.google_secret_manager_secret.s", "module.m.google_storage_bucket.b"},
+		"managed_resource_computed_project_instances_plan.json": {
+			`google_secret_manager_secret.f["x.y"]`, `google_secret_manager_secret.f["z[0]"]`,
+			"google_storage_bucket.c[0]", "google_storage_bucket.c[1]", `module.m["k"].google_storage_bucket.b[0]`},
+		// Real plan output (terraform 1.16, google 8.4.0): the root bucket sets
+		// a computed project and module.m has an identically named bucket that
+		// sets none: only the root one is refused, so a lookup that drops the
+		// module path on both sides is caught.
+		"managed_resource_computed_project_samename_plan.json": {
+			"google_storage_bucket.a"},
+		// The same type.name at four module paths: only module.x's sets a
+		// computed project (var.p), and so does module.y.module.x's.
+		"managed_resource_computed_project_samename_paths_plan.json": {
+			"module.x.google_storage_bucket.a", "module.y.module.x.google_storage_bucket.a"},
+	} {
+		t.Run(fixture, func(t *testing.T) {
+			out := managedTestCover().NotCovered(readPlanFixture(t, fixture), nil)
+			for _, addr := range addrs {
+				if !refusedWith(out, addr+" (", "project", "known only after apply") {
+					t.Errorf("gives %q, want %s refused for a computed project", out, addr)
+				}
+			}
+			if len(out) != len(addrs) {
+				t.Errorf("gives %d refusals %q, want the %d resources that set a computed project alone", len(out), out, len(addrs))
+			}
+		})
+	}
+	if out := managedTestCover().NotCovered(readPlanFixture(t, "managed_resource_inherited_project_plan.json"), nil); len(out) != 0 {
+		t.Fatalf("the same shapes leaving project to the provider block give %q, want them covered", out)
+	}
+}
+
+// TestManagedConfigAddress pins how a resource change's address finds its
+// configuration entry: every instance key goes, a module's included, and a
+// key's quoted text is read as text, brackets, dots and escapes included.
+func TestManagedConfigAddress(t *testing.T) {
+	for in, want := range map[string]string{
+		"google_storage_bucket.b":                         "google_storage_bucket.b",
+		"google_storage_bucket.c[1]":                      "google_storage_bucket.c",
+		`google_secret_manager_secret.f["z[0]"]`:          "google_secret_manager_secret.f",
+		`module.m["k"].google_storage_bucket.b[0]`:        "module.m.google_storage_bucket.b",
+		`module.a[0].module.b["x\"]y"].google_x.y["a.b"]`: "module.a.module.b.google_x.y",
+	} {
+		if got := managedConfigAddress(in); got != want {
+			t.Errorf("managedConfigAddress(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestManagedCoverBillingAccount is the second retained check: the billing
+// account the review showed, which is what makes a plan that moves billing
+// refuse. It is read before the type rule and asserted through NotCovered,
+// because google_billing_budget is off the managed list (Task 1.1's
+// managedDropped: a billing-account permission no project role can hold): read
+// after it, this rule could never fire — every budget would be refused for its
+// type first and the account would go unread — while read before it, a plan
+// that moves billing is refused for the account it moves it to, which is the
+// rule's own reason for existing. The type's refusal is asserted beside it, so
+// neither half can be mistaken for the other.
+func TestManagedCoverBillingAccount(t *testing.T) {
+	budget := func(account string) ResourceChange {
+		return mrc("google_billing_budget", map[string]any{"billing_account": account})
+	}
+	// The passing fixture: the review's own account, which this rule admits —
+	// the refusal that follows is the type's.
+	out := managedTestCover().NotCovered(managedPlan(budget("billingAccounts/AAAA-BBBB")), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "the managed project's allowlist leaves out") {
+		t.Fatalf("a budget on the review's account gives %q, want one refusal for its type", out)
+	}
+	for name, account := range map[string]string{
+		"another billing account": "billingAccounts/CCCC-DDDD",
+		"no billing account":      "",
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(managedPlan(budget(account)), nil)
+			if !refusedWith(out, budget(account).Address+" (", "billing account") {
+				t.Fatalf("gives %q, want the billing account refused", out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverBillingAccountOnAnyType is the property the rule rests on —
+// it reads the attribute, not the type — asserted on a type the managed list
+// keeps, so no type refusal stands in for it: a kept resource carrying a
+// billing account outside the review is refused for the account, and one
+// carrying the review's own is admitted. A rule that read rc.Type (the old
+// google_billing_budget guard) admits the first and fails here.
+func TestManagedCoverBillingAccountOnAnyType(t *testing.T) {
+	bucket := func(account string) ResourceChange {
+		return mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "b", "billing_account": account})
+	}
+	if out := managedTestCover().NotCovered(managedPlan(bucket("billingAccounts/AAAA-BBBB")), nil); len(out) != 0 {
+		t.Fatalf("a kept type on the review's account gives %q, want it covered", out)
+	}
+	for name, account := range map[string]string{
+		"another billing account": "billingAccounts/CCCC-DDDD",
+		"no billing account":      "",
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			rc := bucket(account)
+			out := managedTestCover().NotCovered(managedPlan(rc), nil)
+			if len(out) != 1 || !refusedWith(out, rc.Address+" (", "billing account") {
+				t.Fatalf("gives %q, want one refusal, for the billing account", out)
+			}
+		})
+	}
+}
+
+// providerProjectPlan is a plan of one managed bucket whose root provider
+// block sets project from expr, with the plan's own variables beside it when
+// given. It is the shape terraform writes for a resource left to its provider
+// block (testdata/managed_provider_clean_plan.json): the bucket's own project
+// is unknown, and the block decides where it lands.
+func providerProjectPlan(t *testing.T, project map[string]any, variables any) *Plan {
+	t.Helper()
+	cfg := config(nil, []map[string]any{bucketConfig()}, nil)
+	cfg["provider_config"] = map[string]any{"google": map[string]any{
+		"name": "google", "full_name": googleProvider,
+		"expressions": map[string]any{"project": project}}}
+	doc := map[string]any{"format_version": "1.2",
+		"resource_changes": []any{bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)},
+		"configuration":    cfg}
+	if variables != nil {
+		doc["variables"] = variables
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsePlan(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestManagedCoverRefusesAForeignProjectInAProviderBlock is the project rule
+// one level up, and it is what the rule's own justification rests on: a
+// resource that leaves its project to its provider block is admitted because
+// that block decides where it lands, so the block's project is read too.
+// Without this, the wider rule is bypassed by moving the project one line up:
+// the same resource that is refused for naming proj-2 itself is covered when
+// the block names it.
+//
+// The rule admits a project written out and nothing else. A reference is
+// refused even when the plan shows the variable's value as this run's
+// project: terraform writes replace(var.project, ...) exactly as it writes
+// var.project (TestManagedCoverRefusesAProviderProjectBehindAFunction), so
+// the plan cannot prove the block reads the variable bare. The wider rule is
+// pinned here too: a second project of this run is admitted in a provider
+// block exactly as it is on a resource (TestManagedCoverProjectScope).
+func TestManagedCoverRefusesAForeignProjectInAProviderBlock(t *testing.T) {
+	val := func(v any) map[string]any { return map[string]any{"project": map[string]any{"value": v}} }
+	twoProjects := managedTestCover()
+	twoProjects.Projects = []string{"proj-1", "proj-2"}
+	admits := map[string]struct {
+		c       ManagedCover
+		project map[string]any
+	}{
+		"written out": {managedTestCover(), constant("proj-1")},
+		"a second project of this run, written out": {twoProjects, constant("proj-2")},
+	}
+	for name, tc := range admits {
+		t.Run("admits a provider block whose project is "+name, func(t *testing.T) {
+			if out := tc.c.NotCovered(providerProjectPlan(t, tc.project, nil), nil); len(out) != 0 {
+				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+	refuses := map[string]struct {
+		project   map[string]any
+		variables any
+		want      string
+	}{
+		"written out and not this run's":                                 {constant("proj-2"), nil, "lands resources in project proj-2"},
+		"read from a variable the plan shows as this run's":              {refs("var.project"), val("proj-1"), "var.project"},
+		"read from a variable the plan shows and not this run's":         {refs("var.project"), val("proj-2"), "var.project"},
+		"read from a variable the plan does not show":                    {refs("var.project"), nil, "var.project"},
+		"read from a variable the plan shows no value for":               {refs("var.project"), map[string]any{"other": map[string]any{"value": "proj-1"}}, "var.project"},
+		"read from a variable whose value is not a string":               {refs("var.project"), val([]any{"proj-1"}), "var.project"},
+		"read from two variables":                                        {refs("var.a", "var.b"), map[string]any{"a": map[string]any{"value": "proj-1"}, "b": map[string]any{"value": "proj-1"}}, "project"},
+		"read from a variable's attribute":                               {refs("var.p.id", "var.p"), map[string]any{"p": map[string]any{"value": map[string]any{"id": "proj-1"}}}, "project"},
+		"written out as null":                                            {constant(nil), nil, "project"},
+		"written out as something other than a string":                   {constant(1), nil, "project"},
+		"written out as an empty string":                                 {constant(""), nil, "project"},
+		"written out beside a reference (a form terraform never writes)": {map[string]any{"constant_value": "proj-1", "references": []any{"var.project"}}, val("proj-1"), "project"},
+	}
+	for name, tc := range refuses {
+		t.Run("refuses a provider block whose project is "+name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(providerProjectPlan(t, tc.project, tc.variables), nil)
+			if !refusedWith(out, "provider_config.google (", tc.want) {
+				t.Fatalf("gives %q, want the provider block refused for the project its resources land in", out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverRefusesAProviderProjectBehindAFunction is the residual the
+// previous revision's variable resolution left, on terraform's own output
+// (terraform 1.16.4 and google 8.4.0, planned offline from the plugin cache
+// with a placeholder token and every proxy pointed at a closed port): a root
+// whose var.project is proj-1, and provider blocks whose project is
+// replace(var.project, "1", "2") (the root's own, which lands its bucket in
+// proj-2), "${var.project}-x", lower(var.project), var.project == "proj-1" ?
+// "proj-2" : "proj-1", tostring(var.project) and var.project bare, one module
+// each, every call passing proj-1. Terraform writes every one of them as
+// {"references": ["var.project"]} and nothing else, so the plan cannot tell
+// the bare reference from the wrapped ones, and the previous rule read all
+// six as proj-1 and admitted the plan. Now a provider block's project is
+// admitted only written out (testdata/managed_provider_module_project_clean_plan.json),
+// so all six are refused, and the module whose block sets no project with them.
+func TestManagedCoverRefusesAProviderProjectBehindAFunction(t *testing.T) {
+	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_wrapped_project_plan.json"), nil)
+	for _, block := range []string{"google", "module.tmpl:google", "module.lower:google", "module.cond:google",
+		"module.tostr:google", "module.bare:google"} {
+		if !refusedWith(out, "provider_config."+block+" (", "var.project", "not written out") {
+			t.Errorf("gives %q, want %s refused for a project it does not write out", out, block)
+		}
+	}
+	if !refusedWith(out, "provider_config.module.empty:google (", "sets no project") {
+		t.Errorf("gives %q, want module.empty's block refused for setting no project", out)
+	}
+	if len(out) != 7 {
+		t.Errorf("gives %d refusals %q, want the seven provider blocks alone", len(out), out)
+	}
+	// terraform's own output for a root block reading var.project bare, the
+	// plan the previous revision admitted as its positive control.
+	out = managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_variable_project_plan.json"), nil)
+	if len(out) != 1 || !refusedWith(out, "provider_config.google (", "var.project", "not written out") {
+		t.Errorf("a root block reading var.project bare gives %q, want it refused alone", out)
+	}
+}
+
+// TestManagedCoverRefusesAProviderWithoutAProject: a provider block that sets
+// no project takes one, at apply, from the environment of whoever applies —
+// GOOGLE_PROJECT and its aliases, then gcloud's configuration — and terraform
+// writes the project of every resource left to it as unknown, which the
+// resource rule admits. Neither is in the plan, so a managed plan's provider
+// configurations each write their project out, including the one terraform
+// configures by itself when the plan declares no provider block at all
+// (testdata/managed_provider_no_project_plan.json is its output: a
+// provider_config entry with no expressions).
+func TestManagedCoverRefusesAProviderWithoutAProject(t *testing.T) {
+	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_no_project_plan.json"), nil)
+	if len(out) != 1 || !refusedWith(out, "provider_config.google (", "sets no project") {
+		t.Errorf("a plan with no provider block gives %q, want its implicit provider refused alone", out)
+	}
+	for name, pc := range map[string]map[string]any{
+		"an empty block":                      {"name": "google", "full_name": googleProvider},
+		"a block whose expressions are empty": {"name": "google", "full_name": googleProvider, "expressions": map[string]any{}},
+		"a block setting region alone": {"name": "google", "full_name": googleProvider,
+			"expressions": map[string]any{"region": constant("us-east5")}},
+		"google-beta, implicit in a module": {"name": "google-beta", "full_name": googleBetaProvider, "module_address": "module.m"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := config(map[string]string{"google": googleProvider}, []map[string]any{bucketConfig()}, nil)
+			cfg["provider_config"].(map[string]any)["x"] = pc
+			out := managedTestCover().NotCovered(jsonPlan(t, []map[string]any{bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)}, cfg), nil)
+			if len(out) != 1 || !refusedWith(out, "provider_config.x (", "sets no project") {
+				t.Fatalf("gives %q, want the block refused alone for setting no project", out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverRefusesAProjectPassedThroughAModuleCall is terraform's own
+// output (terraform 1.16.4 and google 8.4.0, planned offline from the plugin
+// cache with a placeholder token and every proxy pointed at a closed port):
+// three modules whose own provider blocks say project = var.project, and
+// three ways a call hands that variable proj-2 — written out in the call
+// (module.m), through the root's own variable two levels down (module.a
+// passes var.other to module.b), and as the module variable's default with
+// nothing passed (module.d) — beside a root block that reads var.project,
+// proj-1. Every one is refused, the root's too: a reference is not proof of
+// the value (TestManagedCoverRefusesAProviderProjectBehindAFunction). The same
+// plan with proj-1 written out in each provider block is admitted, so the rule
+// refuses the form rather than the shape.
+func TestManagedCoverRefusesAProjectPassedThroughAModuleCall(t *testing.T) {
+	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_module_project_plan.json"), nil)
+	for _, block := range []string{"google", "module.m:google", "module.a.module.b:google", "module.d:google"} {
+		if !refusedWith(out, "provider_config."+block+" (", "var.project", "not written out") {
+			t.Errorf("gives %q, want %s refused for a project it does not write out", out, block)
+		}
+	}
+	if len(out) != 4 {
+		t.Errorf("gives %d refusals %q, want the four provider blocks alone", len(out), out)
+	}
+	if out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_module_project_clean_plan.json"), nil); len(out) != 0 {
+		t.Fatalf("the same plan with proj-1 written out in every provider block gives %q, want it covered", out)
+	}
+}
+
+// moduleProjectPlan is a plan whose module m has its own provider block with
+// the given project, and whose call passes the given arguments: the shape of
+// testdata/managed_provider_module_project_plan.json.
+func moduleProjectPlan(t *testing.T, project, callExpressions map[string]any) *Plan {
+	t.Helper()
+	module := map[string]any{"resources": []any{map[string]any{"address": "google_storage_bucket.b", "mode": "managed",
+		"type": "google_storage_bucket", "name": "b", "provider_config_key": "module.m:google"}},
+		"variables": map[string]any{"project": map[string]any{"default": "proj-1"}}}
+	call := map[string]any{"source": "./m", "module": module}
+	if callExpressions != nil {
+		call["expressions"] = callExpressions
+	}
+	cfg := config(map[string]string{"google": googleProvider}, nil, map[string]any{"m": call})
+	cfg["provider_config"].(map[string]any)["module.m:google"] = map[string]any{"name": "google", "full_name": googleProvider,
+		"module_address": "module.m", "expressions": map[string]any{"project": project}}
+	rc := bucketChange("module.m.google_storage_bucket.b", ManagedPrefix+"b", googleProvider)
+	return jsonPlan(t, []map[string]any{rc}, cfg)
+}
+
+// TestManagedCoverModuleCallProjectFailsClosed: a module's provider block is
+// admitted when it writes its project out, whatever its call passes, and
+// refused when it reads it from a variable, whatever its call passes — proj-1
+// written out in the call or as the variable's default included, which the
+// previous rule admitted.
+func TestManagedCoverModuleCallProjectFailsClosed(t *testing.T) {
+	proj1 := map[string]any{"project": constant("proj-1")}
+	for name, call := range map[string]map[string]any{
+		"passing proj-1":  proj1,
+		"passing nothing": nil,
+	} {
+		t.Run("admits a block that writes proj-1 out, its call "+name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(moduleProjectPlan(t, constant("proj-1"), call), nil); len(out) != 0 {
+				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+	for name, call := range map[string]map[string]any{
+		"passing proj-1 written out":      proj1,
+		"passing nothing over a default":  nil,
+		"passing a root variable":         {"project": refs("var.project")},
+		"passing a local":                 {"project": refs("local.p")},
+		"passing proj-2 over the default": {"project": constant("proj-2")},
+	} {
+		t.Run("refuses a block reading var.project, its call "+name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(moduleProjectPlan(t, refs("var.project"), call), nil)
+			if !refusedWith(out, "provider_config.module.m:google (", "var.project", "not written out") {
+				t.Fatalf("gives %q, want the module's provider block refused", out)
+			}
+		})
+	}
+	if out := managedTestCover().NotCovered(moduleProjectPlan(t, constant("proj-2"), proj1), nil); !refusedWith(out, "provider_config.module.m:google (", "lands resources in project proj-2") {
+		t.Fatalf("a module block writing proj-2 out gives %q, want it refused", out)
+	}
+}
+
+// TestManagedCoverRefusesASecondProjectInTerraformsOwnPlan is the same rule on
+// a plan nobody wrote by hand: terraform's own output for a root whose module
+// provider block bills proj-2 and whose resource is in proj-2. The resource is
+// refused by address, and the refusal is the project rule's.
+func TestManagedCoverRefusesASecondProjectInTerraformsOwnPlan(t *testing.T) {
+	const addr = "module.m.google_project_service.s"
+	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_settings_plan.json"), nil)
+	if !refusedWith(out, addr+" (", "in project proj-2, which is not this run's") {
+		t.Fatalf("gives %q, want %s refused for the project it is in", out, addr)
+	}
+}
+
+// TestManagedCoverDropsInitAttributeChecks is the other half of the decision:
+// the attribute checks that only make sense for Fugaro's own embedded modules
+// are dropped, and each fixture below passes because of it. init's cover
+// refuses every one of them (cover_test.go, cover_golden_test.go); a managed
+// plan's resources are the plan's own, and the rules that keep Fugaro's own
+// resources out of reach are Task 1.1's — the name carries the prefix, the
+// runs bucket is refused by name, and the accounts a job or a scheduler runs
+// as must be the managed project's own. The sink's project is dropped with its
+// type (TestManagedCoverRefusesTheDroppedTypes), and the bucket or repository
+// a grant is on with the prefix rule, so neither has a fixture here.
+//
+// Each row asserts both halves, so that it isolates the check it is named for
+// rather than the first one init's cover happens to reach: init's cover is
+// asked the same plan and must refuse it for that check's own reason, and the
+// managed cover must admit it. A row whose fixture init's cover refuses
+// earlier — the image check before the command, the command before the check
+// spec — proves nothing about the check it is named for, which is why every
+// job below runs the image init's cover admits.
+func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
+	// job is the kept job fixture with the container replaced: its name and its
+	// service account stay what Task 1.1 requires, so the type, the prefix and
+	// the account rule all admit it and only a dropped attribute check could
+	// refuse it.
+	job := func(container map[string]any) ResourceChange {
+		return mrc("google_cloud_run_v2_job", map[string]any{
+			"name": ManagedPrefix + "job",
+			"template": []any{map[string]any{"template": []any{map[string]any{
+				"service_account": managedAccount,
+				"containers":      []any{container},
+			}}}},
+		})
+	}
+	// registryImage is an image of this run's registry: init's image check
+	// admits it (testCover's Ghcr is not a prefix of it, so no pin is read), so
+	// a job running it reaches the checks after the image's own.
+	const registryImage = "us-east5-docker.pkg.dev/proj-1/base/job:1"
+	for name, tc := range map[string]struct {
+		rc   ResourceChange
+		want string // what init's cover refuses it for
+	}{
+		"an image outside this run's registry": {
+			job(map[string]any{"image": "docker.io/library/alpine:3"}),
+			"which is outside this run's registry"},
+		"a container command the modules do not set": {
+			job(map[string]any{"image": registryImage, "command": []any{"/bin/sh"}, "args": []any{"-c", "true"}}),
+			"runs a command the modules do not set"},
+		"a check spec pointing at another registry": {
+			job(map[string]any{"image": registryImage, "command": []any{"fugaro"}, "args": []any{"image", "check", "--job"},
+				"env": []any{map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"registry":"attacker.example"}`}}}),
+			"a check spec whose registry"},
+		"a scheduler calling a job that is not this run's": {
+			mrc("google_cloud_scheduler_job", map[string]any{
+				"name": ManagedPrefix + "sweep",
+				"http_target": []any{map[string]any{
+					"uri":         "https://run.googleapis.com/v2/projects/other/locations/us-east5/jobs/fugaro-sweep:run",
+					"oauth_token": []any{map[string]any{"service_account_email": managedAccount}}}}}),
+			"not a job of this run's project and region"},
+		"a bucket without public access prevention": {
+			mrc("google_storage_bucket", map[string]any{
+				"name": ManagedPrefix + "bucket", "public_access_prevention": "inherited", "uniform_bucket_level_access": false}),
+			"without public access prevention"},
+		"an API key whose targets are not the web key's": {
+			mrc("google_apikeys_key", map[string]any{
+				"name":         ManagedPrefix + "key",
+				"restrictions": []any{map[string]any{"api_targets": []any{map[string]any{"service": "compute.googleapis.com"}}}}}),
+			"whose API targets are not the web key's"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(managedPlan(tc.rc), nil); len(out) != 0 {
+				t.Fatalf("%s gives %q, want it covered: the check is dropped for a managed plan", name, out)
+			}
+			if out := testCover.NotCovered(managedPlan(tc.rc), nil); !refusedWith(out, tc.want) {
+				t.Fatalf("init's cover gives %q, want it refused for %q: the row would not isolate the check", out, tc.want)
 			}
 		})
 	}
