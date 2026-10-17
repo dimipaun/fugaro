@@ -87,7 +87,7 @@ which is what makes a redelivery safe to answer rather than to guess about.
 ## The ledger, its cap, and why the cap is not a hole
 
 `state.seen` holds one frozen record per `(sender, id)` — `{ sender, id, at,
-status }` — in a **canonical order** (`at`, then `sender`, then `id`, by code
+kind, status }` — in a **canonical order** (`at`, then `sender`, then `id`, by code
 unit, never by locale). Two deliveries of the same pair in either order
 therefore leave the *identical* state, which is what makes a redelivery
 answerable at all. The record holds `at` and a status, never the message's
@@ -110,12 +110,31 @@ from becoming a hole in the fence:
   work silently, and dropping either makes room for the same id to be acted on
   twice (the round-1 bug the independent review found: deliver x, act, deliver
   x a window later with a fresh `at` — accepted, and acted on again);
-- a record is **evictable only when it is `acked` and strictly outside its
-  kind's window** (age `>` the window; at exactly the window the message is
-  still deliverable, so its record must still be there to call a redelivery a
-  duplicate). Outside the window is the load-bearing half: a redelivery of an
-  evicted message is refused (`replay`, `expired`) before the ledger is
-  consulted, so **eviction cannot re-admit a replay**;
+- a record is **evicted by age only when it is `acked` and strictly older than
+  the horizon**, `max(windowMs, promptTtlMs)` — one horizon for every record,
+  whatever its kind (at exactly the horizon the message is still deliverable,
+  so its record must still be there). A kind-dependent horizon was a hole the
+  second review found: a command evicted after 6 hours came back by claiming
+  to be a prompt (inside the prompt's 72-hour TTL) and was acted on twice, and
+  a prompt with a 1-hour TTL came back as a command;
+- **the watermark** (`evictedThrough`, a state field the module sets): every
+  eviction raises it to the evicted record's `at`, and a delivery whose `at` is
+  at or before it is refused (`replay`, or `expired` for a prompt) — after the
+  ledger lookup, so a held record is still a duplicate or a conflict. This is
+  what makes **eviction unable to re-admit a replay** even when a state is
+  handed back with a *wider* window or TTL (the second review's probe D: evict
+  at 6 hours, widen to 12, redeliver at 7 — refused). It starts at 0, may not
+  pass the state's own `now`, and only rises;
+- **under pressure, the oldest acked record is compacted** into the watermark:
+  a delivery that finds the ledger full of records evicts the oldest `acked`
+  one even inside the horizon, and raises the watermark to its `at`. Acked
+  records therefore never lock anyone out (probe F: four senders at quota, all
+  acked, inside a 72-hour TTL, no longer refuse a fifth with `dedupe-full`).
+  **The cost, stated:** a message that was never delivered here and whose
+  `at` is at or before the compacted record's is refused as a `replay` while
+  still inside its window — refused visibly, never accepted twice and never
+  dropped silently; the sender re-sends it as a new message. Compaction takes
+  the oldest acked record, so the watermark rises as little as it can;
 - a record is **consulted whatever its age**: the same `(sender, id)` with the
   same `at` and kind is a `duplicate`; with a different `at` or kind it is
   `id-conflict` — the id is the message's identity, so a second message under
@@ -124,14 +143,24 @@ from becoming a hole in the fence:
 - an `accepted` record the window has passed is kept, and `act` answers
   **`stale-pending`** for it instead of `acted`, so late work is surfaced
   rather than lost;
-- a delivery with no room is **refused** (`dedupe-full`), and one whose
-  sender already holds `maxPerSender` records is **refused** (`sender-full`).
-  Neither evicts. The quota exists because one sender could otherwise fill the
-  ledger and lock every other sender out — for up to a window, or for ever if
-  the consumer stops acking, since un-acked records are never evicted. It is a
-  state field, default `max(1, floor(maxSeen / 4))` (`defaultMaxPerSender`).
-  Four full senders can still fill the ledger: how many senders may write is
-  P2.1's rules' business.
+- **the quota counts work in flight**: a sender already holding `maxPerSender`
+  records that are `accepted` or `acted` is **refused** (`sender-full`); its
+  acked records do not count, because they can always be compacted. A ledger
+  whose every slot is in flight is **refused** (`dedupe-full`). Neither
+  evicts. The quota is a state field, default `max(1, floor(maxSeen / 4))`
+  (`defaultMaxPerSender`). **It only means something if `sender` is tied to
+  the writer's identity by P2.1's rules** — a writer free to choose `sender`
+  is as many senders as it likes.
+
+**The exact bound, and the recovery path.** The ledger never holds more than
+`maxSeen` records (refused on read, never grown on write), plus one number,
+the watermark. At most `maxPerSender` records per sender are in flight.
+`dedupe-full` happens only when every one of the `maxSeen` slots is work in
+flight — at least `ceil(maxSeen / maxPerSender)` senders whose work the
+consumer has not acked — and the recovery is the consumer's own: act and ack,
+and the next delivery compacts. Nothing is recovered by a fresh
+`initialState`, which forgets the ledger and the watermark and so reopens
+every replay still inside its window.
 
 ## The kinds, and the owner's ruling on the window
 
@@ -147,9 +176,10 @@ the TTL holds, which supersedes D168's "never expire".
 | `command` | `windowMs` (default 6 hours) | `replay` |
 | `prompt` | `promptTtlMs` (required; D118's TTL) | `expired` |
 
-The same rules hold per kind: a record is evicted only when acked and past
-**its own kind's** window, so a prompt record is never evicted before its TTL
-passes, and its redelivery after that is `expired` — never re-admitted. The
+Acceptance is per kind; eviction is not. A record is evicted by age only past
+the horizon `max(windowMs, promptTtlMs)`, so neither kind's record is evicted
+while the other kind could still deliver it, and the watermark refuses it for
+good once it is gone (`expired` for a prompt, `replay` for a command). The
 per-sender quota counts both kinds together.
 
 **Where the kind comes from.** P0.2's schema has no kind field (its `FIELDS`
@@ -160,6 +190,15 @@ into the ledger record. Absent, it is `command`, the stricter window. **P6.3**
 options and reply link); then the event's `kind` goes and the kind is read from
 the validated message.
 
+**The caller's duty, until then: `kind` must be a fixed function of the
+MAC-verified message.** Today the kind is the event's claim, and nothing in
+the event is authenticated. The horizon and the watermark make a *switched*
+kind harmless to the replay guarantee (the same id is never acted on twice),
+but the kind still chooses the acceptance window: a consumer that let a
+writer pick it would let a command be judged by a prompt's TTL. P4.1 must
+derive it from the message it has verified (D113b's MAC), never from anything
+the writer can set beside it.
+
 **Why `promptTtlMs` has no default.** D118 says the mailbox has a TTL "with a
 stated window", and no document states the number. The consumer (P4.1) hands
 in the TTL its sweeper enforces; this module refuses a missing one rather than
@@ -168,7 +207,9 @@ ceiling on the ledger's memory, not a retention policy).
 
 A `now` earlier than the state's own is refused (`now-went-backwards`), which is
 what makes that argument sound: if the window could run in reverse, "outside the
-window" would stop meaning anything.
+window" would stop meaning anything. A `now` more than `MAX_FORWARD_JUMP_MS`
+(366 days) ahead of the state's own is refused too (`now-jumped`): without it
+one far-future `now` would freeze the mailbox until that time.
 
 ## The numbers, and where each came from
 
@@ -180,7 +221,8 @@ window" would stop meaning anything.
 | `MIN_MAX_SEEN` / `MAX_MAX_SEEN` | 1 / 100 000 | the cap has a floor and a ceiling, both refusals |
 | `SENDER_SHARE` / `defaultMaxPerSender` | 4 / `max(1, floor(maxSeen / 4))` | the per-sender quota's default; the field is validated `1 .. maxSeen` |
 | `MAX_PROMPT_TTL_MS` | 30 days | the ceiling on `promptTtlMs` (required, no default: D118 states no number) |
-| `TIME_MAX` | 2100-01-01T00:00:00Z | `shared/lease`'s `MAX_TIMESTAMP`, imported: the latest `now` or `at` this module reads. One huge `now` can push the mailbox's clock no further than this |
+| `TIME_MAX` | 2100-01-01T00:00:00Z | `shared/lease`'s `MAX_TIMESTAMP`, imported: the latest `now` or `at` this module reads |
+| `MAX_FORWARD_JUMP_MS` | 366 days | how far one event's `now` may lead the state's; beyond it `now-jumped`. A consumer really offline longer starts from a new `initialState` — by then every acked record is past any horizon (at most 30 days) |
 | `DEFAULT_FUTURE_TOLERANCE_MS` | 5 minutes | `shared/lease`'s `MAX_CLOCK_SKEW`, imported. Ordinary skew and latency; beyond it `future-timestamp`. A future `at` is inside the window by definition (its age is negative), so an unbounded future would be an entry no window could evict — a memory lever a writer could pull |
 
 ## Fail closed, and each refusal is named
@@ -210,6 +252,9 @@ the lease), so the two modules cannot disagree about a timestamp.
 | `invalid-state` | a declared phase that disagrees with the ledger |
 | `invalid-now` | a `now` (on the state **or** the event) that is not an integer in `1 .. TIME_MAX`, `-0` included |
 | `now-went-backwards` | a `now` earlier than the state's own |
+| `now-jumped` | a `now` more than `MAX_FORWARD_JUMP_MS` ahead of the state's own |
+| `invalid-evicted-through` | an `evictedThrough` watermark that is not an integer in `0 .. now` |
+| `internal-error` | an input that threw while being read (a revoked Proxy, a throwing trap); what was thrown is never echoed |
 | `invalid-window` | `windowMs` outside `MIN_WINDOW_MS .. MAX_WINDOW_MS` |
 | `invalid-max-seen` | `maxSeen` outside `MIN_MAX_SEEN .. MAX_MAX_SEEN` |
 | `invalid-max-per-sender` | `maxPerSender` outside `1 .. maxSeen` |
@@ -222,12 +267,12 @@ the lease), so the two modules cannot disagree about a timestamp.
 | `unsorted-seen` | records not in the canonical order |
 | `negative-zero` | a message whose `at` is `-0` — the schema accepts it (it *is* zero), and this module refuses it because it is the shape of a negated number, not a time |
 | `zero-timestamp` | a message whose `at` is `0` — schema-valid (P0.2 allows any safe integer ≥ 0) and not a time this module will carry: the ledger's floor, the state's own `now` floor and D117's rule (a zero timestamp is the shape of an unset counter) all say a time is a **positive** integer. Admitting it would be worse than refusing it, because the record could not be read back |
-| `replay` | a command older than the replay window (`windowMs`) |
-| `expired` | a prompt older than its TTL (`promptTtlMs`) |
+| `replay` | a command older than the replay window (`windowMs`), or at or before the watermark |
+| `expired` | a prompt older than its TTL (`promptTtlMs`), or at or before the watermark |
 | `future-timestamp` | a message whose `at` is further ahead than the future tolerance, or past `TIME_MAX` |
 | `id-conflict` | a known `(sender, id)` — whatever its record's age — carrying a different `at` or kind |
-| `dedupe-full` | a delivery with no room in the ledger and nothing evictable |
-| `sender-full` | a delivery whose sender already holds `maxPerSender` records |
+| `dedupe-full` | a delivery with no room in the ledger and every record in flight (nothing acked to compact) |
+| `sender-full` | a delivery whose sender already holds `maxPerSender` records in flight |
 | `mailbox-closed` | any event at all, once the mailbox is closed |
 
 ### The schema's codes, propagated verbatim
@@ -306,8 +351,11 @@ removed (`PATH=/usr/bin:/bin`) the script refuses with exit 2 rather than
 reporting mutants it never ran, and with `index.test.js` renamed the positive
 control catches the empty glob — which is why there are two.
 
-The run that is recorded here (round 2, node 26 on PATH) is **92 guards, 92
-killed, 0 survived, 0 not applied**, with the control killed first. One clause of the module is
+The run that is recorded here (round 3, node 26 on PATH) is **111 guards, 111
+killed, 0 survived, 0 not applied**, with the control killed first. Round 3
+added the eviction horizon, the watermark (its check, its inclusive edge, both
+raises and their carrying forward, its range), compaction, the in-flight-only
+quota, the forward-jump bound and the two never-throw guards. One clause of the module is
 deliberately *not* counted: `isPlainObject`'s `Array.isArray` check, which the
 prototype check beside it subsumes (an array's prototype is neither
 `Object.prototype` nor `null`). A mutation of it cannot be killed by any test,
@@ -317,8 +365,8 @@ mutation instead.
 
 **The exhaustive table test does not trust the module's table.** It writes the
 EXPECTED table by hand, asserts the module's `TRANSITIONS` equals it, and
-drives 22 literal ledger compositions (empty, pending-only, acted-only,
-acked-only, mixed, at the cap in each phase, a sender at its quota in each
+drives 24 literal ledger compositions (empty, pending-only, acted-only,
+acked-only, mixed, at the cap in each phase with and without acked records, a sender at its quota in each
 phase, stale records of every status, prompts inside and past their TTL) in
 both an open and a closed phase through every event — then checks the other
 direction too: every outcome and next phase a cell declares is actually
@@ -351,14 +399,16 @@ instead.
   `(sender, id)` with a fresh `at` is then a new message. Its old redelivery
   is still refused by the window; a writer that can choose `at` freely could
   already write any new id, which is P2.1's rules' and D113b's MAC's to fence.
-- **A huge `now` is bounded, not undone.** A `now` up to `TIME_MAX` is
-  accepted, and every later `now` must be at least that (`now-went-backwards`).
-  The caller's `now` is the server's (D117), so this is a caller bug, and the
-  recovery is a new `initialState`; the ceiling bounds how far it can reach.
-- **A Proxy can lie, and a revoked one throws.** A plain-object check and
-  own-descriptor reads stop a getter and a prototype chain; they cannot stop a
-  Proxy that answers `getOwnPropertyDescriptor` dishonestly. Nothing in
-  JavaScript can, and this module does not pretend otherwise.
+- **A `now` that leaps is bounded.** A `now` up to `MAX_FORWARD_JUMP_MS`
+  ahead is accepted, and every later `now` must be at least that. The caller's
+  `now` is the server's (D117), so a leap is a caller bug; it can freeze the
+  mailbox for at most that long, never until `TIME_MAX`.
+- **A Proxy can lie.** A plain-object check and own-descriptor reads stop a
+  getter and a prototype chain; they cannot stop a Proxy that answers
+  `getOwnPropertyDescriptor` dishonestly. Nothing in JavaScript can, and this
+  module does not pretend otherwise. A Proxy that **throws** (or a revoked
+  one) is caught: `step` and `initialState` answer `internal-error` and never
+  throw.
 - **The ledger's integrity is the caller's.** A caller that drops a record, or
   hands back a state with one missing, re-admits a replay for as long as the
   window lasts — the window is the bound on that mistake, and it is why the

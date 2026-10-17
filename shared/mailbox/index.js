@@ -28,7 +28,7 @@
 // once would make the machine's next answer a guess.
 //
 // **The ledger.** `seen` is the dedupe ledger: one frozen record per
-// `(sender, id)` — `{ sender, id, at, status }` — in a canonical order
+// `(sender, id)` — `{ sender, id, at, kind, status }` — in a canonical order
 // (`at`, then `sender`, then `id`, compared by code unit, never by locale).
 // Two deliveries of the same pair in either order therefore leave the
 // *identical* state, which is what makes a redelivery answerable at all. The
@@ -40,16 +40,18 @@
 // per-sender quota (`maxPerSender`), and the rules that keep them from being a
 // hole in the replay fence are:
 //
-//   * a delivery at or above the cap is REFUSED (`dedupe-full`) unless an
-//     entry is evictable, and one whose sender already holds its quota is
-//     REFUSED (`sender-full`). Nothing that is not acked is ever dropped, to
-//     make room or for any other reason: dropping an un-acked record is either
-//     the "acted on twice" failure dedupe is for, or work lost silently;
-//   * an entry is evictable only when it is **acked** and **strictly outside
-//     the replay window**. Outside the window is the load-bearing half: a
-//     redelivery of an evicted message is refused as a replay by the window
-//     rule before the ledger is consulted, so eviction cannot re-admit a
-//     replay;
+//   * nothing that is not acked is ever dropped, to make room or for any
+//     other reason: dropping an un-acked record is either the "acted on
+//     twice" failure dedupe is for, or work lost silently;
+//   * an acked record is evicted by age only past the horizon
+//     `max(windowMs, promptTtlMs)` -- one horizon whatever the record's kind,
+//     so a kind the event claims cannot reopen it -- and under pressure (a
+//     full ledger) the oldest acked record is compacted early;
+//   * every eviction raises the watermark (`evictedThrough`) to the evicted
+//     record's `at`, and nothing at or before it is admitted again, whatever
+//     window a later state carries: eviction cannot re-admit a replay;
+//   * a full ledger of work in flight is REFUSED (`dedupe-full`), and a sender
+//     already holding its quota of work in flight is REFUSED (`sender-full`);
 //   * a record is consulted whatever its age: the same `(sender, id)` with the
 //     same `at` is a `duplicate`, and with a different `at` it is
 //     `id-conflict` — the id is the message's identity, so a second message
@@ -183,6 +185,11 @@ export const REFUSAL = Object.freeze({
   INVALID_STATE: 'invalid-state',
   INVALID_NOW: 'invalid-now',
   NOW_WENT_BACKWARDS: 'now-went-backwards',
+  NOW_JUMPED: 'now-jumped',
+  INVALID_EVICTED_THROUGH: 'invalid-evicted-through',
+  // Something the module did not expect was thrown while reading the inputs
+  // (a revoked Proxy, a throwing `ownKeys` trap). Never echoes what was thrown.
+  INTERNAL_ERROR: 'internal-error',
   INVALID_WINDOW: 'invalid-window',
   INVALID_MAX_SEEN: 'invalid-max-seen',
   INVALID_MAX_PER_SENDER: 'invalid-max-per-sender',
@@ -223,6 +230,9 @@ export const INPUT_REFUSALS = Object.freeze([
   REFUSAL.INVALID_STATE,
   REFUSAL.INVALID_NOW,
   REFUSAL.NOW_WENT_BACKWARDS,
+  REFUSAL.NOW_JUMPED,
+  REFUSAL.INVALID_EVICTED_THROUGH,
+  REFUSAL.INTERNAL_ERROR,
   REFUSAL.INVALID_WINDOW,
   REFUSAL.INVALID_MAX_SEEN,
   REFUSAL.INVALID_MAX_PER_SENDER,
@@ -314,6 +324,16 @@ export function defaultMaxPerSender(maxSeen) {
 export const TIME_MAX = MAX_TIMESTAMP;
 
 /**
+ * How far one event's `now` may be ahead of the state's own: 366 days. `now`
+ * never goes backwards, so without a bound one far-future `now` would freeze
+ * the mailbox (every later honest `now` refused as `now-went-backwards`) until
+ * that time. A leap past the bound is refused as `now-jumped`. A consumer that
+ * was really offline longer than this starts from a new `initialState`; by
+ * then every acked record is past any horizon (at most 30 days) anyway.
+ */
+export const MAX_FORWARD_JUMP_MS = 366 * 24 * 60 * 60 * 1_000;
+
+/**
  * How far into the future a message's `at` may be before it is refused.
  *
  * Five minutes covers ordinary clock skew and latency between the writer's
@@ -344,7 +364,10 @@ export const TRANSITIONS = Object.freeze({
   [STATE.IDLE]: Object.freeze({
     [EVENT.DELIVER]: Object.freeze({
       ok: Object.freeze([OUTCOME.ACCEPTED, OUTCOME.DUPLICATE]),
-      no: DELIVERY_REFUSALS(),
+      // Idle holds only acked records, which compaction can always make room
+      // from, and the quota counts only un-acked ones: so neither
+      // `dedupe-full` nor `sender-full` can be answered here.
+      no: DELIVERY_REFUSALS(false),
       next: Object.freeze([STATE.PENDING, STATE.IDLE]),
     }),
     [EVENT.ACT]: Object.freeze({
@@ -366,7 +389,7 @@ export const TRANSITIONS = Object.freeze({
   [STATE.PENDING]: Object.freeze({
     [EVENT.DELIVER]: Object.freeze({
       ok: Object.freeze([OUTCOME.ACCEPTED, OUTCOME.DUPLICATE]),
-      no: DELIVERY_REFUSALS(),
+      no: DELIVERY_REFUSALS(true),
       next: Object.freeze([STATE.PENDING]),
     }),
     [EVENT.ACT]: Object.freeze({
@@ -392,7 +415,7 @@ export const TRANSITIONS = Object.freeze({
   [STATE.ACTED]: Object.freeze({
     [EVENT.DELIVER]: Object.freeze({
       ok: Object.freeze([OUTCOME.ACCEPTED, OUTCOME.DUPLICATE]),
-      no: DELIVERY_REFUSALS(),
+      no: DELIVERY_REFUSALS(true),
       next: Object.freeze([STATE.PENDING, STATE.ACTED]),
     }),
     [EVENT.ACT]: Object.freeze({
@@ -424,7 +447,8 @@ export const TRANSITIONS = Object.freeze({
  * the schema can refuse a message with, because a delivery is refused by the
  * schema's verdict as much as by the window.
  */
-function DELIVERY_REFUSALS() {
+function DELIVERY_REFUSALS(inFlight) {
+  const full = inFlight ? [REFUSAL.DEDUPE_FULL, REFUSAL.SENDER_FULL] : [];
   return Object.freeze([
     ...new Set([
       REFUSAL.NOT_AN_OBJECT,
@@ -436,8 +460,7 @@ function DELIVERY_REFUSALS() {
       REFUSAL.EXPIRED,
       REFUSAL.FUTURE_TIMESTAMP,
       REFUSAL.ID_CONFLICT,
-      REFUSAL.DEDUPE_FULL,
-      REFUSAL.SENDER_FULL,
+      ...full,
       ...Object.values(REFUSALS),
     ]),
   ]);
@@ -461,6 +484,7 @@ const STATE_FIELDS = Object.freeze([
   'maxPerSender',
   'promptTtlMs',
   'futureToleranceMs',
+  'evictedThrough',
   'seen',
 ]);
 
@@ -536,9 +560,17 @@ function closedRow() {
  * @returns {{ ok: true, state: object } | { ok: false, code: string, field: string | null }}
  */
 export function initialState(options = {}) {
+  try {
+    return initialStateUnguarded(options);
+  } catch {
+    return refuse(REFUSAL.INTERNAL_ERROR, null);
+  }
+}
+
+function initialStateUnguarded(options) {
   const read = readFields(
     options,
-    STATE_FIELDS.filter((field) => field !== 'phase' && field !== 'seen'),
+    STATE_FIELDS.filter((field) => field !== 'phase' && field !== 'seen' && field !== 'evictedThrough'),
     'options',
   );
   if (!read.ok) return read;
@@ -586,6 +618,7 @@ export function initialState(options = {}) {
       maxPerSender,
       promptTtlMs,
       futureToleranceMs,
+      evictedThrough: 0,
       seen: Object.freeze([]),
     }),
   });
@@ -602,8 +635,9 @@ export function initialState(options = {}) {
  * verbatim with a `message.` prefix. It returns `{ ok: true, outcome, phase,
  * id, sender, state }` — where `id`/`sender` name the delivery the outcome is
  * about, or are null when the outcome is about nothing — or a refusal
- * `{ ok: false, code, field }`. It never throws, never mutates its inputs and
- * never reads a clock.
+ * `{ ok: false, code, field }`. It never throws — an exception from a hostile
+ * input (a revoked or throwing Proxy) is answered as `internal-error` — never
+ * mutates its inputs and never reads a clock.
  *
  * @param {object} state the mailbox, as returned by this function or initialState
  * @param {object} event the event, with its own injected `now`
@@ -611,6 +645,17 @@ export function initialState(options = {}) {
  *          | { ok: false, code: string, field: string | null }}
  */
 export function step(state, event) {
+  try {
+    return stepUnguarded(state, event);
+  } catch {
+    // A Proxy can throw from any trap, and a revoked one throws from all of
+    // them. That is a refusal like any other, and what was thrown is never
+    // echoed: it may carry whatever the input put in it.
+    return refuse(REFUSAL.INTERNAL_ERROR, null);
+  }
+}
+
+function stepUnguarded(state, event) {
   const current = readState(state);
   if (!current.ok) return current;
 
@@ -624,6 +669,13 @@ export function step(state, event) {
     // make an evicted entry's message look deliverable again, so it is refused
     // rather than absorbed.
     return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
+  }
+  if (now - current.state.now > MAX_FORWARD_JUMP_MS) {
+    // `now` only moves forward, so one far-future `now` (TIME_MAX, say) would
+    // otherwise refuse every later honest one as `now-went-backwards` for
+    // ever. A leap past the bound is refused instead, and the state keeps its
+    // own `now`.
+    return refuse(REFUSAL.NOW_JUMPED, 'now');
   }
 
   const row = DISPATCH[current.state.phase];
@@ -705,19 +757,38 @@ function deliver(state, values) {
     return answered(OUTCOME.DUPLICATE, state.phase, state, values.now, state.seen, sender, id);
   }
 
-  const kept = evict(state, values.now);
-  if (kept.length >= state.maxSeen) {
-    // Nothing evictable and no room: refusing is the only answer that does not
-    // lose a record, and a lost record is a message that can be acted on twice.
-    return refuse(REFUSAL.DEDUPE_FULL, 'seen');
+  // The watermark: nothing at or before the `at` of a record this ledger has
+  // ever forgotten is admitted again, whatever kind the event claims and
+  // whatever window the state now carries. It is checked after the ledger
+  // lookup, so a held record is still answered as a duplicate or a conflict.
+  if (at <= state.evictedThrough) {
+    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'message.at');
   }
-  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {
-    // One sender may not take the ledger from every other one. Refused, never
-    // evicted: the quota is a fence, not a reason to forget.
+
+  let { kept, through } = evict(state, values.now);
+  if (kept.length >= state.maxSeen) {
+    // Under pressure, the oldest acked record is compacted into the watermark:
+    // forgotten as a record, remembered as a bound. Its redelivery (and any
+    // message as old) is then refused rather than re-admitted.
+    const oldest = kept.findIndex((entry) => entry.status === STATUS.ACKED);
+    if (oldest === -1) {
+      // Every slot is work in flight: refusing is the only answer that does not
+      // lose a record, and a lost record is a message that can be acted on twice.
+      return refuse(REFUSAL.DEDUPE_FULL, 'seen');
+    }
+    through = Math.max(through, kept[oldest].at);
+    kept = kept.filter((_, position) => position !== oldest);
+  }
+  // The quota counts what a sender has in flight (accepted or acted), not what
+  // is finished: acked records can always be compacted, so they hold no one
+  // out. Refused, never evicted: the quota is a fence, not a reason to forget.
+  const inFlight = kept.filter((entry) => entry.sender === sender && entry.status !== STATUS.ACKED);
+  if (inFlight.length >= state.maxPerSender) {
     return refuse(REFUSAL.SENDER_FULL, 'message.sender');
   }
+
   const entries = insert(kept, Object.freeze({ sender, id, at, kind, status: STATUS.ACCEPTED }));
-  return answered(OUTCOME.ACCEPTED, STATE.PENDING, state, values.now, entries, sender, id);
+  return answered(OUTCOME.ACCEPTED, STATE.PENDING, state, values.now, entries, sender, id, through);
 }
 
 /**
@@ -781,26 +852,39 @@ function refuseClosed() {
 // ---------------------------------------------------------------------------
 
 /**
- * evict drops the records that may be dropped, and returns the survivors as a
- * new array. A record is dropped only when it is **acked** — the delivery is
- * finished, so forgetting it cannot lose work — AND **strictly** outside its
- * kind's window (its age is greater than `windowMs` for a command, or
- * `promptTtlMs` for a prompt), so that any redelivery of its message is
- * already refused (`replay`, `expired`) before the ledger is read. At an age
- * of exactly the window the message is still deliverable, so its record must
- * still be there to call the redelivery a duplicate. A prompt record therefore
- * outlives a command record of the same age: it is never evicted before its
- * TTL passes, and never re-admitted after.
+ * evict drops the records that may be dropped, and answers the survivors as a
+ * new array together with the new watermark (`through`). A record is dropped
+ * only when it is **acked** — the delivery is finished, so forgetting it
+ * cannot lose work — AND **strictly** older than the eviction horizon.
+ *
+ * The horizon is `max(windowMs, promptTtlMs)`, the same for every record and
+ * independent of the record's kind. A kind-dependent horizon let a message
+ * come back by changing the kind the event claims: a command evicted after
+ * its 6 hours, redelivered claiming to be a prompt, was inside the prompt's
+ * TTL and accepted again (and the converse with a TTL shorter than the
+ * window). With one horizon, a record is kept for as long as *any* kind could
+ * still deliver its message.
+ *
+ * Every eviction raises the watermark to the evicted record's `at`, so the
+ * guarantee does not rest on the windows staying what they were: a state
+ * handed back with a wider window still refuses everything at or before the
+ * watermark (`deliver` checks it). At an age of exactly the horizon the
+ * message is still deliverable, so its record must still be there.
  *
  * Nothing that is not acked is ever dropped, at any age: an accepted record is
  * work not yet done, and an acted one is work this consumer still owes an ack
  * for. Dropping either would lose the work or make room for a second action.
  */
 function evict(state, now) {
-  return state.seen.filter((entry) => {
+  const horizon = Math.max(state.windowMs, state.promptTtlMs);
+  let through = state.evictedThrough;
+  const kept = state.seen.filter((entry) => {
     if (entry.status !== STATUS.ACKED) return true;
-    return now - entry.at <= windowFor(state, entry.kind);
+    if (now - entry.at <= horizon) return true;
+    through = Math.max(through, entry.at);
+    return false;
   });
+  return { kept, through };
 }
 
 /** The acceptance window of a kind: the command window, or the prompt TTL. */
@@ -880,6 +964,11 @@ function readState(state) {
   if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {
     return refuse(REFUSAL.INVALID_FUTURE_TOLERANCE, 'futureToleranceMs');
   }
+  // The watermark is a time at or before the state's own `now`, or 0 when
+  // nothing has been evicted yet.
+  if (!isIntegerInRange(values.evictedThrough, 0, values.now)) {
+    return refuse(REFUSAL.INVALID_EVICTED_THROUGH, 'evictedThrough');
+  }
 
   const seen = readSeen(values.seen, values.maxSeen);
   if (!seen.ok) return seen;
@@ -901,6 +990,7 @@ function readState(state) {
       maxPerSender: values.maxPerSender,
       promptTtlMs: values.promptTtlMs,
       futureToleranceMs: values.futureToleranceMs,
+      evictedThrough: values.evictedThrough,
       seen: seen.entries,
     }),
   };
@@ -1103,7 +1193,7 @@ function refuse(code, field) {
 }
 
 /** A step: the outcome, the phase it left the mailbox in, and the new state. */
-function answered(outcome, phase, state, now, entries, sender, id) {
+function answered(outcome, phase, state, now, entries, sender, id, evictedThrough = state.evictedThrough) {
   return Object.freeze({
     ok: true,
     outcome,
@@ -1118,6 +1208,7 @@ function answered(outcome, phase, state, now, entries, sender, id) {
       maxPerSender: state.maxPerSender,
       promptTtlMs: state.promptTtlMs,
       futureToleranceMs: state.futureToleranceMs,
+      evictedThrough,
       seen: Object.freeze(entries),
     }),
   });

@@ -344,8 +344,15 @@ run "delivery: the kind's window" \
 run "delivery: the window's edge is inclusive" \
   "  if (values.now - at > windowFor(state, kind)) {" "  if (values.now - at >= windowFor(state, kind)) {"
 run "delivery: an expired prompt is not a replay" \
-  "    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'message.at');" \
-  "    return refuse(REFUSAL.REPLAY, 'message.at');"
+  "  if (values.now - at > windowFor(state, kind)) {
+    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'message.at');" \
+  "  if (values.now - at > windowFor(state, kind)) {
+    return refuse(REFUSAL.REPLAY, 'message.at');"
+run "the watermark: a prompt below it has expired, not replayed" \
+  "  if (at <= state.evictedThrough) {
+    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'message.at');" \
+  "  if (at <= state.evictedThrough) {
+    return refuse(REFUSAL.REPLAY, 'message.at');"
 run "delivery: an absent kind is a command" \
   "  const kind = values.kind === undefined ? KIND.COMMAND : values.kind;" \
   "  const kind = values.kind === undefined ? KIND.PROMPT : values.kind;"
@@ -369,20 +376,44 @@ run "a duplicate does not re-arm the record" \
 run "the cap refuses rather than evicting a live record" \
   "  if (kept.length >= state.maxSeen) {" "  if (false) {"
 run "the per-sender quota refuses" \
-  "  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {" "  if (false) {"
+  "  if (inFlight.length >= state.maxPerSender) {" "  if (false) {"
 run "the per-sender quota counts only that sender" \
-  "  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {" \
-  "  if (kept.length >= state.maxPerSender) {"
+  "  const inFlight = kept.filter((entry) => entry.sender === sender && entry.status !== STATUS.ACKED);" \
+  "  const inFlight = kept.filter((entry) => entry.status !== STATUS.ACKED);"
+run "the per-sender quota counts only work in flight" \
+  "  const inFlight = kept.filter((entry) => entry.sender === sender && entry.status !== STATUS.ACKED);" \
+  "  const inFlight = kept.filter((entry) => entry.sender === sender);"
+run "the watermark refuses what was evicted" \
+  "  if (at <= state.evictedThrough) {" "  if (false) {"
+run "the watermark is inclusive" \
+  "  if (at <= state.evictedThrough) {" "  if (at < state.evictedThrough) {"
+run "compaction: only an acked record is compacted" \
+  "    const oldest = kept.findIndex((entry) => entry.status === STATUS.ACKED);" \
+  "    const oldest = kept.findIndex(() => true);"
+run "compaction: nothing acked to compact is dedupe-full" \
+  "    if (oldest === -1) {" "    if (false) {"
+run "compaction raises the watermark" \
+  "    through = Math.max(through, kept[oldest].at);" ""
+run "the delivery's new watermark is kept in the state" \
+  "  return answered(OUTCOME.ACCEPTED, STATE.PENDING, state, values.now, entries, sender, id, through);" \
+  "  return answered(OUTCOME.ACCEPTED, STATE.PENDING, state, values.now, entries, sender, id);"
+run "every other answer carries the watermark forward" \
+  "function answered(outcome, phase, state, now, entries, sender, id, evictedThrough = state.evictedThrough) {" \
+  "function answered(outcome, phase, state, now, entries, sender, id, evictedThrough = 0) {"
 
-# 9. The eviction rule, and the late work it must not lose.
+# 9. The eviction rule, the watermark, and the late work it must not lose.
 run "eviction: nothing un-acked is ever evicted" \
   "    if (entry.status !== STATUS.ACKED) return true;" ""
-run "eviction: only outside the window is evictable" \
-  "    return now - entry.at <= windowFor(state, entry.kind);" "    return false;"
-run "eviction: at exactly the window's age a record is kept" \
-  "    return now - entry.at <= windowFor(state, entry.kind);" "    return now - entry.at < windowFor(state, entry.kind);"
-run "eviction: by the record's own kind's window" \
-  "    return now - entry.at <= windowFor(state, entry.kind);" "    return now - entry.at <= state.windowMs;"
+run "eviction: only past the horizon" \
+  "    if (now - entry.at <= horizon) return true;" ""
+run "eviction: at exactly the horizon a record is kept" \
+  "    if (now - entry.at <= horizon) return true;" "    if (now - entry.at < horizon) return true;"
+run "eviction: the horizon covers the prompt TTL" \
+  "  const horizon = Math.max(state.windowMs, state.promptTtlMs);" "  const horizon = state.windowMs;"
+run "eviction: the horizon covers the command window" \
+  "  const horizon = Math.max(state.windowMs, state.promptTtlMs);" "  const horizon = state.promptTtlMs;"
+run "eviction raises the watermark" \
+  "    through = Math.max(through, entry.at);" ""
 run "act: late work is surfaced as stale-pending" \
   "    values.now - target.at > windowFor(state, target.kind) ? OUTCOME.STALE_PENDING : OUTCOME.ACTED," \
   "    OUTCOME.ACTED,"
@@ -392,6 +423,32 @@ run "act: at exactly the window's age it is not stale" \
 run "act: stale by the record's own kind's window" \
   "    values.now - target.at > windowFor(state, target.kind) ? OUTCOME.STALE_PENDING : OUTCOME.ACTED," \
   "    values.now - target.at > state.windowMs ? OUTCOME.STALE_PENDING : OUTCOME.ACTED,"
+
+# 9b. The watermark as a state field, the forward jump, and never throwing.
+run "state: the watermark is in range" \
+  "  if (!isIntegerInRange(values.evictedThrough, 0, values.now)) {" "  if (false) {"
+run "state: the watermark is not ahead of now" \
+  "  if (!isIntegerInRange(values.evictedThrough, 0, values.now)) {" \
+  "  if (!isIntegerInRange(values.evictedThrough, 0, TIME_MAX)) {"
+run "initialState: the watermark is not the caller's to set" \
+  "    STATE_FIELDS.filter((field) => field !== 'phase' && field !== 'seen' && field !== 'evictedThrough')," \
+  "    STATE_FIELDS.filter((field) => field !== 'phase' && field !== 'seen'),"
+run "the forward jump is bounded" \
+  "  if (now - current.state.now > MAX_FORWARD_JUMP_MS) {" "  if (false) {"
+run "the forward jump's bound is inclusive" \
+  "  if (now - current.state.now > MAX_FORWARD_JUMP_MS) {" "  if (now - current.state.now >= MAX_FORWARD_JUMP_MS) {"
+run "step never throws" \
+  "    return stepUnguarded(state, event);
+  } catch {" \
+  "    return stepUnguarded(state, event);
+  } finally {"
+run "initialState never throws" \
+  "    return initialStateUnguarded(options);
+  } catch {" \
+  "    return initialStateUnguarded(options);
+  } finally {"
+run "the declared table: an idle mailbox cannot be full" \
+  "      no: DELIVERY_REFUSALS(false)," "      no: DELIVERY_REFUSALS(true),"
 
 # 10. The dispatch table, the declared table, the derived phase, the freezes.
 run "dispatch: the closed row is not the open row" \
