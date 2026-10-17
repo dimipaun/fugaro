@@ -121,6 +121,13 @@ func (e *initEngine) converge(ctx context.Context) error {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
+	// The Batch backend's provisioning is the owner's step and nothing else
+	// reaches it: the stage is registered only under its own flag, and
+	// `backend: cloud-batch` stays refused by config validation until the
+	// enable task (design compute-backend §8.1 tasks 6 and 9).
+	if e.r.o.provisionBatch {
+		stages = append(stages, newComputeStage(e))
+	}
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
 	if e.r.o.createProject {
 		stages = append(stages, newProjectStage(e))

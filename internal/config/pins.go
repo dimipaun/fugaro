@@ -136,10 +136,22 @@ func catalogWarning(model string, m pricing.Model) string {
 // but empty denies everything, and a role that names no model is refused too,
 // because the model the agent would pick is not known to be on the list. Each
 // problem names the role, the model and the layer that set the list; when
-// that layer is not the ceiling and the ceiling has a list of its own
+// that layer is neither the ceiling nor the policy that replaced it
+// (policy.SourcePolicy: the ceiling *is* that list, so naming it twice would
+// print the same node under two labels) and the ceiling has a list of its own
 // (ceiling, nil when it has none), the message gives that list too, so an
 // empty intersection can be understood.
-func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
+//
+// rt and providers are the routing switch and the routes the caller has, in
+// that caller's own sense of "has": the run passes the policy node's switch and
+// the routes its job carries, `fugaro validate` the operator's config and the
+// routes the run will have. They are what a *route's* own ID is judged against
+// (see allowed): a pin that names a route ID is admitted by an allow-list only
+// when that switch routes the model to that route (review finding on this
+// change — before it, any well-formed anthropic/<id> was admitted by its
+// canonical ID alone, so a repository's own pin reached a route the owner's
+// switch never opted in).
+func CheckAllowed(a Agent, e policy.Effective, ceiling []string, rt *Routing, providers map[string]ModelProvider) []Problem {
 	if !e.HasAllowList() {
 		return nil
 	}
@@ -149,7 +161,7 @@ func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
 	}
 	src := e.Sources[policy.KeyAllowedModels]
 	where := "allowed_models from " + src + ": " + list
-	if src != policy.SourceCeiling && ceiling != nil {
+	if src != policy.SourceCeiling && src != policy.SourcePolicy && ceiling != nil {
 		where += "; the project's allow-list: " + strings.Join(ceiling, ", ")
 	}
 	var ps []Problem
@@ -157,11 +169,67 @@ func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
 		switch {
 		case r.model == "":
 			ps = append(ps, Problem{Path: r.path, Message: "names no model, but the run has an allow-list (" + where + "): set it, or agent.model, to a model on the list"})
-		case !e.Allows(r.model):
+		case !allowed(e, r.model, rt, providers):
 			ps = append(ps, Problem{Path: r.path, Message: CodeSpan(r.model) + " is not an allowed model (" + where + ")"})
 		}
 	}
 	return ps
+}
+
+// allowed reports whether an allow-list admits model: by its own name, or — for
+// a pin the routing switch routed — by the canonical ID of the same model. A
+// routed pin names the route's own ID (anthropic/claude-sonnet-5.5) and the
+// list the owner wrote names the model (claude-sonnet-5-5): one model, one
+// entry, and the list is about which models may run rather than which route
+// serves them (plan Task 1b.2).
+//
+// The second answer is the checked-in map's inverse (pricing.CanonicalFor) plus
+// the switch, and it takes all of: the map must carry the pair *inverse* (so
+// the spelling is a route ID at all), the list must name the canonical ID the
+// pair gives (the model, which is what allowed_models is about), and rt must
+// route that canonical ID to exactly this ID — the same resolution the run
+// itself performs (RoutingClaudeFor, over the same routes). Without that half,
+// any well-formed anthropic/<id> a repository wrote for itself was admitted by
+// its canonical ID alone, which is the owner's allowed_models *and* the
+// switch's explicit-list opt-in (D1a) both bypassed by one spelling (review
+// finding on this change). An absent switch, a switch that does not name the
+// model, and a route the map does not pair all admit nothing.
+//
+// What that admits, said exactly, because "the run was going to route it
+// anyway" is not the whole story (the later review finding on this change): the
+// question here is the switch's *resolution*, and the run's application of the
+// switch is a separate step that is skipped in states where the run has nothing
+// to act on — the gateway off, via auto under a Vertex run, via auto with an
+// ANTHROPIC_API_KEY in the job (internal/runner/routing.go's applyRouting). In
+// those states this rule still admits a route ID the switch resolves, and
+// applyRouting leaves every pin spelled as the configuration wrote it: what
+// admits the pin there is the operator's own claim on the route (the entry's
+// allow_data_to names this repository, D1b's safeguard) plus the canonical
+// model on the list, not the switch. So the rule answers "is this model
+// allowed?" and never promises the run takes the route; that promise is D1a's
+// explicit list, and it is applyRouting that keeps it.
+//
+// It is not made skip-aware on purpose: this same function is `fugaro
+// validate`'s offline verdict (internal/cli/validate.go), where there is no
+// credential and no budget mode to read, so a rule that turned on the run's own
+// state would report one answer for a policy the run then judged by another —
+// the divergence the one-resolver rule exists to prevent. The two halves are
+// tested together instead (internal/runner's
+// TestAllowedAdmitsARouteIDTheSwitchDoesNotApply).
+func allowed(e policy.Effective, model string, rt *Routing, providers map[string]ModelProvider) bool {
+	if e.Allows(model) {
+		return true
+	}
+	canonical, ok := pricing.CanonicalFor(model)
+	if !ok || !e.Allows(canonical) || rt == nil || rt.Claude == nil {
+		return false
+	}
+	// The model is on the list; the question left is whether this spelling is
+	// the route's own ID for it. It is admitted when the switch resolves the
+	// canonical ID to exactly this one, and not otherwise — a spelling the
+	// switch does not route is a route's ID the run is not carrying.
+	route, sent, ok := RoutingClaudeFor(rt.Claude, canonical, providers)
+	return ok && route != RouteDirect && sent == model
 }
 
 // CodeSpan quotes s as a markdown code span with the characters that could

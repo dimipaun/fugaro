@@ -390,6 +390,8 @@ reads:
 | `draft_fallback` | bool | **yes** | the host has no draft PRs, so the PR is an ordinary one with `[DRAFT]` in its title |
 | `pr_status_at` | `*time.Time` | **yes** | when the runner last wrote the PR's status section — **null = never** |
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
+| `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
+| `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 
 `runview.Totals` (`runview.go:436`): `runs` int, `model_usd` float64,
 `model_notional_usd` float64 (**notional** — kept apart from `model_usd` by
@@ -422,6 +424,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `agent_message` | string | **yes** | capped at `agentMessageBytes` = 4 KiB |
 | `log_tail` | `[]string` | **yes** | the newest `diagnoseLogLines` = 30 lines |
 | `report_path` | string | no | |
+| `artifact_paths` | `[]string` | **yes** | one `runs/<slug>/<run>/artifacts/<name>` path per artifact the record lists, in the record's own order: an artifact run has no pull request, so this is where its deliverable is named. The record's list only, never a bucket listing, and a name `fugaro artifacts get` would refuse is still named here (`fugaro artifacts ls` shows it with the reason) |
 | `draft_note` | string | **yes** | a line about the run's draft PR, when it needs one |
 | `follow_up` | `*runstore.FollowUp` | **yes** | what a follow-up acted on; absent for a first run |
 | `comments_path` | string | **yes** | where the comments it was given are stored |

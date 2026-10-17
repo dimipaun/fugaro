@@ -26,6 +26,18 @@
           }
         }
       },
+      "policy": {
+        "shared": {
+          ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now)",
+          ".write": false
+        },
+        "repos": {
+          "$slug": {
+            ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug",
+            ".write": false
+          }
+        }
+      },
       "limits": {
         ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now)"
       },
@@ -41,6 +53,10 @@
             ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug"
           }
         }
+      },
+      "admin": {
+        ".read": false,
+        ".write": false
       }
     },
     "runs": {

@@ -117,19 +117,56 @@ var enablePoll = 2 * time.Second
 // enableTimeout bounds an enable's wait for its operation.
 const enableTimeout = 5 * time.Minute
 
+// enableDeactivatingRetries are the waits between attempts at an enable
+// that fails because the service is still being turned off. Enabling a
+// service whose disable has not finished is refused until it has, and the
+// compute backend's stage enables Compute, which an operator may have just
+// disabled: measured 2026-10-15 (Check 57a's setup, design compute-backend
+// §7.2, §8.1 task 6), a Compute disable/re-enable pair fails with
+// "currently being deactivated" and then succeeds. Tests replace them.
+var enableDeactivatingRetries = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second, 30 * time.Second}
+
+// beingDeactivated reports whether err is Google's answer to enabling a
+// service whose disable is still running. It is matched on the 400 and that
+// one phrase because that is what the measurement recorded: unlike a
+// disabled API's refusal (serviceDisabled), this one carries no ErrorInfo
+// reason to match on, so the message is the whole of the evidence. A false
+// positive costs a bounded wait and one more enable, which is why the loose
+// match is acceptable here and not in serviceDisabled, where it would hide
+// a real failure.
+func beingDeactivated(err error) bool {
+	var ae *googleapi.Error
+	return errors.As(err, &ae) && ae.Code == http.StatusBadRequest &&
+		strings.Contains(ae.Message, "is currently being deactivated")
+}
+
 // EnableService enables service in project through Service Usage, and
 // waits for the operation to finish. Enabling an enabled service is a
-// no-op that succeeds. Callers may still see SERVICE_DISABLED for a few
-// minutes while the enable propagates.
+// no-op that succeeds, and an enable refused because the service is still
+// being deactivated is retried for a few minutes (enableDeactivatingRetries).
+// Callers may still see SERVICE_DISABLED for a few minutes while the enable
+// propagates.
 func EnableService(ctx context.Context, c *Clients, project, service string) error {
 	if c.ServiceUsage == nil {
 		return errors.New("no Service Usage client: endpoints.no_auth is set but endpoints.service_usage is not")
 	}
 	ctx, cancel := context.WithTimeout(ctx, enableTimeout)
 	defer cancel()
-	op, err := c.ServiceUsage.Services.Enable("projects/"+project+"/services/"+service, &serviceusage.EnableServiceRequest{}).Context(ctx).Do()
-	if err != nil {
-		return fmt.Errorf("enabling %s in project %s: %w", service, project, err)
+	var op *serviceusage.Operation
+	for attempt := 0; ; attempt++ {
+		var err error
+		op, err = c.ServiceUsage.Services.Enable("projects/"+project+"/services/"+service, &serviceusage.EnableServiceRequest{}).Context(ctx).Do()
+		if err == nil {
+			break
+		}
+		if !beingDeactivated(err) || attempt >= len(enableDeactivatingRetries) {
+			return fmt.Errorf("enabling %s in project %s: %w", service, project, err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("enabling %s in project %s: %w", service, project, err)
+		case <-time.After(enableDeactivatingRetries[attempt]):
+		}
 	}
 	for !op.Done {
 		name := op.Name
@@ -138,6 +175,7 @@ func EnableService(ctx context.Context, c *Clients, project, service string) err
 			return fmt.Errorf("enabling %s in project %s: waiting for operation %s: %w", service, project, name, ctx.Err())
 		case <-time.After(enablePoll):
 		}
+		var err error
 		if op, err = c.ServiceUsage.Operations.Get(name).Context(ctx).Do(); err != nil {
 			return fmt.Errorf("enabling %s in project %s: reading operation %s: %w", service, project, name, err)
 		}

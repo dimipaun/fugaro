@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -40,10 +41,13 @@ const allowRoutingSettingsEnv = "FUGARO_TEST_ALLOW_ROUTING_SETTINGS"
 // vertexRegionPrefix starts Claude Code's per-model Vertex region overrides.
 const vertexRegionPrefix = "VERTEX_REGION_"
 
-// gatewayOn reports whether the agent's calls go through the gateway: the
-// budget is on and the credential is a model API's (an oauth run never is).
+// gatewayOn reports whether the agent's calls go through the gateway. It is
+// GatewayOn — the same predicate for the readers that hold a mode and an auth
+// rather than a run — read off the run, and it is the only place that happens:
+// the routing switch's own question (RoutingInertReason) and the gateway's
+// rules all ask one function, so no reader can answer it differently.
 func (r *run) gatewayOn() bool {
-	return r.cfg != nil && r.spend.On() && (r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex")
+	return r.cfg != nil && GatewayOn(r.cfg.Agent.Auth, r.spend.Mode)
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
@@ -335,8 +339,11 @@ func (r *run) checkBudget() error {
 	if err := r.checkProviderModels(); err != nil {
 		return err
 	}
-	// The allow-list bounds the models whatever the credential or the mode.
-	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed()); len(ps) > 0 {
+	// The allow-list bounds the models whatever the credential or the mode. The
+	// switch and the routes are the run's own: a route ID is admitted only
+	// where the switch routes the model to it, which is the resolution
+	// applyRouting performed a step ago (resolvePolicy).
+	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders()); len(ps) > 0 {
 		msgs := make([]string, len(ps))
 		for i, p := range ps {
 			msgs[i] = p.String()
@@ -445,12 +452,20 @@ func (r *run) checkProviderModels() error {
 // repository's fugaro.yaml escalated the mode, either place will do.
 func (r *run) noCapDetail() string {
 	const base = "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro init --repo"
-	if r.policy.Sources[policy.KeyMode] == policy.SourceCeiling {
+	switch r.policy.Sources[policy.KeyMode] {
+	case policy.SourceCeiling:
 		return base
+	case policy.SourcePolicy:
+		// The ceiling is the project's published policy: init --repo copies
+		// the local config's value into the jobs, and would not change what
+		// this run read.
+		return "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project's policy (" + projectpolicy.PathShared() + "), which is what the run enforces"
 	}
 	return "budget.mode is enforce (set in fugaro.yaml) but no per-run cap is set: set budget.per_run_usd in fugaro.yaml on the default branch, or in the project config and run fugaro init --repo"
 }
 
-// ceilingAllowed is the owner's allow-list from the job environment, nil when
-// none was set: error messages name it next to the merged one.
-func (r *run) ceilingAllowed() []string { return r.d.Spend.AllowedModels }
+// ceilingAllowed is the owner's allow-list from the run's ceiling, nil when
+// none was set: error messages name it next to the merged one. The ceiling is
+// the job environment's copy of the config, or the project's published policy
+// when it has one (resolvePolicy).
+func (r *run) ceilingAllowed() []string { return r.ceiling.AllowedModels }

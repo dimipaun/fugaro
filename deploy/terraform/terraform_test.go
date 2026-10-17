@@ -3,10 +3,16 @@ package terraform
 import (
 	"fmt"
 	"io/fs"
+	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
@@ -57,6 +63,22 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/firebase/outputs.tf",
 		"gcp/roots/firebase/.terraform.lock.hcl",
 		"gcp/roots/firebase/tests/firebase.tftest.hcl",
+		// The Batch backend's installation-level provisioning (design
+		// compute-backend §8.1 task 6). Its build is a script, not HCL: the
+		// wait in the middle of it has no Terraform resource.
+		"gcp/modules/compute/versions.tf",
+		"gcp/modules/compute/variables.tf",
+		"gcp/modules/compute/apis.tf",
+		"gcp/modules/compute/iam.tf",
+		"gcp/modules/compute/network.tf",
+		"gcp/modules/compute/preload.tf",
+		"gcp/modules/compute/preload.sh",
+		"gcp/modules/compute/outputs.tf",
+		"gcp/roots/compute/main.tf",
+		"gcp/roots/compute/variables.tf",
+		"gcp/roots/compute/outputs.tf",
+		"gcp/roots/compute/.terraform.lock.hcl",
+		"gcp/roots/compute/tests/compute.tftest.hcl",
 	} {
 		if _, err := fs.Stat(FS, p); err != nil {
 			t.Errorf("embedded tree lacks %s: %v", p, err)
@@ -1059,9 +1081,14 @@ var (
 	// checked against backendRoleRE; each.value (and each.value.role) takes
 	// its roles from literals and references elsewhere in the file, which are
 	// scanned the same way.
-	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
+	// The compute module's two roles and its build-submitter reference are on
+	// the allowlist knowingly: each is created by that module with a pinned
+	// permission list (TestComputeReaperRoleIsExactlySix and
+	// TestComputePreloadBuilderRoleAreExactlyTheBuild), and the
+	// build-submitter id is the installation's own role.
+	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
 	// The member expressions an IAM member may use.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|google_service_account\.(job|build|scheduler)\.member|google_service_account\.history\[0\]\.member|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload)\.member|google_service_account\.history\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -1204,6 +1231,24 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				t.Errorf("%s: %s: permissions is not a literal list of quoted permissions (a variable, local or concat is refused)", path, blk.name)
 				continue
 			}
+			// The compute module's two roles are the one knowing exception to
+			// the compute ban, and each is pinned to its exact permission
+			// list by TestComputeReaperRoleIsExactlySix and
+			// TestComputePreloadBuilderRoleAreExactlyTheBuild: the reaper ends
+			// Batch jobs and VMs and creates nothing, and the builder boots,
+			// reads, stops, images and deletes one VM. Neither reaches the
+			// budget backend, identities or IAM in any other way.
+			if blk.name == "google_project_iam_custom_role.reaper" || blk.name == "google_project_iam_custom_role.preload_builder" {
+				if !strings.HasPrefix(path, "gcp/modules/compute/") {
+					t.Errorf("%s: %s is not in the compute module", path, blk.name)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !strings.HasPrefix(p[1], "compute.") && !strings.HasPrefix(p[1], "batch.jobs.") {
+						t.Errorf("%s: %s holds %s, which is neither the reaper's six nor the preload builder's build", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
 			if blk.name == "google_project_iam_custom_role.token_minter" {
 				if !strings.HasPrefix(path, "gcp/modules/firebase/") || strings.TrimSpace(strings.Trim(strings.TrimSpace(m[1]), ",")) != `"iam.serviceAccounts.signJwt"` {
 					t.Errorf("%s: %s is not the signJwt-only role in the Firebase module", path, blk.name)
@@ -1228,6 +1273,851 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 }
 
 var quotedPerm = regexp.MustCompile(`"([^"]+)"`)
+
+// The compute module's provisioning, held to what the design says it must be
+// (docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6). These are text
+// checks because the values that matter -- which role, on what, narrowed by
+// what condition -- are what a reviewer has to read, and a plan assertion
+// only ever sees the inputs a test hands it.
+
+// permissionsOf returns the literal permissions a custom role block holds.
+func permissionsOf(t *testing.T, path string, blk block) []string {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)permissions\s*=\s*\[(.*?)\]`).FindStringSubmatch(blk.body)
+	if m == nil {
+		t.Fatalf("%s: %s has no literal permissions list", path, blk.name)
+	}
+	var perms []string
+	for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+		perms = append(perms, p[1])
+	}
+	slices.Sort(perms)
+	return perms
+}
+
+// The reaper's role is the SIX permissions the reaper's code uses, and
+// nothing else: list, get, cancel and delete a job, and list and delete an
+// instance. It carries no create permission of any kind, and the two built-in
+// roles Google's own pages name for the same calls -- batch.jobsEditor (which
+// also carries batch.jobs.create) and compute.instanceAdmin.v1 (which carries
+// the whole instance lifecycle, setMetadata included) -- are granted nowhere
+// in the tree.
+func TestComputeReaperRoleIsExactlySix(t *testing.T) {
+	want := []string{
+		"batch.jobs.cancel",
+		"batch.jobs.delete",
+		"batch.jobs.get",
+		"batch.jobs.list",
+		"compute.instances.delete",
+		"compute.instances.list",
+	}
+	roles, grants := 0, 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+			if blk.name != "google_project_iam_custom_role.reaper" {
+				continue
+			}
+			roles++
+			if path != "gcp/modules/compute/iam.tf" {
+				t.Errorf("%s: the reaper's role is the compute module's", path)
+			}
+			if got := permissionsOf(t, path, blk); !slices.Equal(got, want) {
+				t.Errorf("%s: the reaper holds %v, want exactly %v (design §3.7)", path, got, want)
+			}
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if !anyIAMRE.MatchString(blk.typ) || !strings.Contains(blk.body, "google_service_account.reaper") {
+				continue
+			}
+			grants++
+			if blk.name != "google_project_iam_member.reaper" ||
+				firstAttr(blk.body, "role") != "google_project_iam_custom_role.reaper.name" {
+				t.Errorf("%s: %s grants the reaper something other than its own six-permission role", path, blk.name)
+			}
+		}
+	})
+	if roles != 1 || grants != 1 {
+		t.Errorf("found %d reaper roles and %d reaper grants, want 1 of each", roles, grants)
+	}
+}
+
+// The preload builder's role is the build's own calls and nothing more, and
+// it is granted on the project to the preload account only.
+//
+// The list is longer than the build's four calls because a create is checked
+// argument by argument: the boot disk (compute.disks.create), the interface on
+// the named subnetwork (compute.subnetworks.use), the startup script
+// (compute.instances.setMetadata), the labels (compute.instances.setLabels),
+// the run account the VM runs as (compute.instances.setServiceAccount) and the
+// image it boots from (compute.images.useReadOnly) are each their own
+// permission. What it does NOT carry is the point: no instance or image admin
+// role, no compute.disks.delete (the boot disk is the instance's own and goes
+// with it), and nothing that could create a job or a second VM.
+//
+// The two *Operations.get permissions are the ones a list like this is easy to
+// get wrong, because nothing in the build's own names suggests them: a create
+// call is authorized by its own permission and then WAITS on an operation, and
+// polling that operation is checked against compute.zoneOperations.get (zonal:
+// the instance, its disk) or compute.globalOperations.get (global: images are
+// global resources, so images.create and images.delete both wait on a global
+// operation — cloud.google.com/compute/docs/reference/rest/v1/images/insert,
+// checked 2026-10-16). Missing the global one leaves images.create authorized
+// and the call still failing, which is every pass that makes a generation; the
+// sweep's delete fails the same way and is swallowed by its `|| true`, so a
+// stale generation would never be removed and C19's stale-image half would
+// never happen.
+//
+// setMetadata is the one permission here wider than the build's own use of it
+// -- it is also how SSH keys reach a VM -- and it is pinned as an exception
+// rather than forbidden, because the build has no version of itself without
+// it: a builder VM with no startup script pulls nothing (design §1.2). What
+// bounds it is the holder: exactly one account, the preload builder's, which
+// nothing but the scheduled rebuild and its Cloud Build step runs as.
+func TestComputePreloadBuilderRoleAreExactlyTheBuild(t *testing.T) {
+	want := []string{
+		"compute.disks.create",
+		"compute.disks.useReadOnly",
+		"compute.globalOperations.get",
+		"compute.images.create",
+		"compute.images.delete",
+		"compute.images.get",
+		"compute.images.getFromFamily",
+		"compute.images.list",
+		"compute.images.setLabels",
+		"compute.images.useReadOnly",
+		"compute.instances.create",
+		"compute.instances.delete",
+		"compute.instances.get",
+		"compute.instances.getSerialPortOutput",
+		"compute.instances.list",
+		"compute.instances.setLabels",
+		"compute.instances.setMetadata",
+		"compute.instances.setServiceAccount",
+		"compute.instances.stop",
+		"compute.subnetworks.use",
+		"compute.zoneOperations.get",
+	}
+	found := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+			if blk.name != "google_project_iam_custom_role.preload_builder" {
+				continue
+			}
+			found++
+			if got := permissionsOf(t, path, blk); !slices.Equal(got, want) {
+				t.Errorf("%s: the preload builder holds %v, want exactly %v", path, got, want)
+			}
+		}
+	})
+	if found != 1 {
+		t.Errorf("found %d preload builder roles, want 1", found)
+	}
+}
+
+// The builder VM is placed on the network and the subnetwork the module
+// creates its NAT on, and on no other: the VM has no external IP, so a
+// placement anywhere else is a VM with no egress, and the pull the whole
+// preload exists for would never finish (design §1.7).
+func TestComputePreloadBuildsOnTheNATsNetwork(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The create command itself -- its line and its continuation lines -- and
+	// not the script: a comment that mentions a flag is not the flag.
+	create := shellCommand(t, string(b), `gcloud compute instances create "$BUILDER"`)
+	for _, want := range []string{`--network="$NETWORK"`, `--subnet="$SUBNETWORK"`, "--no-address"} {
+		if !slices.Contains(strings.Fields(create), want) {
+			t.Errorf("the builder VM's create does not name %s: %s", want, create)
+		}
+	}
+	// And the two it names are the module's own inputs, passed to the step.
+	tf, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"NETWORK=${var.network}", "SUBNETWORK=${var.subnetwork}"} {
+		if !strings.Contains(string(tf), want) {
+			t.Errorf("the preload build's environment does not pass %s to the script", want)
+		}
+	}
+}
+
+// shellCommand is the shell command in script that starts with start: its
+// line and every continuation line after it, comments excluded.
+func shellCommand(t *testing.T, script, start string) string {
+	t.Helper()
+	var cmd []string
+	in := false
+	for _, line := range strings.Split(script, "\n") {
+		l := strings.TrimSpace(line)
+		if !in {
+			if !strings.HasPrefix(l, start) {
+				continue
+			}
+			in = true
+		}
+		cmd = append(cmd, strings.TrimSuffix(l, "\\"))
+		if !strings.HasSuffix(l, "\\") {
+			break
+		}
+	}
+	if !in {
+		t.Fatalf("the script no longer runs %s", start)
+	}
+	return strings.Join(cmd, " ")
+}
+
+// The built-in roles the design forbids are granted nowhere, and the one
+// batch.jobsEditor binding is narrowed by the Condition 57a-9 read back as
+// written (2026-10-15): a resource-name prefix, never the bare project-wide
+// grant. An unconditioned jobsEditor is the launcher-shaped power to run any
+// container in the project with any image (design §3.7).
+func TestComputeLauncherJobsEditorIsConditioned(t *testing.T) {
+	for _, bad := range []string{"roles/batch.jobsEditor.limited", "roles/compute.instanceAdmin.v1", "roles/compute.admin", "roles/editor", "roles/owner"} {
+		walk(t, func(path string, b []byte) {
+			for _, blk := range allResourceBlocks(t, path, b) {
+				if anyIAMRE.MatchString(blk.typ) && strings.Contains(blk.body, `"`+bad+`"`) {
+					t.Errorf("%s: %s grants %s", path, blk.name, bad)
+				}
+			}
+		})
+	}
+	launchers, conditioned := 0, 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if !hasAttr(blk.body, "role", `"roles/batch.jobsEditor"`) {
+				continue
+			}
+			launchers++
+			if path != "gcp/modules/compute/iam.tf" || blk.name != "google_project_iam_member.launcher_jobs_editor" {
+				t.Errorf("%s: %s grants Batch Job Editor and is not the compute module's launcher binding", path, blk.name)
+				continue
+			}
+			if !strings.Contains(blk.body, "condition {") || !strings.Contains(blk.body, "${local.job_name_prefix}") {
+				t.Errorf("%s: %s grants Batch Job Editor with no Condition on the job-name prefix", path, blk.name)
+				continue
+			}
+			conditioned++
+		}
+	})
+	if launchers != 1 || conditioned != 1 {
+		t.Errorf("found %d batch.jobsEditor bindings, %d of them conditioned, want 1 and 1", launchers, conditioned)
+	}
+}
+
+// The run-class accounts hold the two roles Batch requires of a job's service
+// account (agentReporter, logWriter) plus the reader grant on the repository
+// the PIN names -- and the pin's repository is a variable, never a constant:
+// on 2026-10-15 it was the remote fugaro-ghcr, not fugaro-base (§7.2).
+func TestComputeRunAccountsHoldTheRunRoles(t *testing.T) {
+	want := map[string]string{
+		"google_project_iam_member.run_agent_reporter": "roles/batch.agentReporter",
+		"google_project_iam_member.run_log_writer":     "roles/logging.logWriter",
+	}
+	seen := map[string]bool{}
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			role, ok := want[blk.name]
+			if !ok {
+				continue
+			}
+			seen[blk.name] = true
+			if !hasAttr(blk.body, "role", `"`+role+`"`) {
+				t.Errorf("%s: %s must grant %s", path, blk.name, role)
+			}
+			if !hasAttr(blk.body, "for_each", "var.run_accounts") || !hasAttr(blk.body, "member", "each.value") {
+				t.Errorf("%s: %s must grant the role to each run account", path, blk.name)
+			}
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository_iam_member") {
+			if !strings.Contains(blk.name, "registry_reader") {
+				continue
+			}
+			if !hasAttr(blk.body, "repository", "var.registry_repository") {
+				t.Errorf("%s: %s must name the repository the pin names, never a constant (§7.2)", path, blk.name)
+			}
+			if strings.Contains(blk.body, `"fugaro-base"`) || strings.Contains(blk.body, `"fugaro-ghcr"`) {
+				t.Errorf("%s: %s writes the repository out by hand", path, blk.name)
+			}
+		}
+	})
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("no %s grant found", name)
+		}
+	}
+}
+
+// Creating the builder VM names a run-class account, and the caller is the
+// build STEP -- which runs as the preload account. So the preload account
+// holds actAs on each run account, and nothing holds it on a run account
+// directly: no grant here names Cloud Build's own agent.
+//
+// That is the shorter path this binding closes, not a claim that a build
+// cannot reach a run account: naming the preload account as a build's
+// serviceAccount takes actAs on that account (which the operators hold, and
+// the account holds on itself for the scheduled call), and such a build boots
+// a builder VM as a run account. The chain is operator -> build -> run
+// account, one reviewed step at a time, and the agent -- which any principal
+// who can submit a build in this project drives -- holds no run account.
+func TestComputeThePreloadBuildActsAsTheRunAccountsOnly(t *testing.T) {
+	users := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_service_account_iam_member") {
+			if !strings.Contains(blk.name, "run_account") {
+				continue
+			}
+			users++
+			if path != "gcp/modules/compute/iam.tf" || blk.name != "google_service_account_iam_member.preload_run_account_user" {
+				t.Errorf("%s: %s grants actAs on a run account", path, blk.name)
+				continue
+			}
+			if !hasAttr(blk.body, "for_each", "var.run_accounts") || !hasAttr(blk.body, "member", "google_service_account.preload.member") {
+				t.Errorf("%s: %s must grant the run accounts' actAs to the preload account", path, blk.name)
+			}
+			if strings.Contains(blk.body, "cloud_build_agent") {
+				t.Errorf("%s: %s grants Cloud Build's agent actAs on a run account", path, blk.name)
+			}
+		}
+	})
+	if users != 1 {
+		t.Errorf("found %d actAs grants on the run accounts, want 1", users)
+	}
+}
+
+// The job's no-external-IP posture needs BOTH the network and the subnetwork
+// named (measured 2026-10-15: Batch refuses the field without them), so both
+// are required variables with a shape check and neither has a default, and
+// the NAT is created on exactly those two.
+func TestComputeNetworkAndSubnetworkAreExplicit(t *testing.T) {
+	vars, err := fs.ReadFile(FS, "gcp/modules/compute/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"network", "subnetwork"} {
+		blk := regexp.MustCompile(`(?s)variable "` + v + `" \{(.*?)\n\}`).FindStringSubmatch(string(vars))
+		if blk == nil {
+			t.Fatalf("variable %q is not declared", v)
+		}
+		if strings.Contains(blk[1], "default") {
+			t.Errorf("variable %q has a default: Batch refuses noExternalIpAddress unless both are named explicitly (design §1.7, §7.2)", v)
+		}
+		if !strings.Contains(blk[1], "validation {") {
+			t.Errorf("variable %q has no shape check", v)
+		}
+	}
+	nats, subnetworks := 0, 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_compute_router_nat") {
+			nats++
+			if !strings.Contains(blk.body, "subnetwork {") || !hasAttr(blk.body, "name", "var.subnetwork") {
+				t.Errorf("%s: %s must NAT the subnetwork the job's VMs are placed in", path, blk.name)
+			}
+			subnetworks++
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_compute_router") {
+			if !hasAttr(blk.body, "network", "var.network") {
+				t.Errorf("%s: %s must sit on the network the job's VMs are placed on", path, blk.name)
+			}
+		}
+	})
+	if nats != 1 || subnetworks != 1 {
+		t.Errorf("found %d NATs over %d subnetworks, want 1 and 1", nats, subnetworks)
+	}
+}
+
+// streaming's API is NOT enabled: the design takes the preloaded boot image,
+// and containerfilesystem is streaming's prerequisite only (§1.2, C4). A run
+// that needs no socket could stream one day; nothing here does.
+func TestComputeDoesNotEnableImageStreaming(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/apis.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	if strings.Contains(code, "containerfilesystem.googleapis.com") {
+		t.Error("the compute module enables containerfilesystem.googleapis.com: the design takes the preload, not streaming")
+	}
+	for _, want := range []string{"compute.googleapis.com", "batch.googleapis.com"} {
+		if !strings.Contains(code, want) {
+			t.Errorf("the compute module does not enable %s", want)
+		}
+	}
+}
+
+// The preload build is a job on a schedule, and the script it runs is the one
+// measured procedure: Google's own base family, a pull into the VM's Docker
+// data root, the serial-port marker, then the image. The build must never
+// delete a VM or an image that is not its own, so every delete in the script
+// is guarded by the fugaro=managed label.
+func TestComputePreloadBuildFollowsTheMeasuredProcedure(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := string(b)
+	for _, want := range []string{
+		"describe-from-family",   // the family is resolved in Google's project
+		"docker pull",            // the pull is what fills the Docker data root
+		"get-serial-port-output", // the wait, because the VM has no external IP
+		"instances stop",         // the disk must be detached before imaging
+		"images create",          // --source-disk
+		"instances delete",       // the builder always goes
+		"fugaro=managed",         // the ownership mark on both
+	} {
+		if !strings.Contains(sh, want) {
+			t.Errorf("preload.sh does not %q: it is not 57a-3b's procedure", want)
+		}
+	}
+	if n := strings.Count(sh, "--labels=fugaro=managed"); n < 2 {
+		t.Errorf("preload.sh marks its own VM and image %d times, want at least 2", n)
+	}
+	for _, line := range strings.Split(sh, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(line, "delete") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "say ") {
+			continue
+		}
+		if !strings.Contains(line, `"$BUILDER"`) && !strings.Contains(line, `"$img"`) {
+			t.Errorf("preload.sh deletes something that is not its builder VM or a fugaro-labelled image of its own prefix: %s", trimmed)
+		}
+	}
+	j, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tf := string(j)
+	if !strings.Contains(tf, `file("${path.module}/preload.sh")`) {
+		t.Error("the build does not run the committed script")
+	}
+	if !strings.Contains(tf, "google_cloud_scheduler_job") || !strings.Contains(tf, "cloudbuild.googleapis.com/v1/projects/") {
+		t.Error("the preload has no scheduled rebuild calling Cloud Build")
+	}
+	if !strings.Contains(tf, "sha256(var.base_image)") {
+		t.Error("the preload image's name must carry the pinned base version: one image per pin")
+	}
+}
+
+// The rebuild replaces what is stale, or the schedule is decoration. The
+// image's FAMILY carries the pin's hash and the pin does not move when Google
+// rolls the base family, so the family name cannot say which release is inside
+// its newest generation and an image that is already there is not
+// automatically current: what it was built from is recorded on it (its
+// base-release label) and how old it is is its creation date, both read back
+// from the API, and a generation that is stale or past the refresh window is
+// replaced by a NEW generation in the same family. The window is an input with
+// a ceiling below the 60 days Batch documents for a custom image (§1.2, C19),
+// because a window at or past the lifetime would leave the image unsupported
+// before anything replaced it.
+func TestComputePreloadRebuildsAStaleImage(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := string(b)
+	for _, want := range []string{
+		`--format='csv[no-heading](name,labels.fugaro,labels.base-release,creationTimestamp)'`, // the four answers the decision reads
+		"IFS=, read -r",                         // and read as four columns, not one joined line
+		"REFRESH_DAYS:?",                        // the window is an input, not a literal
+		`--labels=fugaro=managed,base-release=`, // what the generation was built from is recorded on it
+		`--family="$IMAGE_FAMILY"`,              // the new generation joins the family the runs boot
+		`describe-from-family "$IMAGE_FAMILY"`,  // and the decision is read from that family
+	} {
+		if !strings.Contains(sh, want) {
+			t.Errorf("preload.sh does not name %q: the scheduled rebuild would leave a stale image in place", want)
+		}
+	}
+	// The decision is made from the API's answers, and it is the api's: the
+	// newest generation in the family, the release it holds, how old it is.
+	describe := strings.Index(sh, `describe-from-family "$IMAGE_FAMILY"`)
+	release := strings.Index(sh, "labels.base-release")
+	create := strings.Index(sh, "gcloud compute images create")
+	if describe < 0 || release < describe || create < release {
+		t.Errorf("the new generation is not created after the describe that decides it (describe %d, release %d, create %d)", describe, release, create)
+	}
+	// The replacement needs nothing of the previous generation, so the new one
+	// exists BEFORE any image is deleted: a delete first would leave the
+	// installation with no image at all if the create then failed, and the one
+	// delete the script makes outside its own prefix sweep is the sweep's.
+	if del := strings.Index(sh, `gcloud compute images delete "$img"`); del < create {
+		t.Errorf("an image is deleted before the new generation exists (create %d, delete %d)", create, del)
+	}
+	if n := strings.Count(sh, "compute images delete"); n != 1 {
+		t.Errorf("preload.sh deletes images in %d places, want 1 (the sweep, which never deletes the family's newest)", n)
+	}
+	// The generation is only created once the pull has finished: an image
+	// taken from a disk whose pull has not finished is an image with nothing
+	// in it, and the runs would silently pay the pull the preload exists to
+	// remove.
+	pull := strings.Index(sh, "for _ in $(seq 1 60)")
+	keep := strings.Index(sh, `if [ -n "$BUILT" ]; then`)
+	if pull < 0 || keep < pull || create < keep {
+		t.Errorf("the new generation is not created inside the guard that follows the pull (pull %d, guard %d, create %d)", pull, keep, create)
+	}
+	// An image under this family that this build did not make is left alone:
+	// the refusal names the label, and it comes before anything is created.
+	refuse := strings.Index(sh, "is not fugaro=managed; refusing to touch it")
+	if refuse < describe || refuse > create {
+		t.Errorf("preload.sh does not refuse an image that is not its own before replacing it (describe %d, refusal %d, create %d)", describe, refuse, create)
+	}
+	// A newest generation that is its own, current and inside the window is
+	// the only thing left alone, and that is said, not assumed: both outcomes
+	// are inside the conditional, so an unconditional "nothing to build" --
+	// the bug this test exists for, a scheduled rebuild that never refreshed
+	// anything -- fails here.
+	if !strings.Contains(sh, "nothing to build") {
+		t.Error("preload.sh never reports the one case it leaves an image alone in")
+	}
+	decide := regexp.MustCompile(`(?s)if \[ "\$IMG_RELEASE" = "\$RELEASE_LABEL" \].*?\nfi`).FindString(sh)
+	if decide == "" {
+		t.Fatal("preload.sh does not decide the rebuild from the release the image holds")
+	}
+	for _, want := range []string{`[ "$IMG_AGE_DAYS" -lt "$REFRESH_DAYS" ]`, `BUILD=""`} {
+		if !strings.Contains(decide, want) {
+			t.Errorf("the rebuild's decision does not hold %q: an image is only left alone when it is current AND inside the window", want)
+		}
+	}
+
+	// The window arrives from the module, and the module's and the root's
+	// defaults are inside the lifetime Batch documents.
+	tf, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tf), "REFRESH_DAYS=${var.preload_refresh_days}") {
+		t.Error("the build's environment does not pass the refresh window to the script")
+	}
+	if !strings.Contains(string(tf), "retry_config") {
+		t.Error("the scheduled rebuild has no retry: a failed replacement would wait a week")
+	}
+	for _, path := range []string{"gcp/modules/compute/variables.tf", "gcp/roots/compute/variables.tf"} {
+		vars, err := fs.ReadFile(FS, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blk := regexp.MustCompile(`(?s)variable "preload_refresh_days" \{(.*?)\n\}`).FindStringSubmatch(string(vars))
+		if blk == nil {
+			t.Errorf("%s does not declare preload_refresh_days", path)
+			continue
+		}
+		if !regexp.MustCompile(`(?m)^\s*default\s*=\s*30\s*$`).MatchString(blk[1]) {
+			t.Errorf("%s's preload_refresh_days default is not the 30 days the Go side sends", path)
+		}
+	}
+	moduleVars, err := fs.ReadFile(FS, "gcp/modules/compute/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(moduleVars), "var.preload_refresh_days < 60") {
+		t.Error("the module does not refuse a refresh window at or past the 60-day supported lifetime")
+	}
+}
+
+// The run accounts are the only holders of a reader grant on the installation's
+// registry, and the preload's own pull is one of them: the builder VM boots as
+// a run-class account (preload.sh's --service-account) and the docker pull runs
+// in its startup script, so the preload ACCOUNT reads nothing from that
+// repository -- the build step's own image is Google's, from gcr.io. A grant to
+// it would be a binding with no reader: the project hands out a role whose
+// permissions nothing in the installation ever exercises.
+func TestComputeTheRegistryReaderHasOneHolder(t *testing.T) {
+	grants := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, "gcp/modules/compute/") {
+			return
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository_iam_member") {
+			grants++
+			if blk.name != "google_artifact_registry_repository_iam_member.run_registry_reader" {
+				t.Errorf("%s: %s grants a registry role in the compute module, and every reader grant there is the run accounts'", path, blk.name)
+				continue
+			}
+			if !hasAttr(blk.body, "for_each", "var.run_accounts") || !hasAttr(blk.body, "member", "each.value") {
+				t.Errorf("%s: %s must grant the reader role to each run account", path, blk.name)
+			}
+			if strings.Contains(blk.body, "google_service_account.preload") {
+				t.Errorf("%s: %s grants the reader role to the preload account, which pulls nothing from this repository", path, blk.name)
+			}
+		}
+	})
+	if grants != 1 {
+		t.Errorf("found %d registry grants in the compute module, want 1 (the run accounts' reader)", grants)
+	}
+}
+
+// Cloud Build's own agent is the SERVICE AGENT
+// service-<project number>@gcp-sa-cloudbuild.iam.gserviceaccount.com
+// (cloud.google.com/build/docs/securing-builds/configure-access-for-cloud-build-service-account,
+// checked 2026-10-16). service-<number>@cloudbuild.gserviceaccount.com is no
+// principal at all -- nothing holds that address -- and the form that does
+// exist, the bare <number>@cloudbuild.gserviceaccount.com, is the LEGACY
+// default BUILD account, a build identity an organization may choose; granting
+// it actAs on the preload account would hand a build identity this module never
+// uses the power to run as the preload account
+// (cloud.google.com/build/docs/cloud-build-service-account, checked
+// 2026-10-16). The repo's own tokensigners.go draws the same line: the
+// service- form is recognised only under gcp-sa-* domains, and cloudbuild's
+// legacy domain only in the bare-number form.
+func TestComputePreloadCloudBuildAgentIsTheServiceAgent(t *testing.T) {
+	iam, err := fs.ReadFile(FS, "gcp/modules/compute/iam.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `cloud_build_agent     = "serviceAccount:service-${var.project_number}@gcp-sa-cloudbuild.iam.gserviceaccount.com"`
+	if !strings.Contains(string(iam), want) {
+		t.Errorf("the Cloud Build principal is not the service agent:\n  want %s", want)
+	}
+	if strings.Contains(string(iam), `service-${var.project_number}@cloudbuild.gserviceaccount.com`) {
+		t.Error("the module names service-<number>@cloudbuild.gserviceaccount.com, which is not a principal")
+	}
+	// And no file in the tree grants anything to that address.
+	walk(t, func(path string, b []byte) {
+		if !strings.Contains(string(b), "cloudbuild.gserviceaccount.com") {
+			return
+		}
+		for _, m := range regexp.MustCompile(`serviceAccount:[^"\s]*cloudbuild\.gserviceaccount\.com`).FindAllString(string(b), -1) {
+			if !strings.Contains(m, "gcp-sa-cloudbuild") && !regexp.MustCompile(`^serviceAccount:[0-9]+@cloudbuild`).MatchString(m) {
+				t.Errorf("%s: %s is not a Cloud Build principal: the service agent carries the gcp-sa- prefix, and the only other form is the legacy bare-number build account", path, m)
+			}
+		}
+	})
+}
+
+// The build config is substitution-processed before any step runs, so every
+// `$` in the inlined script has to be doubled: one unescaped `$VAR` that is
+// not a built-in substitution makes the Cloud Build API reject the build with
+// INVALID_ARGUMENT before a step starts
+// (cloud.google.com/build/docs/configuring-builds/substitute-variable-values,
+// checked 2026-10-16: "To use an expression starting with $ you must use $$",
+// and $FOO "is invalid since it is not a built-in substitution"). The script
+// is shell, so it is full of them: every $PROJECT, ${...:?} and $(...) in
+// preload.sh is Cloud Build's to reject.
+func TestComputePreloadEscapesItsScriptForCloudBuild(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tf := string(b)
+	if !strings.Contains(tf, `preload_script = replace(file("${path.module}/preload.sh"), "$", "$$")`) {
+		t.Error(`the inlined script is not escaped: it must be replace(file("${path.module}/preload.sh"), "$", "$$")`)
+	}
+	if !strings.Contains(tf, `args       = ["-c", local.preload_script]`) {
+		t.Error("the build step does not run the escaped script: args must use local.preload_script, not file(...)")
+	}
+	sh, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The escape is load-bearing: the raw script DOES carry unescaped
+	// substitutions, so escaping it is not a formality.
+	raw := unescapedSubstitutions(string(sh))
+	if len(raw) == 0 {
+		t.Fatal("preload.sh holds no $ at all: this test no longer says anything about the escape")
+	}
+	escaped := unescapedSubstitutions(strings.ReplaceAll(string(sh), "$", "$$"))
+	if len(escaped) != 0 {
+		t.Errorf("the escaped script still holds %d unescaped substitutions, starting at %q: Cloud Build would reject the build", len(escaped), escaped[0])
+	}
+}
+
+// unescapedSubstitutions returns the `$`-expressions of a Cloud Build config
+// that its substitution pass would read as substitutions: every `$` except the
+// `$$` escape. A built-in substitution ($BUILD_ID and friends) would be a
+// false positive here; the build config uses none.
+func unescapedSubstitutions(s string) []string {
+	var out []string
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' {
+			continue
+		}
+		if i+1 < len(s) && s[i+1] == '$' {
+			i++
+			continue
+		}
+		if i+1 >= len(s) {
+			continue
+		}
+		if c := s[i+1]; c == '{' || c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			end := i + 2
+			for end < len(s) && (s[end] == '_' || (s[end] >= '0' && s[end] <= '9') || (s[end] >= 'A' && s[end] <= 'Z') || (s[end] >= 'a' && s[end] <= 'z')) {
+				end++
+			}
+			out = append(out, s[i:end])
+		}
+	}
+	return out
+}
+
+// With a user-specified service account the build's logs must go to a Cloud
+// Storage bucket or a Cloud Logging bucket in the project, and the value that
+// names the latter is CLOUD_LOGGING_ONLY. CLOUD_LOGGING is not a value of that
+// enum at all, so the API rejects the build
+// (cloud.google.com/build/docs/securing-builds/configure-user-specified-service-accounts,
+// checked 2026-10-16).
+func TestComputePreloadLogsWithAValueTheAPIHas(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tf := string(b)
+	if !strings.Contains(tf, `options = { logging = "CLOUD_LOGGING_ONLY" }`) {
+		t.Error("the build's logging option is not CLOUD_LOGGING_ONLY: a build run as a user-specified service account must log to Cloud Logging, and CLOUD_LOGGING is not a value of the enum")
+	}
+	if regexp.MustCompile(`logging\s*=\s*"CLOUD_LOGGING"`).MatchString(tf) {
+		t.Error("the build's logging option is CLOUD_LOGGING, which the Cloud Build API does not have")
+	}
+}
+
+// The scheduled call and the build it creates are the same account: Cloud
+// Scheduler calls the Cloud Build API with an OAuth token minted from the
+// preload account (preload.tf), and the build it creates names that account as
+// its serviceAccount. Google's note on that case is that the account "must
+// still have the iam.serviceAccounts.actAs permission"
+// (cloud.google.com/build/docs/cloud-build-service-account, checked
+// 2026-10-16), and a service account does not hold actAs on itself by default:
+// without this binding both the weekly rebuild and the first build the stage
+// starts fail with PERMISSION_DENIED before any step runs.
+func TestComputeThePreloadAccountActsAsItself(t *testing.T) {
+	found := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_service_account_iam_member") {
+			if path != "gcp/modules/compute/iam.tf" {
+				continue
+			}
+			if !hasAttr(blk.body, "member", "google_service_account.preload.member") {
+				continue
+			}
+			// Both sides name the preload account: the run accounts' binding
+			// has the same member and a run account as its target, so it is
+			// not this one.
+			if !hasAttr(blk.body, "service_account_id", "google_service_account.preload.name") {
+				continue
+			}
+			found++
+			if blk.name != "google_service_account_iam_member.preload_self_user" ||
+				!hasAttr(blk.body, "role", `"roles/iam.serviceAccountUser"`) {
+				t.Errorf("%s: %s must be actAs on the preload account, held by the preload account", path, blk.name)
+			}
+		}
+	})
+	if found != 1 {
+		t.Errorf("found %d self-actAs bindings on the preload account, want 1", found)
+	}
+}
+
+// A run's VM is a Docker HOST: its container talks to the host's daemon over
+// the socket, and the host has the run's secrets in its environment. The
+// installation's network is therefore not a boundary, and a default network
+// arrives with default-allow-internal (priority 65534, 10.128.0.0/9, all
+// protocols): without this rule any VM in the project could open every port on
+// a run's VM. The rule matches first, and it is targeted by the run accounts
+// themselves -- a network tag would have to be written by the launcher
+// (Task 7), and a rule that silently matches nothing is worse than no rule.
+func TestComputeRunVMsTakeNoIngress(t *testing.T) {
+	rules := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_compute_firewall") {
+			if path != "gcp/modules/compute/network.tf" {
+				continue
+			}
+			rules++
+			if !hasAttr(blk.body, "direction", `"INGRESS"`) || !hasAttr(blk.body, "network", "var.network") {
+				t.Errorf("%s: %s must be an ingress rule on the network the runs are placed on", path, blk.name)
+			}
+			if !hasAttr(blk.body, "target_service_accounts", `[for a in var.run_accounts : trimprefix(a, "serviceAccount:")]`) {
+				t.Errorf("%s: %s must target the run accounts themselves", path, blk.name)
+			}
+			if !strings.Contains(blk.body, "deny {") || !strings.Contains(blk.body, `protocol = "all"`) {
+				t.Errorf("%s: %s must deny every protocol, not just ssh", path, blk.name)
+			}
+			// Every source, not the network's internal range: a deny wins
+			// over an allow of a higher priority number, and this rule is
+			// what stops a project-level allow (default-allow-ssh, or one a
+			// launcher added) reaching a run's VM. Narrowing the source
+			// ranges to 10.128.0.0/9 is the fallback the module's comment
+			// reserves for 57b-1's answer, and it is a change of the §3.2
+			// control: it must be made here, in the open, and in the tftest's
+			// TestTheRunVMsTakeNoIngress with it.
+			if !hasAttr(blk.body, "source_ranges", `["0.0.0.0/0"]`) {
+				t.Errorf("%s: %s must deny ingress from every source, not from a range of them", path, blk.name)
+			}
+			// A lower number wins, and default-allow-internal is 65534.
+			m := regexp.MustCompile(`(?m)^\s*priority\s*=\s*([0-9]+)\s*$`).FindStringSubmatch(blk.body)
+			if m == nil {
+				t.Fatalf("%s: %s sets no priority, so it would be appended after the default rules", path, blk.name)
+			}
+			p, err := strconv.Atoi(m[1])
+			if err != nil || p >= 65534 {
+				t.Errorf("%s: %s has priority %s, which is not lower than default-allow-internal's 65534 and would therefore not win", path, blk.name, m[1])
+			}
+		}
+	})
+	if rules != 1 {
+		t.Errorf("found %d firewall rules in the compute module, want 1 (the run VMs' deny-ingress)", rules)
+	}
+}
+
+// The runs boot a FAMILY, and a rebuild adds a generation to it: the previous
+// generation keeps serving until the new one exists, so no build ever leaves
+// the installation without an image, and a job's reference never moves
+// (cloud.google.com/compute/docs/images/image-families-best-practices, checked
+// 2026-10-16). The script's own sweep deletes only what it must: images of its
+// own prefix that are neither the generation it just made nor the newest of
+// the family the runs boot.
+func TestComputePreloadKeepsAFamilyAndSweepsGenerations(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := string(b)
+	// The builder VM does not outlive the build, whatever ends it: the trap is
+	// the backstop for an abort between the create and step 7.
+	if !strings.Contains(sh, "trap cleanup EXIT") {
+		t.Error("preload.sh sets no EXIT trap: an abort after the builder VM is created leaks the VM and its disk")
+	}
+	create := strings.Index(sh, "gcloud compute instances create")
+	up := strings.Index(sh, `BUILDER_UP=yes`)
+	if create < 0 || up < create {
+		t.Error("preload.sh does not raise the flag the trap reads when it creates the builder VM")
+	}
+	// The sweep's rule: the newest of the family the runs boot, and the
+	// generation this build just made, are never victims.
+	for _, want := range []string{`-v keep="$NEW_IMAGE"`, `-v fam="$IMAGE_FAMILY"`, "gcloud compute images delete"} {
+		if !strings.Contains(sh, want) {
+			t.Errorf("the sweep does not name %q", want)
+		}
+	}
+	sweep := regexp.MustCompile(`(?s)awk -F, -v keep=.*?print name\[i\]`).FindString(sh)
+	if sweep == "" {
+		t.Fatal("preload.sh has no sweep over the images it might replace")
+	}
+	if !strings.Contains(sweep, "name[i] == keep") || !strings.Contains(sweep, "family[i] == fam") {
+		t.Error("the sweep does not keep the image it just created and the newest of the family")
+	}
+}
+
+// The preload's pull is a run account's, so the image it pulls is one a run
+// could pull: the pin's host, project and repository are the installation's
+// own, and the module refuses a pin that disagrees with region, project or
+// registry_repository rather than failing the build that pulls it.
+func TestComputeBaseImageIsInTheInstallationsRegistry(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk := regexp.MustCompile(`(?s)variable "base_image" \{(.*?)\n\}`).FindStringSubmatch(string(b))
+	if blk == nil {
+		t.Fatal("the compute module does not declare base_image")
+	}
+	// The cross-check names the three variables the path has to agree with,
+	// not a constant: a literal host or repository here would drift from the
+	// root the same way.
+	for _, want := range []string{"${var.region}-docker", "${var.project}", "${var.registry_repository}"} {
+		if !strings.Contains(blk[1], want) {
+			t.Errorf("the base_image validation does not check the image against %s", want)
+		}
+	}
+}
 
 // The signer's own IAM is the launchers' and operators' minter grant on the
 // signer account, and nothing else: no role on the project names it, and no
@@ -1302,6 +2192,448 @@ func TestFirebaseModuleSkipsSharedAPIs(t *testing.T) {
 			t.Errorf("%s declares no skip_apis: %v", p, err)
 		}
 	}
+}
+
+// preloadFixture runs preload.sh against a fake gcloud and returns what the
+// script printed, whether it exited cleanly, and every gcloud call it made.
+//
+// The fake answers the API the way the real one does and records the calls, so
+// the script's DECISIONS run for real: its csv parsing, its comparison of the
+// release the API reports against the one the family is on, its awk sweep, and
+// its EXIT trap. The alternative -- asserting on the script's text -- cannot
+// see the bug this exists for: a `read` without IFS split the comma-joined csv
+// line into one variable, so every existing image looked like one that is not
+// fugaro=managed and the build refused to touch it.
+func preloadFixture(t *testing.T, env map[string]string) (out string, err error, calls []string) {
+	t.Helper()
+	script, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// preload.sh reads the API's timestamps with `date -d`, which is GNU: it
+	// runs in Cloud Build's Debian image, and this test needs the same of its
+	// own host to say anything.
+	if exec.Command("date", "-u", "-d", "2020-01-01T00:00:00Z", "+%s").Run() != nil {
+		t.Skip("no GNU date: preload.sh parses the API's creation timestamps with `date -d`")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash: preload.sh is a bash script")
+	}
+	dir := t.TempDir()
+	sh := filepath.Join(dir, "preload.sh")
+	if err := os.WriteFile(sh, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(dir, "calls")
+	if err := os.WriteFile(callLog, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	created := filepath.Join(dir, "created")
+	if err := os.WriteFile(filepath.Join(bin, "gcloud"), []byte(fakeGcloud), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", sh)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"CALLS="+callLog,
+		"CREATED="+created,
+		// The preload's own inputs, as the module passes them (preload.tf).
+		"PROJECT=proj-1234",
+		"ZONE=us-east5-a",
+		"IMAGE_FAMILY=fugaro-preload-a0b6aca0",
+		"IMAGE_PREFIX=fugaro-preload",
+		"BASE_IMAGE=us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/acme/fugaro-base:1.2.3",
+		"BASE_PROJECT=batch-custom-image",
+		"BASE_FAMILY=batch-cos-stable-official",
+		"BASE_RELEASE=batch-cos-stable-official-2026-10-01-00-00-00",
+		"REGISTRY_HOST=us-east5-docker.pkg.dev",
+		"RUN_ACCOUNT=fugaro-acme-web@proj-1234.iam.gserviceaccount.com",
+		"MACHINE_TYPE=e2-medium",
+		"NETWORK=projects/proj-1234/global/networks/default",
+		"SUBNETWORK=projects/proj-1234/regions/us-east5/subnetworks/default",
+		"REFRESH_DAYS=30",
+	)
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	b, err := cmd.CombinedOutput()
+	raw, rerr := os.ReadFile(callLog)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	for _, l := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if l != "" {
+			calls = append(calls, l)
+		}
+	}
+	return string(b), err, calls
+}
+
+// fakeGcloud is the API the script talks to, as far as it talks to one: the two
+// families, the instance calls, and the image calls. Every call is logged
+// first, so a test can assert on their order as well as their set.
+const fakeGcloud = `#!/bin/bash
+printf '%s\n' "$*" >> "$CALLS"
+args="$*"
+case "$args" in
+  *"images describe-from-family $BASE_FAMILY "*) printf '%s\n' "$BASE_RELEASE"; exit 0;;
+esac
+case "$args" in
+  *"images describe-from-family "*)
+      case "$args" in
+        *"--format="*) printf '%s\n' "$IMAGE_ROW";;
+      esac
+      exit 0;;
+  *"instances describe "*)
+      # A leftover builder VM from an interrupted build, when the test names
+      # one: its fugaro label is LEFTOVER_LABEL.
+      [ -n "$LEFTOVER" ] || exit 1
+      case "$args" in
+        *"--format="*) printf '%s\n' "$LEFTOVER_LABEL";;
+      esac
+      exit 0;;
+  *"instances create "*) exit 0;;
+  *"instances get-serial-port-output "*) printf '%s\n' "$MARKER"; exit 0;;
+  *"instances stop "*) exit 0;;
+  *"instances delete "*)
+      # A delete that will not go: step 7 tolerates it, and the flag it reads
+      # is what decides whether the trap tries once more.
+      if [ -n "$FAIL_INSTANCE_DELETE" ]; then printf 'the delete failed\n' >&2; exit 1; fi
+      exit 0;;
+  *"images create "*)
+      if [ -n "$FAIL_CREATE" ]; then printf 'the create failed\n' >&2; exit 1; fi
+      name="$(printf '%s\n' "$args" | awk '{print $4}')"
+      printf '%s,%s\n' "$name" "$IMAGE_FAMILY" >> "$CREATED"
+      exit 0;;
+  *"images delete "*) exit 0;;
+  *"images list "*)
+      # The ownership filter is the SERVER's: gcloud applies --filter, so an
+      # image without fugaro=managed is simply not in the answer to a filtered
+      # list. The fake applies it too, out of IMAGE_LIST_UNMANAGED -- what a
+      # list WITHOUT that filter would hand back -- so a script that stopped
+      # asking for managed-only is given foreign images, and sweeps them.
+      printf '%s\n' "$IMAGE_LIST"
+      case "$args" in
+        *labels.fugaro=managed*) ;;
+        *) printf '%s\n' "$IMAGE_LIST_UNMANAGED";;
+      esac
+      [ -f "$CREATED" ] && cat "$CREATED"
+      exit 0;;
+esac
+printf 'unexpected gcloud call: %s\n' "$args" >&2
+exit 9
+`
+
+// gcloudCalls returns the calls in calls that ran the subcommand sub (as in
+// "images create"), as their fields.
+func gcloudCalls(t *testing.T, calls []string, sub string) [][]string {
+	t.Helper()
+	var out [][]string
+	for _, c := range calls {
+		f := strings.Fields(c)
+		if len(f) >= 3 && strings.Join(f[1:3], " ") == sub {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// staleRow and currentRow are the API's answers about the family's newest
+// generation, as csv[no-heading]: name, the ownership label, the release it was
+// built from, its creation stamp. The release is the fixture's, and the stamps
+// are computed here rather than by the host's date, so the age the script reads
+// is the age this test means.
+func preloadRow(t *testing.T, release string, age time.Duration) string {
+	t.Helper()
+	return preloadRowOwned(t, "managed", release, age)
+}
+
+// preloadRowOwned is preloadRow with the ownership label spelled out, for the
+// rows that are NOT this module's: an image someone else built, or one from
+// before the label existed.
+func preloadRowOwned(t *testing.T, owner, release string, age time.Duration) string {
+	t.Helper()
+	now := time.Now().UTC()
+	return fmt.Sprintf("%s-%s,%s,%s,%s", "fugaro-preload-a0b6aca0",
+		now.Add(-age).Format("20060102T150405"), owner, release, now.Add(-age).Format(time.RFC3339))
+}
+
+// imageListCall is the one `gcloud compute images list` the sweep makes, as
+// the shell logged it (gcloud's own field splitting is not the script's).
+func imageListCall(t *testing.T, calls []string) string {
+	t.Helper()
+	var got []string
+	for _, c := range calls {
+		if strings.Contains(c, "compute images list") {
+			got = append(got, c)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("the sweep listed images %d times, want once:\n%s", len(got), strings.Join(calls, "\n"))
+	}
+	return got[0]
+}
+
+// The preload's family holds generations, and what the scheduled rebuild does
+// with them decides whether a run boots the image the pin asks for: a newest
+// generation that is its own, built from the release the base family is on, and
+// younger than the refresh window is left alone; anything else is replaced by a
+// NEW generation in the same family, created before anything is deleted, with
+// the builder VM deleted even when the build fails.
+func TestComputePreloadShellDecidesAndReplaces(t *testing.T) {
+	baseRelease := "batch-cos-stable-official-2026-10-01-00-00-00"
+
+	t.Run("a current generation is left alone", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":  preloadRow(t, baseRelease, 48*time.Hour),
+			"IMAGE_LIST": "fugaro-preload-a0b6aca0-20200101T030000,fugaro-preload-a0b6aca0\n",
+			"MARKER":     "fugaro-preload-built",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v, and it should have left the family alone:\n%s", err, out)
+		}
+		if !strings.Contains(out, "nothing to build") {
+			t.Errorf("preload.sh did not report the generation as current:\n%s", out)
+		}
+		if strings.Contains(out, "refusing to touch it") {
+			t.Errorf("preload.sh refused an image that is its own: the csv it read was not split into columns:\n%s", out)
+		}
+		if len(gcloudCalls(t, calls, "instances create")) != 0 || len(gcloudCalls(t, calls, "images create")) != 0 {
+			t.Errorf("a current generation was rebuilt anyway:\n%s", strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a stale generation is replaced in the same family", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW": preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			// The old generation of the family the runs boot, a generation a
+			// concurrent build left behind (newer than anything this build
+			// makes, so only the keep-rule saves it), and the family of a pin
+			// that has moved on.
+			"IMAGE_LIST": "fugaro-preload-a0b6aca0-20200101T030000,fugaro-preload-a0b6aca0\n" +
+				"fugaro-preload-a0b6aca0-20990101T000000,fugaro-preload-a0b6aca0\n" +
+				"fugaro-preload-deadbeef-20200101T030000,fugaro-preload-deadbeef\n",
+			"MARKER": "fugaro-preload-built",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v on a stale generation:\n%s", err, out)
+		}
+		created := gcloudCalls(t, calls, "images create")
+		if len(created) != 1 || !strings.HasPrefix(created[0][3], "fugaro-preload-a0b6aca0-") {
+			t.Fatalf("the rebuild made %d new generations, want 1 in the family the runs boot:\n%s", len(created), strings.Join(calls, "\n"))
+		}
+		if !strings.Contains(strings.Join(created[0], " "), "--family=fugaro-preload-a0b6aca0") {
+			t.Errorf("the new generation does not join the family the runs boot: %s", strings.Join(created[0], " "))
+		}
+		// Created before anything is deleted: the family keeps serving if the
+		// create failed.
+		firstDelete := -1
+		for i, c := range calls {
+			if strings.Contains(c, "compute images delete") || strings.Contains(c, "compute instances delete") {
+				firstDelete = i
+				break
+			}
+		}
+		createIdx := slices.IndexFunc(calls, func(c string) bool { return strings.Contains(c, "compute images create") })
+		if createIdx < 0 || firstDelete < 0 || createIdx > firstDelete {
+			t.Errorf("the new generation is created after something was deleted (create %d, first delete %d)", createIdx, firstDelete)
+		}
+		deleted := map[string]bool{}
+		for _, d := range gcloudCalls(t, calls, "images delete") {
+			deleted[d[3]] = true
+		}
+		if want := map[string]bool{
+			"fugaro-preload-a0b6aca0-20200101T030000": true, // the previous generation
+			"fugaro-preload-deadbeef-20200101T030000": true, // the family of a pin that has moved on
+		}; !slices.Equal(slices.Sorted(maps.Keys(deleted)), slices.Sorted(maps.Keys(want))) {
+			t.Errorf("the sweep deleted %v, want %v: it must never delete the newest of the family the runs boot or the generation it just made", slices.Sorted(maps.Keys(deleted)), slices.Sorted(maps.Keys(want)))
+		}
+		// And the builder VM goes, after the image it was imaged into exists.
+		il := len(gcloudCalls(t, calls, "instances delete"))
+		if il == 0 {
+			t.Error("the rebuild left its builder VM behind")
+		}
+	})
+
+	t.Run("the builder VM is created with no external address", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":  preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST": "",
+			"MARKER":     "fugaro-preload-built",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v:\n%s", err, out)
+		}
+		created := gcloudCalls(t, calls, "instances create")
+		if len(created) != 1 {
+			t.Fatalf("the builder VM was created %d times, want 1:\n%s", len(created), strings.Join(calls, "\n"))
+		}
+		// The call gcloud received, not the script's text: the VM's egress is
+		// the module's NAT, and an external address would be a second path
+		// around it.
+		for _, want := range []string{"--no-address", "--network=projects/proj-1234/global/networks/default",
+			"--subnet=projects/proj-1234/regions/us-east5/subnetworks/default", "--labels=fugaro=managed"} {
+			if !slices.Contains(created[0], want) {
+				t.Errorf("the builder VM's create lacks %s: %s", want, strings.Join(created[0], " "))
+			}
+		}
+	})
+
+	t.Run("a leftover builder VM that is not ours is refused, not deleted", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":      preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":     "",
+			"MARKER":         "fugaro-preload-built",
+			"LEFTOVER":       "1",
+			"LEFTOVER_LABEL": "someone-else",
+		})
+		if err == nil {
+			t.Fatalf("preload.sh went on beside a VM of its builder's name that is not fugaro=managed:\n%s", out)
+		}
+		if !strings.Contains(out, "is not fugaro=managed; refusing to touch it") {
+			t.Errorf("the refusal was not reported:\n%s", out)
+		}
+		if d := gcloudCalls(t, calls, "instances delete"); len(d) != 0 {
+			t.Errorf("a VM that is not fugaro=managed was deleted:\n%s", strings.Join(calls, "\n"))
+		}
+		if c := gcloudCalls(t, calls, "instances create"); len(c) != 0 {
+			t.Errorf("a builder VM was created beside a foreign one:\n%s", strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a leftover builder VM of ours is deleted before the new one", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":      preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":     "",
+			"MARKER":         "fugaro-preload-built",
+			"LEFTOVER":       "1",
+			"LEFTOVER_LABEL": "managed",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v:\n%s", err, out)
+		}
+		del := slices.IndexFunc(calls, func(c string) bool { return strings.Contains(c, "compute instances delete") })
+		create := slices.IndexFunc(calls, func(c string) bool { return strings.Contains(c, "compute instances create") })
+		if del < 0 || create < 0 || del > create {
+			t.Errorf("the leftover builder was not deleted before the new one was created (delete %d, create %d):\n%s", del, create, strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a failed build still deletes its builder VM", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":   preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":  "",
+			"MARKER":      "fugaro-preload-built",
+			"FAIL_CREATE": "1",
+		})
+		if err == nil {
+			t.Fatalf("preload.sh exited 0 although the image was never created:\n%s", out)
+		}
+		if len(gcloudCalls(t, calls, "instances create")) != 1 {
+			t.Fatalf("the fixture did not reach the builder VM:\n%s", strings.Join(calls, "\n"))
+		}
+		// The trap is the backstop: the VM is deleted even though the script
+		// aborted at the create, before its own step 7.
+		if len(gcloudCalls(t, calls, "instances delete")) == 0 {
+			t.Errorf("the build aborted and leaked its builder VM and its disk:\n%s", strings.Join(calls, "\n"))
+		}
+		if len(gcloudCalls(t, calls, "images delete")) != 0 {
+			t.Errorf("a failed build deleted an image:\n%s", strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a builder VM whose delete fails is tried once more by the trap", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":            preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":           "",
+			"MARKER":               "fugaro-preload-built",
+			"FAIL_INSTANCE_DELETE": "1",
+		})
+		// The build itself is not failed by a VM that will not go: the image it
+		// made exists and the sweep is not its business.
+		if err != nil {
+			t.Fatalf("preload.sh exited %v although the generation was created:\n%s", err, out)
+		}
+		if len(gcloudCalls(t, calls, "images create")) != 1 {
+			t.Fatalf("the fixture did not reach the image create:\n%s", strings.Join(calls, "\n"))
+		}
+		if !strings.Contains(out, "could not be deleted; the trap tries once more") {
+			t.Errorf("step 7 did not report the delete it lost:\n%s", out)
+		}
+		// Two: step 7's own attempt, and the trap's, which only runs because
+		// step 7 left the flag raised. Clearing the flag unconditionally after
+		// a failed delete leaks the VM and its disk to the next build's step 3.
+		if got := len(gcloudCalls(t, calls, "instances delete")); got < 2 {
+			t.Errorf("the failed delete was attempted %d time(s), want a second attempt by the EXIT trap:\n%s", got, strings.Join(calls, "\n"))
+		}
+		if !strings.Contains(out, "the build exited") {
+			t.Errorf("the trap did not run for the builder VM it was told is still up:\n%s", out)
+		}
+	})
+
+	// The two ways an image under this installation's own name prefix could
+	// still not be the build's to touch. Both are the same rule -- delete only
+	// what you created -- and neither is covered by the counts above: an
+	// unmanaged image is refused before anything is built, and an unmanaged
+	// image is never handed to the sweep to begin with.
+	t.Run("the family's newest generation is refused when it is not fugaro=managed", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			// The family's newest, built by someone else -- no ownership
+			// label -- and old enough that a build which never read the label
+			// would replace it.
+			"IMAGE_ROW":  preloadRowOwned(t, "not-fugaro", "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST": "",
+			"MARKER":     "fugaro-preload-built",
+		})
+		if err == nil {
+			t.Fatalf("preload.sh exited 0 with a foreign image as the family's newest generation:\n%s", out)
+		}
+		if !strings.Contains(out, "refusing to touch it") {
+			t.Errorf("the refusal was not reported:\n%s", out)
+		}
+		if n := len(gcloudCalls(t, calls, "instances create")) + len(gcloudCalls(t, calls, "images create")); n != 0 {
+			t.Errorf("a build ran beside an image that is not this module's (%d create call(s)):\n%s", n, strings.Join(calls, "\n"))
+		}
+		if n := len(gcloudCalls(t, calls, "images delete")); n != 0 {
+			t.Errorf("an image that is not this module's was deleted (%d delete call(s)):\n%s", n, strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("an image under the prefix that is not fugaro=managed is never swept", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":  preloadRow(t, baseRelease, 48*time.Hour),
+			"IMAGE_LIST": "",
+			// What a list WITHOUT the ownership filter would return: an image
+			// under this installation's prefix that this module did not make.
+			// It is the sweep's worst case, because the name prefix alone
+			// matches it and the sweep deletes everything it is handed that is
+			// neither this build's generation nor the newest of the family.
+			"IMAGE_LIST_UNMANAGED": "fugaro-preload-operator-20200101T030000,fugaro-preload-operator\n",
+			"MARKER":               "fugaro-preload-built",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v:\n%s", err, out)
+		}
+		list := imageListCall(t, calls)
+		for _, want := range []string{"--filter=labels.fugaro=managed", "name~^fugaro-preload-"} {
+			if !strings.Contains(list, want) {
+				t.Errorf("the sweep listed images with %q, which does not ask for %s: the answer to an unfiltered list is every image under the prefix, and the sweep deletes what it is handed:\n%s", list, want, list)
+			}
+		}
+		for _, d := range gcloudCalls(t, calls, "images delete") {
+			if strings.Contains(strings.Join(d, " "), "fugaro-preload-operator-") {
+				t.Errorf("the sweep deleted an image this module did not create: %s", strings.Join(d, " "))
+			}
+		}
+		if len(gcloudCalls(t, calls, "images delete")) != 0 {
+			t.Errorf("a current generation's sweep deleted something:\n%s", strings.Join(calls, "\n"))
+		}
+	})
 }
 
 // allResourceBlocks returns every resource block in src, of any type.

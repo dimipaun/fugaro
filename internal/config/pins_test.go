@@ -177,14 +177,14 @@ func TestCheckPinsOverrideTable(t *testing.T) {
 func TestCheckAllowed(t *testing.T) {
 	a := pinnedAgent()
 	all := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
-	if ps := CheckAllowed(a, policy.Merge(policy.Layer{}), nil); ps != nil {
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{}), nil, nil, nil); ps != nil {
 		t.Fatalf("no list must allow everything: %v", ps)
 	}
-	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all}), all); len(ps) != 0 {
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all}), all, nil, nil); len(ps) != 0 {
 		t.Fatalf("problems: %v", ps)
 	}
 	e := policy.Merge(policy.Layer{AllowedModels: all}, policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}})
-	ps := CheckAllowed(a, e, all)
+	ps := CheckAllowed(a, e, all, nil, nil)
 	if paths(ps) != "agent.models.coder,agent.models.reviewer" {
 		t.Fatalf("problems: %v", ps)
 	}
@@ -193,20 +193,132 @@ func TestCheckAllowed(t *testing.T) {
 	}
 	// An empty non-nil list denies every model, however it came about.
 	e = policy.Merge(policy.Layer{AllowedModels: all}, policy.Layer{AllowedModels: []string{"other"}})
-	if ps := CheckAllowed(a, e, all); len(ps) != 3 || !strings.Contains(ps[0].Message, "none") || !strings.Contains(ps[0].Message, "the project's allow-list: "+strings.Join(all, ", ")) {
+	if ps := CheckAllowed(a, e, all, nil, nil); len(ps) != 3 || !strings.Contains(ps[0].Message, "none") || !strings.Contains(ps[0].Message, "the project's allow-list: "+strings.Join(all, ", ")) {
 		t.Fatalf("deny-all: %v", ps)
+	}
+	// A list the published policy set is the ceiling itself (SourcePolicy):
+	// naming it again under the "project's allow-list" label would print the
+	// same node twice, in the wrong words.
+	e = policy.Merge(policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}})
+	e.Sources[policy.KeyAllowedModels] = policy.SourcePolicy
+	ps = CheckAllowed(a, e, e.AllowedModels, nil, nil)
+	if paths(ps) != "agent.models.coder,agent.models.reviewer" {
+		t.Fatalf("policy-sourced list: %v", ps)
+	}
+	if m := ps[0].Message; !strings.Contains(m, "allowed_models from policy: claude-haiku-4-5") ||
+		strings.Contains(m, "the project's allow-list") {
+		t.Errorf("policy-sourced list message %q", m)
 	}
 	// A role with no model can't be shown to be on the list.
 	a.Models.Reviewer = ""
-	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all}), all); paths(ps) != "agent.models.reviewer" {
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all}), all, nil, nil); paths(ps) != "agent.models.reviewer" {
 		t.Fatalf("problems: %v", ps)
+	}
+}
+
+// routedSwitch is the switch the routed fixtures route through: via openrouter,
+// naming the canonical ID, with one route entry claiming the map's pair and
+// allow_data_to written (D1b's safeguard, so the resolution is a real one).
+func routedSwitch() *Routing {
+	return &Routing{Claude: &RoutingClaude{Via: RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}}
+}
+
+// routedRoutes are the routes routedSwitch resolves through.
+func routedRoutes() map[string]ModelProvider {
+	return map[string]ModelProvider{"openrouter": {
+		Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+		Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"}, AllowDataTo: []string{"*"},
+	}}
+}
+
+// TestCheckAllowedAdmitsARoutedPin (plan Task 1b.2): a pin the routing switch
+// routed names the route's own ID, and the allow-list the owner wrote names the
+// model — one model, one entry. The list admits the routed call, and it admits
+// nothing else: a model it does not name is still refused whether or not it
+// carries a route's spelling.
+//
+// Hand mutation this fails on: comparing the pin literally, which refuses every
+// routed call under the allow-list an enforcing installation always has — the
+// switch would be unusable exactly where the policy is strictest.
+func TestCheckAllowedAdmitsARoutedPin(t *testing.T) {
+	const routed = "anthropic/claude-sonnet-5.5"
+	a := Agent{Models: ModelRoles{Coder: routed, Reviewer: "anthropic/claude-opus-5.5", Background: routed}}
+	sw, routes := routedSwitch(), routedRoutes()
+	// The list names the coder's model, not the reviewer's: the routed coder is
+	// admitted and the routed reviewer is refused. (The reviewer's route ID is
+	// opus's, which this switch does not name — the refusal is about the model,
+	// not about the spelling.)
+	e := policy.Merge(policy.Layer{AllowedModels: []string{"claude-sonnet-5-5"}})
+	if ps := CheckAllowed(a, e, nil, sw, routes); paths(ps) != "agent.models.reviewer" {
+		t.Fatalf("problems: %v", ps)
+	}
+	// A list that names neither model, and a route whose model the list does
+	// not name: the map admits the canonical ID of a route's row and nothing
+	// else, so neither the spelling nor the route is a way onto the list.
+	e = policy.Merge(policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}})
+	if ps := CheckAllowed(a, e, nil, sw, routes); paths(ps) != "agent.models.coder,agent.models.reviewer,agent.models.background" {
+		t.Fatalf("problems: %v", ps)
+	}
+	a.Models.Coder = "deepseek/deepseek-v4-flash"
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: []string{"claude-sonnet-5-5"}}), nil, sw, routes); paths(ps) != "agent.models.coder,agent.models.reviewer" {
+		t.Fatalf("a provider model the map does not carry: %v", ps)
+	}
+}
+
+// TestCheckAllowedAdmitsARouteIDOnlyWhereTheSwitchRoutesIt is the security half
+// of the pair above, and the review finding that rewrote it: a repository's own
+// pin may name a route's ID — that is a well-formed model ID, and the config
+// loader accepts it — and the allow-list must not take that spelling as a way
+// past the owner's two decisions. A route ID is admitted only when the switch
+// routes the model to *that* route, which is the resolution the run itself
+// performs; without a switch, with a switch that names another model, and with
+// no route claiming it, the allow-list refuses it.
+//
+// Hand mutation this fails on: admitting any anthropic/<id> by its canonical ID
+// alone (the behaviour this finding removed), which let a pin the owner's switch
+// never opted in reach the route the allow-list was supposed to bound.
+func TestCheckAllowedAdmitsARouteIDOnlyWhereTheSwitchRoutesIt(t *testing.T) {
+	const routed = "anthropic/claude-sonnet-5.5"
+	a := Agent{Models: ModelRoles{Coder: routed, Reviewer: "claude-opus-5-5", Background: routed}}
+	e := policy.Merge(policy.Layer{AllowedModels: []string{"claude-sonnet-5-5", "claude-opus-5-5"}})
+	// No switch at all: D1b's absent means direct, so nothing routes this pin
+	// and the allow-list judges the spelling it was given.
+	if ps := CheckAllowed(a, e, nil, nil, routedRoutes()); paths(ps) != "agent.models.coder,agent.models.background" {
+		t.Fatalf("no switch: problems = %v, want the route ID's two roles refused", ps)
+	}
+	// A switch that names another model: the same refusal, with the routes
+	// present and resolvable.
+	other := &Routing{Claude: &RoutingClaude{Via: RouteOpenRouter, Models: []string{"claude-fable-5-1"}}}
+	if ps := CheckAllowed(a, e, nil, other, routedRoutes()); paths(ps) != "agent.models.coder,agent.models.background" {
+		t.Fatalf("a switch naming another model: problems = %v", ps)
+	}
+	// A switch that names this model with no route claiming it: RoutingClaudeFor
+	// resolves nothing, so the ID is still not admitted — never admitted by the
+	// fold, the spelling or the map alone.
+	if ps := CheckAllowed(a, e, nil, routedSwitch(), nil); paths(ps) != "agent.models.coder,agent.models.background" {
+		t.Fatalf("a switch with no route: problems = %v", ps)
+	}
+	// The switch that does route it: admitted, and only where it routes it.
+	if ps := CheckAllowed(a, e, nil, routedSwitch(), routedRoutes()); len(ps) != 0 {
+		t.Fatalf("the switch routes the model to this ID and the pin was refused: %v", ps)
+	}
+	// A near-miss spelling claimed by a route is not the map's pair, so the
+	// switch resolves nothing and the allow-list admits nothing: one character
+	// away from the admitted case, and refused.
+	near := "anthropic/claude-sonnet-5-5"
+	a.Models.Coder, a.Models.Background = near, near
+	routes := routedRoutes()
+	routes["openrouter"] = ModelProvider{Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+		Secret: "openrouter-api-key", Models: []string{near}, AllowDataTo: []string{"*"}}
+	if ps := CheckAllowed(a, e, nil, routedSwitch(), routes); paths(ps) != "agent.models.coder,agent.models.background" {
+		t.Fatalf("a claim that is not the map's pair: problems = %v", ps)
 	}
 }
 
 func TestCheckAllowedQuotesModelNames(t *testing.T) {
 	a := pinnedAgent()
 	a.Models.Coder = "[x](http://evil)`@me\n"
-	ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}}), nil)
+	ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}}), nil, nil, nil)
 	if len(ps) == 0 || !strings.Contains(ps[0].Message, "`[x](http://evil)?@me?`") {
 		t.Fatalf("problems: %v", ps)
 	}

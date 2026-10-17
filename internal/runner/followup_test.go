@@ -108,7 +108,7 @@ func (h *fuHarness) followUpRecipe(t *testing.T, id, previous, text string, rcp 
 	t.Helper()
 	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: text,
 		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, Recipe: rcp}
-	store := runstore.Open(h.bucket, "acme-app", id)
+	store := runstore.Open(h.bucket, repoSlug, id)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func (h *fuHarness) pushedRun(t *testing.T, id string) {
 	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady,
 		Branch: "fugaro/" + runID, PR: &runstore.PRRef{Number: 1}, StartedAt: time.Now().UTC(), PushedHead: h.first.PushedHead,
 		FollowUp: &runstore.FollowUp{PR: 1, PreviousRun: runID}}
-	if err := runstore.Open(h.bucket, "acme-app", id).WriteRecord(context.Background(), rec); err != nil {
+	if err := runstore.Open(h.bucket, repoSlug, id).WriteRecord(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -342,7 +342,7 @@ func TestFollowUpBootstrapRefusalsTouchNothing(t *testing.T) {
 		}, "run " + newer + " updated PR #1 after this follow-up was launched"},
 		{"comments fail", func(t *testing.T, h *fuHarness) { h.provider.FailComments = 1 }, "reading PR #1's comments"},
 		{"previous record missing", func(t *testing.T, h *fuHarness) {
-			if err := h.bucket.Delete(context.Background(), runstore.Open(h.bucket, "acme-app", runID).Prefix()+"result.json"); err != nil {
+			if err := h.bucket.Delete(context.Background(), runstore.Open(h.bucket, repoSlug, runID).Prefix()+"result.json"); err != nil {
 				t.Fatal(err)
 			}
 		}, "previous run " + runID + " has no readable record"},
@@ -945,7 +945,7 @@ func TestFollowUpCancelled(t *testing.T) {
 	if !st.PRs[0].Draft || !strings.Contains(report, "cancelled") || !strings.Contains(report, "was ready; moved back to draft because cancelled") {
 		t.Fatalf("draft %v, report:\n%s", st.PRs[0].Draft, report)
 	}
-	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Fatal("the branch lock survives the run")
 	}
 }

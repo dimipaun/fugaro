@@ -113,12 +113,12 @@ func TestExecCloneJobClonesTheRepositoryItWasDeployedFor(t *testing.T) {
 	}
 	defer b.Close()
 	ctx := context.Background()
-	store := runstore.Open(b, "acme-app", runID)
+	store := runstore.Open(b, appSlug, runID)
 	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	work := filepath.Join(t.TempDir(), "work")
-	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/"+runID,
+	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", appSlug+"/"+runID,
 		"--provider", "fake", "--provider-state", filepath.Join(t.TempDir(), "provider.json"),
 		"--workdir", work, "--state-dir", filepath.Join(t.TempDir(), "state"))
 	if err == nil || !strings.Contains(err.Error(), "project mismatch") {

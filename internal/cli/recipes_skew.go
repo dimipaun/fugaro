@@ -87,6 +87,19 @@ const cloneSince = "0.7.5"
 // Task 17.
 const cloneShipped = false
 
+// policySince is the first fugaro release whose launcher and runner read the
+// project's policy (the release phase 1 of the project-centric model ships
+// in, R4), and the release named by the launch gate launchPolicyGates
+// (run_allowlist.go), which refuses a policy newer than this binary: a
+// policy whose version is above what this binary understands is a policy
+// written by a newer Fugaro, and this release is what the message quotes
+// beside it. Like cloneSince and unlike the policy's own integer `version`
+// or the rules marker's RulesVersion, it is a *release*, and it is bumped by
+// the release that ships the model and by nothing else: docs/release.md's
+// ("Before you tag") checklist verifies it equals that release, the same way
+// it does for recipesSince, layeredSince and namedTokensSince.
+const policySince = "0.8.0"
+
 // catalogSince names the release whose runner reads a route's require_zdr
 // and price_policy (price-catalog plan Task 4, design D11): a runner before
 // it decodes FUGARO_MODEL_PROVIDERS with DisallowUnknownFields

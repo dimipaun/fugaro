@@ -18,9 +18,19 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 
 # The allowlist is here, not in the generator, so growing it is a reviewable
 # diff (design §3 D8). Phase 1 is the DeepSeek family plus one Qwen and one
-# Moonshot row. There is deliberately no anthropic/<id> row: until the
-# mixed-credentials opt-in relaxes config.CheckModelPattern and
-# pricing.IsAlias, such a key could be neither claimed by a route nor pinned.
+# Moonshot row. A line is "<model id>" or, for a Claude row, "<model id>
+# <canonical id>" — the route's own key beside the direct spelling a pin
+# carries (plan Task 1b.2 step 1: the generator refuses a Claude row with no
+# canonical ID, or two rows claiming one).
+#
+# There is still no anthropic/<id> row here. The shape is legal now — such a
+# key can be claimed by a route and pinned (phase 1b) — but a row for one
+# would need this script to run against the network for a Claude snapshot the
+# testdata does not carry, and its prices are the D8 measurement phase 1b
+# defers. Until then the canonical-to-route map (internal/pricing/
+# canonical.go) carries the pairs, with an explicit reason for the Claude rows
+# nobody has measured a route for, and a project that routes one prices the
+# route under model_prices.
 # qwen/qwen3.8-flash has no ZDR-eligible endpoint, so the generator writes it
 # an "all" tier and no "zdr" tier, and a require_zdr route (the default)
 # refuses that pin — that row is the one to try with require_zdr: false.

@@ -220,7 +220,7 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 				fmt.Fprintf(r.w, "  %s\n", k.Address)
 			}
 		}
-		fmt.Fprintln(r.w, "  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.")
+		fmt.Fprintln(r.w, "  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls --repo`.")
 	}
 	// Step 1's count is every address the state removal takes out, the
 	// API-deleted jobs included: they leave the state by the same step,

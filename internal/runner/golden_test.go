@@ -20,8 +20,13 @@ var (
 )
 
 // normalize blanks what differs between two runs of the same task: clock
-// readings, durations and commit hashes.
+// readings, durations and commit hashes — and the fixture's storage slug,
+// which the report prints as the run's location. The slug is task.Slug's
+// output for the fixture repository (a readable prefix and a hash, see
+// repoSlug); the goldens record what the run wrote, not how the fixture
+// spells its slug, so it is read back under the readable name alone.
 func normalize(s string) string {
+	s = strings.ReplaceAll(s, repoSlug, "acme-app")
 	s = goldenTime.ReplaceAllString(s, "<time>")
 	s = goldenSHA.ReplaceAllString(s, "<sha>")
 	return goldenDur.ReplaceAllString(s, "| <dur> |")
