@@ -240,6 +240,8 @@ describe('which values are persons, and where a person is replaced', () => {
       runs: { run: string; title: string; requested_by: string }[]
     }
     expect(named.runs[0]?.title).toBe(`${String(named.runs[0]?.requested_by)} asked`)
+    // The run id is the CLI's own identifier, and the person pass leaves it as written.
+    expect(named.runs[0]?.run).toBe('run-zora-1')
   })
 })
 
@@ -299,6 +301,11 @@ describe('hostile shapes are refusals, not crashes', () => {
     expect(message(() => redactor().redactDocument({ t: flood }))).toMatch(/^RedactionRefusal: .*compatibility form/)
     expect(message(() => assertRedacted({ t: flood }))).toMatch(/^RedactionRefusal: .*compatibility form/)
     expect(performance.now() - start).toBeLessThan(1_000)
+    // A short one is refused by its own ratio, well under the document's budget.
+    // Refused before any rule runs, not only by the audit after them.
+    expect(message(() => redactor().redactDocument({ t: '\ufdfa'.repeat(10) }))).toMatch(
+      /^RedactionRefusal: a string whose compatibility form/,
+    )
     // A line of many short ones is refused by the document's budget.
     const many = JSON.stringify({ t: new Array<string>(200_000).fill('ﷺ') })
     const t0 = performance.now()
