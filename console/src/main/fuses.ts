@@ -42,22 +42,53 @@
 // environment (`CSC_LINK`/`CSC_NAME`), which is the task's rule that no identity
 // is ever written into a file in this repository.
 //
-// **A note on the import below.** `@electron/fuses` 2.0.0 is an ES module and
-// this file compiles to CommonJS (`module: Node16`, and the console's
-// package.json has no `"type"`), so the pack-time `require` of it relies on
-// `require(esm)`, which Node has supported since 22.12 -- the floor in
-// `engines.node`, and the same mechanism electron-builder's own fuse support
-// uses. It is a devDependency: the packer needs it, the app does not, and
-// `test/unit/pinning.test.ts` keeps `dependencies` exactly as it was.
-
+// **A note on the import below, because it carries a directive.** `@electron/fuses`
+// 2.0.0 is an ES module and this file is the console's CommonJS build (`module:
+// Node16`, and package.json has no `"type"`), so `tsc` refuses the static import
+// of it with TS1479 -- the module-format rule, not a resolution failure: the
+// package's types still land on every binding, which is why the `@ts-ignore`
+// directly above the import is a suppression of that one rule and nothing else.
+// What the emitted `require("@electron/fuses")` relies on is `require(esm)`,
+// which Node has supported since 22.12: the floor in `engines.node`, the
+// mechanism electron-builder's own fuse support uses, and something this file
+// was run against rather than assumed (see the README). The directive is
+// `@ts-ignore` rather than `@ts-expect-error` because the two `tsc` runs of this
+// directory do not agree here: `tsconfig.build.json` reports TS1479, and the
+// type checker (`tsconfig.json`) resolves the import in ESM mode and reports
+// nothing, so an expect-error would fail *there* as unused.
+//
+// The cost is bounded on purpose. A suppressed import line is a line `tsc` will
+// not flag if this package ever changes its API, so the suite carries that
+// check instead: `fuses.test.ts` imports the same package and asserts that it
+// exports both calls and that every name in the table below is a member of the
+// pinned `FuseV1Options`. It is a devDependency: the packer needs it, the app
+// does not, and `test/unit/pinning.test.ts` keeps `dependencies` exactly as it
+// was.
+// @ts-ignore -- TS1479, this file's CommonJS build, and `require(esm)` at 22.12.
 import { FuseState, FuseV1Options, FuseVersion, flipFuses, getCurrentFuseWire } from '@electron/fuses'
-import type { FuseConfig } from '@electron/fuses'
 import { join } from 'node:path'
+
+// FuseConfig is the shape of the configuration `@electron/fuses` takes and
+// returns, written structurally rather than imported as a type, because a
+// *type-only* import across the same boundary is refused too (TS1541, which a
+// `resolution-mode` attribute would silence in the build config and which the
+// type checker does not report). Nothing here is unchecked: the alias only
+// *names* what the two functions already return, and they carry the package's
+// own types.
+type FuseConfig<State = boolean> = { readonly version: FuseVersion } & Partial<
+  Record<FuseV1Options, State>
+>
 
 /** FlippedFuse is one fuse this build sets, with the reason it is set that way.
  * The reason is prose and it is not decoration: `fuses.test.ts` asserts every
  * entry carries one, so a fuse cannot be added here as a bare boolean. */
 export interface FlippedFuse {
+  /** name is the fuse's own name in the pinned `@electron/fuses`, and it is
+   * written out beside the enum member on purpose: the two must agree, and
+   * `fuses.test.ts` asserts that they do, so a copy-pasted entry carrying the
+   * index of the fuse above it is a red test rather than the wrong byte
+   * flipped. It is also what the hook's failure message names. */
+  readonly name: string
   readonly option: FuseV1Options
   readonly value: boolean
   readonly why: string
@@ -68,6 +99,8 @@ export interface FlippedFuse {
  * each of these, so an Electron bump that changes a default fails a named test
  * here rather than changing the shipped binary quietly. */
 export interface LeftAloneFuse {
+  /** name, as `FlippedFuse.name`: the pinned package's own name for the fuse. */
+  readonly name: string
   readonly option: FuseV1Options
   readonly why: string
 }
@@ -79,31 +112,37 @@ export interface LeftAloneFuse {
  */
 export const FLIPPED_FUSES: readonly FlippedFuse[] = [
   {
+    name: 'RunAsNode',
     option: FuseV1Options.RunAsNode,
     value: false,
     why: 'ELECTRON_RUN_AS_NODE must not turn the shipped console into a Node interpreter.',
   },
   {
+    name: 'EnableNodeOptionsEnvironmentVariable',
     option: FuseV1Options.EnableNodeOptionsEnvironmentVariable,
     value: false,
     why: 'NODE_OPTIONS must not reach the console: it is code injected through the environment.',
   },
   {
+    name: 'EnableNodeCliInspectArguments',
     option: FuseV1Options.EnableNodeCliInspectArguments,
     value: false,
     why: '--inspect must not attach a debugger to the console.',
   },
   {
+    name: 'EnableEmbeddedAsarIntegrityValidation',
     option: FuseV1Options.EnableEmbeddedAsarIntegrityValidation,
     value: true,
     why: 'the app is loaded only when its asar is the one that was packed, byte for byte.',
   },
   {
+    name: 'OnlyLoadAppFromAsar',
     option: FuseV1Options.OnlyLoadAppFromAsar,
     value: true,
     why: 'the app is loaded from app.asar and from nowhere else (design section 5.1 rule 4).',
   },
   {
+    name: 'GrantFileProtocolExtraPrivileges',
     option: FuseV1Options.GrantFileProtocolExtraPrivileges,
     value: false,
     why: 'file:// keeps no extra privileges; the console serves itself over app:// (Task 1.1).',
@@ -118,10 +157,12 @@ export const FLIPPED_FUSES: readonly FlippedFuse[] = [
  */
 export const LEFT_ALONE_FUSES: readonly LeftAloneFuse[] = [
   {
+    name: 'EnableCookieEncryption',
     option: FuseV1Options.EnableCookieEncryption,
     why: 'the console keeps no cookie store: no sign-in is stored, and upstream defaults stand.',
   },
   {
+    name: 'LoadBrowserProcessSpecificV8Snapshot',
     option: FuseV1Options.LoadBrowserProcessSpecificV8Snapshot,
     why: 'a startup optimisation for a browser process that loads web content; not this app.',
   },
@@ -229,7 +270,7 @@ export async function afterPack(
     const actual = wire[fuse.option]
     if (actual !== expected) {
       throw new Error(
-        `the ${FuseV1Options[fuse.option]} fuse is ${wireState(actual)} in ${executable}, ` +
+        `the ${fuse.name} fuse is ${wireState(actual)} in ${executable}, ` +
           `and this build requires it ${fuse.value ? 'enabled' : 'disabled'} -- the flip did ` +
           'not take, so the binary must not be signed as it stands',
       )

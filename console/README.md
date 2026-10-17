@@ -1361,3 +1361,264 @@ and this paragraph is not a claim that it already happened: the pinned
 toolchain, the hardened window, the IPC allow-list, `FugaroSource` and the
 fixtures were written, reviewed and merged on the strength of a reviewer's
 machine, and no workflow ran a console test on any of their pull requests.
+
+## The macOS bundle, its entitlements and its fuses (Task 4.1)
+
+The console is packaged by **electron-builder**, configured entirely in
+`package.json`'s `build` key, and `src/main/fuses.ts` is the `afterPack` hook
+that flips the Electron fuses into the binary before the packer signs it.
+`test/unit/entitlements.test.ts` and `test/unit/fuses.test.ts` assert every part
+of that: the entitlement set exactly, each fuse by name, what the hook passes
+and what it verifies, and the rest of the build configuration.
+
+### The minimum entitlements, and why each withheld key is withheld
+
+`entitlements.mac.plist` grants **one** entitlement:
+
+| Key | Why |
+|---|---|
+| `com.apple.security.cs.allow-jit` | The hardened runtime denies memory that is both writable and executable, and V8 needs it for its JIT — without it Electron aborts at startup on arm64. The JIT is V8's, inside the framework this app is built on; the console has none of its own. |
+
+Everything else is deliberately absent, and the plist says so in its own comment
+rather than leaving a reader to infer it from a short file — the argument for
+each, in one line:
+
+- **`com.apple.security.cs.disable-library-validation`** and
+  **`com.apple.security.cs.allow-unsigned-executable-memory`** are the pair every
+  Electron tutorial adds "just in case", for plug-ins that load their own
+  libraries and bring their own JIT. The console loads **no plug-in and no native
+  module of its own**: its runtime surface is Node's own modules, the Electron
+  framework, and the processes of the CLI it spawns. This is the entitlement the
+  design's §12 item 4 leaves open, and the answer here is "not needed, and here
+  is the reason" — not "probably not needed".
+- **`com.apple.security.cs.allow-dyld-environment-variables`** is the macOS twin
+  of the `NODE_OPTIONS` hole the fuses close: an environment variable that turns
+  into code in our process.
+- **`com.apple.security.cs.debugger`** and **`com.apple.security.get-task-allow`**
+  let another process attach to a hardened-runtime app; `get-task-allow` is a
+  development entitlement, and nothing here builds a debug variant.
+- **`com.apple.security.app-sandbox`** is a Mac App Store key (§D4), and a
+  sandbox key with no container and no file entitlements is a claim with nothing
+  behind it.
+- **The device, network and file keys** are refused by design rather than
+  omitted: the renderer reaches no network and no device and every permission
+  request is denied in the main process (§5.1 rule 9), and the only process that
+  talks to a network or reads a checkout is the CLI, which is a separate binary
+  with its own signature.
+
+`entitlementsInherit` points at the **same file**, which is what makes the
+minimum a property of the whole bundle: left unset, the helpers (renderer, GPU)
+are signed with electron-builder's own inherit plist, which grants the plug-in
+pair. The set here is the signer's own default for the helpers that load no
+plug-in, written down where it can be reviewed.
+
+**Unverified, and named as such in the plist.** This repository has never
+produced a signed build. The claim above is an argument from the bundle's
+contents; Check 59a — owner-run, on a Mac with a Developer ID certificate — is
+where it becomes a measurement, and `codesign -d --entitlements -` on the built
+bundle is the command that prints what was actually granted.
+
+### The six fuses, and the two left alone
+
+Flipped in `afterPack` over `@electron/fuses` 2.0.0, and these are the six the
+design's §5.1 rule 4 names — with the two this build does *not* touch named too,
+because "left at its upstream default" is a decision and not an oversight:
+
+| Fuse | Value | Why |
+|---|---|---|
+| `RunAsNode` | **disabled** | `ELECTRON_RUN_AS_NODE=1` must not turn the shipped console into a Node interpreter — for anyone who can execute the file, not just the owner. |
+| `EnableNodeOptionsEnvironmentVariable` | **disabled** | `NODE_OPTIONS=--require …` is code injected through the environment. |
+| `EnableNodeCliInspectArguments` | **disabled** | `--inspect` must not attach a debugger. |
+| `EnableEmbeddedAsarIntegrityValidation` | **enabled** | The app loads only if its asar is the one that was packed. |
+| `OnlyLoadAppFromAsar` | **enabled** | The app loads from `app.asar` and nowhere else. |
+| `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
+| `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
+| `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
+
+Three properties of the hook are worth stating here, because they are what make
+the six a fact rather than an intention:
+
+- **It verifies what it wrote.** `@electron/fuses` against a path that is not an
+  Electron binary succeeds and changes nothing, so the hook reads the fuse wire
+  back and fails — naming the fuse and the binary — if a flip did not take.
+- **It refuses a platform that is not darwin** instead of skipping. A build on
+  any other platform would produce no `Contents/MacOS` bundle to flip, and a
+  silently skipped hook is the one outcome that ships the fuses unset.
+- **It is the only flipper.** `build.electronFuses` is deliberately unset, so
+  electron-builder's own fuse support cannot run a second, untested
+  configuration over the same binary.
+
+`resetAdHocDarwinSignature` is deliberately **not** set, and the reason is an
+ordering fact: `@electron/fuses` requires it only when the app is not signed
+immediately after the flip ("otherwise the app will refuse to launch with code
+signature validation errors" — its README, Apple Silicon section), and
+electron-builder signs *after* the `afterPack` hook, in the same run. The
+consequence for the owner is the next section's first line.
+
+### The owner's commands, exactly
+
+Run from `console/` on the Mac that holds the Developer ID certificate. The
+variables are **names only** — no value of any of them appears in this
+repository, and `package.json` names no signing identity at all.
+
+```sh
+# The signing material, exported into this shell. electron-builder reads the
+# same names: CSC_LINK (the .p12, base64 or a path) with CSC_KEY_PASSWORD, or
+# CSC_NAME with the identity already in the login keychain.
+export CSC_LINK="${CSC_LINK:?the exported Developer ID Application certificate}"
+export CSC_KEY_PASSWORD="${CSC_KEY_PASSWORD:?the certificate's password}"
+
+# Notarisation activates by itself when one of the three triples below is in the
+# environment (electron-builder 26 has no "turn it on" flag, only a disable
+# switch). The App Store Connect API key is the one electron-builder recommends:
+export APPLE_API_KEY="${APPLE_API_KEY:?the App Store Connect API key file}"
+export APPLE_API_KEY_ID="${APPLE_API_KEY_ID:?the key's id}"
+export APPLE_API_ISSUER="${APPLE_API_ISSUER:?the issuer uuid}"
+# (the alternatives are APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID,
+#  or APPLE_KEYCHAIN + APPLE_KEYCHAIN_PROFILE — one triple, not three)
+
+npm ci
+npm run package          # npm run build && npx --yes electron-builder@26.0.12 --mac
+```
+
+`npm run package` produces `release/*.dmg`, `release/*.zip` and the unpacked
+`release/mac-<arch>/Fugaro Console.app`, signed with the hardened runtime and
+this directory's entitlements, notarised, and stapled. The arch is the host's by
+default; `--x64` or `--universal` is electron-builder's own flag and nothing
+here depends on it. **The certificate has to be exported before that command**:
+the fuses are flipped before the packer signs, and an arm64 bundle left with the
+ad-hoc signature the fuse flip invalidated will not launch. A build with no
+signing material at all is a build with no signature and no notarisation —
+`spctl` will refuse it, which is the correct outcome and not a failure of this
+configuration.
+
+Then, on the artifact (these are also the FACT lines Check 59a is written
+around, and the checks Task 4.5 re-runs after installing):
+
+```sh
+APP="release/mac-arm64/Fugaro Console.app"
+codesign --verify --deep --strict --verbose=2 "$APP"
+codesign -d --entitlements - "$APP"          # must print allow-jit and nothing else
+xcrun stapler validate "$APP"
+spctl --assess --type execute --verbose=4 "$APP"
+xcrun stapler validate release/*.dmg
+spctl --assess --type open --context context:primary-signature -v release/*.dmg
+```
+
+Two things this section is *not*: it is not Task 4.2's workflow (the staged
+`docs/pending-workflows/console-release.yml` names its own secrets and runs the
+same steps in CI, and it is the owner who copies it in), and it is not a claim
+that any of it has run — no agent has built, signed or verified a bundle in this
+repository.
+
+### The hook's import: what was run rather than assumed
+
+`src/main/fuses.ts` imports `@electron/fuses`, which is an ES module, and the
+console's build emits CommonJS — so `tsc` refuses that import for its *format*
+(TS1479) in `tsconfig.build.json`, while the type checker (`tsconfig.json`,
+`module: ESNext` + `moduleResolution: bundler`) resolves it and reports nothing.
+The import therefore carries a `@ts-ignore`, which is why it is `@ts-ignore` and
+not `@ts-expect-error`: the expect-error form fails the type checker as *unused*.
+It suppresses the format rule and nothing else — the package's types still land
+on every binding — but a suppressed import line is one `tsc` will not flag if
+this package changes its API, so `fuses.test.ts` carries that check instead: it
+imports the same package and asserts both calls are exported, that every fuse
+name in the table maps to the index the table gives it, and that the wire states
+the verification compares against are still spelled the same way.
+
+The two facts this rests on were **run, not assumed**, after `npm run build`:
+
+```sh
+$ node -e "console.log(Object.keys(require('./dist/main/fuses.js')).join(','))"
+FLIPPED_FUSES,LEFT_ALONE_FUSES,afterPack,fuseConfig,macExecutable
+$ node -e "console.log(JSON.stringify(require('./dist/main/fuses.js').fuseConfig()))"
+{"0":false,"2":false,"3":false,"4":true,"5":true,"7":false,"version":"1"}
+```
+
+— the emitted `require("@electron/fuses")` resolves under Node 22.12+'s
+`require(esm)` (it is the same mechanism electron-builder's own fuse support
+uses), the six flips arrive at their documented indices with nothing else set,
+and calling the hook for a darwin context reaches the real `flipFuses` rather
+than a stub: it failed inside the Electron framework lookup for a path that has
+no bundle, which is what a real flip attempt against a non-bundle path does.
+
+### Why electron-builder is not a devDependency
+
+The packer is pinned in the `package` script (`npx --yes electron-builder@26.0.12`)
+rather than installed, and the reason is a guard this repository already has:
+electron-builder's tree carries a **git-sourced** `@electron/node-gyp`, and
+`test/unit/lockfile.test.ts` refuses any lock entry that is not resolved from
+the registry with an integrity hash — the rule that exists so the console's tree
+is reproducible from `package-lock.json` alone. Installing the packer would have
+to weaken that rule for every package in the tree, so the pin lives where the
+command is and the version is exact there instead.
+
+**The cost, said plainly**: `npm run package` fetches electron-builder on first
+use, so that one command needs the network and the tree it downloads is not
+locked by this file. The alternative — a floated packer — is worse, and the fix,
+if the owner wants it, is a lockfile rule that admits git dependencies by
+explicit allow-list. That is a decision for a task that owns the lockfile test.
+
+### The seam Task 1.1 left, settled
+
+Task 1.1's section above records the one thing it handed to packaging: `tsc`
+emits JavaScript into `dist/` and copies nothing, while the protocol handler
+serves `src/renderer` (`rendererRoot` in `src/main/index.ts`), so "a packaged
+console needs `src/renderer` on disk". Task 4.1 settles it by naming the file
+rather than moving it: `build.files` is
+
+```json
+["dist/**", "src/renderer/**/*.html", "!**/*.map"]
+```
+
+— the compiled main process and preload, the document the window actually loads,
+and nothing else. No source map ships (the build emits one for every file, and a
+map in the asar is a second copy of the sources with a pointer to it). The
+renderer's *scripts* are compiled into `dist/renderer/` and are not served from
+there: no task serves a script to the document yet (the e2e specs draw their
+screens through `executeJavaScript`), and whichever task does it has to put the
+compiled file inside the served root — the allow-list above is where that
+becomes visible rather than being discovered by an empty packaged window.
+
+Two smaller decisions belong to this list. `directories.output` is `release`
+rather than electron-builder's default `dist`, because `dist` is the compiler's
+output directory here — the packer would otherwise write the app it is packing
+into the tree it is packing from — and `release/` is in `.gitignore` for the
+same reason. `appId` is `io.github.dimipaun.fugaro-console`: electron-builder's
+default is `com.electron.<name>`, which claims upstream's namespace, and this
+repository has no domain, so the project's GitHub home reversed is the honest
+choice. It is a deliberate edit if it ever changes, because the bundle id is the
+identity Gatekeeper and the notary record keep.
+
+### What is deliberately not here
+
+- **A signing workflow.** Task 4.2 stages it under `docs/pending-workflows/`,
+  and that task's file, not this one, names the CI secrets. This section's
+  commands are the owner's local run.
+- **Automatic updates.** `build.publish` is unset and there is no feed: Task 4.4
+  is the auto-update task and it is not part of this MVP. The one consequence
+  worth stating: `electron-updater` is still the declared runtime dependency
+  (Task 1.0's pin), it is shipped in the asar, and nothing imports it yet.
+- **An icon.** There is no `build/icon.icns`, so the bundle carries Electron's
+  default icon. It is a packaging wart, not a security property, and it needs an
+  asset file that no task has produced.
+- **Any executed build.** No bundle has been packed, signed or notarised here:
+  the packer is not installed and this machine is Linux. That is Check 59a's
+  job, and design §12 item 4 stays open until it has run.
+
+### The properties are tests, and each one fails under a mutation
+
+Every claim above is asserted, and the two that matter most were re-run by hand
+against a planted change in the shipped files — recorded here the way the other
+tasks record theirs, because a test that has never been seen red is a test
+nobody should trust:
+
+| Mutation | What went red |
+|---|---|
+| `com.apple.security.cs.disable-library-validation` added to `entitlements.mac.plist` | three named tests: "grants com.apple.security.cs.allow-jit and nothing else", "grants nothing that the set above does not name", and the named test for that one key |
+| `RunAsNode` flipped to `true` in `FLIPPED_FUSES` | "leaves RunAsNode disabled: the binary is never a Node interpreter", and the wire-verification test (the fake wire now agrees with the mutated configuration, so the hook no longer refuses it) |
+| `EnableNodeCliInspectArguments` given the index of the fuse above it (a copy-paste) | four named tests, including "knows every fuse this build names, at the index this build names it at" and "accounts for every fuse this pin knows" |
+| a value the plist parser does not understand (`<integer>`, a nested dict, a root array) | the parser fixtures: each throws rather than reporting an empty set |
+| a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
+| `electronPlatformName: 'linux'` handed to the hook | "refuses a platform that is not darwin…", and `flipFuses` is never called |
+| any entry added to `build.files`, or `asar` turned off, or a `publish` key added, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |

@@ -172,6 +172,36 @@ describe('the two fuses left at their upstream default', () => {
   })
 })
 
+describe('the pinned @electron/fuses the hook is written against', () => {
+  // `src/main/fuses.ts` is the console's CommonJS build, and its import of this
+  // ES module carries a `@ts-ignore` for the module-format rule (TS1479). That
+  // suppression means `tsc` would not flag an API change, so the checks that
+  // would have caught one live here, against the same package the packer loads.
+  it('exports the two calls the hook makes', async () => {
+    const fuses = await import('@electron/fuses')
+    expect(typeof fuses.flipFuses).toBe('function')
+    expect(typeof fuses.getCurrentFuseWire).toBe('function')
+  })
+
+  it('knows every fuse this build names, at the index this build names it at', async () => {
+    // The table carries both the name and the enum member, so the two have to
+    // agree; the mutation this refuses is a copy-pasted entry whose index
+    // belongs to the fuse above it, which would otherwise flip the wrong byte.
+    const { FuseV1Options: pinned } = await import('@electron/fuses')
+    const byName = pinned as unknown as Record<string, number | string>
+    for (const entry of [...FLIPPED_FUSES, ...LEFT_ALONE_FUSES]) {
+      expect(byName[entry.name]).toBe(entry.option)
+    }
+  })
+
+  it('still spells the wire states the hook verifies against', async () => {
+    const fuses = await import('@electron/fuses')
+    expect(fuses.FuseState.ENABLE).toBe(FuseState.ENABLE)
+    expect(fuses.FuseState.DISABLE).toBe(FuseState.DISABLE)
+    expect(fuses.FuseVersion.V1).toBe(FuseVersion.V1)
+  })
+})
+
 describe('the configuration the packer will pass', () => {
   it('is the six flips and nothing else: no other fuse is named and no other option is set', () => {
     const config = fuseConfig()
