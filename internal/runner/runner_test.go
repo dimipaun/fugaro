@@ -99,7 +99,14 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	bucket := memblob.OpenBucket(nil)
 	t.Cleanup(func() { bucket.Close() })
 	if spec == nil {
-		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature"}
+		// The workflow is the fixture's only one (testdata/fixture-repo's
+		// fugaro.yaml), which is also what SelectWorkflow resolves a task that
+		// names none to. It is written out because a run's job is named from it
+		// (a per-repository job is gcp.JobName of the slug and the workflow's
+		// variant): a task naming no workflow cannot be placed in the job it is
+		// in, and every test here that gives the run a Cloud Run execution
+		// would stop on that instead of on what it is about.
+		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {

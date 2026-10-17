@@ -23,7 +23,7 @@ func readDB(t *testing.T) (*gcpfake.RTDB, *rtdb.Client) {
 	return f, c
 }
 
-const readPolicy = `{"version": 1, "budget": {"mode": "observe", "per_run_usd": 5}, "allow_repos": ["github/acme/*"]}`
+const readPolicy = `{"version": 2, "budget": {"mode": "observe", "per_run_usd": 5}, "allow_repos": ["github/acme/*"]}`
 
 // The marker is what decides whether this installation can have a policy at
 // all (task 1.3 step 1): absent, or below RulesVersion, the policy nodes are
@@ -135,8 +135,8 @@ func TestReadRefusesAnUnusableNode(t *testing.T) {
 		"not an object":                     `[1, 2, 3]`,
 		"no version":                        `{"budget": {"mode": "observe"}}`,
 		"a version this code does not know": `{"version": 99}`,
-		"a misspelt budget key":             `{"version": 1, "budget": {"per_run_usdc": 5}}`,
-		"a bad mode":                        `{"version": 1, "budget": {"mode": "enforc"}}`,
+		"a misspelt budget key":             `{"version": 2, "budget": {"per_run_usdc": 5}}`,
+		"a bad mode":                        `{"version": 2, "budget": {"mode": "enforc"}}`,
 	} {
 		f, db := readDB(t)
 		f.Set(PathRulesMarker(), RulesVersion)
@@ -170,7 +170,7 @@ func TestReadRefusesANonIntegerMarker(t *testing.T) {
 // The keys this Fugaro does not know are tolerated and exposed (Decode's own
 // tolerance must not be silent): the runner logs them, the CLI refuses them.
 func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
-	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "observe"}, "future_key": 1, "another": {"a": 1}}`))
+	p, found, err := Decode([]byte(`{"version": 2, "budget": {"mode": "observe"}, "future_key": 1, "another": {"a": 1}}`))
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want a policy", p, found, err)
 	}
@@ -187,7 +187,7 @@ func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
 // routing.claude.via is read in phase 1b, and must not accept garbage now.
 func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 	for _, via := range []string{"", "Direct", "openrouter-api", "none"} {
-		raw := []byte(`{"version": 1, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
+		raw := []byte(`{"version": 2, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
 		p, found, err := Decode(raw)
 		if err == nil || p != nil || !found {
 			t.Errorf("via %q: Decode = (%v, %v, %v), want a refusal", via, p, found, err)
@@ -196,7 +196,7 @@ func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 		}
 	}
 	for _, via := range []string{RouteDirect, RouteOpenRouter, RouteAuto} {
-		raw := []byte(`{"version": 1, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
+		raw := []byte(`{"version": 2, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
 		if p, found, err := Decode(raw); err != nil || !found || p == nil || p.Routing.Claude.Via != via {
 			t.Errorf("via %q: Decode = (%v, %v, %v), want it accepted", via, p, found, err)
 		}

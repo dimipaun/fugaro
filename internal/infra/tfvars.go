@@ -118,6 +118,12 @@ type InstallationSpec struct {
 	// correctly-labelled container that already exists, so a config edit
 	// can never shrink the module's for_each (N3).
 	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
+	// ProjectJobs are the installation's shared project jobs (design
+	// project-centric §4.1): one Cloud Run job and one job service account
+	// per (profile, provider, account), by job name. The key is left out of
+	// an installation whose local config names no profile, so the plan of
+	// one that had none is unchanged (infra.ProjectJobs).
+	ProjectJobs map[string]ProjectJob `json:"project_jobs,omitempty"`
 }
 
 // InstallationNames are the installation's singleton names.
@@ -205,6 +211,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		LogBucketDescription: LogBucketDescription,
 		ProjectSecrets:       projectSecretContainers(lc),
 	}
+	jobs, err := ProjectJobs(lc, bucket, s.EnableVertex)
+	if err != nil {
+		return InstallationSpec{}, err
+	}
+	s.ProjectJobs = jobs
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
 	}
