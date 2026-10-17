@@ -1,0 +1,449 @@
+package managed
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
+)
+
+const (
+	project    = "aurora"
+	gcpProject = "proj-1234"
+	// planBucket is a resource the cover admits (a storage bucket with the
+	// module's own attributes) and planVM one it refuses (a type outside the
+	// installation's modules), so a test can aim each gate separately.
+	planBucket = "module.managed.google_storage_bucket.data"
+	planVM     = "module.managed.google_compute_instance.vm"
+)
+
+// admitAll is a cover that admits everything, and it stands in for the one
+// thing Task 1.1's managed cover must do that the installation's does not: a
+// delete or a replace is the guard's to decide in a managed project — the
+// owner's own list is the allow-list (D74) — so the managed cover does not
+// also refuse it. With it, a test can see the guard's refusal reach the
+// verdict on its own.
+type admitAll struct{}
+
+func (admitAll) NotCovered(*tf.Plan, []tf.ImportKey) []string { return nil }
+
+// cover is the scope-and-attribute gate of the managed project the tests judge
+// for: the installation's tf.Cover with the inputs the review would have
+// shown. It is the real gate, and the refusals below are its own.
+func cover() tf.Cover {
+	return tf.Cover{Projects: []string{gcpProject}, Registry: "us-east5-docker.pkg.dev", Region: "us-east5",
+		Buckets: []string{"fugaro-runs-" + gcpProject}, Billing: []string{"AAAA-BBBB"}}
+}
+
+// change is one entry of a plan's resource_changes.
+func change(addr, typ string, actions []string, after map[string]any) map[string]any {
+	if after == nil {
+		after = map[string]any{}
+	}
+	return map[string]any{"address": addr, "type": typ,
+		"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": after}}
+}
+
+// bucket is a storage bucket as the installation's module writes it: the one
+// resource the cover admits without a run's own inputs (an image, a job's
+// account, a log sink).
+func bucket(addr string) map[string]any {
+	return change(addr, "google_storage_bucket", []string{"create"},
+		map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true})
+}
+
+// vm is a resource type outside the installation's modules: the cover refuses
+// it, the guard does not.
+func vm(addr string) map[string]any {
+	return change(addr, "google_compute_instance", []string{"create"}, map[string]any{})
+}
+
+var (
+	fakeOnce sync.Once
+	fakeBin  string
+	fakeErr  error
+)
+
+// fakeTerraform builds the fake terraform once for the package's tests: the
+// same stand-in internal/infra/tf and internal/cli use. The gate reads its
+// plan through tf.TF.Show exactly as an apply does, and the fake's call log is
+// what proves the gate applied nothing.
+func fakeTerraform(t *testing.T) string {
+	t.Helper()
+	fakeOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "fugaro-managed-faketerraform-")
+		if err != nil {
+			fakeErr = err
+			return
+		}
+		fakeBin = filepath.Join(dir, "terraform")
+		out, err := exec.Command("go", "build", "-o", fakeBin, "github.com/dimipaun/fugaro/internal/infra/tf/faketerraform").CombinedOutput()
+		if err != nil {
+			fakeErr = fmt.Errorf("building the fake terraform: %v\n%s", err, out)
+		}
+	})
+	if fakeErr != nil {
+		t.Fatal(fakeErr)
+	}
+	return fakeBin
+}
+
+// rig is a workdir, the fake's script and the log of every call it recorded.
+type rig struct {
+	dir    string
+	log    string
+	script map[string]any
+}
+
+func newRig(t *testing.T) *rig {
+	t.Helper()
+	root := t.TempDir()
+	r := &rig{dir: filepath.Join(root, "work"), log: filepath.Join(root, "calls.jsonl"), script: map[string]any{}}
+	if err := os.MkdirAll(r.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// tf is a terraform running the fake, with the rig's script and log. The
+// fake's own two variables are added after tf.Env, which drops them: they are
+// not on the allowlist, and a real terraform never sees them.
+func (r *rig) tf(t *testing.T) *tf.TF {
+	t.Helper()
+	env, err := tf.Env(withoutImpersonation(os.Environ()), r.dir, filepath.Join(r.dir, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := json.Marshal(r.script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env = append(env, "FAKE_TERRAFORM_LOG="+r.log, "FAKE_TERRAFORM_SCRIPT="+string(script))
+	tfbin, err := tf.New(fakeTerraform(t), r.dir, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tfbin
+}
+
+// withoutImpersonation drops the one variable tf.Env refuses rather than
+// drops, so a test runs whatever the environment around it holds.
+func withoutImpersonation(env []string) []string {
+	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		return strings.HasPrefix(kv, "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT=")
+	})
+}
+
+// planFile is the saved plan the gate is pointed at. The fake prints its
+// scripted plan whatever the file holds — a real saved plan is a binary no
+// test writes — so what the file is, is a name.
+func (r *rig) planFile(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(r.dir, "fugaro.tfplan")
+	if err := os.WriteFile(p, []byte("the saved plan, as the fake reports it"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// show scripts the fake's `show -json <plan>` with a plan of these changes.
+func (r *rig) show(t *testing.T, changes ...map[string]any) {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": changes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.script["show"] = map[string]any{"stdout": string(b)}
+}
+
+// failShow scripts a `show` that fails, as an unreadable plan file does.
+func (r *rig) failShow() {
+	r.script["show"] = map[string]any{"exit": 1, "stderr": "no such file"}
+}
+
+// applied is every apply the fake was asked to run: the gate reads a plan and
+// returns, and this is how a test says so.
+func (r *rig) applied(t *testing.T) []string {
+	t.Helper()
+	f, err := os.Open(r.log)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var out []string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(nil, 1<<20)
+	for sc.Scan() {
+		var c struct{ Args []string }
+		if err := json.Unmarshal(sc.Bytes(), &c); err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Args) > 0 && c.Args[0] == "apply" {
+			out = append(out, strings.Join(c.Args, " "))
+		}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// spec is the managed project's gate spec: the project's names, the cover and
+// the owner's allow-list.
+func spec(t *testing.T, r *rig, c Cover, allow ...string) Spec {
+	t.Helper()
+	return Spec{Project: project, GCPProject: gcpProject, Cover: c, AllowDelete: allow, TF: r.tf(t)}
+}
+
+// gate runs Gate and fails the test on an error, which is the "could not read"
+// answer and never an admission.
+func gate(t *testing.T, r *rig, s Spec) Verdict {
+	t.Helper()
+	v, err := Gate(context.Background(), r.planFile(t), s)
+	if err != nil {
+		t.Fatalf("Gate: %v", err)
+	}
+	return v
+}
+
+// A plan both gates admit is admitted, and nothing was applied: the gate's
+// whole output is a verdict.
+func TestGateAdmitsAPlanBothGatesAdmit(t *testing.T) {
+	r := newRig(t)
+	r.show(t, bucket(planBucket))
+	v := gate(t, r, spec(t, r, cover()))
+	if !v.OK {
+		t.Fatalf("a plan both gates admit is not admitted: %v", v.Refusals)
+	}
+	if len(v.Refusals) != 0 {
+		t.Errorf("an admitted plan carries refusals: %v", v.Refusals)
+	}
+	if got := r.applied(t); len(got) != 0 {
+		t.Errorf("the gate applied something: %v", got)
+	}
+}
+
+// The red step's case: the guard refuses and the cover admits, and the verdict
+// still says so. A Gate that returned only the last gate's verdict returns OK
+// here, which is a plan that would delete a resource the owner never approved.
+func TestGateReportsTheGuardRefusalEvenWhenTheCoverAdmits(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	v := gate(t, r, spec(t, r, admitAll{}))
+	if v.OK {
+		t.Fatal("a plan the guard refuses was admitted")
+	}
+	if len(v.Refusals) != 1 {
+		t.Fatalf("refusals %v, want the guard's one", v.Refusals)
+	}
+	got := v.Refusals[0]
+	if got.Gate != guardGate || got.Address != planBucket || !strings.Contains(got.Why, "delete") {
+		t.Errorf("refusal %+v, want the guard's refusal of %s with its actions", got, planBucket)
+	}
+	if applied := r.applied(t); len(applied) != 0 {
+		t.Errorf("the gate applied something: %v", applied)
+	}
+}
+
+// And the other way: the cover refuses a plan the guard admits, with the real
+// cover and its own rule as the reason.
+func TestGateReportsTheCoverRefusalWhenTheGuardAdmits(t *testing.T) {
+	r := newRig(t)
+	r.show(t, vm(planVM))
+	v := gate(t, r, spec(t, r, cover()))
+	if v.OK {
+		t.Fatal("a plan the cover refuses was admitted")
+	}
+	if len(v.Refusals) != 1 {
+		t.Fatalf("refusals %v, want the cover's one", v.Refusals)
+	}
+	got := v.Refusals[0]
+	if got.Gate != coverGate || got.Address != planVM || !strings.Contains(got.Why, "outside the installation's modules") {
+		t.Errorf("refusal %+v, want the cover's refusal of %s and its rule", got, planVM)
+	}
+}
+
+// Both gates refusing carries both refusals: the verdict lists every refusal
+// rather than the first, which is the shape the guard itself already uses.
+func TestGateReportsBothGatesRefusals(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil), vm(planVM))
+	v := gate(t, r, spec(t, r, cover()))
+	if v.OK {
+		t.Fatal("a plan both gates refuse was admitted")
+	}
+	var guard, coverRefusals int
+	for _, ref := range v.Refusals {
+		switch {
+		case ref.Gate == guardGate && ref.Address == planBucket:
+			guard++
+		case ref.Gate == coverGate && ref.Address == planVM:
+			coverRefusals++
+		}
+	}
+	if guard != 1 || coverRefusals != 1 {
+		t.Fatalf("refusals %v, want the guard's for %s and the cover's for %s", v.Refusals, planBucket, planVM)
+	}
+	// The guard's refusals come before the cover's, as Gate documents.
+	seenCover := false
+	for _, ref := range v.Refusals {
+		if ref.Gate == coverGate {
+			seenCover = true
+		} else if seenCover {
+			t.Fatalf("refusals %v: a guard refusal follows a cover refusal", v.Refusals)
+		}
+	}
+}
+
+// The verdict never carries the guard's advice to name an address with
+// --allow-delete: in a managed project that flag is the one thing the delete
+// rule forbids (D74), and a refusal that named it would be read by the session
+// it refuses as a thing to pass.
+func TestGateRefusalNeverNamesTheAllowDeleteFlag(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	v := gate(t, r, spec(t, r, admitAll{}))
+	if v.OK {
+		t.Fatal("a plan the guard refuses was admitted")
+	}
+	for _, ref := range v.Refusals {
+		if strings.Contains(ref.Why, "--allow-delete") || strings.Contains(ref.Address, "--allow-delete") {
+			t.Errorf("refusal %+v tells the reader to pass --allow-delete", ref)
+		}
+	}
+}
+
+// A spec with no cover refuses every plan rather than admitting it: the gate's
+// second half is what admits a managed plan, and a missing one is not a pass.
+func TestGateRefusesWhenTheCoverIsMissing(t *testing.T) {
+	r := newRig(t)
+	r.show(t, bucket(planBucket))
+	s := spec(t, r, nil)
+	s.Cover = nil
+	v := gate(t, r, s)
+	if v.OK {
+		t.Fatal("a plan with no cover at all was admitted")
+	}
+	if len(v.Refusals) != 1 || v.Refusals[0].Gate != coverGate || !strings.Contains(v.Refusals[0].Why, "no cover") {
+		t.Fatalf("refusals %v, want the missing cover's own refusal", v.Refusals)
+	}
+}
+
+// A plan the gate cannot read is an error and never a verdict: the caller must
+// not read "no verdict" as "admitted", and the zero Verdict is not OK either.
+func TestGatePlanThatCannotBeReadIsAnError(t *testing.T) {
+	t.Run("no terraform", func(t *testing.T) {
+		r := newRig(t)
+		s := spec(t, r, cover())
+		s.TF = nil
+		v, err := Gate(context.Background(), r.planFile(t), s)
+		if err == nil {
+			t.Fatal("Gate read a plan with no terraform")
+		}
+		if v.OK {
+			t.Error("a plan that was not read is OK")
+		}
+	})
+	t.Run("show fails", func(t *testing.T) {
+		r := newRig(t)
+		r.failShow()
+		v, err := Gate(context.Background(), r.planFile(t), spec(t, r, cover()))
+		if err == nil {
+			t.Fatal("Gate read a plan terraform could not show")
+		}
+		if v.OK {
+			t.Error("a plan that was not read is OK")
+		}
+		if got := r.applied(t); len(got) != 0 {
+			t.Errorf("the gate applied something: %v", got)
+		}
+	})
+}
+
+// The refusals carry the address and the rule apart, and a gate that refused
+// without an address keeps its own words rather than being dropped.
+func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
+	got := refusals(coverGate, strings.Join([]string{
+		`module.m.google_storage_bucket.x (runs the image "x", pinned (us-east5-docker.pkg.dev/p/r/fugaro-ghcr/o/fugaro-build:1.2.3@sha256:ab))`,
+		"",
+	}, "\n"))
+	want := Refusal{Gate: coverGate, Address: "module.m.google_storage_bucket.x",
+		Why: `runs the image "x", pinned (us-east5-docker.pkg.dev/p/r/fugaro-ghcr/o/fugaro-build:1.2.3@sha256:ab)`}
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("refusals %+v, want %+v", got, want)
+	}
+	got = refusals(guardGate, "the plan would delete or replace 1 resource(s):\n  module.m.x (delete)")
+	want = Refusal{Gate: guardGate, Address: "module.m.x", Why: "delete"}
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("refusals %+v, want the guard's address alone", got)
+	}
+	got = refusals(guardGate, "guard: no plan")
+	want = Refusal{Gate: guardGate, Why: "guard: no plan"}
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("refusals %+v, want the refusal whole", got)
+	}
+}
+
+// A guard that errs fails closed even when its message says nothing: OK is not
+// read off the refusals the message turns into.
+func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
+	for _, msg := range []string{"", "  \n "} {
+		old := guard
+		guard = func(*tf.Plan, []string) error { return errors.New(msg) }
+		r := newRig(t)
+		r.show(t, bucket(planBucket))
+		v := gate(t, r, spec(t, r, admitAll{}))
+		guard = old
+		if v.OK {
+			t.Errorf("a guard that refused with %q was admitted", msg)
+		}
+	}
+}
+
+// An address on the owner's AllowDelete list is admitted for a delete; one not
+// on it is refused.
+func TestGateAdmitsADeleteOnlyForAListedAddress(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	if v := gate(t, r, spec(t, r, admitAll{}, planBucket)); !v.OK {
+		t.Errorf("a delete of a listed address was refused: %v", v.Refusals)
+	}
+	if v := gate(t, r, spec(t, r, admitAll{}, "module.managed.google_storage_bucket.other")); v.OK {
+		t.Error("a delete of an address not listed was admitted")
+	}
+	if v := gate(t, r, spec(t, r, admitAll{})); v.OK {
+		t.Error("a delete with an empty list was admitted")
+	}
+}
+
+// The cover receives Spec.Imports: an import discovery did not list is refused,
+// one it listed is admitted.
+func TestGateImportsMustBeOnTheSpecList(t *testing.T) {
+	id := gcpProject + "/data-bucket"
+	imp := bucket(planBucket)
+	imp["change"].(map[string]any)["importing"] = map[string]any{"id": id}
+	imp["change"].(map[string]any)["actions"] = []string{"no-op"}
+	r := newRig(t)
+	r.show(t, imp)
+	s := spec(t, r, cover())
+	if v := gate(t, r, s); v.OK {
+		t.Error("an import discovery did not find was admitted")
+	}
+	s.Imports = []tf.ImportKey{{Address: planBucket, ID: id}}
+	if v := gate(t, r, s); !v.OK {
+		t.Errorf("an import discovery found was refused: %v", v.Refusals)
+	}
+}
