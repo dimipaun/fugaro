@@ -79,14 +79,14 @@ with fixtures that keep its refusals running, and none of them needs the network
   `prefers-reduced-motion` path for every animation, and the shipped tokens equal to the
   palette in force.
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes; derived from the
-  build of 2026-10-17 with 25% headroom, because the plan names the budgets but no figures —
+  build of 2026-10-17 (with the base styles of #528) with 25% headroom, because the plan names the budgets but no figures —
   the derivation is in the test's header, and a task that needs more raises the number here,
   in the commit that needs it):
   - **JavaScript per page:** 0 bytes. The site ships no script; the first one (W1.12's
     consent banner) raises this line.
-  - **Page weight per page:** 214,233 bytes. The heaviest page (the docs hub, 171,386
+  - **Page weight per page:** 220,922 bytes. The heaviest page (the docs hub, 176,737
     bytes) plus 25%.
-  - **Whole site:** 418,054 bytes. Every file in `dist/` (334,443 bytes) plus 25%.
+  - **Whole site:** 484,942 bytes. Every file in `dist/` (387,953 bytes) plus 25%.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull

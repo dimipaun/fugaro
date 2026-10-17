@@ -13,12 +13,13 @@
 //     0. The first task that ships a script — W1.12's consent banner — raises this number
 //     in the README in the same commit, by the size it adds plus 25%, which is the point:
 //     a script is a decision someone states, not a byte count that creeps.
-//   - Page weight per page: 214,233 bytes. The heaviest page on 2026-10-17 was
-//     `docs/index.html` (171,386 bytes: the whole generated CLI reference, inline CSS
+//   - Page weight per page: 220,922 bytes. The heaviest page on 2026-10-17, after the base styles
+//     (#528) landed, was
+//     `docs/index.html` (176,737 bytes: the whole generated CLI reference, inline CSS
 //     included); × 1.25, rounded up. One ceiling for every page rather than one per page,
 //     so a page that grows with the product (the changelog, the reference) is held to the
 //     same line as the rest instead of to its own history.
-//   - Whole site: 418,054 bytes. Every file in `dist/` on 2026-10-17 summed to 334,443
+//   - Whole site: 484,942 bytes. Every file in `dist/` on that build summed to 387,953
 //     bytes (ten pages; no separate stylesheet, script, font or image); × 1.25, rounded up.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
