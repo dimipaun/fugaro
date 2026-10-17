@@ -1,14 +1,12 @@
 {
-  // Astro's own strict preset, plus the one setting it leaves off. TypeScript is not a
+  // Astro's own strict preset: `extends` brings in its base config and sets `strict: true`,
+  // which is `strictNullChecks` and its siblings in one — so the null-handling the
+  // generated-content pipeline (W1.3) depends on is on, and a null a page forgot to handle
+  // is an error an editor shows rather than a value a template renders. TypeScript is not a
   // dependency of this site: nothing here runs `tsc`, and this file is what an editor and
-  // Astro's own diagnostics read. `strictNullChecks` is spelled out because the preset
-  // extends Astro's base config, which turns it off, and a null the site did not handle
-  // is exactly the kind of defect the generated-content pipeline (W1.3) exists to make
-  // loud rather than silent.
+  // Astro's own diagnostics read. `include` and `exclude` are the preset's own lists,
+  // restated so that the files this config covers are visible in the file a reader opens.
   "extends": "astro/tsconfigs/strict",
   "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist"],
-  "compilerOptions": {
-    "strictNullChecks": true
-  }
+  "exclude": ["dist"]
 }

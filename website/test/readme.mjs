@@ -194,6 +194,36 @@ test('the README states the rule that a page renders a fact rather than restatin
   )
 })
 
+test('the README describes the pages the build produces', () => {
+  const text = readme()
+
+  // The shell's own README says what is in the tree, and the tree moves under it: the
+  // first page lands in W1.3 and the rest through W1.12, so a sentence about "no page
+  // yet" is true only while `src/pages/` is empty. Prose a reader trusts has to describe
+  // the directory it is in, which is what this holds it to (W1.1, the W1.5 review).
+  const pagesDir = path.join(SITE_ROOT, 'src', 'pages')
+  const pages = existsSync(pagesDir) ? readdirSync(pagesDir).filter((name) => name.endsWith('.astro')) : []
+
+  if (pages.length === 0) {
+    assert.match(
+      text,
+      /produces no page yet/,
+      'src/pages/ holds no page and the README does not say the build produces none yet: a reader who runs `npm run build` and finds an empty dist/ has to be told that is the state of the shell',
+    )
+    return
+  }
+
+  assert.doesNotMatch(
+    text,
+    /produces no page yet/,
+    `src/pages/ holds ${pages.length} page(s) — ${pages.join(', ')} — and the README still says the build produces no page yet: the build emits one page per file there`,
+  )
+  assert.ok(
+    text.includes('src/pages/'),
+    'the README does not name src/pages/, the directory whose files are the site\'s routes',
+  )
+})
+
 test('the README says the build needs no network', () => {
   const text = readme()
 
