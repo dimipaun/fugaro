@@ -520,7 +520,7 @@ The owner copies `docs/pending-workflows/console-tests.yml` to `.github/workflow
 
 **Red step - `Expected: FAIL`** - `startup-skew.spec.ts`'s old-version case against the tree as Task 3.2 leaves it (`index.ts` with no handshake: the dashboard draws); and `ipc.test.ts`'s allow-list test against an entry with an argument.
 
-**Status: NOT APPROVED TO IMPLEMENT.** Adding this task to the plan is not approval to implement it; implementation waits for the owner's go. It is, however, a **release gate for the console MVP** (Task 4.6 and "What ships with the MVP"): the console does not ship with 0.8.5 without it.
+**Status: approved by the owner 2026-10-17.** The owner's go ("yes, start") came on 2026-10-17, so the line this replaces -- implementation waiting for approval -- no longer holds; nothing else in this task changed with it. It remains a **release gate for the console MVP** (Task 4.6 and "What ships with the MVP"): the console does not ship with 0.8.5 without it.
 
 ---
 
@@ -678,7 +678,7 @@ An agent then makes one docs-only follow-up: the README's console-release row ga
 
 **Depends on:** Task 1.5 (**hard**: this must not merge before the check exists — and it has, by three phases).
 
-**Release gate, in addition: Task 3.3 must be merged before the console MVP is released.** The gate edit above is about CI; this one is about content. The console that carries phase 4 must be one whose startup runs the version handshake (D7), so the release checklist for the release that first ships the console (0.8.5) lists Task 3.3 as a precondition, and a console tree on which `index.ts` does not call `startupWindow` does not ship. The test for that is `TestConsoleMVPRequiresTheStartupHandshake` in `internal/cli/docs_desktop_console_test.go` (added with Task 3.3's plan entry, not by Task 4.6): it reads this plan, asserts the Task 3.3 heading itself carries `SECURITY-SENSITIVE, independent opus review`, that Task 3.3 depends on 3.2, that Task 4.6 names Task 3.3, that the policy list in Global Constraints rule 9 includes 3.3, and asserts the "What ships with the MVP" list below names Task 3.3.
+**Release gate, in addition: Task 3.3 must be merged before the console MVP is released.** (Approved by the owner 2026-10-17: the task is no longer waiting for a go, and the gate below is unchanged by that.) The gate edit above is about CI; this one is about content. The console that carries phase 4 must be one whose startup runs the version handshake (D7), so the release checklist for the release that first ships the console (0.8.5) lists Task 3.3 as a precondition, and a console tree on which `index.ts` does not call `startupWindow` does not ship. The test for that is `TestConsoleMVPRequiresTheStartupHandshake` in `internal/cli/docs_desktop_console_test.go` (added with Task 3.3's plan entry, not by Task 4.6): it reads this plan, asserts the Task 3.3 heading itself carries `SECURITY-SENSITIVE, independent opus review`, that Task 3.3 depends on 3.2, that Task 4.6 names Task 3.3, that the policy list in Global Constraints rule 9 includes 3.3, and asserts the "What ships with the MVP" list below names Task 3.3.
 
 **Commit:** `release: the gate requires the console check`
 

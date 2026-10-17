@@ -1722,7 +1722,11 @@ func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
 		t.Error("Global Constraints rule 9's list of security-sensitive tasks does not include 3.3")
 	}
 	task := section("### Task 3.3:", "\n## Phase 4")
-	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "NOT APPROVED TO IMPLEMENT"} {
+	// "approved by the owner 2026-10-17" replaced "NOT APPROVED TO IMPLEMENT" on
+	// 2026-10-17, when the owner gave the go for this task; the rest of the list
+	// is unchanged, and the gate itself (this function's reason to exist) is
+	// asserted below and by Task 4.6.
+	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "approved by the owner 2026-10-17"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("Task 3.3 lost %q", want)
 		}
