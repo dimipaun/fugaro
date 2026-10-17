@@ -1406,26 +1406,33 @@ func TestChecklistHasCheck50(t *testing.T) {
 			"0.8.0.x",
 			// What the check settles, named in the row too: the number is the point.
 			"cache reads",
-			// The row must carry the section's own hedge: the message that
-			// names the switch is Task 1b.3's, and this binary prints the
-			// older note instead. An owner who reads only the row must not
-			// meet the expected older note as the check's failure.
+			// The row must carry the section's own reading of the two binaries:
+			// Task 1b.3 shipped with phase 1b, so *this* binary prints the
+			// note that names the switch, and the record "Task 1b.3 not in
+			// this binary" is for one older than that release. An owner who
+			// reads only the row must neither meet the older note as this
+			// check's failure nor record the message this binary does print
+			// as missing.
+			"**this binary prints**",
 			"Task 1b.3 not in this binary",
 		})
 		// The row may still SAY the switch is what the message names — that
-		// is what Task 1b.3's message does — but it may not promise it as
-		// this binary's behaviour, which is the phrasing below.
+		// is what Task 1b.3's message does — but it may not say this binary
+		// cannot print it, which is the phrasing below.
 		for _, old := range []string{
+			"cannot print",
 			"refused with a message that names the switch",
 		} {
 			if strings.Contains(row, old) {
-				t.Errorf("the Check 50 row still promises the Task 1b.3 message (%q): this binary's missing-key note names no switch, and the section records it as %q rather than a failure", old, "Task 1b.3 not in this binary")
+				t.Errorf("the Check 50 row still says %q: Task 1b.3 shipped with phase 1b, so this binary's missing-key note names the switch and the row must not deny it", old)
 			}
 		}
 	}
 
-	// Step 2's heading carries the same claim as the row did, so it needs the
-	// same hedge: on this binary the naming safeguard has not landed.
+	// Step 2's heading names the safeguard. It used to hedge it with "once Task
+	// 1b.3 ships", which the tree the check ships against makes false: 1b.3
+	// shipped with phase 1b and this binary prints the message the step asks
+	// for.
 	var step2Head string
 	for _, line := range strings.Split(section, "\n") {
 		if strings.HasPrefix(line, "### 2.") {
@@ -1433,8 +1440,11 @@ func TestChecklistHasCheck50(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(step2Head, "Task 1b.3 ships") {
-		t.Errorf("the Check 50 step 2 heading does not say the switch-naming safeguard arrives with Task 1b.3 (%q): this binary prints the older note, so an unhedged heading promises a message that cannot come", step2Head)
+	if !strings.Contains(step2Head, "the safeguard, which names the switch") {
+		t.Errorf("the Check 50 step 2 heading does not name the switch-naming safeguard (%q): the step's second half is that message, and an owner reading the heading has to know the message is this binary's", step2Head)
+	}
+	if strings.Contains(step2Head, "1b.3") {
+		t.Errorf("the Check 50 step 2 heading still defers the safeguard to Task 1b.3 (%q): 1b.3 shipped with phase 1b, so this binary prints the note that names the switch", step2Head)
 	}
 
 	// Check 43's guard block inside the section — the three hard stops and the
@@ -1473,15 +1483,17 @@ func TestChecklistHasCheck50(t *testing.T) {
 		"Routing exists only with the gateway",
 		// Task 1b.3 (doctor's routing-cache-markers info, validate's
 		// resolution line, the missing-key message) is ordered before this
-		// check's task and has not shipped: the section says so, and says a
-		// step whose output is missing for that reason is recorded as not
-		// produced rather than treated as a failure. Without these the owner
-		// reaches step 3 with no line to paste while this test stays green.
-		"Task 1b.3's, and 1b.3 has not shipped",
-		"prints no `routing-cache-markers` info",
+		// check's task and **has shipped with phase 1b** (#441): the section
+		// says so, and says what a binary *older* than that release records
+		// when its output is missing — not produced, rather than a failure.
+		// Without these the owner reaches step 3 with no line to paste while
+		// this test stays green.
+		"Task 1b.3's, and 1b.3 has shipped",
+		"prints the `routing-cache-markers` info",
+		"A binary older than the release phase 1b ships in prints neither",
 		"recorded as *not produced*",
-		"If this binary prints no resolution line at all, record this FACT as *not produced* and go on",
-		"the line itself is Task 1b.3's and Task 1b.3 has not shipped",
+		"if the `fugaro validate` you ran prints no resolution line at all, record this FACT as *not produced* and go on",
+		"the line itself is Task 1b.3's, which shipped with phase 1b",
 		// What "not landed" looks like is per step, and the opener says which
 		// each one is: step 3's line is simply absent, step 2's note IS
 		// printed and only fails to name the switch — which is why step 2
@@ -1912,15 +1924,17 @@ func TestChecklistHasCheck50(t *testing.T) {
 		}
 	}
 
-	// Task 1b.3 has not shipped, so every FACT line that names its output is
-	// recorded and the check goes on, never treated as a failure. What "not
-	// landed" looks like is per step, and asking them for the same word would
-	// be wrong: step 3's resolution line is simply absent from this binary,
-	// while step 2's missing-key note IS printed — it is the older note that
-	// names no switch (anthropicKeyNeeded, internal/cli/validate.go:28) — so
-	// step 2 records this FACT as "Task 1b.3 not in this binary". A step that
-	// stops, or that reads as if the 1b.3 line must exist, contradicts the
-	// opener and leaves the owner with a check that cannot be finished.
+	// Task 1b.3 shipped with phase 1b, so its output is this binary's — and
+	// every FACT line that names it still has a record for the binary that
+	// predates the release, because a check may be run against an older
+	// install. What "not landed" looks like is per step, and asking them for
+	// the same word would be wrong: step 3's resolution line is simply absent
+	// from such a binary, while step 2's missing-key note IS printed — it is
+	// the note that names no switch (anthropicKeyNeeded, and the older
+	// MissingAnthropicKey it quotes) — so step 2 records this FACT as
+	// "Task 1b.3 not in this binary". A step that stops, or that reads as if
+	// the older binary's form must exist, contradicts the opener and leaves
+	// the owner with a check that cannot be finished.
 	for _, tc := range []struct{ step, marker, want, why string }{
 		{"### 2.", "step 2", "Task 1b.3 not in this binary",
 			"this binary does print a missing-key note; it only does not name the switch, so a binary without 1b.3 is not silent here"},
@@ -1960,14 +1974,37 @@ func TestChecklistHasCheck50(t *testing.T) {
 	chkNoLineCites(t, section, "Check 50 section")
 
 	// The numbering ruling names the number, so a later plan does not take it —
-	// and says Task 1b.3's output is not in the binary, so the section below
-	// does not claim an output this tree cannot produce.
+	// and says Task 1b.3's output is in this binary, so a reader is not sent to
+	// record an output this tree does produce as missing. It said the opposite
+	// ("not in this binary yet") until the three outputs shipped: doctor.go's
+	// routing-cache-markers info, validate.go's resolution line, and the
+	// missing-key note that names the switch.
 	ruling := strings.Join(strings.Fields(doc), " ")
 	if !strings.Contains(ruling, "Check 50 is phase 1b's") {
 		t.Error("the Numbering ruling does not name Check 50 as phase 1b's")
 	}
-	if !strings.Contains(ruling, "not in this binary yet") {
-		t.Error("the Numbering ruling does not say `fugaro doctor`'s routing-cache-markers info is Task 1b.3's and not in this binary yet: internal/cli/doctor.go has no such check, so the ruling would claim an output this tree cannot produce")
+	if !strings.Contains(ruling, "Task 1b.3's output, which **has shipped**") {
+		t.Error("the Numbering ruling does not say `fugaro doctor`'s routing-cache-markers info is Task 1b.3's and has shipped: doctor.go prints it and validate.go prints the resolution line, so a ruling that calls them missing sends the owner to record present output as absent")
+	}
+	if strings.Contains(ruling, "not in this binary yet") {
+		t.Error("the Numbering ruling still says Task 1b.3's output is `not in this binary yet`: internal/cli/doctor.go prints the routing-cache-markers info and internal/cli/validate.go prints the resolution line, so the ruling denies an output this tree produces")
+	}
+
+	// The three claims the section carried while Task 1b.3 was unshipped, and
+	// which the tree the check ships against makes false. Any of them coming
+	// back means the checklist tells the owner to record present output as
+	// absent, so they are refused here by name and not only through the
+	// positive pins above. The section's own reading is the other way round:
+	// the outputs are this binary's, and the older binary is the exception the
+	// record is written for.
+	for _, stale := range []string{
+		"1b.3 has not shipped",
+		"this binary prints no `routing-cache-markers` info",
+		"this binary's `fugaro validate` prints no routing-resolution line at all",
+	} {
+		if strings.Contains(section, stale) {
+			t.Errorf("the Check 50 section says %q: Task 1b.3 shipped with phase 1b, so this binary prints doctor's `routing-cache-markers` info and validate's resolution line, and a section that calls them missing has the owner record them as not produced", stale)
+		}
 	}
 }
 
