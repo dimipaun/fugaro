@@ -302,25 +302,43 @@ func TestSecretsLs(t *testing.T) {
 	var list []struct {
 		Name, ID, Latest string
 		Versions         int
+		Missing          bool
 		Labels           map[string]string
 	}
-	if err != nil || json.Unmarshal([]byte(out), &list) != nil || len(list) != 2 || strings.Contains(out, tokenValue) {
+	// The two stored names, plus the required ones nothing resolves for
+	// (Task 5.1's MISSING column, which every repo-scope listing carries).
+	if err != nil || json.Unmarshal([]byte(out), &list) != nil || len(list) != 4 || strings.Contains(out, tokenValue) {
 		t.Fatalf("ls --json = %s, %v", out, err)
 	}
+	stored := 0
 	for _, s := range list {
 		if s.ID == claudeSecret && (s.Name != "claude-oauth-token" || s.Latest != "2" || s.Versions != 2 || s.Labels["fugaro"] != "managed") {
 			t.Fatalf("ls --json entry %+v", s)
 		}
+		if s.Missing {
+			continue
+		}
+		stored++
+	}
+	if stored != 2 {
+		t.Fatalf("ls --json = %s, want the two stored containers and the required-and-missing rows", out)
 	}
 	for _, r := range sm.Requests() {
 		if strings.Contains(r.Path, ":access") {
 			t.Fatalf("ls read a value: %s", r.Path)
 		}
 	}
-	// An empty listing is valid JSON, not null.
+	// A listing is valid JSON even when nothing is stored: it is then the
+	// required names and nothing else, never null.
 	secretsFixture(t)
-	if out, _, err := execute(t, "secrets", "ls", "--repo", "acme/app", "--json"); err != nil || strings.TrimSpace(out) != "[]" {
-		t.Fatalf("empty ls --json = %q, %v", out, err)
+	out, _, err = execute(t, "secrets", "ls", "--repo", "acme/app", "--json")
+	if err != nil || json.Unmarshal([]byte(out), &list) != nil || len(list) != len(config.ReservedSecrets) {
+		t.Fatalf("ls --json with nothing stored = %q, %v", out, err)
+	}
+	for _, s := range list {
+		if !s.Missing || s.ID != "" {
+			t.Fatalf("an empty listing claims a container: %+v", s)
+		}
 	}
 }
 
@@ -890,12 +908,15 @@ func TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse(t *testing.T) {
 	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
 		t.Fatal(err)
 	}
-	// No container of its own: nothing is listed at all.
+	// No container of its own: the name is not listed. The rows are the
+	// required-and-missing ones Task 5.1 adds, and the project-wide copy of
+	// openrouter-api-key is not among them: this repository may not mount it,
+	// and a copy it may not use is not a value it has.
 	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/other")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "no secrets stored for acme/other") {
+	if strings.Contains(out, gcp.ProjectSecretID("aurora", "openrouter-api-key")) || strings.Contains(out, "openrouter-api-key") {
 		t.Fatalf("a project copy it may not use is listed:\n%s", out)
 	}
 	// With a container of its own (seeded: `secrets set --repo` refuses this
@@ -911,11 +932,18 @@ func TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse(t *testing.T) {
 	}
 	var list []struct {
 		Name, ID, Scope string
+		Missing         bool
 	}
 	if err := json.Unmarshal([]byte(out), &list); err != nil {
 		t.Fatalf("ls --json = %s, %v", out, err)
 	}
-	if len(list) != 1 || list[0].Scope != "repo" || list[0].ID != gcp.SecretID(other, "openrouter-api-key") {
+	var own []string
+	for _, s := range list {
+		if !s.Missing {
+			own = append(own, s.Name+" "+s.ID+" "+s.Scope)
+		}
+	}
+	if len(own) != 1 || own[0] != "openrouter-api-key "+gcp.SecretID(other, "openrouter-api-key")+" repo" {
 		t.Fatalf("entries = %+v, want the repository's own container alone", list)
 	}
 }
@@ -996,5 +1024,129 @@ func TestSecretsLsProjectWideNeverPrintsValue(t *testing.T) {
 		if strings.Contains(r.Path, ":access") {
 			t.Fatalf("ls --project-wide read a value: %s", r.Path)
 		}
+	}
+}
+
+// lsEntry is one entry of `secrets ls --json`, for the MISSING column's
+// tests: the shape secretEntry encodes.
+type lsEntry struct {
+	Name    string
+	ID      string
+	Scope   string
+	Latest  string
+	Missing bool
+}
+
+// lsJSON runs `secrets ls --repo acme/app --json` and decodes it.
+func secretsLsJSON(t *testing.T, args ...string) []lsEntry {
+	t.Helper()
+	out, _, err := execute(t, append([]string{"secrets", "ls", "--repo", "acme/app", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("secrets ls --json: %v", err)
+	}
+	var list []lsEntry
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("secrets ls --json = %s, %v", out, err)
+	}
+	return list
+}
+
+// missingByName maps each listed name to its MISSING flag.
+func secretsMissingByName(list []lsEntry) map[string]bool {
+	got := map[string]bool{}
+	for _, e := range list {
+		got[e.Name] = e.Missing
+	}
+	return got
+}
+
+// TestSecretsLsMissingCoversBothSources is Task 5.1's red step: "required" is
+// the union of the names the repository's own fugaro.yaml declares
+// (npm-token here) and the names the platform itself mounts
+// (config.ReservedSecrets), and a column that reads only one of the two
+// sources misses half the answer. A required name no enabled version resolves
+// for gets a row of its own — a missing secret has no container to be listed
+// from — and a name from neither source never appears.
+func TestSecretsLsMissingCoversBothSources(t *testing.T) {
+	secretsFixture(t)
+	appCheckout(t) // declares npm-token
+	got := secretsMissingByName(secretsLsJSON(t))
+	for _, name := range []string{"npm-token", "github-app-key", "bitbucket-token", "claude-oauth-token", "anthropic-api-key"} {
+		if !got[name] {
+			t.Errorf("%s is required and stored nowhere, so it must be listed as missing (entries %+v)", name, got)
+		}
+	}
+	if _, ok := got["not-required-token"]; ok {
+		t.Errorf("a name neither source requires is listed: %+v", got)
+	}
+	// The human table marks the same rows, with no SECRET and no CREATED for
+	// a name that has no container.
+	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "MISSING") {
+		t.Errorf("the table has no MISSING column:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "npm-token") && !strings.Contains(line, "yes") {
+			t.Errorf("the npm-token row does not say missing: %q", line)
+		}
+	}
+	if strings.Contains(out, gcp.SecretID(appSlug, "npm-token")) {
+		t.Errorf("a missing secret claims a container:\n%s", out)
+	}
+}
+
+// TestSecretsLsMissingIsAbsentVersionNotAbsentContainer: an "absent" secret is
+// one no enabled version resolves for, not one with no container: the
+// container init leaves behind before a value is stored (0 versions) is
+// missing, and an allow-listed project-wide copy the repository would mount
+// is what makes the same name present.
+func TestSecretsLsMissingIsAbsentVersionNotAbsentContainer(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/app] }\n")
+	// The repository's own container, empty: what init --repo leaves before
+	// the value is stored.
+	sm.Seed(gcp.SecretID(appSlug, "claude-oauth-token"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "claude-oauth-token"}, nil)
+	got := secretsMissingByName(secretsLsJSON(t))
+	if !got["claude-oauth-token"] {
+		t.Error("a container with no enabled version is listed as present")
+	}
+	// The same name project-wide, stored: the repository may mount it, so it
+	// is not missing any more.
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	got = secretsMissingByName(secretsLsJSON(t))
+	if got["bitbucket-token"] {
+		t.Error("an allow-listed project copy resolves the name, so it is not missing")
+	}
+	// Nothing here reads a value, at any point (Task 5.1's promise).
+	for _, r := range sm.Requests() {
+		if strings.Contains(r.Path, ":access") {
+			t.Fatalf("ls read a value: %s", r.Path)
+		}
+	}
+}
+
+// TestSecretsLsMissingColumnIsRepoScopeOnly: --project-wide lists the
+// installation's own containers, and a name absent there may be stored per
+// repository and perfectly present, so that listing claims nothing about
+// what is required and keeps its columns as they were.
+func TestSecretsLsMissingColumnIsRepoScopeOnly(t *testing.T) {
+	secretsFixture(t)
+	appCheckout(t)
+	out, _, err := execute(t, "secrets", "ls", "--project-wide", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "missing") {
+		t.Errorf("the project-wide listing gained the column: %s", out)
+	}
+	text, _, err := execute(t, "secrets", "ls", "--project-wide")
+	if err != nil || strings.Contains(text, "MISSING") {
+		t.Errorf("project-wide table = %q, %v", text, err)
 	}
 }

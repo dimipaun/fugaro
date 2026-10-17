@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -491,6 +492,14 @@ type secretEntry struct {
 	// Allowed are the repositories the local config lets use this
 	// project-wide secret (--project-wide only); never a live call.
 	Allowed []string `json:"allowed,omitempty"`
+	// Missing marks a required name no enabled version resolves for this
+	// repository: something this project knows about needs it (the
+	// repository's own fugaro.yaml, or config.ReservedSecrets) and nothing
+	// would mount it. Such a name has no container to be listed from, so it
+	// gets a row of its own — the post-restore question is exactly "which
+	// required secret is gone", and a listing of containers alone can never
+	// answer it (design D67, Task 5.1).
+	Missing bool `json:"missing,omitempty"`
 	gcp.SecretInfo
 }
 
@@ -500,6 +509,59 @@ type secretEntry struct {
 func repoMayUseProject(lc *localcfg.Config, logical, repo string) bool {
 	_, ok := infra.ProjectSecretCandidate(lc, logical, repo)
 	return ok
+}
+
+// requiredSecretNames is the "required" set the MISSING column checks, in one
+// place so the two sources cannot drift: every name the platform itself mounts
+// (config.ReservedSecrets, required of every repository), plus every name the
+// repository's own fugaro.yaml declares (workflows.<w>.secrets:). cfg is the
+// checkout's fugaro.yaml when the working directory is a checkout of the
+// repository being listed, and nil otherwise — a listing must not fail because
+// the operator ran it from elsewhere, so an unreadable repository half simply
+// contributes nothing.
+func requiredSecretNames(cfg *config.Config) []string {
+	set := map[string]bool{}
+	for name := range config.ReservedSecrets {
+		set[name] = true
+	}
+	if cfg != nil {
+		for _, wf := range cfg.Workflows {
+			for _, s := range wf.Secrets {
+				if s.Name != "" {
+					set[s.Name] = true
+				}
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(set))
+}
+
+// markMissingRequired marks every required name no entry resolves to an
+// enabled version for, and is the whole point of the MISSING column: a missing
+// secret has no container, so it can only be reported by a row of its own. A
+// name counts as present when the row this repository resolves carries a
+// latest enabled version — its own copy, or an allow-listed project-wide one
+// it may mount (§5) — and not merely when a container of that name exists: the
+// container init leaves behind before a value is stored, or one whose versions
+// are all disabled, resolves to nothing. A name that has a row already is
+// marked on that row rather than listed twice, so the table keeps one line per
+// name.
+func markMissingRequired(entries []secretEntry, cfg *config.Config) []secretEntry {
+	at := map[string]int{}
+	for i, e := range entries {
+		at[e.Name] = i
+	}
+	var missing []secretEntry
+	for _, name := range requiredSecretNames(cfg) {
+		if i, ok := at[name]; ok {
+			if entries[i].Latest == "" {
+				entries[i].Missing = true
+			}
+			continue
+		}
+		missing = append(missing, secretEntry{Name: name, Missing: true})
+	}
+	return append(entries, missing...)
 }
 
 // projectSecretAllowed are the repositories the local config allows to use
@@ -543,8 +605,19 @@ shows, per name, SCOPE: repo (the repository's own container), project (an
 allow-listed project-wide container with no repo copy), or "project, repo
 override stored" (both exist; the repository's own version wins).
 
+MISSING marks a name something this project knows about needs and no enabled
+version resolves for: the answer to "which required secret is gone" after a
+restore. "Required" is the union of what the checkout's fugaro.yaml declares
+(workflows.<w>.secrets) and the names the platform itself mounts
+(config.ReservedSecrets), and a required name with nothing behind it gets a
+row of its own — a missing secret has no container to be listed from, so its
+SECRET, LATEST and CREATED are "-". Run this from a checkout of the repository
+to check the names its own configuration declares as well.
+
 --project-wide lists the installation's project-wide containers instead,
-with the repositories the local config allows to use each one.`,
+with the repositories the local config allows to use each one. It has no
+MISSING column: a name absent there may be stored per repository and
+perfectly present.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := o.checkScope(cmd); err != nil {
@@ -630,6 +703,7 @@ func listRepoScope(cmd *cobra.Command, env *cloudEnv, o secretsOptions, r *secre
 		}
 		entries = append(entries, secretEntry{Name: name, Scope: scopeProject, SecretInfo: shared[name]})
 	}
+	entries = markMissingRequired(entries, r.checkout())
 	sortSecretEntries(entries)
 	return printSecrets(cmd.OutOrStdout(), r.repo, entries, o.asJSON, false)
 }
@@ -680,21 +754,51 @@ func printSecrets(w io.Writer, subject string, entries []secretEntry, asJSON, pr
 	if projectWide {
 		fmt.Fprintln(tw, "NAME\tSECRET\tSCOPE\tLATEST\tVERSIONS\tCREATED\tALLOWED")
 	} else {
-		fmt.Fprintln(tw, "NAME\tSECRET\tSCOPE\tLATEST\tVERSIONS\tCREATED\tLABELS")
+		fmt.Fprintln(tw, "NAME\tSECRET\tSCOPE\tMISSING\tLATEST\tVERSIONS\tCREATED\tLABELS")
 	}
 	for _, e := range entries {
-		last := strings.Join(e.Allowed, ",")
+		cells := []string{dash(e.Name), dash(e.ID), dash(e.Scope)}
 		if !projectWide {
-			var labels []string
-			for _, k := range slices.Sorted(maps.Keys(e.Labels)) {
-				labels = append(labels, k+"="+e.Labels[k])
-			}
-			last = strings.Join(labels, ",")
+			// "yes" for a required name nothing resolves for, "-" otherwise,
+			// so the column reads as a fact about the row rather than as an
+			// adjective on it.
+			cells = append(cells, dash(missingCell(e)))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n", dash(e.Name), e.ID, e.Scope, dash(e.Latest), e.Versions,
-			e.Created.UTC().Format("2006-01-02 15:04"), dash(last))
+		cells = append(cells, dash(e.Latest), strconv.Itoa(e.Versions), dash(createdCell(e)))
+		if projectWide {
+			cells = append(cells, dash(strings.Join(e.Allowed, ",")))
+		} else {
+			cells = append(cells, dash(labelsCell(e)))
+		}
+		fmt.Fprintln(tw, strings.Join(cells, "\t"))
 	}
 	return tw.Flush()
+}
+
+// missingCell is the MISSING column's value for one row.
+func missingCell(e secretEntry) string {
+	if e.Missing {
+		return "yes"
+	}
+	return ""
+}
+
+// createdCell is the CREATED column's value: a missing required secret has no
+// container, so it has no creation time to print.
+func createdCell(e secretEntry) string {
+	if e.Created.IsZero() {
+		return ""
+	}
+	return e.Created.UTC().Format("2006-01-02 15:04")
+}
+
+// labelsCell is the LABELS column's value, in key order.
+func labelsCell(e secretEntry) string {
+	var labels []string
+	for _, k := range slices.Sorted(maps.Keys(e.Labels)) {
+		labels = append(labels, k+"="+e.Labels[k])
+	}
+	return strings.Join(labels, ",")
 }
 
 func dash(s string) string {
