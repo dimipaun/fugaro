@@ -34,7 +34,7 @@ Once those are lifted, these still differ from a per-repository job, because the
 |---|---|
 | `FUGARO_CHECKOUT` | the runner does not treat the job as a clone job: a full clone instead of a blobless one, and no mise provisioning or prefetch |
 | `FUGARO_MODEL_PROVIDERS` | no owner-configured model provider (OpenRouter and the rest) is available: only the Anthropic API key a profile mounts, or Vertex, can serve the agent |
-| Claude OAuth tokens | refused at `fugaro init`: an `agent.auth: oauth` run has no token on a shared job (phase 5) |
+| Claude OAuth tokens | refused at `fugaro init`, and a launch of one onto a shared job is refused before the claim: an `agent.auth: oauth` run has no token on a shared job (phase 5) |
 | `FUGARO_COMPUTE_PRICES` | the region's list prices are used, not the local config's override |
 | `FUGARO_BUDGET_GRACE` | the default grace applies |
 | `workflows.<n>.secrets` | a repository's own secrets are never mounted on a shared job; only the profile's project-wide `secrets` are |
@@ -114,7 +114,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `agent.first_line_review` | project, repo |  |
 | `agent.first_line_rounds` | project, repo |  |
 | `agent.recipe` | project, repo, override |  |
-| `agent.oauth_token` | repo, override | it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists. On a project job the account is the profile's — an axis of the job's own name — so a run that selects another one is refused at launch (`internal/cli`'s `checkProjectJobAccount`). In this release no profile may mount a Claude OAuth token (`fugaro init` refuses it), so every project job runs as no account: a run naming an account is refused at launch, and an `agent.auth: oauth` run on the default account reaches the job with no token to read — OAuth runs do not work on a shared job yet (phase 5) |
+| `agent.oauth_token` | repo, override | it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists. On a project job the account is the profile's — an axis of the job's own name — so a run that selects another one is refused at launch (`internal/cli`'s `checkProjectJobAccount`). In this release no profile may mount a Claude OAuth token (`fugaro init` refuses it), so every project job runs as no account: a run naming an account is refused at launch, and an `agent.auth: oauth` run on the default account is refused at launch too — before the claim, the budget token and any Cloud Run call (`internal/cli`'s `checkProjectJobOAuth`) — because the job it would land on holds no token to read. An installation on `auth: oauth` therefore has no usable shared job until phase 5 gives a shared account its own job, and the refusal says so: use an API-key workflow for the repository — a repository that keeps a per-repository job of its own (a baked workflow, or an installation that has published no profiles) is not refused at all |
 | `budget.mode` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `budget.per_run_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `budget.allowed_models` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
