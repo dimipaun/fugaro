@@ -1078,7 +1078,7 @@ func TestWebsiteFirebaseRedirectGuardSeesAPlantedLoop(t *testing.T) {
 		{"source":"/releases","destination":"https://github.com/dimipaun/fugaro/releases","type":302}
 	]}}`
 	loops := firebaseSelfRedirects(t, path, []byte(planted), own)
-	if len(loops) != 1 || !strings.Contains(loops[0], `"**"`) {
+	if len(loops) != 1 || !strings.Contains(loops[0], `/**`) || !strings.Contains(loops[0], "https://fugaro.dev/:splat") {
 		t.Errorf("the guard reported %v, want exactly the planted `/**` -> https://fugaro.dev/:splat loop: a guard that misses it passes for the wrong reason, and one that also reports a redirect to another origin, another path or a relative destination is a rule against redirects", loops)
 	}
 }
