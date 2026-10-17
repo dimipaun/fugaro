@@ -217,41 +217,32 @@ home-screen icons, the manifest's colours (the palette's `--ground`), the header
 a day for icons and fonts, and five minutes for HTML. It names no project and there is no
 `.firebaserc`. It landed ahead of W2.1 with the owner's deploy script; W2.1 extends it (the
 staged workflow), and W1.12 or W3.2 must widen the CSP when the consented analytics script
-is switched on, because the policy blocks it today. **It carries no `redirects` block, and
-that is deliberate** — see the next section.
+is switched on, because the policy blocks it today.
 
-### The canonical domain, and why the redirect is not in `firebase.json`
+### The canonical domain
 
 `data/site.yaml`'s `canonical_url` is the one origin the canonical `<link>`, the sitemap, the
 OpenGraph tag and every absolute link on the site are built from, and it is the real domain
 the owner registered and connected Firebase Hosting to (owner ruling 2026-10-17; the site's
-own project is `fugaro-prod`, D91). `secondary_domain` names the second domain the owner
-acquired, and it **redirects to the canonical one**: the direction is the whole point of it,
-so the site links nothing on it and it is not on `allowed_hosts`. Both are named in
-`data/site.yaml` and nowhere else under `website/` — `TestWebsiteDomainsAppearOnlyInSiteYaml`
-in `internal/cli/docs_website_boundary_test.go` scans every file under `website/` for each of
-the two hosts (and the control beside it, `TestWebsiteHostScanSeesAPlantedCopy`, plants one in
-a page to prove the scan sees it), which is why this page does not print either domain.
+own project is `fugaro-prod`, D91). Its host is named in `data/site.yaml` and nowhere else
+under `website/`, and it is on `allowed_hosts` — so pointing the site at a domain is that one
+line, the host list's own entry and a rebuild, and no page can go on serving a domain the
+site stopped being. `TestWebsiteCanonicalHostAppearsOnlyInSiteYaml` in
+`internal/cli/docs_website_boundary_test.go` scans every file under `website/` for the host
+(and the control beside it, `TestWebsiteHostScanSeesAPlantedCopy`, plants one in a page to
+prove the scan sees it), which is why this page does not print the domain.
 
-**The redirect is a property of the attached domain and not a `firebase.json` rule, and that
-is a fact about Firebase Hosting rather than a preference.** A Hosting redirect rule is
-matched against the request **path**, and firebase-tools' config schema for one admits only
-`destination`, one of `source`/`glob`/`regex`, and `type` (`schema/firebase-config.json`,
-`definitions/HostingRedirects`, `additionalProperties: false`): there is no field that could
-condition a rule on the request's host. A rule that sent every path to the canonical origin
-would therefore fire on the canonical origin too, answering a request with a redirect to
-itself — a loop. So the redirect is set where the domain is attached: the Firebase console's
-own redirect option when the second domain is added to the site's project, or the Hosting
-API's custom-domain redirect. **Registering a domain, attaching it and writing its DNS
-records are the owner's steps** — no agent registers a domain, touches DNS or changes the
-project — and until the domain is attached and that redirect is set, `secondary_domain` names
-a domain nothing answers on: the site is simply live on the canonical URL, and nothing in
-this repository changes that. `TestWebsiteFirebaseRedirectsDoNotLoop` also refuses a
-`firebase.json` redirect whose source matches its own destination — a path redirected to
-itself, a wildcard pointing inside its own match set, or either spelling of Firebase's
-catch-all (`/**`, `**`) pointed at any path on a host this site serves — so the looping rule
-cannot be added later by a task that assumes the domain step was already done, and check 69a
-in `docs/gcp-live-checklist.md` is where the live result is recorded.
+**There is no second domain, and no page or document here may name one.** W2.2 wrote a
+`secondary_domain` for a domain the owner acquired alongside the canonical one; the owner
+ruled on 2026-10-17 that no such domain is theirs, so both the value and every step that
+attached it are gone — the ruling is recorded in the amendment under Task W2.2 of
+`docs/website/implementation-plan.md`.
+`TestWebsiteNamesNoSecondDomain`, with its own control, scans every file under `website/` for
+the name W2.2 wrote and refuses it coming back, so a later task cannot reintroduce it by
+copying an older revision of a page. **Registering a domain, attaching it to the site's
+Firebase project and writing its DNS records are the owner's steps** — no agent registers a
+domain, touches DNS or changes that project — and the live result is what check 69a in
+`docs/gcp-live-checklist.md` records.
 
 `scripts/deploy-website.sh` deploys from the owner's machine with the Firebase CLI, using
 whatever `firebase login` the owner already did — it never reads, prints or takes a token

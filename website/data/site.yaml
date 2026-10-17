@@ -15,15 +15,16 @@
 # no query and no trailing slash -- whose host is a real host and is on
 # `allowed_hosts` (W2.2 wrote the domain the owner registered and connected
 # hosting to, replacing the reserved placeholder W0.2 wrote while no domain
-# existed); `secondary_domain` to empty, or to a bare lowercase host that is
-# neither the canonical host nor a host the site links (W2.2 named the second
-# domain the owner acquired, whose only job is to send the reader back to the
-# canonical one); `analytics` to a state where the flag and the measurement id
-# agree, which holds whether or not W3.2 has turned it on -- that task sets the
-# property and the flag together, behind W1.12's consent gate; both `features`
-# to false, because the console is designed and not shipped and the explainer
-# video does not exist yet (W3.1 flips the first with the console's release, and
-# W2.4 the second); and every entry of `allowed_hosts` to a bare lowercase host.
+# existed); the file to carry NO second domain, which W2.2 wrote for a domain the
+# owner then ruled does not exist (the owner's ruling of 2026-10-17, recorded in
+# the amendment under plan Task W2.2); `analytics` to a state where the flag and
+# the measurement id agree, which holds whether or not W3.2 has turned it on --
+# that task sets the property and the flag together, behind W1.12's consent
+# gate; both `features` to false, because the console is designed and not
+# shipped and the explainer video does not exist yet (W3.1 flips the first with
+# the console's release, and W2.4 the second); and every entry of `allowed_hosts`
+# to a bare lowercase host.
+#
 # Each of those pins names in its failure the task that changes the value, so a
 # later task meets a message that tells it what to do rather than one that
 # argues with it.
@@ -52,34 +53,17 @@ version: 1
 #
 # A domain change is this line, the `allowed_hosts` entry below and a rebuild --
 # nothing else under website/ names the host, which
-# TestWebsiteCanonicalURLAppearsOnlyInSiteYaml holds. Registering a domain,
+# TestWebsiteCanonicalHostAppearsOnlyInSiteYaml holds. Registering a domain,
 # adding the custom domain and writing the DNS records stay the owner's steps
 # (no agent registers a domain or touches DNS), and the live result is what
 # check 69a of docs/gcp-live-checklist.md records.
-canonical_url: https://fugaro.dev
-
-# The second domain, which the owner acquired with the canonical one and
-# redirects to it (owner ruling 2026-10-17). It is a bare host and not a URL:
-# the direction is the whole point of it, so a scheme or a path here would
-# describe something other than the domain that was attached. It is not on
-# `allowed_hosts` below, because the site links nothing on the domain it
-# redirects away from.
 #
-# THE REDIRECT IS NOT A firebase.json ENTRY, and that is a fact about Firebase
-# Hosting rather than a preference: a Hosting redirect rule is matched against
-# the request PATH, and firebase-tools' config schema for one admits only
-# `destination`, one of `source`/`glob`/`regex` and `type`
-# (schema/firebase-config.json, `definitions/HostingRedirects`,
-# `additionalProperties: false`), so no rule can be conditioned on the host --
-# a blanket rule sending every path to the canonical origin would fire on the
-# canonical origin too and answer a request with a redirect to itself. The
-# redirect is therefore a property of the attached domain, set when the domain
-# is added to the site's Firebase project (the console's own redirect option, or
-# the Hosting API's custom-domain redirect): that is the owner's step, it is
-# written down in website/README.md, and check 69a observes it. Until the domain
-# is attached and that redirect is set, this value names a domain nothing
-# answers on and the site is simply live on the canonical URL.
-secondary_domain: fugaro.ai
+# There is ONE domain, and no second one: the owner does not own a second
+# domain (ruling of 2026-10-17, recorded in the amendment under plan Task W2.2),
+# so nothing here names one and nothing redirects. TestWebsiteNamesNoSecondDomain
+# in internal/cli/docs_website_boundary_test.go scans every file under website/
+# for the name W2.2 wrote and refuses it coming back.
+canonical_url: https://fugaro.dev
 
 # The repository every GitHub link on the site is built from (W1.7): the docs
 # hub links the guides it renders, the community page links CONTRIBUTING.md and
@@ -135,8 +119,9 @@ min_runs: 20
 #
 # The third entry is the canonical URL's own host, so it moves with
 # `canonical_url` above -- W2.2 replaced both lines in the same commit, which is
-# what the test above holds them to. The secondary domain is deliberately NOT an
-# entry: nothing the site renders links to it.
+# what the test above holds them to. It is the only entry that is the site's
+# own: every other entry is a host the site LINKS to, and a host the site does
+# not link to does not belong here.
 allowed_hosts:
   - github.com
   - raw.githubusercontent.com
