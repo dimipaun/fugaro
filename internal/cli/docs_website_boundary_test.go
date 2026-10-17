@@ -38,13 +38,13 @@ package cli
 // distinct from the canonical host and off the host list (D92).
 //
 // W2.2 adds three checks to this file, all three of them about the domain
-// being real: the canonical URL is a real host and appears in site.yaml and
-// nowhere else under website/ (TestWebsiteCanonicalURLAppearsOnlyInSiteYaml),
-// no firebase.json redirect rule sends one of the site's own paths to the
-// site's own host (TestWebsiteFirebaseRedirectsDoNotLoop -- the rule a
-// domain-level redirect replaces), and the register carries the two owner-run
-// live checks the plan reserves for this task
-// (TestWebsiteChecklistHasCheck69aAnd69b).
+// being real: the canonical URL is a real host, and it and the secondary domain
+// appear in site.yaml and nowhere else under website/
+// (TestWebsiteDomainsAppearOnlyInSiteYaml), no firebase.json redirect rule sends
+// one of the site's own paths to the site's own host
+// (TestWebsiteFirebaseRedirectsDoNotLoop -- the rule a domain-level redirect
+// replaces), and the register carries the two owner-run live checks the plan
+// reserves for this task (TestWebsiteChecklistHasCheck69aAnd69b).
 //
 // THE BOUNDARY IS ABOUT CODE, NOT ABOUT BYTES, and that distinction is the
 // console boundary's own (docs_console_boundary_test.go), carried here so the
@@ -335,9 +335,11 @@ func websiteDownloadNeedle(t *testing.T, repository string) string {
 // websitePlaceholderHost reports whether a host is a name reserved for
 // documentation: RFC 2606's `.test`, `.example`, `.invalid` and `.localhost`
 // TLDs, and the reserved example.com/example.net/example.org names. A name
-// under one of them can never resolve, which is the only kind of host
-// canonical_url may carry while the site has no domain -- a host that resolves
-// is a claim about a domain this repository has not registered.
+// under one of them can never resolve, so it is the shape a placeholder
+// canonical_url had before the site had a domain -- W2.2 replaced that
+// placeholder with the registered domain, and this function is what refuses the
+// placeholder coming back: a canonical_url on a reserved name is a claim that
+// the site is served somewhere it never will be.
 func websitePlaceholderHost(host string) bool {
 	host = strings.ToLower(host)
 	switch host {
@@ -814,16 +816,16 @@ type websiteHostHit struct {
 	text string
 }
 
-// websiteCanonicalHostHits is the canonical-host scan: every line under root's
-// website/ that names host, with the build output stepped over (websiteBuildDir
-// explains why). It is the whole mechanism, so the test that states the rule and
-// the positive control that proves the mechanism sees a planted copy read the
-// same code rather than two copies of it.
+// websiteHostHits is the host scan: every line under root's website/ that names
+// host, with the build output stepped over (websiteBuildDir explains why). It is
+// the whole mechanism, so the tests that state the rule and the positive control
+// that proves the mechanism sees a planted copy read the same code rather than
+// two copies of it.
 //
 // The files come from websiteBoundaryFiles, so the scan cannot pass by walking
 // an empty directory, and every file is read: a host in a lockfile, a document
 // or a built page is a line of a file under website/ like any other.
-func websiteCanonicalHostHits(t *testing.T, root, host string) []websiteHostHit {
+func websiteHostHits(t *testing.T, root, host string) []websiteHostHit {
 	t.Helper()
 	var hits []websiteHostHit
 	for _, rel := range websiteBoundaryFiles(t, root) {
@@ -843,58 +845,72 @@ func websiteCanonicalHostHits(t *testing.T, root, host string) []websiteHostHit 
 	return hits
 }
 
-// TestWebsiteCanonicalURLAppearsOnlyInSiteYaml holds the site to D92's single
-// source for its own name: the canonical origin is written in
-// website/data/site.yaml and nowhere else under website/, so pointing the site
-// at a domain is that one line and a rebuild, and so no page can go on serving a
-// domain the site stopped being.
+// TestWebsiteDomainsAppearOnlyInSiteYaml holds the site to D92's single source
+// for its own names: the canonical origin and the secondary domain are written
+// in website/data/site.yaml and nowhere else under website/, so pointing the
+// site at a domain is that one line and a rebuild, and so no page can go on
+// serving a domain the site stopped being -- or name the domain the site
+// redirects away from, which is a link out of the site nobody meant to write.
 //
-// The needle is the canonical HOST and not the whole URL: a page that wrote
-// fugaro.dev with no scheme, or a template that supplies the scheme itself, is a
-// second copy of the same fact, and that is the spelling a hard-coded link in a
+// The needles are hosts and not the whole URLs: a page that wrote fugaro.dev
+// with no scheme, or a template that supplies the scheme itself, is a second
+// copy of the same fact, and that is the spelling a hard-coded link in a
 // component would have.
 //
 // The scan reads every file under website/ that websiteWalk returns except the
 // build output (websiteBuildDir). Documents under docs/ are out of scope on
 // purpose: they are not the site, and this plan's own documents name the domain
 // where they record the task that set it.
-func TestWebsiteCanonicalURLAppearsOnlyInSiteYaml(t *testing.T) {
+func TestWebsiteDomainsAppearOnlyInSiteYaml(t *testing.T) {
 	root := consoleBoundaryRoot(t)
 	facts, _ := readWebsiteFacts(t)
 	host, found := strings.CutPrefix(facts.CanonicalURL, "https://")
 	if !found || host == "" || strings.ContainsAny(host, "/?#") {
 		t.Fatalf("%s: canonical_url = %q, want an absolute https origin: this scan reads the host out of it (TestWebsiteFactsMatchTheRepository holds the value's shape)", websiteFactsPath, facts.CanonicalURL)
 	}
-
-	hits := websiteCanonicalHostHits(t, root, host)
-
-	// The hit that has to be there. Without it the scan is reading nothing, and
-	// a scan that finds nothing passes for the wrong reason.
-	if !slices.ContainsFunc(hits, func(h websiteHostHit) bool { return h.file == websiteFactsPath }) {
-		t.Fatalf("no line of %s names the canonical host %q, so this scan is not reading the site's own facts: either canonical_url is not what this test read (%v), or the walk lost the file", websiteFactsPath, host, hits)
+	// The secondary domain is a bare host in the facts file (the value's shape
+	// is TestWebsiteFactsMatchTheRepository's), and it is scanned for the same
+	// reason the canonical host is: the site names it in one place, or the
+	// redirect's own direction has two sources.
+	hosts := []string{host}
+	if facts.SecondaryDomain != "" {
+		hosts = append(hosts, facts.SecondaryDomain)
 	}
-	for _, h := range hits {
-		if h.file == websiteFactsPath {
-			continue
+
+	for _, h := range hosts {
+		hits := websiteHostHits(t, root, h)
+
+		// The hit that has to be there. Without it the scan is reading nothing,
+		// and a scan that finds nothing passes for the wrong reason.
+		if !slices.ContainsFunc(hits, func(x websiteHostHit) bool { return x.file == websiteFactsPath }) {
+			t.Fatalf("no line of %s names the host %q, so this scan is not reading the site's own facts: either the value is not what this test read (%v), or the walk lost the file", websiteFactsPath, h, hits)
 		}
-		t.Errorf("%s:%d names the canonical host %q: the canonical URL has one source, %s, and every absolute link, the canonical <link>, the sitemap and the OpenGraph tag are built from it -- a copy here is a second source that keeps pointing at the old domain after the one line changes (D92, plan Task W2.2 step 1)\n%s", h.file, h.line, host, websiteFactsPath, h.text)
+		for _, hit := range hits {
+			if hit.file == websiteFactsPath {
+				continue
+			}
+			t.Errorf("%s:%d names the site's host %q: the canonical URL and the secondary domain have one source, %s, and every absolute link, the canonical <link>, the sitemap and the OpenGraph tag are built from it -- a copy here is a second source that keeps pointing at the old domain after the one line changes (D92, plan Task W2.2 step 1)\n%s", hit.file, hit.line, h, websiteFactsPath, hit.text)
+		}
 	}
 }
 
-// TestWebsiteCanonicalHostScanSeesAPlantedCopy is that scan's positive control:
-// it plants the canonical host in a page, in the facts file and in a built page
-// of a temp tree, and proves the scan reports the first two and steps over the
-// third, so the rule above cannot pass by looking at nothing and cannot be
-// tightened into a rule about the build by a later change to the walk.
-func TestWebsiteCanonicalHostScanSeesAPlantedCopy(t *testing.T) {
-	const host = "fugaro.dev"
+// TestWebsiteHostScanSeesAPlantedCopy is that scan's positive control: it plants
+// a host in a page, in the facts file and in a built page of a temp tree, and
+// proves the scan reports the first two and steps over the third, so the rule
+// above cannot pass by looking at nothing and cannot be tightened into a rule
+// about the build by a later change to the walk. It runs the scan once per
+// spelling the rule scans for, the canonical host and the secondary domain, so a
+// scan that quietly stopped covering the second one is a red control and not a
+// silent hole.
+func TestWebsiteHostScanSeesAPlantedCopy(t *testing.T) {
+	const canonical, secondary = "fugaro.dev", "fugaro.ai"
 	root := t.TempDir()
 	planted := map[string]string{
-		websiteFactsPath:                      "canonical_url: https://" + host + "\n",
+		websiteFactsPath:                      "canonical_url: https://" + canonical + "\nsecondary_domain: " + secondary + "\n",
 		websiteInstallFactsPath:               "version: 1\n",
-		"website/src/pages/index.astro":       "<a href=\"https://" + host + "/docs\">Docs</a>\n",
+		"website/src/pages/index.astro":       "<a href=\"https://" + canonical + "/docs\">Docs</a>\n<a href=\"https://" + secondary + "/\">fugaro.ai</a>\n",
 		"website/src/components/Footer.astro": "<span>fugaro</span>\n",
-		websiteBuildDir + "/index.html":       "<link rel=\"canonical\" href=\"https://" + host + "/\">\n",
+		websiteBuildDir + "/index.html":       "<link rel=\"canonical\" href=\"https://" + canonical + "/\">\n",
 	}
 	for rel, body := range planted {
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -906,18 +922,20 @@ func TestWebsiteCanonicalHostScanSeesAPlantedCopy(t *testing.T) {
 		}
 	}
 
-	seen := map[string]bool{}
-	for _, h := range websiteCanonicalHostHits(t, root, host) {
-		seen[h.file] = true
-	}
-	for _, want := range []string{websiteFactsPath, "website/src/pages/index.astro"} {
-		if !seen[want] {
-			t.Errorf("the scan did not see the planted canonical host in %s: a rule that finds nothing passes for the wrong reason", want)
+	for _, host := range []string{canonical, secondary} {
+		seen := map[string]bool{}
+		for _, hit := range websiteHostHits(t, root, host) {
+			seen[hit.file] = true
 		}
-	}
-	for _, dontWant := range []string{"website/src/components/Footer.astro", websiteBuildDir + "/index.html"} {
-		if seen[dontWant] {
-			t.Errorf("the scan reported %s: a file that does not name the host, or a built page the build rendered the origin into, is not a second source of the fact", dontWant)
+		for _, want := range []string{websiteFactsPath, "website/src/pages/index.astro"} {
+			if !seen[want] {
+				t.Errorf("the scan for %q did not see the planted host in %s: a rule that finds nothing passes for the wrong reason", host, want)
+			}
+		}
+		for _, dontWant := range []string{"website/src/components/Footer.astro", websiteBuildDir + "/index.html"} {
+			if seen[dontWant] {
+				t.Errorf("the scan for %q reported %s: a file that does not name the host, or a built page the build rendered the origin into, is not a second source of the fact", host, dontWant)
+			}
 		}
 	}
 }
@@ -936,29 +954,126 @@ type firebaseRedirect struct {
 	Type        int    `json:"type"`
 }
 
+// firebasePlaceholderEnd returns the index just past the placeholder name that
+// starts at i in a pattern ("/:splat" at the ":" ends at the end of the string).
+func firebasePlaceholderEnd(p string, i int) int {
+	j := i + 1
+	for j < len(p) && (p[j] == '_' || p[j] == '-' || p[j] >= '0' && p[j] <= '9' || p[j] >= 'a' && p[j] <= 'z' || p[j] >= 'A' && p[j] <= 'Z') {
+		j++
+	}
+	return j
+}
+
 // firebaseRedirectPath normalizes a redirect pattern or destination path for the
 // comparison below: a splat or a capture placeholder is the wildcard it stands
-// for ("/:splat", "/:1" and "/**" all become "/*"), and the root is that same
-// wildcard, because Firebase's "/**" matches "/" as well. Two paths that
-// normalize to the same string are the same path to every request that reaches
-// either of them.
+// for ("/:splat", "/:1" and "/**" all become "/*"), a pattern with no leading
+// slash is the path it would be with one (Firebase writes its catch-all both
+// ways, "**" and "/**"), and the root is that same wildcard, because Firebase's
+// "/**" matches "/" as well. Two paths that normalize to the same string are the
+// same path to every request that reaches either of them.
 func firebaseRedirectPath(p string) string {
 	for {
 		i := strings.IndexByte(p, ':')
 		if i < 0 {
 			break
 		}
-		j := i + 1
-		for j < len(p) && (p[j] == '_' || p[j] == '-' || p[j] >= '0' && p[j] <= '9' || p[j] >= 'a' && p[j] <= 'z' || p[j] >= 'A' && p[j] <= 'Z') {
-			j++
-		}
-		p = p[:i] + "*" + p[j:]
+		p = p[:i] + "*" + p[firebasePlaceholderEnd(p, i):]
 	}
 	p = strings.ReplaceAll(p, "**", "*")
 	if p == "" || p == "/" {
 		return "/*"
 	}
+	if !strings.HasPrefix(p, "/") {
+		return "/" + p
+	}
 	return p
+}
+
+// firebasePatternMatches reports whether a Firebase Hosting glob pattern matches
+// a concrete request path -- the question the guard below has to ask, because a
+// rule whose own destination is matched by its own source answers the request
+// that rule just made: the redirect is followed, the rule fires again, and the
+// browser reports a loop. It is what makes a catch-all source visible: "/**" and
+// "**" (the spelling Firebase's own examples use) match every path there is, so
+// a catch-all pointed at any path on the site's own host loops, whatever that
+// path is -- "/index.html" and the bare origin included.
+//
+// Firebase's glob has two wildcards, and this is them: "**" as a whole path
+// segment stands for any run of segments, including none, and inside a segment
+// "*" stands for any run of characters while ":name" stands for a whole captured
+// segment. Nothing else in a pattern is special.
+func firebasePatternMatches(pattern, path string) bool {
+	return firebaseSegmentsMatch(firebasePatternSegments(pattern), firebasePatternSegments(path))
+}
+
+// firebasePatternSegments splits a pattern or a path into its segments, with the
+// root ("/", "//", "") as no segments at all and a leading slash carrying no
+// meaning of its own.
+func firebasePatternSegments(p string) []string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, "/")
+}
+
+func firebaseSegmentsMatch(pattern, path []string) bool {
+	if len(pattern) == 0 {
+		return len(path) == 0
+	}
+	if pattern[0] == "**" {
+		for i := 0; i <= len(path); i++ {
+			if firebaseSegmentsMatch(pattern[1:], path[i:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(path) == 0 || !firebaseSegmentMatches(pattern[0], path[0]) {
+		return false
+	}
+	return firebaseSegmentsMatch(pattern[1:], path[1:])
+}
+
+func firebaseSegmentMatches(pattern, segment string) bool {
+	for {
+		if pattern == "" {
+			return segment == ""
+		}
+		switch pattern[0] {
+		case ':':
+			// A capture placeholder is a whole segment, so it has to have
+			// something to capture; a suffix after the name is matched against
+			// what is left of the segment.
+			if segment == "" {
+				return false
+			}
+			rest := pattern[firebasePlaceholderEnd(pattern, 0):]
+			if rest == "" {
+				return true
+			}
+			for i := 1; i <= len(segment); i++ {
+				if firebaseSegmentMatches(rest, segment[i:]) {
+					return true
+				}
+			}
+			return false
+		case '*':
+			if len(pattern) == 1 {
+				return true
+			}
+			for i := 0; i <= len(segment); i++ {
+				if firebaseSegmentMatches(pattern[1:], segment[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if segment == "" || segment[0] != pattern[0] {
+			return false
+		}
+		pattern, segment = pattern[1:], segment[1:]
+	}
 }
 
 // firebaseSelfRedirects returns the redirect rules of a firebase.json that
@@ -977,7 +1092,14 @@ func firebaseRedirectPath(p string) string {
 // domain is added, or the Hosting API's custom-domain redirect), which is the
 // owner's step and is recorded in website/README.md and in check 69a -- never a
 // firebase.json entry. A rule whose destination is another origin, or one of the
-// site's own paths that is a different path, is legitimate and is not reported.
+// site's own paths that its source does not match, is legitimate and is not
+// reported.
+//
+// What counts as the loop is firebasePatternMatches' question and not a string
+// comparison: a rule loops when its source matches its own destination, so a
+// catch-all pointed at "/index.html" on the site's own host is reported like the
+// same-path rule is. A guard that only compared the two strings would leave the
+// catch-all -- the shape a later task is most likely to reach for -- invisible.
 //
 // A rule that uses `regex` cannot be compared with a destination path here, so a
 // regex rule pointing at one of the site's own hosts is reported rather than
@@ -1021,7 +1143,14 @@ func firebaseSelfRedirects(t *testing.T, path string, config []byte, own []strin
 		if source == "" {
 			source = r.Glob
 		}
-		if firebaseRedirectPath(source) == firebaseRedirectPath(u.Path) {
+		// Two ways a same-host destination loops, and both are needed: the
+		// source and the destination are the same path, or the source is a
+		// pattern that matches the destination path -- which is how a catch-all
+		// ("/**", "**") pointed at any path on this site loops, and how a
+		// wildcard segment pointed at a path inside its own match set does. The
+		// first is what catches a destination that is itself a pattern
+		// ("https://fugaro.dev/:splat"), which the second cannot match against.
+		if firebaseRedirectPath(source) == firebaseRedirectPath(u.Path) || firebasePatternMatches(source, u.Path) {
 			loops = append(loops, fmt.Sprintf("redirects[%d]: %q -> %s", i, source, r.Destination))
 		}
 	}
@@ -1064,22 +1193,45 @@ func TestWebsiteFirebaseRedirectsDoNotLoop(t *testing.T) {
 }
 
 // TestWebsiteFirebaseRedirectGuardSeesAPlantedLoop is that guard's positive
-// control: the looping rule it exists for, and the three shapes a legitimate
-// rules list can have beside it -- a redirect to another origin, a redirect to
-// another path on this site, and a relative destination -- so the guard cannot
-// pass by looking at nothing and cannot become a rule against redirects.
+// control: every shape of the loop it exists for, and the shapes a legitimate
+// rules list can have beside them -- a redirect to another origin, a redirect to
+// another path on this site, a relative destination, a wildcard whose
+// destination is outside its own match set -- so the guard cannot pass by
+// looking at nothing and cannot become a rule against redirects.
+//
+// The looping shapes are the two spellings of Firebase's catch-all ("/**" and
+// "**", the one the docs' own examples use) pointed at a path on the site's own
+// host, and the same path twice. The catch-all is the one a string comparison
+// misses and this control exists for: "/**" does not equal "/index.html", so a
+// guard that only compared source to destination would report nothing and pass
+// while the live site looped.
 func TestWebsiteFirebaseRedirectGuardSeesAPlantedLoop(t *testing.T) {
 	const path = "firebase.json"
 	own := []string{"fugaro.dev", "fugaro.ai"}
 	planted := `{"hosting":{"public":"website/dist","redirects":[
 		{"source":"/**","destination":"https://fugaro.dev/:splat","type":301},
+		{"source":"/**","destination":"https://fugaro.dev/index.html","type":301},
+		{"source":"**","destination":"https://fugaro.dev","type":301},
+		{"source":"/old","destination":"https://fugaro.dev/old","type":301},
+		{"source":"/legacy/*","destination":"/legacy/index.html","type":301},
 		{"source":"/old","destination":"https://fugaro.dev/new","type":301},
 		{"source":"/moved","destination":"/moved-here","type":302},
+		{"source":"/blog/:slug","destination":"/posts/:slug","type":301},
+		{"source":"/**","destination":"https://fugaro.ai/:splat","type":301},
 		{"source":"/releases","destination":"https://github.com/dimipaun/fugaro/releases","type":302}
 	]}}`
-	loops := firebaseSelfRedirects(t, path, []byte(planted), own)
-	if len(loops) != 1 || !strings.Contains(loops[0], `/**`) || !strings.Contains(loops[0], "https://fugaro.dev/:splat") {
-		t.Errorf("the guard reported %v, want exactly the planted `/**` -> https://fugaro.dev/:splat loop: a guard that misses it passes for the wrong reason, and one that also reports a redirect to another origin, another path or a relative destination is a rule against redirects", loops)
+	want := []int{0, 1, 2, 3, 4, 8}
+
+	var got []int
+	for _, loop := range firebaseSelfRedirects(t, path, []byte(planted), own) {
+		var i int
+		if n, err := fmt.Sscanf(loop, "redirects[%d]:", &i); n != 1 || err != nil {
+			t.Fatalf("the guard reported %q, which this control cannot read an index out of: the message has to name the rule, or a report cannot be acted on", loop)
+		}
+		got = append(got, i)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the guard reported rules %v, want %v: a guard that misses a planted loop passes for the wrong reason (rule 1 and rule 2 are the catch-all spellings, which no string comparison sees; rule 3 is a path redirected to itself, rule 4 is a wildcard pointing inside its own match set, and rule 8 is the same catch-all on the secondary domain, which is a host this site serves), and one that also reports a redirect to another origin, another path or a relative destination is a rule against redirects", got, want)
 	}
 }
 
