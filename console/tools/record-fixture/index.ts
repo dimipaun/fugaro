@@ -803,6 +803,24 @@ const NODE_TIMERS: Timers = {
   },
 }
 
+/** argvShape is the child's command with every value taken out: the words
+ * before the first flag (`watch`), and each flag's name, never what follows
+ * it. The binary is not named at all -- `--binary` is one of the literals. */
+function argvShape(argv: readonly string[]): string {
+  const words: string[] = ['<binary>']
+  const rest = argv.slice(1)
+  let flagsBegun = false
+  for (const word of rest) {
+    if (word.startsWith('--')) {
+      flagsBegun = true
+      words.push(word.split('=')[0] ?? word)
+    } else if (!flagsBegun) {
+      words.push(word)
+    }
+  }
+  return words.join(' ')
+}
+
 /**
  * main records one fixture and returns the process exit code: 0 for a fixture
  * written, 2 for a refusal (whose sentence it prints). It is the whole tool, and
@@ -819,9 +837,12 @@ export async function main(argv: readonly string[], deps: RecorderDeps = {}): Pr
   const plan = planForRecording(options, deps.appEnv ?? process.env)
   const redactor = createRedactor(machineLiterals(options, deps.appEnv ?? process.env))
 
+  // The child's argv carries `--project <name>` and `--config <path>`, and its
+  // cwd is the checkout: the strings `recorderLiterals` promises are never
+  // printed. What is said is the shape -- the command and the flags, no value
+  // -- so an owner's pasted transcript says what ran without saying where.
   log(`recording ${options.caseName} for ${String(options.durationSeconds)}s`)
-  log(`  argv: ${plan.argv[0] ?? ''} ${plan.argv.slice(1).join(' ')}`)
-  log(`  cwd:  ${plan.cwd}`)
+  log(`  argv: ${argvShape(plan.argv)} (${String(plan.argv.length)} words; values not printed)`)
 
   const recording = startRecording({
     options,

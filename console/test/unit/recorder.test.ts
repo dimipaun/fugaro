@@ -853,7 +853,8 @@ describe('the whole tool', () => {
     })
     const code = await run(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1', '--duration', '30'])
     expect(code).toBe(0)
-    expect(lines.join('\n')).toContain('watch --json --project sandbox')
+    expect(lines.join('\n')).toContain('recording normal for 30s')
+    expect(lines.join('\n')).toContain('argv: <binary> watch --json --project (')
     expect(lines.join('\n')).toContain(`wrote ${CWD}/${OUT}: 1 records`)
     const [entry] = written
     expect(entry?.path).toBe(`${CWD}/${OUT}`)
@@ -866,6 +867,37 @@ describe('the whole tool', () => {
     expect(loaded.header.recorded).toBe('2026-10-15T12:00:00Z')
     expect(loaded.records).toHaveLength(1)
     expect(entry?.text).not.toContain('fixture-sandbox')
+  })
+
+  it('prints neither the project, the config path nor the checkout, on success or failure', async () => {
+    // `recorderLiterals` promises these strings are never printed: they have
+    // no shape for a pattern to catch, and the terminal transcript is what an
+    // owner pastes when reporting a failure. The child's argv carries the first
+    // two (`--project`, `--config`) and its cwd is the third.
+    const project = ['zorba', 'prod'].join('-')
+    const config = ['/home/operator/private-', 'cfg/fugaro.yaml'].join('')
+    const checkout = ['/home/operator/src/', 'secret-checkout'].join('')
+    const argv = ['--out', OUT, '--project', project, '--config', config, '--dir', checkout, '--gcp-project', 'fixture-gcp-1', '--duration', '30']
+    const leaks = (text: string): readonly string[] => [project, config, checkout].filter((value) => text.includes(value))
+
+    const ok = tool((stub) => {
+      stub.write('{"day":"2026-10-15"}\n')
+      stub.exit(0)
+    })
+    expect(await ok.run(argv)).toBe(0)
+    expect(leaks(ok.lines.join('\n'))).toEqual([])
+
+    const failed = tool((stub) => {
+      stub.write('{"day":"2026-10-15"}\n')
+      stub.fail(new Error('spawn fugaro ENOENT'))
+    })
+    const refusal = await failed.run(argv).then(
+      () => '',
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    )
+    expect(refusal).toContain('nothing written')
+    expect(leaks(failed.lines.join('\n'))).toEqual([])
+    expect(leaks(refusal)).toEqual([])
   })
 
   it('refuses an empty recording rather than writing a quiet-looking fixture', async () => {
