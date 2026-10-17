@@ -147,6 +147,15 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
     <meta property="og:url" content={canonicalHref} />
     <meta name="twitter:card" content="summary" />
 
+    {/* The icons and the manifest, all derived from brand/fugaro-logo.png by
+        scripts/gen-brand-icons.py and served from public/, so no icon is fetched from
+        anywhere but this site (D106). */}
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
     {fonts.map((font) => (
       <link rel="preload" as="font" type={font.type} href={font.href} crossorigin />
     ))}
@@ -252,7 +261,9 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="site-header">
-      <a class="site-wordmark" href="/" rel="home">{SITE_NAME}</a>
+      {/* The logo is decoration beside the name, so its alt is empty: the link's
+          accessible name is the word "Fugaro", said once. The file is 2x the size drawn. */}
+      <a class="site-wordmark" href="/" rel="home"><img src="/logo.png" alt="" width="47" height="32" decoding="async" />{SITE_NAME}</a>
       <nav class="site-nav" aria-label="Sections">
         <ul>
           {NAV.map((item) => (
