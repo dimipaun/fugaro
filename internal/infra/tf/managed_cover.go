@@ -185,7 +185,12 @@ var managedGrantRules = map[string]bool{
 //     one the deployer holds no iam.roles.* to set;
 //   - the runs bucket, by name: a bucket grant on it is refused before the
 //     prefix is read, because that is where the marker and the owner's delete
-//     list live (Task 1.4).
+//     list live (Task 1.4);
+//   - the attributes, two of them and no more (managedAttributes): the project
+//     every resource is in, kept as the wider rule Cover.Projects is, and the
+//     billing account the review showed. Every other attribute check init's
+//     cover makes is re-justified there, and the ones that only make sense for
+//     Fugaro's own embedded modules are dropped rather than inherited.
 //
 // Nor does a managed plan lock anything: a bucket's locked retention policy or
 // an object's Locked retention can never be undone, so it is refused whatever
@@ -220,15 +225,8 @@ type ManagedCover struct {
 // action set, the authoritative IAM resources, the imports and the two halves
 // in that order — with the four
 // managed rules above in place of init's type list and grant table, and with
-// no attribute check of the embedded modules': what a managed resource must
-// *point at* rather than what it must be named is Task 1.2's, and its
-// re-derivation of those checks belongs there rather than here. The one hole
-// that leaves is stated rather than left to be found: until Task 1.2 lands,
-// this cover does not check the project a resource is in, so a plan naming a
-// second project is refused by nothing here. It is refused one step later all
-// the same — the deployer's IAM reaches the managed project alone, so such a
-// plan cannot be applied — and closing it in the gate is Task 1.2's first
-// check rather than a second implementation of it here.
+// managedAttributes' two checks in place of the embedded modules' own: the
+// project every resource is in, and the billing account the review showed.
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
@@ -272,6 +270,8 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
 		case c.managedResource(rc) != "":
 			add(rc, c.managedResource(rc))
+		case c.managedAttributes(rc) != "":
+			add(rc, c.managedAttributes(rc))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.managedGrant(rc); why != "" {
 				add(rc, why)
@@ -649,6 +649,88 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 			return "a service account grant on no account"
 		case !c.managedAccount(accountMember(id)):
 			return "on " + id + ", which is not a service account of the managed project carrying the prefix " + ManagedPrefix
+		}
+	}
+	return ""
+}
+
+// managedAttributes says why a managed resource points at something it may
+// not: the project it is in, or the billing account it bills. "" when it
+// points at what the review showed. It is Task 1.2's re-derivation of
+// Cover.attributes (cover.go:713-827) for an agent-authored plan, and it is
+// deliberately shorter than init's: each of init's checks is re-justified here
+// rather than inherited, the ones that only make sense for Fugaro's own
+// embedded modules are dropped and said to be dropped, and no check outside
+// this set is added — D61 fixes the checkable set and closes it, so a rule
+// that is not on it is a new decision rather than an implementation detail.
+//
+//   - the project every resource is in: KEPT, and kept as the WIDER rule it
+//     is in Cover.Projects — the review's projects, not the managed project
+//     alone — so a resource in a second project Fugaro owns is refused too.
+//     This is the spec's step 3 and D61's own second entry. A project the plan
+//     knows only after apply is admitted, and that is evidence rather than
+//     optimism: terraform writes `project` as unknown for a resource that
+//     leaves it to its provider block (testdata/managed_provider_clean_plan.json
+//     is terraform's own output and shows it), so refusing an unknown project
+//     would refuse every real managed plan. Such a resource lands in the
+//     project its provider block defaults to, and that block is Task 1.1's:
+//     managedProviderSettings admits a project written out or read from
+//     variables alone, and the deployer's IAM reaches the managed project
+//     alone, so a plan defaulting elsewhere cannot be applied.
+//   - the billing account the review showed: KEPT, which is what makes a plan
+//     that moves billing refuse. It is read where it lives rather than through
+//     NotCovered: google_billing_budget is off the managed list (managedDropped
+//     — a billing-account permission no project role can hold), so a plan
+//     carrying one is refused for its type first, and this is the second line
+//     a re-decided type would meet.
+//   - the image a job runs, the command and args the modules set and the
+//     FUGARO_CHECK_SPEC it carries: dropped. They are Fugaro's own images,
+//     commands and check specs — init's cover reads them because its plans are
+//     the embedded modules' — and a managed plan's workload is its own.
+//   - the job a scheduler calls: dropped. init's cover requires the run's own
+//     project and region; a managed scheduler's account is checked by
+//     managedResource instead, which requires the account it calls as to be a
+//     prefixed account of the managed project, so it calls as nothing of
+//     Fugaro's.
+//   - the sink's project: dropped with its type, which the managed list does
+//     not carry (managedDropped: Fugaro's own log plumbing).
+//   - a bucket's public access prevention and uniform access: dropped. The
+//     rule is about Fugaro's own buckets, which hold the installation's state,
+//     runs and build records; a managed plan's bucket is the plan's own, and
+//     the bucket rules this gate needs are Task 1.1's — the name carries the
+//     prefix and the runs bucket is refused by name.
+//   - the two API targets of Fugaro's web key: dropped. init's cover requires
+//     a key to be that key's shape; a managed plan's key is its own, and the
+//     prefix covers the ID the deployer's apikeys.keys.* permissions are
+//     conditioned on.
+//   - the bucket or the repository a grant or an object is on: dropped as
+//     subsumed, because Task 1.1 checks the name every one of them carries —
+//     the runs bucket by name, everything else by the prefix.
+//
+// What Task 1.1 left this task, from its fourth review (PR #483), is stated
+// where it would go rather than left to be found: an Artifact Registry
+// repository's virtual_repository_config.upstream_policies[*].repository and
+// remote_repository_config.*.upstream_credentials are not read here, because
+// no virtual or remote repository is admitted at all — managedResource refuses
+// every mode but STANDARD_REPOSITORY — so there is nothing for them to be read
+// on. Admitting those modes is the decision that would owe those checks (a
+// prefixed repository of the managed project, and a prefixed secret), and it
+// is the owner's rather than this cover's.
+func (c ManagedCover) managedAttributes(rc ResourceChange) string {
+	a := rc.Change.After
+	if a == nil {
+		a = map[string]any{}
+	}
+	if p := str(a["project"]); p != "" && !slices.Contains(c.Projects, p) {
+		return "in project " + p + ", which is not this run's"
+	}
+	if rc.Type == "google_billing_budget" {
+		acct := strings.TrimPrefix(str(a["billing_account"]), "billingAccounts/")
+		switch {
+		case acct == "":
+			return "a budget on no billing account"
+		case !slices.Contains(c.Billing, acct):
+			return "a budget on billing account " + acct + ", which the review did not show"
 		}
 	}
 	return ""

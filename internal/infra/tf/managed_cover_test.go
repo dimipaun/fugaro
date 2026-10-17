@@ -936,6 +936,38 @@ func TestManagedCoverProjectScope(t *testing.T) {
 	}
 }
 
+// TestManagedCoverBillingAccount is the second retained check: the billing
+// account the review showed, which is what makes a plan that moves billing
+// refuse. It is read where it lives rather than through NotCovered, because
+// google_billing_budget is off the managed list (Task 1.1's managedDropped: a
+// billing-account permission no project role can hold) and a plan carrying one
+// is refused for its type first — this rule is the second line a re-decided
+// type would meet. The type's own refusal is asserted beside it, so neither
+// half can be mistaken for the other.
+func TestManagedCoverBillingAccount(t *testing.T) {
+	budget := func(account string) ResourceChange {
+		return mrc("google_billing_budget", map[string]any{"billing_account": account})
+	}
+	if why := managedTestCover().managedAttributes(budget("billingAccounts/AAAA-BBBB")); why != "" {
+		t.Errorf("a budget on the review's billing account gives %q, want it admitted", why)
+	}
+	for name, account := range map[string]string{
+		"another billing account": "billingAccounts/CCCC-DDDD",
+		"no billing account":      "",
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			why := managedTestCover().managedAttributes(budget(account))
+			if why == "" || !strings.Contains(why, "billing account") {
+				t.Fatalf("gives %q, want the billing account refused", why)
+			}
+		})
+	}
+	out := managedTestCover().NotCovered(managedPlan(budget("billingAccounts/CCCC-DDDD")), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "the managed project's allowlist leaves out") {
+		t.Fatalf("a budget gives %q, want one refusal for its type", out)
+	}
+}
+
 // TestManagedCoverRefusesASecondProjectInTerraformsOwnPlan is the same rule on
 // a plan nobody wrote by hand: terraform's own output for a root whose module
 // provider block bills proj-2 and whose resource is in proj-2. The resource is

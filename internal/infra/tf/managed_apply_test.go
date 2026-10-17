@@ -272,7 +272,9 @@ func readPlanFixture(t *testing.T, name string) *Plan {
 // scheduler and sends the storage API — and the bearer token with it — to an
 // outside address, an aliased block whose impersonated account comes from an
 // ephemeral resource, and a module's own block that bills another project.
-// Each is refused for the setting it carries; the plan's resources are clean.
+// Each setting is refused for what it carries, and so is the resource the
+// module block writes: it is in proj-2, which is not this run's project, and
+// Task 1.2's project rule refuses it by address.
 func TestManagedCoverRefusesTerraformsOwnProviderSettings(t *testing.T) {
 	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_settings_plan.json"), nil)
 	for _, want := range [][]string{
@@ -283,14 +285,16 @@ func TestManagedCoverRefusesTerraformsOwnProviderSettings(t *testing.T) {
 		{"provider_config.module.m:google (", "billing_project"},
 		{"provider_config.module.m:google (", "user_project_override"},
 		{"configuration (references ephemeral.google_service_account_access_token.t:"},
+		{"module.m.google_project_service.s (", "in project proj-2, which is not this run's"},
 	} {
 		if !refusedWith(out, want...) {
 			t.Errorf("gives %q, want a refusal carrying %q", out, want)
 		}
 	}
 	for _, o := range out {
-		if !strings.HasPrefix(o, "provider_config.") && !strings.HasPrefix(o, "configuration (references ephemeral.") {
-			t.Errorf("refuses %q, which is neither a provider setting nor the ephemeral resource", o)
+		if !strings.HasPrefix(o, "provider_config.") && !strings.HasPrefix(o, "configuration (references ephemeral.") &&
+			!strings.HasPrefix(o, "module.m.google_project_service.s (") {
+			t.Errorf("refuses %q, which is neither a provider setting, the ephemeral resource, nor the module's own resource in proj-2", o)
 		}
 		if strings.Contains(o, "setting project") || strings.Contains(o, "setting region") {
 			t.Errorf("refuses %q, an allowed setting", o)
