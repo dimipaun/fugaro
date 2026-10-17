@@ -1,0 +1,559 @@
+// The Spend screen in a real window (desktop-console plan Task 2.2; design
+// section 6.2 screen 2, D15).
+//
+// `spend.test.ts` asserts the model and the tree the screen builds; this file
+// asserts that the same screen draws in the console's own hardened window, with
+// the real CSP in force, and takes a golden per theme. The three things the
+// plan names for this spec are here: the three series render separately, the
+// caps panel names a binding scope, and there is a golden for each theme.
+//
+// **Why the screen is drawn through `executeJavaScript` rather than by a script
+// tag or a page.** Task 2.2's file list is the screen and its two tests: the
+// entry point (`src/renderer/index.html`, `src/renderer/app.js`) and the place
+// the compiled script is *served from* (`src/main/index.ts`'s `rendererRoot`)
+// belong to another task, and neither is this one's to edit. So the spec does
+// what the app will do, from outside the app: it loads the compiled renderer
+// out of `dist/` (the output `npm run build` already produces) and calls
+// `renderSpend` with a DOM-backed element factory of its own. The two
+// mechanisms -- `webContents.executeJavaScript` for the CSP, and a twenty-line
+// CommonJS registry instead of `require` -- are the same ones Task 2.1's
+// `live.spec.ts` uses, for the same reasons.
+//
+// **There is no recorded corpus for these two documents.** `test/fixtures/`
+// holds the watch feed and nothing else, and neither `report --json` nor
+// `budget show --json` is recorded anywhere, so the documents below are written
+// here in the shape `JSONLine` and `showBudget` write -- the same corpus
+// `spend.test.ts` builds, cut down to what a window is needed for. Nothing here
+// reaches the network or the CLI: both documents are objects in this file.
+//
+// **The goldens** are `test/e2e/__screenshots__/spend/{light,dark}.png`, and
+// they are in a subdirectory of the golden directory rather than beside the
+// Live screen's two files for a reason that is not tidiness: `live.spec.ts`
+// holds the directory to exactly its own two PNGs (`readdirSync`... `filter(
+// endsWith('.png'))`, "a theme with no golden is a theme nobody has looked
+// at"), and that file is not this task's to edit. With the spend goldens in
+// their own directory neither screen's listing sees the other's files, and the
+// owner's recording step is one command with nothing else to change.
+//
+// They are compared, never written by a run: `playwright.config.ts` sets
+// `updateSnapshots: 'none'`, so a missing baseline FAILS. They are recorded by
+// an owner, on the platform the comparison runs on (macOS and Linux pixels
+// differ), with
+//
+//   npx playwright test spend.spec.ts --update-snapshots
+//
+// and until they are committed the golden tests fail on purpose. The one way to
+// run the rest of the file without them is the explicit
+// `FUGARO_CONSOLE_GOLDENS=skip`, which skips exactly the golden tests and says
+// so in the report; nothing skips them silently.
+
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { _electron as electron, expect, test } from '@playwright/test'
+import type { ElectronApplication, Page } from '@playwright/test'
+
+import type { JSONDoc } from '../../src/source/source'
+import { SPEND_THEMES } from '../../src/renderer/screens/spend'
+
+// The console's own directory, from this file's location: `test/e2e/x.spec.ts`
+// is two levels below it.
+const consoleDir = join(__dirname, '..', '..')
+const goldenDir = join(consoleDir, 'test', 'e2e', '__screenshots__', 'spend')
+
+/** SKIP_GOLDENS is the one documented way to run this file with no goldens
+ * recorded: `FUGARO_CONSOLE_GOLDENS=skip`. Anything else, including unset, means
+ * the golden tests run and a missing baseline fails them. */
+const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
+
+/** The compiled modules the screen is made of, in dependency order: the screen,
+ * the writers in `renderer/app.js`, and the two shared modules those writers
+ * use. Nothing else may be reachable -- the registry below refuses a specifier
+ * that is not a relative path, so a bundle that grew an import of `node:` or of
+ * a package fails here rather than in a window with no Node in it. */
+const MODULES: readonly string[] = Object.freeze([
+  'shared/availability.js',
+  'shared/sanitize.js',
+  'renderer/app.js',
+  'renderer/screens/spend.js',
+])
+
+/** moduleSource is one compiled module as a registry entry. */
+function moduleSource(relative: string): string {
+  const code = readFileSync(join(consoleDir, 'dist', relative), 'utf8')
+  return `registry[${JSON.stringify(`/${relative}`)}] = function (exports, require, module) {\n${code}\n};`
+}
+
+/**
+ * LOADER is the module registry the injected bundle runs on: a CommonJS
+ * `require` that can resolve `./` and `../` specifiers and nothing else.
+ */
+const LOADER = `
+var registry = {};
+var cache = {};
+function normalize(spec, from) {
+  if (spec.charAt(0) !== '.') throw new Error('the renderer may not require ' + spec);
+  var base = from.split('/').slice(0, -1);
+  var parts = spec.split('/');
+  for (var i = 0; i < parts.length; i++) {
+    var part = parts[i];
+    if (part === '' || part === '.') continue;
+    if (part === '..') { base.pop(); continue; }
+    base.push(part);
+  }
+  var resolved = base.join('/');
+  return /\\.js$/.test(resolved) ? resolved : resolved + '.js';
+}
+function load(path) {
+  if (cache[path]) return cache[path].exports;
+  var definition = registry[path];
+  if (!definition) throw new Error('no module ' + path);
+  var module = { exports: {} };
+  cache[path] = module;
+  definition(module.exports, function (spec) { return load(normalize(spec, path)); }, module);
+  return module.exports;
+}
+`
+
+/**
+ * FACTORY is a DOM-backed `ScreenFactory`: one wrapper per element, so the
+ * screen's own narrow interface is served by a real node. `node` is the
+ * harness's handle on the element and is never visible to the screen.
+ */
+const FACTORY = `
+function domFactory() {
+  var wrappers = new Map();
+  function wrap(node) {
+    var existing = wrappers.get(node);
+    if (existing) return existing;
+    var wrapper = {
+      tag: node.tagName.toLowerCase(),
+      node: node,
+      get textContent() { return node.textContent; },
+      set textContent(value) { node.textContent = value; },
+      setAttribute: function (name, value) { node.setAttribute(name, value); },
+      getAttribute: function (name) { return node.getAttribute(name); },
+      removeAttribute: function (name) { node.removeAttribute(name); },
+      append: function (child) { node.appendChild(child.node); },
+      childNodes: function () {
+        var out = [];
+        for (var i = 0; i < node.children.length; i++) out.push(wrap(node.children[i]));
+        return out;
+      },
+    };
+    wrappers.set(node, wrapper);
+    return wrapper;
+  }
+  return {
+    create: function (tag) { return wrap(document.createElement(tag)); },
+    wrap: wrap,
+  };
+}
+`
+
+/** draw is the expression the window evaluates: load the compiled screen, build
+ * the model from the two documents, and mount what it draws. */
+function draw(report: JSONDoc, budget: JSONDoc | null, theme: string, persons: boolean): string {
+  return `(function () {
+${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
+var spend = load('/renderer/screens/spend.js');
+var factory = domFactory();
+var model = spend.buildSpendModel(${JSON.stringify(report)}, ${JSON.stringify(budget)}, { persons: ${String(persons)} });
+var tree = spend.renderSpend(factory, model, ${JSON.stringify(theme)});
+var previous = document.getElementById('spend-mount');
+if (previous) previous.remove();
+var host = document.createElement('div');
+host.id = 'spend-mount';
+host.appendChild(tree.node);
+document.body.appendChild(host);
+return { mounted: true, accounts: model.series.map(function (series) { return series.account; }) };
+})()`
+}
+
+/** Screen is the part of the drawn screen a test asserts on, read back out of
+ * the live document. */
+interface Screen {
+  readonly theme: string | null
+  readonly accounts: readonly (string | null)[]
+  readonly titles: readonly string[]
+  readonly peaks: readonly string[]
+  readonly segments: readonly (string | null)[]
+  readonly gaps: readonly string[]
+  readonly scopes: readonly string[]
+  readonly perRunScopes: readonly (string | null)[]
+  readonly rows: number
+  readonly notionalCells: readonly string[]
+  readonly anchors: number
+  readonly text: string
+}
+
+/** screen reads the mounted screen out of the page. */
+function screen(page: Page): Promise<Screen> {
+  return page.evaluate(() => {
+    const all = (selector: string, within?: Element): HTMLElement[] =>
+      Array.from((within ?? document).querySelectorAll<HTMLElement>(selector))
+    const texts = (selector: string): string[] => all(selector).map((one) => one.textContent ?? '')
+    const attributes = (selector: string, name: string): (string | null)[] =>
+      all(selector).map((one) => one.getAttribute(name))
+    return {
+      theme: document.querySelector('.spend')?.getAttribute('data-theme') ?? null,
+      accounts: attributes('.spend-account', 'data-account'),
+      titles: texts('.spend-account-title'),
+      peaks: texts('.spend-peak'),
+      segments: attributes('.spend-series', 'data-segments'),
+      // Every point of every chart that is a gap, by the day it is about: the
+      // three charts share a key space, and each of them breaks on the day the
+      // history does not hold.
+      gaps: all('.spend-point')
+        .filter((point) => point.getAttribute('data-state') === 'gap')
+        .map((point) => point.getAttribute('data-key') ?? ''),
+      scopes: texts('.spend-scope'),
+      perRunScopes: all('.spend-cap-repo').map(
+        (row) => all('.spend-scope', row)[1]?.getAttribute('data-per-run-scope') ?? null,
+      ),
+      rows: all('.spend-row').length,
+      notionalCells: texts('.spend-notional'),
+      anchors: all('a').length,
+      text: document.getElementById('spend-mount')?.textContent ?? '',
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// The two documents.
+// ---------------------------------------------------------------------------
+
+const DOLLARS = 1_000_000
+
+/**
+ * The report: 2026-10-12 to 2026-10-15 by day, with **three** rows -- the 14th
+ * has no document at all, which is the gap the chart has to break on -- and a
+ * partial day on the 15th. The three accounts are the fixture's own figures,
+ * and no two of them are ever added: 1.25 billed, 0.40 notional, 0.12 compute.
+ */
+const REPORT: JSONDoc = {
+  project: '<project>',
+  source: 'firestore',
+  degraded: false,
+  by: 'day',
+  since: '2026-10-12',
+  until: '2026-10-15',
+  weeks: 'iso-utc-monday',
+  rows: [
+    {
+      key: '2026-10-12',
+      start: '2026-10-12',
+      end: '2026-10-12',
+      partial: false,
+      model_micros: 1_250_000,
+      model_usd: '1.250000',
+      notional_micros: 400_000,
+      notional_usd: '0.400000',
+      compute_micros: 120_000,
+      compute_usd: '0.120000',
+      compute_estimated: true,
+      run_hours: 1.5,
+      runs: 2,
+      calls: 17,
+    },
+    {
+      key: '2026-10-13',
+      start: '2026-10-13',
+      end: '2026-10-13',
+      partial: false,
+      model_micros: 900_000,
+      model_usd: '0.900000',
+      notional_micros: null,
+      notional_usd: null,
+      compute_micros: null,
+      compute_usd: null,
+      compute_estimated: false,
+      run_hours: null,
+      runs: 1,
+      calls: 9,
+    },
+    {
+      key: '2026-10-15',
+      start: '2026-10-15',
+      end: '2026-10-15',
+      partial: true,
+      model_micros: 300_000,
+      model_usd: '0.300000',
+      notional_micros: 100_000,
+      notional_usd: '0.100000',
+      compute_micros: null,
+      compute_usd: null,
+      compute_estimated: false,
+      run_hours: null,
+      runs: 1,
+      calls: 4,
+    },
+  ],
+  totals: {
+    key: 'TOTAL',
+    end: '2026-10-15',
+    partial: true,
+    model_micros: 2_450_000,
+    model_usd: '2.450000',
+    notional_micros: 500_000,
+    notional_usd: '0.500000',
+    compute_micros: 120_000,
+    compute_usd: '0.120000',
+    compute_estimated: true,
+    run_hours: 1.5,
+    runs: 4,
+    calls: 30,
+  },
+  warnings: [],
+}
+
+/**
+ * The budget: one repository with its own two caps, one whose per-run cap comes
+ * from the repository default, and one whose per-run cap comes from the global
+ * fallback -- the three scopes the panel has to name. `acme/docs` has no daily
+ * cap at all (`daily_cap_usd: null` with `daily_cap_source: "none"`), which is
+ * `n/a` and never `$0.00`.
+ */
+const BUDGET: JSONDoc = {
+  project: '<project>',
+  gcp_project: '<gcp-project>',
+  mode: 'enforce',
+  day: '2026-10-15',
+  max_reserve_usd: 50,
+  global: {
+    daily_cap_usd: 25,
+    per_run_cap_usd: 25,
+    counted_usd: 12.5,
+    spent_usd: 10,
+    notional_usd: 4.2,
+    headroom_usd: 12.5,
+    kill: null,
+  },
+  defaults: { repo_daily_cap_usd: 10, repo_per_run_cap_usd: 2 },
+  repos: [
+    {
+      slug: 'widget',
+      repo: 'acme/widget',
+      daily_cap_usd: 5,
+      daily_cap_source: 'repo',
+      per_run_cap_usd: 1.5,
+      per_run_cap_source: 'repo',
+      counted_usd: 3,
+      spent_usd: 2,
+      notional_usd: 1,
+      headroom_usd: 2,
+      kill: null,
+      running: [],
+    },
+    {
+      slug: 'docs',
+      repo: 'acme/docs',
+      daily_cap_usd: null,
+      daily_cap_source: 'none',
+      per_run_cap_usd: 2,
+      per_run_cap_source: 'default',
+      counted_usd: 0,
+      spent_usd: 0,
+      notional_usd: 0,
+      headroom_usd: null,
+      kill: null,
+      running: [],
+    },
+    {
+      slug: 'infra',
+      daily_cap_usd: 7,
+      daily_cap_source: 'repo',
+      per_run_cap_usd: 25,
+      per_run_cap_source: 'global',
+      counted_usd: 4,
+      spent_usd: 4,
+      notional_usd: 0,
+      headroom_usd: 3,
+      kill: null,
+      running: [],
+    },
+  ],
+  running: [],
+  warnings: [],
+}
+
+/**
+ * The person report: two requesters, one an address and one the CLI's own
+ * `unknown` bucket (`budget.UnknownPerson`) for the runs with no requester.
+ * Nothing in this document is drawn until the view is asked for.
+ */
+const PERSON_REPORT: JSONDoc = {
+  ...REPORT,
+  by: 'person',
+  rows: [
+    {
+      key: 'ada@example.com',
+      end: '2026-10-15',
+      partial: false,
+      model_micros: 1_800_000,
+      model_usd: '1.800000',
+      notional_micros: 200_000,
+      notional_usd: '0.200000',
+      compute_micros: null,
+      compute_usd: null,
+      compute_estimated: false,
+      run_hours: null,
+      runs: 3,
+      calls: 19,
+    },
+    {
+      key: 'unknown',
+      end: '2026-10-13',
+      partial: false,
+      model_micros: 650_000,
+      model_usd: '0.650000',
+      notional_micros: null,
+      notional_usd: null,
+      compute_micros: null,
+      compute_usd: null,
+      compute_estimated: false,
+      run_hours: null,
+      runs: 1,
+      calls: 8,
+    },
+  ],
+}
+
+test.describe('the Spend screen', () => {
+  // One window, one page, and the tests in order: each draws the screen it is
+  // about into the same document, and the goldens are taken from what the test
+  // before them mounted.
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+
+  test.beforeAll(async () => {
+    // `args: [consoleDir]` is the app directory: Electron reads its package.json
+    // and runs `main` (`dist/main/index.js`, built by `npm run test:e2e`).
+    app = await electron.launch({ args: [consoleDir] })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+  })
+
+  test.afterAll(async () => {
+    await app.close()
+  })
+
+  /** mount draws the two documents and fails with the window's own words if
+   * the bundle could not be loaded or the screen refused to draw. */
+  async function mount(
+    report: JSONDoc,
+    budget: JSONDoc | null,
+    theme: string,
+    persons = false,
+  ): Promise<void> {
+    const result = await app.evaluate(async ({ BrowserWindow }, source) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      if (window === undefined) return { error: 'the console has no window' }
+      return (await window.webContents.executeJavaScript(source, true)) as { error?: string }
+    }, draw(report, budget, theme, persons))
+    expect(result.error).toBeUndefined()
+  }
+
+  test('renders the three accounts as three separate series', async () => {
+    await mount(REPORT, BUDGET, 'light')
+    const drawn = await screen(page)
+
+    expect(drawn.theme).toBe('light')
+    expect(drawn.accounts).toEqual(['model', 'notional', 'compute'])
+    // Three charts, three axis tops: a shared scale would put a notional bar
+    // and a billed bar at heights that invite the comparison the design forbids.
+    expect(drawn.titles).toEqual([
+      'billed model spend',
+      'NOTIONAL~ subscription list price',
+      'compute (estimated)',
+    ])
+    expect(drawn.peaks).toEqual(['$1.25', 'NOTIONAL~$0.40', 'est. $0.12'])
+    // The billed chart is broken at the day with no document and whole either
+    // side of it, and the notional chart is broken twice.
+    expect(drawn.segments).toEqual(['2', '2', '1'])
+    expect(drawn.gaps).toEqual([
+      '2026-10-14',
+      '2026-10-14',
+      '2026-10-14',
+    ])
+    // The notional column of the rows is marked, so the window never shows a
+    // subscription's list price as a billed dollar.
+    expect(drawn.notionalCells).toEqual(['NOTIONAL~$0.40', 'n/a', 'NOTIONAL~$0.10'])
+    // No cell of the window is the sum of two accounts.
+    expect(drawn.text).not.toContain('$1.65')
+  })
+
+  test('names the binding scope of every cap', async () => {
+    await mount(REPORT, BUDGET, 'light')
+    const drawn = await screen(page)
+
+    // A cap with no scope is a number a reader cannot act on: the fix is
+    // different depending on whether it is the repository's own cap, the
+    // repository default or the global fallback.
+    expect(drawn.scopes).toContain("this repository's own cap")
+    expect(drawn.scopes).toContain('the repository default')
+    expect(drawn.scopes).toContain('the global fallback')
+    expect(drawn.perRunScopes).toEqual(['repo', 'default', 'global'])
+    // A cap the document does not carry is `n/a`, never `$0.00`.
+    expect(drawn.text).toContain('no cap is set at this scope')
+    expect(drawn.text).toContain('n/a')
+  })
+
+  test('hides the person breakdown by default', async () => {
+    await mount(PERSON_REPORT, BUDGET, 'light')
+    const drawn = await screen(page)
+
+    expect(drawn.rows).toBe(0)
+    expect(drawn.text).toContain('person breakdown is off')
+    // The rows are in the document and the address in them is drawn nowhere:
+    // not the address, and not the login either.
+    expect(drawn.text).not.toContain('ada')
+  })
+
+  test('shows the person breakdown when it is asked for, without the address', async () => {
+    await mount(PERSON_REPORT, BUDGET, 'light', true)
+    const drawn = await screen(page)
+
+    expect(drawn.rows).toBe(2)
+    // The `person` class of `sanitize.ts`: an address on the wire is the
+    // console's own marker, and the CLI's `unknown` bucket is drawn as itself.
+    expect(drawn.text).toContain('redacted@example.invalid')
+    expect(drawn.text).toContain('unknown')
+    expect(drawn.text).not.toContain('ada')
+  })
+
+  test('offers no link, and nothing to click', async () => {
+    await mount(REPORT, BUDGET, 'light')
+    const drawn = await screen(page)
+    expect(drawn.anchors).toBe(0)
+  })
+
+  test('draws the spend screen', async () => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(REPORT, BUDGET, 'light')
+    await expect(page).toHaveScreenshot('spend/light.png')
+  })
+
+  test('draws the spend screen in the dark theme', async () => {
+    await mount(REPORT, BUDGET, 'dark')
+    const drawn = await screen(page)
+    expect(drawn.theme).toBe('dark')
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await expect(page).toHaveScreenshot('spend/dark.png')
+  })
+
+  test('has a golden for each theme the design names', () => {
+    // A theme with no golden is a theme nobody has looked at. The themes are
+    // the screen's own, and the directory is this screen's own, so a third
+    // palette -- or a PNG that was never committed -- fails here.
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    const present = existsSync(goldenDir)
+      ? readdirSync(goldenDir)
+          .filter((file) => file.endsWith('.png'))
+          .sort()
+      : []
+    expect(present).toEqual(SPEND_THEMES.map((theme) => `${theme}.png`).sort())
+  })
+})

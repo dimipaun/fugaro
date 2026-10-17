@@ -683,6 +683,19 @@ describe('a day the history does not hold', () => {
     expect(model.notes.join(' ')).toContain('a gap, not a zero')
   })
 
+  it('breaks every chart on the day the history does not hold, in the drawn tree', () => {
+    // The three charts share a key space and each of them has a point for the
+    // missing day: `spend.spec.ts` reads exactly this list back out of the
+    // window (three gaps, one per account), and the container this task was
+    // written in cannot launch Electron, so the fact is held here as well.
+    const tree = renderSpend(factory, modelOf(), 'light')
+    expect(
+      all(tree, 'spend-point')
+        .filter((point) => point.getAttribute('data-state') === 'gap')
+        .map((point) => point.getAttribute('data-key')),
+    ).toEqual(['2026-10-14', '2026-10-14', '2026-10-14'])
+  })
+
   it('is only a gap inside the range the document covers', () => {
     // A range the console cannot enumerate -- `by model`, and any `by` whose
     // `since`/`until` it could not read -- has the document's own rows as its
@@ -1009,6 +1022,13 @@ describe('a report row', () => {
     expect(texts(tree, 'spend-run-hours')[0]).toBe('1.50 h')
     // Not one cell of the row is the sum of two accounts.
     expect(texts(tree, 'spend-model')[0]).not.toBe('$1.65')
+    // The whole notional column, top to bottom: a figure or `n/a`, and never an
+    // unmarked dollar.
+    expect(texts(tree, 'spend-notional')).toEqual([
+      `${NOTIONAL_MARK}$0.40`,
+      UNAVAILABLE_MARK,
+      `${NOTIONAL_MARK}$0.10`,
+    ])
   })
 })
 
