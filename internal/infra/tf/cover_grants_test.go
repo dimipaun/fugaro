@@ -1,6 +1,7 @@
 package tf
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,6 +35,17 @@ func bucketCondFor(typ, role string, person bool) []any {
 	return []any{map[string]any{"title": "fugaro-x", "expression": gcp.BucketCondition("fugaro-runs-proj-1", gcp.JobBucketPrefixes, "acme-0123456789abcdef"), "description": nil}}
 }
 
+// deployerCondFor is the condition a project grant of one of the deployer's
+// roles needs so that deployerCondition never flips a cell this matrix tests
+// only at the table level: binding (2)'s exact condition for the scoped role,
+// which is bound with none for the other one. Every other role needs none.
+func deployerCondFor(typ, role string) []any {
+	if typ != "google_project_iam_member" || role != "projects/proj-1/roles/"+DeployerScopedRole {
+		return nil
+	}
+	return []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}
+}
+
 // Every (type, role, kind of principal) triple is covered exactly when the
 // table says so. This is the mutation check of the table: dropping a row,
 // adding a role to a type it does not belong to, or widening who may hold it
@@ -58,6 +70,8 @@ func TestGrantRulesMatrix(t *testing.T) {
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
 				if cond := bucketCondFor(typ, role, kind == toPeople); cond != nil {
 					after["condition"] = cond
+				} else if cond := deployerCondFor(typ, role); cond != nil {
+					after["condition"] = cond
 				}
 				ch := rc(typ, after, map[string]any{}, "create")
 				got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
@@ -71,6 +85,8 @@ func TestGrantRulesMatrix(t *testing.T) {
 			after := map[string]any{"role": role, "bucket": "fugaro-runs-proj-1"}
 			if cond := bucketCondFor(typ, role, false); cond != nil {
 				after["condition"] = cond
+			} else if cond := deployerCondFor(typ, role); cond != nil {
+				after["condition"] = cond
 			}
 			ch := rc(typ, after, map[string]any{"member": true}, "create")
 			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{sa, ch}}, nil)
@@ -79,7 +95,11 @@ func TestGrantRulesMatrix(t *testing.T) {
 			}
 		}
 		// Roles no module grants through any type.
-		for _, role := range []string{"roles/owner", "roles/editor", "roles/viewer", "roles/iam.securityAdmin", "roles/storage.admin", "roles/run.admin", "roles/iam.serviceAccountTokenCreator",
+		// tokenCreator is deliberately not among these any more: D75 grants it
+		// on a service account for a person (the matrix's own row above). The
+		// deployer's two roles are not here either: their row is
+		// google_project_iam_member's alone, so every other type refuses them.
+		for _, role := range []string{"roles/owner", "roles/editor", "roles/viewer", "roles/iam.securityAdmin", "roles/storage.admin", "roles/run.admin",
 			"projects/proj-1/roles/fugaroEverything", "projects/other/roles/fugaroLauncher"} {
 			for _, member := range []string{person, account} {
 				ch := rc(typ, map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
@@ -316,5 +336,62 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		if (len(got) == 0) != c.covered {
 			t.Errorf("%s: %s to %s: NotCovered = %q, covered want %v", c.typ, c.role, c.member, got, c.covered)
 		}
+	}
+}
+
+// The fence of D75 (Task 1.5 step 5), tested the way it is applied: a project
+// binding of fugaroDeployerScoped is covered only under binding (2)'s exact
+// condition — the managed prefix, per service, byte for byte — and one of
+// fugaroDeployer only with no condition at all. A binding with the condition
+// removed, with a wider one, with a narrowed one, with a condition known only
+// after apply or with more than one condition hands the deployer every update,
+// delete, setIamPolicy and actAs of the scoped role project-wide, which is the
+// account that could then reach the runs bucket and forge the marker.
+func TestDeployerGrantConditions(t *testing.T) {
+	const account = "serviceAccount:fugaro-deployer@proj-1.iam.gserviceaccount.com"
+	scoped := "projects/proj-1/roles/" + DeployerScopedRole
+	plain := "projects/proj-1/roles/" + DeployerRole
+	cond := func(title, expr string) []any {
+		return []any{map[string]any{"title": title, "expression": expr, "description": nil}}
+	}
+	exact := cond(DeployerConditionTitle, DeployerConditionExpression())
+	first := DeployerConditionClauses()[0].String()
+	for name, tc := range map[string]struct {
+		role    string
+		member  string
+		after   map[string]any
+		unknown map[string]any
+		covered bool
+		why     string
+	}{
+		"the scoped role under its condition":                  {role: scoped, member: account, after: map[string]any{"condition": exact}, covered: true},
+		"the scoped role with no condition":                    {role: scoped, member: account, covered: false, why: DeployerConditionTitle},
+		"the scoped role under a widened condition":            {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, DeployerConditionExpression()+" || true")}, covered: false, why: DeployerConditionTitle},
+		"the scoped role under a narrowed condition":           {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, first)}, covered: false, why: DeployerConditionTitle},
+		"the scoped role under another title":                  {role: scoped, member: account, after: map[string]any{"condition": cond("fugaro-something-else", DeployerConditionExpression())}, covered: false, why: DeployerConditionTitle},
+		"the scoped role with a description":                   {role: scoped, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": "x"}}}, covered: false, why: "description"},
+		"the scoped role with two conditions":                  {role: scoped, member: account, after: map[string]any{"condition": []any{exact[0], map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}}, covered: false, why: "more than one condition"},
+		"the scoped role with a condition that is not a block": {role: scoped, member: account, after: map[string]any{"condition": []any{"true", "true"}}, covered: false, why: "not a condition block"},
+		"the scoped role with an unknown condition":            {role: scoped, member: account, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
+		"the scoped role to a person":                          {role: scoped, member: "user:me@example.com", after: map[string]any{"condition": exact}, covered: false, why: "kind of principal"},
+		"the plain role with no condition":                     {role: plain, member: account, covered: true},
+		"the plain role under the scoped condition":            {role: plain, member: account, after: map[string]any{"condition": exact}, covered: false, why: "under a condition"},
+		"the plain role under any condition":                   {role: plain, member: account, after: map[string]any{"condition": cond("fugaro-x", "true")}, covered: false, why: "under a condition"},
+		"the plain role to a person":                           {role: plain, member: "user:me@example.com", covered: false, why: "kind of principal"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			after := map[string]any{"member": tc.member, "role": tc.role}
+			maps.Copy(after, tc.after)
+			unk := map[string]any{}
+			maps.Copy(unk, tc.unknown)
+			ch := rc("google_project_iam_member", after, unk, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			if (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+			if !tc.covered && tc.why != "" && !strings.Contains(strings.Join(got, "\n"), tc.why) {
+				t.Errorf("refused for another reason: %q, want it to name %q", got, tc.why)
+			}
+		})
 	}
 }

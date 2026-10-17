@@ -55,21 +55,33 @@ resource "google_project_iam_custom_role" "tag_mover" {
   depends_on = [google_project_service.this]
 }
 
+# The role is a literal path and not the resource's name attribute: this grant
+# is planned by the same apply that creates the deployer's two roles, and a
+# project grant whose role is computed cannot be told from a deployer one at
+# plan time (Task 1.5 step 5; internal/infra/tf refuses a computed project role
+# while a deployer role is being created). var.project is known at plan time,
+# and the role ID is the Go constant the tfvars file always carries
+# (infra.RoleLauncher).
 resource "google_project_iam_member" "launcher" {
   for_each = toset(var.launchers)
 
   project = var.project
-  role    = google_project_iam_custom_role.launcher.name
+  role    = "projects/${var.project}/roles/fugaroLauncher"
   member  = each.value
+
+  depends_on = [google_project_iam_custom_role.launcher]
 }
 
-# Operators submit image builds while onboarding.
+# Operators submit image builds while onboarding. A literal role, for the
+# reason iam.tf's launcher grant above gives.
 resource "google_project_iam_member" "operator_build_submitter" {
   for_each = toset(var.operators)
 
   project = var.project
-  role    = google_project_iam_custom_role.build_submitter.name
+  role    = "projects/${var.project}/roles/fugaroBuildSubmitter"
   member  = each.value
+
+  depends_on = [google_project_iam_custom_role.build_submitter]
 }
 
 # The whole-project inventory of a managed project reads the project through

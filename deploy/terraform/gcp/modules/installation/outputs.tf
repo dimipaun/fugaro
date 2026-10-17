@@ -33,6 +33,11 @@ output "scheduler_service_account" {
   value       = google_service_account.scheduler.email
 }
 
+output "deployer_service_account" {
+  description = "The email of the account a managed apply assumes (D75). fugaro managed apply impersonates it; an installation that is never managed never uses it."
+  value       = google_service_account.fugaro_deployer.email
+}
+
 output "role_ids" {
   description = "The custom roles' full names (projects/<project>/roles/<id>)."
   value = {
