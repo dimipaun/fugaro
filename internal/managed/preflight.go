@@ -54,7 +54,10 @@ import (
 //     namespaced call (`provider::…::f`, and `core::…`) is refused, and so is
 //     every `path.*` reference. That is what keeps a configuration from
 //     reading the deployer's credential file, the operator's ADC or anything
-//     else on the applier's disk into a plan.
+//     else on the applier's disk into a plan — and, for the same reason, the
+//     one managed resource argument that names a local file
+//     (google_storage_bucket_object's source, which the provider reads and
+//     uploads) is refused too (localFileArgs).
 //   - every module is a local directory inside the root, and is read by the
 //     same rules; a registry or git source is refused outright, because its
 //     files are not here to read before init fetches them.
@@ -160,6 +163,18 @@ var refusedTerraformBlocks = map[string]string{
 	"backend":       "a backend block: the backend of a managed apply is the one this command writes (D77's bucket), and a root that carries its own is refused rather than let one file override the other",
 	"cloud":         "a cloud block: the backend of a managed apply is the one this command writes (D77's bucket)",
 	"provider_meta": "a provider_meta block, which hands a provider settings outside its own block",
+}
+
+// localFileArgs are the arguments of a managed resource type that name a file
+// on the applier's disk, which the provider reads (at plan, for its hash) and
+// uploads (at apply) with the deployer's credential: a path such as the
+// operator's own ADC file would be copied into a bucket the agent reads.
+var localFileArgs = map[string]map[string]bool{
+	"google_storage_bucket_object": {"source": true},
+}
+
+func localFileReason(typ, arg string) string {
+	return fmt.Sprintf("the %s argument of a %s, which names a file on the applier's disk that the provider reads and uploads: a managed root writes the object's content instead", arg, typ)
 }
 
 // providerRef is the form of a `provider` meta-argument: a local name and an
@@ -899,6 +914,13 @@ func (s *scanResult) checkHCL(file string, body hclBody) []string {
 			}
 			s.metaProvider(file, b.body)
 			s.noProvisioners(file, b.body)
+			if len(b.labels) == 2 {
+				for _, a := range b.body.attrs {
+					if localFileArgs[b.labels[0]][a.name] {
+						s.refuse(at(a.line), "%s", localFileReason(b.labels[0], a.name))
+					}
+				}
+			}
 		case "import", "removed":
 			s.metaProvider(file, b.body)
 			s.noProvisioners(file, b.body)
@@ -1378,6 +1400,11 @@ func (s *scanResult) checkJSON(file string, doc *jnode) []string {
 				}
 				s.metaProviderJSON(file, b.body)
 				s.noProvisionersJSON(file, b.body)
+				for name := range localFileArgs[b.labels[0]] {
+					if b.body.get(name) != nil {
+						s.refuse(file, "%s", localFileReason(b.labels[0], name))
+					}
+				}
 			case "import", "removed":
 				s.metaProviderJSON(file, b.body)
 				s.noProvisionersJSON(file, b.body)

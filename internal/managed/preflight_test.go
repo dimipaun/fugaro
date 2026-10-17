@@ -135,6 +135,9 @@ var refusedRoots = []struct {
 	{"core::file() in a JSON template", map[string]string{"main.tf.json": `{"locals":{"a":"${core::file(\"x\")}"}}`}, "namespaced"},
 	{"file() in a JSON key", map[string]string{"main.tf.json": `{"locals":{"a":{"${file(\"x\")}":1}}}`}, "file()"},
 	{"file() as a JSON bare expression", map[string]string{"main.tf.json": `{"resource":{"google_storage_bucket":{"b":{"name":"x","lifecycle":{"replace_triggered_by":["file(\"x\")"]}}}}}`}, "file()"},
+	// Provider arguments that read the applier's disk.
+	{"a bucket object uploaded from a local file", map[string]string{"main.tf": "resource \"google_storage_bucket_object\" \"o\" {\n  bucket = \"fmgd-b\"\n  name   = \"o\"\n  source = \"/home/op/.config/gcloud/application_default_credentials.json\"\n}\n"}, "source argument"},
+	{"a JSON bucket object uploaded from a local file", map[string]string{"main.tf.json": `{"resource":{"google_storage_bucket_object":{"o":{"bucket":"fmgd-b","name":"o","source":"/etc/passwd"}}}}`}, "source argument"},
 	// Modules.
 	{"a registry module", map[string]string{"main.tf": "module \"m\" {\n  source = \"terraform-google-modules/network/google\"\n}\n"}, "not a local path"},
 	{"a git module", map[string]string{"main.tf": "module \"m\" {\n  source = \"git::https://example.com/m.git\"\n}\n"}, "not a local path"},
