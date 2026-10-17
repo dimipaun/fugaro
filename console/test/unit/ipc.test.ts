@@ -1299,6 +1299,20 @@ describe('the day and window arguments', () => {
     ['-5h', false, 'negative'],
     ['h', false, 'a unit with no number'],
     ['1h 30m', false, 'a space is not part of the grammar'],
+    // ...and its magnitude: ParseDuration refuses a sum past 1<<63-1 ns
+    // (`time: invalid duration`), and these were accepted at da86190. Every
+    // value below was run through Go's time.ParseDuration to read off the edge.
+    ['2562047h', true, 'the last whole hour ParseDuration accepts'],
+    ['2562048h', false, 'one hour past int64 nanoseconds'],
+    ['+2562048h', false, 'with a plus, too'],
+    ['2562047h1h', false, 'the sum overflows, not either term'],
+    ['153722867m', true, 'the last whole minute'],
+    ['153722868m', false, 'one minute past it'],
+    ['2562047.7h', true, 'a fraction under the edge'],
+    ['2562047.8h', false, 'and one over it'],
+    ['3000000h', false, 'far past it'],
+    ['999999999h', false, 'the ten-character bound does not bound the magnitude'],
+    ['999999999m', false, 'in minutes either'],
   ]
 
   for (const [value, accepted, why] of runWindows) {

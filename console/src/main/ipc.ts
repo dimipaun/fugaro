@@ -991,7 +991,103 @@ function isRunsSince(value: string): boolean {
   }
   if (!GO_DURATION_RE.test(value)) return false
   if (value.startsWith('-')) return false
-  return /[1-9]/.test(value)
+  const nanos = goDurationNanos(value)
+  return nanos !== null && nanos > 0n
+}
+
+/** GO_UNIT_NANOS is `time.ParseDuration`'s unit map, for the six ASCII units
+ * `GO_DURATION_RE` admits. */
+const GO_UNIT_NANOS: Readonly<Record<string, bigint>> = Object.freeze({
+  ns: 1n,
+  us: 1_000n,
+  ms: 1_000_000n,
+  s: 1_000_000_000n,
+  m: 60_000_000_000n,
+  h: 3_600_000_000_000n,
+})
+
+/** isAsciiDigit is Go's `c >= '0' && c <= '9'` on a UTF-16 code unit. */
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57
+}
+
+/** GO_INT64_EDGE is `1<<63`, the bound every overflow check in
+ * `time.ParseDuration` is written against. */
+const GO_INT64_EDGE = 1n << 63n
+
+/**
+ * goDurationNanos is `time.ParseDuration`'s arithmetic, step for step
+ * (`src/time/format.go`), for a value `GO_DURATION_RE` already admitted: the
+ * integer part through `leadingInt` (refused past `1<<63`), the fraction through
+ * `leadingFraction` (whose digits past the precision are dropped, not refused,
+ * and whose scale is a float64), `v > 1<<63/unit` refused, the fraction added in
+ * float64 and truncated, each term and the running sum refused past `1<<63`, and
+ * a positive total refused past `1<<63-1`. It returns null where Go returns
+ * `time: invalid duration`, so a window the CLI would refuse after the spawn is
+ * refused here, before it -- the ten-character bound keeps the *digits* inside
+ * `Atoi`'s range but not the *magnitude* inside an int64 of nanoseconds
+ * (`999999999h`; review round 2 of PR 478).
+ */
+function goDurationNanos(value: string): bigint | null {
+  let rest = value
+  let negative = false
+  if (rest.startsWith('-') || rest.startsWith('+')) {
+    negative = rest.startsWith('-')
+    rest = rest.slice(1)
+  }
+  let total = 0n
+  while (rest !== '') {
+    // leadingInt
+    let i = 0
+    let whole = 0n
+    for (; i < rest.length && isAsciiDigit(rest.charCodeAt(i)); i += 1) {
+      if (whole > GO_INT64_EDGE / 10n) return null
+      whole = whole * 10n + BigInt(rest.charCodeAt(i) - 48)
+      if (whole > GO_INT64_EDGE) return null
+    }
+    rest = rest.slice(i)
+    // leadingFraction
+    let fraction = 0n
+    let scale = 1
+    if (rest.startsWith('.')) {
+      rest = rest.slice(1)
+      let j = 0
+      let overflow = false
+      for (; j < rest.length && isAsciiDigit(rest.charCodeAt(j)); j += 1) {
+        if (overflow) continue
+        if (fraction > (GO_INT64_EDGE - 1n) / 10n) {
+          overflow = true
+          continue
+        }
+        const next = fraction * 10n + BigInt(rest.charCodeAt(j) - 48)
+        if (next > GO_INT64_EDGE) {
+          overflow = true
+          continue
+        }
+        fraction = next
+        scale *= 10
+      }
+      rest = rest.slice(j)
+    }
+    // The two-letter units are tried first, so `ms` is never read as `m`.
+    const unitMatch = /^(?:ns|us|ms|s|m|h)/.exec(rest)
+    if (unitMatch === null) return null
+    const unitName = unitMatch[0]
+    const unit = GO_UNIT_NANOS[unitName]
+    if (unit === undefined) return null
+    rest = rest.slice(unitName.length)
+    if (whole > GO_INT64_EDGE / unit) return null
+    let term = whole * unit
+    if (fraction > 0n) {
+      term += BigInt(Math.trunc(Number(fraction) * (Number(unit) / scale)))
+      if (term > GO_INT64_EDGE) return null
+    }
+    total += term
+    if (total > GO_INT64_EDGE) return null
+  }
+  if (negative) return -total
+  if (total > GO_INT64_EDGE - 1n) return null
+  return total
 }
 
 /** daysInMonth is the calendar's, leap years included. */
@@ -1131,8 +1227,10 @@ function kindLimit(kind: ArgumentKind): number {
       return 10
     case 'runSince':
       // The longest accepted form is a duration like `1h30m15s`; the bound is
-      // also what keeps a `Nd` day count inside `strconv.Atoi`'s range, which
-      // is why `isRunsSince` needs no integer bound of its own.
+      // also what keeps a `Nd` day count inside `strconv.Atoi`'s range. It does
+      // not keep a *duration* inside an int64 of nanoseconds (`999999999h`), so
+      // `isRunsSince` bounds that magnitude itself, as `time.ParseDuration`
+      // does (`goDurationNanos`).
       return 10
     case 'reportDimension':
       return 8
