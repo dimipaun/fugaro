@@ -82,8 +82,8 @@ var grantRules = map[string]map[string]who{
 		// nothing else (deployer.tf's two bindings; deployerGrant below is
 		// what checks their member, project and conditions, which grantRules
 		// cannot see).
-		customKey + DeployerRole:                  toDeployer,
-		customKey + DeployerScopedRole:            toDeployer,
+		customKey + DeployerRole:       toDeployer,
+		customKey + DeployerScopedRole: toDeployer,
 		// The whole-project inventory's read role (Task 4.1a, the owner's
 		// ruling of 2026-10-17): the installation's own custom role, granted
 		// to the operators who run a managed apply. The predefined
