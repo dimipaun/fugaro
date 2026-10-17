@@ -48,3 +48,27 @@ func (s LaunchSpec) GoString() string { return fmt.Sprintf("%#v", s.redacted()) 
 // reads a LaunchSpec back from JSON, so the redacted form loses nothing a
 // reader needs.
 func (s LaunchSpec) MarshalJSON() ([]byte, error) { return json.Marshal(s.redacted()) }
+
+// envVarFields is EnvVar without its methods.
+type envVarFields EnvVar
+
+// redacted is a copy of v whose value is redactedValue when it is a secret.
+func (v EnvVar) redacted() envVarFields {
+	c := envVarFields(v)
+	if v.Secret {
+		c.Value = redactedValue
+	}
+	return c
+}
+
+// Format prints the entry under any verb with a secret value redacted, so a
+// backend that formats what LaunchEnv returned cannot print the seal key.
+func (v EnvVar) Format(f fmt.State, verb rune) {
+	fmt.Fprintf(f, fmt.FormatString(f, verb), v.redacted())
+}
+
+// String is the entry as %v prints it, a secret value redacted.
+func (v EnvVar) String() string { return fmt.Sprintf("%+v", v.redacted()) }
+
+// MarshalJSON marshals the entry with a secret value redacted.
+func (v EnvVar) MarshalJSON() ([]byte, error) { return json.Marshal(v.redacted()) }

@@ -76,3 +76,33 @@ func TestLaunchSpecNeverPrintsASecretValue(t *testing.T) {
 		t.Fatal("formatting changed the spec")
 	}
 }
+
+// TestASecretEnvVarNeverPrintsItsValue: LaunchEnv's entry for a SecretEnv
+// value (Secret true) prints its name and never its value under any verb or
+// as JSON, alone or in the slice LaunchEnv returns; a plain entry prints as
+// before.
+func TestASecretEnvVarNeverPrintsItsValue(t *testing.T) {
+	secret := secretValue()
+	vars, err := LaunchEnv(LaunchSpec{Env: []string{"PLAIN=visible"}, SecretEnv: []string{"FUGARO_BUDGET_TOKEN=" + secret}})
+	if err != nil || len(vars) != 2 || !vars[1].Secret {
+		t.Fatalf("LaunchEnv = %+v, %v", vars, err)
+	}
+	js, err := json.Marshal(vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for how, out := range map[string]string{
+		"%v": fmt.Sprintf("%v", vars), "%+v": fmt.Sprintf("%+v", vars), "%#v": fmt.Sprintf("%#v", vars), "%s": fmt.Sprintf("%s", vars[1]),
+		"&": fmt.Sprintf("%+v", &vars[1]), "String": vars[1].String(), "json": string(js),
+	} {
+		if strings.Contains(out, secret) {
+			t.Errorf("%s prints the secret value: %s", how, out)
+		}
+		if !strings.Contains(out, "FUGARO_BUDGET_TOKEN") || !strings.Contains(out, "visible") && how != "%s" && how != "&" && how != "String" {
+			t.Errorf("%s lost what is not secret: %s", how, out)
+		}
+	}
+	if vars[1].Value != secret {
+		t.Fatal("formatting changed the entry")
+	}
+}
