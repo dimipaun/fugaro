@@ -1,14 +1,18 @@
 # Fugaro mobile app — the documents
 
-**Status: plan only; nothing is implemented. The owner answered decisions D110–D129 and resolved the three tensions between them on 2026-10-17; no task is approved.** No line of an Expo app, no mailbox, no rules change and no shared module exists anywhere in this repository or in any other. This directory holds the owner's spec, the reconciliation of it against the code, and the plan — in the shape the earlier reconciliations use.
+**Status (2026-10-17, later): partly implemented — P0.1, P0.2, P0.3, P1.2, P1.3 and P1.4 are merged on `main` (`shared/`); the owner approved Phase 2 (P2.1, P2.2) on 2026-10-17 and P2.1 is draft PR #532; everything else is plan only, and no task beyond the approved ones is approved.** The owner's functional spec v0.1 is added and reconciled ([functional-spec-reconciliation.md](functional-spec-reconciliation.md)): it opens decisions **D160–D172** and tensions **T1–T5**, and records the owner's **amendment of D128 (2026-10-17)** — cancel and approve/merge allowed on the phone with a spoken read-back and an explicit "confirm". Its tasks are **Phase 6 of the plan, proposed and NOT APPROVED**; this changes no approval.
 
-**Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-16.
+*The status as first written, kept:* **Status: plan only; nothing is implemented. The owner answered decisions D110–D129 and resolved the three tensions between them on 2026-10-17; no task is approved.** No line of an Expo app, no mailbox, no rules change and no shared module exists anywhere in this repository or in any other. This directory holds the owner's spec, the reconciliation of it against the code, and the plan — in the shape the earlier reconciliations use.
+
+**Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-16. **Functional spec v0.1:** the same owner, draft of October 2026, reconciled 2026-10-17.
 
 | File | What it is |
 |---|---|
 | [spec.md](spec.md) | The owner's spec, **verbatim**, committed alone in its own first commit. Nothing in it was changed, and nothing in it is a statement about this repository. |
 | [reconciliation.md](reconciliation.md) | Findings **F1–F37** against the code (each classified **Wrong / Exists / Gap / Rule / Open**, each citing a file and a symbol, each stating its **consequence** for the design), then **decisions D110–D129** (twenty-two rows, D113b and D113c among them) for the owner — every row with a recommendation, the alternative and its cost, and the "Owner's answer" column, filled with the owner's answers of 2026-10-17 — then **Open for the owner** (the three tensions those answers left, each now marked resolved 2026-10-17), then the **UNVERIFIED** table. |
 | [implementation-plan.md](implementation-plan.md) | The plan: ordered parts, each independently mergeable, each with its **verification**, the **files touched** and a **reviewer tier**, plus a **Parallel execution** section of levels and waves with the critical path. |
+| [functional-spec-v0.1.md](functional-spec-v0.1.md) | The owner's "Fugaro Mobile App — Functional Spec (v0.1)" (draft, October 2026), **verbatim**, committed alone in its own first commit. No typo needed fixing. |
+| [functional-spec-reconciliation.md](functional-spec-reconciliation.md) | The functional spec against `docs/mobile/` and the code at `49712fed`: a concept table, findings **G1–G22** (Wrong / Exists / Gap / Rule / Open), the owner's D128 amendment, every spec §6 question mapped to an existing answer or to new decisions **D160–D172** (recommendation, alternative and cost, empty answer column), open tensions **T1–T5**, open items O1–O3 and UNVERIFIED. |
 
 **Every decision in `reconciliation.md` was answered by the owner on 2026-10-17** — D112 against the recommendation (direct RTDB reads) and D113c as option (ii) (a new `fugaro` command) — **and no task in the plan may start before the owner passes the plan's approval gate**, which has not happened. Answering a decision is not approving a task; the plan says so in its own gate. The three tensions between the answers were **resolved by the owner on 2026-10-17** (reconciliation §4: direct reads under the feed's reader rules, a four-family read grant with no run titles, the per-pairing MAC key confirmed, and the command named `fugaro mailbox`); that approves no task.
 
@@ -29,6 +33,9 @@ The owner's allocation of 2026-10-16, applied rather than inferred:
 | **Checks 67–68** | managed projects | reserved |
 | **Checks 69a–69c** | the website work | allocated, written as 69a–69c as the website plan on `main` does (the allocation read "69 onward"; **80–89 is carved out of that range** for this work) |
 | **Checks 80–89** | **this work** | **reserved here, and no row or section is written by this pull request** |
+| **D130–D159**, **checks 90–99** | the credentials service ([credentials-service](../credentials-service/README.md)) | answered; D155–D159 reserved |
+| **D160–D179** | **the functional spec v0.1** (this directory) | **D160–D172 open** for the owner; **D173–D179 reserved and unused**. Taken after reading the highest numbers on `main` (`49712fed`) and in every open pull request |
+| **Checks 100–109** | **the functional spec v0.1** | **100–104 proposed** (Phase 6, P6.11 writes them); **105–109 reserved and unused**. Checks 70–79 are unused and deliberately not taken |
 
 **A reserved number is never reused and never renumbered**, which is why this work takes **D110–D129** and **80–89** as allocated rather than deriving either from a grep of `main`. The two blocks do not overlap: the website work holds **69a–69c** and this work holds **80–89**, which is how the allocation reads once the mobile block is taken out of the "69 onward" it was given — and this document neither renumbers nor narrows anything the website work holds.
 
