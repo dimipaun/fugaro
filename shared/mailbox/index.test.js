@@ -611,6 +611,9 @@ test('a ledger that is not a ledger is refused, each way with its own code', () 
   refused({ ...state, seen: [{ ...entry, extra: 1 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, at: 1.5 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, sender: '' }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  refused({ ...state, seen: [{ ...entry, sender: 5 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  refused({ ...state, seen: [{ ...entry, id: 5 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
+  refused({ ...state, seen: [{ ...entry, id: '' }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, sender: 's'.repeat(201) }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, id: 'i'.repeat(101) }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
   refused({ ...state, seen: [{ ...entry, at: -0 }] }, act(), REFUSAL.INVALID_SEEN_ENTRY);
@@ -799,6 +802,20 @@ test('the same input answers the same thing: the machine holds no state of its o
 
   assert.deepEqual(step(state, event), step(state, event));
   assert.deepEqual(step(state, event).state, step(state, event).state);
+});
+
+test('two senders whose names concatenate alike are still two pairs', () => {
+  // The ledger's key is the pair (sender, id), and the two halves must not be
+  // able to blur into each other: a key built by concatenation alone would
+  // make ('ab', 'c') and ('a', 'bc') one pair, and refuse a ledger that is
+  // perfectly well formed.
+  const first = stepped(newMailbox(), deliver(message({ sender: 'ab', id: 'c' })));
+  const second = stepped(first.state, deliver(message({ sender: 'a', id: 'bc' })));
+
+  assert.equal(second.outcome, OUTCOME.ACCEPTED);
+  assert.equal(second.state.seen.length, 2);
+  // The state it returns must also be a state it would accept back.
+  assert.equal(step(second.state, act()).ok, true);
 });
 
 test('a closed mailbox refuses every event, with one code and the state it was closed in', () => {
