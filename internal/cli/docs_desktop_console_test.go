@@ -1714,13 +1714,20 @@ func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
 		}
 		return rest
 	}
+	heading := regexp.MustCompile(`(?m)^### Task 3\.3: .*SECURITY-SENSITIVE, independent opus review$`)
+	if !heading.MatchString(plan) {
+		t.Error("the Task 3.3 heading does not itself carry `SECURITY-SENSITIVE, independent opus review`")
+	}
+	if rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan); !strings.Contains(rule, "2.0, 3.3, 4.1") {
+		t.Error("Global Constraints rule 9's list of security-sensitive tasks does not include 3.3")
+	}
 	task := section("### Task 3.3:", "\n## Phase 4")
-	for _, want := range []string{"SECURITY-SENSITIVE, independent opus review", "**Depends on:** Task 3.2", "startup:mode", "Red step", "NOT APPROVED TO IMPLEMENT"} {
+	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "NOT APPROVED TO IMPLEMENT"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("Task 3.3 lost %q", want)
 		}
 	}
-	if gate := section("### Task 4.6:", "\n## Phase 5"); !strings.Contains(gate, "Task 3.3") {
+	if gate := section("### Task 4.6:", "\n## Phase 5"); !strings.Contains(gate, "Task 3.3 must be merged before the console MVP is released") {
 		t.Error("Task 4.6's release gate does not require Task 3.3")
 	}
 	if ships := section("**What ships with the MVP.**", "\n\n"); !strings.Contains(ships, "Tasks 3.2 and 3.3") {
