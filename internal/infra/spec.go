@@ -596,6 +596,48 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 	return out, nil
 }
 
+// WorkflowAccounts are the Claude accounts each of repo's workflows gets a
+// job for: under oauth every account config.AllowedClaudeAccounts allows repo
+// (the default first), and the default alone under every other auth. RepoSpec
+// deploys one job per (workflow, account) from it, and RequiredSecrets reads
+// the same list, so the two cannot disagree about which tokens are mounted.
+func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
+	if cfg.Agent.Auth == "oauth" {
+		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	}
+	return []string{config.DefaultClaudeAccount}
+}
+
+// RequiredSecrets is every logical secret name the jobs of repo's workflows
+// mount and cannot go without, sorted: the union of SecretMounts over each
+// workflow of cfg and each account WorkflowAccounts gives it, with the git
+// credential of cfg's provider (GitSecret), less the optional mounts
+// (OptionalSecret) a job runs without, as readiness treats them. It is what
+// `fugaro secrets ls` checks for MISSING, so that column flags exactly the
+// names a deployed job needs and never one no job of this repository reads. A provider GitSecret does not
+// know, or a workflow SecretMounts refuses, is an error, not a guess.
+func RequiredSecrets(cfg *config.Config, lc *localcfg.Config, repo string) ([]string, error) {
+	git, ok := GitSecret(cfg.Git.Provider)
+	if !ok {
+		return nil, userErr("git.provider %q is not bitbucket or github", cfg.Git.Provider)
+	}
+	set := map[string]bool{}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		for _, tok := range WorkflowAccounts(cfg, lc, repo) {
+			ms, err := SecretMounts(git, cfg, name, tok, cfg.Workflows[name], lc, repo)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range ms {
+				if !OptionalSecret(m.Logical) {
+					set[m.Logical] = true
+				}
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(set)), nil
+}
+
 // workflow is the spec of (name, token): fugaro.yaml's logical workflow
 // commands, base, resources and timeouts, for the Cloud Run job of the
 // variant gcp.WorkflowVariant(name, token) (identity for the repository's
@@ -828,11 +870,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// backstop of the allow-list, design §6b.3). Every other auth kind
 		// has exactly the default account, unchanged from before this field
 		// existed.
-		tokens := []string{config.DefaultClaudeAccount}
-		if in.Cfg.Agent.Auth == "oauth" {
-			tokens = config.AllowedClaudeAccounts(lc.ClaudeAccounts, in.Repo)
-		}
-		for _, tok := range tokens {
+		for _, tok := range WorkflowAccounts(in.Cfg, lc, in.Repo) {
 			ws, err := c.workflow(name, tok)
 			if err != nil {
 				return RepoSpec{}, err
