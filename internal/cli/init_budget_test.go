@@ -288,3 +288,38 @@ func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
 		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
 	}
 }
+
+// The other half of that warning, and the reason it is two: an empty
+// r.res.Created is what adoption leaves behind and also what every other way
+// a --managed run creates nothing leaves behind, so the message may only say
+// "already existed" when the project stage actually read a project that was
+// already there. Here it does not exist and the typed confirmation is
+// declined, so nothing was adopted and nothing was created: the warning says
+// the creation did not happen, and a reader is not sent to look for a project
+// that is not there.
+func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
+	r := newProjectRig(t)
+	r.bill.AddAccount(billingAcc, true)
+	out, errOut, err := r.run(t, true, "not-the-project-id\n",
+		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+	all := refusalText(out, errOut, err)
+	if err == nil {
+		t.Fatalf("a declined creation returned no error:\n%s", all)
+	}
+	// The run really did reach the project stage's confirmation and stop
+	// there, so the warning below is about a creation that did not happen
+	// rather than about an earlier refusal.
+	r.nothingDone(t, "a managed creation whose confirmation was declined")
+	if !strings.Contains(all, "not confirmed") {
+		t.Fatalf("the run did not stop at the project's typed confirmation:\n%s", all)
+	}
+	if !strings.Contains(all, "--managed was not applied") {
+		t.Errorf("the run created no project under --managed and did not say --managed was not applied:\n%s", all)
+	}
+	if strings.Contains(all, "already existed") {
+		t.Errorf("the run says the project already existed, and it does not (nothing was adopted and nothing was created):\n%s", all)
+	}
+	if !strings.Contains(all, "no creation fact was written") {
+		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
+	}
+}

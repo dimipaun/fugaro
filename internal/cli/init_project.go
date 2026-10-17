@@ -162,6 +162,12 @@ func (s *projectStage) read(ctx context.Context) error {
 		return err
 	}
 	s.info = info
+	// The fact markCreated's --managed warning needs, recorded where it is
+	// read: whether the project this run installs into was already there.
+	// r.res.Created alone cannot tell a run that adopted an existing project
+	// from one that never reached the creation at all (see
+	// initRun.projectExisted).
+	s.e.r.projectExisted = info.Exists
 	s.create, s.addFirebase, s.link, s.guide = false, false, false, false
 	if !info.Exists {
 		s.create = true
