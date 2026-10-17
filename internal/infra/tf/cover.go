@@ -75,6 +75,7 @@ var grantRules = map[string]map[string]who{
 		customKey + "fugaroBuildSubmitter":        toPeople | toAccounts,
 		customKey + "fugaroHistory":               toAccounts,
 		"roles/aiplatform.user":                   toAccounts,
+		"roles/cloudasset.viewer":                 toPeople,
 		"roles/datastore.user":                    toAccounts,
 		"roles/datastore.viewer":                  toPeople,
 		"roles/firebaseauth.admin":                toAccounts,

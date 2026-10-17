@@ -453,7 +453,7 @@ run "apis" {
     condition = toset(keys(google_project_service.this)) == toset([
       "run.googleapis.com", "storage.googleapis.com", "secretmanager.googleapis.com", "artifactregistry.googleapis.com",
       "cloudbuild.googleapis.com", "cloudscheduler.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com",
-      "iam.googleapis.com", "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com", "cloudresourcemanager.googleapis.com", "cloudasset.googleapis.com",
     ])
     error_message = "the enabled APIs are wrong"
   }
@@ -1464,7 +1464,11 @@ run "same_project_resolved_iam" {
   assert {
     condition = (alltrue([for m in google_project_iam_member.launcher : m.role == google_project_iam_custom_role.launcher.name && !startswith(m.member, "serviceAccount:")]) &&
     alltrue([for m in google_project_iam_member.operator_build_submitter : m.role == google_project_iam_custom_role.build_submitter.name && !startswith(m.member, "serviceAccount:")]))
-    error_message = "the installation grants people only fugaroLauncher and fugaroBuildSubmitter on the project"
+    error_message = "the installation grants people only the fugaroLauncher and fugaroBuildSubmitter custom roles on the project"
+  }
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.operator_cloudasset_viewer : m.role == "roles/cloudasset.viewer" && !startswith(m.member, "serviceAccount:")])
+    error_message = "the operators hold the whole-project inventory's read role, and no service account holds it through this resource"
   }
   assert {
     condition = (google_project_iam_member.history_launcher[0].role == google_project_iam_custom_role.history[0].name &&
