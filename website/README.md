@@ -194,10 +194,10 @@ the owner registered and connected Firebase Hosting to (owner ruling 2026-10-17;
 own project is `fugaro-prod`, D91). `secondary_domain` names the second domain the owner
 acquired, and it **redirects to the canonical one**: the direction is the whole point of it,
 so the site links nothing on it and it is not on `allowed_hosts`. Both are named in
-`data/site.yaml` and nowhere else under `website/` —
-`TestWebsiteCanonicalURLAppearsOnlyInSiteYaml` in
-`internal/cli/docs_website_boundary_test.go` holds that, which is why this page does not
-print either domain.
+`data/site.yaml` and nowhere else under `website/` — `TestWebsiteDomainsAppearOnlyInSiteYaml`
+in `internal/cli/docs_website_boundary_test.go` scans every file under `website/` for each of
+the two hosts (and the control beside it, `TestWebsiteHostScanSeesAPlantedCopy`, plants one in
+a page to prove the scan sees it), which is why this page does not print either domain.
 
 **The redirect is a property of the attached domain and not a `firebase.json` rule, and that
 is a fact about Firebase Hosting rather than a preference.** A Hosting redirect rule is
