@@ -174,3 +174,8 @@ func projectJobAccount(name string) string {
 	}
 	return name
 }
+
+// checkProjectJobOAuth is the refusal this task adds (empty for the red step).
+func checkProjectJobOAuth(profile, auth, selected string) error {
+	return nil
+}
