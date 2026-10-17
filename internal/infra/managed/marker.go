@@ -68,6 +68,56 @@ type Budget struct {
 	Currency string `json:"currency"`
 }
 
+// The range a recorded amount lies in, in whole units of its currency — the
+// unit the Terraform budget takes (`specified_amount.units`,
+// deploy/terraform/gcp/modules/installation/budget.tf) and the one init's
+// --budget is given in, not minor units. The floor is the Terraform budget's
+// own (a whole amount above 0); the ceiling is Fugaro's: a monthly line of
+// ten million whole units is above any budget a managed project is created
+// with, and a figure beyond it is a typo or a value written by someone else,
+// not a choice — it is what keeps an amount such as 9223372036854775807 from
+// being believed as a line anything is compared against.
+const (
+	MinBudgetAmount int64 = 1
+	MaxBudgetAmount int64 = 10_000_000
+)
+
+// Check refuses a budget that is not one a managed creation records: an
+// amount outside [MinBudgetAmount, MaxBudgetAmount] whole units, or a
+// currency that is not exactly three ASCII uppercase letters — the shape of
+// an ISO 4217 code (USD, EUR), and the shape the Terraform budget's own
+// validation requires. It is a shape check only: there is no embedded list
+// of codes, because the code the budget is created with must also be the
+// billing account's own currency, which only the Budget API knows, and a
+// list here would be a second, staler answer to that. It is the same rule on
+// both sides — the write (Marker.Bytes, and init before anything is created)
+// and the read (readFact), so a value the write would refuse is never
+// believed when read.
+func (b Budget) Check() error {
+	if b.Amount < MinBudgetAmount || b.Amount > MaxBudgetAmount {
+		return fmt.Errorf("the budget amount %d is outside %d to %d whole units of its currency", b.Amount, MinBudgetAmount, MaxBudgetAmount)
+	}
+	if !isCurrencyCode(b.Currency) {
+		return fmt.Errorf("the budget currency %q is not three ASCII uppercase letters (the ISO 4217 code shape, such as USD)", b.Currency)
+	}
+	return nil
+}
+
+// isCurrencyCode is the ISO 4217 code shape: exactly three bytes, each
+// A to Z. Byte by byte rather than a Unicode class, so a letter outside
+// ASCII, a lower-case one, a space and a newline are all refused.
+func isCurrencyCode(s string) bool {
+	if len(s) != 3 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 'A' || s[i] > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
 // Marker is what MarkerObject holds: the fact, the project it is a fact
 // about, and — in the version a managed creation writes — the amount that
 // creation was required to choose. Nothing else: the value is never a
@@ -100,8 +150,8 @@ func (m Marker) Bytes() ([]byte, error) {
 		if m.Budget == nil {
 			return nil, fmt.Errorf("%s: version %d records the budget amount a managed creation was required to choose, and this one carries none", MarkerObject, MarkerVersionBudget)
 		}
-		if m.Budget.Amount <= 0 || m.Budget.Currency == "" {
-			return nil, fmt.Errorf("%s: version %d records a budget of %d %q: an amount above 0 and a currency are the pair the creation was required to choose", MarkerObject, MarkerVersionBudget, m.Budget.Amount, m.Budget.Currency)
+		if err := m.Budget.Check(); err != nil {
+			return nil, fmt.Errorf("%s: version %d records a budget the creation could not have chosen: %v", MarkerObject, MarkerVersionBudget, err)
 		}
 	default:
 		return nil, fmt.Errorf("%s: version %d is not one this package writes (%d and %d)", MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget)

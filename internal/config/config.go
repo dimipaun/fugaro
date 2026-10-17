@@ -321,15 +321,16 @@ const DefaultJobProfile = "standard"
 // DefaultJobProfile when it names none. One accessor, so the default cannot
 // differ between the readers of the selection.
 //
-// The run reads the selection without this accessor, deliberately: a workflow
-// that names no profile has nothing to refuse for, and internal/runner's
-// checkJobProfile refuses only an explicit name the published policy does not
-// define (a policy that carries a profiles block must define the default, so
-// the default is always defined where profiles exist, and a policy with no
-// profiles block is one this release applies nothing from). The readers that do
-// need the default — the job layout Task 3.2 builds, which makes one Cloud Run
-// job and one job service account per (profile, provider, account) — read it
-// here, so the default is spelled in one place.
+// A workflow that names no profile has nothing for the policy to refuse:
+// internal/runner's checkJobProfile refuses an explicit name the published
+// policy does not define (a policy that carries a profiles block must define
+// the default, so the default is always defined where profiles exist, and a
+// policy with no profiles block is one this release applies nothing from), and
+// it reads the *default* through this accessor to compare it with the profile
+// of the Cloud Run job the run is in. The readers that do need the default —
+// that comparison, and the job layout Task 3.2 builds, which makes one Cloud
+// Run job and one job service account per (profile, provider, account) — read
+// it here, so the default is spelled in one place.
 func (w Workflow) JobProfileOrDefault() string {
 	if w.JobProfile == "" {
 		return DefaultJobProfile
@@ -480,7 +481,9 @@ type Resources struct {
 // a profile naming a job the API would refuse must be refused here, where the
 // operator can see it. TimeoutClass is the task timeout, a duration in Go
 // syntax ("90m", "6h") through the same spelling timeouts.total uses; it
-// becomes the job's task timeout, so Cloud Run's 168h ceiling applies to it.
+// becomes the job's task timeout — plus backend.TaskTimeoutSlack, the same
+// sum internal/infra deploys the job with — so Cloud Run's 168h ceiling
+// applies to the sum, which is what projectpolicy.validTimeoutClass bounds.
 // Secrets are logical secret NAMES the job mounts, never values — the policy
 // node is readable by every run token. AllowRepos is the profile's admission
 // list (design §4.1): the key absent means the project's allow_repos applies,

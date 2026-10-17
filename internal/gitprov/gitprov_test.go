@@ -33,6 +33,18 @@ func TestKindForURL(t *testing.T) {
 		"https://github.example.com/acme/web.git": "",
 		"http://127.0.0.1:8080/remote.git":        "",
 		"/tmp/remote.git":                         "",
+		// The scp-like form without a user: git ssh's to github.com for this
+		// spelling too, and keying the form on the "@" answered "" for it.
+		"github.com:acme/web.git":    KindGitHub,
+		"bitbucket.org:acme/web.git": KindBitbucket,
+		// The userinfo is cut at the last "@", where git ends it: the host is
+		// github.com and not "b@github.com".
+		"a@b@github.com:acme/web.git": KindGitHub,
+		// The userinfo alone names no host, and neither does a path whose
+		// colon is inside it ("/tmp/x:y" is a local path, not a host).
+		"@:acme/web.git":      "",
+		"git@:acme/web.git":   "",
+		"/tmp/x:y/remote.git": "",
 	} {
 		if got := KindForURL(in); got != want {
 			t.Errorf("KindForURL(%q) = %q, want %q", in, got, want)

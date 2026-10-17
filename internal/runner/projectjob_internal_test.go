@@ -400,6 +400,52 @@ func TestJobIdentityRefusesANameItCannotPlace(t *testing.T) {
 	}
 }
 
+// TestJobIdentityTellsAPolicyWithNoProfilesFromNoPolicy: the refusal's detail
+// and its fix are computed from the policy the set came from, and the three
+// cases are three different things. A policy that is published and defines no
+// profile is not "no policy published": the rules are deployed and the policy
+// is there, it just names nothing, so the fix is to publish a policy with the
+// profiles (fugaro project policy publish) rather than to deploy rules again.
+//
+// Mutation (run, restored): drop the `else` branch, so a policy with no
+// profiles reports "This project has published no policy". The second case
+// below fails.
+func TestJobIdentityTellsAPolicyWithNoProfilesFromNoPolicy(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	job := "someone-elses-job"
+	for _, tc := range []struct {
+		name       string
+		p          *projectpolicy.Policy
+		found      bool
+		wantDetail string
+		wantFix    string
+	}{
+		{"no policy published", nil, false,
+			"This project has published no policy", "fugaro init --firebase"},
+		{"a policy with no profiles", &projectpolicy.Policy{Version: projectpolicy.Version}, true,
+			"This project's published policy defines no job profiles at all", "fugaro project policy publish"},
+		{"a policy with profiles", policyOf(map[string]config.JobProfile{"standard": profileOf("github")}), true,
+			"This project's published policy defines the job profiles standard", "fugaro init --firebase"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := identityRun(t, job, slug, nil, tc.p, tc.found)
+			_, _, _, err := r.jobIdentity(context.Background())
+			if err == nil {
+				t.Fatalf("jobIdentity(%s) was accepted", job)
+			}
+			if !strings.Contains(err.Error(), tc.wantDetail) {
+				t.Errorf("the refusal %q lacks %q", err, tc.wantDetail)
+			}
+			if !strings.Contains(err.Error(), tc.wantFix) {
+				t.Errorf("the refusal %q does not point at %q", err, tc.wantFix)
+			}
+			if tc.found && strings.Contains(err.Error(), "published no policy") {
+				t.Errorf("a published policy was reported as no policy at all: %v", err)
+			}
+		})
+	}
+}
+
 // TestJobIdentityIsSkippedOutsideCloudRun (R2-9): a run with no Cloud Run
 // execution has no job identity to check, so the step does not run at all —
 // which is why a docker run, a local invocation and `fugaro exec --provider
@@ -444,5 +490,55 @@ func TestJobIdentityRefusesAnUnreadableExecutionName(t *testing.T) {
 	r.d.Execution = "fugaro-acme-app-app-aaaaa" // a bare name, not a resource name
 	if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
 		t.Fatal("an execution name no backend parses was accepted")
+	}
+}
+
+// TestCheckJobProfileHoldsTheRunToTheJobItIsIn: the profile a run is *in* is
+// the one its Cloud Run job was built for — the matched triple of
+// jobIdentity — and the profile its workflow *selects* is the one the launch
+// chose the job from. checkJobProfile compares them, so a workflow edited
+// after the launch, or a job chosen by hand, stops the run instead of running
+// the workflow's work on a job nobody selected for it. A run in a
+// per-repository job carries no profile and nothing is compared (R2-9).
+//
+// Mutation (run, restored): drop the comparison, so checkJobProfile checks
+// only that the policy defines the selected name. The second case below runs
+// on the "big" job while its workflow selects standard.
+func TestCheckJobProfileHoldsTheRunToTheJobItIsIn(t *testing.T) {
+	policy := policyOf(map[string]config.JobProfile{"standard": profileOf("github"), "big": profileOf("github")})
+	bigJob := gcp.ProjectJobName("big", "github", "")
+	slug := identitySlug(t, "github", "acme/app")
+	for _, tc := range []struct {
+		name    string
+		job     string
+		wf      config.Workflow
+		wantErr bool
+	}{
+		{"the job of the profile the workflow selects", bigJob, config.Workflow{JobProfile: "big"}, false},
+		{"a job of another profile", bigJob, config.Workflow{JobProfile: "standard"}, true},
+		{"a job of another profile, selected by omission", bigJob, config.Workflow{}, true},
+		{"a per-repository job, whose workflow names no profile", gcp.JobName(slug, gcp.WorkflowVariant(identityWorkflow, "")), config.Workflow{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := identityRun(t, tc.job, slug, nil, policy, true)
+			if _, _, _, err := r.jobIdentity(context.Background()); err != nil {
+				t.Fatalf("jobIdentity(%s) = %v", tc.job, err)
+			}
+			err := r.checkJobProfile(context.Background(), identityWorkflow, tc.wf)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("a workflow selecting %q ran in the job %s", tc.wf.JobProfileOrDefault(), tc.job)
+				}
+				for _, want := range []string{tc.job, "big", tc.wf.JobProfileOrDefault()} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal %q lacks %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("checkJobProfile = %v, want the run to go on", err)
+			}
+		})
 	}
 }

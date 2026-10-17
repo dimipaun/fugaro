@@ -464,6 +464,12 @@ var (
 // a slug from reaching another slug it is a string prefix of (design
 // §6.1). A condition that differs in one byte is another binding, so this
 // is its one definition.
+//
+// slug is a repository's own and must not be empty: this is the
+// *per-repository* condition, and an empty slug has nothing to scope the
+// grant to — it panics rather than return the widened, project-wide clause
+// (ProjectBucketCondition, which a project job's grant uses and which says so
+// in its name).
 func BucketCondition(bucket string, prefixes []string, slug string) string {
 	conds := make([]string, len(prefixes))
 	for i, p := range prefixes {
@@ -490,19 +496,39 @@ func BucketCondition(bucket string, prefixes []string, slug string) string {
 func ProjectBucketCondition(bucket string, prefixes []string) string {
 	conds := make([]string, len(prefixes))
 	for i, p := range prefixes {
-		conds[i] = bucketPrefixClause(bucket, p, "")
+		conds[i] = projectBucketPrefixClause(bucket, p)
 	}
 	return strings.Join(conds, " || ")
 }
 
-// bucketPrefixClause is one clause of a bucket condition: the bucket's objects
-// under prefix, inside slug's own prefix when slug is set, or directly under
-// prefix when it is empty (a project job's widened clause). The trailing
+// projectBucketPrefixClause is one clause of the widened condition: the
+// bucket's objects directly under prefix, with no slug segment. It is a
+// builder of its own rather than bucketPrefixClause with an empty slug, so
+// that an empty slug reaching the per-repository builder is refused (below)
+// instead of quietly producing this clause — which is what it used to do, and
+// which made BucketCondition(b, prefixes, "") byte for byte the widened
+// condition of a project job rather than a condition that matches nothing.
+func projectBucketPrefixClause(bucket, prefix string) string {
+	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/")`, bucket, prefix)
+}
+
+// bucketPrefixClause is one clause of a per-repository bucket condition: the
+// bucket's objects under prefix, inside slug's own prefix. The trailing
 // slashes keep a slug from reaching another slug it is a string prefix of
 // (design §6.1).
+//
+// slug must be a repository's own (task.Slug's output): an empty one is a
+// caller that has no slug to scope the grant to, and the clause it would
+// build is the *project job's* widened one — every repository's objects under
+// prefix, which is the opposite of what a per-repository caller asks for.
+// This panics rather than widen, as LauncherBucketCondition panics rather
+// than return a condition that is not the one every comparison expects byte
+// for byte: a grant that is wider than the one asked for is the failure this
+// whole function exists to avoid, and it is silent. A caller that wants the
+// widened condition calls ProjectBucketCondition, which says so in its name.
 func bucketPrefixClause(bucket, prefix, slug string) string {
 	if slug == "" {
-		return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/")`, bucket, prefix)
+		panic(fmt.Sprintf("gcp.BucketCondition: empty slug: a per-repository condition with no slug would be the project job's widened one (ProjectBucketCondition builds that), granting every repository's objects under %q", prefix))
 	}
 	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, prefix, slug)
 }

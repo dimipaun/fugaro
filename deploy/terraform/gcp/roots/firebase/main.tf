@@ -6,7 +6,7 @@
 # terraform.tfvars.json and a backend config naming the installation's state
 # bucket (state fugaro/firebase), and plans and applies it there.
 terraform {
-  required_version = ">= 1.7.0, < 2.0.0"
+  required_version = ">= 1.9.0, < 2.0.0"
 
   required_providers {
     google = {
