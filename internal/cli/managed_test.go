@@ -312,7 +312,7 @@ func managedCRM(t *testing.T, f *gcpfake.CRM) *crm.Service {
 // internal/initflow/stage.go gains the managed case there. Until then this
 // file is where the rule is written down, and the product below is what that
 // case has to keep true.
-func managedMode(ok bool, reason string, err error) bool { return err == nil }
+func managedMode(ok bool, reason string, err error) bool { return ok && err == nil }
 
 // nonManaged is whether a read's answer means "not managed", by the read's
 // own contract rather than by whichever predicate is being tested: the fact
