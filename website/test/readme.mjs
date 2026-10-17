@@ -529,14 +529,10 @@ test('the README claims about docs/pending-workflows/ and firebase.json are lite
   const text = readme()
   assert.ok(!/Nothing under `docs\/pending-workflows\/`/.test(text), 'the README says nothing is staged under docs/pending-workflows/, but other pending workflows are committed there')
   const staged = path.join(REPO_ROOT, 'docs', 'pending-workflows')
-  // Every file the README's pending-workflows paragraph names must exist there.
-  const para = text.split('\n\n').find((p) => p.includes('holds other pending workflows today'))
-  assert.ok(para, 'the README no longer carries the "holds other pending workflows today" paragraph')
-  const sentence = /holds other pending workflows today \(([^)]*)\)/.exec(para.replace(/\s+/g, ' '))
-  assert.ok(sentence, 'the README names no files after "holds other pending workflows today"')
-  const named = [...sentence[1].matchAll(/`([^`]+)`/g)].map((m) => m[1])
-  assert.ok(named.length > 0, 'the README names no pending workflow file')
-  for (const f of named) assert.ok(existsSync(path.join(staged, f)), `the README says docs/pending-workflows/ holds \`${f}\`, and it is not there`)
+  // The README says the directory holds no pending workflow today: it must hold none.
+  assert.ok(/holds no pending workflow today/.test(text.replace(/\s+/g, ' ')), 'the README no longer says docs/pending-workflows/ holds no pending workflow today')
+  const pending = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)) : []
+  assert.deepEqual(pending, [], 'a workflow is pending under docs/pending-workflows/: the README says there is none, so update the README')
   // W2.1's, and the README says so: if one lands, the README must be rewritten.
   assert.ok(!existsSync(path.join(REPO_ROOT, 'firebase.json')), 'firebase.json exists: the README says it does not yet, so update the README')
   const deploy = existsSync(staged) ? readdirSync(staged).filter((n) => /deploy/i.test(n)) : []

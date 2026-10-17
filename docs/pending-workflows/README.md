@@ -1,6 +1,6 @@
 # Pending workflow changes
 
-**One file is pending: `images.yml`.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed.)
+**Nothing is pending.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 - **`images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
 
