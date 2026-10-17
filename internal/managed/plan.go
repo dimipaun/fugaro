@@ -72,6 +72,12 @@ type Spec struct {
 	// honoured, whatever the owner's list says (D72/D74, and
 	// infra/managed.GuardAllowList is where that is enforced). An empty list
 	// allows no delete and no replace at all.
+	//
+	// Gate hands the same list to both halves of the gate (tf.Guard and the
+	// cover, which is told it through tf.Deletable), so the two cannot be given
+	// different ones, and it is one half of the decision rather than the whole
+	// of it: the resource is judged whatever its address is on this list
+	// (Task 1.2a).
 	AllowDelete []string
 	// Imports are the import blocks the root's discovery wrote: an import is
 	// admitted only when its address and ID are exactly one of them

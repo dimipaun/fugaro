@@ -564,6 +564,18 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	}
 }
 
+// A listed address with no resource in the plan changes nothing: the list is
+// read per change, so a stale entry — an address the plan no longer carries —
+// neither admits nor refuses anything.
+func TestGateAdmitsAListedAddressThePlanDoesNotCarry(t *testing.T) {
+	r := newRig(t)
+	r.managedShow(t, managedChange("module.managed.google_storage_bucket.data", "google_storage_bucket",
+		[]string{"create"}, nil, map[string]any{"name": "fmgd-data"}))
+	if v := gate(t, r, spec(t, r, managedCover(), "module.managed.google_compute_instance.gone")); !v.OK {
+		t.Errorf("a listed address the plan does not carry changed the verdict: %v", v.Refusals)
+	}
+}
+
 // An address on the owner's AllowDelete list is admitted for a delete only
 // because the cover the test hands Gate admits the resource too; one not on
 // the list is refused, and an empty list refuses every delete. What makes a
