@@ -1822,3 +1822,76 @@ func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
 		t.Error(`"What ships with the MVP" does not name Task 3.3`)
 	}
 }
+
+// TestConsoleMVPRequiresTheRendererEntry is the sibling of
+// TestConsoleMVPRequiresTheStartupHandshake for the proposed Task 3.4 (added
+// 2026-10-17): the console cannot draw a real dashboard until a task sets the
+// preload, registers the handlers after the handshake, loads a script into the
+// document and chooses an installation, and no other task owns that. The plan
+// must carry the task as SECURITY-SENSITIVE, depending on Task 3.3, marked not
+// approved until the owner's go, split into 3.4a/3.4b/3.4c, and named as an MVP
+// gate in "What ships with the MVP", in Task 4.6, in the phase summary and in
+// the cross-task dependencies, and Task 3.3 must name it as the wiring's owner.
+// Removing Task 3.4 from any of those places fails a named check here.
+func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
+	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	section := func(start, end string) string {
+		i := strings.Index(plan, start)
+		if i < 0 {
+			t.Fatalf("plan has no %q", start)
+		}
+		rest := plan[i:]
+		if j := strings.Index(rest[len(start):], end); j >= 0 {
+			return rest[:len(start)+j]
+		}
+		return rest
+	}
+	heading := regexp.MustCompile(`(?m)^### Task 3\.4: The renderer entry.*SECURITY-SENSITIVE, independent opus review$`)
+	if !heading.MatchString(plan) {
+		t.Error("the Task 3.4 heading is missing or does not itself carry `SECURITY-SENSITIVE, independent opus review`")
+	}
+	if rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan); !strings.Contains(rule, "plus 3.4") {
+		t.Error("Global Constraints rule 9's list of security-sensitive tasks does not include 3.4")
+	}
+
+	task := section("### Task 3.4:", "\n## Phase 4")
+	for _, want := range []string{
+		"NOT APPROVED TO IMPLEMENT — proposed 2026-10-17, awaiting the owner's go",
+		"**Depends on:** Task 3.3 (**hard**: #541 merged",
+		"#### 3.4a", "#### 3.4b", "#### 3.4c",
+		"registerConsoleHandlers",
+		"never in `refused`",
+		"script-src 'self'",
+		"The CSP delta of this task is none",
+		"Shared files",
+		"Red step",
+		"Owner-run additions",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("Task 3.4 lost %q", want)
+		}
+	}
+
+	// Task 3.3's own section, bounded by Task 3.4's heading so the text of 3.4
+	// cannot satisfy it, still carries its own facts and names 3.4 as the owner
+	// of the wiring it leaves out.
+	own := section("### Task 3.3:", "\n### Task 3.4:")
+	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "**The renderer entry is Task 3.4's, not this task's"} {
+		if !strings.Contains(own, want) {
+			t.Errorf("Task 3.3's own section lost %q", want)
+		}
+	}
+
+	if gate := section("### Task 4.6:", "\n## Phase 5"); !strings.Contains(gate, "Task 3.4 must be merged before the console MVP is released") {
+		t.Error("Task 4.6's release gate does not require Task 3.4")
+	}
+	if ships := section("**What ships with the MVP.**", "\n\n"); !strings.Contains(ships, "the renderer entry (Task 3.4") || !strings.Contains(ships, "item 4 or item 5 does not ship") {
+		t.Error(`"What ships with the MVP" does not name Task 3.4 as a gate`)
+	}
+	if summary := section("## Phase summary", "\n## "); !strings.Contains(summary, "Task 3.4") {
+		t.Error("the phase summary does not name Task 3.4")
+	}
+	if deps := section("## Cross-task dependencies", "\n## "); !strings.Contains(deps, "Task 3.4 (the renderer entry") {
+		t.Error("the cross-task dependencies do not name Task 3.4")
+	}
+}
