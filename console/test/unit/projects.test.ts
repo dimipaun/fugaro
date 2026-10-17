@@ -45,7 +45,7 @@ import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
 import { putText } from '../../src/renderer/app'
 import { PROJECT_PANEL_KEYS, PROJECTS_THEMES, buildProjectsModel, renderProjects } from '../../src/renderer/screens/projects'
 import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/renderer/screens/projects'
-import { RUN_LOG_CAP, buildRunModel, linkFor, pullRequestUrl, renderRun } from '../../src/renderer/screens/run'
+import { RUN_LOG_CAP, buildRunModel, linkFor, parseLogWindow, pullRequestUrl, renderRun } from '../../src/renderer/screens/run'
 import type { RunInputs } from '../../src/renderer/screens/run'
 import { ReplayBuffer } from '../../src/shared/replay'
 import { ADDRESS_PLACEHOLDER, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
@@ -1026,6 +1026,15 @@ describe('renderRun', () => {
     // None refused is no line at all, not a zero drawn for its own sake.
     const clean = renderRun(factory, buildRunModel(runInputs({ logs: { ...logs, refused: 0 } })), 'light')
     expect(all(clean, 'run-log-refused')).toEqual([])
+  })
+
+  it('reads no refused count where the input carried none, in either shape', () => {
+    // A bare list of log lines and a window that omits `refused` both carry no
+    // count: the reading is unavailable, never a measured zero.
+    expect(parseLogWindow(logLines(3)).refused).toBeNull()
+    expect(parseLogWindow({ entries: logLines(3), total: 3 }).refused).toBeNull()
+    expect(parseLogWindow({ entries: logLines(3), total: 3, refused: 0 }).refused).toBe(0)
+    expect(buildRunModel(runInputs({ logs: logLines(3) })).logs.refused.value).toBeNull()
   })
 
   it('draws exactly the capped window of log lines', () => {

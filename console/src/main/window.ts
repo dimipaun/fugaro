@@ -17,6 +17,15 @@
 // The window itself is created in `createConsoleWindow`, which takes the
 // Electron classes as arguments -- `src/main/index.ts` is the only caller.
 //
+// Task 3.2's version skew handshake lives at the bottom of this file, because
+// "the console refuses to draw a live dashboard" is a statement about *this*
+// window: below the hard floor `startupWindow` constructs no window at all, and
+// the only window a refused console can open is the refusal screen's. The
+// startup path is `startupWindow` -- read the CLI's version, place it, build the
+// dashboard window only if the console will draw one -- and `src/main/index.ts`
+// still calls `createConsoleWindow` directly, because the IPC surface and the
+// screen mounting that would consume the handshake are later tasks' wiring.
+//
 // Two notes on what is deliberately NOT here, because both are later tasks and
 // a reviewer should not have to guess:
 //
@@ -38,6 +47,8 @@ import type {
   WebPreferences,
 } from 'electron'
 
+import { SKEW_HEADLINES, classifyCliVersion, unreadableCompatibility } from '../shared/version'
+import type { CliCompatibility } from '../shared/version'
 import { APP_ENTRY_URL } from './protocol'
 
 /** CONSOLE_WINDOW_TITLE is the window's title and the document's `<title>`. */
@@ -90,14 +101,35 @@ export function consoleWebPreferences(): WebPreferences {
  * matters more here than usual: the console's first paint is the only paint
  * that comes from the bundle, and everything after it comes over IPC.
  */
-export function consoleWindowOptions(): BrowserWindowConstructorOptions {
+export function consoleWindowOptions(
+  compatibility: CliCompatibility | null = null,
+): BrowserWindowConstructorOptions {
   return {
     width: CONSOLE_WINDOW_SIZE.width,
     height: CONSOLE_WINDOW_SIZE.height,
     show: false,
-    title: CONSOLE_WINDOW_TITLE,
+    title: consoleWindowTitle(compatibility),
     webPreferences: consoleWebPreferences(),
   }
+}
+
+/**
+ * consoleWindowTitle is the window's title, and it says which console this is
+ * **and what it made of the CLI it is driving** (design section 3.4 rule 8: the
+ * handshake "says so in its header"). Inside the range, and before a handshake
+ * has run (`null`, which is what `src/main/index.ts` passes today), it is the
+ * plain title.
+ *
+ * The title carries the *mode* and never the version the binary reported, and
+ * that is deliberate rather than an omission: a window title is drawn by the
+ * operating system's chrome and not by this console's writers, so it is not a
+ * place `sanitize.ts` can reach, and a string a binary chose does not go into a
+ * place the console's own rules cannot be applied. The version the CLI reported
+ * is drawn in the document, by `renderVersionSkew`, through the sanitizer.
+ */
+export function consoleWindowTitle(compatibility: CliCompatibility | null): string {
+  if (compatibility === null || compatibility.mode === 'ok') return CONSOLE_WINDOW_TITLE
+  return `${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES[compatibility.mode]}`
 }
 
 /** NavigationEvent is the shape of Electron's cancellable event objects. */
@@ -172,6 +204,20 @@ export function denyEveryPermission(session: Session): void {
     callback(false)
   })
   session.setPermissionCheckHandler(() => false)
+}
+
+/**
+ * denyPageTitleUpdate stops a loaded document from becoming the window's title.
+ * It is the difference between `consoleWindowTitle` being a decision and being a
+ * suggestion: the document defines a `<title>` (`src/renderer/index.html`, which
+ * the unit test pins), and Electron applies a page's title over the `title` the
+ * window was constructed with, so the mode -- reduced, refused -- would be
+ * dropped on load in every real window. A window title is chrome the console
+ * owns: the page it draws is the console's *content*, and the title that names
+ * what the console made of the CLI is not the page's to overwrite.
+ */
+export function denyPageTitleUpdate(event: NavigationEvent): void {
+  event.preventDefault()
 }
 
 /**
@@ -271,10 +317,33 @@ export interface ConsoleWindowDeps {
  * resolves once the document has loaded, so the caller knows the window is up.
  */
 export async function createConsoleWindow(deps: ConsoleWindowDeps): Promise<BrowserWindow> {
-  const window = new deps.BrowserWindow(consoleWindowOptions())
+  return buildConsoleWindow(deps, null)
+}
+
+/** buildConsoleWindow is the one place a console window is constructed, so
+ * every window this app ever opens -- the dashboard's and the refusal screen's
+ * -- has the same preferences, the same handlers, the same denied permissions
+ * and the same single load. */
+async function buildConsoleWindow(
+  deps: ConsoleWindowDeps,
+  compatibility: CliCompatibility | null,
+): Promise<BrowserWindow> {
+  const window = new deps.BrowserWindow(consoleWindowOptions(compatibility))
 
   installWebContentsSecurity(window.webContents)
   denyEveryPermission(deps.session)
+
+  // The document may not take the window's title over. Electron applies the
+  // page's `<title>` to the window once the document loads, and Electron's own
+  // typings say that when the HTML defines one the `title` option "will be
+  // ignored" -- `src/renderer/index.html` defines one, so without this handler
+  // the mode `consoleWindowTitle` puts in the title would never reach a real
+  // window, and a reduced or refused console would show the plain title. The
+  // header saying which console this is and what it made of the CLI is design
+  // section 3.4 rule 8's, and a page cannot be the thing that erases it.
+  window.on('page-title-updated', (event) => {
+    denyPageTitleUpdate(event)
+  })
 
   window.once('ready-to-show', () => {
     window.show()
@@ -282,4 +351,112 @@ export async function createConsoleWindow(deps: ConsoleWindowDeps): Promise<Brow
   await window.loadURL(APP_ENTRY_URL)
 
   return window
+}
+
+// ---------------------------------------------------------------------------
+// The version skew handshake (desktop-console plan Task 3.2; design section 7.1
+// and D7).
+// ---------------------------------------------------------------------------
+
+/**
+ * VersionRead is the reader's answer: the line `fugaro version` wrote, or the
+ * console's own reason for not having one. It is required to be a *reader* and
+ * not an import because this module holds no spawner -- `src/main/spawn.ts` owns
+ * `resolveBinary`/`probeVersion` (Task 1.3) and the console's rule that a binary
+ * whose version cannot be read is a binary it does not run.
+ */
+export type VersionRead =
+  | { readonly ok: true; readonly stdout: string }
+  | { readonly ok: false; readonly reason: string }
+
+/** HANDSHAKE_UNREADABLE is the console's own reason when the read itself threw
+ * -- no binary resolved, a spawn that failed, a timeout. It is a sentence of
+ * this console's, never the child's output, and it is the `because` of the
+ * compatibility this function builds, so the refusal screen draws it in the
+ * reason cell (`p.skew-because`) under the console's own skew sentence. */
+export const HANDSHAKE_UNREADABLE = 'the console could not read which fugaro it is driving'
+
+/** VersionHandshakeDeps is the Electron-free surface the handshake needs: one
+ * function that reads `fugaro version`'s stdout. */
+export interface VersionHandshakeDeps {
+  readonly readVersion: () => Promise<VersionRead>
+}
+
+/**
+ * runVersionHandshake reads the CLI's version and places it in the supported
+ * range. It is the startup path of design section 6.3: the console either
+ * proceeds, proceeds in a reduced mode, or refuses -- and the refusal is only
+ * this value here; `startupWindow` below is where it becomes real.
+ *
+ * A reader that *throws* is a refusal and not a crash: a console that cannot
+ * start because a subprocess misbehaved would be worse than one that says so,
+ * and D7's rule is that an unplaceable CLI is one the console will not draw a
+ * dashboard for.
+ */
+export async function runVersionHandshake(deps: VersionHandshakeDeps): Promise<CliCompatibility> {
+  try {
+    const read = await deps.readVersion()
+    return read.ok ? classifyCliVersion(read.stdout) : unreadableCompatibility(read.reason)
+  } catch {
+    return unreadableCompatibility(HANDSHAKE_UNREADABLE)
+  }
+}
+
+/** ConsoleStartup is what startup produces: the window (or `null`, which is the
+ * refusal), and what the console made of the CLI it read. */
+export interface ConsoleStartup {
+  /**
+   * `window` is `null` when the console refused: **no window is constructed**,
+   * so there is no dashboard to draw and nothing to misdraw spend into. That is
+   * stronger than a flag a renderer could ignore, and it is the plan's red step
+   * -- "the below-floor test against a console that draws the dashboard anyway"
+   * -- held where drawing is actually decided.
+   */
+  readonly window: BrowserWindow | null
+  readonly compatibility: CliCompatibility
+}
+
+/** StartupWindowDeps is the window surface plus the version reader. */
+export interface StartupWindowDeps extends ConsoleWindowDeps, VersionHandshakeDeps {}
+
+/**
+ * startupWindow is the console's startup in one call: read the CLI's version,
+ * place it, and build the window only if the console will draw a dashboard in
+ * it.
+ *
+ * On the refusal path there is deliberately **no window yet**, and the caller is
+ * the one that decides between two honest options: open nothing, or open a
+ * window whose only content is the refusal screen -- which is
+ * `createRefusalWindow`, the door below. What the caller may not do is
+ * `createConsoleWindow` after a refusal: that path is not on this function's
+ * return value, so a wiring mistake shows up as a refusal screen or as no window
+ * at all rather than as a spend figure nothing vouched for.
+ */
+export async function startupWindow(deps: StartupWindowDeps): Promise<ConsoleStartup> {
+  const compatibility = await runVersionHandshake(deps)
+  if (compatibility.mode === 'refused') return { window: null, compatibility }
+  return {
+    window: await buildConsoleWindow(deps, compatibility),
+    compatibility,
+  }
+}
+
+/**
+ * createRefusalWindow builds the window a refused console is allowed: the same
+ * hardened window as the dashboard's -- same preferences, same handlers, same
+ * denied permissions, same single load -- with a title that says which console
+ * this is and that it refused. The renderer draws `renderVersionSkew` in it
+ * (`src/shared/version.ts`) instead of a dashboard, and draws no `live` root at
+ * all.
+ *
+ * It is a named door rather than a `createConsoleWindow` with an argument so
+ * that the refusal is a decision a reviewer can find, and so that the only
+ * caller that can draw a *dashboard* is the one that got a window from
+ * `startupWindow`.
+ */
+export async function createRefusalWindow(
+  deps: ConsoleWindowDeps,
+  compatibility: CliCompatibility,
+): Promise<BrowserWindow> {
+  return buildConsoleWindow(deps, compatibility)
 }
