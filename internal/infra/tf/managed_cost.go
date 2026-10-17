@@ -49,14 +49,31 @@ import (
 // project's own runs bucket, a scheduler — so that criterion fires on
 // essentially every plan, and a gate that refuses everything is a gate that
 // gets switched off. An entry has to be a property a plan is above or below.
+//
+// What this list can reach today is worth stating plainly rather than leaving
+// to be discovered. Three of the four entries read a type Task 1.1's managed
+// allowlist does not admit — a Cloud Run service, a compute instance, a Cloud
+// SQL instance — so a plan of one of those is refused for its type before this
+// list is asked anything, and those entries are the second line rather than the
+// first: they become load-bearing the moment the allowlist admits a service, a
+// VM or a SQL instance, which is a decision for the owner rather than for this
+// file. An entry is a decision about a property rather than about a type (D61),
+// and the four are the spec's own examples, so that is a statement about the
+// allowlist and not a defect here.
+//
+// The one type the two lists share is google_cloud_run_v2_job, and it is the
+// type this task's own wording gets wrong: a job states no minimum instance
+// count at all (the min-instances entry below says why), while a job's node
+// selector is where a GPU is attached to it — so the GPU entry is the one entry
+// with reach on a plan the managed cover would admit.
 
 // The entries of the list. A key is what a recorded finding and a refusal name
 // the entry by, so it is stable: it is the entry's identity in a verdict, in a
 // confirmation, and in this file's tests.
 const (
 	// managedCostMinInstances is the spec's "Cloud Run min instances": a
-	// service or job whose minimum instance count is above the line keeps
-	// instances running — and billing — when nothing calls it.
+	// service whose minimum instance count is above the line keeps instances
+	// running — and billing — when nothing calls it.
 	managedCostMinInstances = "cloud-run-min-instances"
 	// managedCostSQLTier is the spec's "Cloud SQL tiers": a tier above the
 	// named class is a database sized above the smallest one, billed by the
@@ -162,21 +179,16 @@ var managedCostList = []managedCostEntry{
 	{
 		key:   managedCostMinInstances,
 		block: true,
-		why: "a Cloud Run service or job whose minimum instance count is above the line " +
-			"keeps instances running when nothing calls it, and an instance that always " +
-			"runs bills always — the spec's own example, and the one entry whose line is a " +
-			"number a plan states rather than a class it is above",
+		why: "a Cloud Run service whose minimum instance count is above the line keeps " +
+			"instances running when nothing calls it, and an instance that always runs " +
+			"bills always — the spec's own example, and the one entry whose line is a " +
+			"number a plan states rather than a class it is above. The entry reads the " +
+			"service and not the job this task's own wording names: a job runs and exits " +
+			"rather than staying up, the provider's schema carries no scaling block on " +
+			"one (the job in testdata/golden/installation.plan.json states no scaling key " +
+			"at either template level), and a rule reading a key no plan of the type has " +
+			"is a rule that can never fire on a stated value",
 		rules: []managedCostRule{
-			{
-				// A job's template is the execution's, so its scaling block is
-				// one shallower than a service's: the shape
-				// testdata/golden/installation.plan.json writes for a
-				// google_cloud_run_v2_job.
-				typ:   "google_cloud_run_v2_job",
-				what:  "the minimum instance count",
-				path:  []any{"template", 0, "template", 0, "scaling", 0, "min_instance_count"},
-				above: managedCostAboveInstances,
-			},
 			{
 				typ:   "google_cloud_run_v2_service",
 				what:  "the minimum instance count",
@@ -204,10 +216,13 @@ var managedCostList = []managedCostEntry{
 	{
 		key:   managedCostGPU,
 		block: true,
-		why: "an attached GPU bills by the hour on top of the machine it is attached to, " +
-			"whatever the machine costs — the spec's \"GPUs\", read wherever a plan states " +
-			"one: a guest_accelerator block, a Cloud Run node selector naming an " +
-			"accelerator, or a machine type from an accelerator-optimised family",
+		why: "an attached GPU is billed on top of the machine it is attached to, whatever " +
+			"that machine costs — the spec's \"GPUs\", read wherever a plan states one: a " +
+			"guest_accelerator block, a Cloud Run node selector naming an accelerator, or " +
+			"a machine type from an accelerator-optimised family. A Cloud Run job's GPU " +
+			"is billed for the execution rather than around the clock, and it is an entry " +
+			"all the same: an accelerator is the largest line a plan of that size can add, " +
+			"and the spec names GPUs without qualifying them",
 		rules: []managedCostRule{
 			{
 				typ:   "google_compute_instance",
