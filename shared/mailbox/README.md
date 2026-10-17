@@ -273,9 +273,14 @@ shared/mailbox/mutation-proof.sh             # every guard in index.js, mutated 
 disables one guard at a time — the plain-object check, the accessor check, the
 unknown- and missing-field checks, the phase check, the ledger's shape,
 duplicate and order rules, the monotonic-`now` check, the negative-zero and
-zero-timestamp checks, the future bound, the window bound, the `(sender, id)` dedupe, the duplicate
-branch that must not touch the record, the conflict branch, both halves of the
-eviction predicate, the cap, the closed row of the dispatch table, the freeze
+zero-timestamp checks, the timestamp ceiling, the future bound, each kind's
+window and its inclusive edge, `expired` against `replay`, the `(sender, id)`
+dedupe and its consultation at every age, the duplicate branch that must not
+touch the record, the conflict branch (`at` and kind), the cap, the per-sender
+quota and what it counts, the eviction predicate's acked-only rule, its
+boundary and its per-kind window, `stale-pending` and its boundary, the
+ledger's index-only reader, the no-echo rule for key names, the two corrected
+cells of the declared table, the closed row of the dispatch table, the freezes
 and the copy — runs the module's tests, and requires them to fail each time. It
 restores the file with `git checkout` after each mutation and refuses to run
 against an uncommitted module.
@@ -301,14 +306,26 @@ removed (`PATH=/usr/bin:/bin`) the script refuses with exit 2 rather than
 reporting mutants it never ran, and with `index.test.js` renamed the positive
 control catches the empty glob — which is why there are two.
 
-The run that is recorded here is **55 guards, 55 killed, 0 survived, 0 not
-applied**, with the control killed first. One clause of the module is
+The run that is recorded here (round 2, node 26 on PATH) is **92 guards, 92
+killed, 0 survived, 0 not applied**, with the control killed first. One clause of the module is
 deliberately *not* counted: `isPlainObject`'s `Array.isArray` check, which the
 prototype check beside it subsumes (an array's prototype is neither
 `Object.prototype` nor `null`). A mutation of it cannot be killed by any test,
 so it is not claimed as a proved guard — the clause is kept for parity with the
 schema's own `isPlainObject`, and the array case is proved by the prototype
 mutation instead.
+
+**The exhaustive table test does not trust the module's table.** It writes the
+EXPECTED table by hand, asserts the module's `TRANSITIONS` equals it, and
+drives 22 literal ledger compositions (empty, pending-only, acted-only,
+acked-only, mixed, at the cap in each phase, a sender at its quota in each
+phase, stale records of every status, prompts inside and past their TTL) in
+both an open and a closed phase through every event — then checks the other
+direction too: every outcome and next phase a cell declares is actually
+reached, and every one of this module's delivery refusals is produced in every
+open phase. Round 1's version sampled one state per phase and compared the code
+against the module's own table, which is how `pending x ack` answering `acked`
+slipped through.
 
 **One deliberate difference from `mailbox-schema/mutation-proof.sh`:** this
 script's suite is this module's tests (`node --test "mailbox/*.test.js"` from
