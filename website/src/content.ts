@@ -43,9 +43,10 @@
 //     its own line number instead of parsing into something wrong.
 //
 // It is called from website/src/layouts/Base.astro, which every page of the site renders
-// through — so the whole generated layer is checked on every build that renders a page.
-// The site's first page is W1.4's, so today that check is exercised by
-// website/test/layout.mjs, which builds the layout with a page of its own in a temp copy.
+// through — so the whole generated layer is checked on every build that renders a page, and
+// every route under website/src/pages/ is one such build. website/test/layout.mjs exercises
+// the same code against the failures a build on a good tree cannot produce: it copies the
+// site, removes a generated file, drops a header, malforms a data file, and builds.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
@@ -198,12 +199,27 @@ function parseYAML(raw: string, file: string): Value {
     while (i < lines.length && lines[i].blank) i++
   }
 
+  // A flow sequence: `[darwin, linux]`, scalars separated by commas on the one line. It is
+  // its own function rather than a branch of `scalar` because a sequence is not a scalar —
+  // the branch returned `Scalar[]` from a function declared `Scalar`, which is a lie the
+  // compiler is entitled to believe and a reader is not. The site's data files use flow
+  // sequences of scalars and nothing nested inside them, so a nested collection is refused
+  // here rather than quietly read as a string: a reader that guesses is the shape of defect
+  // this module's own header is written against.
+  const flowSequence = (text: string, at: Line): Scalar[] => {
+    if (!text.endsWith(']')) fail(`the flow sequence ${JSON.stringify(text)} does not close on this line`, at)
+    const inner = text.slice(1, -1).trim()
+    if (inner === '') return []
+    return inner.split(',').map((part) => {
+      const item = part.trim()
+      if (item.startsWith('[') || item.startsWith('{')) {
+        fail(`the flow sequence ${JSON.stringify(text)} carries a nested collection, which is not in the subset this reader understands`, at)
+      }
+      return scalar(item, at)
+    })
+  }
+
   const scalar = (text: string, at: Line): Scalar => {
-    if (text.startsWith('[')) {
-      if (!text.endsWith(']')) fail(`the flow sequence ${JSON.stringify(text)} does not close on this line`, at)
-      const inner = text.slice(1, -1).trim()
-      return inner === '' ? [] : inner.split(',').map((part) => scalar(part.trim(), at))
-    }
     if (text.startsWith('"') || text.startsWith("'")) {
       if (text.length < 2 || !text.endsWith(text[0])) {
         fail(`the quoted scalar ${JSON.stringify(text)} does not close on this line`, at)
@@ -268,6 +284,7 @@ function parseYAML(raw: string, file: string): Value {
       if (next && next.indent > parentIndent) return block()
       return fail(`"${at.text}" has no value`, at)
     }
+    if (rest.startsWith('[')) return flowSequence(rest, at)
     if (BLOCK_SCALAR.test(rest)) return blockScalar(rest, parentIndent)
     return scalar(rest, at)
   }
