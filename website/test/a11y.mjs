@@ -227,6 +227,30 @@ export const PAIRS = [
   ['--accent', '--gradient-to', LARGE_OR_UI],
 ]
 
+// The pairs `base.css` paints — the page chrome and the element defaults every page gets.
+// Each one is also in PAIRS (a case below holds that), so each is computed for all three
+// palettes by the per-palette cases; this list is the record of which pairs the base layer
+// depends on, and the cases at the end of this file hold base.css to it in both directions:
+// a rule that sets a colour and a background names a pair listed here, and every colour
+// token the file paints with appears in some pair here.
+export const BASE_PAIRS = [
+  // The document: body text, headings and the wordmark on the ground.
+  ['--text', '--ground', BODY_TEXT],
+  // The quieter tone: nav links, the footer, definitions, captions, blockquotes, markers.
+  ['--text-muted', '--ground', BODY_TEXT],
+  // Links, and the wordmark on hover.
+  ['--accent-on-dark', '--ground', BODY_TEXT],
+  // Code chips, code blocks and table headers sit on the surface.
+  ['--text', '--surface', BODY_TEXT],
+  // The current page in the nav (accent text on a surface pill), and a link in a header cell.
+  ['--accent-on-dark', '--surface', BODY_TEXT],
+  // The focused skip link and the text selection: the ground as a label on the accent fill.
+  ['--ground', '--accent', BODY_TEXT],
+  // The focus ring, the current page's underline and the blockquote rule, as UI colours.
+  ['--accent', '--ground', LARGE_OR_UI],
+  ['--accent', '--surface', LARGE_OR_UI],
+]
+
 // The pairs of a palette that are below their ratio, as the lines a reader sees. Exported
 // with a `pairs` parameter so that the red-step case at the bottom of this file can run the
 // same function over a pair that is meant to fail.
@@ -411,3 +435,77 @@ export function assertColourFree(tokens) {
     }
   }
 }
+
+// ---- the base stylesheet ------------------------------------------------------------------
+
+// `base.css` paints the document and the chrome with the tokens, and it is held to the same
+// rule as the semantic layer — no colour of its own — plus the pair bookkeeping above.
+const BASE_FILE = 'base.css'
+
+// Every `property: value;` in a stylesheet, as [property, value] pairs (custom properties
+// included). Selectors never match: a selector ends in `{`, which a value cannot contain.
+function allDeclarations(css) {
+  return [...stripComments(css).matchAll(/(-{0,2}[a-zA-Z][a-zA-Z0-9-]*)\s*:\s*([^;{}]+);/g)].map(([, prop, value]) => [prop, value.trim()])
+}
+
+// The innermost `{ ... }` blocks, each as a list of declarations: one per rule.
+function rules(css) {
+  return [...stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, selector, body]) => ({
+    selector: selector.trim(),
+    decls: allDeclarations(`${body};`),
+  }))
+}
+
+const COLOUR_PROPS = /^(color|background|background-color|border(-[a-z]+)*|outline(-color)?|text-decoration(-color)?|fill|stroke)$/
+// The palette tokens a value names (spacing, radius and width tokens are not colours).
+const tokenIn = (value) =>
+  [...value.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g)].map((m) => m[1]).filter((t) => COLOUR_TOKENS.includes(t.slice(2)))
+const sameAs = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
+
+test('base.css carries no colour literal: every colour is a palette token', () => {
+  const decls = allDeclarations(readStyleFile(BASE_FILE))
+  assert.ok(decls.length > 0, 'base.css declares nothing: the page chrome is missing')
+  assertColourFree(new Map(decls.map(([prop, value], i) => [`${prop} (declaration ${i + 1})`, value])))
+})
+
+test('the colour literal scan refuses a hex, a colour function and a named colour in a declaration', () => {
+  for (const bad of ['a { color: #fff; }', 'a { color: rgb(1 2 3); }', 'a { background: hsl(0 0% 0%); }', 'a { color: white; }']) {
+    const decls = allDeclarations(bad)
+    assert.throws(() => assertColourFree(new Map(decls)), undefined, `the scan let ${bad} through`)
+  }
+})
+
+test('every pair base.css paints is in the contrast set, for all three palettes', () => {
+  for (const pair of BASE_PAIRS) {
+    assert.ok(
+      PAIRS.some((p) => sameAs(p, pair)),
+      `${pair[0]} on ${pair[1]} is a pair base.css paints and the contrast set does not check: add it to PAIRS`,
+    )
+  }
+
+  const listed = new Set(BASE_PAIRS.flatMap(([fg, bg]) => [fg, bg]))
+  const texts = new Set(BASE_PAIRS.map(([fg]) => fg))
+  for (const { selector, decls } of rules(readStyleFile(BASE_FILE))) {
+    let fg = null
+    let bg = null
+    for (const [prop, value] of decls) {
+      if (!COLOUR_PROPS.test(prop)) continue
+      for (const token of tokenIn(value)) {
+        // --border is a decorative separator, deliberately outside the pair set (see PAIRS).
+        if (token === '--border') continue
+        assert.ok(listed.has(token), `base.css paints ${token} in "${selector}" (${prop}), which no pair in BASE_PAIRS names`)
+      }
+      if (prop === 'color') fg = tokenIn(value)[0] ?? null
+      if (prop === 'background' || prop === 'background-color') bg = tokenIn(value)[0] ?? null
+    }
+    if (fg) {
+      assert.ok(texts.has(fg), `"${selector}" paints text in ${fg}, which BASE_PAIRS never uses as a text colour`)
+    }
+    if (fg && bg && fg !== bg) {
+      assert.ok(
+        BASE_PAIRS.some(([f, b]) => f === fg && b === bg),
+        `"${selector}" paints ${fg} on ${bg}, which is not in BASE_PAIRS (and so not checked for contrast)`,
+      )
+    }
+  }
+})

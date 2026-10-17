@@ -51,8 +51,9 @@ highest written section is 58 today.
 ## Nothing loads from a third party
 
 No font, script, stylesheet, image or embed reaches a page from an origin outside this
-build: a font is **self-hosted in this artifact** (`website/public/fonts/`, when the styles
-land in W1.2), and there is no Google Fonts, no CDN, no embed and no pixel — because every
+build: the pages use the system font stack `src/styles/tokens.css` names, no font file
+ships today, and a font added later is **self-hosted in this artifact**
+(`website/public/fonts/`, which the layout preloads from), and there is no Google Fonts, no CDN, no embed and no pixel — because every
 third-party origin is a request from a reader's browser to a company this project has no
 relationship with (D106). There is exactly **one exception, and the owner chose it**: the
 analytics script (D93), loaded **only after the visitor consents**, with W1.12's banner as

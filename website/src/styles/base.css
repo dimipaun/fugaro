@@ -1,0 +1,366 @@
+/* website/src/styles/base.css — the page chrome and the element defaults.
+ *
+ * `tokens.css` (W1.2) declares the vocabulary and nothing applied it: the built pages carried
+ * every token and painted the browser's defaults — a white page under the palette's pale
+ * text, an unstyled bullet list for a nav, serif body text, blue and purple links. This file
+ * is the missing layer. `Base.astro` imports it after `tokens.css`, so every page gets it,
+ * and it does three things:
+ *
+ *   1. paints the document: the ground, the text colour, the type, the content container;
+ *   2. styles the chrome `Base.astro` writes and no page owns: the skip link, the header,
+ *      the section nav and its current-page mark, the footer;
+ *   3. gives the plain elements a page renders (headings, links, lists, code, tables,
+ *      blockquotes) defaults that read on the dark ground.
+ *
+ * Two rules keep it from fighting the components:
+ *
+ *   - **Only tokens.** Every value that is a colour is a `var(--token)` from the palette in
+ *     force, and `website/test/a11y.mjs` fails on a hex, a colour function or a named colour
+ *     here, exactly as it does for `tokens.css`. The text/background pairs this file paints
+ *     are listed in that test's `BASE_PAIRS`, and each is computed for all three palettes.
+ *   - **Element defaults have no specificity.** Everything in part 3 is wrapped in `:where()`,
+ *     so any class or scoped selector a component writes wins over it without a fight and
+ *     regardless of the order the bundler emits the stylesheets in. The components' own
+ *     styles are theirs; this file only fills in what nobody set.
+ *
+ * Motion: the one transition here uses `--duration-fast`, and the global reduced-motion rule
+ * in `Base.astro` (W1.3, D105) neutralises it — that rule is not repeated here.
+ *
+ * Fonts: `--font-sans` and `--font-mono` are system stacks. The repository ships no font
+ * file (`website/public/fonts/` does not exist), so nothing is fetched (D106).
+ */
+
+/* ---- 1. the document ------------------------------------------------------------------ */
+
+:root {
+  /* Form controls, scrollbars and the canvas behind an overscroll follow the dark ground. */
+  color-scheme: dark;
+  background: var(--ground);
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+  font-weight: var(--weight-normal);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+}
+
+/* The content container: one column, centred, with the gutter the header and footer share
+ * so the three line up. A page whose top-level element is already a full container of its
+ * own (the hero, the security document) gets the column without a second gutter. */
+main {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding: var(--space-lg) var(--space-sm) var(--space-2xl);
+  overflow-wrap: break-word;
+}
+
+main:has(> .hero, > [data-security-page]) {
+  padding: 0;
+}
+
+/* ---- 2. the chrome ---------------------------------------------------------------------- */
+
+/* The skip link. `Base.astro` hides it until focus and positions it; this paints it in the
+ * palette (the accent as a fill, the ground as its label) instead of the system colours.
+ * `a.` raises the specificity above the layout's own `.skip-link:focus` rule. */
+a.skip-link:focus {
+  background: var(--accent);
+  color: var(--ground);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+
+.site-header,
+.site-footer {
+  box-sizing: border-box;
+  width: 100%;
+  /* The same left edge as `main`'s content, at every width. */
+  padding-inline: max(var(--space-sm), calc((100% - var(--page-max)) / 2 + var(--space-sm)));
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2xs) var(--space-lg);
+  padding-block: var(--space-sm);
+  border-bottom: var(--border-width) solid var(--border);
+  background: var(--ground);
+}
+
+.site-wordmark {
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  text-decoration: none;
+}
+
+.site-wordmark:hover {
+  color: var(--accent-on-dark);
+}
+
+/* The section nav: a horizontal bar that wraps onto as many lines as the viewport needs. It
+ * needs no script and no hidden menu: at 360px the ten sections are three short lines. */
+.site-nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3xs) var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-nav a {
+  display: inline-block;
+  padding: var(--space-3xs) var(--space-2xs);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+}
+
+.site-nav a:hover,
+.site-nav a:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+/* The current page: `Base.astro` marks it with `aria-current="page"`, which is also what a
+ * screen reader announces, so the visible mark and the spoken one are the same attribute. */
+.site-nav a[aria-current='page'] {
+  background: var(--surface);
+  color: var(--accent-on-dark);
+  font-weight: var(--weight-medium);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.35em;
+}
+
+.site-footer {
+  padding-block: var(--space-lg);
+  border-top: var(--border-width) solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.site-footer ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-footer a {
+  color: var(--text-muted);
+}
+
+.site-footer a:hover {
+  color: var(--text);
+}
+
+/* The focus ring, for everything: the accent at the token's width and offset, which is a UI
+ * pair the contrast test computes against the ground and the surface. */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ---- 3. the element defaults (all zero-specificity) ------------------------------------- */
+
+:where(h1, h2, h3, h4, h5, h6) {
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-tight);
+  margin: var(--space-lg) 0 var(--space-xs);
+  text-wrap: balance;
+}
+
+/* A heading that opens a box (a card, an article) sits at the box's padding, not below it. */
+:where(h1, h2, h3, h4, h5, h6):where(:first-child) {
+  margin-top: 0;
+}
+
+:where(h1) {
+  font-size: clamp(var(--font-size-2xl), 6vw, var(--font-size-3xl));
+  line-height: var(--leading-tight);
+  margin-top: 0;
+}
+
+:where(h2) {
+  font-size: var(--font-size-xl);
+}
+
+:where(h3) {
+  font-size: var(--font-size-lg);
+}
+
+:where(h4, h5, h6) {
+  font-size: var(--font-size-base);
+}
+
+/* Prose keeps to the measure; a component that wants a wider line sets its own max-width. */
+:where(p, ul, ol, dl, blockquote, figcaption) {
+  max-width: var(--measure);
+}
+
+:where(p) {
+  margin: 0 0 var(--space-sm);
+}
+
+/* Links in running text are underlined at all times: the accent is close to the body text's
+ * lightness, so colour alone would not mark a link (WCAG 1.4.1). Hover and focus thicken the
+ * underline. */
+:where(a) {
+  color: var(--accent-on-dark);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-thickness var(--duration-fast) var(--ease-out);
+}
+
+:where(a:hover, a:focus-visible) {
+  text-decoration-thickness: 2px;
+}
+
+:where(ul, ol) {
+  margin: 0 0 var(--space-sm);
+  padding-left: var(--space-md);
+}
+
+:where(li)::marker {
+  color: var(--text-muted);
+}
+
+:where(dt) {
+  font-weight: var(--weight-semibold);
+}
+
+:where(dd) {
+  margin: 0 0 var(--space-xs);
+  color: var(--text-muted);
+}
+
+:where(strong, b) {
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+
+:where(blockquote) {
+  margin: 0 0 var(--space-sm);
+  padding-left: var(--space-sm);
+  border-left: calc(var(--border-width) * 3) solid var(--accent);
+  color: var(--text-muted);
+}
+
+:where(hr) {
+  border: 0;
+  border-top: var(--border-width) solid var(--border);
+  margin: var(--space-lg) 0;
+}
+
+:where(code, kbd, samp, pre) {
+  font-family: var(--font-mono);
+}
+
+:where(code, kbd, samp) {
+  font-size: 0.9em;
+  padding: 0.1em 0.3em;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+:where(pre) {
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-sm);
+  overflow-x: auto;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-snug);
+}
+
+/* A code element inside a block is the block's text, not a chip inside it. */
+:where(pre) :where(code) {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+:where(table) {
+  border-collapse: collapse;
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-sm);
+}
+
+:where(th, td) {
+  padding: var(--space-2xs) var(--space-xs);
+  border-bottom: var(--border-width) solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  /* A long flag or path may break, so a table narrows to the viewport instead of pushing
+   * the page sideways on a phone. */
+  overflow-wrap: anywhere;
+}
+
+:where(th) {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+}
+
+:where(caption) {
+  color: var(--text-muted);
+  text-align: left;
+  padding-bottom: var(--space-2xs);
+}
+
+/* A box inside the content may shrink below its content's width. Without this a flex or grid
+ * item's minimum is its widest unbreakable line — an install command, a long flag — and one
+ * such line pushes the whole page sideways on a phone; with it, the code block inside the
+ * box scrolls instead (`pre` above), which is what it is for. */
+:where(main) :where(div, section, article, li, figure) {
+  min-width: 0;
+}
+
+:where(img, video) {
+  max-width: 100%;
+  height: auto;
+}
+
+:where(::selection) {
+  background: var(--accent);
+  color: var(--ground);
+}
+
+/* ---- wider viewports ------------------------------------------------------------------- */
+
+@media (min-width: 48rem) {
+  main {
+    padding: var(--space-xl) var(--space-md) var(--space-3xl);
+  }
+
+  .site-header,
+  .site-footer {
+    padding-inline: max(var(--space-md), calc((100% - var(--page-max)) / 2 + var(--space-md)));
+  }
+}
