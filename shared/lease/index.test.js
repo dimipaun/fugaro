@@ -15,6 +15,13 @@
 //     here: `internal/runstore/launch.go`'s Claim/ClaimTTL is the tree's only
 //     claim, so this module is that shape and these tests are what keep it
 //     that shape.
+//   * the TTL belongs to the lease's **state** and not to each take. The
+//     first version of this file passed a TTL per take, and the module that
+//     satisfied it let a caller with a shorter TTL take over a lease its
+//     holder still considered fresh -- which is the two-consumers failure
+//     below, arrived at through the parameter. One state carries one TTL for
+//     as long as it holds a claim, so two judgements about one lease cannot
+//     disagree; a test asserts that a takeover keeps the same TTL.
 //   * the refusal -- a second holder inside the TTL is answered
 //     `already-claimed`, with the holder it was refused by, and the refused
 //     take does not disturb the claim. This is the whole reason the module
@@ -64,6 +71,8 @@ test('a lease has a holder and a timestamp, and its TTL defaults to ClaimTTL', (
   assert.equal(CLAIM_TTL, 600_000);
 
   const empty = emptyLeaseState();
+  assert.equal(empty.ttl, CLAIM_TTL); // the default, and the only TTL a take uses
+  assert.equal(emptyLeaseState(1_000).ttl, 1_000);
   assert.deepEqual(readLease(empty), { ok: true, lease: null });
 
   const taken = takeLease(empty, { holder: 'consumer-a', at: AT });
@@ -165,22 +174,23 @@ test('a lease is released only by its holder, and only when one is held', () => 
   assert.equal(none.code, LEASE_CODES.NO_LEASE);
 });
 
-test('the TTL is a parameter, not a constant', () => {
-  const short = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT, ttl: 1_000 });
+test('the TTL is a parameter of the lease, and ClaimTTL is its default', () => {
+  const short = takeLease(emptyLeaseState(1_000), { holder: 'consumer-a', at: AT });
   assert.equal(short.ok, true);
-  const insideShort = takeLease(short.state, { holder: 'consumer-b', at: AT + 999, ttl: 1_000 });
+  const insideShort = takeLease(short.state, { holder: 'consumer-b', at: AT + 999 });
   assert.equal(insideShort.code, 'already-claimed');
-  const pastShort = takeLease(short.state, { holder: 'consumer-b', at: AT + 1_000, ttl: 1_000 });
-  assert.equal(pastShort.ok, true);
 
-  // A longer TTL protects longer: ten minutes is stale under the default and
-  // still fresh under an hour's.
-  const long = takeLease(emptyLeaseState(), {
-    holder: 'consumer-a',
-    at: AT,
-    ttl: 60 * 60 * 1000,
-  });
-  const underLong = takeLease(long.state, { holder: 'consumer-b', at: AT + CLAIM_TTL });
+  // The takeover is protected for the same 1,000 ms: the TTL is the lease's,
+  // so a second judgement about the same lease cannot use a different one.
+  const pastShort = takeLease(short.state, { holder: 'consumer-b', at: AT + 1_000 });
+  assert.equal(pastShort.ok, true);
+  assert.equal(pastShort.state.ttl, 1_000);
+
+  // A longer TTL protects longer: the same instant is stale under a second
+  // and fresh under the default ten minutes.
+  const long = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT });
+  assert.equal(long.state.ttl, CLAIM_TTL);
+  const underLong = takeLease(long.state, { holder: 'consumer-b', at: AT + 1_000 });
   assert.equal(underLong.code, 'already-claimed');
 });
 
@@ -191,6 +201,11 @@ test('an unknown field is refused, not ignored', () => {
 
   const request = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT, note: 'x' });
   assert.equal(request.code, LEASE_CODES.UNKNOWN_FIELD);
+
+  // A take carries a holder and an instant and nothing else: the TTL is the
+  // lease's, so a per-take one is not a thing this module accepts.
+  const perTake = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT, ttl: 1_000 });
+  assert.equal(perTake.code, LEASE_CODES.UNKNOWN_FIELD);
 
   // A state carries its claim under `claim`, and nothing else.
   const taken = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT });
@@ -278,12 +293,21 @@ test('a blank, padded, control-character or oversize holder is refused', () => {
 
 test('a malformed TTL is refused', () => {
   // A TTL of zero would make every claim stale the instant it was taken,
-  // which is the same as having no lease at all: refused, not defaulted.
-  for (const ttl of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, '600000', null]) {
-    const refused = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT, ttl });
+  // which is the same as having no lease at all: refused, not defaulted. The
+  // malformed TTL is the state's, so every use of that state is refused by
+  // it -- the state does not become usable by reading it.
+  for (const ttl of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.5, '600000', null]) {
+    const state = emptyLeaseState(ttl);
+    const refused = takeLease(state, { holder: 'consumer-a', at: AT });
     assert.equal(refused.ok, false);
     assert.equal(refused.code, LEASE_CODES.BAD_TTL);
+    assert.equal(readLease(state).code, LEASE_CODES.BAD_TTL);
+    assert.equal(releaseLease(state, { holder: 'consumer-a' }).code, LEASE_CODES.BAD_TTL);
   }
+
+  // A state with no TTL at all is not a state, either.
+  const noTTL = { claim: null };
+  assert.equal(takeLease(noTTL, { holder: 'consumer-a', at: AT }).code, LEASE_CODES.MISSING_FIELD);
 });
 
 test('a held claim that is not a lease is refused, never taken over', () => {
@@ -302,7 +326,7 @@ test('a held claim that is not a lease is refused, never taken over', () => {
     'consumer-a',
   ];
   for (const claim of unreadable) {
-    const state = { claim };
+    const state = { claim, ttl: CLAIM_TTL };
     const taken = takeLease(state, { holder: 'consumer-b', at: AT + 100 * CLAIM_TTL });
     assert.equal(taken.ok, false);
     assert.equal(taken.code, LEASE_CODES.UNREADABLE_CLAIM);
@@ -313,8 +337,9 @@ test('a held claim that is not a lease is refused, never taken over', () => {
 
   // A state that is not a state is refused the same way, by its own code.
   assert.equal(readLease({}).code, LEASE_CODES.MISSING_FIELD);
+  assert.equal(readLease({ ttl: CLAIM_TTL }).code, LEASE_CODES.MISSING_FIELD);
   assert.equal(readLease(null).code, LEASE_CODES.BAD_TYPE);
-  assert.equal(readLease({ claim: null, extra: 1 }).code, LEASE_CODES.UNKNOWN_FIELD);
+  assert.equal(readLease({ claim: null, ttl: CLAIM_TTL, extra: 1 }).code, LEASE_CODES.UNKNOWN_FIELD);
 });
 
 test('the module reads no clock and no randomness of its own', () => {
