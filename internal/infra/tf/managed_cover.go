@@ -305,7 +305,11 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		// address is listed — otherwise the list would be a way past every
 		// rule about the resource, which is the failure this gate exists to
 		// avoid.
-		delete := slices.Contains(acts, "delete")
+		// acts is one of managedActions' sets past the switch below, so a set
+		// that names "delete" is a destroy or a replace, and the two are told
+		// apart by how many actions it has.
+		removes := slices.Contains(acts, "delete")
+		destroy := slices.Equal(acts, []string{"delete"})
 		switch {
 		case len(acts) == 0:
 			add(rc, "no actions")
@@ -313,24 +317,24 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case !managedActions(acts):
 			add(rc, "actions "+strings.Join(acts, ", "))
 			continue
-		case delete && !slices.Contains(c.AllowDelete, rc.Address):
+		case removes && !slices.Contains(c.AllowDelete, rc.Address):
 			add(rc, "actions "+strings.Join(acts, ", ")+": an address that is not on the owner's delete list")
 			continue
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
 			continue
 		}
-		// A replace is judged twice, on both resources: the one the plan
-		// creates, read from after as a create is, and the one it removes,
-		// read from before (removed). A destroy has no after to read, so only
-		// the removed resource is judged.
-		if !allOf(acts, "delete") {
+		// Both resources of a replace are judged — the one it creates, read
+		// from after as a create is, and the one it removes, read from before
+		// (removed) — while a destroy has nothing in after to read and is
+		// judged on the resource it removes alone.
+		if !destroy {
 			if why := c.notCoveredResource(rc, declared, imports); why != "" {
 				add(rc, why)
 				continue
 			}
 		}
-		if delete {
+		if removes {
 			if why := c.notCoveredResource(removed(rc), declared, imports); why != "" {
 				add(rc, why)
 			}
