@@ -805,6 +805,19 @@ Each row is one mergeable PR, green on its own:
 
 **Commit:** `managed: the marker and delete-list negatives, re-run against the compute backend's run credential`
 
+### Task 6.3: Prune the delete list after the applied delete, or bind its entries to the before-identity — SECURITY-SENSITIVE, independent opus review — UNSCHEDULED until the owner schedules it
+
+**Files:** `internal/infra/managed/deletelist.go`, `internal/infra/tf/managed_cover.go` and their tests; the apply path of Task 3.1.
+
+**Steps.** The known limit in the design's §6 item 5: the owner's list (D74) holds exact addresses, not resource identity, and is never pruned, so an approved delete of address B remains a reusable permission for any object the managed rules admit at B. The approved format is not amended here or by PR #520, which records the limit and closes only the `moved` shape of it. Two ways to close the rest, either a change the owner decides:
+
+1. **Prune after the applied delete (recommended).** After a managed apply that removed a listed address succeeds, the owner-run writer (or the apply itself, if D74's "never the apply identity" is revisited) removes that entry, so one approval admits one delete. It keeps the approved format, and the list stays something an owner reads. Its cost: the apply identity cannot write the list (D74), so pruning needs either an owner-run step after each apply or a narrow exception to D74, which is the owner's ruling to make.
+2. **Bind each entry to the before-identity.** An entry carries the address and the identity of the object it approves (project, type, name or ID as `before` shows it), and the cover admits a delete only when `before` matches. It closes reuse without a write after the apply, but it changes the owner-approved format and what `fugaro allow-delete` asks the owner for.
+
+**Tests:** whichever is chosen, a second delete at an address whose approved delete was applied is refused; under option 2, a listed address whose `before` names another object is refused.
+
+**Depends on:** Task 1.4 (the list) and Task 3.1 (the apply that would prune it).
+
 ## Cross-task dependencies
 
 Every task's "Depends on" is a *build* dependency, and **the phases are delivery order rather than a chain**: with the "Parallel execution" levels above, most tasks in phases 1 to 5 build at the same time as each other, and the phase headings say what a task belongs to rather than what it waits for. **The dependencies that cross a phase boundary are the ones listed below and no others** — and two of the bullets below stay *inside* one phase (Task 0.1 → Task 0.2, Task 5.2 → Task 5.3); they are listed with them rather than left for a reader to find. **Phase 0 is a real precondition for the gate and not an exception to the rule**: phases 1 to 5 read the marker phase 0 writes, so 0 comes first — deliberately, because the marker is the privilege boundary and there is no safe way to build the gate before the fact it is gated on exists.

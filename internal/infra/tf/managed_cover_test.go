@@ -1716,3 +1716,112 @@ func TestManagedCoverIsDeletable(t *testing.T) {
 		t.Error("WithDeleteList changed the cover's own inputs: it is the cover with a list added, and nothing else")
 	}
 }
+
+// TestManagedCoverRefusesAMovedDeleteUnderAListedAddress: the delete list
+// names addresses, and a moved block puts another address's object under a
+// listed one. The plan terraform writes for `moved { from = A, to = B }` with
+// B in neither state nor configuration is address=B, previous_address=A,
+// actions=[delete], action_reason=delete_because_no_move_target, with A's
+// object in before — so with B listed, A would be deleted. Refused for the
+// move, whatever the resource; and a moved replace in either order, whose
+// reason is no delete_because_*, refused by previous_address alone.
+func TestManagedCoverRefusesAMovedDeleteUnderAListedAddress(t *testing.T) {
+	p, err := parsePlan([]byte(movedDeletePlanJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := p.ResourceChanges[0]
+	// A resource the cover would admit at its own address, so the move is
+	// the only reason left to refuse it.
+	moved.Change.Before = destroyed(managedKeptFixture["google_storage_bucket"]).Change.Before
+	for name, mut := range map[string]func(*ResourceChange){
+		"the no-move-target delete": func(*ResourceChange) {},
+		"a moved replace, delete first": func(rc *ResourceChange) {
+			rc.ActionReason = "replace_because_cannot_update"
+			rc.Change.Actions = []string{"delete", "create"}
+			rc.Change.After = rc.Change.Before
+		},
+		"a moved replace, create first": func(rc *ResourceChange) {
+			rc.ActionReason = "replace_by_request"
+			rc.Change.Actions = []string{"create", "delete"}
+			rc.Change.After = rc.Change.Before
+		},
+		"delete_because_no_move_target with no previous address": func(rc *ResourceChange) { rc.PreviousAddress = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			rc := moved
+			mut(&rc)
+			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			out := c.NotCovered(managedPlan(rc), nil)
+			if len(out) != 1 || !strings.Contains(out[0], "moved here from") {
+				t.Fatalf("a moved removal under a listed address gives %q, want it refused for the move", out)
+			}
+		})
+	}
+	// The control: the same change at its own address — no previous_address,
+	// no move reason — is admitted, so the refusals above are the move's.
+	own := moved
+	own.PreviousAddress, own.ActionReason = "", ""
+	if out := managedTestCover().WithDeleteList([]string{own.Address}).NotCovered(managedPlan(own), nil); len(out) != 0 {
+		t.Fatalf("the same delete without the move gives %q, want it covered", out)
+	}
+}
+
+// TestManagedCoverAdmitsTheListedAddressOwnRemovals: the reasons that delete
+// the listed address's own object — its configuration went away, or its count
+// or for_each — and a deposed object of the listed address, judged on its own
+// before like any other delete; a previous_address equal to the address is not
+// a move.
+func TestManagedCoverAdmitsTheListedAddressOwnRemovals(t *testing.T) {
+	cases := map[string]func(*ResourceChange){
+		"previous_address is the address": func(rc *ResourceChange) { rc.PreviousAddress = rc.Address },
+		"a deposed object":                func(rc *ResourceChange) { rc.Deposed = "00000001" },
+		"a tainted replace": func(rc *ResourceChange) {
+			rc.ActionReason = "replace_because_tainted"
+			rc.Change.Actions = []string{"delete", "create"}
+			rc.Change.After = rc.Change.Before
+		},
+	}
+	for _, r := range []string{"delete_because_no_resource_config", "delete_because_wrong_repetition",
+		"delete_because_count_index", "delete_because_each_key", "delete_because_no_module"} {
+		cases[r] = func(rc *ResourceChange) { rc.ActionReason = r }
+	}
+	for name, mut := range cases {
+		t.Run(name, func(t *testing.T) {
+			rc := destroyed(managedKeptFixture["google_storage_bucket"])
+			mut(&rc)
+			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
+				t.Fatalf("a listed removal of the address's own object gives %q, want it covered", out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverJudgesADeposedObjectOnItsOwnBefore: a deposed object of a
+// listed address is the address's own, and it is judged on the resource in its
+// own before — a deposed bucket outside the managed prefix is refused although
+// the address is listed and its current object would be admitted.
+func TestManagedCoverJudgesADeposedObjectOnItsOwnBefore(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket"])
+	rc.Deposed = "00000001"
+	rc.Change.Before = map[string]any{"name": "fugaro-runs-proj-1"}
+	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	out := c.NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
+		t.Fatalf("a listed deposed delete of a bucket outside the prefix gives %q, want the prefix rule", out)
+	}
+}
+
+// TestManagedCoverRefusesAnUnknownRemovalReason: a delete or replace reason
+// the managed rule has not read — one a later terraform adds — is refused
+// rather than read as a removal of the address's own object.
+func TestManagedCoverRefusesAnUnknownRemovalReason(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket"])
+	rc.ActionReason = "delete_because_something_new"
+	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	out := c.NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "action_reason delete_because_something_new") {
+		t.Fatalf("an unknown removal reason gives %q, want it refused", out)
+	}
+}

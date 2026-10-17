@@ -58,6 +58,19 @@ type ResourceChange struct {
 	// ProviderName is the provider's full source address, such as
 	// registry.terraform.io/hashicorp/google.
 	ProviderName string `json:"provider_name"`
+	// PreviousAddress is set when a moved block (or a refactoring terraform
+	// infers) moves the resource here from another address: the object the
+	// change acts on — the one in before — was at PreviousAddress. A delete
+	// or a replace that carries one removes the object of another address
+	// than its own, so the delete rule refuses it (removesUnderAnotherAddress).
+	PreviousAddress string `json:"previous_address"`
+	// Deposed is the deposed key when the change acts on a deposed object of
+	// the address rather than its current one.
+	Deposed string `json:"deposed"`
+	// ActionReason is terraform's reason for the actions, such as
+	// delete_because_no_resource_config or replace_because_tainted; empty
+	// when it gives none.
+	ActionReason string `json:"action_reason"`
 	Change       Change `json:"change"`
 }
 

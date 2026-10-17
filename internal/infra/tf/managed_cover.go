@@ -333,6 +333,16 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case removes && !slices.Contains(c.AllowDelete, rc.Address):
 			add(rc, "actions "+strings.Join(acts, ", ")+": an address that is not on the owner's delete list")
 			continue
+		// The list names an address, and the object a removal takes away is
+		// the one in before: with a moved block that object was at another
+		// address, so a listed address would admit the delete of an unlisted
+		// one. Refused, as tf.Guard refuses it (removesUnderAnotherAddress).
+		case removes && removesUnderAnotherAddress(rc):
+			add(rc, "actions "+strings.Join(acts, ", ")+": "+movedRemovalReason(rc))
+			continue
+		case removes && !managedRemovalReasons[rc.ActionReason]:
+			add(rc, "actions "+strings.Join(acts, ", ")+": action_reason "+rc.ActionReason+", which the managed delete rule does not know")
+			continue
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
 			continue
@@ -354,6 +364,28 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		}
 	}
 	return out
+}
+
+// managedRemovalReasons are the action_reason values a listed delete or
+// replace may carry, every one of them a removal of the address's own object:
+// none (a plain destroy), the four replace reasons, and the deletes of an
+// address whose configuration went away — its resource block, its module, its
+// count or for_each, or one of its instance keys. delete_because_no_move_target
+// is not here: it is a moved object with nowhere to go, the object of another
+// address (removesUnderAnotherAddress refuses it first). A reason a later
+// terraform adds is refused until it is read and added, fail closed like the
+// action sets.
+var managedRemovalReasons = map[string]bool{
+	"":                                  true,
+	"replace_because_tainted":           true,
+	"replace_because_cannot_update":     true,
+	"replace_by_request":                true,
+	"replace_by_triggers":               true,
+	"delete_because_no_resource_config": true,
+	"delete_because_no_module":          true,
+	"delete_because_wrong_repetition":   true,
+	"delete_because_count_index":        true,
+	"delete_because_each_key":           true,
 }
 
 // managedActions: the plan action sets a managed plan may carry. Terraform's
