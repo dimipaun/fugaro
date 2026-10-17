@@ -1229,6 +1229,17 @@ matches. A fake token that is a *literal* is indistinguishable from a leaked one
 to GitHub's push protection and to a reader, and the console's own tests would be
 the last place to find out.
 
+The rule is now a test rather than a habit: `test/unit/secret-hygiene.test.ts`
+walks `src/`, `test/`, `tools/`, `docs/`, `README.md` and `package.json` and
+fails on the first line matching a credential shape — the forges' prefixes, the
+vendors' keys, a JWT's first segment, a PEM header — with the patterns themselves
+assembled from fragments and the scan checked against a planted line, so a scan
+that cannot fail is not mistaken for one that passes. Turning the rule on it
+found and removed seventeen literals left by Task 1.4's own suites (one of them
+a 36-character body that is exactly what a leaked GitHub token looks like), and
+`TOKEN_RES`'s first pattern in `src/source/redact.ts` is now built from
+fragments, character-for-character the expression it was.
+
 ### What is deliberately not here (Task 2.0)
 
 - **Any screen, and the wiring to the bridge.** `app.ts` has the writers and

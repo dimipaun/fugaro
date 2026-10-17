@@ -22,6 +22,7 @@ import {
   foldConfusables,
 } from '../../src/source/redact'
 import { SYNTHETIC_META } from './synthetic'
+import { inert } from '../support/fakeSecrets'
 
 const KEY = 'redact-final-test-only-key'
 
@@ -110,7 +111,7 @@ describe('every rule runs in linear time, and a string has a hard cap (review it
     base64: (n) => 'QUFB'.repeat(n / 4),
     jwt: (n) => 'eyJ-'.repeat(n / 4),
     sk: (n) => 'sk-'.repeat(n / 3),
-    pem: (n) => '-----BEGIN PRIVATE KEY-----'.repeat(n / 27),
+    pem: (n) => inert('-----BEGIN ', 'PRIVATE KEY-----').repeat(n / 27),
     labels: (n) => `${'a'.repeat(60)}.`.repeat(n / 61),
     accented: (n) => 'é'.repeat(n),
     ipish: (n) => '1.1.1.'.repeat(n / 6),
@@ -260,12 +261,12 @@ describe('hostile shapes (review item 6)', () => {
   })
 
   it('redacts a token split across adjacent array elements', () => {
-    const out = red({ parts: ['ghp_', 'abcdEFGH', '1234abcdEFGH1234'] })
+    const out = red({ parts: [inert('gh', 'p_'), 'abcdEFGH', '1234abcdEFGH1234'] })
     expect(out).not.toContain('abcdEFGH')
     expect(out).toContain(TOKEN_MARKER)
     expect(red({ parts: ['access_token=', 'hunter2'] })).not.toContain('hunter2')
     expect(() => {
-      assertRedacted({ parts: ['ghp_', 'abcdEFGH', '1234abcdEFGH1234'] })
+      assertRedacted({ parts: [inert('gh', 'p_'), 'abcdEFGH', '1234abcdEFGH1234'] })
     }).toThrow(RedactionRefusal)
     const words = { labels: ['bug', 'console', 'p1'] }
     expect(red(words)).toBe(JSON.stringify(words))
@@ -279,7 +280,7 @@ describe('inputs only one step catches (review item 8)', () => {
   })
 
   it('decodes a base64 run too short for the entropy rule', () => {
-    const wrapped = Buffer.from('ghp_abcdEFGH').toString('base64')
+    const wrapped = Buffer.from(inert('gh', 'p_', 'abcdEFGH')).toString('base64')
     expect(wrapped.length).toBeLessThan(20)
     expect(red({ t: `see ${wrapped} now` })).toBe(JSON.stringify({ t: `see ${TOKEN_MARKER} now` }))
   })

@@ -27,6 +27,7 @@ import {
   createRedactor,
 } from '../../src/source/redact'
 import { SYNTHETIC_META } from './synthetic'
+import { inert } from '../support/fakeSecrets'
 
 /** red redacts one document and returns its JSON, which is what a fixture
  * would have carried: a test asserts on the text, because a leak is a leak
@@ -162,12 +163,17 @@ describe("the installation's literals, however they are spelled", () => {
   })
 })
 
+/** GOOGLE_BODY is the body of a fixed Google access token, assembled from two
+ * fragments so that no line here is one: the tests below wrap it, split it and
+ * embed it, and every one of them wants the same string. */
+const GOOGLE_BODY = inert('a0AfH6SMBx7Kq2pLm9TzW', 'v4Yb7Nc3Pd1Hs6Jf0Ga5Q')
+
 describe('credentials the shape list did not know', () => {
-  const ghp = 'ghp_R8x2KqLm9TzWv4Yb7Nc3Pd1Hs6Jf0Ga5QeUi'
+  const ghp = inert('gh', 'p_', 'R8x2KqLm9TzWv4Yb7Nc3Pd1Hs6Jf0Ga5QeUi')
 
   it.each([
-    ['a Google access token', 'ya29.a0AfH6SMBx7Kq2pLm9TzWv4Yb7Nc3Pd1Hs6Jf0Ga5Q'],
-    ['a Google refresh token', '1//0gAbCdEfGhIjKlMnOpQrStUvWxYz0123456789'],
+    ['a Google access token', inert('ya', '29.', GOOGLE_BODY)],
+    ['a Google refresh token', inert('1/', '/0', 'gAbCdEfGhIjKlMnOpQrStUvWxYz0123456789')],
     ['a URL-encoded token', `ghp%5F${ghp.slice(4)}`],
     ['a base64-wrapped token', b64(ghp)],
     ['a base64-wrapped assignment', b64(`password=hunter2hunter2`)],
@@ -271,7 +277,7 @@ describe('the loader, with no literals in hand', () => {
     ['a non-ASCII address', { title: 'ping zorá@widgetco.example' }],
     ['a branch field', { branch: 'acme-merger-codename' }],
     ['a hostname', { reason: 'lookup zoras-laptop-pro.local' }],
-    ['a token', { message: 'ya29.a0AfH6SMBx7Kq2pLm9TzWv4Yb7Nc3Pd1Hs6Jf0Ga5Q' }],
+    ['a token', { message: inert('ya', '29.', GOOGLE_BODY) }],
     ['a GCP project in a sentence', { reason: 'denied on project acme-devel-zora' }],
   ])('refuses a hand-edited fixture carrying %s', (_what, document) => {
     expect(() => loadFixture(writeFixture(records(document), SYNTHETIC_META), 'edited.ndjson')).toThrow(FixtureRefusal)
@@ -283,7 +289,7 @@ describe('every input above, redacted twice', () => {
     const hostile = {
       title: 'ping zorá@widgetco.example on Zoras-Laptop-Pro via 10.42.7.13:443',
       reason: 'permission denied on project acme-devel-zora, bucket fugaro-runs-acme-devel-zora',
-      message: 'access_token=abcdefghijklmnop12345 then ya29.a0AfH6SMBx7Kq2pLm9TzWv4Yb7Nc3Pd1Hs6Jf0Ga5Q',
+      message: `access_token=abcdefghijklmnop12345 then ${inert('ya', '29.', GOOGLE_BODY)}`,
       note: 'read /Users/Zora Kell/secret-plan/x and lookup acme-devel-zora-default-rtdb.firebaseio.com',
       runs: [{ branch: 'dm/q4', base_branch: 'release-2027-secret', oauth_account: 'zora-work', halt: { by: 'Zora Kell' } }],
       ＦＵＧＡＲＯ: 1,

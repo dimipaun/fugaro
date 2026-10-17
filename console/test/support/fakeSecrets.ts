@@ -39,6 +39,18 @@ function repeat(character: string, count: number): string {
   return character.repeat(count)
 }
 
+/**
+ * inert assembles a shape out of fragments for a test that needs a *piece* of a
+ * credential rather than one of the whole values below: half of a token split
+ * across two array elements, a body to wrap in base64, a header on its own. It
+ * is `piece` under a name a reader of a foreign test file can read --
+ * `inert('gh', 'p_')` says "assembled here, on purpose", where a bare prefix
+ * says nothing and a scanner cannot tell the difference.
+ */
+export function inert(...fragments: readonly string[]): string {
+  return piece(...fragments)
+}
+
 /** highEntropyRun is a 20-character run that mixes upper case, lower case and
  * digits -- the one arrangement `isHighEntropy` calls a credential. It is
  * deliberately **not** written literally in the tests either, for the same

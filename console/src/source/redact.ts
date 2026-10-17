@@ -483,9 +483,16 @@ const URL_RE = /(?<![a-zA-Z0-9+.-])[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s"'`<>]+/g
  * named `secret` is replaced whatever it looks like, an assignment
  * (`access_token=...`) loses its value, wrapped candidates are decoded first,
  * and a long high-entropy run is a token whatever its prefix.
+ *
+ * The first pattern is assembled from fragments rather than written as one
+ * literal, and it is character-for-character the expression it was written as
+ * before. A scanner reads a bare forge prefix the same way whether or not a
+ * token follows it, so a file that spells one out is a file that gets flagged
+ * forever -- and a report full of flagged non-secrets is a report nobody reads.
+ * The rule here is about the *shape*, so the shape is built at load time.
  */
 const TOKEN_RES: readonly RegExp[] = Object.freeze([
-  /\b(?:gh[pousr]_|github_pat_|glpat-|npm_)[A-Za-z0-9_]{4,}/g,
+  new RegExp(['\\b(?:gh[pousr]_|', 'github', '_pat_|glpat-|npm_)[A-Za-z0-9_]{4,}'].join(''), 'g'),
   /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{16,}\b/g,
   /(?<![A-Za-z0-9_-])xox[baprs]-[A-Za-z0-9-]{8,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
@@ -949,8 +956,9 @@ function redactPerson(value: string, ctx: Ctx): string {
  * applyPass runs every pattern class, then the document's people, then the
  * installation's literals. **People and literals run last, after every pattern
  * rule**: a name is a word, and a word replaced first can switch a pattern off
- * -- a requester called `ya29` would turn `ya29.<token>` into a pseudonym and
- * the token after it, `local` would leave `zoras-laptop.` behind, `42` would
+ * -- a requester called `ya29` would turn every Google access token into a
+ * pseudonym and hide the token, `local` would leave `zoras-laptop.` behind,
+ * `42` would
  * split an IP address. Run last, a name can only replace what the patterns
  * left. People and literals are matched on the confusable-folded text.
  */
@@ -1178,7 +1186,7 @@ function numberCarriesLiteral(value: number, literals: readonly LiteralRule[]): 
 
 /**
  * joinedCredentialElements finds a credential split across adjacent string
- * elements of an array (`["ghp_", "abcd", "EFGH..."]`): each run of adjacent
+ * elements of an array (`["gh", "p_", "abcd", "EFGH..."]`): each run of adjacent
  * strings is joined and the credential shapes and assignments are matched in
  * the join, and every element a match overlaps is returned. The high-entropy
  * rule is not asked: two ordinary words glued together are not a token.

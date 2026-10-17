@@ -25,6 +25,7 @@ import {
   createRedactor,
 } from '../../src/source/redact'
 import { SYNTHETIC_META } from './synthetic'
+import { inert, pemBlock } from '../support/fakeSecrets'
 
 const KEY = 'redact-persons-test-only-key'
 
@@ -48,15 +49,19 @@ function message(run: () => unknown): string {
 // A fixed "random" body, so a failure prints the same thing twice.
 const BODY60 = 'Q7xk2PzR9mWb4LcV8nTy3HdJ6fGs1AeU5oKi0rZqXwYvBpNjMhCtDlEgFuSa'
 const HEX12 = 'a1b2c3d4e5f6'
+/** SPLIT_BODY is a forge-shaped token, assembled here because three tests below
+ * embed it in a sentence: a literal one would be a shape a scanner matches, and
+ * the tests are about what the redactor does with the shape, not the value. */
+const SPLIT_BODY = inert('gh', 'p_', 'abcdEFGH1234abcdEFGH1234abcdEFGH1234')
 
 describe('people are matched after every pattern rule, so a person cannot switch one off', () => {
   // [the requester, the text, what must not survive, what must be there]
   const cases: readonly (readonly [string, string, string, string])[] = [
-    ['ya29', `ya29.${BODY60}`, BODY60.slice(0, 20), TOKEN_MARKER],
+    ['ya29', inert('ya', '29.', BODY60), BODY60.slice(0, 20), TOKEN_MARKER],
     ['password', 'login failed: password=hunter2xyz rejected', 'hunter2xyz', TOKEN_MARKER],
     ['bearer', `Authorization: Bearer ${HEX12}`, HEX12, TOKEN_MARKER],
-    ['BEGIN', '-----BEGIN PRIVATE KEY-----\nMIIabcDEF\n-----END PRIVATE KEY-----', 'MIIabcDEF', TOKEN_MARKER],
-    ['private', '-----BEGIN PRIVATE KEY-----\nMIIabcDEF\n-----END PRIVATE KEY-----', 'MIIabcDEF', TOKEN_MARKER],
+    ['BEGIN', pemBlock('MIIabcDEF'), 'MIIabcDEF', TOKEN_MARKER],
+    ['private', pemBlock('MIIabcDEF'), 'MIIabcDEF', TOKEN_MARKER],
     ['local', 'on zoras-laptop.local now', 'zoras', HOST_MARKER],
     ['com', 'on zoras-laptop.corp.acme.com now', 'acme', HOST_MARKER],
     ['internal', 'dial db.acme.internal', 'acme', HOST_MARKER],
@@ -83,7 +88,7 @@ describe('people are matched after every pattern rule, so a person cannot switch
   it('still replaces the person wherever the pattern rules left them', () => {
     const out = redactor().redactDocument({
       requested_by: 'Zora Kell',
-      t: 'Zora Kell pushed ghp_abcdEFGH1234abcdEFGH1234abcdEFGH1234 from zoras-laptop.local',
+      t: `Zora Kell pushed ${SPLIT_BODY} from zoras-laptop.local`,
     }) as { requested_by: string; t: string }
     expect(out.t).toBe(`${out.requested_by} pushed ${TOKEN_MARKER} from ${HOST_MARKER}`)
   })
@@ -161,7 +166,7 @@ describe('which values are persons, and where a person is replaced', () => {
 
   it('never takes a marker word for a person, so a marker stays a marker', () => {
     for (const person of ['token', 'redacted', 'person', 'host', 'redacted-token']) {
-      const out = redactor().redactDocument({ requested_by: person, t: `key ghp_abcdEFGH1234abcdEFGH1234abcdEFGH1234 on db.acme.com` }) as {
+      const out = redactor().redactDocument({ requested_by: person, t: `key ${SPLIT_BODY} on db.acme.com` }) as {
         t: string
       }
       expect(out.t, person).toBe(`key ${TOKEN_MARKER} on ${HOST_MARKER}`)
