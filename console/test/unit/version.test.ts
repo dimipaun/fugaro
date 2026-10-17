@@ -510,6 +510,45 @@ describe('renderVersionSkew', () => {
     expect(drawn(root)).not.toContain('usage')
   })
 
+  it('draws the reader\'s own reason under the banner, so there is something to act on', () => {
+    // A compatibility built by `unreadableCompatibility` is the reader's answer
+    // after a spawn that failed or a read that did not finish. "It could not
+    // read a version" without the why is a refusal screen with no next step, so
+    // the reason the reader kept is drawn -- sanitized, like every other text
+    // this module writes.
+    const reason = 'the fugaro binary did not answer within 5000ms; run `fugaro version` yourself'
+    const compatibility = unreadableCompatibility(reason)
+    const root = renderVersionSkew(factory, compatibility, 'light')
+    expect(unreadableReason(compatibility)).toBe(reason)
+    expect(one(root, 'skew-because').textContent).toBe(reason)
+    // Beside the sentence, not inside it: the sentence stays the console's.
+    expect(one(root, 'skew-sentence').textContent).not.toContain('5000ms')
+  })
+
+  it('draws no reason cell when the placement read a line', () => {
+    for (const line of [CAPTURED_RELEASE_OUTPUT, CAPTURED_DEV_OUTPUT, '0.9.0', '0.5.0', 'not a version']) {
+      const root = renderVersionSkew(factory, classifyCliVersion(line), 'light')
+      expect(all(root, 'skew-because'), line).toHaveLength(0)
+    }
+  })
+
+  it('redacts a token a reader put in the reason, and still draws the reason', () => {
+    // The reason is a string a program wrote, so it takes the free-text door:
+    // a credential-shaped run inside it is redacted in place rather than taking
+    // the whole sentence down. The operator keeps the failure ("the reader
+    // answered with ..."), and the token is not on screen -- nor in an
+    // attribute, since the redaction happens before the sink.
+    const token = githubToken()
+    const compatibility = unreadableCompatibility(`the reader answered with ${token}`)
+    const root = renderVersionSkew(factory, compatibility, 'light')
+    const reason = unreadableReason(compatibility)
+    expect(reason).not.toBeNull()
+    expect(reason ?? '').toContain('the reader answered with')
+    expect(one(root, 'skew-because').textContent).toBe(reason)
+    expect(drawn(root)).not.toContain(token)
+    expect(JSON.stringify([...walk(root)].map((node) => [...node.attributes]))).not.toContain(token)
+  })
+
   it('draws no withheld list when there is nothing withheld', () => {
     const root = renderVersionSkew(factory, classifyCliVersion(CAPTURED_RELEASE_OUTPUT), 'light')
     expect(root.getAttribute('data-mode')).toBe('ok')

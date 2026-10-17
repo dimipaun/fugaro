@@ -555,11 +555,14 @@ test.describe('the version skew handshake', () => {
     expect(described.sentence).not.toContain('gabc1234')
     expect(described.sentence).not.toContain('0.9.0-3')
     // The reported version is in its own cell, drawn through the sanitizer: as
-    // it was read, or `n/a` with a reason -- never a half-drawn string.
+    // it was read, or the console's own sentence for a line it will not draw --
+    // never a half-drawn string. (`n/a` was the spelling before the
+    // UNREADABLE_VERSION refactor of the last commit; nothing in this file may
+    // go back to it, so the assertion names the constant itself.)
     if (described.cliVersion === 'v0.9.0-3-gabc1234') {
       expect(described.text).toContain('gabc1234')
     } else {
-      expect(described.cliVersion).toBe('n/a')
+      expect(described.cliVersion).toBe(UNREADABLE_VERSION)
     }
   })
 })

@@ -371,8 +371,9 @@ export type VersionRead =
 
 /** HANDSHAKE_UNREADABLE is the console's own reason when the read itself threw
  * -- no binary resolved, a spawn that failed, a timeout. It is a sentence of
- * this console's, never the child's output, and it is what the refusal screen
- * shows under its heading. */
+ * this console's, never the child's output, and it is the `because` of the
+ * compatibility this function builds, so the refusal screen draws it in the
+ * reason cell (`p.skew-because`) under the console's own skew sentence. */
 export const HANDSHAKE_UNREADABLE = 'the console could not read which fugaro it is driving'
 
 /** VersionHandshakeDeps is the Electron-free surface the handshake needs: one

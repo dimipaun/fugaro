@@ -124,6 +124,8 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     },
     'version === null ? UNREADABLE_VERSION : versionText(version, field)':
       "`UNREADABLE_VERSION`, a console constant, or `versionText`: the version line **through `sanitizeText`** (the `label` class), which returns the sanitized text or the console's own sentence -- so the raw line a binary printed never reaches the sink",
+    because:
+      "`unreadableReason(compatibility)`: the reader's own reason for a failed read, **through `sanitizeText`** (the `sentence` class) inside that function, and `null` when there is none or the sanitizer refuses it -- in which case `renderVersionSkew` creates no element at all, so nothing raw and nothing empty reaches the sink",
   },
   'run.ts': {
     'stage.deadline': '`deadlineState` keeps a word only when it is on `DEADLINE_STATES`, else null',

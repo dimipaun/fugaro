@@ -577,6 +577,19 @@ export function renderVersionSkew(
   root.setAttribute('data-skew', compatibility.skew)
   literal(cell(root, factory, 'h1', 'skew-headline'), SKEW_HEADLINES[compatibility.mode])
   literal(cell(root, factory, 'p', 'skew-sentence'), skewSentence(compatibility))
+  const because = unreadableReason(compatibility)
+  if (because !== null) {
+    // Why the console could not read a version, when its reader said: a reader's
+    // reason is what `runVersionHandshake` kept from `probeVersion` (rule 4's
+    // search, a spawn that failed, a deadline), and a screen that says only "it
+    // could not read one" leaves the operator with nothing to act on. It is
+    // drawn through the sanitizer like every other text this module writes
+    // (`unreadableReason`, the `sentence` class), so a token shape inside the
+    // reason is redacted there before it can reach this sink; and when the
+    // reader kept no reason at all, the element is not created rather than
+    // drawn empty, so there is no blank cell to misread.
+    literal(cell(root, factory, 'p', 'skew-because'), because)
+  }
   versionRow(
     root,
     factory,
@@ -608,10 +621,20 @@ export function renderVersionSkew(
 
 /**
  * unreadableReason is the console's own sentence for a compatibility that came
- * from a failed read, when one was kept. A caller that built the value with
- * `classifyCliVersion` has none; a caller that went through
- * `unreadableCompatibility` may draw it as a title attribute, which is where
- * `src/main/window.ts` puts it.
+ * from a failed read, when one was kept, and `renderVersionSkew` draws it under
+ * the banner's sentence (`p.skew-because`) -- the reader's reason is why the
+ * operator sees a reduced or refused console at all, and "it could not read a
+ * version" without it is a screen with nothing to act on.
+ *
+ * A caller that built the value with `classifyCliVersion` has none, and `null` is
+ * that answer, so the caller creates no element.
+ *
+ * The class is `sentence`, which is the console's free-text door: a token shape
+ * inside the reason is **redacted in place** by `sanitizeText` (a reader's
+ * reason is a sentence a program wrote, and dropping the whole sentence because
+ * part of it looked like a key would hide the failure it is describing). It is
+ * sanitized here rather than at the call site so that the one door a reader's
+ * sentence goes through is this function's.
  */
 export function unreadableReason(compatibility: CliCompatibility): string | null {
   const because = compatibility.because
