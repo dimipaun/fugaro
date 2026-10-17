@@ -491,7 +491,16 @@ describe('the committed synthetic fixture', () => {
     // is what may be here at all: every file is either the synthetic fixture or
     // a case `FIXTURE_CASES` names. A stray file -- a hand-made copy, a
     // recording under a name no case holds -- fails it by name.
-    const allowed = new Set(['synthetic.ndjson', ...FIXTURE_CASES.map((name) => `${name}.ndjson`)])
+    // `degraded.ndjson` is the second agent-written fixture, and it is not one
+    // of the eight cases above: the design's eight are *recordings of a live
+    // installation*, and the degraded mode is a project with no budget backend
+    // at all -- a state the sandbox every recording is made against cannot be
+    // put into without changing what the installation is. Task 3.1 writes it
+    // from invented documents instead (`console/src/renderer/screens/degraded.ts`
+    // draws what the CLI's degraded shape carries, and `degraded.spec.ts` reads
+    // this file), so it is named here rather than added to `FIXTURE_CASES`,
+    // which is the list of the *recorder's* cases.
+    const allowed = new Set(['synthetic.ndjson', 'degraded.ndjson', ...FIXTURE_CASES.map((name) => `${name}.ndjson`)])
     const present = readdirSync(FIXTURE_DIRECTORY)
     expect(present.filter((name) => !allowed.has(name))).toEqual([])
     expect(present).toContain('synthetic.ndjson')

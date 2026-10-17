@@ -62,6 +62,12 @@ type Entry = string | { readonly within: string; readonly reason: string }
  * source text.
  */
 const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>>> = Object.freeze({
+  'degraded.ts': {
+    'state.installCommand': '`FUGARO_INSTALL_COMMAND` in `src/source/cli.ts`, which is the README\'s own `brew install dimipaun/tap/fugaro` rather than a string a document chose',
+    'state.operation': '`OperationName`, the closed IPC allow-list union: the read the console asked for, in the console\'s own words',
+    'state.sentence':
+      'the CLI\'s own refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string: design section 6.3 requires it verbatim, and the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>` -- `degraded.test.ts` asserts both halves of that',
+  },
   'live.ts': {
     'flag.name': 'a RunFlag is built only from live.ts\'s own flag table (`runFlags`); an unknown health or deadline is the console\'s "unknown ..." flag, never the document\'s word',
   },
@@ -242,6 +248,9 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'sanitizedKey(repo.slug)': 'the slug as `sanitizeText` drew it (slug class)',
     "repo.kill === null ? 'false' : 'true'": 'a boolean drawn as one of two literals',
     "connection.textContent ?? ''": 'read back from a cell `putText` wrote, so it is the sanitized text',
+    "formatReading(feedReading(feed), 'seconds')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
+    "model.feed === null ? '' : (model.feed.since ?? '')":
+      'the arrival stamp `src/source/cli.ts` wrote on the frame (or the empty string when the caller keeps no feed reading), used as a key rather than as text',
     theme: { within: 'renderLive', reason: 'a `LiveTheme`, the closed theme tuple' },
   },
   'projects.ts': {
@@ -252,6 +261,14 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'row.scope': '`ProjectCapScope`, a closed union the model assigns (`global`, `defaults`, `repo`)',
     slug: { within: 'capRowLine', reason: '`sanitizedKey(row.slug)`: the slug as `sanitizeText` drew it, null when refused' },
     theme: { within: 'renderProjects', reason: 'a `ProjectsTheme`, the closed theme tuple' },
+  },
+  'degraded.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    "model.caps.state": 'a Reading\'s `state`, the closed `ReadingState` union',
+    "sanitizedKey(row.run)": 'the run id as `sanitizeText` drew it (runId class), empty when refused',
+    kind: { within: 'root', reason: 'the closed discriminant of this file\'s states (`no-firebase`, `no-binary`, `refused`), written as a key' },
+    "receivedAt === null ? '' : receivedAt": 'the arrival stamp `src/source/cli.ts` wrote on the frame, or the empty string when the caller keeps no feed reading; a key rather than text',
+    theme: { within: 'root', reason: 'a `LiveTheme`, the closed theme tuple' },
   },
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -460,8 +477,8 @@ function attributeCalls(code: string): { at: number; args: string[] }[] {
 const FILES = readdirSync(SCREENS).filter((name) => name.endsWith('.ts'))
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the four screens', () => {
-    expect(FILES.sort()).toEqual(['live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
+  it('reads the five screens', () => {
+    expect(FILES.sort()).toEqual(['degraded.ts', 'live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
   })
 
   it('hands literal no document-controlled argument', () => {

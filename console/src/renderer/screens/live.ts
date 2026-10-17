@@ -518,6 +518,45 @@ export interface LiveModel {
    * field: a row the console cannot place is still a run that is spending. */
   readonly orphans: readonly LiveRunRow[]
   readonly queuedNote: string | null
+  /** the console's own reading of how long the feed has been quiet, when the
+   * caller keeps one. `null` is a caller that measures nothing -- the screen
+   * then draws no banner and no timestamp, which is every drawing the earlier
+   * tests and the goldens were taken from. */
+  readonly feed: FeedHealth | null
+}
+
+/**
+ * FeedHealth is the console's own staleness reading (design section 6.3;
+ * contract section 10.9's `watch.StaleAfter`, 45 s). It is quoted here from
+ * `src/source/cli.ts`'s `FeedSilence`, structurally rather than by import --
+ * the renderer may not import a module that spawns -- and `degraded.spec.ts`
+ * hands one to `buildLiveModel` in the other type's place, so a drift between
+ * the two fails the typecheck rather than the screen.
+ *
+ * The CLI announces its own `connection.state`, and this is **not** a second
+ * opinion about that word: `connection.staleByAge` already reads the age the
+ * document carries. This one reads the console's own clock against the
+ * *arrival* of the newest frame, which is the only thing that can see a CLI
+ * that has stopped talking altogether (contract section 10.11 item 2).
+ */
+export interface FeedHealth {
+  /** the arrival stamp of the newest frame, or `null` with none */
+  readonly since: string | null
+  /** the console's own clock at the moment of the reading */
+  readonly at: string
+  /** whole seconds between `since` and `at`, or `null` with no frame */
+  readonly seconds: number | null
+  /** whether `seconds` is past `LIVE_STALE_AFTER_SECONDS` */
+  readonly stale: boolean
+}
+
+/** feedReading is a feed's silence as a Reading, so the number cannot be drawn
+ * without its state: a console that has heard nothing has measured nothing. */
+export function feedReading(feed: FeedHealth): Reading {
+  if (feed.seconds === null) {
+    return unavailable('no document has arrived yet, so there is no silence to measure')
+  }
+  return measured(feed.seconds)
 }
 
 /** rowOf builds one run row. */
@@ -554,10 +593,26 @@ function rowOf(run: RunView): LiveRunRow {
  * fresh one and gets a one-bar sparkline, which is the truth about a console
  * that has seen one document.
  */
-export function buildLiveModel(document: LiveDocument, history: BurnHistory = new BurnHistory()): LiveModel {
+export function buildLiveModel(
+  document: LiveDocument,
+  history: BurnHistory = new BurnHistory(),
+  feed: FeedHealth | null = null,
+): LiveModel {
   const repos: LiveRepoRow[] = document.repos.map((repo) => {
     const burn = burnReading(repo.burn)
     history.observe(repo.slug, { at: document.now, reading: burn })
+    // A feed that has gone quiet is a **gap** in every series, not a flat line
+    // and not a repeat of the last sample: the console stopped observing, and
+    // `seriesSegments` splits the sparkline where it did (design section 6.3,
+    // "the graphs break rather than interpolate"). The last known sample stays
+    // where it is, which is what makes the break visible at all.
+    const at = feed !== null && feed.stale ? feed.at : document.now
+    if (feed !== null && feed.stale) {
+      history.observe(repo.slug, {
+        at: feed.at,
+        reading: gap(`no document has arrived for ${String(feed.seconds ?? 0)}s, so this series breaks here`),
+      })
+    }
     return {
       slug: repo.slug,
       repo: repo.repo,
@@ -568,7 +623,7 @@ export function buildLiveModel(document: LiveDocument, history: BurnHistory = ne
       percent: repo.percent,
       burnPerMin: burn,
       burnFast: repo.burn.fast,
-      spark: sparkline(history, repo.slug, document.now),
+      spark: sparkline(history, repo.slug, at),
       kill: repo.kill,
       runs: document.runs.filter((run) => run.slug === repo.slug).map(rowOf),
     }
@@ -596,6 +651,7 @@ export function buildLiveModel(document: LiveDocument, history: BurnHistory = ne
     repos,
     orphans,
     queuedNote: document.queuedNote,
+    feed,
   }
 }
 
@@ -865,8 +921,51 @@ function header(factory: ScreenFactory, model: LiveModel): ScreenElement {
     // like a project with none, which is a different fact.
     textCell(element, factory, 'p', model.queuedNote, 'sentence', 'queued_note', 'live-note')
   }
+  if (model.feed !== null) element.append(sinceLine(factory, model.feed))
+  if (model.feed !== null && model.feed.stale) element.append(staleBanner(factory, model.feed))
   return element
 }
+
+/** sinceLine is when the values on this screen were last read: the arrival
+ * stamp of the newest frame the console holds. It is drawn whenever a caller
+ * keeps a feed reading, because design section 6.3's stale condition is "the
+ * last-known values stay, **with their timestamps**" -- and a timestamp is only
+ * honest if it is drawn before the values are stale too. */
+function sinceLine(factory: ScreenFactory, feed: FeedHealth): ScreenElement {
+  const element = make(factory, 'p', 'live-since')
+  literal(cell(element, factory, 'span', 'live-since-word'), 'last read')
+  textCell(element, factory, 'span', feed.since, 'label', 'feed.since', 'live-since-at')
+  numberCell(element, factory, 'span', feedReading(feed), 'seconds', 'live-since-age')
+  return element
+}
+
+/**
+ * staleBanner is design section 6.3's stale condition: the console has not
+ * heard from the CLI for longer than `watch.StaleAfter`, so it says so, with
+ * the silence it measured and the clock reading it measured it at.
+ *
+ * The figure is drawn through `putReading` like every other number, and the two
+ * literals around it are the console's own words -- including the threshold,
+ * which is this file's `LIVE_STALE_AFTER_SECONDS`, interpolated from the
+ * constant rather than typed as a second copy of it.
+ */
+function staleBanner(factory: ScreenFactory, feed: FeedHealth): ScreenElement {
+  const element = make(factory, 'div', 'live-stale')
+  element.setAttribute('data-stale', 'true')
+  // `data-silence` is the measured silence as drawn, so a test reads the number
+  // the screen drew rather than recomputing it from the stamps.
+  element.setAttribute('data-silence', formatReading(feedReading(feed), 'seconds'))
+  literal(cell(element, factory, 'span', 'live-stale-word'), 'no document has arrived for')
+  numberCell(element, factory, 'span', feedReading(feed), 'seconds', 'live-stale-silence')
+  literal(cell(element, factory, 'span', 'live-stale-threshold'), STALE_BANNER_TAIL)
+  textCell(element, factory, 'span', feed.at, 'label', 'feed.at', 'live-stale-at')
+  return element
+}
+
+/** STALE_BANNER_TAIL is the one thing the banner says about the threshold. It
+ * is a constant with the number interpolated once, so a reader who changes
+ * `LIVE_STALE_AFTER_SECONDS` cannot leave the sentence claiming the old one. */
+const STALE_BANNER_TAIL = ` (a feed is stale after ${String(LIVE_STALE_AFTER_SECONDS)} s), so the values above are the last ones read and the graphs break where the console stopped observing`
 
 /** total draws the global cap bar with today's counted dollars and the cap. */
 function total(factory: ScreenFactory, model: LiveModel): ScreenElement {
@@ -894,6 +993,11 @@ function total(factory: ScreenFactory, model: LiveModel): ScreenElement {
 export function renderLive(factory: ScreenFactory, model: LiveModel, theme: LiveTheme): ScreenElement {
   const root = make(factory, 'section', 'live')
   root.setAttribute('data-theme', theme)
+  // The arrival stamp of the frame the values came from, on the root as well as
+  // in the header's own line: a test (and a later screen) reads the timestamp of
+  // what it is looking at without walking the tree, and an empty value is a
+  // caller that keeps no feed reading at all.
+  root.setAttribute('data-received-at', model.feed === null ? '' : (model.feed.since ?? ''))
   root.append(header(factory, model))
   root.append(total(factory, model))
 

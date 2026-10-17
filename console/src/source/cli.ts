@@ -41,6 +41,7 @@ import {
   MAX_FEED_LINE_LENGTH,
   SPAWN_COMMANDS,
   assertSpawnSurface,
+  binDirectories,
   cliSentence,
   decodeFeedLine,
   planFor,
@@ -91,6 +92,146 @@ export const FIRST_FRAME_BUDGET_MS = 15_000
  * least recently used feed is stopped (its child gets `SIGTERM`) and dropped.
  */
 export const MAX_LIVE_FEEDS = 4
+
+/**
+ * FEED_STALE_AFTER_SECONDS is `watch.StaleAfter` (`internal/watch/state.go`):
+ * the per-stream silence, keep-alives counting as events, after which the CLI's
+ * own `connection.state` becomes `stale`. It is the console's number too --
+ * design section 6.3's stale banner is the same 45 s, because a console that
+ * bannered at its own threshold would be telling the operator about a silence
+ * the CLI it is reading does not call one. It is stated here, beside the code
+ * that measures the silence off the source's own clock (§10.11 item 2: the
+ * child does not exit on a dead stream, so the console needs its own staleness
+ * clock), and `live.ts`'s `LIVE_STALE_AFTER_SECONDS` is the screen's copy of
+ * the same fact: `degraded.spec.ts` asserts the two cannot drift.
+ */
+export const FEED_STALE_AFTER_SECONDS = 45
+
+/**
+ * FeedSilence is what the console knows about how long the feed has been quiet:
+ * the stamp of the newest frame it holds, the console's own clock when it
+ * looked, the seconds between them, and whether that silence is a stale one.
+ *
+ * It is deliberately about **arrival**, not about the document's own `now`: a
+ * frame that arrived two seconds ago and says the day rolled is not silence,
+ * and a frame that has not arrived at all is silence no matter what the last one
+ * claimed. `seconds` is `null` -- not `0` -- when no frame has arrived, which is
+ * the availability rule every number on this console follows: a console that has
+ * heard nothing has not measured a silence of zero seconds.
+ */
+export interface FeedSilence {
+  /** the arrival stamp of the newest frame, or `null` when there is none */
+  readonly since: string | null
+  /** the console's own clock at the moment of the reading */
+  readonly at: string
+  /** whole seconds between `since` and `at`, or `null` with no frame */
+  readonly seconds: number | null
+  /** whether `seconds` is past `FEED_STALE_AFTER_SECONDS` */
+  readonly stale: boolean
+}
+
+/**
+ * feedSilence measures a feed's quiet. `latest` is the newest thing the console
+ * received -- a `Snapshot`, a `TextSnapshot` or a `Notice`, all of which carry
+ * `receivedAt` -- and `now` is the console's clock, passed in rather than read
+ * here so that a test can hold a feed to an exact silence instead of to a
+ * machine's speed.
+ *
+ * `at` is the clock reading in the same shape `receivedAt` uses (whole seconds,
+ * `Z`), so the two stamps can be compared and drawn together without a second
+ * formatter.
+ */
+export function feedSilence(
+  latest: { readonly receivedAt: string } | null,
+  now: Date,
+): FeedSilence {
+  const at = now.toISOString().replace(/\.\d{3}Z$/, 'Z')
+  if (latest === null) {
+    return { since: null, at, seconds: null, stale: false }
+  }
+  const arrived = Date.parse(latest.receivedAt)
+  const measured = Date.parse(at)
+  // A stamp the console itself wrote is always parseable; a frame's own stamp is
+  // not used here at all. An unreadable one is the same fact as no frame: the
+  // console cannot say how long it has been quiet, so it says `null`.
+  const seconds = Number.isNaN(arrived) || Number.isNaN(measured) ? null : Math.max(0, Math.round((measured - arrived) / 1000))
+  return {
+    since: latest.receivedAt,
+    at,
+    seconds,
+    stale: seconds !== null && seconds > FEED_STALE_AFTER_SECONDS,
+  }
+}
+
+/**
+ * FUGARO_INSTALL_COMMAND is the one line the absent-binary screen offers, and
+ * it is the README's own command rather than one this file invented:
+ * `console/README.md` and `docs/release.md` both hand the cask as the install
+ * step (`brew install dimipaun/tap/fugaro`). The console prints it and runs
+ * nothing -- installing a binary is the operator's act, not the app's.
+ */
+export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
+
+/**
+ * NoInstallationState is the console's state when there is no `fugaro` to read:
+ * everything design section 6.3's first screen needs, with no document in it.
+ * `renderer/screens/degraded.ts` draws it, and `degraded.spec.ts` holds one
+ * built here to the renderer's own type, so the two cannot drift.
+ */
+export interface NoInstallationState {
+  readonly kind: 'no-binary'
+  /** the resolution's own sentence, kept as the CLI-less reason it is */
+  readonly reason: string
+  readonly installCommand: string
+  /** every candidate the resolution looked at, in the order it looked */
+  readonly searched: readonly string[]
+  /** the path the installation named, when it named one */
+  readonly configuredPath: string | null
+}
+
+/**
+ * NoInstallation is thrown instead of a bare `SourceRefusal` when **binary
+ * resolution** failed -- the operator has no `fugaro`, or the one they have
+ * cannot say which version it is. It is still a `SourceRefusal` (so nothing that
+ * catches one changes behaviour) carrying the resolution's own sentence, and it
+ * adds the state a screen needs: this is not a refused read, it is a missing
+ * program, and the screen that follows says what to install rather than which
+ * read failed.
+ */
+export class NoInstallation extends SourceRefusal {
+  override readonly name = 'NoInstallation'
+  readonly state: NoInstallationState
+
+  constructor(state: NoInstallationState) {
+    super(state.reason)
+    this.state = state
+  }
+}
+
+/**
+ * noInstallationState is the state, built from the resolution that failed. The
+ * candidate list is re-derived from the same `binDirectories` the resolution
+ * walked, with the same options -- so the screen names the directories this
+ * machine would actually be searched in, not a list written down twice.
+ */
+export function noInstallationState(options: {
+  readonly reason: string
+  readonly configuredPath?: string | undefined
+  readonly appEnv?: Readonly<Record<string, string | undefined>>
+  readonly home?: string
+}): NoInstallationState {
+  return {
+    kind: 'no-binary',
+    reason: options.reason,
+    installCommand: FUGARO_INSTALL_COMMAND,
+    searched: binDirectories({
+      ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
+      appEnv: options.appEnv ?? {},
+      ...(options.home === undefined ? {} : { home: options.home }),
+    }),
+    configuredPath: options.configuredPath === undefined || options.configuredPath === '' ? null : options.configuredPath,
+  }
+}
 
 /** CliSourceOptions is everything a v1 source is built from. `appEnv` is the
  * app's own environment, used for `HOME`, `TMPDIR`, `LANG`/`LC_ALL`, the five
@@ -169,7 +310,14 @@ export class CliSource implements FugaroSource {
     }
     if (!resolution.ok) {
       if (ownsLog) log.close()
-      throw new SourceRefusal(resolution.reason)
+      throw new NoInstallation(
+        noInstallationState({
+          reason: resolution.reason,
+          configuredPath: options.configuredBinaryPath,
+          appEnv: env,
+          ...(options.home === undefined ? {} : { home: options.home }),
+        }),
+      )
     }
 
     const installation: InstallationRef = {
