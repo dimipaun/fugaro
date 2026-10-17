@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"slices"
 	"strings"
 
+	"google.golang.org/api/googleapi"
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -65,6 +67,12 @@ const (
 // operator named the wrong project" (their own error to fix) from "the
 // operator's credentials were refused" (an operator's or IAM's).
 var ErrRefused = errors.New("refused")
+
+// ErrChanged is what WriteDeleteList wraps when the object is not the
+// generation the caller read: another writer changed the list in between, and
+// writing over it would drop whatever that writer approved without anyone
+// being asked.
+var ErrChanged = errors.New("the delete list changed since it was read")
 
 // DeleteList is what AllowDeleteObject holds: the addresses, the version of
 // the format, and the project the list is about. Nothing else — no note, no
@@ -135,7 +143,12 @@ func refusedf(format string, a ...any) error {
 // ReadProjectMarker beneath it: a bucket name is global, so a list written
 // into a stranger's bucket of the same name would be believed by nobody and
 // lost for the owner.
-func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, addresses []string) error {
+//
+// generation is the object's generation as ReadDeleteListForWrite reported
+// it (0 for no object), and the write is conditioned on it: a list another
+// writer changed since that read is not overwritten (ErrChanged), so two
+// concurrent writers cannot silently drop each other's approvals.
+func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, addresses []string, generation int64) error {
 	data, err := DeleteList{Version: AllowDeleteVersion, GCPProject: gcpProject, Addresses: addresses}.Bytes()
 	if err != nil {
 		return err
@@ -150,7 +163,11 @@ func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject
 		return err
 	}
 	if _, err := s.Objects.Insert(bucket, &storage.Object{Name: AllowDeleteObject, ContentType: "application/json"}).
-		Media(bytes.NewReader(data)).Context(ctx).Do(); err != nil {
+		IfGenerationMatch(generation).Media(bytes.NewReader(data)).Context(ctx).Do(); err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == http.StatusPreconditionFailed {
+			return fmt.Errorf("%w: gs://%s/%s for %s: %v", ErrChanged, bucket, AllowDeleteObject, gcpProject, err)
+		}
 		return fmt.Errorf("writing gs://%s/%s for %s: %w", bucket, AllowDeleteObject, gcpProject, err)
 	}
 	return nil
@@ -188,9 +205,15 @@ func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 	if err != nil {
 		return nil, nil
 	}
+	return parseDeleteList(data, gcpProject), nil
+}
+
+// parseDeleteList is the addresses a body approves for gcpProject, nil for a
+// body that is not exactly a list this package writes (see AllowDelete).
+func parseDeleteList(data []byte, gcpProject string) []string {
 	var d DeleteList
 	if err := strictFields(data); err != nil {
-		return nil, nil
+		return nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	// A field this package does not write is refused rather than ignored: the
@@ -200,7 +223,7 @@ func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 	// beside it are not read as an approval.
 	dec.DisallowUnknownFields()
 	if dec.Decode(&d) != nil {
-		return nil, nil
+		return nil
 	}
 	// And nothing may follow the value either: a second value, or junk after
 	// the closing brace, is the same "this is not that object" the unknown
@@ -208,27 +231,77 @@ func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 	// read as an approval. Token returns io.EOF only when nothing but
 	// whitespace is left.
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return nil, nil
+		return nil
 	}
 	switch {
 	case len(data) > allowDeleteMaxBytes:
-		return nil, nil
+		return nil
 	case d.Version != AllowDeleteVersion:
-		return nil, nil
+		return nil
 	case d.GCPProject != gcpProject:
 		// The list is about another installation: whoever copied it may have
 		// edited it, and the project it names is what it is an approval of.
-		return nil, nil
+		return nil
 	}
 	for _, a := range d.Addresses {
 		if strings.TrimSpace(a) == "" {
-			return nil, nil
+			return nil
 		}
 	}
 	if len(d.Addresses) == 0 {
-		return nil, nil
+		return nil
 	}
-	return slices.Clone(d.Addresses), nil
+	return slices.Clone(d.Addresses)
+}
+
+// DeleteListState is what the writer reads before it writes: the list as it
+// stands, and the generation the write is conditioned on.
+type DeleteListState struct {
+	// Addresses are the approved addresses, nil when there is no object or
+	// one AllowDelete would not believe.
+	Addresses []string
+	// Generation is the object's generation, 0 when there is none.
+	Generation int64
+	// Unreadable is an object that is there but is not a list AllowDelete
+	// would read: writing replaces whatever it holds.
+	Unreadable bool
+}
+
+// ReadDeleteListForWrite is the writer's read, and unlike AllowDelete it is
+// strict: a read that fails is an error, never an empty list. The writer
+// replaces the whole list and asks before it drops an approval, so a
+// transient failure read as "nothing approved" would let the next write drop
+// every approval without that question. An absent object is no addresses and
+// generation 0; the bucket is proved the project's own first.
+func ReadDeleteListForWrite(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) (DeleteListState, error) {
+	switch {
+	case bucket == "" || number == 0 || gcpProject == "":
+		return DeleteListState{}, refusedf("to read %s for %s: no runs bucket, or no project number to check it against", AllowDeleteObject, gcpProject)
+	case s == nil:
+		return DeleteListState{}, refusedf("to read %s for %s: no storage client", AllowDeleteObject, gcpProject)
+	}
+	if err := proveRunsBucket(ctx, s, bucket, gcpProject, number); err != nil {
+		return DeleteListState{}, err
+	}
+	o, err := s.Objects.Get(bucket, AllowDeleteObject).Context(ctx).Do()
+	if err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == http.StatusNotFound {
+			return DeleteListState{}, nil
+		}
+		return DeleteListState{}, fmt.Errorf("reading gs://%s/%s for %s: %w", bucket, AllowDeleteObject, gcpProject, err)
+	}
+	resp, err := s.Objects.Get(bucket, AllowDeleteObject).Generation(o.Generation).Context(ctx).Download()
+	if err != nil {
+		return DeleteListState{}, fmt.Errorf("reading gs://%s/%s for %s: %w", bucket, AllowDeleteObject, gcpProject, err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, allowDeleteMaxBytes+1))
+	if err != nil {
+		return DeleteListState{}, fmt.Errorf("reading gs://%s/%s for %s: %w", bucket, AllowDeleteObject, gcpProject, err)
+	}
+	list := parseDeleteList(data, gcpProject)
+	return DeleteListState{Addresses: list, Generation: o.Generation, Unreadable: list == nil}, nil
 }
 
 // deleteListKeys is what DeleteList marshals, exactly: the field names, in the

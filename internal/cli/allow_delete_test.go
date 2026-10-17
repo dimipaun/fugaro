@@ -2,15 +2,18 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
+	"cloud.google.com/go/storage"
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // allowDeleteRig is the installation's own runs bucket, seeded as the read
@@ -136,7 +139,7 @@ func terminal(t *testing.T, is bool) {
 // list stays deletable.
 func TestAllowDeleteCommandWritesTheWholeList(t *testing.T) {
 	r := allowDeleteRig(t)
-	out, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web")
+	out, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web", "google_cloud_run_v2_job.web")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -344,5 +347,54 @@ func TestAllowDeleteCommandRefusesABucketThatIsNotTheProjectsOwn(t *testing.T) {
 				t.Errorf("the refusal names neither the bucket nor the project: %v", err)
 			}
 		})
+	}
+}
+
+// allowDeleteGeneration is the list's generation, 0 when it is absent, read
+// from a listing so that a test that fails the object's reads can still see
+// whether it was rewritten.
+func allowDeleteGeneration(t *testing.T, g *gcpfake.GCS, bucket string) int64 {
+	t.Helper()
+	it := g.Client(t).Bucket(bucket).Objects(context.Background(), &storage.Query{Prefix: managed.AllowDeleteObject})
+	attrs, err := it.Next()
+	if err != nil {
+		return 0
+	}
+	return attrs.Generation
+}
+
+// TestAllowDeleteCommandWritesNothingWhenItCannotReadTheList: the write
+// replaces the list and asks before it drops an approval, so a read that
+// failed must not be taken for "nothing approved" — that would drop every
+// approval without the question. Nothing is written, and the error says why.
+func TestAllowDeleteCommandWritesNothingWhenItCannotReadTheList(t *testing.T) {
+	r := allowDeleteRig(t)
+	if _, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web"); err != nil {
+		t.Fatal(err)
+	}
+	before := allowDeleteGeneration(t, r.gcs, initRunsBucket)
+	if before == 0 {
+		t.Fatal("the list was not written")
+	}
+	r.gcs.FailObjectGetsAfter(initRunsBucket, managed.AllowDeleteObject, 0)
+	out, _, err := execute(t, "allow-delete", "google_compute_network.vpc")
+	if err == nil {
+		t.Fatalf("a write after a failed read ran:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("the refusal does not say nothing was written: %v", err)
+	}
+	if after := allowDeleteGeneration(t, r.gcs, initRunsBucket); after != before {
+		t.Errorf("a write after a failed read rewrote the list (generation %d → %d)", before, after)
+	}
+}
+
+// TestAllowDeleteCommandRefusesAListThatChangedUnderIt: the error a
+// concurrent write produces is the owner's to act on, and says what to do.
+func TestAllowDeleteCommandRefusesAListThatChangedUnderIt(t *testing.T) {
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: "proj-1234"}
+	err := allowDeleteWriteErr(lc, initRunsBucket, fmt.Errorf("%w: generation 7", managed.ErrChanged))
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run the command again") {
+		t.Errorf("allowDeleteWriteErr(ErrChanged) = %v (exit %d), want a user error that says to run it again", err, ExitCode(err))
 	}
 }

@@ -22,8 +22,8 @@ import (
 // the managed apply reads its allow-list from, rather than its own command
 // line, which belongs to whatever session is applying.
 //
-// It is run by the owner, with the owner's own credentials, and it is the only
-// writer of the object. What that buys, and what it does not — the plan's step
+// It is run by the owner, with the owner's own credentials, and it is
+// Fugaro's only writer of the object. What that buys, and what it does not — the plan's step
 // 4, stated rather than implied:
 //
 //   - Against a run's own credentials it is a boundary. No credential a run
@@ -59,7 +59,7 @@ func newAllowDeleteCmd() *cobra.Command {
 		Long: `Record which Terraform addresses the project's owner approves for deletion or
 replacement, in a managed project's fugaro/allow-delete.json at the root of
 the runs bucket. An approval lives in that object and nowhere else: this
-command is its only writer, and it writes with the operator's own credentials.
+command is Fugaro's only writer of it, with the operator's own credentials.
 
 An address is the Terraform address a plan reports, as in
 google_cloud_run_v2_job.web or module.web.google_storage_bucket.data, and
@@ -73,10 +73,10 @@ would drop and asks for the project's name before writing such a list. With no
 addresses the command prints the list and writes nothing; it never empties the
 list, because an empty list is what an absent one already means.
 
-What the object is for: a run's own credentials, and the deployer account a
-managed apply impersonates, cannot write it, so a managed apply can take its
-allow-list from the owner's object instead of from the command line of
-whatever session is applying. That apply is not built yet — the managed apply
+What the object is for: a run's own credentials cannot write it, and the
+deployer account a managed apply impersonates will not be able to (D75, Task
+1.5), so a managed apply can take its allow-list from the owner's object
+instead of from the command line of whatever session is applying. That apply is not built yet — the managed apply
 is Task 3.1, and until it lands fugaro init still honours its own flag. What
 this does not do: a coding agent's session holds the operator's credentials,
 so it can write this object directly (gcloud storage cp) or unset its agent
@@ -91,7 +91,10 @@ installation has, not that the project is Fugaro-managed.
 The list is read fail-closed: an absent object, an empty one, one naming
 another project, one whose fields are not exactly the three this command
 writes, or one this package cannot read is no addresses — and no addresses
-refuses every delete and replacement rather than permitting them.`,
+refuses every delete and replacement rather than permitting them. The write
+is fail-closed too: if the current list cannot be read, nothing is written,
+and the write is conditioned on the object being unchanged since that read,
+so a concurrent write is never silently overwritten (run the command again).`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return allowDelete(cmd, o, args)
@@ -151,17 +154,28 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	}
 	w := cmd.OutOrStdout()
 	// What is approved now, read once and before the write: it is what the
-	// print mode prints, and what tells the write whether it is dropping an
-	// approval the owner gave (a read the command cannot believe is no
-	// addresses, which is what an absent list already means).
-	current, err := managed.AllowDelete(ctx, c.Storage, bucket, lc.GCPProject, number)
+	// print mode prints, what tells the write whether it is dropping an
+	// approval the owner gave, and the generation the write is conditioned on.
+	// The read is strict: one that fails writes nothing, because a failure
+	// read as "nothing approved" would let this write drop every approval
+	// without asking.
+	state, err := managed.ReadDeleteListForWrite(ctx, c.Storage, bucket, lc.GCPProject, number)
 	if err != nil {
-		return remote(err)
+		if errors.Is(err, managed.ErrRefused) {
+			return allowDeleteWriteErr(lc, bucket, err)
+		}
+		return remote(fmt.Errorf("nothing was written for %s: the current gs://%s/%s could not be read, and a list written without that read could drop approvals unasked: %w",
+			lc.Name, bucket, managed.AllowDeleteObject, err))
 	}
+	current := state.Addresses
 	if len(approved) == 0 {
 		if len(current) == 0 {
-			fmt.Fprintf(w, "gs://%s/%s allows no address: every delete and replacement in %s is refused (no list, an empty one, or one this run cannot read)\n",
-				bucket, managed.AllowDeleteObject, lc.Name)
+			why := "there is no list"
+			if state.Unreadable {
+				why = "the object there is not a list this command reads"
+			}
+			fmt.Fprintf(w, "gs://%s/%s allows no address: every delete and replacement in %s is refused (%s)\n",
+				bucket, managed.AllowDeleteObject, lc.Name, why)
 			return nil
 		}
 		fmt.Fprintf(w, "gs://%s/%s allows %d address(es) in %s:\n", bucket, managed.AllowDeleteObject, len(current), lc.Name)
@@ -178,11 +192,19 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	// owner noticing is a delete refused later for a reason nobody remembers
 	// giving. The entries this write drops are named, and a list that drops any
 	// of them is written only after the project's name is typed.
-	if dropped := droppedFrom(current, approved); len(dropped) > 0 {
+	dropped := droppedFrom(current, approved)
+	if len(dropped) > 0 {
 		fmt.Fprintf(w, "gs://%s/%s approves %d address(es) now, and this list leaves out %d of them:\n", bucket, managed.AllowDeleteObject, len(current), len(dropped))
 		for _, a := range dropped {
 			fmt.Fprintln(w, a)
 		}
+	}
+	// An object that is there but is not a list this command reads is
+	// replaced only on the same typed confirmation: what it held is unknown.
+	if state.Unreadable {
+		fmt.Fprintf(w, "gs://%s/%s is there but is not a list this command reads: writing replaces it\n", bucket, managed.AllowDeleteObject)
+	}
+	if len(dropped) > 0 || state.Unreadable {
 		// Strict rather than confirmTyped: this command has no --yes (it
 		// registers the cloud flags and nothing else), so a refusal offering
 		// one would tell the owner to pass a flag that does not exist. The
@@ -191,11 +213,11 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 		// goes, not by a flag typed in advance.
 		if err := confirmTypedStrict(cmd, lc,
 			"removing an approval is confirmed by typing the project's name at a terminal, and by nothing else",
-			fmt.Sprintf("this removes %d address(es) %s had approved: every delete or replacement of them is refused again", len(dropped), lc.Name)); err != nil {
+			fmt.Sprintf("this replaces %s's list, removing %d address(es) it approved: every delete or replacement of them is refused again", lc.Name, len(dropped))); err != nil {
 			return err
 		}
 	}
-	if err := managed.WriteDeleteList(ctx, c.Storage, bucket, lc.GCPProject, number, approved); err != nil {
+	if err := managed.WriteDeleteList(ctx, c.Storage, bucket, lc.GCPProject, number, approved, state.Generation); err != nil {
 		return allowDeleteWriteErr(lc, bucket, err)
 	}
 	fmt.Fprintf(w, "wrote gs://%s/%s: %s may now delete or replace %d address(es):\n", bucket, managed.AllowDeleteObject, lc.Name, len(approved))
@@ -225,6 +247,9 @@ func allowDeleteWriteErr(lc *localcfg.Config, bucket string, err error) error {
 	case errors.Is(err, managed.ErrRefused):
 		return userErr("nothing was written for %s: the delete list goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %v",
 			lc.Name, bucket, managed.AllowDeleteObject, lc.GCPProject, err)
+	case errors.Is(err, managed.ErrChanged):
+		return userErr("nothing was written for %s: gs://%s/%s changed after this command read it, so another write happened in between: run the command again to see the list as it is now: %v",
+			lc.Name, bucket, managed.AllowDeleteObject, err)
 	case isAccessDenied(err):
 		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (since 0.7.0 a launcher writes runs/ only, and no run account may write the bucket's root at all): run this as an operator, or ask one to approve the addresses: %v",
 			lc.Name, bucket, managed.AllowDeleteObject, err)

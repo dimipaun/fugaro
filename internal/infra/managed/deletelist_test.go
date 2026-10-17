@@ -120,7 +120,7 @@ func TestDeleteListJSONShape(t *testing.T) {
 func TestWriteDeleteListRoundTrip(t *testing.T) {
 	s, bucket := seedDeleteList(t, "")
 	ctx := context.Background()
-	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses); err != nil {
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses, 0); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := deleteListAt(t, s, bucket); !ok || got != deleteListJSON {
@@ -142,11 +142,15 @@ func TestWriteDeleteListRoundTrip(t *testing.T) {
 func TestWriteDeleteListWritesTheWholeList(t *testing.T) {
 	s, bucket := seedDeleteList(t, "")
 	ctx := context.Background()
-	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses); err != nil {
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses, 0); err != nil {
 		t.Fatal(err)
 	}
 	short := []string{deleteListAddresses[1]}
-	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, short); err != nil {
+	state, err := ReadDeleteListForWrite(ctx, s, bucket, testProject, testProjectNumber)
+	if err != nil || state.Generation == 0 || !slices.Equal(state.Addresses, deleteListAddresses) {
+		t.Fatalf("ReadDeleteListForWrite() = %+v, %v; want the first list and its generation", state, err)
+	}
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, short, state.Generation); err != nil {
 		t.Fatal(err)
 	}
 	list, err := AllowDelete(ctx, s, bucket, testProject, testProjectNumber)
@@ -194,7 +198,7 @@ func TestWriteDeleteListNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 				// names no bucket is checked as well as the ones that do.
 				f.AddBucket(testBucket, testProjectNumber, testManaged)
 			}
-			err := WriteDeleteList(context.Background(), s, tc.bucket, tc.project, tc.number, deleteListAddresses)
+			err := WriteDeleteList(context.Background(), s, tc.bucket, tc.project, tc.number, deleteListAddresses, 0)
 			if err == nil {
 				t.Fatal("the list was written into a bucket that is not the project's own")
 			}
@@ -207,10 +211,10 @@ func TestWriteDeleteListNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	// project's own runs bucket, numbered and labelled as the read proves it.
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
-	if err := WriteDeleteList(context.Background(), s, testBucket, testProject, testProjectNumber, deleteListAddresses); err != nil {
+	if err := WriteDeleteList(context.Background(), s, testBucket, testProject, testProjectNumber, deleteListAddresses, 0); err != nil {
 		t.Fatalf("the project's own runs bucket was refused: %v", err)
 	}
-	if err := WriteDeleteList(context.Background(), nil, testBucket, testProject, testProjectNumber, deleteListAddresses); err == nil {
+	if err := WriteDeleteList(context.Background(), nil, testBucket, testProject, testProjectNumber, deleteListAddresses, 0); err == nil {
 		t.Error("the write was made with no storage client")
 	}
 }
@@ -228,7 +232,7 @@ func TestWriteDeleteListRefusesNoAddresses(t *testing.T) {
 		"blank addresses": {"", "  "},
 		"an empty slice":  {},
 	} {
-		if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, addresses); err == nil {
+		if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, addresses, 0); err == nil {
 			t.Errorf("%s: an empty list was written", name)
 		}
 	}
@@ -252,7 +256,7 @@ func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
 	for i := range cap(addresses) {
 		addresses = append(addresses, fmt.Sprintf("google_cloud_run_v2_job.web_%08d", i))
 	}
-	err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, addresses)
+	err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, addresses, 0)
 	if err == nil {
 		t.Fatalf("a list of %d addresses was written: the read would refuse it", len(addresses))
 	}
@@ -482,5 +486,71 @@ func TestRunAccountsHaveNoWritePathToTheDeleteList(t *testing.T) {
 	}
 	if scan.writes < 4 || scan.narrowed < 3 {
 		t.Errorf("the scan found %d write grants on the runs bucket and %d narrowing conditions, want the job account's, the build account's and the launchers' at least", scan.writes, scan.narrowed)
+	}
+}
+
+// TestWriteDeleteListRefusesAListThatChangedSinceItsRead: the write is
+// conditioned on the generation the writer read, so a second writer's list is
+// never overwritten by one computed from what was there before it — neither
+// over an object that appeared (generation 0) nor over one that changed.
+func TestWriteDeleteListRefusesAListThatChangedSinceItsRead(t *testing.T) {
+	s, bucket := seedDeleteList(t, "")
+	ctx := context.Background()
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses, 0); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := ReadDeleteListForWrite(ctx, s, bucket, testProject, testProjectNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another writer, in between.
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses[:1], stale.Generation); err != nil {
+		t.Fatal(err)
+	}
+	for name, gen := range map[string]int64{"a stale generation": stale.Generation, "no object expected": 0} {
+		err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses[1:], gen)
+		if !errors.Is(err, ErrChanged) {
+			t.Errorf("%s: WriteDeleteList() = %v, want ErrChanged", name, err)
+		}
+	}
+	if list, _ := AllowDelete(ctx, s, bucket, testProject, testProjectNumber); !slices.Equal(list, deleteListAddresses[:1]) {
+		t.Errorf("after the refused writes AllowDelete() = %v, want the other writer's %v", list, deleteListAddresses[:1])
+	}
+}
+
+// TestReadDeleteListForWriteFailsClosed: the writer's read is strict where
+// AllowDelete is lenient. A read that fails is an error rather than no
+// addresses (which would let the next write drop every approval unasked);
+// an absent object is no addresses and generation 0; an object it cannot
+// believe is reported as such, with its generation.
+func TestReadDeleteListForWriteFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	state, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber)
+	if err != nil || state.Generation != 0 || state.Addresses != nil || state.Unreadable {
+		t.Fatalf("over no object: %+v, %v; want the zero state", state, err)
+	}
+	f.Put(testBucket, AllowDeleteObject, []byte(deleteListJSON))
+	// The metadata read failing, then the media read after it.
+	for _, skip := range []int{0, 1} {
+		f.FailObjectGetsAfter(testBucket, AllowDeleteObject, skip)
+		if state, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber); err == nil {
+			t.Errorf("a read failing after %d good ones returned %+v and no error", skip, state)
+		}
+		s, f = newStorage(t)
+		f.AddBucket(testBucket, testProjectNumber, testManaged)
+		f.Put(testBucket, AllowDeleteObject, []byte(deleteListJSON))
+	}
+	s2, f2 := newStorage(t)
+	f2.AddBucket(testBucket, testProjectNumber, testManaged)
+	f2.Put(testBucket, AllowDeleteObject, []byte(`{"version":1,"gcp_project":"`+testProject+`","addresses":["a"],"note":"x"}`))
+	state, err = ReadDeleteListForWrite(ctx, s2, testBucket, testProject, testProjectNumber)
+	if err != nil || !state.Unreadable || state.Generation == 0 || state.Addresses != nil {
+		t.Errorf("over an object it cannot believe: %+v, %v; want Unreadable with a generation", state, err)
+	}
+	f2.AddBucket(testBucket, testProjectNumber+1, testManaged)
+	if _, err := ReadDeleteListForWrite(ctx, s2, testBucket, testProject, testProjectNumber); !errors.Is(err, ErrRefused) {
+		t.Errorf("over another project's bucket: %v, want ErrRefused", err)
 	}
 }
