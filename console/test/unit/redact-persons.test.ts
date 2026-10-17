@@ -340,3 +340,38 @@ describe('a person refusal names no person', () => {
     expect(() => createRedactor().redactFeedLine(`{"a":${'['.repeat(5_000)}${']'.repeat(5_000)}}`)).toThrow(RedactionRefusal)
   })
 })
+
+describe('a notice goes through the person pass too (review round 2 of PR 478)', () => {
+  // A notice is free text with no fields, so the only people the redactor can
+  // find in it are the ones the recording's documents named. At da86190 a
+  // notice saw no people at all: `redactText` ran with an empty person table,
+  // and a requester's name went into the fixture verbatim while the same name
+  // in a document became a pseudonym.
+  const name = 'Dana Whitfield'
+
+  it('replaces a person a document named, with the pseudonym the document gave them', () => {
+    const r = redactor()
+    const document = r.redactDocument({ runs: [{ requested_by: name }] }) as { runs: { requested_by: string }[] }
+    const pseudonym = document.runs[0]?.requested_by ?? ''
+    expect(pseudonym).toMatch(PERSON_PSEUDONYM_RE)
+    const notice = r.redactText(`queued run 1234 by ${name} for review`)
+    expect(notice).toBe(`queued run 1234 by ${pseudonym} for review`)
+    expect(r.redactText(`queued for whitfield, dana`)).toBe(`queued for ${pseudonym}`)
+  })
+
+  it('keeps people across documents, so a later notice still knows an earlier requester', () => {
+    const r = redactor()
+    r.redactDocument({ runs: [{ requested_by: name }] })
+    r.redactDocument({ runs: [{ requested_by: 'Ola Brandt' }] })
+    const notice = r.redactText(`retrying for ${name} and Ola Brandt`)
+    expect(notice).not.toContain('Whitfield')
+    expect(notice).not.toContain('Brandt')
+  })
+
+  it('cannot know a person no document has named yet, which is why the recorder re-runs notices at the end', () => {
+    const r = redactor()
+    expect(r.redactText(`queued by ${name}`)).toBe(`queued by ${name}`)
+    r.redactDocument({ runs: [{ requested_by: name }] })
+    expect(r.redactText(`queued by ${name}`)).not.toContain('Whitfield')
+  })
+})

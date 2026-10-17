@@ -685,7 +685,8 @@ rules and not a second copy of them — a recording cannot be of a command the
 console would refuse to run. It records for a bounded time (`--duration`, 120 s
 by default), then stops the child the way the console does, `SIGTERM` and then
 `SIGKILL` after `SHUTDOWN_GRACE_MS`; a torn last line is dropped rather than
-recorded as garbage.
+recorded as garbage, while a last line that is a whole JSON document — a CLI
+that wrote its final frame without a newline — is recorded like any other.
 
 ### The eight recordings, and why seven of them are missing
 
@@ -794,6 +795,13 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
   `run`, `api`, ...) or the `-` placeholder is not a name, and the contract
   fields (`run`, `id`, `stage`, `status`, `auth`, `health`, `deadline`,
   `verify`, `outcome`, `mode`, `state`) are never rewritten by the person pass.
+  **A notice gets the person pass too, with the recording's people**: a notice
+  is free text with no fields, so the only names the redactor can know in one
+  are the ones the recording's documents named. The redactor keeps every person
+  any document named, and the recorder re-runs every notice through it once the
+  recording is over, so a notice written *before* the document that names its
+  person loses the name as well. A name no document in the recording ever
+  named is not found in a notice — there is nothing to find it by.
   Every redacted document must be a **fixed point**: redacting it again must
   change nothing, or the recording is refused. A document
   with a key nobody anticipated still cannot carry an address out of the room, and a test per class holds each one — a run title, a
@@ -869,7 +877,12 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
 document and every notice it loads, so a fixture edited by hand after it was
 written is refused too, with `FixtureRefusal` naming the class. The loader is
 told no literals, but every other class — addresses, hosts, IPs, GCP names,
-branch and person fields, tokens, paths — needs no list, and is checked.
+branch and person fields, tokens, paths — needs no list, and is checked. **What
+the loader cannot check is a person's name in free text** — a title or a
+notice: it has no person table, so a name is only a name to it in a person
+field. A name in free text is kept out by the recorder's person pass above,
+not by the load-time audit, and a hand edit that writes one into a title or a
+notice is not refused on the way back in.
 
 ### The format, and what the loader refuses
 

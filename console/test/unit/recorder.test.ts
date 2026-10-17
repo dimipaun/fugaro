@@ -596,6 +596,57 @@ describe('a recording in progress', () => {
     expect(result.records).toHaveLength(1)
   })
 
+  it('keeps a final frame the child wrote without a newline, and still drops a torn one', async () => {
+    // Review round 2 of PR 478: a CLI whose last document had no terminating
+    // newline lost it, and when it was the only one the whole recording was
+    // refused. A frame that decodes as a whole document cannot be a torn
+    // write, so it is recorded; anything else at the end is still dropped.
+    const whole = started()
+    whole.stub.write('{"day":"2026-10-15"}')
+    whole.stub.exit(0)
+    const kept = await whole.recording.finished
+    expect(kept.refusal).toBeNull()
+    expect(kept.records).toEqual([{ at: '2026-10-15T12:00:00Z', document: { day: '2026-10-15' } }])
+
+    const torn = started()
+    torn.stub.write('{"day":"2026-10-15"}\n')
+    torn.stub.write('{"day":"2026-10-')
+    torn.stub.exit(0)
+    expect((await torn.recording.finished).records).toEqual([
+      { at: '2026-10-15T12:00:00Z', document: { day: '2026-10-15' } },
+    ])
+  })
+
+  it('redacts the unterminated final frame like any other', async () => {
+    const { stub, recording } = started()
+    stub.write('{"project":"fixture-sandbox"}')
+    stub.exit(0)
+    const result = await recording.finished
+    expect(result.records).toEqual([{ at: '2026-10-15T12:00:00Z', document: { project: PROJECT_MARKER } }])
+  })
+
+  it('takes a person out of a notice, even one written before the document that named them', async () => {
+    // Review round 2 of PR 478: a notice is free text, so the only people the
+    // redactor can find in it are the ones the recording's documents named --
+    // and a notice can come first. The recorder re-runs every notice through
+    // the redactor once the recording is over, with every person in hand.
+    const { stub, recording } = started()
+    stub.write('queued run 1234 by Dana Whitfield for review\n')
+    stub.write('{"runs":[{"requested_by":"Dana Whitfield"}]}\n')
+    stub.write('retrying for Dana Whitfield\n')
+    stub.exit(0)
+    const result = await recording.finished
+    expect(result.refusal).toBeNull()
+    const written = JSON.stringify(result.records)
+    expect(written).not.toContain('Whitfield')
+    expect(written).not.toContain('Dana')
+    const [first, document, last] = result.records
+    const pseudonym = (document as unknown as { document: { runs: { requested_by: string }[] } }).document.runs[0]?.requested_by
+    expect(pseudonym).toMatch(/^person-[0-9a-f]{8}$/)
+    expect(first).toEqual({ at: '2026-10-15T12:00:00Z', notice: `queued run 1234 by ${String(pseudonym)} for review` })
+    expect(last).toEqual({ at: '2026-10-15T12:00:00Z', notice: `retrying for ${String(pseudonym)}` })
+  })
+
   it('reports a spawn that never started', async () => {
     const { stub, recording } = started()
     stub.fail(new Error('spawn fugaro ENOENT'))

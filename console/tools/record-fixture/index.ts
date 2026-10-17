@@ -45,7 +45,8 @@
 //   5. **records for a bounded time** (`--duration`, 120 s by default) and then
 //      stops the child the way the console does -- `SIGTERM`, then `SIGKILL`
 //      for a child that will not go. A torn last line (a write cut in half by
-//      the signal) is dropped rather than recorded as garbage, and a recording
+//      the signal) is dropped rather than recorded as garbage -- a last line
+//      that decodes as a whole document is not torn, and is kept -- and a recording
 //      that read nothing at all is a refusal: an empty fixture would look like a
 //      quiet installation rather than a failed run.
 //
@@ -624,10 +625,40 @@ export function startRecording(deps: RecordingDeps): Recording {
   let graceTimer: ReturnType<typeof setTimeout> | null = null
   let settle: () => void = () => {}
 
+  /** finish is what the end of a recording owes the records, before anyone
+   * sees them. First the **unterminated last frame**: a child may write its
+   * last document with no `\n`, and the recorder cannot tell that from a write
+   * cut in half by the signal -- except that a cut-off frame never decodes as a
+   * whole JSON object. So a final frame that is a document is recorded (through
+   * the redactor, like any other), and anything else is dropped, as a torn
+   * write always was. Then **every notice again**: a notice is free text, so
+   * the only people the redactor can find in it are the ones the recording's
+   * documents named, and a notice may come before the document that names its
+   * person. Re-running each one now, with every person in hand, is what keeps a
+   * requester's name out of a notice whatever order the CLI wrote them in. A
+   * refusal from either is the recording's refusal: nothing is written. */
+  const finish = (): void => {
+    const tail = partial
+    partial = ''
+    if (refusal !== null) return
+    try {
+      if (decodeFeedLine(tail).kind === 'document') {
+        const record = recordLine(tail, stampOf(clock()), redactor)
+        if (record !== null) records.push(record)
+      }
+      for (const [index, record] of records.entries()) {
+        if ('notice' in record) records[index] = { at: record.at, notice: redactor.redactText(record.notice) }
+      }
+    } catch (error) {
+      refusal = error instanceof Error ? error : new Error(String(error))
+    }
+  }
+
   const finished = new Promise<RecordingResult>((resolve) => {
     settle = (): void => {
       if (settled) return
       settled = true
+      finish()
       if (durationTimer !== null) timers.clearTimeout(durationTimer)
       if (graceTimer !== null) timers.clearTimeout(graceTimer)
       resolve({ records, refusal, exitCode })

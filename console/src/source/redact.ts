@@ -242,7 +242,9 @@ export type PseudonymPrefix = 'r' | 'slug' | 'person'
 export interface Redactor {
   /** redactDocument returns a redacted copy of a whole document. */
   redactDocument(document: unknown, where?: string): unknown
-  /** redactText returns redacted free text (a notice line, a log message). */
+  /** redactText returns redacted free text (a notice line, a log message).
+   * The person pass uses every person the documents this redactor redacted
+   * so far named: a notice has no fields of its own to find a person by. */
   redactText(text: string): string
   /** redactFeedLine parses one line of a feed and returns the redacted line. It
    * throws on a line that is not a JSON object rather than passing it through. */
@@ -279,13 +281,33 @@ export function createRedactor(literals: readonly string[] = [], options: Redact
     pseudonym: (prefix, value) =>
       `${prefix}-${createHmac('sha256', key).update(`${prefix}\u0000${value}`).digest('hex').slice(0, 8)}`,
   }
+  // The recording's people: every person any document redacted so far named,
+  // with the pseudonym that document gave them. A notice is free text with no
+  // fields, so this table is the only way the redactor can know a name in one
+  // (review round 2 of PR 478: a notice used to see no people at all). A
+  // document still collects its own people afresh -- this table only grows,
+  // and only after a document has been redacted and audited.
+  const seen: PersonTable = { words: new Map(), names: new Map(), maxWords: 0 }
+  const remember = (document: unknown, where: string): void => {
+    collectPersons(document, undefined, null, ctx, seen, { expanded: 0, distinct: 0, where }, 0)
+  }
+  const withSeen = (): Ctx => ({ ...ctx, persons: seen })
   return {
-    redactDocument: (document, where) => redactDocument(document, ctx, where),
-    redactText: (text) => redactFreeText(text, ctx),
-    redactFeedLine: (line) => redactFeedLine(line, ctx),
+    redactDocument: (document, where) => {
+      const redacted = redactDocument(document, ctx, where)
+      remember(document, where ?? 'a document')
+      return redacted
+    },
+    redactText: (text) => redactFreeText(text, withSeen()),
+    redactFeedLine: (line) => {
+      const out = redactFeedLine(line, ctx)
+      const decoded = decodeFeedLine(line)
+      if (decoded.kind === 'document') remember(decoded.document, 'a feed document')
+      return out
+    },
     redactRepository: (value) => redactRepository(value, ctx),
     pseudonym: (prefix, value) => ctx.pseudonym(prefix, value),
-    problems: (value, where) => auditProblems(value, ctx.literals, null, where),
+    problems: (value, where) => auditProblems(value, ctx.literals, seen, where),
   }
 }
 
