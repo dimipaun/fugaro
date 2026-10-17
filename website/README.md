@@ -6,12 +6,13 @@ build and its own schedule (D90): nothing under it is importable by the Go modul
 Go module gains no dependency from it. The boundary is a test, not a convention —
 `internal/cli/docs_website_boundary_test.go`.
 
-**What is here today:** the shell. The pinned toolchain, the static Astro configuration,
-the check that runs the build and every test file, and this document. `website/data/` and
-`website/content/` already hold the facts Part 0 generates; the pages that render them land
-in W1.3 (`src/layouts/`) through W1.12. **The build therefore produces no page yet**, which
-is why `npm run build` is green today and why the first page's own test arrives with the
-first page.
+**What is here today:** the shell, and its first page. The pinned toolchain, the static Astro
+configuration, the check that runs the build and every test file, this document, and
+`src/pages/changelog.astro` with `src/components/Changelog.astro` (W1.9), which render
+`docs/releases/` at build time — so `npm run build` writes `dist/changelog/index.html`
+today. `website/data/` and `website/content/` already hold the facts Part 0 generates, the
+base layout and the content pipeline are W1.3's, and the site's other routes arrive with
+their own pages and their own tests (W1.4-W1.12).
 
 ## Toolchain
 
@@ -97,12 +98,14 @@ Three things about those commands are worth stating rather than leaving to the t
 
 ## The changelog is built, never committed
 
-There is no changelog page file and no changelog JSON in this tree: `src/lib/changelog.mjs`
-reads `docs/releases/vX.Y.Z.md` **during the build** and the changelog page (W1.9) renders
-what it returns. Nothing is written to disk, so a Highlights file that lands on `main`
-before its tag exists leaves no stale copy behind — and no date is taken from a tag,
-because a shallow checkout has no tags and the newest entry a reader sees has none yet
-(D100). `website/test/changelog.mjs` holds that.
+There is no changelog JSON in this tree: `src/lib/changelog.mjs` reads
+`docs/releases/vX.Y.Z.md` **during the build** and `src/pages/changelog.astro` (W1.9) renders
+what it returns — one entry per release, newest first, each linked to its GitHub release.
+Nothing is written to disk, so a Highlights file that lands on `main` before its tag exists
+leaves no stale copy behind — and no date is taken from a tag, because a shallow checkout
+has no tags and the newest entry a reader sees has none yet (D100).
+`website/test/changelog.mjs` holds the generator to the directory, and
+`website/test/changelog-page.mjs` (W1.9) holds the built page to it.
 
 ## The rule this directory is written to
 
