@@ -40,13 +40,13 @@
 // of its argv, cwd and environment, which is what makes these tests about what a
 // real machine would see rather than about the console's self-consistency.
 
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CHILD_ENV_KEYS,
@@ -124,6 +124,24 @@ function freshDirectory(prefix = 'fugaro-console-test-'): string {
   // realpath, so a test comparing the two needs the realpath on both sides.
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)))
 }
+
+const ownedTemporaryDirectories: string[] = []
+
+/** ownTemporaryDirectory points TMPDIR at a fresh directory this file owns, so a
+ * test that reaches the private working directory's default base (a child of the
+ * system temporary directory) neither needs nor creates anything on the machine
+ * it runs on; the afterEach below removes it and restores TMPDIR. */
+function ownTemporaryDirectory(): string {
+  const owned = freshDirectory('fugaro-console-tmp-')
+  ownedTemporaryDirectories.push(owned)
+  vi.stubEnv('TMPDIR', owned)
+  return owned
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  for (const directory of ownedTemporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true })
+})
 
 /** safeContext is the main-process state a plan is built from in a test. */
 function safeContext(overrides: {
@@ -736,6 +754,7 @@ describe('the child’s working directory', () => {
   })
 
   it('spawns from a private directory the app owns when there is no checkout, and never /', async () => {
+    ownTemporaryDirectory()
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
     const source = await CliSource.create({
@@ -772,6 +791,7 @@ describe('the child’s working directory', () => {
   })
 
   it('creates the private directory with owner-only mode and reuses it', () => {
+    ownTemporaryDirectory()
     expect(privateWorkingDirectory()).toBe(privateWorkingDirectory())
     expect(statSync(privateWorkingDirectory()).mode & 0o777).toBe(0o700)
   })
@@ -780,7 +800,6 @@ describe('the child’s working directory', () => {
 describe('the private working directory', () => {
   const uid = typeof process.getuid === 'function' ? process.getuid() : null
   const name = PRIVATE_DIR_LEAF
-
   it('puts the uid in the base directory, so a second user never shares it', () => {
     // The defect this test exists for: the base was `join(tmpdir(),
     // 'fugaro-console')` for every user on the machine, created 0700 by whoever
@@ -788,18 +807,20 @@ describe('the private working directory', () => {
     // at that name and `assertSafeParent` refused -- correctly, and unfixably
     // from their side -- so the console could not spawn at all for them, and the
     // uid-named leaf below it was never reached. A shared `/tmp` is the case.
+    //
+    // The temporary directory is one this test owns (TMPDIR points at a mkdtemp
+    // directory, removed afterwards), so nothing depends on /tmp/fugaro-console
+    // existing on the machine -- it does not on a fresh CI runner -- and the
+    // test never creates it there either.
+    const owned = ownTemporaryDirectory()
     const path = privateWorkingDirectory()
-    const expected = realpathSync(
-      join(
-        tmpdir(),
-        uid === null ? PRIVATE_DIR_NAME : `${PRIVATE_DIR_NAME}-${uid}`,
-      ),
-    )
+    const expected = join(owned, uid === null ? PRIVATE_DIR_NAME : `${PRIVATE_DIR_NAME}-${uid}`)
     expect(dirname(path)).toBe(expected)
     expect(basename(path)).toBe(PRIVATE_DIR_LEAF)
     // And the shared name is not what this user runs from: the first line of the
-    // defect was that everybody's base was the same path.
-    if (uid !== null) expect(dirname(path)).not.toBe(realpathSync(join(tmpdir(), PRIVATE_DIR_NAME)))
+    // defect was that everybody's base was the same path. A string comparison,
+    // so it needs no path to exist.
+    if (uid !== null) expect(dirname(path)).not.toBe(join(owned, PRIVATE_DIR_NAME))
   })
 
   it('refuses a symbolic link where the directory should be, even to a directory it would accept', () => {
