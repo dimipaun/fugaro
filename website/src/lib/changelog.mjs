@@ -31,15 +31,20 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 export const RELEASES_DIR = path.join(REPO_ROOT, 'docs', 'releases')
 
-// `docs/releases/README.md` describes the format; it is skipped by name, not by pattern.
+// `docs/releases/README.md` describes the format; it is the one file in the directory that
+// is not a release, and it is skipped by name rather than by the pattern below. Every other
+// file must be a release file: one that is not named `vX.Y.Z.md` is a mistake in the tree
+// (a release notes draft, a stray note), and this module throws rather than dropping it
+// silently — a changelog that leaves a release out without saying so is the failure D100
+// and F44 exist to prevent.
 const NON_RELEASE = 'README.md'
 
 const OPERATORS_HEADING = '### For operators'
 
 const RELEASE_FILE = /^v(\d+)\.(\d+)\.(\d+)\.md$/
 
-// The version from the filename, as a comparable triple. Every release file is plain
-// `vX.Y.Z.md`; a file that is not named that way is not a release and is not read.
+// The version from the filename, as a comparable triple, or null for a name that is not a
+// release file's.
 function versionOf(fileName) {
   const m = RELEASE_FILE.exec(fileName)
   if (!m) return null
@@ -88,10 +93,20 @@ function releasedTags(cwd) {
 export function buildChangelog({ releasesDir = RELEASES_DIR, cwd = REPO_ROOT } = {}) {
   const tags = releasedTags(cwd)
 
-  return readdirSync(releasesDir)
+  const files = readdirSync(releasesDir)
     .filter((fileName) => fileName !== NON_RELEASE)
-    .map((fileName) => ({ fileName, ...versionOf(fileName) }))
-    .filter((file) => file.tag !== undefined)
+    .map((fileName) => {
+      const version = versionOf(fileName)
+      if (version === null) {
+        throw new Error(
+          `docs/releases/${fileName} is not a release file: every file there is vX.Y.Z.md, ` +
+            `and README.md (which describes the format) is the only file that is not one`,
+        )
+      }
+      return { fileName, ...version }
+    })
+
+  return files
     .sort((a, b) => newestFirst(a, b))
     .map((file) => {
       const lines = contentLines(readFileSync(path.join(releasesDir, file.fileName), 'utf8'))

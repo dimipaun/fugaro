@@ -22,10 +22,19 @@ const OPERATORS_HEADING = '### For operators'
 
 // The release files' names, read here rather than asked of the generator: the point of
 // these cases is to compare the generator's answer against the directory itself.
+//
+// The enumeration is deliberately the *loosest* one that is still correct — every `*.md`
+// in the directory except `README.md`, which is skipped by name — and not the generator's
+// `vX.Y.Z.md` pattern: a file the generator does not recognise has to fail this case
+// loudly, which it cannot do if the expectation is filtered by the same rule the generator
+// filters with (D100 and F44 call this coverage check the whole of the drift protection).
 function releaseFiles() {
-  return readdirSync(RELEASES_DIR)
-    .filter((name) => name !== NON_RELEASE)
-    .filter((name) => /^v\d+\.\d+\.\d+\.md$/.test(name))
+  return readdirSync(RELEASES_DIR).filter((name) => name.endsWith('.md') && name !== NON_RELEASE)
+}
+
+// The tag a file's entry must carry, taken from the filename alone.
+function tagOf(fileName) {
+  return fileName.slice(0, -'.md'.length)
 }
 
 function versionOf(fileName) {
@@ -89,6 +98,10 @@ test('changelog covers every release file', () => {
   const files = releaseFiles()
   const entries = buildChangelog()
 
+  // `docs/releases/README.md` is the one file that is not a release; the count below is
+  // every other `*.md` in the directory, so a release file the generator does not
+  // recognise shrinks the answer and fails here.
+  assert.ok(existsSync(path.join(RELEASES_DIR, NON_RELEASE)), 'docs/releases/README.md is the file skipped by name')
   assert.equal(
     entries.length,
     files.length,
@@ -96,8 +109,8 @@ test('changelog covers every release file', () => {
   )
   assert.deepEqual(
     new Set(entries.map((entry) => entry.tag)),
-    new Set(files.map((fileName) => fileName.slice(0, -'.md'.length))),
-    'every release file is an entry, and no entry is outside the directory',
+    new Set(files.map(tagOf)),
+    'every *.md in docs/releases/ other than README.md is an entry, and no entry is outside the directory',
   )
 })
 
