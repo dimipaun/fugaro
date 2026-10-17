@@ -818,6 +818,41 @@ test('two senders whose names concatenate alike are still two pairs', () => {
   assert.equal(step(second.state, act()).ok, true);
 });
 
+test('every state a step returns is a state the next step accepts', () => {
+  // A caller's whole contract in one line: a state handed back is a state taken
+  // back. A delivery admitted by one rule and refused by another is an accepted
+  // message nobody can act on, ack or close, so the round trip is asserted for
+  // every edge the delivery rules have rather than for the ordinary case alone.
+  const roundTrips = [
+    [newMailbox(), message({ at: NOW - 1_000 })],
+    [newMailbox(), message({ at: NOW })],
+    [newMailbox(), message({ at: NOW + TOLERANCE })],
+    [newMailbox(), message({ at: NOW - WINDOW })],
+    [newMailbox(), message({ id: 'm-oldest', at: NOW - WINDOW + 1 })],
+    [newMailbox({ now: 1 }), message({ at: 1 })],
+    [newMailbox({ now: 1, windowMs: MIN_WINDOW_MS }), message({ id: 'm-first', at: 1 })],
+  ];
+
+  for (const [state, value] of roundTrips) {
+    const now = state.now;
+    const delivered = stepped(state, deliver(value, { now }));
+    const acted = stepped(delivered.state, act(now));
+    const acked = stepped(acted.state, ack(now));
+    assert.equal(acked.phase, STATE.IDLE);
+    assert.equal(step(acked.state, close(now)).ok, true, 'the ledger it kept is a ledger it reads');
+  }
+
+  // The other side of the same invariant: a timestamp the ledger cannot hold is
+  // refused at the door rather than admitted into a state this module's own
+  // reader rejects. `at: 0` is schema-valid (P0.2 allows a safe integer >= 0)
+  // and is not a time the ledger will carry.
+  const tiny = newMailbox({ now: 500, windowMs: MIN_WINDOW_MS });
+  const zero = step(tiny, deliver(message({ at: 0 }), { now: 500 }));
+  assert.equal(zero.ok, false, 'at: 0 was admitted into the ledger');
+  assert.equal(zero.code, REFUSAL.ZERO_TIMESTAMP);
+  assert.equal(zero.field, 'message.at');
+});
+
 test('a closed mailbox refuses every event, with one code and the state it was closed in', () => {
   const closed = mailboxIn(STATE.CLOSED);
   assert.equal(closed.phase, STATE.CLOSED);

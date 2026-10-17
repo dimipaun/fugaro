@@ -101,13 +101,22 @@ D113b's MAC is what protects a message's contents, not this table.
 The cap (`maxSeen`, default `DEFAULT_MAX_SEEN`) is a bound on what the
 bookkeeping can hold. Three rules keep it from becoming a hole in the fence:
 
-- a delivery with no room is **refused** (`dedupe-full`), never admitted by
-  dropping something live — dropping an in-flight record is exactly the
-  "acted on twice" failure dedupe exists to prevent;
-- a record is evictable only when it is **`acked`** *and* **outside the replay
-  window**. Outside the window is the load-bearing half: a redelivery of an
-  evicted message is refused as a replay by the window rule before the ledger
-  is consulted, so **eviction cannot re-admit a replay**;
+- a delivery with no room is **refused** (`dedupe-full`) unless something is
+  evictable. Nothing **inside the window** is ever dropped to make room:
+  dropping an in-window record is exactly the "acted on twice" failure dedupe
+  exists to prevent;
+- a record is evictable only when it is **outside the replay window** *and*
+  either **`acked`** — the delivery is finished, so forgetting it cannot lose
+  work — **or the record for the very `(sender, id)` now arriving**, which is
+  dropped even when it is un-acked, because the window has already ruled that
+  its message is not the one arriving and the ledger holds one record per pair.
+  Outside the window is the load-bearing half of the rule: a redelivery of an
+  evicted message is refused as a replay by the window rule before the ledger is
+  consulted, so **eviction cannot re-admit a replay**. The one thing that is
+  never evicted is an in-flight record *inside* the window, or an in-flight
+  record for any other pair — a delivery that was acted on and never acked is
+  work this consumer still owes an ack for, and dropping it would make room for
+  a second action;
 - the same `(sender, id)` with a different `at` **inside** the window is
   `id-conflict`: the id is the message's identity, so a second message under it
   is an ambiguity rather than a duplicate.
@@ -151,6 +160,7 @@ fault and never the value it refused, so a refusal can be logged as it stands.
 | `duplicate-seen-entry` | two records for the same `(sender, id)` |
 | `unsorted-seen` | records not in the canonical order |
 | `negative-zero` | a message whose `at` is `-0` — the schema accepts it (it *is* zero), and this module refuses it because it is the shape of a negated number, not a time |
+| `zero-timestamp` | a message whose `at` is `0` — schema-valid (P0.2 allows any safe integer ≥ 0) and not a time this module will carry: the ledger's floor, the state's own `now` floor and D117's rule (a zero timestamp is the shape of an unset counter) all say a time is a **positive** integer. Admitting it would be worse than refusing it, because the record could not be read back |
 | `replay` | a message older than the replay window |
 | `future-timestamp` | a message whose `at` is further ahead than the future tolerance |
 | `id-conflict` | a known `(sender, id)` carrying a different `at`, inside the window |
@@ -191,8 +201,8 @@ shared/mailbox/mutation-proof.sh             # every guard in index.js, mutated 
 **Every guard in `index.js` is mutation-proved**, not merely covered: the script
 disables one guard at a time — the plain-object check, the accessor check, the
 unknown- and missing-field checks, the phase check, the ledger's shape,
-duplicate and order rules, the monotonic-`now` check, the negative-zero check,
-the future bound, the window bound, the `(sender, id)` dedupe, the duplicate
+duplicate and order rules, the monotonic-`now` check, the negative-zero and
+zero-timestamp checks, the future bound, the window bound, the `(sender, id)` dedupe, the duplicate
 branch that must not touch the record, the conflict branch, both halves of the
 eviction predicate, the cap, the closed row of the dispatch table, the freeze
 and the copy — runs the module's tests, and requires them to fail each time. It

@@ -156,6 +156,7 @@ export const REFUSAL = Object.freeze({
   UNSORTED_SEEN: 'unsorted-seen',
   // The delivery.
   NEGATIVE_ZERO: 'negative-zero',
+  ZERO_TIMESTAMP: 'zero-timestamp',
   REPLAY: 'replay',
   FUTURE_TIMESTAMP: 'future-timestamp',
   ID_CONFLICT: 'id-conflict',
@@ -337,6 +338,7 @@ function DELIVERY_REFUSALS() {
       REFUSAL.UNKNOWN_FIELD,
       REFUSAL.MISSING_FIELD,
       REFUSAL.NEGATIVE_ZERO,
+      REFUSAL.ZERO_TIMESTAMP,
       REFUSAL.REPLAY,
       REFUSAL.FUTURE_TIMESTAMP,
       REFUSAL.ID_CONFLICT,
@@ -515,13 +517,14 @@ export function step(state, event) {
  * deliver: a message has arrived, possibly again.
  *
  * The order of the checks is the rule. The schema first — a value that is not
- * a message is not a delivery. Then negative zero, which the schema accepts
- * (it is numerically zero) and which is refused here because it is the shape
- * of a negated number rather than a time. Then the future bound, before the
- * window: a far-future `at` would otherwise compute a negative age and read as
- * "inside the window". Then the window, which is the replay rule. Then the
- * ledger: the same `(sender, id)` inside the window is a duplicate when its
- * `at` agrees and a conflict when it does not.
+ * a message is not a delivery. Then the message's own time: negative zero, which
+ * the schema accepts (it is numerically zero), and zero itself, which is a
+ * schema-valid `at` this module will not carry, both refused here because they
+ * are the shape of a negated or unset counter rather than a time. Then the
+ * future bound, before the window: a far-future `at` would otherwise compute a
+ * negative age and read as "inside the window". Then the window, which is the
+ * replay rule. Then the ledger: the same `(sender, id)` inside the window is a
+ * duplicate when its `at` agrees and a conflict when it does not.
  */
 function deliver(state, values) {
   const validated = validateMessage(values.message);
@@ -534,6 +537,16 @@ function deliver(state, values) {
 
   const { sender, id, at } = validated.message;
   if (Object.is(at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'message.at');
+  // `at: 0` is schema-valid (P0.2 allows any safe integer >= 0) and is not a
+  // time this module will carry: the ledger's own floor, the state's `now`
+  // floor and the presence rule (D117: a zero timestamp is the shape of an
+  // unset counter) all say a time is a *positive* integer. Admitting it here
+  // would be worse than refusing it -- the delivery would be accepted, written
+  // into the ledger, and then refused by this module's own reader
+  // (`invalid-seen-entry`), leaving a message nobody could act on, ack or
+  // close. The guard is written `at < 1` rather than `at === 0` so that it
+  // stays right if the schema's floor ever moves.
+  if (at < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, 'message.at');
   if (at - values.now > state.futureToleranceMs) {
     return refuse(REFUSAL.FUTURE_TIMESTAMP, 'message.at');
   }
@@ -620,9 +633,11 @@ function refuseClosed() {
  *     reused, which the window has already ruled is a new message rather than a
  *     duplicate, and the ledger holds one record per pair.
  *
- * Anything else survives, including an in-flight record far outside the window:
- * a delivery that was acted on and never acked is work this consumer still owes
- * an ack for, and dropping it would make room for a second action.
+ * An in-flight record for any *other* pair survives even far outside the
+ * window: a delivery that was acted on and never acked is work this consumer
+ * still owes an ack for, and dropping it would make room for a second action.
+ * Only the arriving pair's own stale record goes, and only because the window
+ * has already ruled that its message is not the one arriving.
  */
 function evict(state, now, sender, id) {
   return state.seen.filter((entry) => {

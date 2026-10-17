@@ -276,6 +276,8 @@ run "the monotonic now (now-went-backwards)" \
 #    the conflict, and the cap.
 run "delivery: negative zero in a message" \
   "  if (Object.is(at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'message.at');" ""
+run "delivery: a zero timestamp is not a time" \
+  "  if (at < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, 'message.at');" ""
 run "delivery: the future bound" \
   "  if (at - values.now > state.futureToleranceMs) {" "  if (false) {"
 run "delivery: the replay window" \
