@@ -61,7 +61,7 @@ resource "google_service_account" "fugaro_deployer" {
 # permissions is ever moved into fugaroDeployer (the unconditioned role) or
 # into a binding with no condition.
 locals {
-  deployer_condition_title      = "fugaro-managed-prefix"
+  deployer_condition_title = "fugaro-managed-prefix"
   deployer_condition_expression = join(" || ", [
     "(resource.type == \"storage.googleapis.com/Bucket\" && resource.name.startsWith(\"projects/_/buckets/fmgd-\"))",
     "(resource.type == \"storage.googleapis.com/Object\" && resource.name.startsWith(\"projects/_/buckets/fmgd-\"))",
@@ -87,32 +87,32 @@ resource "google_project_iam_custom_role" "fugaro_deployer" {
   role_id = "fugaroDeployer"
   title   = "Fugaro managed deployer (create and read)"
   permissions = [
-    "apikeys.keys.create",                    # google_apikeys_key: create a managed project's own key, unconditioned, and update or delete only a prefixed one (the scoped role)
-    "apikeys.keys.get",                       # the read the provider makes after creating the key
-    "apikeys.keys.list",                      # ... and the read behind an import or a refresh
-    "artifactregistry.repositories.create",   # google_artifact_registry_repository: a managed project's own images need a repository of their own
-    "artifactregistry.repositories.get",      # the read the provider makes after creating the repository
+    "apikeys.keys.create",                        # google_apikeys_key: create a managed project's own key, unconditioned, and update or delete only a prefixed one (the scoped role)
+    "apikeys.keys.get",                           # the read the provider makes after creating the key
+    "apikeys.keys.list",                          # ... and the read behind an import or a refresh
+    "artifactregistry.repositories.create",       # google_artifact_registry_repository: a managed project's own images need a repository of their own
+    "artifactregistry.repositories.get",          # the read the provider makes after creating the repository
     "artifactregistry.repositories.getIamPolicy", # the read the provider makes before the conditioned setIamPolicy of the same repository
-    "artifactregistry.repositories.list",     # ... and the read behind a refresh
-    "cloudscheduler.jobs.create",             # google_cloud_scheduler_job: the schedule a managed project runs
-    "cloudscheduler.jobs.get",                # the read the provider makes after creating the job
-    "cloudscheduler.jobs.list",               # ... and the read behind a refresh
-    "iam.serviceAccounts.create",             # google_service_account: a managed project's workloads need accounts of their own; update and delete are conditioned
-    "iam.serviceAccounts.get",                # the read the provider makes after creating the account
-    "iam.serviceAccounts.getIamPolicy",       # the read the provider makes before the conditioned setIamPolicy of the same account
-    "iam.serviceAccounts.list",               # ... and the read behind a refresh
-    "run.jobs.create",                        # google_cloud_run_v2_job: the workload a managed project runs; update, delete and run are conditioned
-    "run.jobs.get",                           # the read the provider makes after creating the job
-    "run.jobs.getIamPolicy",                  # the read the provider makes before the conditioned setIamPolicy of the same job
-    "run.jobs.list",                          # ... and the read behind a refresh
-    "secretmanager.secrets.create",           # google_secret_manager_secret: the container, never a version — no secretmanager.versions.* anywhere
-    "secretmanager.secrets.get",              # the read the provider makes after creating the secret
-    "secretmanager.secrets.getIamPolicy",     # the read the provider makes before the conditioned setIamPolicy of the same secret
-    "secretmanager.secrets.list",             # ... and the read behind a refresh
-    "serviceusage.services.enable",           # google_project_service: a managed plan may enable an API. Not disable: a delete is the owner's to approve, and the deployer could not apply it
-    "serviceusage.services.get",              # the read the provider makes after enabling the service
-    "serviceusage.services.list",             # ... and the read behind a refresh
-    "storage.buckets.create",                 # google_storage_bucket: a managed project's own storage. The only storage permission here; get, update, delete and setIamPolicy are conditioned in the other role
+    "artifactregistry.repositories.list",         # ... and the read behind a refresh
+    "cloudscheduler.jobs.create",                 # google_cloud_scheduler_job: the schedule a managed project runs
+    "cloudscheduler.jobs.get",                    # the read the provider makes after creating the job
+    "cloudscheduler.jobs.list",                   # ... and the read behind a refresh
+    "iam.serviceAccounts.create",                 # google_service_account: a managed project's workloads need accounts of their own; update and delete are conditioned
+    "iam.serviceAccounts.get",                    # the read the provider makes after creating the account
+    "iam.serviceAccounts.getIamPolicy",           # the read the provider makes before the conditioned setIamPolicy of the same account
+    "iam.serviceAccounts.list",                   # ... and the read behind a refresh
+    "run.jobs.create",                            # google_cloud_run_v2_job: the workload a managed project runs; update, delete and run are conditioned
+    "run.jobs.get",                               # the read the provider makes after creating the job
+    "run.jobs.getIamPolicy",                      # the read the provider makes before the conditioned setIamPolicy of the same job
+    "run.jobs.list",                              # ... and the read behind a refresh
+    "secretmanager.secrets.create",               # google_secret_manager_secret: the container, never a version — no secretmanager.versions.* anywhere
+    "secretmanager.secrets.get",                  # the read the provider makes after creating the secret
+    "secretmanager.secrets.getIamPolicy",         # the read the provider makes before the conditioned setIamPolicy of the same secret
+    "secretmanager.secrets.list",                 # ... and the read behind a refresh
+    "serviceusage.services.enable",               # google_project_service: a managed plan may enable an API. Not disable: a delete is the owner's to approve, and the deployer could not apply it
+    "serviceusage.services.get",                  # the read the provider makes after enabling the service
+    "serviceusage.services.list",                 # ... and the read behind a refresh
+    "storage.buckets.create",                     # google_storage_bucket: a managed project's own storage. The only storage permission here; get, update, delete and setIamPolicy are conditioned in the other role
   ]
 
   depends_on = [google_project_service.this]

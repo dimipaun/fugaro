@@ -49,7 +49,10 @@ func TestMarkCreatedSetsUpTheManagedStateBucket(t *testing.T) {
 		r.gcs.AddBucket(bucket, number, managedBucketLabels)
 
 		var out bytes.Buffer
-		run := &initRun{cmd: NewRootCmd(), w: &out, gcpProject: newProj}
+		// --managed with its required budget trio (Task 4.2): markCreated
+		// reads the options for the amount the creation fact records.
+		o := &initOptions{managed: true, budget: 100, budgetCurrency: "USD", billingAccount: "000000-000000-000000"}
+		run := &initRun{o: o, cmd: NewRootCmd(), w: &out, gcpProject: newProj}
 		run.res.Created, run.res.Outputs = newProj, &infra.InstallationOutputs{RunsBucket: bucket}
 		e := &initEngine{r: run, c: c, lc: lc, spec: infra.InstallationSpec{Project: newProj, Region: "us-east5"}}
 		return r, e, &out
