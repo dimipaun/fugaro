@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 )
 
@@ -134,6 +137,51 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		noMarker(t, r.gcs, bucket)
 	})
 
+	// (c'') --create-project with --firebase set to the same project: the
+	// one-project layout the docs tell the owner to run ("One project or
+	// two: either is supported", docs/gcp-setup.md, and the live checklist's
+	// init step), where the Firebase backend lives in the project the run
+	// creates. It is a different path to the same fact: with --firebase the
+	// installation is the Firebase engine's first apply and the installation
+	// stage is skipped (init_stages.go, newInstallationStage), so the
+	// outputs markCreated reads — the runs bucket among them — are set by
+	// that engine's writeConfig rather than by the installation stage, and
+	// the fact still lands, once.
+	//
+	// Against a *different* Firebase project the flag is refused before
+	// anything is called (TestCreateWithOtherFirebaseRefused); this is the
+	// accepted combination, and until this case existed no test ran it.
+	t.Run("--create-project with Firebase on the created project", func(t *testing.T) {
+		r := newCreatedFBRig(t)
+		bucket := "fugaro-runs-" + newProj
+		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+names(1)+"us-east5\n"+names(1),
+			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+			"--firebase", newProj, "--budget-mode", "observe")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if n := len(r.crm.Creates()); n != 1 {
+			t.Fatalf("%d project(s) created:\n%s", n, out)
+		}
+		b, ok := markerAt(t, r.gcs, bucket)
+		if !ok {
+			t.Fatalf("no %s in gs://%s after the run that created the project and put Firebase on it:\n%s", managed.MarkerObject, bucket, out)
+		}
+		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
+			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
+		}
+		// Once, and on its own first try: a second write would have to get
+		// past WriteMarker's IfGenerationMatch(0), and the run says so
+		// exactly once. The warning below is what the run prints instead
+		// when the fact cannot be written.
+		if n := strings.Count(out, "recorded that this run created project "+newProj); n != 1 {
+			t.Errorf("the run recorded the fact %d time(s), want once:\n%s", n, out)
+		}
+		if strings.Contains(out, "not marked as managed") {
+			t.Errorf("the run warned that the created project is unmarked:\n%s", out)
+		}
+	})
+
 	// (d) The project created, but with a runs bucket that is not the
 	// project's own under the default name: a marker there would be a fact
 	// nothing reads — the read of Task 0.2 locates the bucket the way init's
@@ -181,6 +229,95 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		}
 		noMarker(t, r.gcs, initRunsBucket)
 	})
+}
+
+// createdFBRig is the rig of the one-project layout: the create rig (the
+// project, its billing and Firebase Management) with the Firebase engine's
+// own fakes on top, for `fugaro init --create-project --gcp-project P
+// --firebase P`. The Firebase project is the one this run creates, so its
+// database, its admins and its billing exist as the run itself leaves them,
+// not as a rig seeds them.
+type createdFBRig struct {
+	*projectRig
+	db    *gcpfake.RTDB
+	fbdb  *gcpfake.FirebaseDB
+	idt   *gcpfake.IdentityToolkit
+	fs    *gcpfake.Firestore
+	rules *gcpfake.FirebaseRules
+	keys  *gcpfake.APIKeys
+}
+
+func newCreatedFBRig(t *testing.T) *createdFBRig {
+	t.Helper()
+	p := newProjectRig(t)
+	r := &createdFBRig{projectRig: p, db: gcpfake.NewRTDB(t), fbdb: gcpfake.NewFirebaseDB(t)}
+	r.idt = gcpfake.NewIdentityToolkit(t, nil, "key", newProj)
+	r.fs, r.rules = gcpfake.NewFirestore(t), gcpfake.NewFirebaseRules(t, newProj)
+	r.fs.RemoveDatabase() // a fresh Firebase project has none
+	r.keys = gcpfake.NewAPIKeys(t)
+	r.fbdb.AddInstanceFull(newProj, "us-central1", newProj+"-default-rtdb", "DEFAULT_DATABASE", "ACTIVE", r.db.URL)
+
+	// The rest of the Firebase engine's endpoints, beside the ones the
+	// create rig already wrote (cloud_billing, firebase_management).
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := strings.Replace(string(b), "no_auth: true }", "firebase_database: "+r.fbdb.URL+"/, api_keys: "+r.keys.URL+
+		"/, identity_toolkit: "+r.idt.URL+"/, firestore: "+r.fs.URL+", firebase_rules: "+r.rules.URL+", no_auth: true }", 1)
+	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Who may change a cap in the created project: the Firebase engine reads
+	// the installation project's owners and editors before its first apply
+	// and refuses a project with none.
+	r.crm.SetPolicy(newProj, gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}})
+	r.bill.AddAccount(billingAcc, true)
+
+	// The created project's own runs bucket, as the installation would make
+	// it, and the number both the bucket check and the fact's write are made
+	// against (the number the fake gives the first project created through
+	// projects.create).
+	bucket := "fugaro-runs-" + newProj
+	r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
+	r.gcs.AddBucket(bucket, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
+	roles := map[string]string{}
+	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+		roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
+	}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"runs_bucket":               bucket,
+		"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+		"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+		"role_ids":                  roles,
+		"history_service_account":   "fugaro-history@" + newProj + ".iam.gserviceaccount.com",
+		"history_job":               nil,
+	})}
+	r.script["output@firebase"] = map[string]any{"stdout": r.firebaseOutputs(t)}
+	r.save(t)
+
+	// The history image the images stage mirrors into the created project's
+	// registry, so the installation-2 apply (the history job) has one.
+	r.ar.AddRepository(newProj, "us-east5", infra.BaseRegistry, managedBucketLabels)
+	r.ar.SetTag(newProj, "us-east5", infra.BaseRegistry, infra.HistoryImagePackage, "latest")
+	return r
+}
+
+// firebaseOutputs is the Firebase root's outputs, about the project this rig
+// puts Firebase on.
+func (r *createdFBRig) firebaseOutputs(t *testing.T) string {
+	t.Helper()
+	out := map[string]any{}
+	for k, v := range map[string]string{"rtdb_url": r.db.URL, "firebase_api_key": fpAPIKey,
+		"token_signer": "fugaro-token-signer@" + newProj + ".iam.gserviceaccount.com", "firebase_project": newProj} {
+		out[k] = map[string]any{"value": v, "type": "string", "sensitive": false}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 // managedBucketLabels is the label the installation puts on the runs bucket,
