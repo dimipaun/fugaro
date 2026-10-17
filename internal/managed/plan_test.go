@@ -50,7 +50,7 @@ func change(addr, typ string, actions []string, after map[string]any) map[string
 	if after == nil {
 		after = map[string]any{}
 	}
-	return map[string]any{"address": addr, "type": typ,
+	return map[string]any{"address": addr, "type": typ, "mode": "managed",
 		"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": after}}
 }
 
@@ -445,5 +445,85 @@ func TestGateImportsMustBeOnTheSpecList(t *testing.T) {
 	s.Imports = []tf.ImportKey{{Address: planBucket, ID: id}}
 	if v := gate(t, r, s); !v.OK {
 		t.Errorf("an import discovery found was refused: %v", v.Refusals)
+	}
+}
+
+// The cost list (Task 1.3) is enforced here, in the verdict, and nowhere else:
+// a plan the guard and the cover both admit but that states a blocked cost
+// attribute comes back not OK, with the cost gate's own refusal. Dropping the
+// wiring from Gate turns this red.
+func TestGateRefusesABlockedCostAttribute(t *testing.T) {
+	const svc = "module.managed.google_cloud_run_v2_service.api"
+	r := newRig(t)
+	r.show(t, change(svc, "google_cloud_run_v2_service", []string{"create"}, map[string]any{
+		"template": []any{map[string]any{"scaling": []any{map[string]any{"min_instance_count": 3}}}}}))
+	v := gate(t, r, spec(t, r, admitAll{}))
+	if v.OK {
+		t.Fatal("a plan with a blocked cost attribute was admitted")
+	}
+	if len(v.Refusals) != 1 {
+		t.Fatalf("refusals %v, want the cost gate's one", v.Refusals)
+	}
+	got := v.Refusals[0]
+	if got.Gate != costGate || got.Address != svc || !strings.Contains(got.Why, "cloud-run-min-instances") {
+		t.Errorf("refusal %+v, want the cost gate's refusal of %s with the entry's words", got, svc)
+	}
+	if applied := r.applied(t); len(applied) != 0 {
+		t.Errorf("the gate applied something: %v", applied)
+	}
+}
+
+// And the ordinary plan beside it: a service with min instances 0 fires no
+// entry, so the cost gate does not refuse ordinary work.
+func TestGateAdmitsAPlanBelowTheCostLines(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change("module.managed.google_cloud_run_v2_service.api", "google_cloud_run_v2_service", []string{"create"}, map[string]any{
+		"template": []any{map[string]any{"scaling": []any{map[string]any{"min_instance_count": 0}}}}}))
+	if v := gate(t, r, spec(t, r, admitAll{})); !v.OK {
+		t.Fatalf("a plan below the cost lines is refused: %v", v.Refusals)
+	}
+}
+
+// A plan the guard refuses and that also states a blocked cost attribute
+// returns every refusal, the cost one included: the "every refusal" contract.
+func TestGateReturnsTheCostRefusalAlongsideTheGuards(t *testing.T) {
+	const svc = "module.managed.google_cloud_run_v2_service.api"
+	r := newRig(t)
+	r.show(t,
+		change(planBucket, "google_storage_bucket", []string{"delete"}, nil),
+		change(svc, "google_cloud_run_v2_service", []string{"create"}, map[string]any{
+			"template": []any{map[string]any{"scaling": []any{map[string]any{"min_instance_count": 3}}}}}))
+	v := gate(t, r, spec(t, r, admitAll{}))
+	var guarded, costed bool
+	for _, ref := range v.Refusals {
+		guarded = guarded || (ref.Gate == guardGate && ref.Address == planBucket)
+		costed = costed || (ref.Gate == costGate && ref.Address == svc)
+	}
+	if v.OK || !guarded || !costed {
+		t.Errorf("verdict %+v, want not OK with the guard's and the cost gate's refusals", v)
+	}
+}
+
+// A flag-only finding is carried in Verdict.Flags, shown to whoever confirms,
+// and never makes the plan not OK.
+func TestGateCarriesAFlagOnlyFindingWithoutRefusing(t *testing.T) {
+	const addr = "module.managed.google_cloud_run_v2_service.api"
+	old := costFindings
+	costFindings = func(*tf.Plan) []tf.ManagedCostFinding {
+		return []tf.ManagedCostFinding{{Entry: "test-flag", Address: addr, Detail: "the size is large", Block: false}}
+	}
+	t.Cleanup(func() { costFindings = old })
+	r := newRig(t)
+	r.show(t, bucket(planBucket))
+	v := gate(t, r, spec(t, r, admitAll{}))
+	if !v.OK {
+		t.Errorf("a flag-only finding made the plan not OK: %+v", v)
+	}
+	if len(v.Refusals) != 0 {
+		t.Errorf("refusals %v, want none", v.Refusals)
+	}
+	if len(v.Flags) != 1 || v.Flags[0].Gate != costGate || v.Flags[0].Address != addr ||
+		!strings.Contains(v.Flags[0].Why, "test-flag") {
+		t.Errorf("flags %+v, want the finding", v.Flags)
 	}
 }

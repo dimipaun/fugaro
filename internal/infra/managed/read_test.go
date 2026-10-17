@@ -132,10 +132,119 @@ func TestIsManagedReadsTheCreationFact(t *testing.T) {
 	}
 	// The bucket is located from the GCP project alone, under the name the
 	// installation module gives it and the name init's marker write uses
-	// (init.go:672, which warns rather than writes anywhere else for this
-	// reason).
+	// (initEngine.markCreated in internal/cli/init.go, which warns rather
+	// than writes anywhere else for this reason).
 	if got := runsBucketName(testProject); got != testBucket {
 		t.Errorf("runsBucketName(%q) = %q, want %q", testProject, got, testBucket)
+	}
+}
+
+// The version a managed creation writes (Task 4.2): the fact and the monthly
+// amount it was required to choose, read as managed, with the amount and the
+// currency readable from the same object — and still a read that writes
+// nothing and asks for nothing but the project's number, the bucket and the
+// object.
+func TestIsManagedReadsTheBudgetVersion(t *testing.T) {
+	ctx := context.Background()
+	s, f, c, cf := managedWorld(t)
+	f.Put(testBucket, MarkerObject, []byte(markerBudgetJSON))
+
+	ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || !ok || reason != "" {
+		t.Fatalf("IsManaged = %v, %q, %v; want true, \"\", nil", ok, reason, err)
+	}
+	budget, ok, reason, err := ReadBudget(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || !ok || reason != "" {
+		t.Fatalf("ReadBudget = %+v, %v, %q, %v; want 7 USD, true, \"\", nil", budget, ok, reason, err)
+	}
+	if budget.Amount != 7 || budget.Currency != "USD" {
+		t.Errorf("ReadBudget = %+v, want the amount and the currency the fact records (7 USD)", budget)
+	}
+	for _, r := range f.Requests() {
+		if r.Method != http.MethodGet {
+			t.Errorf("the budget read made a %s %s: a marker read writes nothing", r.Method, r.Path)
+		}
+	}
+	for _, r := range cf.Requests() {
+		if r.Method != http.MethodGet {
+			t.Errorf("the budget read made a %s %s: a marker read writes nothing", r.Method, r.Path)
+		}
+	}
+}
+
+// ReadBudget's other answers, which are the reason it exists as a read of its
+// own rather than a field IsManaged happens to return: an amount a caller can
+// act on, or a refusal a caller can print. A managed project under version 1
+// records none — it was created before this task, or it was not a managed
+// creation — and that is ok=false with a reason and **no error**: it is an
+// answer, and the fail-closed one for a caller that needs a line to compare a
+// spend against, because an absent amount is not an unlimited one. A read
+// that could not be made at all (an API that did not answer) is the error,
+// exactly as IsManaged's is.
+func TestReadBudgetAnswersWhatTheFactRecords(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		world  func(t *testing.T) (*storage.Service, *crm.Service)
+		fails  bool
+		reason string
+	}{
+		"the fact is version 1, which records no amount": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"the project is not managed at all": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, _, c, _ := managedWorld(t)
+				return s, c
+			},
+			reason: MarkerObject,
+		},
+		"the project's number cannot be read": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, cf := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(markerBudgetJSON))
+				cf.DenyGet(testProject)
+				return s, c
+			},
+			reason: "cannot be read",
+		},
+		"the project's number read fails": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, cf := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(markerBudgetJSON))
+				cf.Refuse(http.StatusInternalServerError, "INTERNAL", "", "backend error")
+				return s, c
+			},
+			reason: "reading project " + testProject,
+			fails:  true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, c := tc.world(t)
+			budget, ok, reason, err := ReadBudget(ctx, s, c, testFugaroProject, testProject)
+			if ok {
+				t.Fatalf("ReadBudget = %+v, true: an amount came back from %s", budget, name)
+			}
+			if reason == "" || strings.Contains(reason, "\n") {
+				t.Errorf("reason = %q, want one line a caller can print", reason)
+			}
+			if !strings.Contains(reason, tc.reason) {
+				t.Errorf("reason = %q, want it to say %q", reason, tc.reason)
+			}
+			if !strings.Contains(reason, testFugaroProject) && !strings.Contains(reason, testProject) {
+				t.Errorf("reason = %q: it names neither the project nor the GCP project it is about", reason)
+			}
+			if tc.fails && err == nil {
+				t.Error("want an error: the API did not answer, so the caller should be told the read failed")
+			}
+			if !tc.fails && err != nil {
+				t.Errorf("err = %v, want the refusal to be an answer rather than a failure", err)
+			}
+		})
 	}
 }
 
@@ -346,7 +455,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		"a version this build does not know": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
-				f.Put(testBucket, MarkerObject, []byte(`{"version":`+strconv.Itoa(MarkerVersion+1)+`,"gcp_project":"`+testProject+`"}`))
+				f.Put(testBucket, MarkerObject, []byte(`{"version":`+strconv.Itoa(MarkerVersionBudget+1)+`,"gcp_project":"`+testProject+`"}`))
 				return s, c
 			},
 			reason: "version",
@@ -355,6 +464,86 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
 				f.Put(testBucket, MarkerObject, []byte(`{"version":1,"gcp_project":"`+testProject+`","budget_amount":50}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		// The budget version (Task 4.2). Version 2 means "this creation was
+		// required to choose an amount and did", so an object of that version
+		// without one — or with an amount that is not one — is not a fact
+		// this build wrote, and believing it would be a managed project with
+		// no line to compare a spend against. Version 2 read as a version-1
+		// object, or the amount taken from a field someone else chose, is the
+		// mutation these rows exist for.
+		"version 2 with no budget recorded": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`"}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 2 with an amount of 0": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":0,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 2 with a budget and no currency": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":50}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		// The amount is a monthly line above 0, so a negative one is no more
+		// an amount than 0 is.
+		"version 2 with a negative amount": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":-5,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		// A version-1 object carries no budget: version 1 is a creation that
+		// was never required to choose one, so a budget in it is a field
+		// someone else wrote. The shape check refuses it first ("not a
+		// marker"); readFact's version-1 case refuses it again, with its own
+		// reason, so the rule does not rest on the shape check alone — and a
+		// shape check that let the budget through for version 1 changes the
+		// reason this row sees, which is what fails it.
+		"version 1 with a budget": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":1,"gcp_project":"`+testProject+`","budget":{"amount":50,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		"version 2 with a budget field spelled differently": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"AMOUNT":50,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		"version 2 with a budget field this build does not write": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":50,"currency":"USD","thresholds":[0.5]}}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		"a budget that is not an object": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":50}`))
 				return s, c
 			},
 			reason: "not a marker",

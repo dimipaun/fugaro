@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/spf13/cobra"
@@ -441,5 +444,172 @@ func TestAllowDeleteCommandRefusesAListThatChangedUnderIt(t *testing.T) {
 	err := allowDeleteWriteErr(lc, initRunsBucket, fmt.Errorf("%w: generation 7", managed.ErrChanged))
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run the command again") {
 		t.Errorf("allowDeleteWriteErr(ErrChanged) = %v (exit %d), want a user error that says to run it again", err, ExitCode(err))
+	}
+}
+
+// TestAllowDeleteCommandConditionsItsWriteOnWhatItRead: the command reads the
+// list, asks, and writes conditioned on the generation it read, so a writer
+// that replaces the object while the owner is at the prompt is not
+// overwritten — and its approvals are not dropped by a write that never saw
+// them. This is the compare-and-swap end to end: the test holds the command at
+// its confirmation, replaces the object behind it, and lets it proceed. The
+// write that follows must be refused (ErrChanged), and the object must still
+// be the other writer's.
+//
+// Before this test the ErrChanged path was reached only through
+// allowDeleteWriteErr, as a string formatter: nothing ran the command against
+// a list that changed under it. What pins the conditioning itself is the
+// second write of TestAllowDeleteCommandWritesTheWholeList — an unconditioned
+// create of an object that exists is refused by GCS and by the fake alike, so
+// a write that dropped the generation fails there.
+func TestAllowDeleteCommandConditionsItsWriteOnWhatItRead(t *testing.T) {
+	r := allowDeleteRig(t)
+	if _, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web"); err != nil {
+		t.Fatal(err)
+	}
+	terminal(t, true)
+	pr, pw := io.Pipe()
+	out := newPromptWriter()
+	cmd := NewRootCmd()
+	var errOut bytes.Buffer
+	cmd.SetIn(pr)
+	cmd.SetOut(out)
+	cmd.SetErr(&errOut)
+	// One address of the two: a removal, which is the branch that asks.
+	cmd.SetArgs([]string{"allow-delete", "google_cloud_run_v2_job.web"})
+	done := make(chan error, 1)
+	go func() { done <- cmd.Execute() }()
+	select {
+	case <-out.asked():
+	case <-time.After(30 * time.Second):
+		t.Fatalf("the command never asked for the confirmation:\n%s", out.String())
+	}
+	// While it waits for the name: another writer replaces the list.
+	other := []byte(`{"version":1,"gcp_project":"proj-1234","addresses":["google_compute_network.vpc"]}`)
+	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, other)
+	if _, err := pw.Write([]byte(initProjectName + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	err := <-done
+	if err == nil {
+		t.Fatalf("a list written over another writer's list was not refused:\n%s", out.String())
+	}
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run the command again") {
+		t.Errorf("the refusal = %v (exit %d), want a user error that says to run the command again", err, ExitCode(err))
+	}
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); !ok || got != string(other) {
+		t.Errorf("gs://%s/%s = %q (there: %v), want the other writer's list, unchanged", initRunsBucket, managed.AllowDeleteObject, got, ok)
+	}
+}
+
+// promptWriter collects a command's output and lets a test act at the moment
+// the command is waiting for the owner: the write's own buffer is read from
+// the test's goroutine, so it is guarded, and the signal is sent once, when
+// the confirmation prompt appears.
+type promptWriter struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	signal chan struct{}
+	once   sync.Once
+}
+
+func newPromptWriter() *promptWriter { return &promptWriter{signal: make(chan struct{})} }
+
+func (w *promptWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if strings.Contains(w.buf.String(), "Type ") {
+		w.once.Do(func() { close(w.signal) })
+	}
+	return n, err
+}
+
+func (w *promptWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+// asked is the signal that the confirmation prompt is on the page: the
+// command is blocked reading stdin, and the test owns the pipe.
+func (w *promptWriter) asked() <-chan struct{} { return w.signal }
+
+// TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead: an object
+// that is there but is not a list this command reads is replaced only on the
+// typed confirmation, because what it holds is unknown — the command cannot
+// say which approvals a write would drop. It says so, asks, and writes only
+// when the project's name is typed.
+func TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead(t *testing.T) {
+	r := allowDeleteRig(t)
+	// A body AllowDelete would not read: the object is there, and it holds
+	// no addresses this command could report.
+	foreign := []byte(`{"version":1,"gcp_project":"proj-1234"}`)
+	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, foreign)
+	// No terminal: nothing replaces an object whose contents are unknown.
+	out, _, err := execute(t, "allow-delete", "google_storage_bucket.data")
+	if err == nil {
+		t.Fatalf("an unreadable list was replaced without a confirmation:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(out, "is not a list this command reads") {
+		t.Errorf("the command does not say what it would replace:\n%s", out)
+	}
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); !ok || got != string(foreign) {
+		t.Errorf("a refused run wrote gs://%s/%s = %q", initRunsBucket, managed.AllowDeleteObject, got)
+	}
+	// A terminal, but the wrong name: still nothing.
+	terminal(t, true)
+	if _, _, err := executeStdin(t, "not-the-name\n", "allow-delete", "google_storage_bucket.data"); err == nil {
+		t.Error("a mistyped confirmation replaced an unreadable list")
+	}
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); !ok || got != string(foreign) {
+		t.Errorf("a mistyped confirmation wrote gs://%s/%s = %q", initRunsBucket, managed.AllowDeleteObject, got)
+	}
+	// The name typed: the object is replaced by the list, and the command
+	// says what it holds now.
+	out, _, err = executeStdin(t, initProjectName+"\n", "allow-delete", "google_storage_bucket.data")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatal("the confirmed replacement wrote nothing")
+	}
+	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`
+	if got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+}
+
+// TestAllowDeleteCommandRefusesAnOverSizeList: a list past the size the read
+// believes would be written and then read back as no addresses, silently
+// refusing every delete it looks like it approves. The command refuses, and
+// its message is about the list — not about the bucket, whose two settings
+// are fine.
+func TestAllowDeleteCommandRefusesAnOverSizeList(t *testing.T) {
+	r := allowDeleteRig(t)
+	addresses := make([]string, 0, 2500)
+	for i := range cap(addresses) {
+		addresses = append(addresses, fmt.Sprintf("google_cloud_run_v2_job.web_%04d", i))
+	}
+	args := append([]string{"allow-delete"}, addresses...)
+	out, _, err := execute(t, args...)
+	if err == nil {
+		t.Fatalf("a list of %d addresses was written:\n%s", len(addresses), out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "fewer addresses") || !strings.Contains(err.Error(), "over the size") {
+		t.Errorf("the refusal does not say the list is what to fix: %v", err)
+	}
+	if strings.Contains(err.Error(), "runs_bucket") || strings.Contains(err.Error(), "gcp_project") {
+		t.Errorf("the refusal sends the owner to settings that are fine: %v", err)
+	}
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 	}
 }
