@@ -81,7 +81,7 @@ var managedTypeReasons = map[string]string{
 	"google_cloud_run_v2_job":                        "inherited: the workload a managed project runs. Its name must carry the prefix and its service account must be set and be one of the managed project's own — a job with no account runs as the project's default compute account, which holds Editor by default",
 	"google_cloud_run_v2_job_iam_member":             "inherited: invoker grants on the plan's own jobs; the deployer's run.jobs.setIamPolicy is conditioned on the prefix",
 	"google_cloud_scheduler_job":                     "inherited: the schedule a managed project runs; its name and the OIDC or OAuth account it calls as must both carry the prefix, so it can neither reach Fugaro's own jobs nor run as an account the plan did not create",
-	"google_project_service":                         "inherited: a managed plan may enable an API. The deployer holds serviceusage.services.enable, get and list only, never disable, so a plan that disables a service by deleting its google_project_service cannot be applied — and the delete needs the owner's own list whatever the type is",
+	"google_project_service":                         "inherited: a managed plan may enable an API. The deployer holds serviceusage.services.enable, get and list only, never disable, so a plan that disables a service by deleting its google_project_service cannot be applied — and the delete needs the owner's own list whatever the type is. Accepted exposure: enabling an API can make Google itself add project-level IAM grants for that API's default service accounts (the Compute Engine default account's Editor, a service agent's role), grants no plan shows; not usable today, because no type the list admits can run as those accounts — a job or a scheduler must run as a prefixed account of the plan's own, and a grant on an account is conditioned on the prefix",
 	"google_secret_manager_secret":                   "inherited: the container, never a version. The deployer holds no secretmanager.versions.access, so a managed plan can create a secret and cannot read one, and update or delete only a prefixed one",
 	"google_secret_manager_secret_iam_member":        "inherited: a grant on a secret the plan itself created; the deployer's secretmanager.secrets.setIamPolicy is conditioned on the prefix",
 	"google_service_account":                         "inherited: a managed project's workloads need accounts of their own; the deployer creates one unconditioned and updates or deletes only a prefixed account_id",
@@ -186,6 +186,10 @@ var managedGrantRules = map[string]bool{
 //   - the runs bucket, by name: a bucket grant on it is refused before the
 //     prefix is read, because that is where the marker and the owner's delete
 //     list live (Task 1.4).
+//
+// Nor does a managed plan lock anything: a bucket's locked retention policy or
+// an object's Locked retention can never be undone, so it is refused whatever
+// the delete rule would later allow (managedBucketLock, managedObjectLock).
 //
 // And one rule under all four: every value the cover reads — a name, the
 // account a job, a scheduler or a grant is on, a member, a role — must be
@@ -487,7 +491,12 @@ func managedProviderSettings(pc ProviderConfig) []string {
 // block itself out of the plan's configuration, so a reference to one is
 // where a plan shows it. One that nothing references, or that only a local
 // does, is not in the plan at all: Task 3.1 refuses the block in the working
-// directory's .tf files.
+// directory's .tf files. Nor is one named only in a depends_on: this walk
+// reads an expression's references and nothing else, and a resource's or a
+// module's depends_on is a list of its own, so an ephemeral resource a plan
+// names there alone is still opened at apply. Task 3.1's refusal of every
+// ephemeral block in the .tf and .tf.json files is what covers it, and its
+// required residuals say so.
 func managedEphemeralReferences(raw json.RawMessage) []string {
 	var doc any
 	if len(raw) == 0 || json.Unmarshal(raw, &doc) != nil {
@@ -567,7 +576,14 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 		}
 	}
 	switch rc.Type {
+	case "google_storage_bucket":
+		if why := managedBucketLock(rc.Change); why != "" {
+			return why
+		}
 	case "google_storage_bucket_object":
+		if why := managedObjectLock(rc.Change); why != "" {
+			return why
+		}
 		// source is a path on the machine that applies — the operator's, under
 		// D75 — and the provider uploads whatever file it names. A managed
 		// object carries its content in the plan or none; a computed source is
@@ -636,6 +652,63 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 		}
 	}
 	return ""
+}
+
+// managedBucketLock says why a bucket's retention policy is one a managed
+// plan may not set: a locked one, or one whose lock the plan does not know.
+// Locking a retention policy cannot be undone — the bucket cannot be deleted
+// until its last object's retention has run out, which can be decades,
+// whatever the owner's delete list says — and a locked bucket can place a
+// lien on the project, which then cannot be deleted either. An unlocked
+// policy can be changed or removed later, and is admitted.
+func managedBucketLock(ch Change) string {
+	if blockUnknown(ch.AfterUnknown, "retention_policy", "is_locked") {
+		return "a bucket whose retention policy lock is not known at plan time: write is_locked = false, or leave it out"
+	}
+	for _, p := range objects(ch.After["retention_policy"]) {
+		if l, set := p["is_locked"]; set && l != nil && l != false {
+			return "a bucket whose retention policy is locked: a lock can never be undone, so the bucket cannot be deleted until its retention runs out and can hold a lien on the project — a managed plan locks nothing"
+		}
+	}
+	return ""
+}
+
+// managedObjectLock says why an object's retention is one a managed plan may
+// not set: mode Locked, read without regard to case so no spelling of it slips
+// past, or a mode the plan does not know. A locked retention can be
+// neither shortened nor removed, and the object, its bucket and the project
+// with it cannot be deleted before it runs out. Unlocked retention is admitted.
+func managedObjectLock(ch Change) string {
+	if blockUnknown(ch.AfterUnknown, "retention", "mode") {
+		return "an object whose retention mode is not known at plan time: write mode = \"Unlocked\", or leave retention out"
+	}
+	for _, r := range objects(ch.After["retention"]) {
+		if strings.EqualFold(strings.TrimSpace(str(r["mode"])), "Locked") {
+			return "an object whose retention mode is Locked: a locked retention can never be shortened or removed, so the object, its bucket and the project cannot be deleted before it runs out — a managed plan locks nothing"
+		}
+	}
+	return ""
+}
+
+// blockUnknown: the plan knows the nested block, any element of it, or attr in
+// any element only after apply. after_unknown writes a block as a list of
+// objects (or true for the whole of it), and an element as true or an object.
+func blockUnknown(au any, block, attr string) bool {
+	m, _ := au.(map[string]any)
+	v := m[block]
+	if v == true {
+		return true
+	}
+	l, _ := v.([]any)
+	for _, e := range l {
+		if e == true {
+			return true
+		}
+		if em, ok := e.(map[string]any); ok && em[attr] == true {
+			return true
+		}
+	}
+	return false
 }
 
 // managedName says why a managed resource's name, known at plan time

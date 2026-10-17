@@ -768,3 +768,122 @@ func TestManagedCoverRefusesAVirtualOrRemoteRepository(t *testing.T) {
 		t.Errorf("a standard repository gives %q, want it covered", out)
 	}
 }
+
+// updating is rc as an in-place update: the same checks hold for an update as
+// for a create, because an update's after is what the resource becomes.
+func updating(rc ResourceChange) ResourceChange {
+	rc.Change.Actions = []string{"update"}
+	rc.Change.Before = map[string]any{}
+	return rc
+}
+
+// TestManagedCoverChecksUpdates: an update is held to every rule a create is —
+// one fixture per rule family, each refused, beside an update the list admits.
+// Only a no-op or a read skips the checks; a cover that skipped an update too
+// would admit each row below.
+func TestManagedCoverChecksUpdates(t *testing.T) {
+	const runs = "fugaro-runs-proj-1"
+	grant := func(bucket, member, role string) ResourceChange {
+		return mrc("google_storage_bucket_iam_member", map[string]any{"bucket": bucket, "member": member, "role": role})
+	}
+	computedMember := mrc("google_storage_bucket_iam_member", map[string]any{"bucket": ManagedPrefix + "bucket", "role": "roles/storage.objectViewer"})
+	computedMember.Change.AfterUnknown = map[string]any{"member": true}
+	for name, tc := range map[string]struct {
+		rc  ResourceChange
+		why string
+	}{
+		"a type outside the allowlist": {mrc("google_compute_instance", map[string]any{"name": ManagedPrefix + "vm"}),
+			"a resource type outside the managed project's allowlist"},
+		"the runs bucket by its name": {mrc("google_storage_bucket", map[string]any{"name": runs}),
+			"outside the managed prefix"},
+		"allUsers on the runs bucket": {grant(runs, "allUsers", "roles/storage.objectViewer"),
+			"on bucket " + runs + ", which is not the managed project's"},
+		"allUsers on a managed bucket": {grant(ManagedPrefix+"bucket", "allUsers", "roles/storage.objectViewer"),
+			"grants to allUsers, which is everyone"},
+		"a computed member": {computedMember, "a member that is not known at plan time"},
+		"a basic role":      {grant(ManagedPrefix+"bucket", "user:owner@example.com", "roles/owner"), "basic role roles/owner"},
+		"a retention policy locked by the update": {mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "bucket",
+			"retention_policy": []any{map[string]any{"is_locked": true, "retention_period": float64(3600)}}}), "retention policy is locked"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rc := updating(tc.rc)
+			out := managedTestCover().NotCovered(managedPlan(rc), nil)
+			if len(out) != 1 || !refusedWith(out, rc.Address+" (", tc.why) {
+				t.Fatalf("an update gives %q, want one refusal %q", out, tc.why)
+			}
+		})
+	}
+	for _, typ := range ManagedAllowedTypes() {
+		t.Run("admitted "+typ, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(managedPlan(updating(managedKeptFixture[typ])), nil); len(out) != 0 {
+				t.Fatalf("an update of the %s fixture gives %q, want it covered", typ, out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverRefusesLocks: a locked retention policy on a bucket, or an
+// object retained in mode Locked, can never be undone — the bucket cannot be
+// deleted until the retention runs out and a locked bucket can hold a lien on
+// the project — so a managed plan locks nothing. The fixtures are the plan
+// JSON's own shape: retention_policy and retention are lists of one block,
+// and after_unknown mirrors them. An unlocked policy, an Unlocked retention
+// and no retention at all are admitted.
+func TestManagedCoverRefusesLocks(t *testing.T) {
+	bucket := func(policy map[string]any, unknown map[string]any) ResourceChange {
+		after := map[string]any{"name": ManagedPrefix + "bucket"}
+		if policy != nil {
+			after["retention_policy"] = []any{policy}
+		}
+		return withUnknown(mrc("google_storage_bucket", after), unknown)
+	}
+	object := func(retention map[string]any, unknown map[string]any) ResourceChange {
+		after := map[string]any{"bucket": ManagedPrefix + "bucket", "name": "results.json", "content": "{}"}
+		if retention != nil {
+			after["retention"] = []any{retention}
+		}
+		return withUnknown(mrc("google_storage_bucket_object", after), unknown)
+	}
+	const until = "2066-01-01T00:00:00Z"
+	for name, tc := range map[string]struct {
+		rc  ResourceChange
+		why string
+	}{
+		"a locked retention policy": {bucket(map[string]any{"is_locked": true, "retention_period": float64(3600)}, map[string]any{}),
+			"retention policy is locked"},
+		"a computed lock": {bucket(map[string]any{"retention_period": float64(3600)},
+			map[string]any{"retention_policy": []any{map[string]any{"is_locked": true}}}), "retention policy lock is not known"},
+		"a computed retention policy": {bucket(nil, map[string]any{"retention_policy": true}), "retention policy lock is not known"},
+		"a computed policy element": {bucket(map[string]any{}, map[string]any{"retention_policy": []any{true}}),
+			"retention policy lock is not known"},
+		"an object retained Locked": {object(map[string]any{"mode": "Locked", "retain_until_time": until}, map[string]any{}),
+			"retention mode is Locked"},
+		"an object retained LOCKED": {object(map[string]any{"mode": "LOCKED", "retain_until_time": until}, map[string]any{}),
+			"retention mode is Locked"},
+		"an object retained locked": {object(map[string]any{"mode": "locked", "retain_until_time": until}, map[string]any{}),
+			"retention mode is Locked"},
+		"a computed retention mode": {object(map[string]any{"retain_until_time": until},
+			map[string]any{"retention": []any{map[string]any{"mode": true}}}), "retention mode is not known"},
+		"a computed retention": {object(nil, map[string]any{"retention": true}), "retention mode is not known"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(managedPlan(tc.rc), nil)
+			if len(out) != 1 || !refusedWith(out, tc.rc.Address+" (", tc.why) {
+				t.Fatalf("gives %q, want one refusal %q", out, tc.why)
+			}
+		})
+	}
+	for name, rc := range map[string]ResourceChange{
+		"an unlocked retention policy": bucket(map[string]any{"is_locked": false, "retention_period": float64(3600)}, map[string]any{}),
+		"a policy with no lock set":    bucket(map[string]any{"retention_period": float64(3600)}, map[string]any{}),
+		"no retention policy":          bucket(nil, map[string]any{}),
+		"an object retained Unlocked":  object(map[string]any{"mode": "Unlocked", "retain_until_time": until}, map[string]any{}),
+		"an object with no retention":  object(nil, map[string]any{}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(managedPlan(rc), nil); len(out) != 0 {
+				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+}
