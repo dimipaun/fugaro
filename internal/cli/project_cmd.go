@@ -837,8 +837,13 @@ func profileText(pr projectpolicy.Profile) string {
 		secrets = strings.Join(pr.Secrets, ", ")
 	}
 	allow := "the project's allow_repos"
-	if len(pr.AllowRepos) > 0 {
+	switch {
+	case len(pr.AllowRepos) > 0:
 		allow = strings.Join(pr.AllowRepos, ", ")
+	case len(pr.Secrets) > 0:
+		// Any enrolled repository on the profile's provider can select it
+		// with job_profile:, and every run of it mounts these secrets.
+		allow += " (warning: every enrolled repository can select this profile and read its secrets; give it its own allow_repos)"
 	}
 	return fmt.Sprintf("provider %s, cpu %d, memory %s, timeout %s, secrets %s, allow_repos %s",
 		pr.Provider, pr.CPU, pr.Memory, pr.TimeoutClass, secrets, allow)
