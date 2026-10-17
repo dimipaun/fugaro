@@ -862,7 +862,10 @@ function repoBlock(factory: ScreenFactory, repo: LiveRepoRow): ScreenElement {
   element.setAttribute('data-key', sanitizedKey(repo.slug))
   element.setAttribute('data-killed', repo.kill === null ? 'false' : 'true')
 
-  textCell(element, factory, 'span', repo.repo, 'repository', 'repos[].repo', 'live-repo-name')
+  // `repoDisplayName` (internal/watch/build.go) falls back to the slash-free
+  // slug when the host's config does not name the repository: the slash decides
+  // the class, as `spend.ts`'s `keyClass` does (review round 2 of PR 494).
+  textCell(element, factory, 'span', repo.repo, repo.repo.includes('/') ? 'repository' : 'slug', 'repos[].repo', 'live-repo-name')
   numberCell(element, factory, 'span', repo.countedUsd, 'usd', 'live-repo-counted')
   numberCell(element, factory, 'span', repo.dailyCapUsd, 'usd', 'live-repo-cap')
   bar(element, factory, repo.percent, 'live-repo-percent')

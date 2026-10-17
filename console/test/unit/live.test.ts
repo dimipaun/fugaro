@@ -950,3 +950,12 @@ describe('src/renderer/, at any depth', () => {
     }
   })
 })
+
+describe('a repository the feed names by its slug (review round 2 of PR 494)', () => {
+  it('draws the slash-free slug repoDisplayName falls back to, with the slug class', () => {
+    const frame = theLastFrame()
+    const repos = frame.repos.map((repo) => ({ ...repo, repo: 'teammate-app-dc4d4e59e884fc44' }))
+    const tree = renderLive(factory, modelOf({ ...frame, repos } as LiveDocument), 'light')
+    expect(texts(tree, 'live-repo-name')).toEqual(['teammate-app-dc4d4e59e884fc44'])
+  })
+})

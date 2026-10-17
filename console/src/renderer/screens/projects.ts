@@ -827,6 +827,23 @@ function labelOf(entry: RepoEntry): string {
   return entry.repo ?? entry.slug
 }
 
+/** labelClass is the class a `labelOf` value is drawn with: `owner/name` is a
+ * repository and the slash-free bucket key is a slug -- the two shapes the CLI
+ * writes, decided the way `spend.ts`'s `keyClass` decides them. Drawing the slug
+ * fallback with the `repository` class could only ever draw `n/a` (review
+ * round 2 of PR 494). */
+function labelClass(label: string): TextClass {
+  return label.includes('/') ? 'repository' : 'slug'
+}
+
+/** EVERY_REPOSITORY are the two values `secrets ls --project-wide` writes in
+ * `allowed` for a secret open to every repository
+ * (`projectSecretAllowed`, `internal/cli/secrets.go`): a provider with no
+ * allow-list answers the words, and an explicit `["*"]` is passed through. They
+ * are console vocabulary, matched exactly and drawn through the `label`
+ * class; anything else in that list is held to the `repository` class. */
+const EVERY_REPOSITORY: readonly string[] = Object.freeze(['any repository', '*'])
+
 // ---------------------------------------------------------------------------
 // The drawing.
 // ---------------------------------------------------------------------------
@@ -1024,7 +1041,7 @@ function killPanel(factory: ScreenFactory, model: ProjectsModel): ScreenElement 
   else global.append(killBanner(factory, model.kill.global))
   for (const row of model.kill.rows) {
     const line = cell(element, factory, 'div', 'projects-kill-row')
-    textCell(line, factory, 'span', row.repo ?? row.slug, 'repository', 'repo', 'projects-kill-repo')
+    textCell(line, factory, 'span', row.repo ?? row.slug, labelClass(row.repo ?? row.slug), 'repo', 'projects-kill-repo')
     if (row.kill === null) literal(cell(line, factory, 'span', 'projects-kill-none'), 'not killed')
     else line.append(killBanner(factory, row.kill))
   }
@@ -1039,7 +1056,7 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
   numberCell(enrolled, factory, 'span', model.enrolledCount, 'count', 'projects-enrolled-count')
   const enrolledList = cell(enrolled, factory, 'ul', 'projects-enrolled-list')
   for (const entry of model.enrolled) {
-    textCell(enrolledList, factory, 'li', labelOf(entry), 'repository', 'repo', 'projects-enrolled-repo')
+    textCell(enrolledList, factory, 'li', labelOf(entry), labelClass(labelOf(entry)), 'repo', 'projects-enrolled-repo')
   }
 
   const seen = cell(element, factory, 'div', 'projects-seen')
@@ -1047,19 +1064,19 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
   numberCell(seen, factory, 'span', model.seenCount, 'count', 'projects-seen-count')
   const seenList = cell(seen, factory, 'ul', 'projects-seen-list')
   for (const entry of model.seen) {
-    textCell(seenList, factory, 'li', labelOf(entry), 'repository', 'repo', 'projects-seen-repo')
+    textCell(seenList, factory, 'li', labelOf(entry), labelClass(labelOf(entry)), 'repo', 'projects-seen-repo')
   }
   if (model.onlySeen.length > 0) {
     // A repository running with no cap row is the case worth a line of its own.
     const line = cell(element, factory, 'p', 'projects-only-seen')
     literal(line, 'running with no cap row:')
-    for (const entry of model.onlySeen) textCell(line, factory, 'span', entry, 'repository', 'repo', 'projects-only-seen-repo')
+    for (const entry of model.onlySeen) textCell(line, factory, 'span', entry, labelClass(entry), 'repo', 'projects-only-seen-repo')
   }
   if (model.onlyEnrolled.length > 0) {
     const line = cell(element, factory, 'p', 'projects-only-enrolled')
     literal(line, 'a cap row and no run yet:')
     for (const entry of model.onlyEnrolled) {
-      textCell(line, factory, 'span', entry, 'repository', 'repo', 'projects-only-enrolled-repo')
+      textCell(line, factory, 'span', entry, labelClass(entry), 'repo', 'projects-only-enrolled-repo')
     }
   }
   return element
@@ -1135,7 +1152,10 @@ function secretsPanel(factory: ScreenFactory, model: ProjectSecrets): ScreenElem
       textCell(pair, factory, 'span', label.value, 'label', 'secrets[].labels', 'projects-secret-label-value')
     }
     for (const allowed of entry.allowed) {
-      textCell(line, factory, 'span', allowed, 'repository', 'secrets[].allowed', 'projects-secret-allowed')
+      // The two "every repository" values still go through the door, as a
+      // label; only the exact console vocabulary takes that class.
+      const textClass: TextClass = typeof allowed === 'string' && EVERY_REPOSITORY.includes(allowed) ? 'label' : 'repository'
+      textCell(line, factory, 'span', allowed, textClass, 'secrets[].allowed', 'projects-secret-allowed')
     }
   }
   return element

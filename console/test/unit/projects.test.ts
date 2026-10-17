@@ -1103,3 +1103,28 @@ const REPLAY_FRAMES = [
   { at: '2026-10-15T12:04:00Z', document: { project: 'example-project', day: '2026-10-15' } },
   { at: '2026-10-15T12:08:00Z', document: { project: 'example-project', day: '2026-10-15' } },
 ].map((record) => ({ receivedAt: record.at, document: record.document, notices: [] }))
+
+describe('the shapes the CLI writes where a repository is expected (review round 2 of PR 494)', () => {
+  it('draws the two "every repository" values `secrets ls` writes, and still refuses anything else', () => {
+    const secrets = [{ ...SECRETS[0], allowed: ['any repository', '*', 'not a repository'] }]
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ secrets })), 'light')
+    expect(texts(tree, 'projects-secret-allowed')).toEqual(['any repository', '*', 'n/a'])
+  })
+
+  it('draws a repository the document names only by its slash-free slug with the slug class', () => {
+    // `repo` is omitempty: a host whose local config does not list a
+    // repository with spend has only the bucket slug for it.
+    const slug = 'teammate-app-dc4d4e59e884fc44'
+    const block = { ...BUDGET.repos[1], slug }
+    delete (block as { repo?: string }).repo
+    const budget = { ...BUDGET, repos: [BUDGET.repos[0], block] }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ budget })), 'light')
+    expect(texts(tree, 'projects-kill-repo')).toContain(slug)
+    expect(texts(tree, 'projects-enrolled-repo')).toContain(slug)
+    expect(texts(tree, 'projects-only-enrolled-repo')).toContain(slug)
+    // A slug-shaped value that is not a slug is still refused.
+    const bad = { ...block, slug: 'Not A Slug' }
+    const refused = renderProjects(factory, buildProjectsModel(inputs({ budget: { ...BUDGET, repos: [bad] } })), 'light')
+    expect(texts(refused, 'projects-enrolled-repo')).toEqual(['n/a'])
+  })
+})
