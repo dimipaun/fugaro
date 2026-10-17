@@ -14,22 +14,17 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
-// fakeWatchGH writes an executable gh, first on PATH, whose body is script; it
-// returns the file every invocation appends its argv to, so a test can see
-// both what ran and that nothing ran at all.
+// fakeWatchGH puts a fake gh first on PATH whose body is script; it returns
+// the file every invocation appends its argv to, so a test can see both what
+// ran and that nothing ran at all. It writes no executable of its own: see
+// testutil.FakeCommand for why.
 func fakeWatchGH(t *testing.T, script string) string {
 	t.Helper()
-	dir := t.TempDir()
-	calls := filepath.Join(dir, "calls")
-	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + calls + "\n" + script
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return calls
+	return testutil.FakeCommand(t, "gh", script)
 }
 
 func ghWatchCalls(t *testing.T, calls string) []string {
