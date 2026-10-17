@@ -1021,7 +1021,6 @@ export function runToCompletion(
   const grace = deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS
   const binary = plan.argv[0]
   if (binary === undefined) refused('a spawn plan with no binary is not a plan')
-  deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
   const what = plan.argv.slice(1).filter((word) => !word.startsWith('-')).slice(0, 2).join(' ')
 
   return new Promise<RunResult>((resolve, reject) => {
@@ -1037,6 +1036,10 @@ export function runToCompletion(
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
+    // Recorded once the spawner has handed back a child, never before: the
+    // log is one line per child process (`spawnlog.ts`), and a spawn that threw
+    // (the binary removed between resolution and spawn) produced none.
+    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
     let stdout = ''
     let stderr = ''
     let settled = false
@@ -1502,13 +1505,42 @@ export function startSidecar(
     }
   }
 
+  // drain is the end of one child's stdout: a last line the child wrote
+  // without a newline is still a line, so it is decoded like any other; a
+  // fragment that is not a whole document (a child killed mid-write) is said
+  // as a notice -- without its text -- rather than lost in silence.
+  const drain = (): void => {
+    const rest = buffer
+    const wasDiscarding = discarding
+    buffer = ''
+    discarding = false
+    if (wasDiscarding || rest.trim() === '') return
+    if (rest.length > maxLine) {
+      events.onNotice({ text: `a feed line longer than ${maxLine} characters was dropped`, receivedAt: stamp() })
+      return
+    }
+    const decoded = decodeFeedLine(rest)
+    if (decoded.kind === 'document') {
+      events.onFrame(tracker.push(decoded.document, stamp()))
+      return
+    }
+    if (decoded.kind === 'notice' && !rest.trimStart().startsWith('{')) {
+      // A sentence, as `consume` would have said it had the newline come.
+      events.onNotice({ text: decoded.text, receivedAt: stamp() })
+      return
+    }
+    events.onNotice({
+      text: `the feed's last line ended without a newline and was not a whole document; it was dropped (${String(rest.length)} characters)`,
+      receivedAt: stamp(),
+    })
+  }
+
   const spawnOnce = (): void => {
     const binary = plan.argv[0]
     if (binary === undefined) {
       finish({ reason: 'unstartable', code: null, signal: null, sentence: 'the spawn plan has no binary', spawns })
       return
     }
-    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
     spawns += 1
     let started: SpawnedChildLike
     try {
@@ -1528,6 +1560,8 @@ export function startSidecar(
       })
       return
     }
+    // After the spawner returned, as in `runToCompletion`: one line per child.
+    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
     child = started
     stderr = ''
     buffer = ''
@@ -1543,8 +1577,10 @@ export function startSidecar(
     // the last frame of a `watch` can arrive after the child is reaped, and a
     // supervisor that decided `lost` on `exit` would both drop that frame and
     // read an empty stderr into the sentence it gives the screen. `close` is
-    // the point at which there is nothing left to read from this child.
+    // the point at which there is nothing left to read from this child, so it
+    // is also where `drain` hands on a last line that had no newline.
     started.on('close', (code, signal) => {
+      drain()
       child = null
       const decision = restartDecision({ code, signal, stopped, attempt, backoff: plan.backoff })
       if (!decision.restart) {

@@ -81,6 +81,7 @@ import type {
   Timers,
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
+import type { SpawnLogWriter } from '../../src/main/spawnlog'
 import { validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
@@ -1954,5 +1955,110 @@ describe('parseLogEntries', () => {
 
   it('caps the window at the Run screen\'s own cap', () => {
     expect(LOG_WINDOW_MAX_ENTRIES).toBe(RUN_LOG_CAP)
+  })
+})
+
+/** countingLog is a spawn-log writer that keeps its lines in memory, so a test
+ * can count what a spawn path wrote without a file. */
+function countingLog(): SpawnLogWriter & { readonly lines: readonly string[] } {
+  const lines: string[] = []
+  return {
+    enabled: true,
+    path: null,
+    error: null,
+    get records() {
+      return lines.length
+    },
+    record: (spawn) => {
+      lines.push(spawn.argv.join(' '))
+    },
+    close: () => undefined,
+    lines,
+  }
+}
+
+/** throwingSpawner is a spawn that never produced a child: the binary was
+ * removed between resolution and spawn. */
+const throwingSpawner: ChildSpawner = () => {
+  const error = new Error('spawn /opt/homebrew/bin/fugaro ENOENT') as Error & { code?: string }
+  error.code = 'ENOENT'
+  throw error
+}
+
+describe('the spawn log records children, not attempts', () => {
+  it('writes no line when a one-shot read never produced a child', async () => {
+    const log = countingLog()
+    const plan = planFor('budget.show', {}, safeContext())
+    await expect(runToCompletion(plan, { spawner: throwingSpawner, log })).rejects.toThrow(/ENOENT/)
+    expect(log.records).toBe(0)
+  })
+
+  it('writes one line for a one-shot read that did spawn', () => {
+    const log = countingLog()
+    const plan = planFor('budget.show', {}, safeContext())
+    void runToCompletion(plan, { spawner: recordingSpawner(), log })
+    expect(log.records).toBe(1)
+  })
+
+  it('writes no line when a feed never produced a child, and one per child it did', () => {
+    const log = countingLog()
+    const plan = planFor('live.watch', {}, safeContext())
+    const ended: string[] = []
+    startSidecar(plan, {
+      onFrame: () => undefined,
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: (end) => ended.push(end.reason),
+    }, { spawner: throwingSpawner, timers: manualTimers(), log })
+    expect(ended).toEqual(['unstartable'])
+    expect(log.records).toBe(0)
+
+    const second = countingLog()
+    startSidecar(plan, {
+      onFrame: () => undefined,
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: () => undefined,
+    }, { spawner: () => scriptedChild(), timers: manualTimers(), log: second })
+    expect(second.records).toBe(1)
+  })
+})
+
+describe('a feed whose last line has no newline', () => {
+  it('delivers the last document when the child closes without a final newline', () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const frames: unknown[] = []
+    const notices: string[] = []
+    startSidecar(plan, {
+      onFrame: (frame) => frames.push(frame.document),
+      onNotice: (notice) => notices.push(notice.text),
+      onRestart: () => undefined,
+      onEnded: () => undefined,
+    }, { spawner: () => child, timers: manualTimers() })
+    child.emitStdout('{"day":"2026-01-01"}\n{"day":"2026-01-02"}')
+    expect(frames).toHaveLength(1)
+    child.close(0, null)
+    expect(frames).toEqual([{ day: '2026-01-01' }, { day: '2026-01-02' }])
+    expect(notices).toEqual([])
+  })
+
+  it('says a torn last line was dropped, without echoing it', () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const frames: unknown[] = []
+    const notices: string[] = []
+    startSidecar(plan, {
+      onFrame: (frame) => frames.push(frame.document),
+      onNotice: (notice) => notices.push(notice.text),
+      onRestart: () => undefined,
+      onEnded: () => undefined,
+    }, { spawner: () => child, timers: manualTimers() })
+    child.emitStdout('{"day":"2026-01-01"}\n{"day":"2026-')
+    child.close(0, null)
+    expect(frames).toHaveLength(1)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toMatch(/last line .*without a newline/)
+    expect(notices[0]).not.toContain('2026-')
   })
 })
