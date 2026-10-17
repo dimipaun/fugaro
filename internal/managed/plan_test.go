@@ -540,10 +540,15 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	if len(v.Refusals) != 1 || v.Refusals[0].Gate != coverGate || !strings.Contains(v.Refusals[0].Why, "outside the managed prefix") {
 		t.Errorf("refusals %v, want the cover's prefix refusal of %s", v.Refusals, addr)
 	}
-	// And a resource whose type the allowlist does not carry.
+	// And a resource whose type the allowlist does not carry: the address is
+	// listed, so the guard admits it and the cover's own rule is the refusal.
 	r.managedShow(t, deleted(addr, "google_compute_instance", map[string]any{"name": "fmgd-data"}))
-	if v := gate(t, r, spec(t, r, managedCover(), addr)); v.OK {
-		t.Error("a listed delete of a type outside the managed allowlist was admitted")
+	v = gate(t, r, spec(t, r, managedCover(), addr))
+	if v.OK {
+		t.Fatal("a listed delete of a type outside the managed allowlist was admitted")
+	}
+	if len(v.Refusals) != 1 || v.Refusals[0].Gate != coverGate || !strings.Contains(v.Refusals[0].Why, "outside the managed project's allowlist") {
+		t.Errorf("refusals %v, want the cover's type refusal of %s", v.Refusals, addr)
 	}
 	// The other half: the resource is the plan's own and the address is not on
 	// the list, which is the guard's refusal to make and the verdict names it.
@@ -573,6 +578,28 @@ func TestGateAdmitsAListedAddressThePlanDoesNotCarry(t *testing.T) {
 		[]string{"create"}, nil, map[string]any{"name": "fmgd-data"}))
 	if v := gate(t, r, spec(t, r, managedCover(), "module.managed.google_compute_instance.gone")); !v.OK {
 		t.Errorf("a listed address the plan does not carry changed the verdict: %v", v.Refusals)
+	}
+}
+
+// A list never authorizes a create: the delete list is read for the change that
+// removes something and for nothing else, so a create at an address on it is
+// judged by the allowlist exactly as one at an address that is not — the same
+// plan, admitted or refused by the resource alone.
+func TestGateListNeverAuthorizesACreate(t *testing.T) {
+	const gone = "module.managed.google_compute_instance.gone"
+	r := newRig(t)
+	r.managedShow(t, managedChange(gone, "google_compute_instance", []string{"create"}, nil, map[string]any{}))
+	v := gate(t, r, spec(t, r, managedCover(), gone))
+	if v.OK {
+		t.Fatal("a create at an address on the delete list was admitted although its type is not on the allowlist")
+	}
+	if len(v.Refusals) != 1 || v.Refusals[0].Gate != coverGate || !strings.Contains(v.Refusals[0].Why, "outside the managed project's allowlist") {
+		t.Errorf("refusals %v, want the cover's type refusal of %s", v.Refusals, gone)
+	}
+	// And the same plan without the address listed: the list changed nothing.
+	if v := gate(t, r, spec(t, r, managedCover())); len(v.Refusals) != 1 || v.Refusals[0].Why !=
+		"a resource type outside the managed project's allowlist" {
+		t.Errorf("refusals %v, want the same single refusal with no list at all", v.Refusals)
 	}
 }
 

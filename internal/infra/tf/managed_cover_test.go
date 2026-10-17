@@ -1476,19 +1476,26 @@ func TestManagedCoverAdmitsAListedDeleteOfAnAllowedResource(t *testing.T) {
 // fail here. The first two are dropped entries and the third is a type neither
 // list carries.
 func TestManagedCoverRefusesAListedDeleteOfATypeOutsideTheAllowlist(t *testing.T) {
-	for _, typ := range []string{"google_project_iam_member", "google_monitoring_alert_policy", "google_compute_instance"} {
-		t.Run(typ, func(t *testing.T) {
-			rc := destroyed(mrc(typ, map[string]any{"name": ManagedPrefix + "x"}))
+	for _, tc := range []struct{ typ, want string }{
+		// A type allowedTypes carries and the managed list dropped: the
+		// refusal names the decision that dropped it.
+		{"google_project_iam_member", "allowlist leaves out"},
+		{"google_monitoring_alert_policy", "allowlist leaves out"},
+		// A type neither list carries.
+		{"google_compute_instance", "a resource type outside the managed project's allowlist"},
+	} {
+		t.Run(tc.typ, func(t *testing.T) {
+			rc := destroyed(mrc(tc.typ, map[string]any{"name": ManagedPrefix + "x"}))
 			c := managedTestCover().WithDeleteList([]string{rc.Address})
 			out := c.NotCovered(managedPlan(rc), nil)
 			if len(out) != 1 || !strings.HasPrefix(out[0], rc.Address+" (") {
-				t.Fatalf("a listed delete of %s gives %q, want one refusal at its own address", typ, out)
+				t.Fatalf("a listed delete of %s gives %q, want one refusal at its own address", tc.typ, out)
 			}
-			if strings.Contains(out[0], "actions delete") {
-				t.Errorf("a listed delete of %s is refused for its actions (%q), want the resource judged", typ, out[0])
+			if !strings.Contains(out[0], tc.want) {
+				t.Errorf("a listed delete of %s is refused for %q, want the type rule %q: the address alone is not the decision", tc.typ, out[0], tc.want)
 			}
-			if !strings.Contains(out[0], "allowlist") {
-				t.Errorf("a listed delete of %s is refused for %q, want the type rule", typ, out[0])
+			if strings.Contains(out[0], "actions ") {
+				t.Errorf("a listed delete of %s is refused for its actions (%q), want the resource judged", tc.typ, out[0])
 			}
 		})
 	}
@@ -1611,11 +1618,13 @@ func TestManagedCoverDeleteListIsCopied(t *testing.T) {
 // hands the delete list to, and a value is what it returns — the interface the
 // gate type-asserts for (internal/managed/plan.go).
 func TestManagedCoverIsDeletable(t *testing.T) {
-	var d Deletable = managedTestCover()
-	if _, ok := d.WithDeleteList([]string{"x"}).(ManagedCover); !ok {
-		t.Fatal("WithDeleteList returns something that is not a ManagedCover")
-	}
-	if !slices.Equal(d.WithDeleteList([]string{"x"}).(ManagedCover).AllowDelete, []string{"x"}) {
+	var _ Deletable = ManagedCover{}
+	var _ Deletable = managedTestCover()
+	d := managedTestCover().WithDeleteList([]string{"x"})
+	if !slices.Equal(d.(ManagedCover).AllowDelete, []string{"x"}) {
 		t.Error("WithDeleteList did not hand the cover the list it was given")
+	}
+	if !slices.Equal(d.(ManagedCover).Projects, managedTestCover().Projects) {
+		t.Error("WithDeleteList changed the cover's own inputs: it is the cover with a list added, and nothing else")
 	}
 }
