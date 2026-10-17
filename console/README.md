@@ -628,8 +628,11 @@ run against the committed tree, and each made a named test red:
   (`READ_TIMEOUT_MS`) and a stdout cap, the feed's line buffer is capped, and a
   source keeps at most `MAX_LIVE_FEEDS` (4) live children, stopping the least
   recently used.
-- **Persistence.** The installation store is in memory for one run; see the note
-  above on rule 10.
+- **Persistence.** `createInstallationStore` holds the list in memory for one
+  run, and it took a `persistence` seam rather than a file: the store's
+  read-and-write half is `src/main/installations.ts` (Task 3.4b), which owns
+  `installations.json` and is documented below. The in-memory default is what
+  the unit tests and the e2e harness use, and nothing here writes.
 - **The fixtures.** `FugaroSource`'s second implementation is Task 1.4's
   recorder and replay, and it slots in behind the same interface — see the
   section below. What landed there is the tool and one synthetic fixture; the
@@ -1452,11 +1455,31 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   from editing the renderer entry's registration: a console with no store
   answers the no-installation state rather than failing to register, and Task
   3.4a passes `picker.installation` in when it lands.
-- **`build.files`.** The packaged app must carry the new document and preload
-  (`dist/renderer/installations.html`, `dist/renderer/installations.js`,
-  `dist/preload/installations.js`). `console/package.json` has no `build` block
-  and no electron-builder yet — that is Task 4.1's (#540) — so nothing is added
-  here, and the entries Task 4.1 must carry are named in this task's PR body.
+- **`build.files`.** The packaged app must carry everything it loads at runtime,
+  and Task 4.1 (#540) is the task that writes the list. `console/package.json`
+  has no `build` block and no electron-builder yet, so nothing is added here —
+  and the requirement is written down instead, where Task 4.1 will read it.
+  `build.files` must carry, at least: the three documents the handler serves,
+  `src/renderer/index.html`, `src/renderer/refusal.html` and
+  `src/renderer/installations.html` (the bundler copies them into its output
+  directory); the two preloads a window loads by absolute path,
+  `dist/preload/index.js` and `dist/preload/installations.js`; and `dist/**`,
+  which is the compiled main process, the renderer bundle and the shared
+  modules. `test/unit/build-files.test.ts` reads that list off the tree rather
+  than repeating it, holds the README to naming every entry **today**, and holds
+  `build.files` to covering every entry the day it exists — so a third document
+  or a third preload is covered when it is added, and a file that works here but
+  is missing from the shipped bundle fails a named test instead of shipping.
+- **The picker's bundle entry.** `src/renderer/installations.html` names its own
+  script, `./installations.js`, and the file it names does not exist yet: the
+  served root is `src/renderer` (documents only) while the compiled renderer
+  lands in `dist/`. The renderer entry (Task 3.4a) is the task that closes that
+  seam — `tools/bundle-renderer` writes one file per document and the served
+  root becomes the bundler's output directory — and its **second entry**, the
+  picker's, is the one line this task needs from it. The tag is written now, in
+  this task's own new file, so the bundler has one entry per document and no
+  document is waiting on a script nobody built; until it lands the page draws
+  its heading, its status line and an empty list, and reaches for nothing.
 - **A picker e2e spec.** The picker's coverage is
   `test/unit/installations-store.test.ts` and `test/unit/installations-ipc.test.ts`;
   a Playwright spec that drives the second window is a follow-up, because a

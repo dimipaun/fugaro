@@ -23,15 +23,22 @@
   <body>
     <!--
       The picker's whole capability is one preload script and one bundle file,
-      both served from this same origin. The script is `installations.js`, built
-      from `src/renderer/installations.ts` by the renderer-entry task's bundle
-      step (Task 3.4a) alongside `index.js` -- this document names it now so
-      that the bundle step has one entry per document and no document is
-      waiting on a script nobody built.
+      both served from this same origin and from nowhere else. The script is
+      `installations.js`, and it is the **second entry** of the renderer
+      bundler: `console/tools/bundle-renderer/index.ts` walks the compiled
+      CommonJS closure of an entry and writes one file, and this document's
+      entry is `src/renderer/installations.ts`. The bundler also copies each
+      document into the served root verbatim, which is what makes `./` here
+      resolve to a file that exists.
 
-      With the script absent (before that step lands) the page still draws: it
-      is a static document with a heading and an empty list, and the console
-      has nothing to add to it that a document cannot say.
+      It is `defer` and it is a file, exactly as `index.html`'s script is: the
+      CSP of rule 3 has no `'unsafe-inline'`, so an inline script would not run
+      even if one were written, and `console/test/unit/installations-ipc.test.ts`
+      asserts the tag's shape so that neither half can drift.
+
+      With the bundle absent the page still draws: it is a static document with
+      a heading, a status line and an empty list, and it reaches for nothing
+      until its script arrives.
     -->
     <main>
       <h1>Installations</h1>
@@ -46,6 +53,6 @@
         <button type="submit" id="picker-add-submit">Add</button>
       </form>
     </main>
-    <script src="./installations.js"></script>
+    <script src="./installations.js" defer></script>
   </body>
 </html>

@@ -19,9 +19,10 @@
 // module that reads `node:fs`) and a duplicate nobody compares is a duplicate
 // that drifts.
 
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
@@ -48,6 +49,7 @@ import {
   channelForOperation,
   registerConsoleHandlers,
 } from '../../src/main/ipc'
+import { CONTENT_SECURITY_POLICY } from '../../src/main/protocol'
 import type { ConsoleEventLike, ConsoleHandlers, ConsoleReply, IpcMainLike } from '../../src/main/ipc'
 
 function freshDirectory(): string {
@@ -403,5 +405,44 @@ describe('the picker’s add', () => {
     const reply = (await add?.(eventFor(PICKER_ENTRY_URL), { project: 'fugaro', binary: token })) as ConsoleReply
     expect(reply).toEqual({ ok: false, reason: 'binary is not an outstanding choice' })
     picker.close()
+  })
+})
+
+describe('the picker’s document', () => {
+  // Read from this file's own location rather than from the working directory,
+  // the way `window.test.ts` reads `index.html`: the served root is the source
+  // tree today (`rendererRoot` in `src/main/index.ts`) and becomes the
+  // bundler's output directory when the renderer entry lands, and either way
+  // this is the document as written.
+  const documentPath = fileURLToPath(new URL('../../src/renderer/installations.html', import.meta.url))
+  const html = readFileSync(documentPath, 'utf8')
+
+  // The design's own CSP string, section 5.1 rule 3, copied by hand rather than
+  // assembled from the constant it is compared against: a test that built its
+  // expectation out of the implementation would agree with any implementation.
+  const DESIGN_CSP =
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+
+  it('carries the header’s CSP byte for byte, with no delta of its own', () => {
+    // The picker is a second page of the same bundle, not a second policy: it
+    // is served by the same `app://` handler, so it gets the same header, and
+    // the meta copy is what covers the window between parsing and the header.
+    expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)
+    expect(html).toContain(`content="${CONTENT_SECURITY_POLICY}"`)
+    // The mutation this catches, held as a value: a document that loosened the
+    // policy for itself -- an inline script, a remote script -- would fail the
+    // assertion above, and this is what that looks like.
+    const loosened = html.replace("script-src 'self'", "script-src 'self' 'unsafe-inline' https://cdn.example")
+    expect(loosened.includes(`content="${CONTENT_SECURITY_POLICY}"`)).toBe(false)
+  })
+
+  it('loads exactly one script, as a file from its own origin, deferred, and nothing inline', () => {
+    const tags = [...html.matchAll(/<script\b[^>]*>/g)].map((match) => match[0])
+    expect(tags).toEqual(['<script src="./installations.js" defer></script>'])
+    // Non-vacuity, against the same extraction: an inline script is a tag this
+    // assertion does not accept, so the check is not merely "there is a tag".
+    expect([...('<script>alert(1)</script>'.matchAll(/<script\b[^>]*>/g))].map((match) => match[0])).toEqual([
+      '<script>',
+    ])
   })
 })
