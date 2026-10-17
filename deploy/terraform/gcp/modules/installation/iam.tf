@@ -108,9 +108,14 @@ resource "google_project_iam_custom_role" "cloud_asset_reader" {
 
 # Granted at the project to the operators, who run the managed apply that makes
 # the read. The role is a literal path and not the resource's name attribute,
-# for the reason the launcher grant below gives: this grant is planned by the
+# for the reason the launcher grant above gives: this grant is planned by the
 # same apply that creates the deployer's two roles, and a project grant whose
 # role is computed cannot be told from a deployer one at plan time.
+#
+# The role ID is a literal in both places, like the history role's, and not a
+# names.role_ids entry: nothing outside this module names it, and the pin in
+# internal/infra/tf is by the same literal ID (tf.CloudAssetRole), so the
+# tfvars plumbing the four older roles carry would be a name with no reader.
 resource "google_project_iam_member" "operator_cloud_asset_reader" {
   for_each = toset(var.operators)
 

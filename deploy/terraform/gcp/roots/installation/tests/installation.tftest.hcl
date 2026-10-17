@@ -1382,7 +1382,9 @@ run "TestHistoryEnvHasBucket" {
 # The same-project layout puts these accounts in the project that also holds
 # the budget backend, so the resolved project-level grants and custom roles of
 # the installation module are pinned exactly: people get only the launcher and
-# build-submitter custom roles, the one service account with a project role is
+# build-submitter custom roles and the whole-project inventory's own Cloud Asset
+# read role (fugaroCloudAssetReader, holding cloudasset.assets.searchAllResources
+# alone, Task 4.1a), the one service account with a project role is
 # the history account (its narrow Cloud Run role), and the scheduler account
 # has none. (Mock providers expose a child module's resources only when the
 # module itself is the run's target, hence a module-level run here; the repo
@@ -1467,15 +1469,20 @@ run "same_project_resolved_iam" {
     error_message = "the installation grants people only the fugaroLauncher and fugaroBuildSubmitter custom roles on the project"
   }
   assert {
-    condition = (alltrue([for m in google_project_iam_member.operator_cloud_asset_reader : m.role == "projects/proj-1234/roles/fugaroCloudAssetReader" && !startswith(m.member, "serviceAccount:")]) &&
-    google_project_iam_custom_role.cloud_asset_reader.role_id == "fugaroCloudAssetReader" &&
-    google_project_iam_custom_role.cloud_asset_reader.permissions == toset(["cloudasset.assets.searchAllResources"]) &&
-    google_project_iam_custom_role.cloud_asset_reader.title == "Fugaro Cloud Asset reader")
-    error_message = "the whole-project inventory's read role is this installation's own fugaroCloudAssetReader, holding cloudasset.assets.searchAllResources and nothing else, and the operators -- never a service account -- hold it through this resource"
+    condition     = alltrue([for m in google_project_iam_member.operator_cloud_asset_reader : m.role == "projects/proj-1234/roles/fugaroCloudAssetReader" && !startswith(m.member, "serviceAccount:")])
+    error_message = "the operators hold the whole-project inventory's read role, this installation's own fugaroCloudAssetReader, and no service account holds it through this resource"
   }
   assert {
     condition     = keys(google_project_iam_member.operator_cloud_asset_reader) == ["user:operator@example.com"]
     error_message = "the whole-project inventory's read role is granted to the operators, and to nobody else"
+  }
+  assert {
+    condition     = google_project_iam_custom_role.cloud_asset_reader.role_id == "fugaroCloudAssetReader" && google_project_iam_custom_role.cloud_asset_reader.title == "Fugaro Cloud Asset reader"
+    error_message = "the whole-project inventory's read role is this installation's own custom role, not a predefined one"
+  }
+  assert {
+    condition     = google_project_iam_custom_role.cloud_asset_reader.permissions == toset(["cloudasset.assets.searchAllResources"])
+    error_message = "fugaroCloudAssetReader holds exactly cloudasset.assets.searchAllResources, the one permission the read's SearchAllResources call needs, and nothing else"
   }
   assert {
     condition = (google_project_iam_member.history_launcher[0].role == google_project_iam_custom_role.history[0].name &&
