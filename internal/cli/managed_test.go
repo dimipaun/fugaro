@@ -315,7 +315,11 @@ func managedPropertyWorlds() []managedPropertyWorld {
 		{"a creation fact whose read fails (500)", false, managedWorld(managedWorldOpts{refuseObject: http.StatusInternalServerError})},
 		{"a malformed creation fact", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":`)})},
 		{"a creation fact with a field this build does not write", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":"` + managedPropertyGCP + `","managed":true}`)})},
-		{"a creation fact of an unknown version", false, managedWorld(managedWorldOpts{object: []byte(`{"version":2,"gcp_project":"` + managedPropertyGCP + `"}`)})},
+		// 99, not 2: version 2 is the budget version (managed.MarkerVersionBudget),
+		// so a 2 here would be a known version with a missing budget, and the
+		// unknown-version refusal would go untested.
+		{"a creation fact of an unknown version", false, managedWorld(managedWorldOpts{object: []byte(`{"version":99,"gcp_project":"` + managedPropertyGCP + `"}`)})},
+		{"a budget-version creation fact with no budget", false, managedWorld(managedWorldOpts{object: []byte(`{"version":2,"gcp_project":"` + managedPropertyGCP + `"}`)})},
 		{"a creation fact about another project", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":"someone-elses-project"}`)})},
 		{"a runs bucket in another project (wrong project number)", false, managedWorld(managedWorldOpts{bucketNumber: managedPropertyNumber + 1})},
 		{"a creation fact in a bucket without the label", false, managedWorld(managedWorldOpts{noLabel: true})},
@@ -725,6 +729,7 @@ var initFlagCases = map[string]string{
 	"plan-only":       "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
 	// Flags whose steps confirm through the paths the property drives.
 	"create-project":   "its creation confirms through the Typed class (askTyped/canType, both covered)",
+	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
 	"link-billing":     "the billing link confirms through the Typed class (askTyped/canType, both covered)",
 	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
 	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
