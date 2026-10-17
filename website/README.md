@@ -212,10 +212,12 @@ API's custom-domain redirect. **Registering a domain, attaching it and writing i
 records are the owner's steps** — no agent registers a domain, touches DNS or changes the
 project — and until the domain is attached and that redirect is set, `secondary_domain` names
 a domain nothing answers on: the site is simply live on the canonical URL, and nothing in
-this repository changes that. The Go test above also refuses a `firebase.json` redirect that
-answers one of the site's own paths with the site's own host, so the looping rule cannot be
-added later by a task that assumes the domain step was already done, and check 69a in
-`docs/gcp-live-checklist.md` is where the live result is recorded.
+this repository changes that. `TestWebsiteFirebaseRedirectsDoNotLoop` also refuses a
+`firebase.json` redirect whose source matches its own destination — a path redirected to
+itself, a wildcard pointing inside its own match set, or either spelling of Firebase's
+catch-all (`/**`, `**`) pointed at any path on a host this site serves — so the looping rule
+cannot be added later by a task that assumes the domain step was already done, and check 69a
+in `docs/gcp-live-checklist.md` is where the live result is recorded.
 
 `scripts/deploy-website.sh` deploys from the owner's machine with the Firebase CLI, using
 whatever `firebase login` the owner already did — it never reads, prints or takes a token
