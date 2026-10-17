@@ -8,11 +8,11 @@ D50's operative rulings: the code lives **in this repository**, it is **not an n
 `package.json` is `private` and the version is `0.0.0`, so nothing here is published and
 nothing here is a public API — and there is **no `fugaro voice` command**.
 
-**Status: the skeleton, and nothing else.** Nothing here implements anything. The message
-schema (P0.2), the URL validator (P0.3), the mailbox state machine (P1.1), the consumer lease
+**Status: the skeleton, and `mailbox-schema/` (P0.2, the message schema).** The
+URL validator (P0.3), the mailbox state machine (P1.1), the consumer lease
 (P1.2), the digest and its redactor (P1.3), the staleness rule (P1.4) and the mailbox
 simulator (P1.5) are planned, unbuilt, and each is its own directory. What exists today is
-the runner, one trivial module with its test, and this document. No task of that plan is
+the runner, the skeleton module and `mailbox-schema/`, each with its test, and this document. No task of that plan is
 approved, and this directory is not evidence that one is.
 
 ## The runner, and the glob
