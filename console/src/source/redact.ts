@@ -90,7 +90,7 @@ import { decodeFeedLine } from '../main/spawn'
 import {
   ABS_PATH_SOURCE,
   invisibleOrSeparatorRe,
-  resolveAmbiguousSequences,
+  resolveReadings,
   stripTerminalSequences,
 } from '../shared/sanitize'
 
@@ -1050,6 +1050,14 @@ function applyRules(text: string, ctx: Ctx, nested = false, persons = true): str
  * is no token to a rule and all of one to whoever reads the fixture -- and a
  * fixture is a file a person reads, not a terminal.
  *
+ * **The readings are combined first, by the display layer's own step**
+ * (`resolveReadings`, review round 2 of PR 540): the credential rules run over
+ * the form as written (invisible characters in place) as well as the prepared
+ * form, every time, and a credential either finds is masked. They used to be
+ * read only when the prepared form matched nothing, so a path or an address
+ * elsewhere in the value let a token split from its neighbour by a zero-width
+ * character through whole.
+ *
  * **A sequence that swallowed printable bytes is read every way** (review
  * round 4 of PR 494): `resolveAmbiguousSequences`, the display layer's rule,
  * masks every character of the terminal's reading that the credential rules
@@ -1064,7 +1072,7 @@ function applyRules(text: string, ctx: Ctx, nested = false, persons = true): str
  */
 function redactFreeText(text: string, ctx: Ctx, persons = true): string {
   if (text === '' || isMarker(text)) return text
-  const ambiguity = resolveAmbiguousSequences(text)
+  const ambiguity = resolveReadings(text)
   if (ambiguity === null) return TOKEN_MARKER
   if (ambiguity?.masked === true) return applyRules(ambiguity.text, ctx, false, persons)
   const prepared = prepare(text)

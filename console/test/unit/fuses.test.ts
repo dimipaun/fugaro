@@ -122,8 +122,9 @@ function fakeFuses(wire?: Partial<Record<FuseV1Options, FuseState>>): FuseTools 
       // snapshot off, WasmTrapHandlers on), so the fake wire is as long as the
       // real one.
       const untouched: Record<number, FuseState> = {
-        [FuseV1Options.EnableCookieEncryption]: FuseState.DISABLE,
-        [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: FuseState.DISABLE,
+      }
+      for (const fuse of LEFT_ALONE_FUSES) {
+        untouched[fuse.option] = fuse.upstreamDefault ? FuseState.ENABLE : FuseState.DISABLE
       }
       for (const fuse of BEYOND_PIN_FUSES) {
         untouched[fuse.index] = fuse.upstreamDefault ? FuseState.ENABLE : FuseState.DISABLE
@@ -332,6 +333,18 @@ describe('the afterPack hook', () => {
     await expect(afterPack(CONTEXT, fuses)).rejects.toThrow(/holds 10 fuses .* about 9/)
   })
 
+  it('refuses a binary whose left-alone fuse is not at the default this file records', async () => {
+    // The left-alone fuses are checked by value, not only by count.
+    expect(LEFT_ALONE_FUSES.map((fuse) => [fuse.name, fuse.upstreamDefault])).toEqual([
+      ['EnableCookieEncryption', false],
+      ['LoadBrowserProcessSpecificV8Snapshot', false],
+    ])
+    for (const fuse of LEFT_ALONE_FUSES) {
+      const flipped = fakeFuses({ [fuse.option]: fuse.upstreamDefault ? FuseState.DISABLE : FuseState.ENABLE })
+      await expect(afterPack(CONTEXT, flipped), fuse.name).rejects.toThrow(new RegExp(fuse.name))
+    }
+  })
+
   it('refuses a binary whose WasmTrapHandlers fuse is not at the default this file records', async () => {
     const fuses = fakeFuses({ 8: FuseState.DISABLE } as Partial<Record<FuseV1Options, FuseState>>)
     await expect(afterPack(CONTEXT, fuses)).rejects.toThrow(/WasmTrapHandlers/)
@@ -510,6 +523,15 @@ describe('the packaging configuration the fuses belong to', () => {
     for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'binaries', 'identity']) {
       expect(build.mac, `build.mac.${widening} must be absent`).not.toHaveProperty(widening)
     }
+  })
+
+  it('has no electron-builder.env, and could not ship one', () => {
+    // electron-builder's CLI loads `electron-builder.env` from the working
+    // directory into its environment before it builds (cli-util.js), which would
+    // put back what the README's `env -i` packaging step keeps out -- and, if it
+    // held secrets, put them in a file in the checkout.
+    expect(existsSync(join(CONSOLE_DIR, 'electron-builder.env'))).toBe(false)
+    for (const pattern of build.files ?? []) expect(pattern).not.toMatch(/\.env$|^\*|\/\*\*$/)
   })
 
   it('rebuilds no native module: the console has none, and a rebuild runs install scripts', () => {

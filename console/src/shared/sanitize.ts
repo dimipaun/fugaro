@@ -1323,6 +1323,10 @@ export const MAX_AMBIGUOUS_SCAN = 1 << 20
 export interface Ambiguity {
   readonly text: string
   readonly masked: boolean
+  /** sequences says whether an escape sequence swallowed printable bytes, as
+   * opposed to the form as written alone holding a credential
+   * (`resolveReadings`). */
+  readonly sequences: boolean
 }
 
 /**
@@ -1358,16 +1362,73 @@ export interface Ambiguity {
  * every invisible character either layer strips.
  */
 export function resolveAmbiguousSequences(raw: string): Ambiguity | null | undefined {
-  if (!SEQUENCE_FAST_RE.test(raw)) return undefined
+  return resolve(raw, false)
+}
+
+/**
+ * resolveReadings is the combining step both free-text readers call -- the
+ * display layer's `withRules` and the recorder's `redactFreeText`
+ * (`src/source/redact.ts`) -- so that the two cannot combine their readings two
+ * different ways (review round 2 of PR 540).
+ *
+ * It is `resolveAmbiguousSequences` with **one more reading in the union: the
+ * form as written**, NFKC with the terminal's reading of every sequence and
+ * every invisible character still in place. The prepared form has lost those
+ * characters, and with them the boundary a token shape's lookbehind
+ * (`(?<![\p{L}\p{N}_])`) needs, so `J` + a zero-width space + a key id is a key
+ * id only in the form as written. Both layers used to read that form only when
+ * the prepared one matched nothing, so a path, an address or another token
+ * anywhere in the value turned the second reading off and the split key id was
+ * drawn and recorded whole. Now the credential rules run over the written form
+ * too, every time, and what they match there is mapped onto the prepared form's
+ * characters and masked, exactly as an ambiguous sequence's readings are.
+ *
+ * Returns `undefined` when no sequence swallowed anything and the written form
+ * holds no credential the prepared form's own pass would not see (the caller's
+ * ordinary path), `null` when the readings exceed the bounds (fail closed), and
+ * otherwise the prepared form, masked.
+ */
+export function resolveReadings(raw: string): Ambiguity | null | undefined {
+  return resolve(raw, true)
+}
+
+/** resolve is the union over readings, with or without the form as written
+ * (`resolveReadings`). */
+function resolve(raw: string, withWritten: boolean): Ambiguity | null | undefined {
+  const hasSequence = SEQUENCE_FAST_RE.test(raw)
+  if (!hasSequence && !withWritten) return undefined
   const sites: AmbiguousSite[] = []
-  const stripped = scanTerminalSequences(raw.normalize('NFKC'), sites)
-  if (sites.length === 0) return undefined
+  const stripped = hasSequence ? scanTerminalSequences(raw.normalize('NFKC'), sites) : stripTerminalSequences(raw.normalize('NFKC'))
   // The prepared form, with each site's place carried through the strip.
   const removed: number[] = []
   const prepared = stripped.replace(PREPARE_STRIP_RE, (found: string, offset: number) => {
     removed.push(offset, found.length)
     return ''
   })
+  if (sites.length === 0 && (!withWritten || removed.length === 0)) return undefined
+  const covered = new Uint8Array(prepared.length)
+  if (withWritten) {
+    // The form as written: `stripped`, each character mapped to its place in
+    // the prepared form, and each character the prepared form dropped mapped
+    // to none.
+    const origin = new Int32Array(stripped.length).fill(-1)
+    let at = 0
+    let next = 0
+    let r = 0
+    while (at < stripped.length) {
+      const start = removed[r]
+      if (start !== undefined && at === start) {
+        at += removed[r + 1] ?? 0
+        r += 2
+        continue
+      }
+      origin[at] = next
+      next += 1
+      at += 1
+    }
+    traceCredentials({ text: stripped, origin }, false, covered)
+    if (sites.length === 0) return maskCovered(prepared, covered, false) ?? undefined
+  }
   const places: number[] = []
   let shift = 0
   let r = 0
@@ -1407,8 +1468,7 @@ export function resolveAmbiguousSequences(raw: string): Ambiguity | null | undef
     readings = Math.max(readings, size)
   }
   const inserted = sites.reduce((sum, site) => sum + site.body.length, 0)
-  if ((readings + 2) * (prepared.length + inserted) > MAX_AMBIGUOUS_SCAN) return null
-  const covered = new Uint8Array(prepared.length)
+  if ((readings + (withWritten ? 3 : 2)) * (prepared.length + inserted) > MAX_AMBIGUOUS_SCAN) return null
   const read = (choose: (site: number, cluster: number, within: number) => number): void => {
     const parts: string[] = []
     const origins: { readonly at: number; readonly from: number; readonly length: number }[] = []
@@ -1457,6 +1517,12 @@ export function resolveAmbiguousSequences(raw: string): Ambiguity | null | undef
   // Every final byte kept, and every body kept, everywhere at once.
   read((site) => (sites[site]?.final === null ? 0 : 1))
   read((site) => (options[site]?.length ?? 1) - 1)
+  return maskCovered(prepared, covered, true) ?? { text: prepared, masked: false, sequences: true }
+}
+
+/** maskCovered replaces every covered run of `prepared` with its placeholder,
+ * or returns null when nothing is covered. */
+function maskCovered(prepared: string, covered: Uint8Array, sequences: boolean): Ambiguity | null {
   let masked = false
   const out: string[] = []
   let index = 0
@@ -1472,7 +1538,7 @@ export function resolveAmbiguousSequences(raw: string): Ambiguity | null | undef
     }
     index = end
   }
-  return { text: out.join(''), masked }
+  return masked ? { text: out.join(''), masked, sequences } : null
 }
 
 /**
@@ -1499,10 +1565,16 @@ function freeText(
 
 /** withRules runs `rules` over the prepared form and, when they find nothing
  * there, over the form as written: `freeText`'s rule, shared with
- * `sanitizeRefusal`. When an ambiguous escape sequence made the resolver mask a
- * credential (`resolveAmbiguousSequences`), the masked form is the only form
- * read: the form as written is the terminal's reading alone, and it is the one
- * that can still hold the rest of a token another reading found.
+ * `sanitizeRefusal`. **Before either, the readings are combined**
+ * (`resolveReadings`): when any reading -- an ambiguous escape sequence's, or
+ * the form as written with its invisible characters still in place -- holds a
+ * credential, the resolver hands back the prepared form with every such
+ * credential masked, and that masked form is the only form read. So a token
+ * whose boundary is only a zero-width split is masked whether or not another
+ * rule fires in the prepared form (review round 2 of PR 540: it used to be
+ * read only when the prepared form matched nothing, and was drawn whole beside
+ * a path, an address or another token). The written-form retry below is left
+ * for the non-credential rules, whose matches no reading masks.
  *
  * **`written` is the recorder's second reading, and it is not optional.**
  * `redactFreeText` (`src/source/redact.ts`) retries its rules over
@@ -1992,15 +2064,17 @@ export function sanitizeText(
     )
   }
 
-  // Every reading of an ambiguous escape sequence, and the union of what the
-  // credential rules find in them (`resolveAmbiguousSequences`).
-  const ambiguity = resolveAmbiguousSequences(raw)
+  // Every reading -- each ambiguous escape sequence's, and the form as written
+  // with its invisible characters in place -- and the union of what the
+  // credential rules find in them (`resolveReadings`): the same combining step
+  // the recorder runs, computed once.
+  const ambiguity = resolveReadings(raw)
   if (ambiguity === null) return refuse(ambiguityRefusal(field))
 
   if (textClass === 'url') {
     // A link is drawn and opened exactly as written, so a url whose escape
     // sequences hide bytes no reading can settle is not a link.
-    if (ambiguity !== undefined) {
+    if (ambiguity?.sequences === true) {
       return refuse(`${field} is a url with a terminal escape sequence in it, so the console will not draw it`)
     }
     return applyUrl(text, field)
@@ -2009,7 +2083,11 @@ export function sanitizeText(
   if (ambiguity?.masked === true && textClass !== 'sentence' && textClass !== 'label' && textClass !== 'host') {
     // A validating class draws the value whole or not at all, and one reading
     // of this value holds a credential.
-    return refuse(`${field} holds a credential in one reading of its terminal escape sequences, so the console will not draw it`)
+    return refuse(
+      ambiguity.sequences
+        ? `${field} holds a credential in one reading of its terminal escape sequences, so the console will not draw it`
+        : `${field} holds a credential in the form it was written in, so the console will not draw it`,
+    )
   }
 
   if (textClass === 'person') {
@@ -2188,9 +2266,9 @@ export function sanitizeRefusal(raw: unknown, field = 'the refusal'): Sanitized 
       `${field} is longer than the console will read (${String(MAX_TEXT_INPUT_LENGTH)} characters)`,
     )
   }
-  const ambiguity = resolveAmbiguousSequences(raw)
-  if (ambiguity === null) return refuse(ambiguityRefusal(field))
-  const rules = withRules(stripped.text, stripTerminalSequences(raw), prepared, ambiguity, REFUSAL_RULES)
+  const readings = resolveReadings(raw)
+  if (readings === null) return refuse(ambiguityRefusal(field))
+  const rules = withRules(stripped.text, stripTerminalSequences(raw), prepared, readings, REFUSAL_RULES)
   const cut = clipped(oneLine(rules.text))
   return ok(cut.text, [...stripped.flags, ...rules.flags, ...cut.flags])
 }
