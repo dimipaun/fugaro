@@ -33,7 +33,7 @@ package cli
 // Constraint 6): the repository URL is go.mod's own module path, min_runs is
 // internal/stats.MinRuns, the canonical URL's host is on the site's own host
 // list, and every decision-backed value is in the state its decision left it
-// in -- analytics off (D93, W3.2 turns it on), the console's downloads off
+// in -- analytics' flag and measurement id agreeing with each other (D93; W3.2 sets both together), the console's downloads off
 // (D95), the video off (D107), and no second domain (D92).
 //
 // THE BOUNDARY IS ABOUT CODE, NOT ABOUT BYTES, and that distinction is the
@@ -603,6 +603,51 @@ func TestWebsiteLinksNoConsoleWhileTheFlagIsOff(t *testing.T) {
 			}
 			t.Errorf("%s:%d carries the console download URL %q while features.console_downloads is false: the console is not released, the site links the Releases page and never a versioned asset URL, and a link here would either 404 or point at an unsigned artifact (finding 25, D95, Global Constraint 9)\n%s", rel, i+1, download, line)
 		}
+	}
+}
+
+// TestWebsiteDownloadNeedleSeesEverySpelling is the console-link scan's
+// positive control: it plants the release-asset URL in a temp tree in the
+// spellings a page could use -- with a scheme, and without one -- and proves
+// the needle and the scan find each, and a clean file stays clean, so the
+// scan cannot pass by looking at nothing.
+func TestWebsiteDownloadNeedleSeesEverySpelling(t *testing.T) {
+	needle := websiteDownloadNeedle(t, "https://github.com/example-org/example-repo")
+	root := t.TempDir()
+	planted := map[string]string{
+		"website/src/pages/a.astro":  "<a href=\"https://github.com/example-org/example-repo/releases/download/v1/x\">",
+		"website/src/pages/b.astro":  "<a href=\"github.com/example-org/example-repo/releases/download/v1/x\">",
+		"website/src/pages/c.astro":  "<a href=\"//github.com/example-org/example-repo/releases/download/v1/x\">",
+		"website/src/pages/ok.astro": "<a href=\"https://github.com/example-org/example-repo/releases\">",
+	}
+	for rel, body := range planted {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := websiteWalk(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits := map[string]bool{}
+	for _, rel := range files {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hits[rel] = strings.Contains(string(data), needle)
+	}
+	for _, rel := range []string{"website/src/pages/a.astro", "website/src/pages/b.astro", "website/src/pages/c.astro"} {
+		if !hits[rel] {
+			t.Errorf("the scan did not see the planted download URL in %s (needle %q): a console-link check that misses a spelling passes by looking at nothing", rel, needle)
+		}
+	}
+	if hits["website/src/pages/ok.astro"] {
+		t.Errorf("the scan flagged the Releases page link, which the site is allowed to carry (needle %q)", needle)
 	}
 }
 
