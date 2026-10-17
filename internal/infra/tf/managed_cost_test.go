@@ -225,6 +225,43 @@ func TestManagedCostReadsTheShapesAPlanWrites(t *testing.T) {
 	}
 }
 
+// TestManagedCostJobPathIsTheGoldenPlansNesting: a rule's path is the nesting
+// terraform writes, and a path this file got wrong is an entry that never
+// fires — a silent hole rather than a false refusal, which is the failure mode
+// a cost gate cannot afford. The golden installation plan is where the nesting
+// is read rather than asserted: its Cloud Run job is a real plan of the type
+// the min-instances rule names, and the object the rule reads its scaling block
+// from — template.0.template.0 — is the object that plan states the service
+// account, the node selector and the containers in, which are the fields the
+// provider puts in the job's task template beside scaling. Regenerate the
+// fixture and this test says whether the path still lands where it did.
+func TestManagedCostJobPathIsTheGoldenPlansNesting(t *testing.T) {
+	p := readPlanFixture(t, "golden/installation.plan.json")
+	var job *ResourceChange
+	for i := range p.ResourceChanges {
+		if p.ResourceChanges[i].Type == "google_cloud_run_v2_job" {
+			job = &p.ResourceChanges[i]
+			break
+		}
+	}
+	if job == nil {
+		t.Fatal("the golden plan has no Cloud Run job, so the min-instances rule's path is unchecked")
+	}
+	task, ok := managedCostAt(job.Change.After, "template", 0, "template", 0)
+	if !ok {
+		t.Fatalf("%s has no template.0.template.0, which is where the min-instances rule reads scaling", job.Address)
+	}
+	m, ok := task.(map[string]any)
+	if !ok {
+		t.Fatalf("%s's task template is %T, want the object a plan writes a block in", job.Address, task)
+	}
+	for _, field := range []string{"service_account", "node_selector", "containers"} {
+		if _, ok := m[field]; !ok {
+			t.Errorf("the job's task template states no %q, so it is not the object a scaling block sits in", field)
+		}
+	}
+}
+
 // TestManagedCostComputedValueIsNotBelowTheLine: a plan that knows the
 // property only after apply is not below the line by default. A saved plan
 // keeps only the references an expression uses, never the expression, so a
