@@ -4,9 +4,9 @@
 
 **Status: plan only; nothing is implemented.** No line of any task below has been written or run. **The owner answered every decision on 2026-10-17** — all as recommended except **D132** (answered "proceed and record the risk as accepted") — ruled on O1 and O2 the same day, and answered O3 and confirmed O4 the same day. **Answering a decision or ruling on an item is not approving a task: no task in this plan is approved.** Each task starts only on the owner's explicit go for that task (or for a named group of tasks); the gate at the end of this file is not passed. No item is open in [reconciliation.md](reconciliation.md) §4: **O3** is answered — the cascade's switch is `routing.claude: {via: cascade}`, which needs no provider route while tier C for Claude is off and leaves `via: auto` unchanged — and **O4** is confirmed — the service learns each repository's admitted accounts from what `fugaro project policy publish` publishes.
 
-**What waits for 0.9.0.** Because the service is now the first product slice, **every product task of this plan waits for the seal — both halves — which is held for 0.9.0** (D134): PR #417 (the seal's runner half, Slice A, a held draft on `next-0.9`) **and** its launcher half (the seal design's Slice B, D19's second step: the launcher seals the token object and hands the key to the execution it starts; a `--retry` re-mints and re-seals, D17; not yet opened as a pull request). **What can be done earlier, each still on the owner's go:** Slice 0 (the supersession notes, Checks 90 and 91 written and run by the owner), docs-only work, and one piece of rules groundwork that needs no rules change and no run-token grant (C0.6: emulator tests pinning that today's rules already deny every run token all of `creds/`).
+**What waits for 0.9.0.** Because the service is now the first product slice, **every product task of this plan waits for the seal — both halves — which is held for 0.9.0** (D134): PR #417 (the seal's runner half, Slice A, merged into `next-0.9` on 2026-10-17) **and** PR #523 (its launcher half, the seal design's Slice B, D19's second step: the launcher seals the token object and hands the key to the execution it starts; a `--retry` re-mints and re-seals, D17; an open draft on `next-0.9`), both reaching `main` with 0.9.0. **What can be done earlier, each still on the owner's go:** Slice 0 (the supersession notes, Checks 90 and 91 written and run by the owner), docs-only work, and one piece of rules groundwork that needs no rules change and no run-token grant (C0.6: emulator tests pinning that today's rules already deny every run token all of `creds/`).
 
-**Checked against.** `origin/main` at `b9990f10` (2026-10-17). Every path and symbol named below was located with `git grep` (there is no `graphify-out/` for this repository) and re-checked to exist before it was written; a path marked **new** does not exist yet. Line numbers are never cited.
+**Checked against.** `origin/main` at `021728c1` (2026-10-17), the same commit as [reconciliation.md](reconciliation.md). Every path and symbol named below was located with `git grep` (there is no `graphify-out/` for this repository) and re-checked to exist before it was written; a path marked **new** does not exist yet. Line numbers are never cited.
 
 **Spec.** [spec.md](spec.md) (verbatim). **Reconciliation.** [reconciliation.md](reconciliation.md) — F1–F37, D130–D154, O1–O4, U1–U7. **Index.** [README.md](README.md).
 
@@ -87,7 +87,7 @@ Check 47 (the superseded held plan's) stays reserved and unused (D130).
 2. **No secret-shaped literals** in tests, fixtures, docs or skills. Fake credentials are built at run time (for example from a constant prefix and `t.Name()`), never a literal that looks like a key or token; the plugin lint (`TestLintRejectsSecretShaped`) and the image scan's `images/trivy-secret.yaml` already enforce this for their areas.
 3. **Skills stay inside their budget.** Any edit under `plugin/skills/` passes `go test ./plugin/...` (`TestLintSizeBudget`, `TestLintByteBudget`, the command and flag lint).
 4. **Docs guards.** Every task that edits a document runs `GOFLAGS=-p=2 go test ./internal/cli ./internal/config ./images -run 'Docs|Migration|BaseImageDoc|Design|SecurityMd|RecipesGuide|NoLegacy|Website|CliRef' -count=1` (the list CI's docs-only path names) — and updates the guard test in the same commit when the pinned text changes on purpose.
-5. **Version skew.** A new `fugaro.yaml` value is a version-skew break in a strictly decoded config: it gets a `…Since` constant in `internal/cli/recipes_skew.go` and `fugaro init --repo` refuses it against a base image that predates it (the held plan's P9, carried over by D130). A policy change bumps `projectpolicy.Version` and uses `SkewSentence`; a rules change bumps `projectpolicy.RulesVersion`.
+5. **Version skew.** A new `fugaro.yaml` value is a version-skew break in a strictly decoded config: it gets a `…Since` constant in `internal/cli/recipes_skew.go` and `fugaro init --repo` refuses it against a base image that predates it (the held plan's P9, carried over by D130). A policy change bumps `projectpolicy.Version` (and uses `SkewSentence`) **only when an older reader must refuse the node**; a new top-level member is tolerated by older readers (`projectpolicy.Decode` ignores unknown top-level keys) and does not bump it. A rules change bumps `projectpolicy.RulesVersion`.
 6. **Strict decoding and schemas.** New config and wire formats decode strictly; `schemas/fugaro.schema.json` changes with the config.
 7. **Rules changes** ship as template + regenerated golden + parity + emulator **denial** cases in one PR, and are deployed by the owner (`fugaro init --firebase <id>`).
 8. **No agent edits `.github/workflows/`.** A workflow change (the service image's build) is staged under `docs/pending-workflows/` and copied in by the owner.
@@ -99,12 +99,12 @@ Check 47 (the superseded held plan's) stays reserved and unused (D130).
 
 ## Global Constraints
 
-1. **Docs only in this pull request.** It edits `docs/credentials-service/implementation-plan.md`, `README.md` and `reconciliation.md`. No Go, Terraform, rules, schema, skill or workflow change. (The shipping tasks below edit files outside `docs/`, `SECURITY.md` among them; this pull request does not.)
+1. **Docs only in this pull request.** It adds and edits only `docs/credentials-service/`: `spec.md` (the owner's spec, verbatim), `implementation-plan.md`, `README.md` and `reconciliation.md`. No Go, Terraform, rules, schema, skill or workflow change. (The shipping tasks below edit files outside `docs/`, `SECURITY.md` among them; this pull request does not.)
 2. **No task is approved.** Each starts on the owner's explicit go. A recommendation, an answered decision, a ruling or a passing check is not a go.
-3. **Slice order is the owner's (D137 as amended by O1).** Slice 0 first. **Every Slice 1 task starts only after the seal — #417 and its launcher half — has merged (D134, held for 0.9.0)** and Checks 90 and 91 are recorded (D151). Slice 2 follows Slice 1.
+3. **Slice order is the owner's (D137 as amended by O1).** Slice 0 first. **Every Slice 1 task starts only after the seal — #417 (merged into `next-0.9`) and #523 (the launcher half, open draft) — is on `main` (D134, held for 0.9.0)** and Checks 90 and 91 are recorded (D151). Slice 2 follows Slice 1.
 4. **If Check 90 fails** (subscription traffic does not survive a header swap), the TIER A tasks (C1.7 and the TIER A parts of C1.11 and C1.12) are dropped, and Slice 1 ships the service with a B-only cascade, waiting and visibility; the plan is amended in a docs PR before any further task starts.
 5. **The invariant (D133).** An OAuth token is only ever sent to Anthropic's own endpoint. It is asserted in code (C1.7) and by a test that fails if any route with a provider base URL can carry an OAuth credential.
-6. **Per-repository jobs only** until the phase-3 shared-job rules are on `main` (C3.9). The phase-3 refusal of an OAuth launch onto a shared job (Task 3.4a, open PR #511) stays until then.
+6. **Per-repository jobs only** until the phase-3 shared-job rules are on `main` (C3.9). The phase-3 refusal of an OAuth launch onto a shared job (Task 3.4a, PR #511, merged into `next-0.8.5`) stays until then.
 7. **The managed-projects deployer (D75: `fugaroDeployer`, `fugaroDeployerScoped`) is never used** for any of this work, and `fugaro managed apply` never deploys the service (D146). The service is Fugaro's own infrastructure, in the installation root.
 8. **Unreachable service halts, never falls back** (D143): no code path mounts a model key in the job when the service is down.
 9. **No refresh, no alerts, no egress restriction, no share model** in Slices 1–2 (D139, D141, D142, D144).
@@ -135,7 +135,7 @@ A reviewer of a **task** reads its own "Reviewer" line and the Review notes in i
 | D131 | C0.2 (project-centric §7 note); C3.9 (shared jobs) |
 | D132 | Convention 10, Global Constraint 4, the TIER A marks (C1.7, C1.11, C1.12), the Risks section |
 | D133 | C1.1 (the mode), C1.7 (the invariant) |
-| D134 | C1.10 (verification; liveness from the write-once outcome); Global Constraint 3 (both halves of the seal first) |
+| D134 | C1.10 (verification; liveness from the write-once outcome), C1.11 (the repository's admission); Global Constraint 3 (both halves of the seal first) |
 | D135 | C1.15 (gateway → service with an ID token), C1.18 (invoker) |
 | D136 | C0.6, C1.3 (`creds/` denied to every run token), C1.9 (CAS, written by the service only), C1.11 — as amended by O1 |
 | D137 | The slice order — as amended by O1 (Slice 1 skipped) |
@@ -177,7 +177,7 @@ A reviewer of a **task** reads its own "Reviewer" line and the Review notes in i
 | `internal/credsvc/` (**new**) | C1.10–C1.13, C2.1 | The service: run-identity verification and the wire contract (C1.10), the forward and the cascade (C1.11), the probe (C1.12), the audit log (C1.13), the GitHub mint endpoint (C2.1) |
 | `internal/cli/credentials_serve.go` (**new**) | C1.14 | A hidden `fugaro` subcommand that runs the service in its image |
 | `images/credentials/Dockerfile` (**new**) | C1.14 | The service image, on the `images/history` precedent |
-| `deploy/terraform/gcp/modules/installation/credentials.tf` (**new**) | C1.18 | The opt-in service, its SA, its grants, invoker for job SAs |
+| `deploy/terraform/gcp/modules/installation/credentials.tf` (**new**) | C1.18 | The opt-in service, its SA and its grants (the job SAs' invoker is in `modules/workflow/sa.tf`) |
 | `internal/cli/init_credentials.go` (**new**) | C1.20 | The owner-run init stage, on the `init_compute.go` precedent |
 
 ### Edited (the shared ones; every task lists its own)
@@ -185,21 +185,21 @@ A reviewer of a **task** reads its own "Reviewer" line and the Review notes in i
 | Path | Written by (level) |
 |---|---|
 | `internal/budget/rules/rules.json.tmpl`, `testdata/rules.golden.json`, `creds_emulator_test.go` | C0.6 (L0, the test only), C1.3 (L2) |
-| `internal/projectpolicy/version.go` | C1.3 (L2, `RulesVersion`), C1.2 (L3, `Version`) |
+| `internal/projectpolicy/version.go` | C1.3 (L2, `RulesVersion`), C1.2 (L3, a comment only; `Version` stays 1) |
 | `internal/gateway/gateway.go`, `route.go` | C1.7 (L2), C1.15 (L3), C1.11 (L5, `gateway.go`'s package comment only) |
 | `internal/gateway/ledger.go` | C1.16 (L5) — and no other task |
 | `internal/budget/model.go` | C1.3 (L2, `AgentEntry`), C1.16 (L5, by-tier paths) |
 | `internal/runner/gateway.go` | C1.15 (L3), C1.19 (L5) |
-| `internal/runner/runner.go` | C1.17 (L4), C1.19 (L5), C2.2 (L7) |
+| `internal/runner/runner.go` | C1.17 (L4), C1.19 (L5), C2.2 (L8) |
 | `internal/runstore/runstore.go` | C1.17 (L4), C1.16 (L5) |
-| `internal/infra/spec.go`, `readiness.go` | C1.20 (L3) |
+| `internal/infra/spec.go`, `readiness.go` | C1.20 (L5) |
 | `internal/cli/accounts.go` | C1.21 (L5) |
 | `deploy/terraform/gcp/modules/workflow/sa.tf` | C1.18 (L2), C2.3 (L3) |
 | `deploy/terraform/gcp/modules/installation/credentials.tf` | C1.18 (L2, creates), C2.3 (L3) |
 | `docs/design/m9-budget-and-dashboard.md` | C0.2 (L0), C1.3 (L2) |
-| `SECURITY.md` | C1.22 (L6), C2.4 (L8) |
-| `docs/gcp-live-checklist.md` | C0.3 (L0), C1.5 (L4), C1.23 (L7), C2.4 (L8) |
-| `internal/cli/recipes_skew.go` | C1.1 (L2) |
+| `SECURITY.md` | C1.22 (L6), C2.4 (L9) |
+| `docs/gcp-live-checklist.md` | C0.3 (L0), C1.5 (L4), C1.23 (L7), C2.4 (L9) |
+| `internal/cli/recipes_skew.go` | C1.1 (L4) |
 
 ---
 
@@ -207,19 +207,19 @@ A reviewer of a **task** reads its own "Reviewer" line and the Review notes in i
 
 ### The edges
 
-Every line is exactly one task's "Depends on" line below, and nothing else; **G** is the seal gate (#417 and the seal's launcher half merged, Checks 90 and 91 recorded).
+Every line is exactly one task's "Depends on" line below, and nothing else; **G** is the seal gate (both halves on `main` with 0.9.0 — #417, merged into `next-0.9`, and #523, open draft — and Checks 90 and 91 recorded).
 
 ```
 C0.2  ← nothing                      C0.3 ← nothing           C0.6 ← nothing
 C0.4  ← C0.3 (owner)                 C0.5 ← C0.3 (owner)
-G     = #417 merged + seal launcher half merged + C0.4 + C0.5
+G     = #417 + #523 on main (0.9.0) + C0.4 + C0.5
 
-C1.1  ← G                            C1.3  ← G, C0.6
+C1.1  ← G, C1.2                      C1.3  ← G, C0.6
 C1.2  ← G, C1.3                      C1.4  ← C1.3
 C1.5  ← C1.3, C1.4                   C1.6  ← C1.5 (owner)
 C1.7  ← G                            C1.8  ← C1.7
 C1.9  ← G, C1.2                      C1.10 ← G
-C1.11 ← C1.2, C1.8, C1.9, C1.10      C1.12 ← C1.11
+C1.11 ← C1.2, C1.8, C1.9, C1.10      C1.12 ← C1.11, C1.13
 C1.13 ← C1.11                        C1.14 ← C1.11
 C1.15 ← C1.7, C1.10                  C1.16 ← C1.3, C1.15, C1.17
 C1.17 ← C1.2, C1.3, C1.10            C1.18 ← G
@@ -228,7 +228,7 @@ C1.21 ← C1.3, C1.9                   C1.22 ← C1.19, C1.20, C1.21
 C1.23 ← C1.6, C1.14, C1.19, C1.20, C1.21
 C1.24 ← C1.12, C1.13, C1.16, C1.22, C1.23 (owner; plus a release)
 
-C2.1  ← C1.11                        C2.2  ← C2.1, C1.15
+C2.1  ← C1.11, C1.13                 C2.2  ← C2.1, C1.15
 C2.3  ← C1.18                        C2.4  ← C2.2, C2.3, C1.22, C1.23
 C2.5  ← C2.4, C1.24 (owner; plus a release)
 ```
@@ -240,27 +240,28 @@ C2.5  ← C2.4, C1.24 (owner; plus a release)
 | **L0** | C0.2 supersession notes · C0.3 Checks 90, 91 written · C0.6 `creds/` denial pinned | standard · standard · opus + mandatory | `docs/plans/2026-10-14-oauth-reviewer-stage.md`, `docs/design/mixed-credentials.md`, `docs/design/project-centric.md`, `docs/design/m9-budget-and-dashboard.md` · `docs/gcp-live-checklist.md` · `internal/budget/rules/creds_emulator_test.go` |
 | **L1** | C0.4 Check 90 · C0.5 Check 91 | owner · owner | none (results recorded by the owner) |
 | — | **G: the seal (both halves) merged — 0.9.0** | | |
-| **L2** | C1.1 the mode · C1.3 the rules · C1.7 OAuth upstream (TIER A) · C1.10 identity verification · C1.18 Terraform | all SEC | `internal/config/validate.go`, `layer.go`, `providers.go`, `config.go`, `schemas/fugaro.schema.json`, `internal/cli/recipes_skew.go`, `internal/cli/validate.go` · `internal/budget/rules/*`, `internal/projectpolicy/version.go`, `internal/budget/model.go`, `docs/design/m9-budget-and-dashboard.md` · `internal/gateway/oauth.go`, `gateway.go`, `route.go` · `internal/credsvc/auth.go`, `wire.go` · `deploy/terraform/gcp/modules/*`, `deploy/terraform/gcp/roots/*/tests/` |
-| **L3** | C1.2 the policy settings · C1.4 the live helper · C1.8 exported helpers · C1.15 runner's service upstream · C1.20 mounts and init stage · C2.3 App key grant | SEC · SEC · SEC · SEC · SEC · SEC | `internal/projectpolicy/policy.go`, `version.go`, `internal/cli/project_cmd.go`, `internal/config/routing.go` · `internal/e2e/live_creds_rules_test.go` · `internal/gateway/export.go`, `export_test.go` · `internal/gateway/gateway.go`, `route.go`, `internal/runner/gateway.go` · `internal/infra/spec.go`, `readiness.go`, `internal/cli/init.go`, `internal/cli/init_credentials.go` · `deploy/terraform/gcp/modules/installation/secrets.tf`, `credentials.tf`, `modules/workflow/sa.tf` |
-| **L4** | C1.5 Check 92 written · C1.9 the state package · C1.17 waiting and review sessions | standard · SEC · SEC | `docs/gcp-live-checklist.md` · `internal/creds/` · `internal/runner/session.go`, `runner.go`, `internal/runstore/runstore.go` |
-| **L5** | C1.6 rules deploy and Check 92 (owner) · C1.11 the service forward and cascade · C1.16 accounting · C1.19 the wiring · C1.21 visibility and clearing a mark | owner · SEC · SEC · SEC · opus + mandatory | none · `internal/credsvc/forward.go`, `server.go`, `cascade.go`, `internal/gateway/gateway.go` (package comment only), `docs/plans/2026-09-30-m9a-gateway-and-project-identity.md` · `internal/gateway/ledger.go`, `internal/budget/lease.go`, `internal/budget/model.go`, `internal/runstore/cost.go`, `runstore.go` · `internal/runner/routing.go`, `internal/runner/gateway.go`, `agentenv.go`, `runner.go`, `internal/agent/env.go`, `internal/cli/run.go` · `internal/cli/accounts.go`, `doctor.go`, `internal/watch/json.go`, `render.go`, `console/docs/json-contract.md` |
-| **L6** | C1.12 the probe · C1.13 audit · C1.14 cmd and image · C1.22 SECURITY.md, docs and skill · C2.1 GitHub mint | SEC · SEC · SEC · opus + mandatory · SEC | `internal/credsvc/probe.go` · `internal/credsvc/audit.go` · `internal/cli/credentials_serve.go`, `internal/cli/root.go`, `images/credentials/`, `docs/pending-workflows/` · `SECURITY.md`, `plugin/skills/working/reference/diagnose.md`, `docs/multi-model.md`, the guard tests · `internal/credsvc/github.go` |
-| **L7** | C1.23 Checks 94, 95, 99 written · C2.2 runner fetches GitHub token | standard · SEC | `docs/gcp-live-checklist.md` · `internal/gitprov/github/*`, `internal/runner/runner.go` |
-| **L8** | C1.24 Checks 94, 95, 99 and the init stage (owner) · C2.4 docs and Check 96 written | owner · opus + mandatory | none · `SECURITY.md`, `docs/git-providers.md`, `docs/gcp-live-checklist.md` |
-| **L9** | C2.5 Check 96 (owner) | owner | none |
+| **L2** | C1.3 the rules · C1.7 OAuth upstream (TIER A) · C1.10 identity verification · C1.18 Terraform | all SEC | `internal/budget/rules/*`, `internal/projectpolicy/version.go`, `internal/budget/model.go`, `docs/design/m9-budget-and-dashboard.md` · `internal/gateway/oauth.go`, `gateway.go`, `route.go` · `internal/credsvc/auth.go`, `wire.go` · `deploy/terraform/gcp/modules/*`, `deploy/terraform/gcp/roots/*/tests/` |
+| **L3** | C1.2 the policy settings · C1.4 the live helper · C1.8 exported helpers · C1.15 runner's service upstream · C2.3 App key grant | SEC · SEC · SEC · SEC · SEC | `internal/projectpolicy/policy.go`, `version.go`, `internal/cli/project_cmd.go`, `internal/config/routing.go` · `internal/e2e/live_creds_rules_test.go` · `internal/gateway/export.go`, `export_test.go` · `internal/gateway/gateway.go`, `route.go`, `internal/runner/gateway.go` · `deploy/terraform/gcp/modules/installation/secrets.tf`, `credentials.tf`, `modules/workflow/sa.tf` |
+| **L4** | C1.1 the mode · C1.5 Check 92 written · C1.9 the state package · C1.17 waiting and review sessions | SEC · standard · SEC · SEC | `internal/config/validate.go`, `layer.go`, `providers.go`, `config.go`, `schemas/fugaro.schema.json`, `internal/cli/recipes_skew.go`, `internal/cli/validate.go` · `docs/gcp-live-checklist.md` · `internal/creds/` · `internal/runner/session.go`, `runner.go`, `internal/runstore/runstore.go` |
+| **L5** | C1.6 rules deploy and Check 92 (owner) · C1.11 the service forward and cascade · C1.16 accounting · C1.19 the wiring · C1.20 mounts and init stage · C1.21 visibility and clearing a mark | owner · SEC · SEC · SEC · SEC · opus + mandatory | none · `internal/credsvc/forward.go`, `server.go`, `cascade.go`, `internal/gateway/gateway.go` (package comment only), `docs/plans/2026-09-30-m9a-gateway-and-project-identity.md` · `internal/gateway/ledger.go`, `internal/budget/lease.go`, `internal/budget/model.go`, `internal/runstore/cost.go`, `runstore.go` · `internal/runner/routing.go`, `internal/runner/gateway.go`, `agentenv.go`, `runner.go`, `internal/agent/env.go`, `internal/cli/run.go` · `internal/infra/spec.go`, `readiness.go`, `internal/cli/init.go`, `internal/cli/init_credentials.go` · `internal/cli/accounts.go`, `doctor.go`, `internal/watch/json.go`, `render.go`, `console/docs/json-contract.md` |
+| **L6** | C1.13 audit · C1.14 cmd and image · C1.22 SECURITY.md, docs and skill | SEC · SEC · opus + mandatory | `internal/credsvc/audit.go` · `internal/cli/credentials_serve.go`, `internal/cli/root.go`, `images/credentials/`, `docs/pending-workflows/` · `SECURITY.md`, `plugin/skills/working/reference/diagnose.md`, `docs/multi-model.md`, the guard tests |
+| **L7** | C1.12 the probe · C1.23 Checks 94, 95, 99 written · C2.1 GitHub mint | SEC · standard · SEC | `internal/credsvc/probe.go` · `docs/gcp-live-checklist.md` · `internal/credsvc/github.go` |
+| **L8** | C1.24 Checks 94, 95, 99 and the init stage (owner) · C2.2 runner fetches GitHub token | owner · SEC | none · `internal/gitprov/github/*`, `internal/runner/runner.go` |
+| **L9** | C2.4 docs and Check 96 written | opus + mandatory | `SECURITY.md`, `docs/git-providers.md`, `docs/gcp-live-checklist.md` |
+| **L10** | C2.5 Check 96 (owner) | owner | none |
 
-**Widest levels: L3 (six) and L5 (five).** No two tasks in a level write one file (the table above). Placements forced only by a shared file, not by logic: C1.2 sits at L3 because it shares `internal/projectpolicy/version.go` with C1.3; C1.15 at L3 because it shares `gateway.go` and `route.go` with C1.7; C1.16 at L5 because it shares `internal/runstore/runstore.go` with C1.17. **C1.8 writes only its two new files and never `ledger.go`** (review finding U2), and C1.16 — the only writer of `ledger.go` — is two levels later. C1.11 touches `internal/gateway/gateway.go`'s package comment at L5, where no other task writes it.
+**Widest levels: L5 (six) and L3 (five).** No two tasks in a level write one file (the table above). Placements forced only by a shared file, not by logic: C1.2 sits at L3 because it shares `internal/projectpolicy/version.go` with C1.3; C1.15 at L3 because it shares `gateway.go` and `route.go` with C1.7; C1.16 at L5 because it shares `internal/runstore/runstore.go` with C1.17. C1.1 sits at L4 because it needs C1.2 (L3), and C1.20 at L5 because it needs C1.1. **C1.8 writes only its two new files and never `ledger.go`** (review finding U2), and C1.16 — the only writer of `ledger.go` — is two levels later. C1.11 touches `internal/gateway/gateway.go`'s package comment at L5, where no other task writes it.
 
 ### The critical path
 
-**C0.3 → C0.4 (owner) → G (0.9.0's seal) → C1.3 → C1.2 → C1.17 → C1.19 → C1.22 → C1.23 → C1.24 (owner) → C2.5 (owner)** — ten steps, three of them owner-run (C0.4, C1.24, C2.5), and the seal's wait between C0.4 and C1.3. Equal-length alternatives run C1.7 → C1.15 → C1.17 and C1.2 → C1.9 → C1.11 → C1.14 → C1.23. The longest wait on it is not a task at all: **the seal, held for 0.9.0**. Two things shorten the rest: C1.9 is a pure package (keep it small), and the owner-run checks are scheduled as soon as their text is written. The release that carries a runner change is a hidden step before every owner-run check of runner behaviour (C1.24, C2.5): the check runs a released or owner-built image.
+**C0.3 → C0.4 (owner) → G (0.9.0's seal) → C1.3 → C1.2 → C1.9 → C1.11 → C1.13 → C2.1 → C2.2 → C2.4 → C2.5 (owner)** — eleven steps, two of them owner-run (C0.4, C2.5), and the seal's wait between C0.4 and C1.3. Slice 1's own end, C1.2 → C1.17 → C1.19 → C1.22 → C1.23 → C1.24 (owner), is one step shorter (C1.2 → C1.1 → C1.19 runs beside it). The longest wait on it is not a task at all: **the seal, held for 0.9.0**. Two things shorten the rest: C1.9 is a pure package (keep it small), and the owner-run checks are scheduled as soon as their text is written. The release that carries a runner change is a hidden step before every owner-run check of runner behaviour (C1.24, C2.5): the check runs a released or owner-built image.
 
 ### What must be sequential
 
 1. **C0.4 and C0.5 before Slice 1** (D151). C1.7's header list *is* Check 90's FACT lines.
-2. **The seal — #417 and its launcher half — before every Slice 1 task** (D134, O1).
+2. **The seal — #417 and #523 — on `main` before every Slice 1 task** (D134, O1).
 3. **C1.3 before C1.4 before C1.5 before C1.6 before C1.24.** The deploy ships rules the emulator proved; the live checks need them deployed.
-4. **C1.2 before every task that reads its settings** (threshold, `fallback`, backoff, the two controls, admissions): C1.9, C1.11, C1.17, C1.19 (review finding U1).
+4. **C1.2 before every task that reads its settings** (threshold, `fallback`, backoff, the two controls, admissions, the `via: cascade` switch): C1.1, C1.9, C1.11, C1.17, C1.19 (review finding U1).
 5. **C1.10 before C1.11, C1.15 and C1.17.** The wire contract (headers, the typed "exhausted until T" answer, the tier and credential-name response headers) is defined once.
 6. **C1.17 before C1.19.** The wiring turns waiting on; waiting needs review-stage sessions saved.
 7. **C1.18 before C1.20 before C1.24.** Terraform, then the init stage that applies it, then the owner's apply.
@@ -320,7 +321,7 @@ Writing the answers approves no task.
 
 ## Slice 1 — The service and the cascade
 
-*Starts after the seal — #417 and its launcher half — has merged (D134; 0.9.0) and Checks 90 and 91 are recorded (D151). Opt-in per installation (D147). Per-repository jobs only (C3.9 for shared). The service is the only writer of the cascade's state (O1, Convention 11). No job mounts a tier-A token.*
+*Starts after the seal — #417 (merged into `next-0.9`) and #523 (the launcher half, open draft) — is on `main` (D134; 0.9.0) and Checks 90 and 91 are recorded (D151). Opt-in per installation (D147). Per-repository jobs only (C3.9 for shared). The service is the only writer of the cascade's state (O1, Convention 11). No job mounts a tier-A token.*
 
 ### Task C1.1: `agent.auth: cascade`, its refusals and its skew constant — SECURITY-SENSITIVE
 
@@ -329,19 +330,19 @@ Writing the answers approves no task.
 **Tests.** `TestValidateAcceptsCascade`, `TestCascadeRefusedWithBudgetOff`, `TestCascadeRefusedWithAllowPublic`, `TestLayerAcceptsCascade`, `TestCheckProviderAuthCascadeNeverSendsOAuthToAProvider`, `TestValidateRefusesCascadeWithoutPolicySwitch` (O2; the message names the setting), `TestInitRepoRefusesCascadeOnOlderBaseImage` (the skew), schema corpus case.
 **Red step.** Write `TestValidateAcceptsCascade` and `TestInitRepoRefusesCascadeOnOlderBaseImage` first; both fail on today's auth list.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/config/... ./schemas/... ./internal/cli -run 'Cascade|Skew|Validate|Schema' -count=1`.
-**Depends on.** G. **Reviewer.** opus + mandatory independent review.
+**Depends on.** G; C1.2 (`TestValidateRefusesCascadeWithoutPolicySwitch` needs `via: cascade` and the admissions it publishes). **Reviewer.** opus + mandatory independent review.
 **Commit.** `config: agent.auth cascade, refused without the gateway, with followup.allow_public, without the policy's switch (O2), and on an older base image`
 
-### Task C1.2: The cascade's policy settings, the admissions and the policy version bump — SECURITY-SENSITIVE
+### Task C1.2: The cascade's policy settings and the admissions, no policy version bump — SECURITY-SENSITIVE
 
-**Files.** `internal/projectpolicy/policy.go` (a `Credentials` member: `fallback` = `oauth-only` | `auto`; `wait_threshold`; `backoff` (initial, cap); `stop_after_exhaustion_per_window`; `concurrency_per_token`; and, per repository in `config/policy/repos/$slug`, the **names** of its admitted Claude accounts — O4), `internal/projectpolicy/version.go` (`Version` 1 → 2), `internal/cli/project_cmd.go` (`fugaro project policy publish`: validation, and publishing each repository's admitted account names from `config.ClaudeAccount.AllowDataTo`), `internal/config/routing.go` (`RoutingClaude.Via` gains `cascade`; `CheckRouting` accepts it with no provider claim while tier C for Claude is off — O3).
+**Files.** `internal/projectpolicy/policy.go` (a `Credentials` member: `fallback` = `oauth-only` | `auto`; `wait_threshold`; `backoff` (initial, cap); `stop_after_exhaustion_per_window`; `concurrency_per_token`; and, per repository in `config/policy/repos/$slug`, the **names** of its admitted Claude accounts — O4), `internal/projectpolicy/version.go` (its comment only: `Version` stays 1), `internal/cli/project_cmd.go` (`fugaro project policy publish`: validation, and publishing each repository's admitted account names from `config.ClaudeAccount.AllowDataTo`), `internal/config/routing.go` (`RoutingClaude.Via` gains `cascade`; `CheckRouting` accepts it with no provider claim while tier C for Claude is off — O3).
 **Interfaces.** D152: `fallback` absent means `oauth-only`; `auto` is refused unless the policy's `budget.mode` is `enforce` with `per_run_usd` > 0. D153: these live only in the project policy (no `fugaro.yaml` key). Defaults: threshold 15 min, backoff 15 min doubling, capped at 5 h (probed, C1.12). D150 + O2: the policy's switch turns the cascade on for `cascade` workflows; for every other auth today's meaning of `routing.claude` is unchanged; tier C for Claude stays off (C3.6). **O3 (answered 2026-10-17):** the switch is `routing.claude: {via: cascade}`. It turns the cascade on for `cascade` workflows and needs no provider route while tier C for Claude is off (C3.6); `via: auto` and `CheckRouting`'s rule for it are unchanged, so an `api-key` workflow's routing does not move. **O4:** admissions are names only, never values; publishing them is how the service (an admin reader) learns which accounts each repository may use; a repository's run can read its own node today and gains nothing it could not already infer from its own job.
-**Version skew.** A node at version 2 read by an older CLI or runner yields today's `SkewSentence` text; tests pin both directions.
-**Tests.** `TestPolicyCredentialsDefaults`, `TestPolicyFallbackAutoRefusedWithoutEnforceCap`, `TestPolicyCredentialsUnknownKeyRefused`, `TestPolicyAdmissionsPublishedNamesOnly`, `TestPolicyVersion2SkewSentences`, `TestRoutingAutoMeaningUnchangedForAPIKey`, `TestRoutingCascadeNeedsNoProviderClaim` (O3).
+**Version skew — no bump.** `Version` stays 1 (owner's ruling, 2026-10-17). Why no bump is safe: `projectpolicy.Decode` ignores unknown top-level keys (`knownTopLevelKeys`; only `version` refuses a node) and no code on `main` reads `config/policy/repos/$slug` yet, so an older runner or CLI ignores the new `credentials` member and the admissions and sees no cascade — with the cascade off nothing changes (D147). **Flagged, not covered by that sentence:** `via: cascade` is a new value inside the known `routing` block, and an older reader's `config.CheckRoutingShape` (reached through `CheckRouting` from `Decode`) refuses any `via` other than `direct`, `openrouter` or `auto`, so a shared node carrying `via: cascade` is refused whole by an older CLI or runner with that routing error, not `SkewSentence`: fail closed, but every run of the project on an older image halts until its image is updated. The review of this task decides whether `fugaro project policy publish` warns about it.
+**Tests.** `TestPolicyCredentialsDefaults`, `TestPolicyFallbackAutoRefusedWithoutEnforceCap`, `TestPolicyCredentialsUnknownKeyRefused`, `TestPolicyAdmissionsPublishedNamesOnly`, `TestPolicyCredentialsIgnoredByVersion1Reader` (a node carrying `credentials` decodes as today with `Version` 1), `TestRoutingCascadeRefusedByOlderShapeCheck` (pins the flagged behaviour), `TestRoutingAutoMeaningUnchangedForAPIKey`, `TestRoutingCascadeNeedsNoProviderClaim` (O3).
 **Red step.** `TestPolicyFallbackAutoRefusedWithoutEnforceCap` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/projectpolicy/... ./internal/config/... -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run 'Policy|Routing' -count=1`.
-**Depends on.** G; C1.3 (shares `version.go` only). **Reviewer.** opus + mandatory independent review.
-**Commit.** `projectpolicy: credentials fallback, threshold, backoff, the two controls and the admitted accounts (D142, D152, D153); policy version 2`
+**Depends on.** G; C1.3 (shares `version.go`, a comment only). **Reviewer.** opus + mandatory independent review.
+**Commit.** `projectpolicy: credentials fallback, threshold, backoff, the two controls and the admitted accounts (D142, D152, D153); policy Version unchanged`
 
 ### Task C1.3: The rules — `creds/` denied, the run's new children, by-tier counters — SECURITY-SENSITIVE
 
@@ -405,8 +406,8 @@ Writing the answers approves no task.
 ### Task C1.10: Run-identity verification and the wire contract — SECURITY-SENSITIVE
 
 **Files.** `internal/credsvc/auth.go`, `internal/credsvc/wire.go` (**new**: header names, error shapes, the response headers that carry the tier and the credential's name, and the wire form of `ExhaustedUntil` — an HTTP status, error type and reset field the runner reads), tests.
-**Interfaces.** Verify the Firebase ID token for uid `r~<slug>~<run>` against Google's public keys (cached), `fp` against the service's project, `fx` not passed, the repository admitted (O4), and **the run's liveness from a node the run cannot undo**: the write-once outcome `outcomes/$day/$slug/$run` (rules `RUN && DAYOK && !data.exists()`: once written, no run token can rewrite or delete it), checked for every day from the run's launch day to today; an outcome present means the run has ended and is refused. **Not** `agents/<slug>/<run>`: the rules give the run token `.write: "RUN"` on that node, so a hostile agent can rewrite or recreate it, and it proves nothing (review finding W2). The outcome is written by the runner at its end (`internal/budget/registry.go`) and by the sweeper for a run that died (`internal/budget/sweep.go`); **until one of them has written it — a job killed before its end and not yet swept — `fx` is the only real bound.** The job SA's Google ID token is checked by Cloud Run IAM, not by this code.
-**Tests.** `TestVerifyAcceptsLiveRun`, `TestVerifyRefusesRunWithOutcome`, `TestVerifyIgnoresAgentsNode` (a rewritten `agents/` entry does not revive an ended run), `TestVerifyRefusesOtherProject`, `TestVerifyRefusesExpiredFX`, `TestVerifyRefusesUnknownKeyID`, `TestVerifyRefusesUnadmittedRepository`, `TestVerifyRefusesSharedJobRun` (C3.9's gate), `TestExhaustedUntilWireRoundTrip` — keys generated in the test.
+**Interfaces.** Verify the Firebase ID token for uid `r~<slug>~<run>` against Google's public keys (cached), `fp` against the service's project, `fx` not passed, and **the run's liveness from a node the run cannot undo**: the write-once outcome `outcomes/$day/$slug/$run` (rules `RUN && DAYOK && !data.exists()`: once written, no run token can rewrite or delete it), checked for every day from the run's launch day to today; an outcome present means the run has ended and is refused. **Not** `agents/<slug>/<run>`: the rules give the run token `.write: "RUN"` on that node, so a hostile agent can rewrite or recreate it, and it proves nothing (review finding W2). The outcome is written by the runner at its end (`internal/budget/registry.go`) and by the sweeper for a run that died (`internal/budget/sweep.go`); **until one of them has written it — a job killed before its end and not yet swept — `fx` is the only real bound.** The job SA's Google ID token is checked by Cloud Run IAM, not by this code. The repository's admission (O4) is checked by C1.11, which reads the admissions C1.2 publishes; this task needs nothing from C1.2.
+**Tests.** `TestVerifyAcceptsLiveRun`, `TestVerifyRefusesRunWithOutcome`, `TestVerifyIgnoresAgentsNode` (a rewritten `agents/` entry does not revive an ended run), `TestVerifyRefusesOtherProject`, `TestVerifyRefusesExpiredFX`, `TestVerifyRefusesUnknownKeyID`, `TestVerifyRefusesSharedJobRun` (C3.9's gate), `TestExhaustedUntilWireRoundTrip` — keys generated in the test.
 **Red step.** `TestVerifyRefusesRunWithOutcome` first.
 **Verification.** `go test ./internal/credsvc/... -count=1`.
 **Depends on.** G. **Reviewer.** opus + **MANDATORY** independent review.
@@ -415,9 +416,9 @@ Writing the answers approves no task.
 ### Task C1.11: The service's forward and the cascade — SECURITY-SENSITIVE (TIER A parts marked)
 
 **Files.** `internal/credsvc/forward.go`, `internal/credsvc/server.go`, `internal/credsvc/cascade.go` (**new**), tests; `internal/gateway/gateway.go` (**the package comment only**) and `docs/plans/2026-09-30-m9a-gateway-and-project-identity.md` (a dated note on its two "never retries" lines), both for the retry below.
-**Interfaces.** Reads secrets from Secret Manager as its own SA, `latest` with a short cache (D147); reads the project policy and each repository's admissions (O4) as its own account; no shell, no admin endpoint (D143); never logs a header or a body. Per call: `creds.Select` (sticky); attach (**TIER A**: the OAuth upstream of C1.7 for an admitted account); forward with C1.8's helpers. On a usage-limit response (status, type and reset headers per Check 90/U3) mark `exhausted until T` (or backed off, C1.9) and **retry the same request on the next credential only when no byte has been streamed to the client**; on 401 mark `broken` (D139); when nothing is usable and the wait is under the threshold, or `fallback` is `oauth-only` (threshold ignored, D152), answer the typed `ExhaustedUntil` (C1.10) with the earliest reset; every answer carries the tier and the credential's name (C1.10's headers), and a switch carries `{from, to, reason}`.
+**Interfaces.** Reads secrets from Secret Manager as its own SA, `latest` with a short cache (D147); reads the project policy and each repository's admissions (O4) as its own account, and refuses a run whose repository has no admitted account; no shell, no admin endpoint (D143); never logs a header or a body. Per call: `creds.Select` (sticky); attach (**TIER A**: the OAuth upstream of C1.7 for an admitted account); forward with C1.8's helpers. On a usage-limit response (status, type and reset headers per Check 90/U3) mark `exhausted until T` (or backed off, C1.9) and **retry the same request on the next credential only when no byte has been streamed to the client**; on 401 mark `broken` (D139); when nothing is usable and the wait is under the threshold, or `fallback` is `oauth-only` (threshold ignored, D152), answer the typed `ExhaustedUntil` (C1.10) with the earliest reset; every answer carries the tier and the credential's name (C1.10's headers), and a switch carries `{from, to, reason}`.
 **The retry and the gateway's rule (review finding C2).** `internal/gateway`'s package comment and the m9a plan both say the gateway "never retries". The in-runner gateway still never retries; the **service** retries, once per credential and only before the first byte. This task changes the package comment to say so (the helpers it exports are reused by a forwarder that retries before the first byte, `internal/credsvc`) and adds the dated note to the m9a plan. **The reservation:** the in-runner gateway reserves once per client request, before it calls the service, at the worst case of the paid tiers; the service's internal retry happens inside that one request, so it is covered by that one reservation and settles once (C1.16) from the usage of the attempt that answered, at that attempt's tier; a usage-limit answer that was retried streamed nothing and is not settled.
-**Tests.** `TestServiceForwardsWithSelectedCredential`, `TestServiceStreamsUnbuffered`, `TestServiceRefusesUnverified`, `TestServiceHasNoAdminRoutes`, `TestServiceNeverLogsHeaders`, `TestCascadeSwitchesOnUsageLimitBeforeFirstByte`, `TestCascadeNeverRetriesAfterStreamStarted`, `TestCascade401MarksBroken`, `TestCascadeOAuthOnlyWaits`, `TestCascadeAutoFallsToB`, `TestCascadeStickyAcrossCalls`, `TestCascadeUsesAdmittedAccountsOnly`.
+**Tests.** `TestServiceForwardsWithSelectedCredential`, `TestServiceStreamsUnbuffered`, `TestServiceRefusesUnverified`, `TestServiceRefusesUnadmittedRepository` (O4), `TestServiceHasNoAdminRoutes`, `TestServiceNeverLogsHeaders`, `TestCascadeSwitchesOnUsageLimitBeforeFirstByte`, `TestCascadeNeverRetriesAfterStreamStarted`, `TestCascade401MarksBroken`, `TestCascadeOAuthOnlyWaits`, `TestCascadeAutoFallsToB`, `TestCascadeStickyAcrossCalls`, `TestCascadeUsesAdmittedAccountsOnly`.
 **Red step.** `TestCascadeNeverRetriesAfterStreamStarted` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/credsvc/... ./internal/gateway/... -count=1` and Convention 4 (the plan note).
 **Depends on.** C1.2, C1.8, C1.9, C1.10. **Reviewer.** opus + **MANDATORY** independent review.
@@ -430,7 +431,7 @@ Writing the answers approves no task.
 **Tests.** `TestProbeClearsOnSuccess`, `TestProbeDoublesOnFailure`, `TestProbeCappedAtWindow`, `TestOneProbeAtATime`, `TestNoProbeOnBroken`.
 **Red step.** `TestProbeClearsOnSuccess` first.
 **Verification.** `go test ./internal/credsvc/... -count=1`.
-**Depends on.** C1.11. **Reviewer.** opus + mandatory independent review.
+**Depends on.** C1.11, C1.13 (a probe is audited). **Reviewer.** opus + mandatory independent review.
 **Commit.** `credsvc: probe a backed-off credential before routing work to it (D153)`
 
 ### Task C1.13: The audit log — SECURITY-SENSITIVE
@@ -474,7 +475,7 @@ Writing the answers approves no task.
 
 ### Task C1.18: Terraform — the service, its SA, the grants moved — SECURITY-SENSITIVE
 
-**Files.** `deploy/terraform/gcp/modules/installation/credentials.tf` (**new**: Cloud Run service with ingress requiring IAM, its SA, `secretAccessor` on model secrets only, `run.invoker` for job SAs), `modules/installation/variables.tf` (`credentials_service` opt-in, default off), `modules/workflow/sa.tf` and `modules/repo/secrets.tf` (job SAs' `secretAccessor` on model secrets dropped **only when** the opt-in is on), `roots/installation/tests/installation.tftest.hcl` and the repo root's tests.
+**Files.** `deploy/terraform/gcp/modules/installation/credentials.tf` (**new**: Cloud Run service with ingress requiring IAM, its SA, its `secretAccessor` on model secrets only), `modules/installation/variables.tf` (`credentials_service` opt-in, default off), `modules/workflow/sa.tf` — where the job SAs are created (`google_service_account "job"`) and the only job `secretAccessor` grant lives (`google_secret_manager_secret_iam_member "job"`, one per mounted secret; `modules/repo/secrets.tf` grants operators only): model secrets dropped from it **only when** the opt-in is on, and the job SA's `run.invoker` on the service added there — `modules/workflow/variables.tf` and `modules/repo/workflows.tf` (the service's name and region passed down to the workflow module), `roots/installation/tests/installation.tftest.hcl` and the repo root's tests.
 **Tests.** Terraform tests: off → plan identical to today; on → job SA has no model-secret accessor and has invoker; service SA has nothing on the runs bucket and no `actAs` granted to non-operators.
 **Red step.** The "on" test first. **Verification.** `terraform fmt -check -recursive deploy/terraform && go test -tags terraform ./internal/infra/... -count=1` and `terraform test` in `roots/installation` and `roots/repo`. **Depends on.** G. **Reviewer.** opus + **MANDATORY** independent review.
 **Commit.** `terraform: an opt-in credentials service in the installation root; model-secret access moves to it (D146, D147)`
@@ -517,6 +518,7 @@ Writing the answers approves no task.
 ### Task C1.23: Checks 94, 95 and 99 written — docs
 
 **Files.** `docs/gcp-live-checklist.md`; each step's exact command — Check 94: the init stage, `gcloud … get-iam-policy` reads, the audit log read; Check 95: a sandbox run, the `/proc` inspection from the run's own log, the ended-run refusal, the unreachable-service case by scaling the service to zero instances; Check 99: two admitted test accounts and the sandbox API key, the policy published with the switch and `credentials.fallback: auto` with an enforce cap, a forced exhaustion by the operator's mark, a review run (`fugaro run …`), the probe, the `oauth-only` waiting view, `fugaro watch`, `fugaro accounts ls`, `fugaro doctor` read back, a revoked test token for the broken case and the operator's clear; Restore re-publishes the recorded policy, clears marks, and ends in the all-`0` assertion.
+**Verification.** Convention 4's command.
 **Depends on.** C1.6, C1.14, C1.19, C1.20, C1.21. **Reviewer.** standard.
 **Commit.** `docs(gcp-live-checklist): Checks 94, 95 and 99, the credentials service and the cascade`
 
@@ -530,7 +532,7 @@ Writing the answers approves no task.
 
 ### Task C2.1: The mint endpoint — SECURITY-SENSITIVE
 
-**Files.** `internal/credsvc/github.go` (**new**), reusing `github.MintInstallationToken` and `tokenPermissions` (no permission added); the repository is bound to the run identity's `fs`. **Tests.** `TestMintForOwnRepositoryOnly`, `TestMintPermissionsAreTokenPermissions`, `TestMintRefusesEndedRun`, `TestMintAudited`. **Red step.** `TestMintForOwnRepositoryOnly`. **Verification.** `go test ./internal/credsvc/... ./internal/gitprov/... -count=1`. **Depends on.** C1.11. **Reviewer.** opus + mandatory independent review.
+**Files.** `internal/credsvc/github.go` (**new**), reusing `github.MintInstallationToken` and `tokenPermissions` (no permission added); the repository is bound to the run identity's `fs`. **Tests.** `TestMintForOwnRepositoryOnly`, `TestMintPermissionsAreTokenPermissions`, `TestMintRefusesEndedRun`, `TestMintAudited`. **Red step.** `TestMintForOwnRepositoryOnly`. **Verification.** `go test ./internal/credsvc/... ./internal/gitprov/... -count=1`. **Depends on.** C1.11, C1.13 (`TestMintAudited`). **Reviewer.** opus + mandatory independent review.
 **Commit.** `credsvc: mint a GitHub installation token for the run's own repository (D145)`
 
 ### Task C2.2: The runner fetches its GitHub token from the service — SECURITY-SENSITIVE
@@ -545,7 +547,7 @@ Writing the answers approves no task.
 
 ### Task C2.4: Docs and Check 96 written — security claims
 
-**Files.** `SECURITY.md`, `docs/git-providers.md` ("None of these variables reaches the agent", made exact, F34), `docs/gcp-live-checklist.md` (Check 96), guards. **Depends on.** C2.2, C2.3, C1.22, C1.23. **Reviewer.** opus + **mandatory** independent review (SECURITY.md's claims; review finding C1).
+**Files.** `SECURITY.md`, `docs/git-providers.md` ("None of these variables reaches the agent", made exact, F34), `docs/gcp-live-checklist.md` (Check 96), guards. **Verification.** Convention 4's command. **Depends on.** C2.2, C2.3, C1.22, C1.23. **Reviewer.** opus + **mandatory** independent review (SECURITY.md's claims; review finding C1).
 **Commit.** `docs: GitHub tokens through the credentials service; Check 96`
 
 ### Task C2.5: Check 96 — OWNER-RUN
@@ -582,4 +584,4 @@ Each needs its own plan amendment and the owner's go.
 
 ## OWNER APPROVAL GATE
 
-**Not passed. No task is approved.** The owner answered D130–D154, ruled on O1 and O2, answered O3 and confirmed O4 on 2026-10-17; that answers the design, not the work. To start any task the owner names it (or a slice) and says go. Before 0.9.0, only Slice 0 can start. Before any Slice 1 task: the seal — #417 and its launcher half — merged, Checks 90 and 91 recorded (C0.4, C0.5). No open item holds any task.
+**Not passed. No task is approved.** The owner answered D130–D154, ruled on O1 and O2, answered O3 and confirmed O4 on 2026-10-17; that answers the design, not the work. To start any task the owner names it (or a slice) and says go. Before 0.9.0, only Slice 0 can start. Before any Slice 1 task: the seal — #417 and #523 — on `main`, Checks 90 and 91 recorded (C0.4, C0.5). No open item holds any task.
