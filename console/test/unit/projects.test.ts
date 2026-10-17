@@ -939,6 +939,16 @@ describe('renderRun', () => {
     expect(drawnText(tree)).toContain(TOKEN_PLACEHOLDER)
   })
 
+  it('counts the lines the log read refused, and draws none of them', () => {
+    const logs = { entries: logLines(3), total: 3, refused: 2 }
+    const tree = renderRun(factory, buildRunModel(runInputs({ logs })), 'light')
+    expect(all(tree, 'run-log-line')).toHaveLength(3)
+    expect(one(tree, 'run-log-refused-count').textContent).toBe('2')
+    // None refused is no line at all, not a zero drawn for its own sake.
+    const clean = renderRun(factory, buildRunModel(runInputs({ logs: { ...logs, refused: 0 } })), 'light')
+    expect(all(clean, 'run-log-refused')).toEqual([])
+  })
+
   it('draws exactly the capped window of log lines', () => {
     const tree = renderRun(factory, buildRunModel(runInputs({ logs: logLines(RUN_LOG_CAP + 25) })), 'light')
     expect(all(tree, 'run-log-line')).toHaveLength(RUN_LOG_CAP)

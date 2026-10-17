@@ -220,6 +220,9 @@ export interface RunLogs {
   readonly lines: readonly RunLogLine[]
   readonly total: Reading
   readonly dropped: Reading
+  /** `refused` is how many lines the read refused -- torn, oversized or not a
+   * `logLine` -- and is a reading so that zero is drawn only when it was read. */
+  readonly refused: Reading
   readonly link: string | null
   readonly linkBecause: string | null
 }
@@ -528,12 +531,25 @@ function haltOf(raw: unknown): RunHalt | null {
  * --url` is its own read, and a run whose link could not be read says so. */
 const LOG_NO_LINK = 'no `logs RUN --url` line arrived: the full transcript is not linked'
 
-/** parseLogWindow caps the log window. The CLI writes one compact `logLine`
- * object per line (contract section 6.2); the **newest** `RUN_LOG_CAP` are the
- * ones drawn, and how many were left out is a reading, so the panel cannot look
- * like the whole transcript. */
-export function parseLogWindow(raw: unknown): readonly RunLogLine[] {
-  const lines = arrayAt(raw) ?? []
+/** LogWindow is what the log read handed over: its lines, how many entries the
+ * read held in all (which can be more than it kept), and how many lines it
+ * refused. */
+export interface LogWindow {
+  readonly lines: readonly RunLogLine[]
+  readonly total: number
+  readonly refused: number | null
+}
+
+/** parseLogWindow reads the log window. The CLI writes one compact `logLine`
+ * object per line (contract section 6.2), and the main process's reader
+ * (`parseLogEntries`, `src/source/cli.ts`) collects them into the window
+ * document `{entries, total, refused}`; a plain list of `logLine` objects is
+ * accepted too. The **newest** `RUN_LOG_CAP` are the ones drawn, and how many
+ * were left out is a reading, so the panel cannot look like the whole
+ * transcript. */
+export function parseLogWindow(raw: unknown): LogWindow {
+  const window = objectAt(raw)
+  const lines = (window === null ? arrayAt(raw) : arrayAt(window['entries'])) ?? []
   const parsed: RunLogLine[] = []
   for (const item of lines) {
     const line = objectAt(item)
@@ -545,7 +561,20 @@ export function parseLogWindow(raw: unknown): readonly RunLogLine[] {
       message: textAt(line['message']) ?? '',
     })
   }
-  return parsed
+  const total = window === null ? null : wholeAt(window['total'])
+  return {
+    lines: parsed,
+    // The read's own count when it carries one and it is not smaller than what
+    // it handed over; otherwise the lines themselves are the whole count.
+    total: total !== null && total >= parsed.length ? total : parsed.length,
+    refused: window === null ? 0 : wholeAt(window['refused']),
+  }
+}
+
+/** wholeAt is a count the log read carries: a non-negative integer, zero
+ * included (unlike `numberAt`, whose identifiers start at one), or null. */
+function wholeAt(raw: unknown): number | null {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : null
 }
 
 /** buildRunModel turns the document, the log window, the link and the ring into
@@ -557,8 +586,8 @@ export function buildRunModel(inputs: RunInputs): RunModel {
   const number = prNumberOf(row)
   const url = textAt(row['pr_url'])
 
-  const lines = parseLogWindow(inputs.logs)
-  const shown = lines.slice(Math.max(0, lines.length - RUN_LOG_CAP))
+  const window = parseLogWindow(inputs.logs)
+  const shown = window.lines.slice(Math.max(0, window.lines.length - RUN_LOG_CAP))
 
   const buffer = new ReplayBuffer()
   for (const arrival of inputs.replay ?? []) buffer.observe(arrival)
@@ -606,8 +635,9 @@ export function buildRunModel(inputs: RunInputs): RunModel {
     },
     logs: {
       lines: shown,
-      total: measured(lines.length),
-      dropped: measured(lines.length - shown.length),
+      total: measured(window.total),
+      dropped: measured(window.total - shown.length),
+      refused: window.refused === null ? unavailable('the log read carries no count of refused lines') : measured(window.refused),
       link: inputs.logLink,
       linkBecause: inputs.logLink === null ? LOG_NO_LINK : null,
     },
@@ -835,6 +865,13 @@ function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
     numberCell(note, factory, 'span', model.dropped, 'count', 'run-log-dropped')
     literal(cell(note, factory, 'span', 'run-log-of'), 'of')
     numberCell(note, factory, 'span', model.total, 'count', 'run-log-total')
+  }
+  if (model.refused.value !== null && model.refused.value > 0) {
+    // A line the read refused -- torn, past the line cap, or not a `logLine` --
+    // is counted rather than silently left out, and never echoed.
+    const note = cell(element, factory, 'p', 'run-log-refused')
+    literal(note, 'lines refused (torn, oversized or not a log entry):')
+    numberCell(note, factory, 'span', model.refused, 'count', 'run-log-refused-count')
   }
   if (model.link !== null) {
     // `putLink` writes the destination as the element's own text and puts the

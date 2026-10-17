@@ -83,7 +83,8 @@ import type {
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import { validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
-import { CliSource, MAX_LIVE_FEEDS, createInstallationStore } from '../../src/source/cli'
+import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
+import { RUN_LOG_CAP, buildRunModel } from '../../src/renderer/screens/run'
 import { SourceRefusal, handlersFor } from '../../src/source/source'
 import { installStub } from './stub'
 import type { Stub } from './stub'
@@ -1647,6 +1648,49 @@ describe('the source as a whole', () => {
     }
   })
 
+  it('reads every line `logs RUN --json` prints into the window the Run screen draws', async () => {
+    // `logs RUN --json` prints one compact object per entry (contract section
+    // 6.2), not one document: a reader that kept the last object would hand
+    // the screen a single line, and `parseLogWindow` none at all. 250 entries,
+    // one torn line in the middle, and the window is the newest cap of them.
+    const entry = (index: number): string =>
+      JSON.stringify({ time: '2026-10-15T11:00:00Z', severity: 'INFO', stage: 'verify', message: `line ${String(index)}` })
+    const lines = Array.from({ length: 250 }, (_, index) => entry(index))
+    lines.splice(100, 0, '{"time":"2026-10-15T11:00:00Z","severity":"IN')
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, logs: { stdout: `${lines.join('\n')}\n` } },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const snapshot = await source.readRunLogs({ run: '20260101-120000-abcd' })
+    expect(snapshot.document['total']).toBe(250)
+    expect(snapshot.document['refused']).toBe(1)
+    const entries = snapshot.document['entries'] as readonly Record<string, unknown>[]
+    expect(entries).toHaveLength(LOG_WINDOW_MAX_ENTRIES)
+    expect(entries.at(-1)?.['message']).toBe('line 249')
+
+    // And the join: the snapshot's document is what the Run screen reads.
+    const model = buildRunModel({ diagnosis: {}, logs: snapshot.document, logLink: null })
+    expect(model.logs.lines).toHaveLength(RUN_LOG_CAP)
+    expect(model.logs.lines.at(-1)?.message).toBe('line 249')
+    expect(model.logs.total.value).toBe(250)
+    expect(model.logs.dropped.value).toBe(250 - RUN_LOG_CAP)
+    expect(model.logs.refused.value).toBe(1)
+  })
+
+  it('answers a run with no log entries with an empty window, not a refusal', async () => {
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, logs: { stdout: '' } } })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const snapshot = await source.readRunLogs({ run: '20260101-120000-abcd' })
+    expect(snapshot.document).toEqual({ entries: [], total: 0, refused: 0 })
+    // An empty window is a measured nothing: no lines, and zero refused.
+    const model = buildRunModel({ diagnosis: {}, logs: snapshot.document, logLink: null })
+    expect(model.logs.lines).toEqual([])
+    expect(model.logs.total.value).toBe(0)
+    expect(model.logs.refused.value).toBe(0)
+  })
+
   it('records every spawn it makes, including the version handshake', async () => {
     const directory = freshDirectory()
     const logPath = join(directory, 'spawn.jsonl')
@@ -1742,5 +1786,57 @@ describe('the source scan', () => {
     expect(source).not.toMatch(/\bexecSync?\(/)
     expect(source).not.toMatch(/shell:\s*true/)
     expect(source).not.toMatch(/\/bin\/sh/)
+  })
+})
+
+describe('parseLogEntries', () => {
+  const line = (fields: Record<string, unknown>): string => JSON.stringify(fields)
+  const base = { time: '2026-10-15T11:00:00Z', severity: 'INFO', message: 'ok' }
+
+  it('keeps every well-shaped entry, and only the fields logLine has', () => {
+    const read = parseLogEntries(
+      [line(base), line({ ...base, stage: 'verify', stream: 'stdout', event: 'e', extra: 'x' }), ''].join('\n'),
+    )
+    expect(read.total).toBe(2)
+    expect(read.refused).toBe(0)
+    expect(read.entries[1]).toEqual({ ...base, stage: 'verify', stream: 'stdout', event: 'e' })
+  })
+
+  it('refuses a torn line, a non-object, a wrong-typed field and a missing required one', () => {
+    const read = parseLogEntries(
+      [
+        line(base),
+        '{"time":"2026',
+        '[1,2]',
+        'a sentence',
+        line({ ...base, severity: 3 }),
+        line({ ...base, stage: {} }),
+        line({ time: base.time, severity: base.severity }),
+        line(base),
+      ].join('\r\n'),
+    )
+    expect(read.total).toBe(2)
+    expect(read.refused).toBe(6)
+  })
+
+  it('refuses a line past the line cap without parsing it, and a field past the text cap', () => {
+    const long = line({ ...base, message: 'm'.repeat(200) })
+    const read = parseLogEntries([long, line(base)].join('\n'), { maxLineLength: 100 })
+    expect(read.total).toBe(1)
+    expect(read.refused).toBe(1)
+    const field = parseLogEntries(line({ ...base, message: 'm'.repeat(70 * 1024) }))
+    expect(field.total).toBe(0)
+    expect(field.refused).toBe(1)
+  })
+
+  it('keeps the newest entries up to the cap, oldest first', () => {
+    const lines = Array.from({ length: 12 }, (_, index) => line({ ...base, message: String(index) }))
+    const read = parseLogEntries(lines.join('\n'), { maxEntries: 5 })
+    expect(read.total).toBe(12)
+    expect(read.entries.map((entry) => entry['message'])).toEqual(['7', '8', '9', '10', '11'])
+  })
+
+  it('caps the window at the Run screen\'s own cap', () => {
+    expect(LOG_WINDOW_MAX_ENTRIES).toBe(RUN_LOG_CAP)
   })
 })

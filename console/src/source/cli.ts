@@ -38,6 +38,7 @@
 // on screen explaining why.
 
 import {
+  MAX_FEED_LINE_LENGTH,
   SPAWN_COMMANDS,
   assertSpawnSurface,
   cliSentence,
@@ -59,6 +60,7 @@ import type {
 import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
+import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
 import { SourceRefusal, refusalFrom } from './source'
 import type {
   FeedEnd,
@@ -308,8 +310,29 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('run.diagnose', args)
   }
 
-  readRunLogs(args: ValidatedArguments): Promise<Snapshot> {
-    return this.#readDocument('run.logs', args)
+  /** readRunLogs reads `logs RUN --json`, which is line-delimited -- one
+   * `logLine` per entry, not one document -- into the capped window
+   * `parseLogEntries` builds. A run with no entries is an empty window, not a
+   * refusal: the CLI exits 0 and prints nothing on stdout for it. */
+  async readRunLogs(args: ValidatedArguments): Promise<Snapshot> {
+    const operation: OperationName = 'run.logs'
+    const plan = this.#plan(operation, args)
+    const result = await runToCompletion(plan, {
+      log: this.#log,
+      ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
+    })
+    if (result.code !== 0) throw refusalFrom(operation, cliSentence(result.stderr))
+    const window = parseLogEntries(result.stdout)
+    const receivedAt = this.#stamp()
+    const hint = cliSentence(result.stderr)
+    return {
+      document: { entries: [...window.entries], total: window.total, refused: window.refused },
+      receivedAt,
+      sequence: 1,
+      day: null,
+      rolled: false,
+      notices: hint === null ? [] : [{ text: hint, receivedAt }],
+    }
   }
 
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot> {
@@ -368,6 +391,88 @@ export function parseStdout(
     else if (decoded.kind === 'notice') notices.push({ text: decoded.text, receivedAt })
   }
   return { document, notices }
+}
+
+/**
+ * LOG_WINDOW_MAX_ENTRIES is how many `logLine` entries the log read keeps: the
+ * newest ones, which is the Run screen's own cap (`RUN_LOG_CAP`,
+ * `src/renderer/screens/run.ts`; `spawn.test.ts` holds the two equal). The main
+ * process keeps no more than the screen can draw, and says how many it read.
+ */
+export const LOG_WINDOW_MAX_ENTRIES = 200
+
+/** LOG_REQUIRED_FIELDS and LOG_OPTIONAL_FIELDS are `logLine`'s keys
+ * (`internal/cli/logs.go:33`): `time`, `severity` and `message` carry no
+ * `omitempty`, the other three do. No other key is kept. */
+const LOG_REQUIRED_FIELDS = ['time', 'severity', 'message'] as const
+const LOG_OPTIONAL_FIELDS = ['stage', 'stream', 'event'] as const
+
+/** LogEntries is the capped window: the newest entries, oldest first, how many
+ * well-shaped entries the read held in all, and how many lines it refused. */
+export interface LogEntries {
+  readonly entries: readonly JSONObject[]
+  readonly total: number
+  readonly refused: number
+}
+
+/**
+ * parseLogEntries reads `logs RUN --json`'s stdout: one compact `logLine`
+ * object per line (contract section 6.2), so **every** line is an entry -- not
+ * the last one, which is the rule for the indented documents (`parseStdout`).
+ *
+ * Each line is held to the entry's shape before it is kept: a line past the
+ * feed's line cap is refused without being parsed, a torn or non-object line is
+ * refused, a required field that is missing or not a string is refused, and a
+ * string past the sanitizer's own input bound (`MAX_TEXT_INPUT_LENGTH`) is
+ * refused. A refused line is counted, never dropped silently, and never echoed.
+ * What is kept is still text from a job: the Run screen draws every field of it
+ * through `putText`. Only the newest `maxEntries` are kept.
+ */
+export function parseLogEntries(
+  stdout: string,
+  limits: { readonly maxLineLength?: number; readonly maxEntries?: number } = {},
+): LogEntries {
+  const maxLine = limits.maxLineLength ?? MAX_FEED_LINE_LENGTH
+  const maxEntries = limits.maxEntries ?? LOG_WINDOW_MAX_ENTRIES
+  const entries: JSONObject[] = []
+  let total = 0
+  let refused = 0
+  for (const raw of stdout.split('\n')) {
+    const line = raw.replace(/\r$/, '')
+    if (line.trim() === '') continue
+    if (line.length > maxLine) {
+      refused += 1
+      continue
+    }
+    const decoded = decodeFeedLine(line)
+    const entry = decoded.kind === 'document' ? logEntryOf(decoded.document) : null
+    if (entry === null) {
+      refused += 1
+      continue
+    }
+    total += 1
+    entries.push(entry)
+    if (entries.length > maxEntries) entries.shift()
+  }
+  return { entries, total, refused }
+}
+
+/** logEntryOf is one `logLine` held to its shape, with only its own keys, or
+ * null when it is not one. */
+function logEntryOf(document: JSONObject): JSONObject | null {
+  const entry: Record<string, string> = {}
+  for (const key of LOG_REQUIRED_FIELDS) {
+    const value = document[key]
+    if (typeof value !== 'string' || value.length > MAX_TEXT_INPUT_LENGTH) return null
+    entry[key] = value
+  }
+  for (const key of LOG_OPTIONAL_FIELDS) {
+    const value = document[key]
+    if (value === undefined) continue
+    if (typeof value !== 'string' || value.length > MAX_TEXT_INPUT_LENGTH) return null
+    entry[key] = value
+  }
+  return entry as JSONObject
 }
 
 /**
