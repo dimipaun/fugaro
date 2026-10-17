@@ -207,6 +207,19 @@ describe('parseCliVersion', () => {
     }
   })
 
+  it('refuses a version component too long to be a number, and the handshake reads it as unreadable', () => {
+    // `Number.parseInt` of a 30-digit component is a float that has lost its
+    // digits (and `1e400` digits is Infinity), so a comparison against the
+    // supported range would place a line it cannot actually read. Fail closed.
+    const huge = '9'.repeat(30)
+    for (const line of [`${huge}.8.1`, `0.${huge}.1`, `0.8.${huge}`, `v0.8.${huge}-rc.1`]) {
+      expect(parseCliVersion(line).ok, line).toBe(false)
+      expect(classifyCliVersion(line).skew, line).toBe('unreadable')
+    }
+    // Nine digits per component is still a version.
+    expect(parseCliVersion('0.8.999999999').ok).toBe(true)
+  })
+
   it('keeps the refused line out of the reason, because the reason is drawn', () => {
     // The reason a screen or a title attribute shows is the console's own
     // sentence. `src/main/spawn.ts`'s `parseVersionLine` makes the opposite

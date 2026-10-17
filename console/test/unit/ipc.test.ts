@@ -1254,7 +1254,7 @@ describe('the day and window arguments', () => {
     })
   }
 
-  // `runs ls --since` is `parseSince` (`internal/cli/runs.go:496`) and this
+  // `runs ls --since` is `parseSince` (`internal/cli/runs.go:502`) and this
   // table is read off it rather than invented: the CLI's own `TestParseSince`
   // cases (`7d`, `36h`, `90m`, `0` accepted; `""`, `d`, `-1d`, `7w` refused) are
   // all here, with the two forms the console used to accept and the CLI never
@@ -1320,8 +1320,14 @@ describe('the day and window arguments', () => {
     ['2562047h47m16.854775807s', true, 'the largest duration ParseDuration accepts, spelled out'],
     ['+2562047h47m16.854775807s', true, 'with a plus: the longest canonical form'],
     ['2562047h47m16.854775808s', false, 'one nanosecond past it: the overflow rule still holds'],
-    ['12345678901d', true, 'an eleven-digit day count strconv.Atoi reads'],
-    ['9223372036854775807d', true, 'the largest day count Atoi reads'],
+    // ...and its day count: `time.Duration(days) * 24 * time.Hour` wraps past
+    // 106751 days (int64 nanoseconds), so parseSince refuses more than that
+    // rather than reading a negative window, and the schema refuses it first.
+    ['106751d', true, 'the last whole day int64 nanoseconds hold'],
+    ['+106751d', true, 'with a plus, too'],
+    ['106752d', false, 'one day past it: the duration would wrap negative'],
+    ['12345678901d', false, 'an eleven-digit day count Atoi reads but the duration cannot hold'],
+    ['9223372036854775807d', false, 'the largest day count Atoi reads'],
     ['9223372036854775808d', false, 'one past it: Atoi refuses, and so does the schema'],
     ['+2562047h47m16.8547758070s', false, 'a surplus fraction digit Go would drop: past the longest canonical form, so the length bound refuses it'],
   ]

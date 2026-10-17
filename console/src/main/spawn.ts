@@ -878,6 +878,9 @@ export interface ReadableLike {
    * `StringDecoder`, so a UTF-8 character split across two chunks is one
    * character either way. */
   setEncoding?(encoding: BufferEncoding): unknown
+  /** Present on every real stream; the supervisor calls it to let go of a pipe
+   * a grandchild still holds once the child itself has exited (`startSidecar`). */
+  destroy?(): unknown
 }
 
 /** readText subscribes to a child's stream as text. `chunk.toString()` on a
@@ -1579,7 +1582,23 @@ export function startSidecar(
     // read an empty stderr into the sentence it gives the screen. `close` is
     // the point at which there is nothing left to read from this child, so it
     // is also where `drain` hands on a last line that had no newline.
-    started.on('close', (code, signal) => {
+    //
+    // `exit` still arms a backstop, the counterpart of `runToCompletion`'s
+    // deadline: a grandchild (or a shim) that inherited the pipe can hold
+    // stdout open after the child is reaped, and then `close` never comes --
+    // no restart, no `lost`, and a `stop()` that never settles, which hangs
+    // `CliSource.close()` and app quit with it. After `exit` the streams get
+    // the shutdown grace to drain; then they are destroyed and the child is
+    // decided on its exit status as if `close` had come.
+    let decided = false
+    let drainTimer: ReturnType<typeof setTimeout> | null = null
+    const decide = (code: number | null, signal: string | null): void => {
+      if (decided) return
+      decided = true
+      if (drainTimer !== null) {
+        timers.clearTimeout(drainTimer)
+        drainTimer = null
+      }
       drain()
       child = null
       const decision = restartDecision({ code, signal, stopped, attempt, backoff: plan.backoff })
@@ -1593,7 +1612,18 @@ export function startSidecar(
         timer = null
         if (!stopped) spawnOnce()
       }, decision.delayMs)
+    }
+    started.on('exit', (code, signal) => {
+      if (decided || drainTimer !== null) return
+      drainTimer = timers.setTimeout(() => {
+        drainTimer = null
+        if (decided) return
+        started.stdout?.destroy?.()
+        started.stderr?.destroy?.()
+        decide(code, signal)
+      }, grace)
     })
+    started.on('close', decide)
   }
 
   // `stop()` is idempotent, and *the promise is what is cached*, not just the

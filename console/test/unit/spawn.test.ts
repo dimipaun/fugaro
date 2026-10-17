@@ -221,6 +221,7 @@ function scriptedChild(): SpawnedChildLike & {
   exitWithoutClose(code: number | null, signal: string | null): void
   close(code: number | null, signal: string | null): void
   readonly killed: readonly (NodeJS.Signals | undefined)[]
+  readonly destroyed: readonly string[]
 } {
   const stdoutListeners: ((chunk: Buffer | string) => void)[] = []
   const stderrListeners: ((chunk: Buffer | string) => void)[] = []
@@ -228,9 +229,16 @@ function scriptedChild(): SpawnedChildLike & {
   const closeListeners: ((code: number | null, signal: string | null) => void)[] = []
   const errorListeners: ((error: Error) => void)[] = []
   const killed: (NodeJS.Signals | undefined)[] = []
+  const destroyed: string[] = []
   const child = {
-    stdout: { on: (_event: string, listener: (chunk: Buffer | string) => void) => stdoutListeners.push(listener) },
-    stderr: { on: (_event: string, listener: (chunk: Buffer | string) => void) => stderrListeners.push(listener) },
+    stdout: {
+      on: (_event: string, listener: (chunk: Buffer | string) => void) => stdoutListeners.push(listener),
+      destroy: () => destroyed.push('stdout'),
+    },
+    stderr: {
+      on: (_event: string, listener: (chunk: Buffer | string) => void) => stderrListeners.push(listener),
+      destroy: () => destroyed.push('stderr'),
+    },
     on(event: 'error' | 'exit' | 'close', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
       if (event === 'error') errorListeners.push(listener as (error: Error) => void)
       else if (event === 'exit') exitListeners.push(listener as (code: number | null, signal: string | null) => void)
@@ -258,6 +266,7 @@ function scriptedChild(): SpawnedChildLike & {
       for (const listener of closeListeners) listener(code, signal)
     },
     killed,
+    destroyed,
   }
   return child
 }
@@ -1216,6 +1225,48 @@ describe('the supervisor', () => {
     const end = await first
     expect(end).toEqual({ reason: 'stopped', code: null, signal: 'SIGTERM', sentence: null, spawns: 1 })
     await expect(second).resolves.toBe(end)
+  })
+
+  it('settles `stop()` when the child exits but its stdout is never closed', async () => {
+    // A grandchild (or a shim) that inherited the pipe keeps stdout open after
+    // the child is reaped, so `close` never comes. Without a backstop after
+    // `exit`, `stop()` -- and with it `CliSource.close()` and app quit -- hung.
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const ended: string[] = []
+    const sidecar = startSidecar(
+      plan,
+      { onFrame: () => undefined, onNotice: () => undefined, onRestart: () => undefined, onEnded: (end) => ended.push(end.reason) },
+      { spawner: () => child, timers },
+    )
+    const stopping = sidecar.stop()
+    child.exitWithoutClose(null, 'SIGTERM')
+    timers.fire()
+    const end = await Promise.race([stopping, new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 200))])
+    expect(end).toEqual({ reason: 'stopped', code: null, signal: 'SIGTERM', sentence: null, spawns: 1 })
+    expect(ended).toEqual(['stopped'])
+    expect(child.destroyed).toEqual(['stdout', 'stderr'])
+    // A late `close` once the grandchild lets go changes nothing.
+    child.close(null, 'SIGTERM')
+    expect(ended).toEqual(['stopped'])
+  })
+
+  it('decides on `exit` after the grace when `close` never comes, without stopping', () => {
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const ended: string[] = []
+    startSidecar(
+      plan,
+      { onFrame: () => undefined, onNotice: () => undefined, onRestart: () => undefined, onEnded: (end) => ended.push(end.reason) },
+      { spawner: () => child, timers },
+    )
+    child.emitStderr('Error: refused\n')
+    child.exitWithoutClose(1, null)
+    expect(ended).toEqual([])
+    timers.fire()
+    expect(ended).toEqual(['refused'])
   })
 
   it('stops a binary that never answers `version` instead of abandoning it', async () => {

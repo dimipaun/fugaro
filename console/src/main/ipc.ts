@@ -186,8 +186,8 @@ export const REPORT_MAX_WEEKS = 522
  *     (`internal/cli/report.go:40`, `reportRange` at `report.go:93`). A window
  *     in hours or minutes is *not* one of its forms, and neither is `0`;
  *   - `runSince` -- `runs ls --since`'s own forms, which are `parseSince`'s
- *     exactly (`internal/cli/runs.go:496`): `0` for no bound, `Nd` with at
- *     least one day, or a *positive Go duration* in any of `time.ParseDuration`'s
+ *     exactly (`internal/cli/runs.go:502`): `0` for no bound, `Nd` with one to 106751
+ *     days, or a *positive Go duration* in any of `time.ParseDuration`'s
  *     units (`36h`, `90m`, `1h30m`, `1.5h`, `300ms`). **A UTC calendar day is
  *     not one of them** -- `parseSince` has no date branch, so `--since
  *     2026-10-16` is a `runs ls` refusal and this grammar refuses it before a
@@ -850,7 +850,7 @@ const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // as its own kind so neither can admit a value its own command refuses. `report`
 // takes days and weeks but not hours (`reportRange`, `internal/cli/report.go:93`
 // -- an `h` suffix falls through to the date parser there); `runs ls` takes
-// `parseSince`'s own forms (`internal/cli/runs.go:496`), which is what the two
+// `parseSince`'s own forms (`internal/cli/runs.go:502`), which is what the two
 // patterns below are: its grammar rather than a summary of it. `parseSince`
 // tries the `d` suffix *first* (so `7d5h` is not a duration), then hands
 // anything else to Go's `time.ParseDuration`, whose units are `ns`, `us`,
@@ -977,7 +977,7 @@ function isCalendarDay(value: string): boolean {
 const LONGEST_RUNS_SINCE = '+2562047h47m16.854775807s'
 
 /**
- * isRunsSince mirrors `parseSince` (`internal/cli/runs.go:496`) branch for
+ * isRunsSince mirrors `parseSince` (`internal/cli/runs.go:502`) branch for
  * branch, and it exists because the console used to accept two things that
  * function always refuses: **a UTC calendar day** (there is no date branch) and
  * **a zero window** (`0d`, `0h`, `0m` -- `days < 1` and `d <= 0`). Both were
@@ -987,22 +987,27 @@ const LONGEST_RUNS_SINCE = '+2562047h47m16.854775807s'
  * The branches, in the CLI's order:
  *
  *   1. `"0"` exactly -- no bound;
- *   2. a `d` suffix, whose digits `strconv.Atoi` reads -- inside int64, so a
- *      count past `1<<63-1` is refused here as `Atoi` refuses it -- and which
- *      must be at least one;
+ *   2. a `d` suffix, whose digits `strconv.Atoi` reads, and which must be at
+ *      least one and at most `maxSinceDays` (106751): past it
+ *      `time.Duration(days) * 24 * time.Hour` would wrap int64 nanoseconds, so
+ *      the CLI refuses it and the schema refuses it here first;
  *   3. anything else is a Go duration, and `parseSince` refuses `d <= 0`. A
  *      leading `-` is that case, and so is a duration whose every digit is
  *      zero (`0s`, `0h0m`); `+5h` is a positive duration the CLI accepts.
  */
+/** MAX_SINCE_DAYS is `parseSince`'s `maxSinceDays` (`internal/cli/runs.go`):
+ * `floor((1<<63-1) / (24h in ns))`. */
+const MAX_SINCE_DAYS = 106751n
+
 function isRunsSince(value: string): boolean {
   if (value === '0') return true
   if (value.endsWith('d')) {
     const days = value.slice(0, -1)
     if (!SINCE_DAYS_RE.test(days)) return false
-    // `strconv.Atoi` is int64 on the CLI's platforms: a count past it is
-    // `value out of range`, which `parseSince` refuses.
+    // `parseSince`'s `maxSinceDays`: the last day count whose duration fits
+    // int64 nanoseconds. BigInt, so a count of any length is compared exactly.
     const count = BigInt(days.replace(/^\+/, ''))
-    return count >= 1n && count < GO_INT64_EDGE
+    return count >= 1n && count <= MAX_SINCE_DAYS
   }
   if (!GO_DURATION_RE.test(value)) return false
   if (value.startsWith('-')) return false

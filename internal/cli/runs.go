@@ -491,6 +491,12 @@ func absent[T any](v *T, err error) (*T, error) {
 	return v, err
 }
 
+// maxSinceDays is the largest day count whose duration fits in int64
+// nanoseconds: time.Duration(days)*24*time.Hour silently wraps to a negative
+// window past it, so a larger count is refused rather than read as "no runs".
+// The desktop console's runs-window schema holds the same bound.
+const maxSinceDays = 106751
+
 // parseSince parses --since: a positive number of days (7d), a positive Go
 // duration (36h, 90m), or 0 for no bound.
 func parseSince(s string) (time.Duration, error) {
@@ -499,7 +505,7 @@ func parseSince(s string) (time.Duration, error) {
 	}
 	if n, ok := strings.CutSuffix(s, "d"); ok {
 		days, err := strconv.Atoi(n)
-		if err != nil || days < 1 {
+		if err != nil || days < 1 || days > maxSinceDays {
 			return 0, fmt.Errorf("--since %q: use a positive number of days (7d) or a Go duration (36h)", s)
 		}
 		return time.Duration(days) * 24 * time.Hour, nil

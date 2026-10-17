@@ -173,6 +173,10 @@ export type CliVersionParse =
  * an empty line, a usage message, a stack trace -- is not a version, and the
  * console refuses to guess at one.
  */
+/** MAX_VERSION_COMPONENT_DIGITS bounds each dotted component: nine digits is
+ * always an exact integer, and no real release needs more. */
+const MAX_VERSION_COMPONENT_DIGITS = 9
+
 const VERSION_LINE_RE = /^v?\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?$/
 
 /**
@@ -203,7 +207,14 @@ export function parseCliVersion(text: string): CliVersionParse {
     return { ok: false, reason: 'the binary printed a line that is not a version' }
   }
   const numeric = raw.replace(/^v/, '').split(/[-+]/)[0] ?? ''
-  const parts = numeric.split('.').map((part) => Number.parseInt(part, 10))
+  const digits = numeric.split('.')
+  // A component past MAX_VERSION_COMPONENT_DIGITS is not a number `parseInt`
+  // can hold exactly, and a comparison against a rounded float would place a
+  // line it cannot read. Fail closed: the line is unreadable.
+  if (digits.some((part) => part.length > MAX_VERSION_COMPONENT_DIGITS)) {
+    return { ok: false, reason: 'the binary printed a version number too long to read' }
+  }
+  const parts = digits.map((part) => Number.parseInt(part, 10))
   const [major, minor, patch] = parts
   if (major === undefined || minor === undefined) {
     return { ok: false, reason: 'the binary printed a version with no minor number' }
