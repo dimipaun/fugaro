@@ -68,17 +68,29 @@
 // address on the wire is the console's own marker (`redacted@example.invalid`)
 // and never the address itself.
 //
-// **The controls are wired, and they are wired to one read.** The range picker,
-// the breakdown switch and the operator's person knob (D15) all feed
-// `SpendControls`, and `spendArguments` turns that state into the argument
-// object `spend.report` already declares -- `--since`/`--until` from the picker,
-// `--by` from the switch -- which `readSpend` hands to the **existing**
-// `runReport` operation. No new write, no new spawn-table row and no new
-// channel: the renderer supplies values, main builds the argv (section 5.1 rule
-// 6), and a value outside the screen's own closed sets is refused before
-// anything is spawned. A control change is one `report --json` read and a
-// re-render from the document that came back; the budget document is not
-// re-read, because no control this screen draws is about it.
+// **The controls are wired, and they are wired to one read -- on this screen's
+// side of the seam.** The range picker, the breakdown switch and the operator's
+// person knob (D15) all feed `SpendControls`, and `spendArguments` turns that
+// state into the argument object `spend.report` already declares --
+// `--since`/`--until` from the picker, `--by` from the switch -- which
+// `readSpend` hands to the **existing** `runReport` operation. No new write, no
+// new spawn-table row and no new channel: the renderer supplies values, main
+// builds the argv (section 5.1 rule 6), and a value outside the screen's own
+// closed sets is refused before anything is spawned. A control change is one
+// `report --json` read and a re-render from the document that came back; the
+// budget document is not re-read, because no control this screen draws is about
+// it.
+//
+// **Nothing in the application calls them yet, and this file says so rather
+// than implying otherwise.** There is no renderer entry point in this tree: no
+// shell, no router, no event handler, and `index.html` is still Task 1.1's
+// script-free document, so `spendArguments`, `readSpend` and `personView` are a
+// library with no caller outside the tests, and the `data-` hooks below are
+// what that entry point will read. That is the seam this task was given: its
+// Files hold no shell, and the plan's Files are what a task may change. What is
+// finished here is the screen's half -- the arguments a control produces, the
+// read they make, and the state they draw -- so the entry point a later task
+// writes has nothing left to decide about the Spend screen's controls.
 //
 // **And the person view is off until the operator says otherwise.** `--by
 // person` is not a read this screen makes while the knob is off, and the

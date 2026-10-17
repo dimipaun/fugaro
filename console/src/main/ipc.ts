@@ -336,7 +336,9 @@ export const CONSOLE_OPERATIONS = [
   // name here, before a handler sees it, and `test/unit/ipc.test.ts` fails a
   // test per hostile payload rather than passing a review. The screen supplies
   // *values*; `argvFor` below builds the argv, so no renderer ever hands this
-  // console a word of a command line.
+  // console a word of a command line. (The screen's half of that wiring is
+  // `src/renderer/screens/spend.ts`; the entry point that calls it is a later
+  // task's, and this schema is what bounds it when it arrives.)
   {
     name: 'spend.report',
     method: 'runReport',

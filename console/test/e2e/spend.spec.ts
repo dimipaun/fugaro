@@ -60,6 +60,7 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import type { JSONDoc } from '../../src/source/source'
+import { GAP_MARK } from '../../src/shared/availability'
 import { SPEND_DEFAULT_CONTROLS, SPEND_THEMES, personView } from '../../src/renderer/screens/spend'
 import type { SpendControls } from '../../src/renderer/screens/spend'
 
@@ -243,6 +244,7 @@ interface Screen {
   readonly personsEnabled: string | null
   readonly personState: string | null
   readonly points: number
+  readonly seriesValues: readonly string[]
   readonly text: string
 }
 
@@ -290,6 +292,10 @@ function screen(page: Page): Promise<Screen> {
       points: all('.spend-account')
         .find((block) => block.getAttribute('data-account') === 'model')
         ?.querySelectorAll('.spend-point').length ?? 0,
+      // The charts' own readings, and only the charts': a gap is the em dash
+      // here, while a `$0.00` in the caps panel is a different statement about
+      // a different document.
+      seriesValues: texts('.spend-point-value'),
       text: document.getElementById('spend-mount')?.textContent ?? '',
     }
   })
@@ -668,7 +674,14 @@ test.describe('the Spend screen', () => {
     // the widened range is the only thing that changed.
     expect(after.points).toBe(11)
     expect(after.gaps.filter((key) => key === '2026-10-05')).toHaveLength(3)
-    expect(after.text).not.toContain('$0.00')
+    // A day the history does not hold is a gap and never a zero, and the
+    // assertion is scoped to the charts on purpose: the caps panel is built
+    // from `BUDGET` and legitimately draws `$0.00` for a cap nothing has been
+    // counted against (`spend.test.ts` asserts those cells), so the whole
+    // mount's text would fail this for the wrong reason.
+    expect(after.seriesValues).toHaveLength(33)
+    expect(after.seriesValues.filter((value) => value === GAP_MARK)).toHaveLength(24)
+    expect(after.seriesValues).not.toContain('$0.00')
     expect(after.accounts).toEqual(['model', 'notional', 'compute'])
   })
 

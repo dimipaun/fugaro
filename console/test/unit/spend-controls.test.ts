@@ -2,11 +2,13 @@
 // operator's person-view knob (desktop-console plan Task 2.4; design sections
 // 2.3, 5.1 rule 6 and 6.2 screen 2, D15).
 //
-// Task 2.2 drew all three and wired none of them. This file asserts the wiring:
-// one `spend.report` read per change, whose `--since`/`--until` come from the
-// picker and whose `--by` comes from the switch, through the **existing**
-// `runReport` operation and the spawn table's own argv -- no new write, no new
-// spawn-table row and no new channel.
+// Task 2.2 drew all three and wired none of them. This file asserts the
+// screen's half of the wiring: one `spend.report` read per change, whose
+// `--since`/`--until` come from the picker and whose `--by` comes from the
+// switch, through the **existing** `runReport` operation and the spawn table's
+// own argv -- no new write, no new spawn-table row and no new channel. (The
+// entry point that calls this library is a later task's; there is no renderer
+// entry point in this tree yet, and `spend.ts`'s header says so.)
 //
 // **The reads here are real spawns.** The reader below is a `CliSource` over
 // Task 1.3's stub, and every argument the screen builds goes through the IPC
