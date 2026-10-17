@@ -328,6 +328,19 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // spend.report is the one read the Spend screen's controls make, and the
+  // wiring (Task 2.4) added no field to it. The range picker sends `since`
+  // (it draws four windows; no control sets the end of the range yet, so
+  // `until` is accepted here for a later control and no reachable screen state
+  // sends it), the breakdown switch sends `by`, and `repo` is unchanged from the
+  // design's allow-list: **these four keys and no others**. A fifth key -- a
+  // `csv` flag, a path, a command, a URL, a free-form string -- is refused by
+  // name here, before a handler sees it, and `test/unit/ipc.test.ts` fails a
+  // test per hostile payload rather than passing a review. The screen supplies
+  // *values*; `argvFor` below builds the argv, so no renderer ever hands this
+  // console a word of a command line. (The screen's half of that wiring is
+  // `src/renderer/screens/spend.ts`; the entry point that calls it is a later
+  // task's, and this schema is what bounds it when it arrives.)
   {
     name: 'spend.report',
     method: 'runReport',
