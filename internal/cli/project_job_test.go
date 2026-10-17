@@ -63,9 +63,12 @@ func newProjectJobFixture(t *testing.T) *projectJobFixture {
 }
 
 // newProjectJobFixtureMode is newProjectJobFixture on a budget installation
-// with the given mode: "enforce" is the one a test that has to see whether a
-// launch minted its token uses (with the mode off there is no backend to mint
-// against, and the question cannot be asked).
+// whose local mode is mode: "enforce" is what a real enforcing installation
+// runs, so a launch takes the budget precheck path as well
+// (budgetBackendOn, launch_budget.go). The mode does not decide whether a
+// launch mints a budget token: a published policy turns minting on whatever
+// the mode says (budgetMintOn), and this fixture publishes one — so a test
+// must not read the mode as "minting is on here, and off there".
 func newProjectJobFixtureMode(t *testing.T, mode string) *projectJobFixture {
 	t.Helper()
 	f := newLaunchBudget(t, mode)

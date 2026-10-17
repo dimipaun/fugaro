@@ -195,9 +195,9 @@ func projectJobAccount(name string) string {
 // shared job cannot honour — so `fugaro init` refuses to deploy a profile that
 // mounts one, and the account axis of every project job's name is empty
 // (internal/infra's projectJobSecrets, ProjectJobs). A run launched onto one
-// therefore reads the profile's account, never the account its own fugaro.yaml
-// chose, and with `auth: oauth` there is no token of that account in the job's
-// environment at all.
+// therefore reads the profile's account, never the account its own
+// configuration chose, and with `auth: oauth` there is no token of that
+// account in the job's environment at all.
 //
 // Left to Cloud Run, that launch failed after it had spent its queueing slot:
 // the claim was taken, the budget token was minted, and the run then stopped
@@ -205,26 +205,29 @@ func projectJobAccount(name string) string {
 // decided — before the claim, before the token and before any Cloud Run call —
 // as the provider mismatch beside it is (launchProjectJobFor).
 //
+// The question is the run's resolved agent.auth and nothing else: a named
+// account is only ever selected by a run whose auth is oauth
+// (claudeAccountAllowed, run.go), and spec.OAuthToken is empty for the default
+// account (run.go sets it only for another one), so `auth != "oauth"` is the
+// whole of "no OAuth account is involved here" — an api-key or Vertex run is
+// untouched by this check whatever the profile mounts, and no other launch's
+// behaviour changes. The account the run selected is read only to name it in
+// the message: with `auth: oauth` it is the account the run's own configuration
+// chose, the default one when it chose none.
+//
 // The refusal is scoped to the shared-job path, exactly as that one is: a
 // repository whose workflow keeps its per-repository job — a baked workflow
 // (design §4.4), or an installation that has published no profiles — launches
 // an OAuth run as it always has, on the variant job that mounts its account's
-// token. Only the launch's own selections are read here, and both spell an
-// account the run cannot run as: `agent.auth: oauth` in the repository's
-// checkout (the default account's run, spec.OAuthToken is empty for it) and a
-// named account the run selected (--token, or agent.oauth_token), which
-// projectJobAccount normalizes so `--token default` is not mistaken for one.
-// An api-key or Vertex run is untouched by this check whatever the profile
-// mounts, so no other launch's behaviour changes.
+// token.
 func checkProjectJobOAuth(profile, auth, selected string) error {
-	account := projectJobAccount(selected)
-	if auth != "oauth" && account == "" {
+	if auth != "oauth" {
 		return nil
 	}
-	what := "this run's workflow runs as the default Claude OAuth account (the repository's own fugaro.yaml sets agent.auth: oauth)"
-	if account != "" {
-		what = fmt.Sprintf("this run selects the Claude OAuth account %q", account)
+	what := "this run's workflow runs as the default Claude OAuth account (its resolved agent.auth is oauth)"
+	if selected != "" {
+		what = fmt.Sprintf("this run selects the Claude OAuth account %q", selected)
 	}
-	return userErr("%s, and the launch would run it on the shared project job of the job profile %q: a Claude OAuth account is not supported on a shared project job until phase 5. A project job's Claude account is fixed where the job is deployed — it is the account segment of the job's own name, computed from the profile's secrets — and no profile may mount a Claude OAuth token in this release (fugaro init refuses to deploy such a job, and an account's allow_data_to is a per-repository list a shared job cannot honour), so an installation on auth: oauth has no shared job and this repository stays on its per-repository job. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Use an API-key workflow for this repository (agent.auth: api-key), or keep it on its own per-repository job — a repository whose workflow selects no profile of a published policy (a baked workflow, or an installation that has published no profiles) keeps the job it has always had",
+	return userErr("%s, and the launch would run it on the shared project job of the job profile %q: a Claude OAuth account is not supported on a shared project job until phase 5. A project job's Claude account is fixed where the job is deployed — it is the account segment of the job's own name, computed from the profile's secrets — and no profile may mount a Claude OAuth token in this release (fugaro init refuses to deploy such a job, and an account's allow_data_to is a per-repository list a shared job cannot honour), so an installation on auth: oauth has no usable shared job, and this launch is refused rather than started on a job that cannot serve it. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Run this repository on an API-key workflow (agent.auth: api-key); a repository that keeps its per-repository job — a baked workflow, or an installation that has published no profiles — is not refused here and launches exactly as it did",
 		what, profile)
 }

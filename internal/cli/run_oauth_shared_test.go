@@ -41,9 +41,12 @@ import (
 // — the launch takes the claim (the hook below fires), mints a token and
 // starts an execution on the shared job.
 func TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch(t *testing.T) {
-	// The budget installation is on, so "no budget token was minted" is a
-	// question this fixture can answer: with the mode off there is nothing to
-	// mint against, and the assertion would hold for any launch at all.
+	// The installation runs the budget backend in its enforcing mode, so this
+	// launch takes the path a real one takes: the precheck runs before the job
+	// selection. The mode is not what makes the token assertion below able to
+	// fail — this fixture publishes a policy, and a published policy turns
+	// minting on whatever the local mode says (budgetMintOn) — so a launch
+	// that got past the refusal mints in either mode.
 	f := newProjectJobFixtureMode(t, "enforce")
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
@@ -120,6 +123,11 @@ func TestOAuthLaunchOnALegacyJobIsUnchanged(t *testing.T) {
 // function, one text, naming the account the run uses, the profile it would
 // have run on and the fix — and refusing nothing at all when no OAuth account
 // is involved, which is what keeps every other launch byte-identical.
+//
+// Mutation (run, restore): read the selected account as well as the auth —
+// `if auth != "oauth" && acct == "" { return nil }` — and the api-key row
+// carrying a named account stops launching, which is the case the check must
+// leave alone.
 func TestOAuthRefusalNamesAccountProfileAndFix(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -130,10 +138,12 @@ func TestOAuthRefusalNamesAccountProfileAndFix(t *testing.T) {
 		{name: "an oauth workflow on the default account", auth: "oauth", refuse: true},
 		{name: "an oauth workflow on a named account", auth: "oauth", acct: "acme-personal", refuse: true},
 		{name: "a named account selected by flag", auth: "oauth", acct: "acme-work", refuse: true},
-		// --token default is not a named account: it spells the default one,
-		// and a run that names it is not refused here (config.DefaultClaudeAccount,
-		// gcp.WorkflowVariant's own normalization).
-		{name: "--token default", auth: "api-key", acct: "default"},
+		// The check reads the resolved agent.auth and nothing else: a named
+		// account is only ever selected by a run whose auth is oauth
+		// (claudeAccountAllowed), and spec.OAuthToken is empty for the default
+		// account (run.go sets it only for another one), so an api-key or
+		// Vertex run is untouched here whatever account it carries.
+		{name: "an api-key workflow on a named account", auth: "api-key", acct: "acme-work"},
 		{name: "an api-key workflow", auth: "api-key"},
 		{name: "a vertex workflow", auth: "vertex"},
 		{name: "no auth resolved", auth: ""},
@@ -151,13 +161,21 @@ func TestOAuthRefusalNamesAccountProfileAndFix(t *testing.T) {
 				t.Fatalf("err = %v (%d), want a user error", err, ExitCode(err))
 			}
 			msg := err.Error()
-			for _, want := range []string{"standard", "phase 5", "API-key", "per-repository"} {
+			for _, want := range []string{"standard", "phase 5", "agent.auth", "API-key", "per-repository"} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("the refusal does not name %q: %v", want, err)
 				}
 			}
 			if c.acct != "" && !strings.Contains(msg, c.acct) {
 				t.Errorf("the refusal does not name the account %q: %v", c.acct, err)
+			}
+			// It names the setting, never the file that carries it: the resolved
+			// agent.auth may come from the project layer rather than the
+			// repository's own fugaro.yaml (config.Resolve overlays the layer's
+			// defaults), and blaming a file that does not set it would send the
+			// operator to the wrong place.
+			if strings.Contains(msg, "fugaro.yaml") {
+				t.Errorf("the refusal blames a file for a setting it cannot attribute: %v", err)
 			}
 		})
 	}
