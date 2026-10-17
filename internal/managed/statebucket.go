@@ -108,16 +108,17 @@ func (s InfraStore) SetPolicy(ctx context.Context, bucket string, p *storage.Pol
 }
 
 // EnsureManagedStateBucket is D77's whole setup step: the dedicated state
-// bucket of gcpProject exists in project and region, and the deployer holds
-// DeployerStateRole on it and nothing wider. It is idempotent — a bucket and a
-// binding that are already there are left alone, so a second managed creation
-// on the same project changes nothing.
+// bucket of gcpProject exists in the project and region, and carries the
+// deployer's one binding on it and nothing wider. It is idempotent — a bucket
+// and a binding that are already there are left alone, so a second managed
+// creation on the same project changes nothing.
 //
 // The bucket's name and the member are both computed from project here and
-// never passed in: the caller chooses the project and the region, and nothing
-// else about what is created. A foreign bucket under that name (another
-// project's, or one without the state mark) is refused by infra.CheckStateBucket
-// rather than adopted, and a policy write never happens before that check.
+// never passed in: the caller chooses the project and the region the
+// installation was created in, and nothing else about what is created. A
+// foreign bucket under that name (another project's, or one without the state
+// mark) is refused by infra.CheckStateBucket rather than adopted, and a policy
+// write never happens before that check.
 func EnsureManagedStateBucket(ctx context.Context, s StateStore, project, region string) error {
 	switch {
 	case s == nil:
@@ -125,7 +126,7 @@ func EnsureManagedStateBucket(ctx context.Context, s StateStore, project, region
 	case project == "":
 		return fmt.Errorf("no project: the managed state bucket's name is the project's, and an empty one would read as the state bucket of no project")
 	case region == "":
-		return fmt.Errorf("no region for the managed state bucket of %s", project)
+		return fmt.Errorf("no region for the managed state bucket of %s: without one there is nowhere to create it", project)
 	}
 	bucket := ManagedStateBucketName(project)
 	if bucket == InstallationsStateBucket(project) {

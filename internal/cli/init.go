@@ -30,6 +30,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	// The managed-mode package of internal/managed, aliased because this file
+	// already imports internal/infra/managed as managed (the creation fact's
+	// object): managedmode is the package of the managed apply path, and the
+	// state bucket below is its first caller in the CLI (Task 3.1's apply is
+	// the next).
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
@@ -611,14 +617,16 @@ func runInit(r *initRun) error {
 }
 
 // markCreated records the creation fact in the runs bucket of a project
-// this run created: the object at the bucket's root that no credential a run
+// this run created, and sets up the state bucket a managed apply keeps its
+// state in: the object at the bucket's root that no credential a run
 // holds can write (internal/infra/managed, design D56/D57; Task 0.1 of
-// docs/plans/2026-10-16-managed-projects.md). A later run reads it to know
-// the project is Fugaro's own, so it is written by the run that knows the
-// fact, on the operator's own credentials, and by nothing else: the project
-// stage runs first and the runs bucket does not exist until the installation
-// stage has applied, so this is the one place and the one moment it can be
-// written from.
+// docs/plans/2026-10-16-managed-projects.md) and D77's dedicated
+// fugaro-managed-tfstate-<project> (Task 1.5 (3) of the same plan). A later
+// run reads the marker to know the project is Fugaro's own, so it is written
+// by the run that knows the fact, on the operator's own credentials, and by
+// nothing else: the project stage runs first and the runs bucket does not
+// exist until the installation stage has applied, so this is the one place
+// and the one moment either step can run from.
 //
 // The fact is the project this run created, and nothing else (D73: adding
 // Firebase to an existing project is not creating one, so init --firebase
@@ -686,6 +694,23 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		return
 	}
 	fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s)\n", r.res.Created, bucket, managed.MarkerObject)
+
+	// D77's state bucket, the other half of what a managed project needs
+	// before an apply can run under the deployer: the state of the
+	// agent-authored root lives in a bucket of its own, and the deployer is
+	// bound on that bucket alone (internal/managed/statebucket.go). It
+	// belongs here for the same reason the marker does: it is setup on the
+	// operator's own credentials, in the managed creation and nowhere else.
+	// The region is the installation's, so the managed state sits where the
+	// rest of the project's storage does. Like the marker, this never changes
+	// the outcome of the run — a project that is marked but has no state
+	// bucket is the fail-closed direction (a managed apply finds nowhere to
+	// keep its state and says so, rather than writing it somewhere else).
+	if err := managedmode.EnsureManagedStateBucket(ctx, managedmode.InfraStore{Clients: e.c}, r.res.Created, e.spec.Region); err != nil {
+		r.warn(fmt.Sprintf("project %s was created and marked as Fugaro-managed, but its managed state bucket was not set up (%v): a managed apply has nowhere to keep its state until an owner-run command sets it up", r.res.Created, err))
+		return
+	}
+	fmt.Fprintf(r.w, "set up the managed state bucket gs://%s and bound the deployer to it (%s)\n", managedmode.ManagedStateBucketName(r.res.Created), managedmode.DeployerStateRole)
 }
 
 // checkEnv refuses an environment that would point Terraform or the

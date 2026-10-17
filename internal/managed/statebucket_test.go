@@ -84,8 +84,8 @@ func TestManagedStateBucketNameIsDedicatedAndTheProjects(t *testing.T) {
 	}
 }
 
-// The step itself: a project with no bucket gets one, and the deployer gets
-// its one binding on it.
+// The step itself: a project with no bucket gets one, in the region the
+// installation was created in, and the deployer gets its one binding on it.
 func TestEnsureManagedStateBucketCreatesAndBinds(t *testing.T) {
 	s := &fakeState{}
 	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5"); err != nil {
