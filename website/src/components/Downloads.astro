@@ -63,14 +63,11 @@ const HEADING = 'Downloads'
       </ul>
     ) : (
       <div class="downloads-unreleased">
+        {/* One paragraph, and nothing else: while the console is unreleased this branch
+            renders no `<a>` and no `<button>` — not because a rule says not to, but
+            because there is no element here that could be one. That is the red step's
+            fix, and website/test/console.mjs asserts it over the built page. */}
         <p>{note}</p>
-        {/* W1.6 red step: a hard-coded placeholder download URL, the defect the task
-            removes and the reason website/test/console.mjs exists. */}
-        <p>
-          <a href="https://github.com/dimipaun/fugaro/releases/download/v0.9.0/fugaro-console-macos.dmg" rel="noopener">
-            Download for macOS
-          </a>
-        </p>
       </div>
     )
   }
