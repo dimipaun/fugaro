@@ -63,6 +63,19 @@ function downloadsData() {
 }
 
 /**
+ * One decision row of the console's design, as that document writes it: the row is the
+ * decision, and a claim that cites `D2` is citing this line and not a remembered summary
+ * of it. Every check below reads the row rather than a copy of it, so a decision that is
+ * reworded fails a test instead of silently disagreeing with the page.
+ */
+function decisionRow(id) {
+  const design = repoFile('docs/design/desktop-console.md')
+  const row = new RegExp(`^\\|\\s*\\*\\*${id}\\*\\*\\s*\\|.*$`, 'm').exec(design)
+  assert.ok(row, `docs/design/desktop-console.md carries no ${id} row, and the console's page cites it`)
+  return row[0]
+}
+
+/**
  * The string a console download URL of this repository contains, built from `site.yaml`'s
  * own repository rather than typed here: while the flag is false the built page may carry
  * none of it, and the same shape is what the Go boundary test scans the whole site for
@@ -241,6 +254,80 @@ test('every console claim is traceable to the document it came from', () => {
     assert.ok(
       decisions.has(id),
       `no console claim cites ${id}: the page states that the console is read-only (D2), that it has no telemetry (D5) and that it is its own artifact (D11), and each of those is one of those decisions`,
+    )
+  }
+})
+
+test("the console's guarantees are stated as the document that decides them states them", () => {
+  // Traceability is not enough on its own: a sentence can cite a decision and still
+  // misstate it. The two guarantees the page publishes are read out of the document that
+  // decides them here, part by part — the defect this catches is a property that drops one
+  // of a decision's parts and thereby promises more than the product does.
+  const design = repoFile('docs/design/desktop-console.md')
+  const data = downloadsData()
+
+  const property = (id) => {
+    const found = data.properties.find((entry) => entry.id === id)
+    assert.ok(found, `the console's data file states no "${id}" property`)
+    return found
+  }
+
+  // --- Strictly read-only (D2) ------------------------------------------------
+  // D2 defers the three commands that write, and it names them: the console is read-only
+  // because those commands stay in the CLI, not because the console is careful.
+  const d2 = decisionRow('D2')
+  assert.match(d2, /read-only/i, 'the design\'s D2 row no longer decides that the console is read-only; re-read D2 before restating it')
+  const readOnly = property('read-only')
+  assert.match(readOnly.text, /read-only/i, 'the read-only property does not say the console is read-only')
+  for (const command of ['kill', 'resume', 'cancel']) {
+    assert.ok(d2.includes(command), `the design's D2 row no longer names \`${command}\`, so the property that defers it can no longer be checked against it`)
+    assert.ok(
+      readOnly.text.includes(command),
+      `the read-only property does not name \`${command}\`, which D2 defers to the CLI: a guarantee that names some of the commands that write and not the others is a narrower promise than the design makes`,
+    )
+  }
+
+  // --- No telemetry (D5, and the design's section 7.4) ------------------------
+  // Four promises in one sentence, and the page may not drop one of them. The update check
+  // is the one that is easy to lose — an earlier revision of this property said the only
+  // outbound requests were the CLI's own, which reads as "nothing else leaves the machine"
+  // and is false: the console updates itself **on by default** (D5, section 7.3), so that
+  // check is an outbound request of its own and has to be named.
+  const promised = /No telemetry[^.]*\./.exec(design)
+  assert.ok(promised, "the design's section 7.4 no longer carries the console's telemetry promise; re-read it before the page states one")
+  assert.match(decisionRow('D5'), /On by default/, 'the design\'s D5 row no longer puts the update check on by default, which is why the check has to appear in the promise the page copies')
+
+  const noTelemetry = property('no-telemetry')
+  for (const part of ['telemetry', 'crash reporting', 'analytics', 'update check']) {
+    assert.ok(promised[0].includes(part), `the design no longer promises "${part}" in section 7.4, and the page repeats that sentence's parts`)
+    assert.ok(
+      noTelemetry.text.includes(part),
+      `the no-telemetry property does not name "${part}": the console's promise has four parts (telemetry, crash reporting, analytics and the update check's identifier) and a property that drops one promises more than the design does`,
+    )
+  }
+  // And where the property enumerates what does leave the machine, the update check has to
+  // be listed among those things — the precise shape of the defect above. "Names the update
+  // check somewhere" is not the rule and does not catch it: the defective sentence did name
+  // the check, twice, and then enumerated the outbound requests as the CLI's own and
+  // stopped. The rule is where the mention falls: if the property says "only outbound
+  // requests", an update check has to be named *in that enumeration*, after it.
+  const enumerated = noTelemetry.text.indexOf('only outbound requests')
+  if (enumerated >= 0) {
+    assert.ok(
+      noTelemetry.text.indexOf('update check', enumerated) > enumerated,
+      `the no-telemetry property ${JSON.stringify(noTelemetry.text)} names the CLI's requests as the only outbound ones without listing the update check among them: the console updates itself on by default (D5, section 7.3), that check fetches its own feed, and a property that stops at the CLI promises more than the design does`,
+    )
+  }
+
+  // --- What the console is (D1, and the design's section 1) -------------------
+  // One sentence of the design's own, and the page carries its parts.
+  const isWhat = /It has no [^.]*\./.exec(design)
+  assert.ok(isWhat, "the design's section 1 no longer says what the console holds; re-read it before the page repeats it")
+  for (const part of ['no credential', 'no database client']) {
+    assert.ok(isWhat[0].includes(part), `the design's section 1 no longer says the console has "${part}"`)
+    assert.ok(
+      data.what.text.includes(part),
+      `what.text does not carry "${part}", and ${JSON.stringify(isWhat[0])} is where the page's sentence comes from`,
     )
   }
 })

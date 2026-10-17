@@ -20,7 +20,7 @@
     {
       "id": "no-telemetry",
       "title": "No telemetry",
-      "text": "No telemetry, no crash reporting to a third party, no analytics, and no update check that carries an identifier: its only outbound requests are the CLI's own, to the cloud the operator already owns.",
+      "text": "No telemetry, no crash reporting to a third party, no analytics, and no update check that carries an identifier: its only outbound requests are the CLI's own, to the cloud the operator already owns, and the update check itself.",
       "source": "docs/design/desktop-console.md D5"
     },
     {
