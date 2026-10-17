@@ -19,8 +19,12 @@
 //      or an operator who redacts by hand into something the recorder's rules
 //      do not recognise, would put a live secret in a screenshot. This module
 //      re-runs the recorder's own rules (`src/source/redact.ts`) rather than a
-//      cheaper approximation of them, and the two vocabularies are held equal
-//      by test.
+//      cheaper approximation of them: the pattern classes below are that file's
+//      list, in its order, and the corpus test in `sanitize.test.ts` asserts the
+//      property that makes them a re-run -- this layer never draws a value the
+//      recorder would have changed. The two rules this layer cannot reproduce
+//      (the people pass and the installation's literals) are named where the
+//      list is, in `FREE_TEXT_RULES`, and neither is approximated.
 //   3. **the text can be a shape it must not be.** A repository name that is
 //      not `owner/name`, a URL with `javascript:` in it, a path: the classes
 //      below are deny-by-default, so a value that is not the class the wire key
@@ -32,8 +36,11 @@
 // recorder's vocabulary is *copied* rather than imported: `src/source/redact.ts`
 // reaches for `node:crypto`, and a `shared/` module that imported it would be a
 // module the renderer cannot load. `sanitize.test.ts` holds the two copies
-// equal by equality and by running both over the same inputs, so a drift on
-// either side fails a test rather than a screen.
+// equal by equality and by running both over the same corpus, so a drift on
+// either side fails a test rather than a screen. The corpus test is
+// one-directional on purpose: this layer is allowed to change *more* than the
+// recorder -- it always removes the invisible characters, and it keeps the word
+// `Bearer` where the recorder replaces it -- and is not allowed to change less.
 
 /**
  * TextClass is what a wire key's string is allowed to be. Every string the
@@ -190,6 +197,12 @@ export type SanitizeFlag =
   | 'address-marker'
   /** a hostname or IP became `<host>` */
   | 'host-placeholder'
+  /** a git branch in free text became `<branch>` */
+  | 'branch-placeholder'
+  /** a repository path or a GCP project or bucket in free text became a
+   * placeholder: the recorder's keyed pseudonym where it has one, and
+   * `[redacted]` where this layer has no key to compute one */
+  | 'name-placeholder'
   /** the text was cut at `MAX_TEXT_LENGTH` */
   | 'clipped'
 
@@ -220,24 +233,43 @@ function refuse(reason: string): Sanitized {
 // ---------------------------------------------------------------------------
 
 /**
- * INVISIBLE_RE matches the format characters that change what a string *looks
- * like* without being visible: soft hyphens, bidi overrides, zero-width joins,
- * the Byte Order Mark, and the Arabic letter mark. A run title carrying a bidi
- * override can reverse the text drawn after it, which is how
- * `evil/<U+202E>gpj.exe` reads as `evil/exe.jpg`. It is the IPC layer's own set
- * (`src/main/ipc.ts`), and a test holds the two equal.
+ * INVISIBLE_RE matches what `prepare` strips before any rule runs: every
+ * default-ignorable code point (zero-width spaces and joiners, the soft hyphen,
+ * the variation selectors), every bidi control, and every C0/C1 control but
+ * tab, line feed and carriage return. None of them is visible, so none of them
+ * may split a token, an address or a literal into pieces no rule recognises.
+ *
+ * It is the recorder's own set (`src/source/redact.ts`), copied here rather than
+ * approximated: the hand-written list this replaced carried U+200B..U+200F and
+ * U+FEFF but not the variation selectors, so `gh` + U+FE0F + `p_...` was a token
+ * the recorder redacted and this layer drew. The one addition is U+FFF9..U+FFFB,
+ * the interlinear annotation anchors: the IPC layer refuses them and the Unicode
+ * property does not carry them, and a character that is invisible to every rule
+ * must not be able to split one. The IPC layer's refusal list (`src/main/ipc.ts`)
+ * is a subset of this set, and a test reads that list off the file and holds it
+ * to exactly that.
  */
 const INVISIBLE_RE =
-  /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb]/g
+  /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\ufff9-\ufffb\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
 
 /**
- * CONTROL_RE matches the C0 and C1 control characters other than the four
- * whitespace ones, plus the line and paragraph separators. This is what an ANSI
- * escape sequence is made of: `\x1b[31m` loses its escape and is left as the
- * literal text `[31m`, which is ugly and honest, where a surviving escape would
- * colour -- or, on some terminals, clear -- the operator's screen.
+ * CONTROL_RE matches the line and paragraph separators -- the two separators a
+ * screen must not draw, and the two the recorder's set deliberately keeps. They
+ * are removed rather than flattened, so a sentence that used one to smuggle a
+ * second row past a single-line check has already lost it.
  */
-const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]/g
+const CONTROL_RE = /[\u2028\u2029]/g
+
+/**
+ * prepare is the form every rule reads: NFKC first, so a fullwidth `＠` *is* an
+ * `@` before the address rule looks and a fullwidth `ｓｋ-` prefix is the `sk-`
+ * the token table looks for; then the invisible characters gone, so none of them
+ * can split a shape into pieces no rule recognises. It is the recorder's
+ * `prepare`, copied.
+ */
+function prepare(text: string): string {
+  return text.normalize('NFKC').replace(INVISIBLE_RE, '')
+}
 
 /**
  * CREDENTIAL_ASSIGNMENT_RE matches a key that names a credential and the value
@@ -254,21 +286,24 @@ const CREDENTIAL_ASSIGNMENT_RE =
  * recorder's, character for character, and is assembled from pieces at run time
  * so that no line of this file is itself a credential-shaped string.
  *
- * That is not decoration either. A literal `gh`+`p_` prefix, a literal AWS key
- * id prefix or a literal PEM header in a source file is a line every secret
+ * That is not decoration either. A literal forge prefix, a literal AWS key id
+ * prefix or a literal PEM header in a source file is a line every secret
  * scanner flags, and a scanner's output cannot tell an invented prefix in a
- * regular expression from a leaked key -- which is why the previous revision of
+ * regular expression from a leaked key -- which is why an earlier revision of
  * this task's commit could not be pushed at all. The fragments here are inert on
- * their own; `sanitize.test.ts` asserts each assembled pattern's `source` equals
- * the recorder's own pattern source, character for character, so the assembly
- * cannot drift from the rule it claims to re-apply.
+ * their own; `sanitize.test.ts` runs both this module and the recorder over the
+ * same corpus and asserts that this layer never keeps what the recorder removed,
+ * so the assembly cannot silently drift from the rule it claims to re-apply.
  */
 function shape(fragments: readonly string[], unicode = false): RegExp {
   return new RegExp(fragments.join(''), unicode ? 'gu' : 'g')
 }
 
 /** BEARER_RE matches a `Bearer <credential>` header and keeps the word, so the
- * text reads "Bearer [redacted-token]" rather than losing its context. */
+ * text reads "Bearer [redacted-token]" rather than losing its context. The
+ * recorder replaces the word as well; keeping it is the one difference this
+ * layer makes on purpose, and it is on the safe side of the boundary -- the
+ * credential is gone either way. */
 const BEARER_RE = /\b(Bearer)(\s+)[A-Za-z0-9._~+/-]{12,}=*/gi
 
 /**
@@ -286,9 +321,8 @@ const PEM_RE = shape([
   String.raw`PRIVATE KEY-----`,
 ])
 
-/** GITHUB is the fragment the family patterns below are built around. It is
- * written as one piece so the several patterns that need it stay readable, and
- * short enough that it is not a shape on its own. */
+/** GIT_FORGE, ANTHROPIC_STYLE and the rest are the fragments the family patterns
+ * below are built around, so that no line here spells a prefix out. */
 const GIT_FORGE = 'gh'
 const ANTHROPIC_STYLE = 's'
 const SLACK_STYLE = 'xo'
@@ -303,7 +337,11 @@ const JWT_STYLE = 'ey'
  * GitHub, GitLab, npm, Anthropic/OpenAI-style providers, Slack, AWS and Google
  * issue, a JSON Web Token, a Google OAuth access token and a refresh token. It
  * is a *floor*, not the rule: a value whose key names a credential goes whatever
- * it looks like, and a long high-entropy run is a token whatever its prefix.
+ * it looks like, a percent-encoded or base64-wrapped candidate is decoded first,
+ * and a long high-entropy run is a token whatever its prefix.
+ *
+ * The recorder's ninth and tenth shapes are `BEARER_RE` and `PEM_RE` below,
+ * kept apart only because the first keeps its word.
  */
 export const TOKEN_SHAPES: readonly RegExp[] = Object.freeze([
   shape([
@@ -330,6 +368,8 @@ export const TOKEN_SHAPES: readonly RegExp[] = Object.freeze([
   ]),
 ])
 
+/** ENTROPY_RE is a candidate for the high-entropy rule: a long run of the
+ * characters tokens are made of. */
 const ENTROPY_RE = /(?<![\p{L}\p{N}_+/=.-])[A-Za-z0-9_+/=-]{20,}(?![\p{L}\p{N}_+/=-])/gu
 
 /**
@@ -378,64 +418,392 @@ const PERSON_PSEUDONYM_RE = /^person-[0-9a-f]{8}$/
 /** ANY_PSEUDONYM_RE finds a pseudonym inside free text. */
 const ANY_PSEUDONYM_RE = /(?<![\p{L}\p{N}_-])(?:r-[0-9a-f]{8}(?:\/r-[0-9a-f]{8})?|slug-[0-9a-f]{8}|person-[0-9a-f]{8})(?![\p{L}\p{N}_-])/gu
 
-/** URL_RE finds a URL in free text. It is deliberately greedy about the scheme:
- * anything with `://` is replaced whole, whether or not the console would open
- * it, because a URL in prose is a URL a screenshot can leak -- including its
- * userinfo. */
-const URL_RE = /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s"'`<>\\^|{}[\]]+/g
-/** IPV4_RE finds an address literal, which the recorder redacts as a host. */
-const IPV4_RE = /(?<![\p{L}\p{N}._-])(?:\d{1,3}\.){3}\d{1,3}(?![\p{L}\p{N}._-])/u
+// ---------------------------------------------------------------------------
+// The pattern classes, in the recorder's order. Every pattern below is the
+// recorder's, character for character: the anchor at the start of a run is what
+// keeps it linear in its input, and this layer runs over values the console does
+// not own.
+// ---------------------------------------------------------------------------
 
-// The sentinels hold a pseudonym aside while the rest of the pass runs. They
-// are private-use code points, which no document can carry in practice and
-// which the invisible-character strip above never removes -- so a pseudonym
-// cannot be eaten by the net, and cannot be re-inserted into text that happened
-// to contain the sentinel, because the text cannot contain it.
+/** URL_RE matches every URL. It runs first, so the userinfo, the host and the
+ * path inside a URL never get a chance to be what is replaced. A URL is
+ * replaced WHOLE -- userinfo included -- rather than parsed and rebuilt:
+ * `https://user:pass@host/x` keeps nothing but the marker, and a URL this layer
+ * cannot parse is still a URL this layer will not draw. The scheme starts at the
+ * start of its run, never inside one, so `_https://evil.invalid/x` is a URL and
+ * `xhttps://evil.invalid/x` is not. */
+const URL_RE = /(?<![a-zA-Z0-9+.-])[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s"'`<>]+/g
+
+/** ADDRESS_RE matches an email address **in any script**: a Unicode local part
+ * and a Unicode (IDN) domain. Only the exact marker is left alone. */
+const ADDRESS_RE = /(?<![\p{L}\p{N}\p{M}._%+-])[\p{L}\p{N}\p{M}._%+-]+@[\p{L}\p{N}\p{M}-]+(?:\.[\p{L}\p{N}\p{M}-]+)+/gu
+
+/** BRANCH_RE matches a git branch or ref by its conventional prefix, and any
+ * `refs/heads/...`. A branch with no conventional prefix is found by its field
+ * (`branch`, `base_branch`, ...), not by a pattern. */
+const BRANCH_RE =
+  /\b(?:refs\/(?:heads|tags|remotes)\/[^\s"'`<>,;]+|(?:feature|feat|fix|bugfix|hotfix|chore|release|dependabot|renovate|topic|wip)\/[A-Za-z0-9._/-]+)/g
+
+/** PATH_SEGMENT is one segment of a filesystem path, and ABS_PATH_RE matches a
+ * path rooted at `/` or `~/` with at least two segments. **A space is part of a
+ * segment when more path follows it**, so `/Users/Zora Kell/plan/x` is one path
+ * and a sentence after a path is not. Two slashes is what keeps a sentence from
+ * being eaten: `and/or` is not rooted. */
+const PATH_SEGMENT = String.raw`[^\s\/\\"'\x60<>|;,:()\[\]{}*?]+`
+const ABS_PATH_RE = new RegExp(
+  [
+    String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:[ \t]+SEG)*\/)+SEG`,
+    String.raw`(?:~\/|\/)(?:SEG\/)+SEG`,
+  ]
+    .join('|')
+    .replaceAll('SEG', PATH_SEGMENT),
+  'gu',
+)
+
+/** WIN_PATH_RE matches a Windows path and a UNC path. */
+const WIN_PATH_RE = /(?:\b[A-Za-z]:\\[^\s"'`,;:)\]}]*|\\\\[^\s"'`,;:)\]}]+)/g
+
+/** REPO_TOKEN_RE matches a repository path anywhere a string carries one -- `in
+ * dimipaun/fugaro#412` in a title, `github.com/acme/secret-repo` in a log line.
+ * Every segment must be at least four characters, so the prose pairs `and/or`,
+ * `he/she`, `w/o`, `24/7` are left as written. **The false positive this keeps,
+ * said out loud:** two ordinary words of four characters or more
+ * (`input/output`) are replaced as though they were a repository: that costs a
+ * recorded title's wording, and the other mistake costs a private repository's
+ * name on a screen. */
+const REPO_TOKEN_RE =
+  /(?<![\w./~-])(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+\/)?[A-Za-z0-9][A-Za-z0-9._-]{3,}\/[A-Za-z0-9][A-Za-z0-9._-]{3,}(?![\w/~-])/g
+
+/** GCP_CONTEXT_RE matches a GCP project or bucket *named in a sentence*: `on
+ * project acme-devel-zora`, `projects/123456789012`, `bucket fugaro-runs-x`. A
+ * project ID has no shape of its own, so the word in front of it is the
+ * evidence; an ID with neither a hyphen nor a digit (`project settings`) is
+ * prose and is left. */
+const GCP_CONTEXT_RE = /\b(projects?|buckets?)(\s*[:=/]\s*|\s+)(["'`]?)([a-z0-9][a-z0-9._-]{3,61}[a-z0-9])/giu
+/** RUNS_BUCKET_RE is the runs bucket by its own name (`fugaro-runs-<gcp>`). */
+const RUNS_BUCKET_RE = /\bfugaro-runs-[a-z0-9][a-z0-9._-]*/giu
+
+/** IPV4_RE and IPV6_RE match a network address, with a port when there is
+ * one. */
+const IPV4_RE =
+  /(?<![\p{N}.])(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}(?::\d{1,5})?(?![\p{N}]|\.\d)/gu
+const IPV6_RE =
+  /(?<![\p{L}\p{N}:])(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,7}:(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){0,6})?|::(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){0,6}))(?![\p{L}\p{N}:])/gu
+
+/**
+ * HOST_RE matches a dotted name; `isHostname` decides whether it is a host. A
+ * name is a host when its last label is a known top-level or private suffix
+ * (`com`, `io`, `local`, `internal`, ...), or when it has three labels or more
+ * and its last label is not a file extension. That leaves `redact.ts`,
+ * `README.md`, `config.json`, `node.js` and `e.g.` alone, and takes
+ * `acme-devel-zora-default-rtdb.firebaseio.com` and `zoras-laptop-pro.local`
+ * whole. A machine name is identity -- it names an operator's laptop -- which is
+ * why the recorder redacts one and this layer shows the placeholder.
+ */
+const HOST_RE =
+  /(?<![\p{L}\p{N}\p{M}_.@-])(?:[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}-]{0,61}[\p{L}\p{N}\p{M}])?\.)+\p{L}[\p{L}\p{M}]{1,62}(?![\p{L}\p{N}\p{M}_-]|\.[\p{L}\p{N}])/gu
+const HOST_SUFFIXES: ReadonlySet<string> = new Set(
+  (
+    'com net org io dev app ai co cloud run page site online tech xyz info biz me us uk de fr eu ca au jp cn in nl ' +
+    'se ch es it ru br pl be at dk no fi ie nz sg hk kr tw za mx ar edu gov mil int local localdomain internal ' +
+    'lan home corp intranet localhost goog google gle'
+  ).split(' '),
+)
+const FILE_EXTENSIONS: ReadonlySet<string> = new Set(
+  (
+    'ts tsx js jsx mjs cjs json ndjson md mdx txt log yaml yml toml ini cfg conf go py rb rs java kt c h cc cpp ' +
+    'hpp cs swift sh bash zsh fish ps html htm css scss svg png jpg jpeg gif webp ico pdf csv tsv xml lock sum mod ' +
+    'tf tfvars hcl sql db zip gz tgz tar bz xz dmg pkg deb rpm exe dll so dylib wasm map env pem key crt cer'
+  ).split(' '),
+)
+
+/** isHostname answers whether a HOST_RE match is a host rather than a file name
+ * or an abbreviation. */
+function isHostname(match: string): boolean {
+  const labels = match.toLowerCase().split('.')
+  const last = labels[labels.length - 1] ?? ''
+  if (HOST_SUFFIXES.has(last)) return true
+  return labels.length >= 3 && !FILE_EXTENSIONS.has(last)
+}
+
+/** isAddressMarker answers whether an ADDRESS_RE match is the marker itself. */
+function isAddressMarker(value: string): boolean {
+  return value.toLowerCase() === ADDRESS_PLACEHOLDER
+}
+
+// The sentinels hold a pseudonym aside while the rest of the pass runs. They are
+// private-use code points, which no document can carry in practice and which the
+// invisible-character strip above never removes -- so a pseudonym cannot be
+// eaten by the net, and cannot be re-inserted into text that happened to contain
+// the sentinel, because the text cannot contain it.
 const SENTINEL_START = '\ue000'
 const SENTINEL_END = '\ue001'
 
+/** PERCENT_RUN_RE is a run of the characters a percent-encoded value is made of:
+ * one character class, scanned once. A run with an escape in it
+ * (`PERCENT_ESCAPE_RE`) is decoded before any rule looks at it. */
+const PERCENT_RUN_RE = /[A-Za-z0-9._~+=%-]+/g
+const PERCENT_ESCAPE_RE = /%[0-9A-Fa-f]{2}/
+
+/** UTF8_ENCODER and UTF8_DECODER are the Web standards for turning a code point
+ * into the bytes a percent escape encodes, and back. They are globals rather
+ * than imports: `shared/` may import nothing at run time, and the renderer has
+ * no `Buffer` -- which is what the recorder's own decoder uses. */
+const UTF8_ENCODER = new TextEncoder()
+const UTF8_DECODER = new TextDecoder('utf-8')
+
 /**
- * neutralise replaces everything credential-shaped in free text. The order is
- * the recorder's, and the order matters: a key whose value is a credential goes
- * first, so `Bearer abcdef` does not lose only the word `Bearer`; the shapes go
- * next; the entropy net goes last, over what the shapes left.
- *
- * The pseudonyms are held aside for the duration and put back at the end, so
- * the net cannot see them.
+ * percentDecode decodes every valid escape in a run, leniently (an invalid
+ * escape stays as written), and again while escapes remain -- up to three times,
+ * so `%2540` is an `@`. It is the recorder's decoder, and it is why a token
+ * whose `p` was written `%70` is the token it spells.
  */
-function neutralise(text: string): { readonly text: string; readonly changed: boolean } {
+function percentDecode(run: string): string {
+  let text = run
+  for (let round = 0; round < 3 && PERCENT_ESCAPE_RE.test(text); round += 1) {
+    const bytes: number[] = []
+    for (let i = 0; i < text.length; i += 1) {
+      const hex = text.slice(i + 1, i + 3)
+      if (text[i] === '%' && /^[0-9A-Fa-f]{2}$/.test(hex)) {
+        bytes.push(Number.parseInt(hex, 16))
+        i += 2
+      } else {
+        const point = text.codePointAt(i) ?? 0
+        const character = String.fromCodePoint(point)
+        for (const byte of UTF8_ENCODER.encode(character)) bytes.push(byte)
+        i += character.length - 1
+      }
+    }
+    text = UTF8_DECODER.decode(Uint8Array.from(bytes))
+  }
+  return text
+}
+
+/** WRAPPED_BASE64_RE is a run that could be base64 (standard or URL-safe). */
+const WRAPPED_BASE64_RE = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{16,}={0,2}(?![A-Za-z0-9+/_=-])/g
+
+/** decodeBase64 returns printable text a base64 run decodes to, or null. It is
+ * the recorder's rule with a Web decoder: a run whose text is not mostly
+ * printable is not text, and a run that does not decode is not a candidate. */
+function decodeBase64(run: string): string | null {
+  const standard = run.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = standard + '='.repeat((4 - (standard.length % 4)) % 4)
+  let decoded: string
+  try {
+    const latin1 = atob(padded)
+    const bytes = Uint8Array.from(latin1, (character) => character.charCodeAt(0))
+    decoded = UTF8_DECODER.decode(bytes)
+  } catch {
+    return null
+  }
+  if (decoded.length < 8) return null
+  const printable = decoded.replace(/[^\x20-\x7e]/g, '').length
+  return printable / decoded.length >= 0.9 ? decoded : null
+}
+
+/** hits is `RegExp.test` for a shared, global pattern, re-anchored first. */
+function hits(pattern: RegExp, text: string): boolean {
+  pattern.lastIndex = 0
+  return pattern.test(text)
+}
+
+/** containsSecret answers whether decoded text is credential-shaped. */
+function containsSecret(text: string): boolean {
+  if (TOKEN_SHAPES.some((pattern) => hits(pattern, text))) return true
+  if (hits(BEARER_RE, text) || hits(PEM_RE, text)) return true
+  CREDENTIAL_ASSIGNMENT_RE.lastIndex = 0
+  for (const match of text.matchAll(CREDENTIAL_ASSIGNMENT_RE)) {
+    if (!isMarkerText(match[3] ?? '')) return true
+  }
+  return false
+}
+
+/** Changed is what one run of the rules did: the text, and which classes fired
+ * on it. */
+interface Changed {
+  readonly text: string
+  readonly flags: readonly SanitizeFlag[]
+}
+
+/** OneRule is one pattern class: the flag it raises, and what it does to a
+ * string. A rule leaves a string with nothing of its class in it unchanged,
+ * which is the property the tests walk. */
+interface OneRule {
+  readonly flag: SanitizeFlag
+  readonly apply: (text: string, nested: boolean) => string
+}
+
+/**
+ * FREE_TEXT_RULES are the classes a job's own prose goes through, in the
+ * recorder's order -- and the order is the point: URLs first (they contain
+ * everything else), then credentials, then addresses, branches, paths,
+ * repository paths, GCP names, network addresses, hosts, and the entropy net
+ * last, over what the shapes left.
+ *
+ * **This is the list `src/source/redact.ts` runs**, bar two things this layer
+ * cannot reproduce and does not pretend to:
+ *
+ *   - **the people pass.** The recorder replaces a requester's name everywhere
+ *     the document spells it, from a table of the document's own people; this
+ *     layer sees one string at a time and has no such table. A name is a word
+ *     with no shape, and no pattern can find it. (`schema.ts` gives every
+ *     person-shaped key the `person` class, which is where that value is
+ *     handled.)
+ *   - **the installation's literals.** The recorder holds the operator's own
+ *     project name, paths and hosts, folded; the renderer is not given them, and
+ *     a literal list in the renderer would be a list of the very strings the
+ *     redaction exists to remove.
+ *
+ * Everything else is here. Where the recorder writes a *keyed pseudonym* --
+ * `r-.../r-...` for a repository, `<project>` and `<bucket>` for a GCP name --
+ * this layer writes `[redacted]` for a repository path, because it has no key to
+ * compute a pseudonym with and a made-up one would be worse than a mark: two
+ * repositories would look like one, and a pseudonym the recorder never wrote is
+ * not a marker any later reader can verify. `[redacted]` is in the recorder's
+ * own marker set and says exactly what happened.
+ *
+ * A percent-decoded run is the one recursive case: the rules that find nothing
+ * in the run's own text find something in what it decodes to, and the run is
+ * replaced by the decoded text, redacted -- so `u=ana%40acme.com` loses its
+ * local part too. `nested` is what stops that from recurring.
+ */
+const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
+  { flag: 'replaced-url', apply: (text) => text.replace(URL_RE, URL_PLACEHOLDER) },
+  { flag: 'neutralised-credential', apply: (text, nested) => credentialPass(text, nested) },
+  {
+    flag: 'address-marker',
+    apply: (text) =>
+      text.replace(ADDRESS_RE, (match) => (isAddressMarker(match) ? match : ADDRESS_PLACEHOLDER)),
+  },
+  { flag: 'branch-placeholder', apply: (text) => text.replace(BRANCH_RE, BRANCH_PLACEHOLDER) },
+  {
+    flag: 'path-placeholder',
+    apply: (text) =>
+      text.replace(ABS_PATH_RE, PATH_PLACEHOLDER).replace(WIN_PATH_RE, PATH_PLACEHOLDER),
+  },
+  {
+    flag: 'name-placeholder',
+    apply: (text) =>
+      text.replace(REPO_TOKEN_RE, (match) =>
+        REPO_PSEUDONYM_RE.test(match) ? match : LITERAL_PLACEHOLDER,
+      ),
+  },
+  {
+    flag: 'name-placeholder',
+    apply: (text) =>
+      text
+        .replace(GCP_CONTEXT_RE, (whole, word: string, separator: string, quote: string, id: string) => {
+          if (!/[-\d]/.test(id)) return whole
+          const marker = word.toLowerCase().startsWith('bucket') ? BUCKET_PLACEHOLDER : PROJECT_PLACEHOLDER
+          return `${word}${separator}${quote}${marker}`
+        })
+        .replace(RUNS_BUCKET_RE, BUCKET_PLACEHOLDER),
+  },
+  {
+    flag: 'host-placeholder',
+    apply: (text) =>
+      text.replace(IPV4_RE, HOST_PLACEHOLDER).replace(IPV6_RE, HOST_PLACEHOLDER),
+  },
+  {
+    flag: 'host-placeholder',
+    apply: (text) => text.replace(HOST_RE, (match) => (isHostname(match) ? HOST_PLACEHOLDER : match)),
+  },
+  {
+    flag: 'neutralised-credential',
+    apply: (text) =>
+      text.replace(ENTROPY_RE, (run) => (isHighEntropy(run) ? TOKEN_PLACEHOLDER : run)),
+  },
+])
+
+/**
+ * CREDENTIAL_RULES are the first two of them, and they are the whole pass a
+ * value whose *key* declares what it is goes through. Running the whole list
+ * over such a value would be wrong in both directions: `fixture-owner/fixture-repo`
+ * is a repository path, so the repository rule would replace the very value the
+ * `repository` class exists to validate, and the class would then refuse a
+ * document the recorder wrote. The recorder makes the same split -- a field
+ * class short-circuits, and the pattern classes are for free text -- and the
+ * credential rules stay on for the validating classes because a token is a shape
+ * a validating pattern can accept: a Google access token, dots and all, is a
+ * legal git branch name, and so is a forge token with no underscore in it.
+ */
+const CREDENTIAL_RULES: readonly OneRule[] = Object.freeze(FREE_TEXT_RULES.slice(0, 2))
+
+/**
+ * credentialPass is the recorder's "something credential-shaped" rule: a
+ * percent-encoded run is decoded first, then a base64-wrapped candidate, then
+ * the token families, then an assignment, which keeps its name and loses its
+ * value.
+ */
+function credentialPass(text: string, nested: boolean): string {
+  let out = text.replace(PERCENT_RUN_RE, (run) => {
+    if (!PERCENT_ESCAPE_RE.test(run)) return run
+    const decoded = percentDecode(run)
+    if (containsSecret(decoded) || isHighEntropy(decoded)) return TOKEN_PLACEHOLDER
+    if (nested) return run
+    const redacted = runRules(prepare(decoded), FREE_TEXT_RULES, true).text
+    return redacted === prepare(decoded) ? run : redacted
+  })
+  out = out.replace(WRAPPED_BASE64_RE, (run) => {
+    const decoded = decodeBase64(run)
+    return decoded !== null && containsSecret(decoded) ? TOKEN_PLACEHOLDER : run
+  })
+  for (const pattern of TOKEN_SHAPES) out = out.replace(pattern, TOKEN_PLACEHOLDER)
+  out = out.replace(BEARER_RE, (_match, lead: string) => `${lead} ${TOKEN_PLACEHOLDER}`)
+  out = out.replace(PEM_RE, TOKEN_PLACEHOLDER)
+  out = out.replace(
+    CREDENTIAL_ASSIGNMENT_RE,
+    (whole, name: string, separator: string, value: string) =>
+      isMarkerText(value) ? whole : `${name}${separator}${TOKEN_PLACEHOLDER}`,
+  )
+  return out
+}
+
+/**
+ * runRules runs one list of rules in order and reports what fired. The
+ * pseudonyms are held aside for the duration and put back at the end, so the
+ * entropy net cannot eat a redaction the recorder already made.
+ */
+function runRules(text: string, rules: readonly OneRule[], nested: boolean): Changed {
   const held: string[] = []
   let working = text.replace(ANY_PSEUDONYM_RE, (found) => {
     held.push(found)
     return `${SENTINEL_START}${String(held.length - 1)}${SENTINEL_END}`
   })
-  working = working
-    .replace(BEARER_RE, (_match, lead: string) => `${lead} ${TOKEN_PLACEHOLDER}`)
-    .replace(
-      CREDENTIAL_ASSIGNMENT_RE,
-      (_match, key: string, separator: string) => `${key}${separator}${TOKEN_PLACEHOLDER}`,
-    )
-    .replace(PEM_RE, TOKEN_PLACEHOLDER)
-  for (const shape of TOKEN_SHAPES) working = working.replace(shape, TOKEN_PLACEHOLDER)
-  // The guard is the recorder's, and it is what keeps an identifier an
-  // identifier: only a run that could be a credential is replaced.
-  working = working.replace(ENTROPY_RE, (run) => (isHighEntropy(run) ? TOKEN_PLACEHOLDER : run))
+  const flags: SanitizeFlag[] = []
+  for (const rule of rules) {
+    const next = rule.apply(working, nested)
+    if (next !== working && !flags.includes(rule.flag)) flags.push(rule.flag)
+    working = next
+  }
   for (const [index, pseudonym] of held.entries()) {
     working = working.replace(`${SENTINEL_START}${String(index)}${SENTINEL_END}`, pseudonym)
   }
-  // `changed` is reported because a caller may want to mark a value this pass
-  // altered. It is deliberately NOT what decides whether the text is safe: the
-  // text returned here *is* the safe one, and a caller that dropped it because
-  // it changed would be dropping the sanitized value and drawing the original.
-  return { text: working, changed: working !== text }
+  return { text: working, flags }
 }
 
-/** replaceUrls replaces every URL in free text with the recorder's URL marker.
- * A URL is replaced WHOLE -- userinfo included -- rather than parsed and
- * rebuilt: `https://user:pass@host/x` keeps nothing but the marker, and a URL
- * this layer cannot parse is still a URL this layer will not draw. */
-function replaceUrls(text: string): string {
-  return text.replace(URL_RE, URL_PLACEHOLDER)
+/**
+ * freeText is the pass over one value of one class -- the recorder's own split
+ * between "a field class" and "free text".
+ *
+ * For a sentence or a label the rules read the **prepared** form: NFKC, then the
+ * invisible characters gone. A string in which no rule finds anything is drawn
+ * as it came, minus the invisible characters, which this layer always removes;
+ * one in which a rule finds something is drawn from the prepared form, because
+ * that is the form the rule rewrote. The form as written is tried as well, for
+ * the rare match that only it shows.
+ */
+function freeText(text: string, textClass: TextClass): Changed {
+  const rules = textClass === 'sentence' || textClass === 'label' ? FREE_TEXT_RULES : CREDENTIAL_RULES
+  const prepared = prepare(text)
+  const fromPrepared = runRules(prepared, rules, false)
+  if (fromPrepared.text !== prepared) return fromPrepared
+  if (prepared === text) return fromPrepared
+  // `text` is the caller's already-stripped form, so the value returned here
+  // carries no invisible character whatever the rules did: removing those is
+  // this layer's own rule, not one of the recorder's, and a value drawn with a
+  // bidi override in it is a value a screen can be made to spell something else.
+  return runRules(text, rules, false)
 }
 
 /** isMarkerText says whether a whole string is one redaction, the way the
@@ -458,9 +826,11 @@ const REPOSITORY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 /** SLUG_RE is a bucket key or a task slug: lower case, digits, hyphens. */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,126}$/
 
-/** BRANCH_RE is a git branch or ref: the characters git allows, with the
- * spellings git refuses (`..`, `@{`, a leading `-`, `.lock` at the end). */
-const BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*@\{)(?!.*\/\/)[A-Za-z0-9._/-]{1,255}$/
+/** WHOLE_BRANCH_RE is a git branch or ref: the characters git allows, with the
+ * spellings git refuses (`..`, `@{`, a leading `-`, `.lock` at the end). It is
+ * not the free-text `BRANCH_RE` above, which finds a branch by its conventional
+ * prefix inside a sentence. */
+const WHOLE_BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*@\{)(?!.*\/\/)[A-Za-z0-9._/-]{1,255}$/
 
 /** PROJECT_RE is a Fugaro project name, or a GCP project id. */
 const PROJECT_RE = /^[a-z][a-z0-9-]{0,62}$/
@@ -468,9 +838,10 @@ const PROJECT_RE = /^[a-z][a-z0-9-]{0,62}$/
 /** LOGIN_RE is a forge account name. */
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 
-/** ADDRESS_RE matches an email address in any script. A Unicode local part is
- * legal, so the pattern is Unicode-wide rather than ASCII. */
-const ADDRESS_RE = /^[\p{L}\p{N}\p{M}._%+-]+@[\p{L}\p{N}\p{M}-]+(?:\.[\p{L}\p{N}\p{M}-]+)+$/u
+/** WHOLE_ADDRESS_RE matches an email address in any script. A Unicode local part is
+ * legal, so the pattern is Unicode-wide rather than ASCII. It is not the
+ * free-text `ADDRESS_RE` above, which finds an address inside a sentence. */
+const WHOLE_ADDRESS_RE = /^[\p{L}\p{N}\p{M}._%+-]+@[\p{L}\p{N}\p{M}-]+(?:\.[\p{L}\p{N}\p{M}-]+)+$/u
 
 /** RUN_ID_RE is a Fugaro run id: `YYYYMMDD-HHMMSS-xxxx`. */
 const RUN_ID_RE = /^[0-9]{8}-[0-9]{6}-[a-z0-9]{4}$/
@@ -479,9 +850,9 @@ const RUN_ID_RE = /^[0-9]{8}-[0-9]{6}-[a-z0-9]{4}$/
  * characters, no label starting or ending with a hyphen. */
 const HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/
 
-/** ABS_PATH_RE recognises a value that is a filesystem path, so the `path`
+/** WHOLE_PATH_RE recognises a value that is a filesystem path, so the `path`
  * class can say what it is refusing rather than only that it refused. */
-const ABS_PATH_RE = /^(?:[A-Za-z]:[\\/]|\\\\|\/|~\/)/
+const WHOLE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\\\\|\/|~\/)/
 
 /** LABEL_BREAK_RE is what a label may not contain: a line break. A label with a
  * line break in it is not a long label, it is two rows wearing one cell -- and
@@ -614,7 +985,7 @@ export function sanitizeText(
 
   if (textClass === 'person') {
     // An address loses its local part; a login and a pseudonym are kept.
-    if (ADDRESS_RE.test(text) && !isMarkerText(text)) {
+    if (WHOLE_ADDRESS_RE.test(text) && !isMarkerText(text)) {
       return ok(ADDRESS_PLACEHOLDER, [...flags, 'address-marker'])
     }
     if (isMarkerText(text)) return ok(text, flags)
@@ -624,18 +995,15 @@ export function sanitizeText(
 
   if (textClass === 'host') {
     if (isMarkerText(text)) return ok(text, flags)
-    if (IPV4_RE.test(text) || !HOSTNAME_RE.test(text)) {
+    if (hits(IPV4_RE, text) || !HOSTNAME_RE.test(text)) {
       return ok(HOST_PLACEHOLDER, [...flags, 'host-placeholder'])
     }
     return ok(text, flags)
   }
 
-  const neutralised = neutralise(text)
-  if (neutralised.changed) flags.push('neutralised-credential')
-  text = neutralised.text
-  const withoutUrls = replaceUrls(text)
-  if (withoutUrls !== text) flags.push('replaced-url')
-  text = withoutUrls
+  const rules = freeText(text, textClass)
+  flags.push(...rules.flags)
+  text = rules.text
 
   if (textClass === 'sentence') {
     // An empty sentence is drawn as an empty cell rather than refused: whether
@@ -677,7 +1045,7 @@ export function sanitizeText(
     if (text.endsWith('.lock') || text.endsWith('/') || text.startsWith('/')) {
       return refuse(`${field} is not a valid branch`)
     }
-    return BRANCH_RE.test(text) ? ok(text, flags) : refuse(`${field} is not a valid branch`)
+    return WHOLE_BRANCH_RE.test(text) ? ok(text, flags) : refuse(`${field} is not a valid branch`)
   }
 
   if (textClass === 'project') {

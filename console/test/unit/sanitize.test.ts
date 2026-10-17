@@ -224,7 +224,12 @@ describe('the hostile-title corpus', () => {
     expect(text('a title with a \u0000 nul', 'sentence')).toBe('a title with a nul')
     expect(text('an escape: \u001b[31mred\u001b[0m', 'sentence')).toBe('an escape: [31mred[0m')
     expect(text('pay\u00adpal', 'sentence')).toBe('paypal')
-    expect(text('evil/\u202egpj.exe', 'sentence')).toBe('evil/gpj.exe')
+    // The bidi override is gone, and so is what it was hiding behind: `evil` and
+    // `gpj.exe` are two four-character segments around a slash, which is a
+    // repository path to the recorder and to this layer alike. Both changes are
+    // the point -- the override cannot reorder what is drawn, and the pair
+    // cannot make `gpj.exe` read as though it were the second half of a path.
+    expect(text('evil/\u202egpj.exe', 'sentence')).toBe('[redacted]')
     expect(flags('pay\u00adpal', 'sentence')).toContain('stripped-invisible')
   })
 
@@ -444,6 +449,183 @@ describe('the credential rules', () => {
     expect(bearer).not.toContain(fake.googleAccessToken())
   })
 })
+
+describe('the free-text classes are the recorder\u2019s, class for class', () => {
+  // The finding this block exists for: this layer claimed to re-apply the
+  // recorder's rules while carrying a strict subset of them, so a token split by
+  // a variation selector, a percent-encoded one, a fullwidth prefix, a URL after
+  // a word character, an address, a path, a hostname and a URL containing a
+  // pipe all reached the screen as written. The cases below are those inputs,
+  // one by one, and each is an assertion about the *output* rather than about
+  // the pattern that produced it.
+  const VS16 = String.fromCharCode(0xfe0f)
+  const FULLWIDTH_SK = String.fromCharCode(0xff53, 0xff4b) + '-'
+
+  it('neutralises a token the recorder neutralises, however it was spelled', () => {
+    const token = fake.githubToken()
+    const cases: readonly (readonly [string, string])[] = [
+      // Split by a variation selector: invisible, and not in the hand-written
+      // set this layer used to carry.
+      ['split by a variation selector', `${token.slice(0, 3)}${VS16}${token.slice(3)}`],
+      // Percent-encoded: `%70` is a `p`, and the run is decoded before any rule
+      // looks at it.
+      ['percent-encoded', ['gh', '%70_', 'a'.repeat(36)].join('')],
+      // Base64-wrapped: the decoded text is looked in, not the run.
+      ['base64-wrapped', btoa(fake.googleAccessToken())],
+      // Fullwidth: NFKC turns it into the prefix the table carries.
+      ['written fullwidth', `${FULLWIDTH_SK}${'a'.repeat(24)}`],
+    ]
+    for (const [what, secret] of cases) {
+      const line = text(`the job printed ${secret} here`, 'sentence')
+      expect(line, what).toBe(`the job printed ${TOKEN_PLACEHOLDER} here`)
+      expect(line, what).not.toContain(secret)
+    }
+  })
+
+  it('replaces an address, a path, a hostname and a repository path in a sentence', () => {
+    const cases: readonly (readonly [string, string, string])[] = [
+      ['an address', 'mail ana@acme.invalid now', 'mail redacted@example.invalid now'],
+      ['a path', 'wrote /Users/ana/secret/plan.md today', 'wrote <path> today'],
+      ['a windows path', 'wrote C:\\Users\\ana\\plan.md today', 'wrote <path> today'],
+      ['a hostname', 'dial acme-devel-zora-default-rtdb.firebaseio.com now', 'dial <host> now'],
+      ['a private hostname', 'on zoras-laptop-pro.local now', 'on <host> now'],
+      ['an address literal', 'dial 10.42.7.13:443 now', 'dial <host> now'],
+      ['a repository path', 'in dimipaun/fugaro#412 the fix landed', 'in [redacted]#412 the fix landed'],
+      ['a gcp project', 'on project acme-devel-zora today', 'on project <project> today'],
+      ['a runs bucket', 'wrote to fugaro-runs-acme-x9 today', 'wrote to <bucket> today'],
+      ['a branch', 'merge fix/console-text-path now', 'merge <branch> now'],
+      ['a bare branch', 'merge feat/x for r-4c25cf20/r-f1aa9214', 'merge <branch> for r-4c25cf20/r-f1aa9214'],
+      ['a ref', 'pushed refs/heads/secret-codename now', 'pushed <branch> now'],
+    ]
+    for (const [what, line, expected] of cases) {
+      expect(text(line, 'sentence'), what).toBe(expected)
+    }
+  })
+
+  it('replaces a URL whole, whatever follows it on the line', () => {
+    // The three shapes a URL rule misses when it is not the recorder\u2019s: a
+    // scheme after a word character, a URL whose path holds a `|`, and a scheme
+    // with no dot in it.
+    // The word character stays and the URL goes: the scheme starts at the start
+    // of its own run, so `_` is not part of it -- the recorder leaves it too.
+    expect(text('see _https://evil.invalid/x now', 'sentence')).toBe(`see _${URL_PLACEHOLDER} now`)
+    expect(text('see https://evil.invalid/a|b end', 'sentence')).toBe(`see ${URL_PLACEHOLDER} end`)
+    expect(text('see git+ssh://evil.invalid/x now', 'sentence')).toBe(`see ${URL_PLACEHOLDER} now`)
+    expect(text('see http://user:pass@evil.invalid/x now', 'sentence')).toBe(`see ${URL_PLACEHOLDER} now`)
+  })
+
+  it('says which class it changed, not only that it changed something', () => {
+    expect(flags('mail ana@acme.invalid now', 'sentence')).toContain('address-marker')
+    expect(flags('wrote /Users/ana/plan.md today', 'sentence')).toContain('path-placeholder')
+    expect(flags('on zoras-laptop-pro.local now', 'sentence')).toContain('host-placeholder')
+    expect(flags('merge fix/console-text-path now', 'sentence')).toContain('branch-placeholder')
+    expect(flags('in dimipaun/fugaro#412 it landed', 'sentence')).toContain('name-placeholder')
+    expect(flags('on project acme-devel-zora today', 'sentence')).toContain('name-placeholder')
+  })
+
+  it('keeps the recorder\u2019s identifiers, and the prose that only looks like one', () => {
+    // Every one of these is a false positive the pattern rules are built to
+    // avoid, and a layer that replaced one would be stating that a credential
+    // was found where the recorder found none.
+    for (const line of [
+      'the model claude-sonnet-4-5-20250929 answered',
+      'run 20261015-120000-aa01 stopped',
+      'the console-screens-workflow says so',
+      'the file redact-persons.test.ts is here',
+      'release v1.2.3-rc.4+build.20261015 is out',
+      'slug-6a7c7d06',
+      'the pairs and/or, he/she and 24/7',
+    ]) {
+      expect(text(line, 'sentence'), line).toBe(line)
+    }
+  })
+
+  it('never keeps what the recorder removed, over a corpus of prose', () => {
+    // The property, rather than a list of cases: if this layer drew a value
+    // verbatim, the recorder must have left that value alone too. It is
+    // one-directional on purpose -- this layer is allowed to change *more* than
+    // the recorder (it always removes the invisible characters, and it keeps the
+    // word `Bearer` where the recorder replaces it) and is not allowed to change
+    // less.
+    const recorder = createRedactor()
+    for (const sample of PROSE) {
+      const shown = text(sample, 'sentence')
+      const redacted = recorder.redactText(sample)
+      expect(
+        shown === sample && redacted !== sample,
+        `${sample}: this layer drew it as written and the recorder redacted it`,
+      ).toBe(false)
+    }
+  })
+
+  it('strips every invisible character the IPC layer refuses, and then some', () => {
+    // The claim in `sanitize.ts`\u2019s header: this layer\u2019s set is the
+    // recorder\u2019s, and the IPC layer\u2019s refusal list is a subset of it.
+    // The subset half is read off `src/main/ipc.ts` rather than restated, so the
+    // two cannot drift apart in silence.
+    const ipc = readFileSync(path.join(SRC, 'main', 'ipc.ts'), 'utf8')
+    const classSource = /const INVISIBLE_RE = \/(\[[^\]]+\])/.exec(ipc)?.[1] ?? ''
+    expect(classSource).not.toBe('')
+    const refused = new RegExp(classSource, 'u')
+    const found: number[] = []
+    for (let point = 0; point <= 0xffff; point += 1) {
+      if (refused.test(String.fromCharCode(point))) found.push(point)
+    }
+    expect(found.length).toBeGreaterThan(10)
+    for (const point of found) {
+      const character = String.fromCharCode(point)
+      expect(text(`a${character}b`, 'sentence'), `U+${point.toString(16)}`).toBe('ab')
+    }
+    // And the characters the IPC list does not carry, which is the whole reason
+    // this set is the recorder\u2019s: a variation selector, a word joiner and a
+    // Mongolian vowel separator are invisible to a reader and to every rule, so a
+    // token split by one is a token that has to be found again.
+    for (const point of [0xfe00, 0xfe0f, 0x2060, 0x180e, 0x061c]) {
+      expect(text(`a${String.fromCharCode(point)}b`, 'sentence'), `U+${point.toString(16)}`).toBe('ab')
+    }
+  })
+
+  it('leaves the validating classes their own values', () => {
+    // The split the recorder makes too: a value whose key says what it is runs
+    // the credential and URL rules and is then validated by its class, so a
+    // repository path stays a repository path -- but a token spelled as one of
+    // those values does not survive.
+    expect(text('fixture-owner/fixture-repo', 'repository')).toBe('fixture-owner/fixture-repo')
+    expect(text('feat/console-fixtures', 'branch')).toBe('feat/console-fixtures')
+    const spelledAsABranch = ['feat/', 'ya', '29.', 'b'.repeat(40)].join('')
+    expect(refused(spelledAsABranch, 'branch')).toContain('not a valid branch')
+  })
+})
+
+/** PROSE is the corpus the "not weaker than the recorder" property walks: the
+ * sentences a job writes, plus one of each shape the pattern classes exist for.
+ * It is not a list of expectations (those are above); it is the input set whose
+ * *kept-or-changed* answer has to match the recorder\u2019s. */
+const PROSE: readonly string[] = Object.freeze([
+  'the run finished with no warnings',
+  'a title with <script>alert(1)</script> in it',
+  'the pairs and/or, he/she and 24/7',
+  'the model claude-sonnet-4-5-20250929 answered',
+  'run 20261015-120000-aa01 stopped',
+  'see https://example.invalid/x for the diff',
+  'see _https://evil.invalid/x now',
+  'see https://evil.invalid/a|b end',
+  'mail ana@acme.invalid now',
+  'wrote /Users/ana/secret/plan.md today',
+  'wrote C:\\Users\\ana\\plan.md today',
+  'dial acme-devel-zora-default-rtdb.firebaseio.com now',
+  'on zoras-laptop-pro.local now',
+  'dial 10.42.7.13:443 now',
+  'on project acme-devel-zora today',
+  'wrote to fugaro-runs-acme-x9 today',
+  'in dimipaun/fugaro#412 the fix landed',
+  'merge fix/console-text-path now',
+  'merge feat/x for r-4c25cf20/r-f1aa9214',
+  'pushed refs/heads/secret-codename now',
+  'slug-6a7c7d06',
+  'Authorization: Bearer abcdefghijkl',
+  'API_KEY: hunter2',
+])
 
 describe('the class rules', () => {
   it('names the classes the contract has fields for', () => {
