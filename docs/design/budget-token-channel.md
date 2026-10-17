@@ -1,7 +1,9 @@
 # The budget token's channel
 
-**Status: the decisions are answered (2026-10-15); Slice A is built (the runner side and the token
-package); Slice B (the launcher seals, the retry re-seal, the `tokens/` move) follows.**
+**Status: the decisions are answered (2026-10-15); both halves are built for 0.9.0 — Slice A (the
+runner side and the token package, PR #417) and Slice B (the launcher seals, the retry re-seal, the
+`tokens/` move with its grants, SECURITY.md's two sentences; the pull request stacked on #417).
+Check 60 (owner-run, sandbox only) is written in `docs/gcp-live-checklist.md` and has not run.**
 Phase 3b, Task 3b.1 of [the project-centric plan](../plans/2026-10-14-project-centric.md).
 SECURITY-SENSITIVE: it is flagged for an independent review, and it decides nothing by itself.
 **D14 to D19 are no longer open**: the owner answered all six on 2026-10-15, and each answer is
@@ -38,13 +40,36 @@ two sentences are rewritten with the launcher's seal (D15). Until Slice B the la
 the token plaintext, which is why SECURITY.md's wording is unchanged here: the marker's nature
 change arrives with the launcher, not with the runner that is ready for it.
 
-**One consequence to record for Slice B rather than to build now:** once the launcher seals, the
-key it hands the execution is the same override that the batch backend turns into the job's
-definition, so a batch launch would carry the key in plaintext in the job spec — a location the
-agent cannot read but a peer's `gcloud run jobs describe` could, which is a wider audience than the
-marker's own (compute Task 7, `docs/design/compute-backend.md`). The marker's carrier is settled by
-D15 and this document does not reopen it; the batch path's handling of a secret-bearing override is
-Slice B's to decide, and no batch code changes for Slice A.
+**Slice B is built (2026-10-17), in D19's order.** The launcher draws a 32-byte key per launch
+(`token.NewKey`), seals the token under it and hands the key to the one execution it starts as the
+marker's value (`LaunchSpec.SecretEnv`); a `--retry` re-mints and re-seals under a new key and
+deletes the earlier object first (D17); the launcher's own errors are redacted of the key. The
+object moves to `tokens/<slug>/<run>/budget-token` (`token.ObjectPrefix`), `PutObject` has no
+plaintext form, and the take is read-only — no delete, no fallback keyed on a 403 (§7.2). A mixed
+fleet fails closed both ways: the launcher refuses to mint against a job image whose release base
+predates `sealSince` (the gate D19 allows), and a runner handed a marker of `1` — a launcher from
+before the seal — refuses at the take with the old side named, never reading a plaintext object.
+The grants moved with the object (§7.2, §7.5): the job account's `tokens/<slug>/` is
+`roles/storage.objectViewer` (`google_storage_bucket_iam_member.job_tokens`, in the workflow
+module), and the launchers' conditioned write is widened to `runs/ || tokens/` under the new title
+`fugaro-launchers-runs-tokens`, in Terraform, its precondition and tftest lines, and the four Go
+files that write and re-check it. **The project module of Task 3.2 does not exist on the base this
+was built on**, so the read-only grant is in the per-repository workflow module (`tokens/<slug>/`);
+Task 3.2's shared job must carry the same read-only grant on its own prefix condition, and must not
+add `tokens` to the job's objectUser prefixes.
+
+**The Batch backend refuses a sealed launch (decided in Slice B; an open owner question).** Once
+the launcher seals, the key it hands the execution would, on Batch, become a plain variable of the
+job's definition — Batch has no per-execution override — readable by anyone who can describe the
+job (`gcloud batch jobs describe`, `batch.jobs.get`), a wider and longer-lived audience than the
+Cloud Run override §7.1 prices (compute Task 7, `docs/design/compute-backend.md`). This document
+allows no other carrier: a per-run Secret Manager secret read by the VM's account is C2, rejected
+above (the shared account reads every peer's secret, and revocation is not fail-closed). So the
+launcher hands the key as a *secret* launch variable (`LaunchSpec.SecretEnv`), Cloud Run carries it
+in the override, and Batch refuses the launch before creating anything (`ErrRejected`, the value
+never quoted). Batch's launcher wiring is not built, so no launch reaches this today. **Open for the
+owner:** whether Batch should ever run a budget-on run, and through which carrier — this document
+names none that satisfies §3's constraints.
 
 Every symbol below was read on `next` on 2026-10-15 and is cited by name rather than by line
 number, because the lines move.
