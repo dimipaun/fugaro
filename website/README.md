@@ -62,6 +62,40 @@ consent, no cookie before consent, withdrawal and keyboard reachability. `readme
 refuses a third-party font or script host in the shell's own sources today, and W1.11
 asserts the same over the built HTML's script, link, iframe and image origins.
 
+## The gates
+
+Four checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+with fixtures that keep its refusals running, and none of them needs the network:
+
+- `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
+  `#anchor` to an id in its target, every external link is `https:` on `site.yaml`'s
+  `allowed_hosts`, and every GitHub link into this repository names a path and heading that
+  exist.
+- `test/origins.mjs` — nothing loads from a host that is not this site (images and embeds
+  may also come from `allowed_hosts`), inline scripts are on a hash allow-list, and the one
+  third-party origin D93 admits appears only in the layout's consent-gated loader.
+- `test/a11y.mjs` — after W1.2's contrast cases: lang, one `h1`, no heading jumps,
+  landmarks, a skip link, names and labels, keyboard reachability, focus outlines, a
+  `prefers-reduced-motion` path for every animation, and the shipped tokens equal to the
+  palette in force.
+- `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
+  deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
+  each is about three times what the build of 2026-10-17 needs, and a later optimisation
+  pass tightens them.** The gate itself is not loose: a page or a site over the number
+  fails, and the test keeps a case that proves it. The original derivation (that build plus
+  25%) is in the test's header; a task that needs more raises the number here, in the commit
+  that needs it:
+  - **JavaScript per page:** 100,000 bytes. The site ships no script today; the allowance
+    leaves room for W1.12's consent banner and the logo work without a budget edit.
+  - **Page weight per page:** 662,766 bytes. Three times 220,922 (the heaviest page, the
+    docs hub at 176,737 bytes, plus 25%).
+  - **Whole site:** 1,454,826 bytes. Three times 484,942 (every file in `dist/`, 387,953
+    bytes, plus 25%).
+
+**Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
+best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
+requests and the tests here are hermetic, so a browser-driven audit is not one of them.
+
 The site's other gate is the Go side, which holds every fact to the file it is derived
 from:
 

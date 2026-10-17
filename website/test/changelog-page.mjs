@@ -35,11 +35,12 @@
 
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { linkNodeModules } from './lib/build.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -94,7 +95,7 @@ function build() {
   })
   // The installed tree is symlinked rather than copied: it is the pinned tree `npm ci`
   // wrote, and this file installs nothing (W1.1).
-  symlinkSync(path.join(SITE, 'node_modules'), path.join(root, 'website', 'node_modules'), 'dir')
+  linkNodeModules(path.join(root, 'website', 'node_modules'))
 
   const site = path.join(root, 'website')
   const result = spawnSync(process.execPath, [path.join(site, 'node_modules', 'astro', 'bin', 'astro.mjs'), 'build'], {

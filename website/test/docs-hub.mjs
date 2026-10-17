@@ -29,7 +29,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url'
 // approximation of the rule it is checking agrees with the page's bug instead of catching
 // it (the module's header says what the two approximations got wrong).
 import { headingAnchor } from '../src/lib/github-slug.mjs'
+import { copyRepository } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -398,20 +399,10 @@ test('the reference shows its text unaltered: `--out` keeps two hyphens', () => 
 test('markup planted in the reference source is rendered as text and never as a tag', () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'docs-hub-'))
   try {
-    // A throwaway copy of what the build reads, so the real reference is untouched.
-    // Every page reads files from the repository (the FAQ its provenance documents, the
-    // community page ci.yml and the issue templates), so copy the repository minus what no
-    // page reads, as layout.mjs does; the site itself is copied entry by entry below.
-    const skip = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata', 'website'])
-    for (const entry of readdirSync(REPO)) {
-      if (!skip.has(entry)) cpSync(path.join(REPO, entry), path.join(tmp, entry), { recursive: true })
-    }
-    const site = path.join(tmp, 'website')
-    mkdirSync(site)
-    for (const entry of ['astro.config.mjs', 'package.json', 'tsconfig.json', 'content', 'data', 'src']) {
-      cpSync(path.join(SITE, entry), path.join(site, entry), { recursive: true })
-    }
-    symlinkSync(path.join(SITE, 'node_modules'), path.join(site, 'node_modules'))
+    // A throwaway copy of what the build reads, so the real reference is untouched: the
+    // whole repository but the Go tree, as the other copy-and-build tests take it, because
+    // other pages read root files (LICENSE, SECURITY.md) and .github/ (the community page).
+    const site = copyRepository(tmp)
     const file = path.join(site, 'content', 'cli-reference.md')
     writeFileSync(
       file,
