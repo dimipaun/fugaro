@@ -61,11 +61,7 @@ type statsSeed struct {
 func seedStatsRuns(t *testing.T, f *cloudFixture, seeds []statsSeed, start time.Time) {
 	t.Helper()
 	ctx := context.Background()
-	b, err := blob.OpenBucket(ctx, f.bucket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
+	b := statsBucket(t, f)
 	for i, s := range seeds {
 		id := fmt.Sprintf("%s-1200%02d-abcd", start.Format("20060102"), i)
 		st := runstore.Open(b, appSlug, id)
@@ -94,6 +90,31 @@ func seedStatsRuns(t *testing.T, f *cloudFixture, seeds []statsSeed, start time.
 		if err := st.WriteRecord(ctx, &rec); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// statsBucket opens the fixture's runs bucket directly, for the seeds that
+// write an object the command must survive rather than a well-formed record.
+func statsBucket(t *testing.T, f *cloudFixture) *blob.Bucket {
+	t.Helper()
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close() })
+	return b
+}
+
+// seedStatsCorrupt writes one more run into the bucket whose result.json
+// cannot be read: the object runs ls and budget preview count as unreadable
+// rather than fail on.
+func seedStatsCorrupt(t *testing.T, f *cloudFixture, start time.Time, n int) {
+	t.Helper()
+	ctx := context.Background()
+	id := fmt.Sprintf("%s-1200%02d-abcd", start.Format("20060102"), n)
+	if err := runstore.Open(statsBucket(t, f), appSlug, id).
+		PutFile(ctx, "result.json", []byte(`{"version":1,"run_id":`), "application/json"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -359,6 +380,159 @@ func TestStatsRunsSuppressesSmallSamples(t *testing.T) {
 	}
 	if group, _ := recipes[0].(map[string]any); group["recipe"] != "premium" || group["runs"] != float64(4) {
 		t.Errorf("group = %v", recipes[0])
+	}
+}
+
+// TestStatsRunsWindowIsTheOneWindowAskedFor: the window is a published fact,
+// not an implementation detail -- the two dates, that a run minted before
+// --since is not read at all, that --since 0 means the whole bucket, and that
+// an unusable --since or --min-runs is refused rather than guessed at.
+func TestStatsRunsWindowIsTheOneWindowAskedFor(t *testing.T) {
+	noAgentSession(t)
+	f := newCloudFixture(t)
+	now := time.Now().UTC()
+	var seeds []statsSeed
+	for i := range 21 {
+		seeds = append(seeds, statsSeed{recipe: "standard", duration: time.Duration(600+i) * time.Second, cost: 1})
+	}
+	seedStatsRuns(t, f, seeds, now)
+	// A second batch, older than every window below: it must not be read.
+	seedStatsRuns(t, f, seeds, now.AddDate(0, 0, -200))
+
+	doc := statsRunsJSON(t, f, "aurora")
+	if doc["since"] == "" {
+		t.Fatalf("--since 90d published no start date: %v", doc)
+	}
+	since := statsDate(t, "$.since", doc["since"])
+	until := statsDate(t, "$.until", doc["until"])
+	if got := until.Sub(since); got != 90*24*time.Hour {
+		t.Errorf("the window is %v, want 90 days", got)
+	}
+	// until is the day the command ran -- not a day the fixture chose.
+	if drift := now.Sub(until); drift < 0 || drift > 24*time.Hour {
+		t.Errorf("$.until = %v, want the day of the run (%v)", doc["until"], now)
+	}
+	if runs := statsTotals(t, doc)["runs"]; runs != float64(21) {
+		t.Errorf("totals.runs = %v, want the 21 runs in the window, not the 21 minted 200 days ago", runs)
+	}
+
+	// --since 0: no bound at all, which the table says in words.
+	doc = statsRunsJSON(t, f, "aurora", "--since", "0")
+	if doc["since"] != "" {
+		t.Errorf("--since 0 published a start date: %v", doc["since"])
+	}
+	if runs := statsTotals(t, doc)["runs"]; runs != float64(42) {
+		t.Errorf("--since 0 counted %v runs, want all 42", runs)
+	}
+	table, _, err := execute(t, "stats", "runs", "--project", "aurora", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table, "the whole bucket") {
+		t.Errorf("--since 0 does not say the window is unbounded:\n%s", table)
+	}
+
+	// A window of the operator's own choosing is published as given.
+	doc = statsRunsJSON(t, f, "aurora", "--since", "30d")
+	if got := statsDate(t, "$.until", doc["until"]).Sub(statsDate(t, "$.since", doc["since"])); got != 30*24*time.Hour {
+		t.Errorf("--since 30d published a %v window", got)
+	}
+	table, _, err = execute(t, "stats", "runs", "--project", "aurora", "--since", "30d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table, "(30d)") {
+		t.Errorf("the table does not print --since as it was written:\n%s", table)
+	}
+
+	// A window that cannot be meant, and a threshold that cannot be meant.
+	for _, tc := range []struct {
+		name, want string
+		args       []string
+	}{
+		{"--since", "--since", []string{"stats", "runs", "--project", "aurora", "--since", "yesterday"}},
+		{"--since", "--since", []string{"stats", "runs", "--project", "aurora", "--since", "-1d"}},
+		{"--min-runs", "--min-runs", []string{"stats", "runs", "--project", "aurora", "--min-runs", "0"}},
+	} {
+		t.Run(tc.want+" "+tc.args[len(tc.args)-1], func(t *testing.T) {
+			_, _, err := execute(t, tc.args...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%v = %v, want a refusal naming %s", tc.args, err, tc.want)
+			}
+			if got := ExitCode(err); got != ExitUserError {
+				t.Errorf("exit code = %d, want %d", got, ExitUserError)
+			}
+		})
+	}
+}
+
+// statsRunsJSON runs the command over the fixture and decodes its document.
+func statsRunsJSON(t *testing.T, f *cloudFixture, project string, extra ...string) map[string]any {
+	t.Helper()
+	args := append([]string{"stats", "runs", "--project", project, "--json"}, extra...)
+	out, _, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("%v: %v", args, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+// statsDate reads one of the document's dates.
+func statsDate(t *testing.T, path string, v any) time.Time {
+	t.Helper()
+	s, ok := v.(string)
+	if !ok {
+		t.Fatalf("%s is %T, want a date", path, v)
+	}
+	d, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		t.Fatalf("%s = %q: %v", path, s, err)
+	}
+	return d
+}
+
+// statsTotals reads the document's totals object.
+func statsTotals(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+	totals, ok := doc["totals"].(map[string]any)
+	if !ok {
+		t.Fatalf("totals = %v, want an object", doc["totals"])
+	}
+	return totals
+}
+
+// TestStatsRunsSurvivesARecordItCannotRead: a corrupt or oversized result.json
+// is one run's problem, not the window's -- runs ls and budget preview count
+// such an object as unreadable and go on, and so do the figures: the group is
+// still published and the record is counted as one with no figure, rather than
+// the whole aggregation failing with a remote error.
+func TestStatsRunsSurvivesARecordItCannotRead(t *testing.T) {
+	noAgentSession(t)
+	f := newCloudFixture(t)
+	now := time.Now().UTC()
+	var seeds []statsSeed
+	for i := range 21 {
+		seeds = append(seeds, statsSeed{recipe: "standard", duration: time.Duration(600+i) * time.Second, cost: 1})
+	}
+	seedStatsRuns(t, f, seeds, now)
+	seedStatsCorrupt(t, f, now, 40)
+
+	doc := statsRunsJSON(t, f, "aurora")
+	recipes, _ := doc["recipes"].([]any)
+	if len(recipes) != 1 {
+		t.Fatalf("recipes = %v, want the one group of 21 runs the corrupt record does not belong to", doc["recipes"])
+	}
+	group, _ := recipes[0].(map[string]any)
+	if group["runs"] != float64(21) {
+		t.Errorf("group runs = %v, want 21", group["runs"])
+	}
+	totals := statsTotals(t, doc)
+	if totals["runs"] != float64(21) || totals["runs_without_a_figure"] != float64(1) {
+		t.Errorf("totals = %v, want the corrupt record counted and not grouped", totals)
 	}
 }
 
