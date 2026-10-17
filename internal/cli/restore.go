@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	crm "google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/googleapi"
+	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -48,9 +52,11 @@ import (
 //     it is that path, with a creation in front of it.
 //   - It reads no prior state, anywhere. The state lived in the project that
 //     was lost, so a restore that needed it would fail exactly when it is
-//     needed (the managed-projects Gap's finding 31). The one cloud read it
-//     makes before it creates anything is the OLD project's own creation
-//     fact, which is where the owner's amount is written down (Task 4.2).
+//     needed (the managed-projects Gap's finding 31). The cloud reads it
+//     makes before it creates anything are the OLD project's own creation
+//     fact, which is where the owner's amount is written down (Task 4.2) and
+//     whether that project was managed at all, and whether the NEW project ID
+//     already exists (a restore never adopts one).
 //
 // It is INERT in this release, and it refuses before it reads anything —
 // before the project is selected and before a single cloud call. The reason
@@ -104,10 +110,17 @@ about thirty days, so this is a restore into a new project:
     was created with. No prior state is read: the state lived in the project
     that was lost.
 
-The monthly budget amount is read from the OLD project's own creation fact,
-unless --budget and --budget-currency are given (then nothing is read). The
-billing account is always yours to give: the creation fact is not a credential
-and records none.
+The OLD project's own creation fact is read whenever the old project can
+still be read: a project that is not managed is refused, whatever flags are
+given, and a managed one gives the monthly budget amount unless --budget and
+--budget-currency are given. When the old project cannot be read (deleted,
+closed, not yours to read) the restore proceeds only on --budget and
+--budget-currency. The billing account is always yours to give: the creation
+fact is not a credential and records none.
+
+NEW_PROJECT_ID must not exist: an existing project is refused, never adopted.
+If the creation fails or does not end in a managed project, the local project
+config is put back as it was and the restore can be run again.
 
 Every step is money or permanent, so the project's name is typed at a real
 terminal, and there is no --yes, no --non-interactive and no address argument.
@@ -148,8 +161,10 @@ type restoreRun struct {
 	sel  localcfg.Selection
 	lc   *localcfg.Config // the installation as it is: the project that was lost
 	path string           // the project config's file, which this run moves
-	old  []byte           // its bytes, for the diff and the backup
-	next *localcfg.Config // the config after the move
+	old  []byte           // its bytes, for the diff, the backup and putBack
+	// backup is where writeConfig saved old, named in putBack's message.
+	backup string
+	next   *localcfg.Config // the config after the move
 	// left is what the config's move could not place in the new project, in
 	// the operator's words. It is printed in the run's account.
 	left []string
@@ -164,7 +179,6 @@ type restoreRun struct {
 // confirmation, then the creation, the checkout and the apply — and every
 // refusal before the creation is a hard return.
 func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) error {
-	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
@@ -183,6 +197,34 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	// value, so neither can be left out.
 	if err := managedmode.Shipped().Refuse(); err != nil {
 		return userErr("nothing was restored: %v", err)
+	}
+	return restoreSteps(cmd, o, newID, rootArg)
+}
+
+// restoreManagedApply is the apply a restore ends in: managedApply, the
+// function `fugaro managed apply` runs, and nothing else. It is a variable
+// only so that a test can record that the sequence below reaches it, exactly
+// once and with the new project's root — the gate above keeps the sequence
+// unreachable through the command tree, so nothing else could pin that.
+var restoreManagedApply = managedApply
+
+// restoreSteps is the sequence behind runRestore's refusals: the inputs, the
+// new project's own refusals, the one confirmation, the creation and its
+// verification, the checkout and the apply.
+//
+// The local config moves before the creation (the creating path installs into
+// it, and init refuses a --gcp-project the selected config does not name), so
+// until the creation is verified — the project exists and this run's creation
+// marked it managed — a failure puts the config back to its original bytes
+// (the deferred putBack) and the checkout's fugaro.yaml has not been touched:
+// a retry finds the installation exactly as it was.
+func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (err error) {
+	ctx := cmd.Context()
+	// The coding agent's refusal again, at the head of the sequence itself:
+	// runRestore checks it before the gate, and a caller of this function
+	// that skipped runRestore must not skip it too.
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("nothing was restored: %s", initflow.AgentRefusal(m))
 	}
 	sel, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
@@ -213,6 +255,13 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	if rr.budget, err = rr.budgetOf(ctx, c); err != nil {
 		return err
 	}
+	// The new project must not exist yet: the creating path adopts any
+	// project the caller can read and then writes no creation fact, so a
+	// restore into one would move the installation into a project that is
+	// not managed (and may be someone else's).
+	if err := rr.refuseExisting(ctx); err != nil {
+		return err
+	}
 	// What the config's move will be, before the confirmation rather than
 	// after it: the two things it refuses (a runs_bucket that is not the
 	// installation's default, a terraform.state_bucket of the operator's own)
@@ -229,19 +278,96 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	if err := rr.writeConfig(); err != nil {
 		return err
 	}
+	moved := true
+	defer func() {
+		if moved && err != nil {
+			err = rr.putBack(err)
+		}
+	}()
 	if err := rr.create(ctx); err != nil {
 		return err
 	}
+	if err := rr.verifyCreated(ctx, c); err != nil {
+		return err
+	}
+	// The project exists and this run's creation marked it managed: from here
+	// the config names a project that is the installation's, and it stays.
+	moved = false
 	if err := rr.anchor(cmd); err != nil {
 		return err
 	}
 	// The apply: the same function `fugaro managed apply` runs, so the
 	// preflight allowlist, the gate, the plan-hash re-check, the credential
 	// and the confirmation are the same ones and not a second, weaker path.
-	if err := managedApply(cmd, restoreApplyCloud(o.cloud), rr.root); err != nil {
-		return err
+	if err := restoreManagedApply(cmd, restoreApplyCloud(o.cloud), rr.root); err != nil {
+		return restoreWrap(err, "%s was created and is managed, and the project config names it; the apply did not finish, so run fugaro managed apply %s to finish it (nothing else is left to do but D66's list below, which a finished restore prints)", rr.newID, rr.rootArg)
 	}
 	return rr.report()
+}
+
+// restoreWrap adds what state a failed restore left to err, keeping err's
+// exit code.
+func restoreWrap(err error, format string, args ...any) error {
+	return &ExitError{Code: ExitCode(err), Err: fmt.Errorf("%w. %s", err, fmt.Sprintf(format, args...))}
+}
+
+// refuseExisting is the creation's precondition: NEW_PROJECT_ID is not a
+// project the caller can read. `fugaro init --create-project` adopts any
+// project the caller can read, and a run that adopted one writes no creation
+// fact (it warns that --managed was not applied and succeeds), so without this
+// a restore would move the installation into a project nobody marked — a
+// stale one, or someone else's. The read fails closed: an answer that is not
+// "absent" is a refusal. (A project that exists and that the caller cannot
+// read answers the same as an absent one; the creation then fails as taken,
+// before anything is adopted.)
+func (rr *restoreRun) refuseExisting(ctx context.Context) error {
+	ep := rr.lc.Endpoints
+	pc, err := infra.NewProjectClients(ctx, infra.ProjectEndpoints{ResourceManager: ep.ResourceManager, Firebase: ep.FirebaseManagement, Billing: ep.CloudBilling}, ep.NoAuth, nil)
+	if err != nil {
+		return remote(err)
+	}
+	info, err := infra.ReadProject(ctx, pc, rr.newID)
+	if info.Exists {
+		return userErr("nothing was restored: GCP project %s already exists (%s), and a restore never adopts a project — it creates a new one, which is what makes it managed. Choose a NEW_PROJECT_ID nobody holds", rr.newID, oneLine(info.State))
+	}
+	if err != nil {
+		return userErr("nothing was restored: whether GCP project %s already exists could not be read (%v), and a restore creates its project rather than adopting one, so an unanswered read is a refusal", rr.newID, err)
+	}
+	return nil
+}
+
+// verifyCreated is the creation's postcondition, checked before anything
+// else moves: NEW_PROJECT_ID is managed, by the same fail-closed read every
+// managed command uses. With refuseExisting having seen no such project, a
+// creation fact for it is one this run's creating path wrote. A child init
+// that returned without creating (a declined typed ID, an adopted project, a
+// creation that stopped part way) fails here.
+func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients) error {
+	var s *storage.Service
+	var r *crm.Service
+	if c != nil {
+		s, r = c.Storage, c.CRM
+	}
+	ok, reason, err := managed.IsManaged(ctx, s, r, rr.lc.Name, rr.newID)
+	if err != nil {
+		return userErr("the creation of %s ended, and whether it is managed could not be read: %v", rr.newID, err)
+	}
+	if !ok {
+		return userErr("the creation of %s ended and it is not managed (%s)", rr.newID, reason)
+	}
+	return nil
+}
+
+// putBack is the rollback of the local config's move, for a run that failed
+// after the move and before the new project was verified: the config gets its
+// original bytes back so `fugaro restore` can simply be run again, and the
+// error says what state the run left.
+func (rr *restoreRun) putBack(cause error) error {
+	left := fmt.Sprintf("the checkout's fugaro.yaml was not touched. If the creation got as far as making %s, that project exists and is not this installation's: a restore never adopts an existing project, so retry with another NEW_PROJECT_ID, and shut %s down (gcloud projects delete %s) if it is yours and unwanted", rr.newID, rr.newID, rr.newID)
+	if werr := writeFileAtomic(rr.path, rr.old); werr != nil {
+		return restoreWrap(cause, "nothing was restored, and the project config %s could NOT be put back (%v): it names %s, so copy its backup %s over it by hand before retrying; %s", rr.path, werr, rr.newID, rr.backup, left)
+	}
+	return restoreWrap(cause, "nothing was restored: the project config %s is back as it was (it names %s again, so the restore can be retried); %s", rr.path, rr.lc.GCPProject, left)
 }
 
 // restoreRoot is ROOT as the restore reads it: the absolute root the managed
@@ -308,16 +434,29 @@ func restoreConfigPath(sel localcfg.Selection, lc *localcfg.Config) (string, err
 }
 
 // budgetOf is the monthly amount the new project is created with (D64, Task
-// 4.2), and the billing account it is linked to.
+// 4.2), and the billing account it is linked to — and it is where a restore
+// of a project that is not managed is refused.
 //
-// The flags win, and then nothing is read at all. Without them the amount
-// comes from the OLD project's own creation fact, which is exactly where the
-// owner's choice was written down: ReadBudget is the same read IsManaged is
-// (one object, one proof), so the amount can never come from an object the
-// marker read would refuse. A project whose fact records no amount — a
-// creation before Task 4.2, or one that was not managed — is a refusal naming
-// the flags rather than a number nothing chose: an absent amount is not an
-// unlimited one.
+// The rule (stated in the PR and in docs/design/managed-projects.md's D66
+// row), whatever flags are given:
+//
+//   - The OLD project's creation fact is read whenever the old project can be
+//     read: the project answers Resource Manager, is ACTIVE, and its runs
+//     bucket answers (restoreOldReadable). Then a definite "not managed" is a
+//     refusal — the flags do not change it, because a restore is a rebuild of
+//     a MANAGED project and not a way to make any installation into one — and
+//     a managed one gives the amount, unless --budget and --budget-currency
+//     are given, which then win.
+//   - When the old project cannot be read — deleted, closed, or no longer
+//     the caller's to read: the case a restore is for — there is no fact to
+//     read, and the run proceeds only on --budget and --budget-currency, with
+//     the typed confirmations as designed. Without them it is a refusal
+//     naming the flags: an absent amount is not an unlimited one.
+//   - A read that did not answer (a 5xx, a cancelled context) is a refusal
+//     either way: it is neither "gone" nor "managed".
+//
+// ReadBudget is the same read IsManaged is (one object, one proof), so the
+// amount can never come from an object the marker read would refuse.
 //
 // The billing account has no source to read. The creation fact is not a
 // credential and records no account, so --billing-account is required on
@@ -326,29 +465,84 @@ func restoreConfigPath(sel localcfg.Selection, lc *localcfg.Config) (string, err
 // the fact is the change that would let this step read it instead.
 func (rr *restoreRun) budgetOf(ctx context.Context, c *infra.Clients) (*managed.Budget, error) {
 	o := rr.o
+	old := rr.lc.GCPProject
 	if o.billingAccount == "" {
-		return nil, userErr("a restore creates a project and links it to billing, and --billing-account is required: the creation fact of %s records the monthly amount (Task 4.2) and records no account, so this one is always yours to give, together with --budget and --budget-currency if you do not want the amount read from the fact", rr.lc.GCPProject)
+		return nil, userErr("a restore creates a project and links it to billing, and --billing-account is required: the creation fact of %s records the monthly amount (Task 4.2) and records no account, so this one is always yours to give, together with --budget and --budget-currency if you do not want the amount read from the fact", old)
 	}
+	var flags *managed.Budget
 	switch {
 	case o.budget != 0 && o.budgetCurrency != "":
 		if o.budget < 0 {
 			return nil, userErr("--budget %d: a monthly amount is above 0 (D64 requires one at creation, with no default)", o.budget)
 		}
-		return &managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}, nil
+		flags = &managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}
 	case o.budget != 0 || o.budgetCurrency != "":
-		return nil, userErr("--budget %d with --budget-currency %q: a monthly amount and its currency are one pair, and the creation was required to choose both. Give both, or neither to read them from %s's creation fact", o.budget, o.budgetCurrency, rr.lc.GCPProject)
+		return nil, userErr("--budget %d with --budget-currency %q: a monthly amount and its currency are one pair, and the creation was required to choose both. Give both, or neither to read them from %s's creation fact", o.budget, o.budgetCurrency, old)
 	}
 	if c == nil || c.Storage == nil || c.CRM == nil {
-		return nil, userErr("no client to read %s's creation fact with: give the amount as --budget, --budget-currency and --billing-account together", rr.lc.GCPProject)
+		return nil, userErr("nothing was restored: no client to read %s's creation fact with, and a restore reads it whenever it can, to refuse a project that is not managed", old)
 	}
-	b, ok, reason, err := managed.ReadBudget(ctx, c.Storage, c.CRM, rr.lc.Name, rr.lc.GCPProject)
+	readable, err := restoreOldReadable(ctx, c, old)
 	if err != nil {
-		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and the amount a managed creation was required to choose is recorded in it: %v", rr.lc.GCPProject, err)
+		return nil, userErr("nothing was restored: whether %s can still be read did not get an answer (%v), and a restore reads the old project's creation fact whenever it can", old, err)
+	}
+	if !readable {
+		if flags == nil {
+			return nil, userErr("nothing was restored: %s cannot be read (deleted, closed, or not yours to read), so its creation fact cannot be either. Pass --budget, --budget-currency and --billing-account together: there is no amount to fall back on, and a restore never chooses one for you (D64)", old)
+		}
+		if rr.cmd != nil {
+			fmt.Fprintf(rr.cmd.ErrOrStderr(), "fugaro: %s cannot be read, so its creation fact is not read and the amount is the one given: %d %s\n", old, flags.Amount, oneLine(flags.Currency))
+		}
+		return flags, nil
+	}
+	isManaged, reason, err := managed.IsManaged(ctx, c.Storage, c.CRM, rr.lc.Name, old)
+	if err != nil {
+		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and a restore refuses a project that is not managed: %v", old, err)
+	}
+	if !isManaged {
+		return nil, userErr("nothing was restored: %s can be read and is not managed (%s). A restore rebuilds a managed project, and no flag turns an installation that is not managed into one", old, reason)
+	}
+	if flags != nil {
+		return flags, nil
+	}
+	b, ok, reason, err := managed.ReadBudget(ctx, c.Storage, c.CRM, rr.lc.Name, old)
+	if err != nil {
+		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and the amount a managed creation was required to choose is recorded in it: %v", old, err)
 	}
 	if !ok {
-		return nil, userErr("nothing was restored: %s's creation fact records no monthly amount (%s). Pass --budget, --budget-currency and --billing-account together: there is no amount to fall back on, and a restore never chooses one for you (D64)", rr.lc.GCPProject, reason)
+		return nil, userErr("nothing was restored: %s's creation fact records no monthly amount (%s). Pass --budget, --budget-currency and --billing-account together: there is no amount to fall back on, and a restore never chooses one for you (D64)", old, reason)
 	}
 	return &b, nil
+}
+
+// restoreOldReadable is whether the OLD project can still be read at all:
+// Resource Manager answers it with a number and as ACTIVE, and its default
+// runs bucket answers. A 403 or a 404 from either, a project that is being
+// deleted, or one with no number is "cannot be read" (false, nil) — the state
+// a lost project is in. Any other failure is an error: no answer is not an
+// answer, and budgetOf refuses on it.
+func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string) (bool, error) {
+	gone := func(err error) bool {
+		var ge *googleapi.Error
+		return errors.As(err, &ge) && (ge.Code == http.StatusForbidden || ge.Code == http.StatusNotFound)
+	}
+	p, err := c.CRM.Projects.Get(gcpProject).Context(ctx).Do()
+	switch {
+	case gone(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	case p.ProjectNumber == 0 || (p.LifecycleState != "" && p.LifecycleState != "ACTIVE"):
+		return false, nil
+	}
+	_, err = c.Storage.Buckets.Get("fugaro-runs-" + gcpProject).Context(ctx).Do()
+	switch {
+	case gone(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
 }
 
 // restoreConfig moves a local config from the project that was lost to the
@@ -514,6 +708,7 @@ func (rr *restoreRun) writeConfig() error {
 		if err != nil {
 			return userErr("backing up the project config: %v", err)
 		}
+		rr.backup = backup
 		fmt.Fprintf(w, "backed up the old project config to %s\n", backup)
 	}
 	if err := writeFileAtomic(rr.path, data); err != nil {
@@ -579,6 +774,11 @@ func (rr *restoreRun) create(ctx context.Context) error {
 	args := rr.createArgs()
 	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: creating the project through the same path fugaro init --create-project --managed uses: fugaro init %s\n", strings.Join(args, " "))
 	child := newInitCmd()
+	// The child is run as a root of its own, so cobra would print its error
+	// (raw, past ErrorText's sanitising) and its whole usage before returning
+	// it — and main prints the error again. Both are silenced: the error comes
+	// back to this command and is printed once, sanitised, like any other.
+	child.SilenceErrors, child.SilenceUsage = true, true
 	child.SetArgs(args)
 	child.SetIn(cmd.InOrStdin())
 	child.SetOut(cmd.OutOrStdout())
@@ -670,7 +870,8 @@ func restoreGCPProjectLine(data []byte, oldID, newID string) ([]byte, bool, erro
 		}
 		return out, changed, nil
 	case cur != oldID:
-		return nil, false, byHand("fugaro.yaml names gcp_project: %s, and this restore moves %s to %s (a reviewed value in a committed file is never rewritten)", cur, oldID, newID)
+		// cur is the checkout's own text, which a run can write: one line.
+		return nil, false, byHand("fugaro.yaml names gcp_project: %s, and this restore moves %s to %s (a reviewed value in a committed file is never rewritten)", oneLine(cur), oldID, newID)
 	}
 
 	// The line the restore is for: read, so it is the top-level one the

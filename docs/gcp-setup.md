@@ -578,6 +578,17 @@ At any point before `fugaro-build` is retired:
 
 After `fugaro-build` is retired, a rollback also needs it re-enabled (`gcloud iam service-accounts enable`) and its bindings restored from the snapshot.
 
+## Restoring a managed project
+
+`fugaro restore NEW_PROJECT_ID ROOT` rebuilds a lost managed project from zero into a **new** GCP project ID (a deleted project's ID stays reserved for about thirty days). **It is refused in this release**, like the `fugaro managed apply` it ends with: a coding agent reads that refusal to the user and stops, and never assembles the same sequence by hand. It takes the project's name typed at a real terminal, refuses a coding agent's session, and has no `--yes`. What it does, in order:
+
+- **The old project must have been managed.** Whenever the old project can still be read (it answers, is `ACTIVE`, and its runs bucket answers), its creation fact is read and a project that is not managed is refused, whatever flags are given; a managed one gives the monthly amount unless `--budget` and `--budget-currency` are passed. When it cannot be read (deleted, closed, not yours to read) the restore proceeds only on `--budget` and `--budget-currency`. `--billing-account` is always required: the creation fact records no account.
+- **The new ID must not exist.** A project that already exists is refused before anything is asked or changed: `init --create-project` adopts a readable project and writes no creation fact, so a restore into one would not be managed.
+- **The creation goes through `fugaro init --create-project --managed`**, with its own typed confirmations; the local project config moves to the new ID first (init installs into it). The new project must then read as managed; if the creation fails or does not end managed, the local config is put back byte for byte, the checkout is untouched, and the restore can be run again (with another ID if the project was created).
+- **Then** the checkout's `gcp_project:` line moves (shown as a diff, written on a yes), and the root is applied from zero through `fugaro managed apply`'s own path. No prior state is read.
+
+Nothing is carried across: the runs in flight and their counters, the spend history, the kill switch, the Firestore and RTDB data, the Firestore database's location, the secrets, the plan files and the owner's delete list (`fugaro allow-delete` again; until then every delete and replace is refused) are not restored, and the project layer and the project's recipes are not re-published. The command prints that list at the end.
+
 ## Retiring `fugaro-build`
 
 M4's single build account, `fugaro-build`, could read every repository's secrets and write every registry. After steps 4.5 and 4.6 have built successfully with per-repository accounts, retire it:

@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The restore's tests (plan Task 5.2, design D66): a from-zero apply of a
@@ -255,8 +256,13 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 		}
 	})
 
-	t.Run("the flags win and nothing is read", func(t *testing.T) {
+	// MEDIUM 3's rule, case by case: the old project's fact is read whenever
+	// the old project can be read, flags or not, and a definite "not
+	// managed" is a refusal the flags do not change.
+	t.Run("readable and managed: the flags win for the amount, and the fact is still read", func(t *testing.T) {
 		r := newInitRig(t)
+		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 		lc, err := localcfg.Load(r.cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -264,13 +270,79 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 		rr := &restoreRun{o: restoreOptions{budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc}, lc: lc, newID: restoreNewProj}
 		b, err := rr.budgetOf(ctx, clients(t, r))
 		if err != nil {
-			t.Fatalf("a run given the amount as flags: %v", err)
+			t.Fatalf("a managed old project and the amount as flags: %v", err)
 		}
 		if b.Amount != 9 || b.Currency != "EUR" {
 			t.Errorf("the amount is %d %s, want 9 EUR: the flags are the run's own word", b.Amount, b.Currency)
 		}
-		if n := len(r.gcs.Requests()) + len(r.crm.Requests()); n != 0 {
-			t.Errorf("the amount was given as flags and the old project was read anyway (%d request(s))", n)
+		var reads int
+		for _, req := range r.gcs.Requests() {
+			if req.Method == "GET" && strings.Contains(req.Path, managed.MarkerObject) {
+				reads++
+			}
+		}
+		if reads == 0 {
+			t.Error("the old project could be read and its creation fact was not: the flags must not skip the managed check")
+		}
+	})
+
+	t.Run("readable and not managed: refused, flags or not", func(t *testing.T) {
+		for name, o := range map[string]restoreOptions{
+			"no flags":   {billingAccount: billingAcc},
+			"with flags": {budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc},
+		} {
+			t.Run(name, func(t *testing.T) {
+				r := newInitRig(t)
+				// The old project's own runs bucket, labelled, and no fact:
+				// an installation that was never managed.
+				r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+				lc, err := localcfg.Load(r.cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = (&restoreRun{o: o, lc: lc, newID: restoreNewProj}).budgetOf(ctx, clients(t, r))
+				if err == nil {
+					t.Fatal("a restore of an installation that can be read and is not managed ran on")
+				}
+				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not managed") {
+					t.Errorf("want a user refusal saying the project is not managed, got exit %d: %v", ExitCode(err), err)
+				}
+			})
+		}
+	})
+
+	t.Run("unreadable: proceeds on the flags, and only on them", func(t *testing.T) {
+		for name, gone := range map[string]func(r *initRig, lc *localcfg.Config){
+			// The project answers and its runs bucket is not there.
+			"no runs bucket": func(*initRig, *localcfg.Config) {},
+			// The project itself does not answer (deleted, or not yours).
+			"no project": func(_ *initRig, lc *localcfg.Config) { lc.GCPProject = "proj-gone-9999" },
+		} {
+			t.Run(name, func(t *testing.T) {
+				r := newInitRig(t)
+				lc, err := localcfg.Load(r.cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				gone(r, lc)
+				c := clients(t, r)
+				b, err := (&restoreRun{o: restoreOptions{budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc}, lc: lc, newID: restoreNewProj}).budgetOf(ctx, c)
+				if err != nil {
+					t.Fatalf("an old project that cannot be read, with the amount as flags: %v", err)
+				}
+				if b.Amount != 9 || b.Currency != "EUR" {
+					t.Errorf("the amount is %d %s, want 9 EUR", b.Amount, b.Currency)
+				}
+				_, err = (&restoreRun{o: restoreOptions{billingAccount: billingAcc}, lc: lc, newID: restoreNewProj}).budgetOf(ctx, c)
+				if err == nil {
+					t.Fatal("an old project that cannot be read and no amount ran on")
+				}
+				for _, flag := range []string{"--budget", "--budget-currency", "--billing-account"} {
+					if !strings.Contains(err.Error(), flag) {
+						t.Errorf("the refusal does not name %s: %v", flag, err)
+					}
+				}
+			})
 		}
 	})
 
@@ -291,11 +363,11 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 		}
 	})
 
-	t.Run("nothing readable names the three flags", func(t *testing.T) {
+	t.Run("a managed fact with no amount names the three flags", func(t *testing.T) {
 		r := newInitRig(t)
-		// The old project's runs bucket is there and holds no fact: the
-		// project may have been created before the fact existed at all.
+		// A version-1 fact: managed, from before Task 4.2, with no amount.
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":1,"gcp_project":"`+initProject+`"}`))
 		lc, err := localcfg.Load(r.cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -961,4 +1033,305 @@ func newRestoreRig(t *testing.T) (*projectRig, *localcfg.Config) {
 		t.Fatal(err)
 	}
 	return r, lc
+}
+
+// ------------------------------------------------- the sequence, end to end
+
+// restoreApplyCall is one call the sequence made to the apply it ends in,
+// with what the installation looked like at that moment.
+type restoreApplyCall struct {
+	cloud      cloudOptions
+	root       string
+	configGCP  string // the local config's gcp_project when the apply ran
+	newManaged bool   // whether the new project read as managed then
+}
+
+// recordRestoreApply replaces the apply the restore ends in with a recorder,
+// for the test's lifetime.
+func recordRestoreApply(t *testing.T, r *projectRig) *[]restoreApplyCall {
+	t.Helper()
+	var calls []restoreApplyCall
+	old := restoreManagedApply
+	restoreManagedApply = func(cmd *cobra.Command, o cloudOptions, rootArg string) error {
+		call := restoreApplyCall{cloud: o, root: rootArg}
+		if lc, err := localcfg.Load(r.cfg); err == nil {
+			call.configGCP = lc.GCPProject
+			if c, err := newInitClients(cmd.Context(), lc); err == nil {
+				ok, _, err := managed.IsManaged(cmd.Context(), c.Storage, c.CRM, lc.Name, newProj)
+				call.newManaged = ok && err == nil
+			}
+		}
+		calls = append(calls, call)
+		return nil
+	}
+	t.Cleanup(func() { restoreManagedApply = old })
+	return &calls
+}
+
+// restoreCheckout is a git checkout whose fugaro.yaml names the installation
+// as it is (the project that was lost), and a root directory inside it.
+func restoreCheckout(t *testing.T) (checkout, root string) {
+	t.Helper()
+	checkout = t.TempDir()
+	testutil.Git(t, checkout, "init", "-q")
+	doc := "version: 1\nproject: " + initProjectName + "\ngcp_project: " + initProject + "\nworkflows:\n  default: {}\n"
+	if err := os.WriteFile(filepath.Join(checkout, "fugaro.yaml"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root = filepath.Join(checkout, "infra")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return checkout, root
+}
+
+// restoreManagedOld makes the old project read as managed, with an amount.
+func restoreManagedOld(r *projectRig) {
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
+}
+
+// ttyLines is a terminal's stdin as a program sees it: one Read returns at
+// most the one line typed so far, so a buffered reader in one step (the
+// creating path's) cannot take the lines a later step (the anchor's) reads.
+type ttyLines struct{ rest string }
+
+func (r *ttyLines) Read(p []byte) (int, error) {
+	if r.rest == "" {
+		return 0, io.EOF
+	}
+	line := r.rest
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i+1]
+	}
+	n := copy(p, line)
+	r.rest = r.rest[n:]
+	return n, nil
+}
+
+// restoreStepsWith runs the sequence with stdin as the user's terminal.
+func restoreStepsWith(t *testing.T, r *projectRig, stdin, root string) (string, error) {
+	t.Helper()
+	in := &ttyLines{rest: stdin}
+	restoreTestTerminal(t, in)
+	cmd, out := restoreTestCmdIn(in)
+	cmd.SetContext(t.Context())
+	err := restoreSteps(cmd, restoreOptions{cloud: cloudOptions{config: r.cfg}, billingAccount: billingAcc}, newProj, root)
+	return out.String(), err
+}
+
+// TestRestoreEndsInTheSharedManagedApply pins the call graph the review's
+// mutation found unpinned: the sequence ENDS in the shared managedApply, once,
+// with the new project's root, after the config moved to a project that reads
+// as managed — and the coding agent's refusal stands in front of it.
+func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
+	t.Run("a restore reaches the apply exactly once, on the new project", func(t *testing.T) {
+		r, _ := newRestoreRig(t)
+		restoreManagedOld(r)
+		calls := recordRestoreApply(t, r)
+		checkout, root := restoreCheckout(t)
+		out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+		if err != nil {
+			t.Fatalf("the restore: %v\n%s", err, out)
+		}
+		if len(*calls) != 1 {
+			t.Fatalf("the shared managed apply was called %d time(s), want exactly 1:\n%s", len(*calls), out)
+		}
+		c := (*calls)[0]
+		if c.root != root {
+			t.Errorf("the apply ran root %q, want %q", c.root, root)
+		}
+		if c.cloud.gcpProject != "" || c.cloud.config != r.cfg {
+			t.Errorf("the apply's cloud flags are %+v: --gcp-project dropped, the config passed through", c.cloud)
+		}
+		if c.configGCP != newProj {
+			t.Errorf("when the apply ran the config named %q, want the new project %s", c.configGCP, newProj)
+		}
+		if !c.newManaged {
+			t.Errorf("when the apply ran %s did not read as managed", newProj)
+		}
+		if got, _ := os.ReadFile(filepath.Join(checkout, "fugaro.yaml")); !strings.Contains(string(got), "gcp_project: "+newProj) {
+			t.Errorf("the checkout's line did not move:\n%s\n%s", got, out)
+		}
+		if !strings.Contains(out, "NOT restored") {
+			t.Errorf("the run did not end with D66's list:\n%s", out)
+		}
+	})
+
+	t.Run("a coding agent's session is refused before anything", func(t *testing.T) {
+		r, _ := newRestoreRig(t)
+		restoreManagedOld(r)
+		calls := recordRestoreApply(t, r)
+		_, root := restoreCheckout(t)
+		before := mustRead(t, r.cfg)
+		t.Setenv(agentMarkers[0], "1")
+		out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+		if err == nil || !strings.HasPrefix(err.Error(), "nothing was restored") {
+			t.Fatalf("want the agent refusal, got %v", err)
+		}
+		if out != "" {
+			t.Errorf("an agent's session got as far as printing:\n%s", out)
+		}
+		if len(*calls) != 0 || len(r.crm.Creates()) != 0 {
+			t.Errorf("an agent's session reached %d apply call(s) and %d creation(s)", len(*calls), len(r.crm.Creates()))
+		}
+		if !bytes.Equal(mustRead(t, r.cfg), before) {
+			t.Error("an agent's session changed the project config")
+		}
+	})
+}
+
+// TestRestoreNeverAdoptsAnExistingProject is MEDIUM 1: a NEW_PROJECT_ID that
+// already exists is refused before the confirmation, with nothing changed —
+// init's creating path would adopt it and write no creation fact.
+func TestRestoreNeverAdoptsAnExistingProject(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	r.existing(true)
+	calls := recordRestoreApply(t, r)
+	checkout, root := restoreCheckout(t)
+	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
+	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("want a refusal of an existing project, got %v\n%s", err, out)
+	}
+	if strings.Contains(out, "CONFIRM") {
+		t.Errorf("the refusal came after the confirmation was asked:\n%s", out)
+	}
+	if len(*calls) != 0 || len(r.crm.Creates()) != 0 {
+		t.Errorf("%d apply call(s), %d creation(s) for an existing project", len(*calls), len(r.crm.Creates()))
+	}
+	if !bytes.Equal(mustRead(t, r.cfg), before) || !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+		t.Error("a refused restore changed the project config or the checkout")
+	}
+}
+
+// TestRestoreAFailedCreationPutsTheConfigBack is MEDIUM 2: a creation that
+// does not end in a managed project (here the creating path's typed project
+// ID is declined) puts the local config back byte for byte, leaves the
+// checkout alone, never reaches the apply, says what state it left — and a
+// retry of the same command then works.
+func TestRestoreAFailedCreationPutsTheConfigBack(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	calls := recordRestoreApply(t, r)
+	checkout, root := restoreCheckout(t)
+	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
+
+	declined := initProjectName + "\n" + "not-the-id\n" + billingAcc + "\n" + initProjectName + "\n"
+	out, err := restoreStepsWith(t, r, declined, root)
+	if err == nil {
+		t.Fatalf("a declined creation ended in success:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "is back as it was") || !strings.Contains(err.Error(), "retried") {
+		t.Errorf("the failure does not say the config was put back and the restore can be retried: %v", err)
+	}
+	if !bytes.Equal(mustRead(t, r.cfg), before) {
+		t.Errorf("the project config was not put back:\n%s", mustRead(t, r.cfg))
+	}
+	if !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+		t.Error("a failed creation moved the checkout's gcp_project: line")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("a failed creation reached the apply %d time(s)", len(*calls))
+	}
+
+	// The retry: the same command, the same ID, typed right this time.
+	out, err = restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err != nil {
+		t.Fatalf("the retry after a failed creation: %v\n%s", err, out)
+	}
+	if len(*calls) != 1 {
+		t.Errorf("the retry reached the apply %d time(s), want 1", len(*calls))
+	}
+}
+
+// TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout: the creating
+// path can succeed and still leave a project that is not managed — its
+// marker write is a warning, never a failure (markCreated). Here the new
+// project's runs bucket reports another project's number, so the marker is
+// refused; the restore must catch that before the checkout's line moves and
+// before the apply, and put the config back.
+func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	r.gcs.DenyWrites("fugaro-runs-"+newProj, managed.MarkerObject)
+	calls := recordRestoreApply(t, r)
+	checkout, root := restoreCheckout(t)
+	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
+	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err == nil || !strings.Contains(err.Error(), "is not managed") {
+		t.Fatalf("want the creation's verification to refuse, got %v\n%s", err, out)
+	}
+	if len(r.crm.Creates()) != 1 {
+		t.Errorf("%d creation(s), want 1: the case is a creation that ran and ended unmarked", len(r.crm.Creates()))
+	}
+	if len(*calls) != 0 {
+		t.Errorf("an unmarked project reached the apply %d time(s)", len(*calls))
+	}
+	if !bytes.Equal(mustRead(t, r.cfg), before) || !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+		t.Error("an unmarked creation left the project config or the checkout moved")
+	}
+}
+
+// TestRestoreVerifiesTheCreatedProjectIsManaged: the check between the
+// creation and the move of the checkout reads the new project's fact
+// fail-closed — a fact about another project (the mismatch infra/managed's
+// own suite refuses) fails the restore here too, and the right one passes.
+func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
+	for name, tc := range map[string]struct {
+		fact string
+		ok   bool
+	}{
+		"the new project's own fact": {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`, true},
+		"a fact about another":       {`{"version":2,"gcp_project":"someone-else-1","budget":{"amount":7,"currency":"USD"}}`, false},
+		"no fact":                    {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, lc := newRestoreRig(t)
+			r.crm.AddProject(newProj, int64(gcpfake.FirstCreatedProjectNumber))
+			if tc.fact != "" {
+				r.gcs.Put("fugaro-runs-"+newProj, managed.MarkerObject, []byte(tc.fact))
+			}
+			c, err := newInitClients(t.Context(), lc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = (&restoreRun{lc: lc, newID: newProj}).verifyCreated(t.Context(), c)
+			if (err == nil) != tc.ok {
+				t.Errorf("verifyCreated = %v, want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}
+
+// TestRestoreChildPrintsNoRawErrorOrUsage is LOW 5: the creating path runs as
+// a cobra root of its own, and its failure must come back to this command
+// (printed once by main, through ErrorText) — not as cobra's own raw
+// "Error: …" line plus init's whole usage.
+func TestRestoreChildPrintsNoRawErrorOrUsage(t *testing.T) {
+	r, lc := newRestoreRig(t)
+	cmd, out := restoreTestCmd("")
+	rr := &restoreRun{cmd: cmd, lc: lc, newID: newProj, path: r.cfg,
+		o:      restoreOptions{billingAccount: billingAcc, parent: "not-a-parent"},
+		budget: &managed.Budget{Amount: 7, Currency: "USD"}}
+	if err := rr.create(t.Context()); err == nil {
+		t.Fatalf("an invalid --parent was accepted:\n%s", out)
+	}
+	if strings.Contains(out.String(), "Usage:") || strings.Contains(out.String(), "Error:") {
+		t.Errorf("the child printed its own error or usage:\n%s", out)
+	}
+}
+
+// TestRestoreGCPProjectLineSanitisesTheCheckoutsValue is LOW 7: the value a
+// refusal quotes from fugaro.yaml is the checkout's, which a run can write.
+func TestRestoreGCPProjectLineSanitisesTheCheckoutsValue(t *testing.T) {
+	doc := "version: 1\nproject: x\ngcp_project: \"evil\\e[2J\\nproj\"\n"
+	_, _, err := restoreGCPProjectLine([]byte(doc), initProject, restoreNewProj)
+	if err == nil {
+		t.Fatal("a third value was rewritten")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b\n") {
+		t.Errorf("the refusal quotes the checkout's value raw: %q", err.Error())
+	}
 }
