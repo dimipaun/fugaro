@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // allowedTypes are the resource types our embedded modules declare
@@ -449,7 +450,7 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		return []string{"no plan"}
 	}
 	var out []string
-	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
+	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	// What this plan creates, by module: a computed member or role is trusted
 	// only when the resource it comes from is created in the same module.
 	creates := map[string]bool{}

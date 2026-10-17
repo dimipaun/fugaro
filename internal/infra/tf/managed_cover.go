@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The managed project's instantiation of Cover (Task 1.1 of
@@ -294,7 +296,7 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	out := append(managedPlanFields(p), managedConfiguration(p)...)
 	out = append(out, c.managedProviderProject(p)...)
 	declared := managedConfigResources(p.Configuration)
-	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
+	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
 		// What runs besides the resource's API calls, before its actions: a
@@ -532,9 +534,9 @@ func managedConfiguration(p *Plan) []string {
 			addr := prefix + r.Address
 			switch {
 			case len(r.Provisioners) > 0:
-				out = append(out, addr+" (a provisioner, which runs a command or a file copy at apply on the machine that applies: a managed plan declares none)")
+				out = append(out, safetext.Field(addr)+" (a provisioner, which runs a command or a file copy at apply on the machine that applies: a managed plan declares none)")
 			case r.Mode != "managed":
-				out = append(out, addr+" ("+managedModeReason(r.Mode)+")")
+				out = append(out, safetext.Field(addr)+" ("+managedModeReason(r.Mode)+")")
 			}
 		}
 		for _, name := range slices.Sorted(maps.Keys(m.ModuleCalls)) {

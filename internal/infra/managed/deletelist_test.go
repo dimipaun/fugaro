@@ -855,3 +855,31 @@ func TestReadDeleteListForWriteRefusesNoClient(t *testing.T) {
 		})
 	}
 }
+
+// GuardAllowList repeats the run's own command-line addresses in its refusal,
+// and a coding agent may have written that command line: each is one bounded
+// field — no C1 control, no bidi override, no newline, no 10k run (Task 3.2's
+// review, finding 4).
+func TestGuardAllowListBoundsTheAddressesItRepeats(t *testing.T) {
+	s, bucket := seedDeleteList(t, deleteListJSON)
+	for name, v := range map[string]string{
+		"C1 CSI":        "google_storage_bucket.a" + string(rune(0x9b)) + "31m",
+		"bidi override": "google_storage_bucket.a" + string(rune(0x202e)) + "gnp.exe",
+		"newline":       "google_storage_bucket.a\nforged line",
+		"10k":           "google_storage_bucket.a" + strings.Repeat("x", 10000),
+	} {
+		_, err := GuardAllowList(context.Background(), s, bucket, testProject, testProjectNumber, []string{v})
+		if err == nil {
+			t.Fatalf("%s: the command line's address was accepted", name)
+		}
+		msg := err.Error()
+		for _, r := range msg {
+			if (r >= 0x80 && r <= 0x9f) || r == 0x202e || r < 0x20 {
+				t.Errorf("%s: the refusal carries %U:\n%q", name, r, msg)
+			}
+		}
+		if strings.Contains(msg, strings.Repeat("x", 600)) {
+			t.Errorf("%s: the refusal carries the 10k address unbounded", name)
+		}
+	}
+}
