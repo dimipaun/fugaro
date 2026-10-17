@@ -172,13 +172,13 @@ func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project,
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&m); err != nil {
-		return false, fmt.Sprintf("gs://%s/%s is not a marker: %v", bucket, MarkerObject, err), nil
+		return false, fmt.Sprintf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err), nil
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return false, fmt.Sprintf("gs://%s/%s is not a marker: it holds more than one JSON value", bucket, MarkerObject), nil
+		return false, fmt.Sprintf("gs://%s/%s is not a marker for %s: it holds more than one JSON value", bucket, MarkerObject, project), nil
 	}
 	if err := checkMarkerShape(data); err != nil {
-		return false, fmt.Sprintf("gs://%s/%s is not a marker: %v", bucket, MarkerObject, err), nil
+		return false, fmt.Sprintf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err), nil
 	}
 	if m.Version != MarkerVersion {
 		return false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows version %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, project), nil

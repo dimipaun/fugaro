@@ -27,13 +27,123 @@ import (
 type Plan struct {
 	FormatVersion   string           `json:"format_version"`
 	ResourceChanges []ResourceChange `json:"resource_changes"`
+	// Configuration is the plan's configuration, nil when the document has
+	// none. Only the managed cover reads it (ManagedCover): what runs at apply
+	// besides the resources' own API calls — a provisioner, a provider, a data
+	// source — is declared there and not in resource_changes.
+	Configuration *Configuration `json:"configuration"`
+
+	// fields is every top-level key of the document, decoded or not: the
+	// managed cover refuses a key it does not know carries nothing that runs
+	// (action_invocations, deferred_changes, or one a later terraform adds),
+	// which a struct of the known fields alone would drop unseen.
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a plan and keeps its top-level keys (fields).
+func (p *Plan) UnmarshalJSON(data []byte) error {
+	type plain Plan
+	if err := json.Unmarshal(data, (*plain)(p)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &p.fields)
 }
 
 // ResourceChange is one entry of a plan's resource_changes.
 type ResourceChange struct {
 	Address string `json:"address"`
-	Type    string `json:"type"`
-	Change  Change `json:"change"`
+	// Mode is "managed" for a resource and "data" for a data source.
+	Mode string `json:"mode"`
+	Type string `json:"type"`
+	// ProviderName is the provider's full source address, such as
+	// registry.terraform.io/hashicorp/google.
+	ProviderName string `json:"provider_name"`
+	Change       Change `json:"change"`
+}
+
+// Configuration is what the managed cover reads of a plan's configuration:
+// the providers it declares and the resources of every module it calls.
+type Configuration struct {
+	ProviderConfig map[string]ProviderConfig `json:"provider_config"`
+	RootModule     ConfigModule              `json:"root_module"`
+
+	// fields are its keys, as Plan's are; raw is the whole of it, which the
+	// managed cover reads for references to an ephemeral resource wherever an
+	// expression carries one.
+	fields map[string]json.RawMessage
+	raw    json.RawMessage
+}
+
+// UnmarshalJSON decodes a configuration and keeps its keys and its text.
+func (c *Configuration) UnmarshalJSON(data []byte) error {
+	type plain Configuration
+	if err := json.Unmarshal(data, (*plain)(c)); err != nil {
+		return err
+	}
+	c.raw = slices.Clone(data)
+	return json.Unmarshal(data, &c.fields)
+}
+
+// ProviderConfig is one entry of a configuration's provider_config: a
+// provider the configuration requires or configures, in any module. The key
+// is "<name>", "<name>.<alias>" or "<module address>:<name>".
+type ProviderConfig struct {
+	Name              string `json:"name"`
+	FullName          string `json:"full_name"`
+	Alias             string `json:"alias"`
+	ModuleAddress     string `json:"module_address"`
+	VersionConstraint string `json:"version_constraint"`
+	// Expressions are the settings of the provider block, each as terraform
+	// writes an expression ({"constant_value": ...} or {"references": [...]})
+	// or, for a nested block, a list of them; kept raw so a setting of any
+	// shape is read rather than failing the whole plan.
+	Expressions map[string]json.RawMessage `json:"expressions"`
+
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a provider entry and keeps its keys.
+func (pc *ProviderConfig) UnmarshalJSON(data []byte) error {
+	type plain ProviderConfig
+	if err := json.Unmarshal(data, (*plain)(pc)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &pc.fields)
+}
+
+// ConfigModule is one module of a configuration: its resources, and the
+// modules it calls with theirs.
+type ConfigModule struct {
+	Resources   []ConfigResource      `json:"resources"`
+	ModuleCalls map[string]ModuleCall `json:"module_calls"`
+
+	// fields are its keys, as Plan's are: an action block shows here (as
+	// "actions") and nowhere a struct of resources would read.
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a module and keeps its keys.
+func (m *ConfigModule) UnmarshalJSON(data []byte) error {
+	type plain ConfigModule
+	if err := json.Unmarshal(data, (*plain)(m)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &m.fields)
+}
+
+// ConfigResource is a resource or data block of a configuration, with the
+// provisioners declared on it. Address is relative to its module.
+type ConfigResource struct {
+	Address      string            `json:"address"`
+	Mode         string            `json:"mode"`
+	Type         string            `json:"type"`
+	Provisioners []json.RawMessage `json:"provisioners"`
+}
+
+// ModuleCall is a module block of a configuration and the module it calls.
+type ModuleCall struct {
+	Source string       `json:"source"`
+	Module ConfigModule `json:"module"`
 }
 
 // Change is what a plan will do to one resource instance.

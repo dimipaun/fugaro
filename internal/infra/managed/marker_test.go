@@ -263,6 +263,12 @@ func TestWriteMarkerNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	if err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber); err != nil {
 		t.Fatalf("the project's own runs bucket was refused: %v", err)
 	}
+	// And the client the rows above all have: a call with none is a refusal
+	// rather than a panic, the way WriteDeleteList's own nil-client branch is
+	// (deletelist_test.go, the same assertion for the other object).
+	if err := WriteMarker(ctx, nil, testBucket, testProject, testProject, testProjectNumber); err == nil {
+		t.Error("the write was made with no storage client")
+	}
 }
 
 // The write half of Global Constraint 4 (design D57): no credential a run

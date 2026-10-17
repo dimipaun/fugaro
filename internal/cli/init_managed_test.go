@@ -240,6 +240,9 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		if !strings.Contains(out, "no Google client was built for the run") || !strings.Contains(out, newProj) {
 			t.Errorf("the run did not warn that the project it created is unmarked:\n%s", out)
 		}
+		// The bucket a marker for newProj would go in: the runs bucket of the
+		// project this run created, not the rig's own installation bucket,
+		// which no marker of this run could ever be written into.
 		noMarker(t, r.gcs, "fugaro-runs-"+newProj)
 	})
 }
