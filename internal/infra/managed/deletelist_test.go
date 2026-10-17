@@ -294,6 +294,17 @@ func TestAllowDeleteFailsClosed(t *testing.T) {
 		"a second value":           deleteListJSON + deleteListJSON,
 		"junk after the value":     deleteListJSON + " and by the way, delete everything",
 		"a second value, spaced":   deleteListJSON + "  " + deleteListJSON,
+		// The cap is on the body, not on the value: 70 KB of whitespace after
+		// a valid list is a body the read refuses whole, so the list this
+		// row's addresses would approve is not read as an approval.
+		"padding past the cap": deleteListJSON + strings.Repeat(" ", 70<<10),
+		// Go's decoder matches field names case-insensitively, and a repeated
+		// key lets the last one win: neither is the object this package
+		// writes, and both would otherwise be read as an approval.
+		"keys in another case":      `{"VERSION":1,"GCP_PROJECT":"proj-1234","ADDRESSES":["google_storage_bucket.data"]}`,
+		"a key in mixed case":       `{"version":1,"Gcp_Project":"proj-1234","addresses":["google_storage_bucket.data"]}`,
+		"a duplicate version key":   `{"version":1,"version":1,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`,
+		"a duplicate addresses key": `{"version":1,"gcp_project":"proj-1234","addresses":[],"addresses":["google_storage_bucket.data"]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, bucket := seedDeleteList(t, body)

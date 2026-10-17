@@ -18,17 +18,29 @@ import (
 const (
 	// AllowDeleteObject is the owner's per-address approval of the deletes
 	// and replacements a run may make in this project: an object at the root
-	// of the runs bucket, beside fugaro/managed.json (design D74). A run
-	// never deletes or replaces anything without the address being on this
-	// list (D72), so the list is what stands between a coding agent's session
-	// and the owner's infrastructure.
+	// of the runs bucket, beside fugaro/managed.json (design D74). A managed
+	// apply takes its allow-list from this object rather than from the command
+	// line of whatever session is applying (D72), so the list is the boundary
+	// the applying credentials cannot move.
 	//
 	// The root is the whole point, for the same reason MarkerObject's is: the
 	// bucket's grants to a run's job account, a build account and a launcher
 	// are all conditioned to a prefix below it (gcp.JobBucketPrefixes,
 	// gcp.BuildBucketPrefixes, gcp.LauncherBucketCondition), so no credential
-	// a run holds has a write path to this key. The identity that does is
-	// the operator's own, through fugaro allow-delete.
+	// a run holds has a write path to this key — and by D75's answer neither
+	// has the deployer service account the managed apply impersonates (Task
+	// 1.5). The identity that does is the operator's own, through fugaro
+	// allow-delete.
+	//
+	// What it is not, stated rather than implied (the plan's step 4): a
+	// boundary against a coding agent's session. That session runs under the
+	// OPERATOR's credentials, so it can write this object directly — gcloud
+	// storage cp — and it can unset the marker in its own environment and run
+	// the owner's command itself; SECURITY.md records the wider fact this sits
+	// inside, that a project Owner or Editor, or anyone with a project-level
+	// storage role, bypasses the bucket's policy regardless. The writer's
+	// marker refusal is a speed bump against an agent that goes through the
+	// program, not a wall against one that goes around it.
 	//
 	// It is a second object rather than a field of the marker because of how
 	// fugaro init works: it rewrites the installation's terraform.tfvars.json
@@ -150,7 +162,9 @@ func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject
 // It fails closed, and it is fail-closed in the direction that matters: no
 // addresses, and no error a caller could read as "proceed". An absent object,
 // an empty list, an object of another project or of an unknown version, a
-// blank address, a body this package cannot parse, a bucket that is not the
+// blank address, a body this package cannot parse, one whose top-level fields
+// are not exactly the three this package writes or which repeats one of them
+// (strictFields), one past allowDeleteMaxBytes, a bucket that is not the
 // project's own, a read that fails, an argument that is missing — each is the
 // empty list. The gate that acts on the answer is the fail-closed one
 // (tf.Guard: a delete or a replace not named here is refused), so an empty
@@ -175,6 +189,9 @@ func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 		return nil, nil
 	}
 	var d DeleteList
+	if err := strictFields(data); err != nil {
+		return nil, nil
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	// A field this package does not write is refused rather than ignored: the
 	// object is written by fugaro allow-delete alone, so a fourth field means
@@ -212,6 +229,60 @@ func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 		return nil, nil
 	}
 	return slices.Clone(d.Addresses), nil
+}
+
+// deleteListKeys is what DeleteList marshals, exactly: the field names, in the
+// order the object's shape test pins. strictFields walks a body against them.
+var deleteListKeys = []string{"version", "gcp_project", "addresses"}
+
+// strictFields refuses a body whose top-level keys are not exactly the ones
+// DeleteList writes: every key spelled as this package spells it, and none of
+// them twice.
+//
+// It is needed because Go's own decoding is more forgiving than this object
+// can afford. encoding/json matches a field name case-insensitively, so
+// {"VERSION":1,"Gcp_Project":"proj-1234","ADDRESSES":[…]}, which no version of
+// this package has ever written, would be read as an approval; and a repeated
+// key is not an error there either — the last one wins, so a body with two
+// "addresses" keys is believed on the strength of whichever came second. Both
+// are the same "this is not that object" the caller's DisallowUnknownFields
+// refuses a fourth field over, and the addresses in such a body are not read
+// as an approval.
+func strictFields(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return errors.New("not a JSON object")
+	}
+	seen := make(map[string]bool, len(deleteListKeys))
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := kt.(string)
+		if !ok {
+			return errors.New("a key that is not a string")
+		}
+		if !slices.Contains(deleteListKeys, key) {
+			return fmt.Errorf("a field this package does not write: %q", key)
+		}
+		if seen[key] {
+			return fmt.Errorf("the field %q twice", key)
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return err
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // GuardAllowList is the allow-list a command that applies a plan feeds to

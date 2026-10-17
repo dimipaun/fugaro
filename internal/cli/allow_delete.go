@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -19,15 +20,36 @@ import (
 // and D74) is the owner's answer to "may this project ever delete or replace
 // this resource?": a list of Terraform addresses, at the root of the runs
 // bucket, that is the whole of an approval in a managed project — the object
-// an apply reads its allow-list from, rather than its own command line, which
-// belongs to whatever session is applying.
+// the managed apply reads its allow-list from, rather than its own command
+// line, which belongs to whatever session is applying.
 //
-// It is run by the owner, with the owner's own credentials, and it is the
-// only writer of the object. No credential a run holds has a write path to
-// the bucket's root (the job, build and launcher grants are all conditioned
-// to a prefix below it), so a coding agent's session cannot record its own
-// approval — and this command refuses outright when one is present, because a
-// session that holds the operator's credentials could otherwise just ask.
+// It is run by the owner, with the owner's own credentials, and it is the only
+// writer of the object. What that buys, and what it does not — the plan's step
+// 4, stated rather than implied:
+//
+//   - Against a run's own credentials it is a boundary. No credential a run
+//     holds has a write path to the bucket's root (the job, build and launcher
+//     grants are all conditioned to a prefix below it), and by D75's answer
+//     the same holds for the deployer service account the managed apply
+//     impersonates (Task 1.5). An apply through Fugaro's own path therefore
+//     cannot approve its own delete, and the gate that reads this object
+//     (tf.Guard, fed by managed.GuardAllowList) refuses a delete or a
+//     replacement whose address the owner did not name.
+//   - Against a coding agent's session it is a speed bump, not a boundary.
+//     That session runs under the OPERATOR's credentials: it can write this
+//     object directly — gcloud storage cp — and it can unset the marker in its
+//     own environment and run this command itself, since the marker check
+//     below reads an environment the same process controls. SECURITY.md
+//     already records the wider fact this sits inside: a project Owner or
+//     Editor, or anyone with a project-level storage role, bypasses the
+//     bucket's own policy regardless. The refusal below stops an agent that
+//     goes through the program; it does not stop one that goes around it, and
+//     nothing here claims otherwise.
+//
+// And the apply that reads it is not built yet: the managed apply is Task 3.1
+// and the refusal of an applying command's own flag is Task 3.2, so today
+// fugaro init still honours the flag on its own command line. What exists
+// today is the object, its only writer, and its fail-closed read.
 
 // newAllowDeleteCmd is `fugaro allow-delete [ADDRESS...]`.
 func newAllowDeleteCmd() *cobra.Command {
@@ -45,17 +67,32 @@ google_cloud_run_v2_job.web or module.web.google_storage_bucket.data, and
 nothing else is recorded — no note and no reason: the object's own version
 history is the record of who approved what and when.
 
-Run it in your own terminal, as an operator, with your own credentials: the
-object sits where only an operator may write, and a coding agent's session is
-refused (it holds those credentials and could otherwise approve its own
-deletes). Pass the addresses to approve, and they replace the list — a shorter
-list refuses more, so dropping an address is how a delete is refused again.
-With no addresses the command prints the list and writes nothing; it never
-empties the list, because an empty list is what an absent one already means.
+Run it in your own terminal, as an operator, with your own credentials. Pass
+the addresses to approve, and they replace the list: an invocation that leaves
+an address out removes that approval, so the command names the entries it
+would drop and asks for the project's name before writing such a list. With no
+addresses the command prints the list and writes nothing; it never empties the
+list, because an empty list is what an absent one already means.
+
+What the object is for: a run's own credentials, and the deployer account a
+managed apply impersonates, cannot write it, so a managed apply can take its
+allow-list from the owner's object instead of from the command line of
+whatever session is applying. That apply is not built yet — the managed apply
+is Task 3.1, and until it lands fugaro init still honours its own flag. What
+this does not do: a coding agent's session holds the operator's credentials,
+so it can write this object directly (gcloud storage cp) or unset its agent
+marker and run this command itself. The refusal below is a speed bump against
+an agent that uses the program, not a boundary against one that goes around it
+(SECURITY.md records the wider Owner/Editor bypass).
+
+On a project that is not managed, this writes an object nothing reads: the
+check below is that the bucket is the project's own runs bucket, which every
+installation has, not that the project is Fugaro-managed.
 
 The list is read fail-closed: an absent object, an empty one, one naming
-another project, or one this package cannot read is no addresses — and no
-addresses refuses every delete and replacement rather than permitting them.`,
+another project, one whose fields are not exactly the three this command
+writes, or one this package cannot read is no addresses — and no addresses
+refuses every delete and replacement rather than permitting them.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return allowDelete(cmd, o, args)
@@ -114,18 +151,22 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 		return remote(err)
 	}
 	w := cmd.OutOrStdout()
+	// What is approved now, read once and before the write: it is what the
+	// print mode prints, and what tells the write whether it is dropping an
+	// approval the owner gave (a read the command cannot believe is no
+	// addresses, which is what an absent list already means).
+	current, err := managed.AllowDelete(ctx, c.Storage, bucket, lc.GCPProject, number)
+	if err != nil {
+		return remote(err)
+	}
 	if len(approved) == 0 {
-		list, err := managed.AllowDelete(ctx, c.Storage, bucket, lc.GCPProject, number)
-		if err != nil {
-			return remote(err)
-		}
-		if len(list) == 0 {
+		if len(current) == 0 {
 			fmt.Fprintf(w, "gs://%s/%s allows no address: every delete and replacement in %s is refused (no list, an empty one, or one this run cannot read)\n",
 				bucket, managed.AllowDeleteObject, lc.Name)
 			return nil
 		}
-		fmt.Fprintf(w, "gs://%s/%s allows %d address(es) in %s:\n", bucket, managed.AllowDeleteObject, len(list), lc.Name)
-		for _, a := range list {
+		fmt.Fprintf(w, "gs://%s/%s allows %d address(es) in %s:\n", bucket, managed.AllowDeleteObject, len(current), lc.Name)
+		for _, a := range current {
 			fmt.Fprintln(w, a)
 		}
 		return nil
@@ -133,6 +174,21 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	// Sorted and deduplicated, so one approval has one encoding: two people
 	// adding the same two addresses in either order write the same object.
 	approved = slices.Compact(slices.Sorted(slices.Values(approved)))
+	// The write replaces the list, so an invocation that leaves an address out
+	// removes the approval it carried — and an approval dropped without the
+	// owner noticing is a delete refused later for a reason nobody remembers
+	// giving. The entries this write drops are named, and a list that drops any
+	// of them is written only after the project's name is typed.
+	if dropped := droppedFrom(current, approved); len(dropped) > 0 {
+		fmt.Fprintf(w, "gs://%s/%s approves %d address(es) now, and this list leaves out %d of them:\n", bucket, managed.AllowDeleteObject, len(current), len(dropped))
+		for _, a := range dropped {
+			fmt.Fprintln(w, a)
+		}
+		if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, false,
+			fmt.Sprintf("this removes %d address(es) %s had approved: every delete or replacement of them is refused again", len(dropped), lc.Name)); err != nil {
+			return err
+		}
+	}
 	if err := managed.WriteDeleteList(ctx, c.Storage, bucket, lc.GCPProject, number, approved); err != nil {
 		return allowDeleteWriteErr(lc, bucket, err)
 	}
@@ -141,6 +197,18 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 		fmt.Fprintln(w, a)
 	}
 	return nil
+}
+
+// droppedFrom is the addresses current approves that approved does not: the
+// approvals a write of approved removes.
+func droppedFrom(current, approved []string) []string {
+	var out []string
+	for _, a := range current {
+		if !slices.Contains(approved, a) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // allowDeleteWriteErr is what the owner can do about a write that did not

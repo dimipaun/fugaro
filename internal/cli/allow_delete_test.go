@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -32,6 +33,73 @@ func allowDeleteAt(t *testing.T, g *gcpfake.GCS, bucket string) (string, bool) {
 	return string(b), true
 }
 
+// TestAllowDeleteCommandAsksBeforeItDropsAnApproval: the write replaces the
+// list, so an invocation that leaves an address out removes an approval the
+// owner gave — and a silently dropped approval is the fail-closed direction
+// only by accident: the owner believes it is still there. The command names
+// the entries it is about to remove and asks for the project's name before it
+// writes a list that drops any of them.
+func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
+	r := allowDeleteRig(t)
+	if _, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web"); err != nil {
+		t.Fatal(err)
+	}
+	before, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatal("the list was not written")
+	}
+	// No terminal: the removal is refused, and nothing is written.
+	out, _, err := execute(t, "allow-delete", "google_cloud_run_v2_job.web")
+	if err == nil {
+		t.Fatalf("the removal ran without a confirmation:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(out, "google_storage_bucket.data") {
+		t.Errorf("the command does not say which approval it would drop:\n%s", out)
+	}
+	if after, _ := allowDeleteAt(t, r.gcs, initRunsBucket); after != before {
+		t.Errorf("a refused removal changed the list: %s → %s", before, after)
+	}
+	// A terminal, but the wrong name typed: still nothing written.
+	terminal(t, true)
+	out, _, err = executeStdin(t, "not-the-name\n", "allow-delete", "google_cloud_run_v2_job.web")
+	if err == nil {
+		t.Fatalf("a mistyped confirmation wrote the list:\n%s", out)
+	}
+	if after, _ := allowDeleteAt(t, r.gcs, initRunsBucket); after != before {
+		t.Errorf("a mistyped confirmation changed the list: %s → %s", before, after)
+	}
+	// The project's name typed: the shorter list is written.
+	out, _, err = executeStdin(t, initProjectName+"\n", "allow-delete", "google_cloud_run_v2_job.web")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatal("the confirmed removal wrote nothing")
+	}
+	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_cloud_run_v2_job.web"]}`
+	if got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+	// And a write that drops nothing asks nothing: the same list again is not
+	// a removal.
+	if _, _, err := execute(t, "allow-delete", "google_cloud_run_v2_job.web"); err != nil {
+		t.Errorf("re-approving what is already approved asked for a confirmation: %v", err)
+	}
+}
+
+// terminal patches the terminal test budget's way: the command asks for a
+// typed confirmation only when stdin is one.
+func terminal(t *testing.T, is bool) {
+	t.Helper()
+	old := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return is }
+	t.Cleanup(func() { stdinIsTerminal = old })
+}
+
 // TestAllowDeleteCommandWritesTheWholeList is the writer's contract: the
 // owner's approval, recorded at the runs bucket's root, whole on every
 // invocation — a shorter list refuses more, and nothing an owner took off the
@@ -54,7 +122,11 @@ func TestAllowDeleteCommandWritesTheWholeList(t *testing.T) {
 	}
 	// A second invocation with one address replaces the list rather than
 	// merging into it.
-	out, _, err = execute(t, "allow-delete", "google_cloud_run_v2_job.web")
+	// The second invocation drops google_storage_bucket.data, so it is a
+	// removal: it is confirmed the way any removal is (TestAllowDeleteCommand-
+	// AsksBeforeItDropsAnApproval is where that rule is asserted).
+	terminal(t, true)
+	out, _, err = executeStdin(t, initProjectName+"\n", "allow-delete", "google_cloud_run_v2_job.web")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
