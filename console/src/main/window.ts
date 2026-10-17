@@ -207,6 +207,20 @@ export function denyEveryPermission(session: Session): void {
 }
 
 /**
+ * denyPageTitleUpdate stops a loaded document from becoming the window's title.
+ * It is the difference between `consoleWindowTitle` being a decision and being a
+ * suggestion: the document defines a `<title>` (`src/renderer/index.html`, which
+ * the unit test pins), and Electron applies a page's title over the `title` the
+ * window was constructed with, so the mode -- reduced, refused -- would be
+ * dropped on load in every real window. A window title is chrome the console
+ * owns: the page it draws is the console's *content*, and the title that names
+ * what the console made of the CLI is not the page's to overwrite.
+ */
+export function denyPageTitleUpdate(event: NavigationEvent): void {
+  event.preventDefault()
+}
+
+/**
  * ALLOWED_EXTERNAL_HOSTS is the whole of the allow-list for opening a URL in
  * the user's own browser, and it is exactly the three hosts rule 2 names: the
  * two providers' web hosts (`github.com`, `bitbucket.org` -- "both providers'
@@ -318,6 +332,18 @@ async function buildConsoleWindow(
 
   installWebContentsSecurity(window.webContents)
   denyEveryPermission(deps.session)
+
+  // The document may not take the window's title over. Electron applies the
+  // page's `<title>` to the window once the document loads, and Electron's own
+  // typings say that when the HTML defines one the `title` option "will be
+  // ignored" -- `src/renderer/index.html` defines one, so without this handler
+  // the mode `consoleWindowTitle` puts in the title would never reach a real
+  // window, and a reduced or refused console would show the plain title. The
+  // header saying which console this is and what it made of the CLI is design
+  // section 3.4 rule 8's, and a page cannot be the thing that erases it.
+  window.on('page-title-updated', (event) => {
+    denyPageTitleUpdate(event)
+  })
 
   window.once('ready-to-show', () => {
     window.show()

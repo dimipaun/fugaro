@@ -78,6 +78,7 @@ import {
   createRefusalWindow,
   denyEveryPermission,
   denyNavigation,
+  denyPageTitleUpdate,
   denyWebviewAttach,
   denyWindowOpen,
   installWebContentsSecurity,
@@ -86,6 +87,7 @@ import {
   startupWindow,
   validateExternalUrl,
 } from '../../src/main/window'
+import type { NavigationEvent } from '../../src/main/window'
 import {
   CLI_VERSION_BUILT_AGAINST,
   SKEW_HEADLINES,
@@ -102,6 +104,15 @@ import { githubToken } from '../support/fakeSecrets'
 const bundleRoot = fileURLToPath(new URL('../../src/renderer', import.meta.url))
 const indexHTMLPath = fileURLToPath(new URL('../../src/renderer/index.html', import.meta.url))
 const indexHTML = readFileSync(indexHTMLPath, 'utf8')
+
+/**
+ * DOCUMENT_TITLE is the title the loaded document defines, read out of the
+ * document itself rather than written down again: it is the value Electron
+ * offers to the window in place of the `title` option, so a test that wants to
+ * assert what a window's title *ends up* as has to know it. The assertion below
+ * (`is the document the window loads`) pins it as the console's plain title.
+ */
+const DOCUMENT_TITLE = /<title>([^<]*)<\/title>/.exec(indexHTML)?.[1] ?? ''
 
 // The design's own CSP string, section 5.1 rule 3, copied by hand rather than
 // built from the constant it is compared against: a test that assembled its
@@ -604,6 +615,9 @@ describe('createConsoleWindow', () => {
 
     const fakeWindow = {
       webContents: contents.value,
+      on(event: string, listener: () => void) {
+        listeners.set(event, listener)
+      },
       once(event: string, listener: () => void) {
         listeners.set(event, listener)
       },
@@ -663,30 +677,78 @@ describe('createConsoleWindow', () => {
 // correctly.
 // ---------------------------------------------------------------------------
 
+/**
+ * FakeConsoleWindow is one window of `fakeWindowFactory`, and `title` is the
+ * point of it: Electron sets a window's title from the `title` option it was
+ * constructed with and then **replaces** it with the loaded document's
+ * `<title>` unless a `page-title-updated` listener prevents the default. That
+ * rule is modelled here, because it is what makes the assertion about the mode
+ * an assertion about the *outcome* -- the title the window ends up with -- and
+ * not about the option Electron discards when the document defines one (which
+ * `src/renderer/index.html` does; the test below pins it).
+ */
+interface FakeConsoleWindow {
+  /** `title` is the window's current title, as `BrowserWindow.getTitle()` would
+   * report it. */
+  title: string
+  readonly webContents: WebContents
+  /** `pageTitleOffers` is every title the document offered, and whether the
+   * console refused it. */
+  pageTitleOffers: { title: string; prevented: boolean }[]
+  on(event: string, listener: (event: NavigationEvent, title: string) => void): void
+  once(): void
+  show(): void
+  loadURL(url: string): Promise<void>
+}
+
 /** fakeWindowFactory counts every window constructed, records every load, and
- * hands back the fake `webContents` of each so the handler wiring can be
- * checked on the window that was actually built. */
+ * hands back the fake `webContents` and the fake window of each, so the handler
+ * wiring and the title a window ends up with can be checked on the window that
+ * was actually built. */
 function fakeWindowFactory(): {
   BrowserWindow: new (options: BrowserWindowConstructorOptions) => BrowserWindow
   options: BrowserWindowConstructorOptions[]
   loaded: string[]
-  built: unknown[]
+  built: FakeConsoleWindow[]
   contents: FakeWebContents[]
 } {
   const options: BrowserWindowConstructorOptions[] = []
   const loaded: string[] = []
-  const built: unknown[] = []
+  const built: FakeConsoleWindow[] = []
   const contents: FakeWebContents[] = []
   const WindowClass = function (given: BrowserWindowConstructorOptions): object {
     options.push(given)
     const webContents = fakeWebContents()
     contents.push(webContents)
-    const window = {
+    const titleListeners: ((event: NavigationEvent, title: string) => void)[] = []
+    const window: FakeConsoleWindow = {
+      title: typeof given.title === 'string' ? given.title : '',
       webContents: webContents.value,
+      pageTitleOffers: [],
+      on(event: string, listener: (event: NavigationEvent, title: string) => void) {
+        if (event === 'page-title-updated') titleListeners.push(listener)
+      },
       once() {},
       show() {},
       async loadURL(url: string) {
         loaded.push(url)
+        // Electron's rule, in the order Electron applies it: the document's
+        // title (`DOCUMENT_TITLE`, what `src/renderer/index.html` defines) is
+        // offered to the window and becomes its title unless a listener refuses
+        // it -- which is why the `title` option alone is not enough.
+        let prevented = false
+        for (const listener of titleListeners) {
+          listener(
+            {
+              preventDefault: () => {
+                prevented = true
+              },
+            },
+            DOCUMENT_TITLE,
+          )
+        }
+        window.pageTitleOffers.push({ title: DOCUMENT_TITLE, prevented })
+        if (!prevented) window.title = DOCUMENT_TITLE
       },
     }
     built.push(window)
@@ -792,6 +854,69 @@ describe('consoleWindowTitle', () => {
   })
 })
 
+/**
+ * The mode reaches a real window's header. The review of this task found the
+ * `title` option inert: `src/renderer/index.html` defines a `<title>`, and
+ * Electron's own typings say the option "will be ignored" then, so a window
+ * asserted only on the option it was handed proves nothing about what an
+ * operator sees. `fakeWindowFactory`'s window therefore models Electron's rule
+ * (the document's title replaces the option's unless a `page-title-updated`
+ * listener prevents it) and these tests assert the title the window *ends up*
+ * with. `test/e2e/skew.spec.ts` asserts the same thing in a real window, where
+ * Electron itself applies the rule.
+ */
+describe('the title the window ends up with', () => {
+  it('is the console\'s own, with the mode on it, after the document has loaded', async () => {
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value,
+      readVersion: async () => ({ ok: true, stdout: '0.6.9\n' }),
+    })
+    const window = factory.built[0]
+    expect(window?.title).toBe(consoleWindowTitle(startup.compatibility))
+    expect(window?.title).toContain(SKEW_HEADLINES.reduced)
+    expect(window?.title).not.toBe(DOCUMENT_TITLE)
+    // The document offered its title and the console refused it -- so this is
+    // the denial doing the work, and not a document that stayed silent.
+    expect(window?.pageTitleOffers).toEqual([{ title: DOCUMENT_TITLE, prevented: true }])
+  })
+
+  it('says what it refused on the window the refusal screen is drawn in', async () => {
+    const factory = fakeWindowFactory()
+    const built = await createRefusalWindow(
+      { BrowserWindow: factory.BrowserWindow, session: fakeSession().value },
+      classifyCliVersion('0.5.0'),
+    )
+    expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.refused)
+    expect(factory.built[0]?.title).toBe(consoleWindowTitle(classifyCliVersion('0.5.0')))
+    expect(factory.built[0]?.title).not.toBe(DOCUMENT_TITLE)
+    expect(built.title).toContain(SKEW_HEADLINES.refused)
+  })
+
+  it('is the document\'s title when the console does not refuse it -- which is why it does', async () => {
+    // The mutation, as a test: the same options, the same document, and no
+    // `page-title-updated` denial -- exactly what `buildConsoleWindow` did
+    // before the review. The window ends up with the document's plain title and
+    // the mode is gone, so the assertions above are about the denial and not
+    // about the option, the fake, or Electron happening to agree.
+    const factory = fakeWindowFactory()
+    const window = new factory.BrowserWindow(
+      consoleWindowOptions(classifyCliVersion('0.5.0')),
+    ) as unknown as FakeConsoleWindow
+    await window.loadURL(APP_ENTRY_URL)
+    expect(window.title).toBe(DOCUMENT_TITLE)
+    expect(window.title).not.toContain(SKEW_HEADLINES.refused)
+    expect(window.pageTitleOffers).toEqual([{ title: DOCUMENT_TITLE, prevented: false }])
+  })
+
+  it('refuses a page title through the one handler, whatever the page says', () => {
+    const event = recordingEvent()
+    denyPageTitleUpdate(event)
+    expect(event.prevented).toBe(true)
+  })
+})
+
 describe('startupWindow', () => {
   it('builds the dashboard window for a CLI inside the range', async () => {
     const factory = fakeWindowFactory()
@@ -804,6 +929,9 @@ describe('startupWindow', () => {
     expect(factory.options).toHaveLength(1)
     expect(factory.built).toEqual([startup.window])
     expect(factory.options[0]?.title).toBe(CONSOLE_WINDOW_TITLE)
+    // ...and that is what the window *ends up* as: the document offered its own
+    // `<title>` and the console refused it (see the block below).
+    expect(factory.built[0]?.title).toBe(CONSOLE_WINDOW_TITLE)
     expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
     expect(factory.loaded).toEqual([APP_ENTRY_URL])
   })
@@ -818,6 +946,7 @@ describe('startupWindow', () => {
     expect(startup.compatibility.mode).toBe('reduced')
     expect(startup.window).not.toBeNull()
     expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.reduced)
+    expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.reduced)
     // The window is still the hardened one: a reduced mode is not a reason to
     // relax anything.
     expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
@@ -866,6 +995,7 @@ describe('createRefusalWindow', () => {
     expect(factory.built).toEqual([built])
     expect(factory.options).toHaveLength(1)
     expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.refused)
+    expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.refused)
     expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
     expect(factory.options[0]?.show).toBe(false)
     // The same single load over the console's own scheme, the same handlers and

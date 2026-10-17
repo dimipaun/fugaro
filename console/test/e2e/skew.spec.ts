@@ -318,6 +318,47 @@ test.describe('the version skew handshake', () => {
     return result
   }
 
+  /**
+   * The window's header, in a real window. Design section 3.4 rule 8 says the
+   * handshake "says so in its header", and `main/window.ts` puts the mode in the
+   * window's title -- but Electron applies a loaded document's `<title>` over
+   * the `title` the window was constructed with, and `src/renderer/index.html`
+   * defines one. So the mechanism, not just the option, is what has to hold in
+   * Electron: the console refuses the page title, and the title stays its own.
+   * The mode's own title (reduced, refused) is asserted in `window.test.ts`
+   * against a window that models Electron's rule for exactly this reason; a
+   * second window cannot be constructed from here without reaching into the
+   * main process's own modules, which this spec deliberately does not do.
+   */
+  test('keeps the window title its own: the document cannot take the header over', async () => {
+    const documentTitle = /<title>([^<]*)<\/title>/.exec(
+      readFileSync(join(consoleDir, 'src', 'renderer', 'index.html'), 'utf8'),
+    )?.[1]
+    expect(documentTitle).toBe('Fugaro console')
+
+    const before = await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      return window === undefined
+        ? null
+        : { title: window.getTitle(), listeners: window.listenerCount('page-title-updated') }
+    })
+    expect(before?.title).toBe(documentTitle)
+    // The console's denial is on the window. `>= 1` rather than `=== 1`: this
+    // test is about the console's handler being there, and an Electron or
+    // Playwright listener beside it is not a defect.
+    expect(before?.listeners ?? 0).toBeGreaterThanOrEqual(1)
+
+    // The document asks for a title of its own, which Electron offers to the
+    // window. Without the denial the window's title becomes this string, and a
+    // reduced or refused console would lose the mode it was built with.
+    await page.evaluate(() => {
+      document.title = 'a title the document chose'
+    })
+    const after = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle() ?? null)
+    expect(after).toBe(documentTitle)
+    expect(after).not.toBe('a title the document chose')
+  })
+
   test('draws no banner inside the supported range, and says which versions those are', async () => {
     const result = await mount(drawSkew(THE_LINE, 'light'))
     const screen = await drawn(page)
