@@ -200,7 +200,6 @@
             "sender": { ".validate": "STR && newData.val() == $mb" },
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
             "at": { ".validate": "AMOUNT" },
-            "acked": { ".validate": "newData.isBoolean()" },
             "$other": { ".validate": false }
           }
         },
