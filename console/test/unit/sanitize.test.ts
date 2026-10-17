@@ -713,6 +713,52 @@ describe('the class rules', () => {
     }
   })
 
+  it('redacts a branch-shaped credential to the recorder’s own marker', () => {
+    // The branch grammar is `[A-Za-z0-9._/-]{1,255}`: upper case, lower case,
+    // digits, dots, dashes and slashes -- the credential alphabet whole, and the
+    // one validating class where a run no pattern can find was drawn as a name
+    // (review of Task 4.1: a 20-character mixed-case run, and a 40-character hex
+    // digest git would take as a ref). The token families are answered for by
+    // the credential pass every validating class runs, which is why the first
+    // loop is the token placeholder; the entropy rule's run is answered for in
+    // the class, and the answer is `<branch>` -- the marker the *recorder*
+    // writes for every value under a branch key, so this is agreement and not a
+    // redaction the document does not contain. A refusal would be the other
+    // choice, and the reason it is not taken is the last loop: the entropy rule
+    // is a heuristic, and `feat/ABC-123-add-thing` is a real branch name it
+    // calls a credential. Each value is assembled at run time
+    // (`fakeSecrets.ts`), so no line of this repository holds the shape.
+    const families: readonly string[] = [
+      fake.awsKeyId(),
+      fake.googleApiKey(),
+      fake.gitlabToken(),
+      fake.slackToken(),
+      fake.googleAccessToken(),
+    ]
+    for (const value of families) expect(text(value, 'branch'), value).toBe(TOKEN_PLACEHOLDER)
+    for (const value of [fake.highEntropyRun(), fake.hexDigest()]) {
+      // This fails if the entropy check is deleted: both are legal branch names,
+      // and both were drawn whole.
+      expect(text(value, 'branch'), value).toBe(BRANCH_PLACEHOLDER)
+      expect(flags(value, 'branch'), value).toContain('branch-placeholder')
+    }
+    // ...and a branch that is not high-entropy is drawn as the name it is, so
+    // the class is not "redact everything long": these are the shapes the
+    // console's own repositories use, including the mixed-case one that a
+    // branch field is easiest to get wrong about.
+    for (const good of ['feat/console-fixtures', 'fugaro/20261017-204831-b96d', 'feat/console-A1B2C3', 'main']) {
+      expect(text(good, 'branch'), good).toBe(good)
+    }
+    // The heuristic's false positives are redacted rather than refused, which is
+    // the difference between a cell the operator cannot read and a screen they
+    // cannot use at all. Both of these are names a person would write and git
+    // would accept; the rule calls them credentials because they mix case,
+    // digits and length.
+    for (const named of ['feat/ABC-123-add-thing', 'Fugaro/Entitlements-4.1']) {
+      expect(text(named, 'branch'), named).toBe(BRANCH_PLACEHOLDER)
+    }
+  })
+
   it('keeps a project name, and refuses anything that is not one', () => {
     expect(text('fixture-sandbox', 'project')).toBe('fixture-sandbox')
     expect(text('<project>', 'project')).toBe('<project>')
