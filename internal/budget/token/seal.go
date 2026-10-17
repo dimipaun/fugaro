@@ -51,6 +51,19 @@ const (
 	minEnvelope = 1 + nonceSize + tagSize
 )
 
+// NewKey draws a fresh seal key from crypto/rand: KeySize bytes, one per
+// launch. The launcher calls it for every mint, a --retry included, so no key
+// is ever in front of two executions (D17), and the key is never derived from
+// anything a peer could compute (the run's names, the token). A failed draw is
+// an error and never a fallback to a plaintext object.
+func NewKey() ([]byte, error) {
+	key := make([]byte, KeySize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("budget token: generating the seal key failed: %w", err)
+	}
+	return key, nil
+}
+
 // EncodeKey renders key as the marker carries it: one unpadded base64url
 // string. It is the form the runner registers with its redactor, because it
 // is the form a print of the environment value would show.

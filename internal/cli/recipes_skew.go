@@ -181,6 +181,23 @@ const gitSecretIDSince = "0.7.5"
 // recipesSince and layeredSince.
 const namedTokensSince = "0.6.5"
 
+// sealSince is the first fugaro release whose runner reads a sealed budget
+// token (docs/design/budget-token-channel.md §7.1): the marker's value is the
+// launch's seal key, parsed strictly and never echoed, the key is registered
+// with the run's redactor before anything can print it, and the token object
+// is read from tokens/, never from runs/ and never as plaintext. A runner
+// before it does none of that — an image built before the seal's runner half
+// formats a marker value it cannot parse into its bootstrap error, so the
+// launch's key would land in the run's record (§7.4, D19) — so a launch that
+// mints a budget token is refused against a job image older than this, before
+// the claim, the mint or the object (sealGate). It is D19's "runner and image
+// first, launcher second" as a gate rather than as an ordering of
+// deployments, which the owner accepted as the alternative. It names the
+// release the seal ships in (0.9.0, the design's "Which release" paragraph);
+// docs/release.md's ("Before you tag") checklist verifies it the way it does
+// for the other *Since constants.
+const sealSince = "0.9.0"
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).
