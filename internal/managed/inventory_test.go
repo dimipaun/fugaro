@@ -40,7 +40,7 @@ func listed(name, typ string) Asset { return Asset{Name: name, Type: typ} }
 
 // inventory is the check under test, for a project whose state accounts for
 // accounted and whose whole-project read answers with assets.
-func inventory(a Assets, accounted ...string) Inventory {
+func inventory(a Assets, accounted ...StateResource) Inventory {
 	return Inventory{Project: project, GCPProject: gcpProject, Assets: a, Accounted: accounted}
 }
 
@@ -53,7 +53,7 @@ func TestInventoryForeignResourceFallsBack(t *testing.T) {
 		listed(runs, "storage.googleapis.com/Bucket"),
 		listed(other, "compute.googleapis.com/Instance"),
 	}}
-	d := inventory(a, "fugaro-runs-"+gcpProject).Check(context.Background())
+	d := inventory(a, StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}).Check(context.Background())
 
 	if !d.Fallback {
 		t.Fatalf("a foreign resource did not fall the run back: %+v", d)
@@ -84,7 +84,9 @@ func TestInventoryEveryResourceAccountedIsClean(t *testing.T) {
 		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject, "storage.googleapis.com/Bucket"),
 		listed("//run.googleapis.com/"+job, "run.googleapis.com/Job"),
 	}}
-	d := inventory(a, "fugaro-runs-"+gcpProject, job).Check(context.Background())
+	d := inventory(a,
+		StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject},
+		StateResource{Type: "run.googleapis.com/Job", Name: job}).Check(context.Background())
 
 	if d.Fallback || d.Cause != "" || len(d.Foreign) != 0 || d.Why != "" {
 		t.Errorf("an accounted-for project decided %+v, want a clean decision", d)
@@ -161,31 +163,64 @@ func TestInventoryNoReadFallsBack(t *testing.T) {
 	}
 }
 
-// What "the state accounts for" matches: the resource's own name, which the
-// state stores either as its API path or, for a resource GCP names that way,
-// as its bare name — and never a name that merely contains it.
+// What "the state accounts for" matches: the resource's own type and its own
+// whole path — the full resource name, the API path, or for a resource GCP
+// names that way a bare name of a top-level resource in this project — and
+// never a name that merely contains it, ends in it, or is the same name filed
+// under another type, another project or another location.
 func TestInventoryAccountedMatching(t *testing.T) {
-	const job = "projects/proj-1234/locations/us-east5/jobs/check"
+	const (
+		job     = "projects/proj-1234/locations/us-east5/jobs/check"
+		jobT    = "run.googleapis.com/Job"
+		bucketT = "storage.googleapis.com/Bucket"
+		saT     = "iam.googleapis.com/ServiceAccount"
+		vmT     = "compute.googleapis.com/Instance"
+		runs    = "fugaro-runs-proj-1234"
+	)
+	bucket := StateResource{Type: bucketT, Name: runs}
 	for _, tc := range []struct {
 		name      string
-		accounted []string
+		accounted []StateResource
 		listName  string
+		listType  string
 		want      bool
 	}{
-		{"a bare name, a bucket", []string{"fugaro-runs-proj-1234"}, "//storage.googleapis.com/projects/_/buckets/fugaro-runs-proj-1234", true},
-		{"an API path", []string{job}, "//run.googleapis.com/" + job, true},
-		{"a project-prefixed path", []string{"jobs/check"}, "//run.googleapis.com/" + job, true},
-		{"empty list", nil, "//storage.googleapis.com/projects/_/buckets/fugaro-runs-proj-1234", false},
-		{"a name merely contained", []string{"runs"}, "//storage.googleapis.com/projects/_/buckets/not-runs", false},
-		{"a name that is a prefix", []string{"runs"}, "//storage.googleapis.com/projects/_/buckets/runs-2", false},
-		{"a child of an accounted resource", []string{job}, "//run.googleapis.com/" + job + "/executions/e-1", false},
-		{"another project's resource", []string{"fugaro-runs-proj-1234"}, "//storage.googleapis.com/projects/_/buckets/fugaro-runs-other", false},
+		{"a bare name, a bucket (Cloud Asset form)", []StateResource{bucket}, "//storage.googleapis.com/" + runs, bucketT, true},
+		{"a bare name, a bucket (project form)", []StateResource{bucket}, "//storage.googleapis.com/projects/_/buckets/" + runs, bucketT, true},
+		{"a bare name, a service account of this project", []StateResource{{Type: saT, Name: "fugaro@proj-1234.iam.gserviceaccount.com"}},
+			"//iam.googleapis.com/projects/proj-1234/serviceAccounts/fugaro@proj-1234.iam.gserviceaccount.com", saT, true},
+		{"an API path", []StateResource{{Type: jobT, Name: job}}, "//run.googleapis.com/" + job, jobT, true},
+		{"a full resource name", []StateResource{{Type: jobT, Name: "//run.googleapis.com/" + job}}, "//run.googleapis.com/" + job, jobT, true},
+		{"empty list", nil, "//storage.googleapis.com/" + runs, bucketT, false},
+		{"an entry with no type", []StateResource{{Name: runs}}, "//storage.googleapis.com/" + runs, bucketT, false},
+		{"a name merely contained", []StateResource{{Type: bucketT, Name: "runs"}}, "//storage.googleapis.com/projects/_/buckets/not-runs", bucketT, false},
+		{"a name that is a prefix", []StateResource{{Type: bucketT, Name: "runs"}}, "//storage.googleapis.com/projects/_/buckets/runs-2", bucketT, false},
+		{"a child of an accounted resource", []StateResource{{Type: jobT, Name: job}}, "//run.googleapis.com/" + job + "/executions/e-1", jobT, false},
+		{"another bucket", []StateResource{bucket}, "//storage.googleapis.com/projects/_/buckets/fugaro-runs-other", bucketT, false},
+
+		// The collisions a bare suffix let through.
+		{"same name, different type", []StateResource{bucket},
+			"//compute.googleapis.com/projects/proj-1234/zones/us-east5-a/instances/" + runs, vmT, false},
+		{"same name, different type, same shape", []StateResource{bucket},
+			"//iam.googleapis.com/projects/proj-1234/serviceAccounts/" + runs, saT, false},
+		{"same path, different type", []StateResource{{Type: jobT, Name: job}}, "//run.googleapis.com/" + job, "run.googleapis.com/Service", false},
+		{"a bare name nested under a location", []StateResource{{Type: jobT, Name: "check"}}, "//run.googleapis.com/" + job, jobT, false},
+		{"a partial path names no project or location", []StateResource{{Type: jobT, Name: "jobs/check"}}, "//run.googleapis.com/" + job, jobT, false},
+		{"same job, different project", []StateResource{{Type: jobT, Name: job}},
+			"//run.googleapis.com/projects/other-5678/locations/us-east5/jobs/check", jobT, false},
+		{"same job, different location", []StateResource{{Type: jobT, Name: job}},
+			"//run.googleapis.com/projects/proj-1234/locations/europe-west1/jobs/check", jobT, false},
+		{"a bare name of another project's resource", []StateResource{{Type: saT, Name: "fugaro"}},
+			"//iam.googleapis.com/projects/other-5678/serviceAccounts/fugaro", saT, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := &fakeAssets{assets: []Asset{listed(tc.listName, "x.googleapis.com/Thing")}}
-			d := inventory(a, tc.accounted...).Check(context.Background())
+			// The listing carries a resource the state always accounts for, so
+			// the case under test is never an empty listing.
+			a := &fakeAssets{assets: []Asset{listed(tc.listName, tc.listType)}}
+			in := Inventory{Project: project, GCPProject: "proj-1234", Assets: a, Accounted: tc.accounted}
+			d := in.Check(context.Background())
 			if got := !d.Fallback; got != tc.want {
-				t.Errorf("accounted = %v: %s decided %+v, want accounted %v", tc.accounted, tc.listName, d, tc.want)
+				t.Errorf("accounted = %+v: %s (%s) decided %+v, want accounted %v", tc.accounted, tc.listName, tc.listType, d, tc.want)
 			}
 		})
 	}
@@ -348,4 +383,34 @@ func errorInfo(code int, reason, service, message string) error {
 		map[string]any{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": reason, "domain": "googleapis.com",
 			"metadata": map[string]any{"service": service}},
 	}}
+}
+
+// An empty listing is a read that went wrong, never a clean project: a real
+// project always lists at least itself and the services it has enabled, so a
+// read that answers with nothing is not evidence of anything (Global
+// Constraint 3).
+func TestInventoryEmptyListingFallsBack(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		accounted []StateResource
+	}{
+		{"nothing accounted", nil},
+		{"something accounted", []StateResource{{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &fakeAssets{}
+			d := Inventory{Project: project, GCPProject: gcpProject, Assets: a, Accounted: tc.accounted}.Check(context.Background())
+			if !d.Fallback || d.Cause != CauseEmpty {
+				t.Fatalf("an empty listing decided %+v, want a fallback with cause %q", d, CauseEmpty)
+			}
+			if len(d.Foreign) != 0 {
+				t.Errorf("Foreign = %+v, want none: nothing was listed", d.Foreign)
+			}
+			for _, want := range []string{project, gcpProject, "confirmation"} {
+				if !strings.Contains(d.Why, want) {
+					t.Errorf("Why does not name %q: %s", want, d.Why)
+				}
+			}
+		})
+	}
 }

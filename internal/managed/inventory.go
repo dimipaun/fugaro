@@ -99,19 +99,44 @@ type Inventory struct {
 	// a check that could not run means ask for confirmation (Global
 	// Constraint 3).
 	Assets Assets
-	// Accounted is what the installation's own state accounts for, by resource
-	// name: each one the id the state stores for a resource it manages — the
-	// resource's API path ("projects/acme/locations/us-east5/jobs/check"), or
-	// its bare name where GCP names the resource that way, as a bucket's is.
-	// The caller reads them out of the state it is about to apply into;
-	// nothing here reads the state, because what a state accounts for is the
-	// caller's to know (the managed apply of Task 3.1 is the first caller).
+	// Accounted is what the installation's own state accounts for: each one a
+	// resource the state manages, by the asset type the Cloud Asset API files
+	// it under and the name the state stores for it. The caller reads them out
+	// of the state it is about to apply into; nothing here reads the state,
+	// because what a state accounts for is the caller's to know (the managed
+	// apply of Task 3.1 is the first caller).
 	//
 	// An empty list accounts for nothing, and that is the honest answer for a
 	// root whose state holds nothing yet: every resource the read returns is
 	// then foreign and the run keeps its confirmations. The safe direction,
 	// and not an accident.
-	Accounted []string
+	Accounted []StateResource
+}
+
+// StateResource is one resource the installation's state accounts for, in the
+// terms the whole-project read answers in, so the two can be compared without
+// guessing.
+//
+// Type is the Cloud Asset type ("run.googleapis.com/Job"), and it is required:
+// an entry without one accounts for nothing, because a name alone cannot tell
+// a bucket from an instance that happens to share it.
+//
+// Name is one of three shapes, and only these three:
+//   - the full resource name, "//run.googleapis.com/projects/p/locations/l/jobs/j",
+//     compared whole;
+//   - the API path, "projects/p/locations/l/jobs/j", compared whole against
+//     the asset's path — the project and location segments are part of it, so
+//     the same job in another project or another location is not this one;
+//   - a bare name with no "/", for a resource GCP names that way (a bucket, a
+//     service account), which accounts only for a top-level resource of the
+//     inventory's own project: "//<service>/<name>" or
+//     "projects/<this project or _>/<collection>/<name>".
+//
+// A partial path ("jobs/check") is none of these and accounts for nothing: it
+// names no project and no location, so it would account for the same name
+// anywhere — the safe direction is that it falls back.
+type StateResource struct {
+	Type, Name string
 }
 
 // Cause is why a decision fell back. It is a string so a caller can print it,
@@ -134,6 +159,10 @@ const (
 	CauseQuota Cause = "the read is over its quota"
 	// CauseUnreadable is any other failure of the read.
 	CauseUnreadable Cause = "the whole-project read failed"
+	// CauseEmpty is a read that answered with nothing. A real project always
+	// lists at least itself and the services it has enabled, so an empty answer
+	// is a read that went wrong, never a clean project.
+	CauseEmpty Cause = "the whole-project read returned no resources at all"
 	// CauseNoReader is no read at all: none was given, or there is no project
 	// to read.
 	CauseNoReader Cause = "there is no whole-project read to make"
@@ -169,6 +198,9 @@ func (in Inventory) Check(ctx context.Context) Decision {
 	if err != nil {
 		return in.fallback(classify(err), err.Error())
 	}
+	if len(listed) == 0 {
+		return in.fallback(CauseEmpty, "a real project lists at least itself and its enabled services")
+	}
 	foreign := in.foreign(listed)
 	if len(foreign) == 0 {
 		return Decision{}
@@ -194,46 +226,68 @@ func (in Inventory) fallback(cause Cause, detail string) Decision {
 func (in Inventory) foreign(listed []Asset) []Asset {
 	var out []Asset
 	for _, a := range listed {
-		if !in.accounted(a.Name) {
+		if !in.accounted(a) {
 			out = append(out, a)
 		}
 	}
 	return out
 }
 
-// accounted reports whether a listed asset's full resource name is what the
-// state accounts for. The state stores a resource by the name GCP knows it by
-// — its API path, or its bare name for a resource GCP names that way (a
-// bucket) — and the read always answers with the full resource name
-// ("//<service>/<path>"), so the comparison is on that path: equal to an
-// accounted name, or ending in it at a path boundary.
+// accounted reports whether a listed asset is a resource the state accounts
+// for: the same asset type, and the same whole path — never a name that merely
+// ends the asset's path. The read always answers with the full resource name
+// ("//<service>/<path>"); an entry matches it in one of the three shapes
+// StateResource names, and in no other.
 //
-// The boundary is the whole point of the rule: the name has to be the
-// resource's own, never a string that merely appears in it, so a bucket called
-// not-runs is not accounted for by an id of "runs", and an execution of an
-// accounted job is not accounted for by the job. What the rule cannot see is a
-// resource GCP names identically to another of a different type; that is the
-// one ambiguity a name-level comparison has, and it is why the accounted names
-// are the state's own ids rather than anything derived here.
-func (in Inventory) accounted(name string) bool {
-	path := assetPath(name)
-	if path == "" {
+// The rule is deliberately narrow, because the cost of each direction differs:
+// a resource wrongly accounted for is one the run applies next to without a
+// confirmation, and a resource wrongly left foreign is one confirmation. So a
+// name filed under another type, a job of the same name in another project or
+// location, an execution under an accounted job, and a partial path that names
+// no project are all foreign.
+func (in Inventory) accounted(asset Asset) bool {
+	path := assetPath(asset.Name)
+	if path == "" || asset.Type == "" {
 		return false
 	}
-	for _, a := range in.Accounted {
-		a = strings.Trim(a, "/")
-		if a == "" {
+	for _, r := range in.Accounted {
+		if r.Type != asset.Type || r.Name == "" {
 			continue
 		}
-		if path == a || strings.HasSuffix(path, "/"+a) {
-			return true
+		switch {
+		case strings.HasPrefix(r.Name, "//"):
+			if r.Name == asset.Name {
+				return true
+			}
+		case strings.HasPrefix(r.Name, "projects/"):
+			if path == strings.TrimSuffix(r.Name, "/") {
+				return true
+			}
+		case !strings.Contains(r.Name, "/"):
+			if in.topLevel(path, r.Name) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
+// topLevel reports whether path is a top-level resource called name in the
+// inventory's own project: "<name>" (the Cloud Asset API's form for a bucket,
+// "//storage.googleapis.com/<name>") or "projects/<project>/<collection>/<name>",
+// where the project is this inventory's or the "_" GCP writes for a resource
+// whose name is global.
+func (in Inventory) topLevel(path, name string) bool {
+	if path == name {
+		return true
+	}
+	seg := strings.Split(path, "/")
+	return len(seg) == 4 && seg[0] == "projects" &&
+		(seg[1] == in.GCPProject || seg[1] == "_") && seg[2] != "" && seg[3] == name
+}
+
 // assetPath is an asset's full resource name without its "//<service>/"
-// prefix, which is the part the state's own ids can be compared with.
+// prefix, which is the part the state's API paths can be compared with.
 func assetPath(name string) string {
 	s, ok := strings.CutPrefix(name, "//")
 	if !ok {
