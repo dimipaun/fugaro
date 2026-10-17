@@ -23,6 +23,15 @@
 //     tree, that the cell that would have carried it reads `n/a`, and that the
 //     whole tree holds no string matching a credential's shape.
 //
+// **Where the Run detail screen's model tests live.** The plan's file list for
+// this task names `projects.test.ts` and `replay.test.ts` and no `run.test.ts`,
+// so `buildRunModel`'s tests are the last two describes of this file, under a
+// banner that says so. They are also where the task's other named case is held:
+// **the pull request is text and no link is built**, per source -- a
+// `runview.Row` (whose number is `pr`), a `JSONFinished`-shaped record (whose
+// number is `pr_number`), and a live entry that carries neither -- with a
+// Bitbucket-shaped `pr_url` on the allowed host, and an open-external spy that
+// must never be called.
 //
 // The fake screen below is `spend.test.ts`'s, in this file's own words: the
 // three screens are siblings, each declares its own `ScreenElement`, and a test
@@ -36,6 +45,8 @@ import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
 import { putText } from '../../src/renderer/app'
 import { PROJECT_PANEL_KEYS, PROJECTS_THEMES, buildProjectsModel, renderProjects } from '../../src/renderer/screens/projects'
 import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/renderer/screens/projects'
+import { RUN_LOG_CAP, buildRunModel, linkFor, pullRequestUrl, renderRun } from '../../src/renderer/screens/run'
+import type { RunInputs } from '../../src/renderer/screens/run'
 import { ADDRESS_PLACEHOLDER, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { githubToken, highEntropyRun } from '../support/fakeSecrets'
 
@@ -530,3 +541,280 @@ function drawnText(node: ScreenElement): string {
     .filter((text) => text !== '')
     .join(' ')
 }
+
+// ---------------------------------------------------------------------------
+// buildRunModel -- the Run detail screen's model, which the plan's file list
+// puts here (there is no `run.test.ts` in this task's Files).
+// ---------------------------------------------------------------------------
+
+/** DIAGNOSIS is `diagnose RUN --json`, invented: a finished run whose row
+ * carries the Bitbucket-shaped `pr_url` and the `pr` number, and whose
+ * diagnosis carries the halt, the verify records and the failed tests. */
+const DIAGNOSIS = {
+  project: 'example-project',
+  row: {
+    run: 'run-4a5b6c7d8e9f',
+    run_id: '4a5b6c7d8e9f',
+    repo: 'example-owner/example-repo',
+    workflow: 'default',
+    oauth_account: 'claude-ops@example.test',
+    recipe: 'default',
+    status: 'finished',
+    stage: 'done',
+    reason: 'the run finished',
+    branch: 'fugaro/run-4a5b6c7d8e9f',
+    outcome: 'success',
+    requested_by: 'operator@example.test',
+    pr: 42,
+    pr_url: 'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
+    log_url: 'https://console.cloud.google.com/batch/jobs/example-job',
+    created: '2026-10-15T11:00:00Z',
+    started_at: '2026-10-15T11:00:30Z',
+    image_age_s: 3600,
+    terminal: true,
+    settled: true,
+    follow_up: false,
+    stale_draft: false,
+    cost: { model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' },
+  },
+  halt: { reason: 'the daily cap was reached', at: '2026-10-15T11:30:00Z' },
+  // One `verify.Record`, with the keys the struct actually carries
+  // (`internal/verify/verify.go:110`): `kind` is the stage's name, `passed` its
+  // outcome, and no stage carries a spend or a deadline.
+  verify: [
+    {
+      n: 1,
+      kind: 'test',
+      head_sha: '0f1e2d3c4b5a69788796a5b4c3d2e1f0a1b2c3d4',
+      clean_tree: true,
+      exit_code: 0,
+      passed: true,
+      tests: 1182,
+      failures: 0,
+      skipped: 2,
+      started_at: '2026-10-15T11:10:00Z',
+      duration_s: 42,
+    },
+  ],
+  failed: ['TestSpend'],
+  flaky: [],
+  findings: [],
+  log_tail: ['verify: TestSpend failed'],
+  report_path: 'runs/example/run-4a5b6c7d8e9f/report.json',
+}
+
+/** LOG_LINES is `logs RUN --json`: one compact `logLine` object per line, as
+ * the contract describes it (section 6.2), parsed here as a list. */
+function logLines(count: number): readonly Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, index) => ({
+    time: `2026-10-15T11:0${String(index % 10)}:00Z`,
+    severity: 'info',
+    stage: 'verify',
+    message: `line ${String(index)}`,
+  }))
+}
+
+/** runInputs is a complete set of run inputs. */
+function runInputs(overrides: Partial<RunInputs> = {}): RunInputs {
+  return {
+    diagnosis: DIAGNOSIS,
+    logs: logLines(3),
+    logLink: 'https://console.cloud.google.com/batch/jobs/example-job',
+    sentences: {},
+    ...overrides,
+  }
+}
+
+describe('buildRunModel', () => {
+  it('reads the ledger, the stage timeline and the outcome out of the row', () => {
+    const model = buildRunModel(runInputs())
+    expect(model.row.run).toBe('run-4a5b6c7d8e9f')
+    expect(model.row.repo).toBe('example-owner/example-repo')
+    expect(model.row.outcome).toBe('success')
+    expect(model.row.status).toBe('finished')
+    // The ledger is the row's own figures: the model dollars, the compute the
+    // document marks as an estimate, and the two accounts apart.
+    expect(model.ledger.model.value).toBe(1.25)
+    expect(model.ledger.compute.value).toBe(0.5)
+    expect(model.ledger.compute.state).toBe('estimated')
+    expect(model.ledger.total.value).toBe(1.75)
+    // Per-stage spend is a reading the document does not carry: `diagnose`
+    // reports spend by route and by model, so the stage's figure is n/a with
+    // that sentence rather than a total divided by the number of stages.
+    expect(model.stages).toHaveLength(1)
+    expect(model.stages[0]?.stage).toBe('test')
+    expect(model.stages[0]?.passed).toBe(true)
+    expect(model.stages[0]?.tests.value).toBe(1182)
+    expect(model.stages[0]?.spend.state).toBe('unavailable')
+    expect(model.stages[0]?.spend.because).toContain('by route and by model')
+    // And the deadline: `runview.Row` carries none, so the timeline says which
+    // field it looked for rather than inventing a deadline from `started_at`.
+    expect(model.stages[0]?.deadline).toBeNull()
+    expect(model.stages[0]?.deadlineBecause).toBe('the document has no row.deadline')
+    expect(model.halt?.reason).toBe('the daily cap was reached')
+  })
+
+  it('draws a deadline the row does carry, and only then', () => {
+    // A live `watch --json` entry carries `deadline: "near"` (contract section
+    // 2); a `runview.Row` does not. The timeline reads the row it was given.
+    const live = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, deadline: 'near' } }
+    const model = buildRunModel(runInputs({ diagnosis: live }))
+    expect(model.stages[0]?.deadline).toBe('near')
+    expect(model.stages[0]?.deadlineBecause).toBeNull()
+    // A word this build does not know is no deadline, not a word drawn as one.
+    const unknown = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, deadline: 'tomorrow' } }
+    expect(buildRunModel(runInputs({ diagnosis: unknown })).stages[0]?.deadline).toBeNull()
+  })
+
+  it('builds a pull request URL per provider, for the day gap 7 lands', () => {
+    // Design section 5.1 rule 2's construction, both providers, unit-tested now
+    // so that the screen only has to start offering the link later. The two
+    // paths differ, and that is the whole point: a Bitbucket repository built as
+    // a GitHub URL passes the design's own host allow-list while naming a
+    // repository the operator does not own.
+    expect(pullRequestUrl('github', 'example-owner/example-repo', 42)).toBe(
+      'https://github.com/example-owner/example-repo/pull/42',
+    )
+    expect(pullRequestUrl('bitbucket', 'example-owner/example-repo', 42)).toBe(
+      'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
+    )
+    // Nothing to build from: a repository that is not `owner/name`, a number
+    // that is not a positive integer, and a number that is not there at all.
+    expect(pullRequestUrl('github', 'example-repo', 42)).toBeNull()
+    expect(pullRequestUrl('github', 'example-owner/example-repo', 0)).toBeNull()
+    expect(pullRequestUrl('bitbucket', 'example-owner/example-repo', 1.5)).toBeNull()
+  })
+
+  it('refuses to build a link from a `pr_url` alone', () => {
+    // The inference that must not creep back in: a URL the host gave is not
+    // evidence of which host gave it. `linkFor` takes a provider and nothing
+    // else -- it has no overload that takes the URL -- so a caller without one
+    // gets null, which is what the screen draws today.
+    expect(linkFor(null, 'example-owner/example-repo', 42)).toBeNull()
+    // And even with the provider the console does not have, the *model* offers
+    // no link: the Bitbucket-shaped `pr_url` above is text on the screen.
+    const model = buildRunModel(runInputs())
+    expect(model.pullRequest?.url).toBe('https://bitbucket.org/example-owner/example-repo/pull-requests/42')
+    expect(model.pullRequest?.link).toBeNull()
+    expect(linkFor('bitbucket', model.pullRequest?.repository ?? null, model.pullRequest?.number ?? null)).toBe(
+      model.pullRequest?.url,
+    )
+  })
+
+  it('shows the pull request as text, and builds no link from it', () => {
+    const model = buildRunModel(runInputs())
+    expect(model.pullRequest).not.toBeNull()
+    expect(model.pullRequest?.repository).toBe('example-owner/example-repo')
+    expect(model.pullRequest?.number).toBe(42)
+    expect(model.pullRequest?.url).toBe('https://bitbucket.org/example-owner/example-repo/pull-requests/42')
+    // Design section 4.3's gap 7: no document names the provider, so the console
+    // offers no link. `link` is null and the reason is a sentence.
+    expect(model.pullRequest?.link).toBeNull()
+    expect(model.pullRequest?.because).toContain('provider')
+  })
+
+  it('renders a finished run\'s `pr_number` as text too, and a live entry with no number at all', () => {
+    // The two spellings: `pr` on a `runview.Row`, `pr_number` on `JSONFinished`.
+    const finished = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, pr: undefined, pr_number: 43 } }
+    const model = buildRunModel(runInputs({ diagnosis: finished }))
+    expect(model.pullRequest?.number).toBe(43)
+    expect(model.pullRequest?.link).toBeNull()
+    // A live `watch --json` entry carries neither, so no number is invented.
+    const live = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, pr: undefined, pr_number: undefined, pr_url: undefined } }
+    const without = buildRunModel(runInputs({ diagnosis: live }))
+    expect(without.pullRequest?.number).toBeNull()
+    expect(without.pullRequest?.url).toBeNull()
+    expect(without.pullRequest?.link).toBeNull()
+  })
+
+  it('bounds the log panel at the cap and never follows the log', () => {
+    const model = buildRunModel(runInputs({ logs: logLines(RUN_LOG_CAP + 25) }))
+    expect(model.logs.lines).toHaveLength(RUN_LOG_CAP)
+    expect(model.logs.dropped.value).toBe(25)
+    expect(model.logs.total.value).toBe(RUN_LOG_CAP + 25)
+    // The link to the full transcript is the CLI's own `logs RUN --url` line.
+    expect(model.logs.link).toBe('https://console.cloud.google.com/batch/jobs/example-job')
+  })
+
+  it('draws the replay buffer\'s bound, its span and the moment scrubbed to', () => {
+    const model = buildRunModel(runInputs({ replay: REPLAY_FRAMES, scrubAt: '2026-10-15T12:05:00Z' }))
+    expect(model.replay.records.value).toBe(REPLAY_FRAMES.length)
+    expect(model.replay.from).toBe(REPLAY_FRAMES[0]?.receivedAt)
+    expect(model.replay.to).toBe(REPLAY_FRAMES.at(-1)?.receivedAt)
+    // The moment scrubbed to is 12:05, and the frame *in effect* then is the
+    // 12:04 one -- not the nearest, and not the newest.
+    expect(model.replay.scrubbed?.at).toBe('2026-10-15T12:04:00Z')
+    expect(model.replay.scrubbedBecause).toBeNull()
+    expect(model.replay.windowSeconds.value).toBe(900)
+    // A moment before the ring starts is a moment with nothing to show, which
+    // the panel says rather than drawing the first frame as if it were that one.
+    const before = buildRunModel(runInputs({ replay: REPLAY_FRAMES, scrubAt: '2026-10-15T11:00:00Z' }))
+    expect(before.replay.scrubbed).toBeNull()
+    expect(before.replay.scrubbedBecause).toContain('2026-10-15T11:00:00Z')
+    // And with no ring at all the panel draws no span and no moment.
+    const none = buildRunModel(runInputs())
+    expect(none.replay.records.value).toBe(0)
+    expect(none.replay.from).toBeNull()
+    expect(none.replay.to).toBeNull()
+  })
+})
+
+describe('renderRun', () => {
+  it('draws the run through the Projects screen\'s factory, and offers no link', () => {
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    expect(tree.getAttribute('data-theme')).toBe('light')
+    // The pull request is text: repository, number and URL, and nothing that
+    // navigates. `FakeScreen` would throw on a navigating attribute, and the
+    // model's `link` is null -- both halves of the rule in one test.
+    const pr = one(tree, 'run-pr')
+    expect(drawnText(pr)).toContain('example-owner/example-repo')
+    expect(drawnText(pr)).toContain('42')
+    expect(drawnText(pr)).toContain('https://bitbucket.org/example-owner/example-repo/pull-requests/42')
+    expect(one(pr, 'run-pr-reason').textContent).toContain('provider')
+    // Nothing in the pull request panel carries a destination at all: there is
+    // no inert link, and none waiting for a provider.
+    expect(walk(pr).map((node) => node.getAttribute('data-href'))).toEqual(walk(pr).map(() => null))
+  })
+
+  it('offers the logs link as a destination attribute and never as a navigation', () => {
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    const link = one(tree, 'run-log-link')
+    // `putLink` writes `data-href`, which does nothing when clicked: the main
+    // process owns the allow-list (design section 5.1 rule 2).
+    expect(link.getAttribute('data-href')).toBe('https://console.cloud.google.com/batch/jobs/example-job')
+    expect(link.getAttribute(['h', 'ref'].join(''))).toBeNull()
+  })
+
+  it('draws exactly the capped window of log lines', () => {
+    const tree = renderRun(factory, buildRunModel(runInputs({ logs: logLines(RUN_LOG_CAP + 25) })), 'light')
+    expect(all(tree, 'run-log-line')).toHaveLength(RUN_LOG_CAP)
+    expect(drawnText(one(tree, 'run-log-note'))).toContain('25')
+  })
+
+  it('puts a document\'s log line through the sanitizer like every other string', () => {
+    // A line a job wrote is free text, and a line that carries a credential is
+    // refused rather than drawn: the panel is a renderer that cannot read the
+    // transcript, which is why it is capped in the first place.
+    const token = githubToken()
+    const logs = [{ time: '2026-10-15T11:00:00Z', severity: 'info', message: `using ${token}` }]
+    const tree = renderRun(factory, buildRunModel(runInputs({ logs })), 'light')
+    expect(drawnText(tree)).not.toContain(token)
+    expect(one(one(tree, 'run-log-line'), 'run-log-message').textContent).toBe(`using ${TOKEN_PLACEHOLDER}`)
+  })
+
+  it('writes only the console\'s own text into the reading cells', () => {
+    // The `putText` door, exercised directly: a screen that wrote a document's
+    // string into a cell without it would leave the cell holding the value.
+    const element = new FakeScreen('span')
+    putText(element, githubToken(), 'label', 'name')
+    expect(element.textContent).toBe(TOKEN_PLACEHOLDER)
+  })
+})
+
+/** REPLAY_FRAMES is a small replay buffer, built here rather than imported: the
+ * buffer's own module is `replay.test.ts`'s subject. */
+const REPLAY_FRAMES = [
+  { at: '2026-10-15T12:00:00Z', document: { project: 'example-project', day: '2026-10-15' } },
+  { at: '2026-10-15T12:04:00Z', document: { project: 'example-project', day: '2026-10-15' } },
+  { at: '2026-10-15T12:08:00Z', document: { project: 'example-project', day: '2026-10-15' } },
+].map((record) => ({ receivedAt: record.at, document: record.document, notices: [] }))
