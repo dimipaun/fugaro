@@ -28,7 +28,7 @@
 | **0. The ground** | the JSON contract written down and pinned (`console/docs/json-contract.md`); the child-process contract settled; the Go/`console` boundary with three tests holding it (imports, `go:embed`, and the one-entry read exception) | nothing | nothing |
 | **1. The shell** | the hardened Electron main process, the frozen IPC allow-list, `FugaroSource` with its `cli` and `fixture` implementations, the recorder/redactor, and **the console's CI — which begins with Task 1.5's copy-in, so Tasks 1.0 to 1.4 have none** | **the eight fixture recordings** (Task 1.4) and **the copy-in of the staged tests workflow** (Task 1.5) | phase 0 |
 | **2. The screens** | Live, Spend, Projects, Run detail — with the availability states and the replay buffer | nothing | phase 1 |
-| **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake | nothing | phase 2 |
+| **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)** | nothing | phase 2 |
 | **4. macOS packaging** | the builder config and entitlements; the staged signing/notarisation workflow (a file of its own, tag-only); the update feed; **Checks 59a and 59b** | **all of it**: the certificate, the API key, the first signed build, the update round trip (Check 59); the protected GitHub environment the signing secrets live in; and Task 4.5's copy-in of the staged **signing** workflow | phase 3 |
 | **5. Later, unscheduled** | Windows and Linux packaging; the v1.1 write actions | each, when the owner decides | phase 4 |
 
@@ -151,6 +151,7 @@ Each row is one mergeable PR, green on its own:
 | D | 2.0 | **SECURITY-SENSITIVE** (the text path) |
 | E | 2.1, 2.2, 2.3 | |
 | F | 3.1, 3.2 | |
+| F2 | **3.3** | **SECURITY-SENSITIVE** (the startup gate that decides whether a dashboard is drawn); **not approved to implement**, see the task |
 | G | 4.1, 4.2, 4.4 | **SECURITY-SENSITIVE** (supply chain) |
 | H | 4.3, 4.5 | **OWNER-RUN**, no agent performs any step of either; 4.5 copies in the **signing** workflow |
 | I | 4.6 | the release gate; **merges only after C2**, and refuses a tag until the console job runs |
@@ -473,6 +474,38 @@ The owner copies `docs/pending-workflows/console-tests.yml` to `.github/workflow
 
 **Red step — `Expected: FAIL`** — the below-floor test against a console that draws the dashboard anyway.
 
+### Task 3.3: The handshake wired at startup, and the mode told to the renderer — SECURITY-SENSITIVE, independent opus review
+
+**Why this task exists.** Task 3.2 builds the handshake (`version.ts`, `startupWindow`, a refusal window) but, as its review (#514) found, nothing in the app calls it: `console/src/main/index.ts` still calls `createConsoleWindow` with no handshake, no `src` file calls `startupWindow`, `createRefusalWindow` loads the same `APP_ENTRY_URL` as the dashboard, and no channel tells the renderer which mode it is in, so a refused version would draw the dashboard and D7 (**refuse below the floor rather than misreport spend**) would not be enforced anywhere a user can see. **Owner ruling 2026-10-17: the handshake must be wired at startup before the console MVP ships with 0.8.5.** This task is that wiring, and nothing in it is a new policy: the range, the floor and the parse are Task 3.2's.
+
+**Files:** `console/src/main/index.ts`, `console/src/main/window.ts`, `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/src/shared/mode.ts`, `console/src/renderer/screens/refusal.ts`, `console/src/renderer/index.ts`, `console/test/unit/{startup,ipc,mode}.test.ts`, `console/test/e2e/startup-skew.spec.ts`, `console/test/fixtures/stub-fugaro-version.sh`
+
+**Steps.**
+
+1. **The handshake runs before any dashboard window exists.** `index.ts` calls `startupWindow` (Task 3.2) as the first thing after `app.whenReady()`, and only `startupWindow` decides which window is created: `ok` creates the dashboard window, `reduced` creates it with the banner and the hidden-views list, `refused` creates the refusal window and **never constructs the dashboard window at all** (not hidden, not later destroyed: a window that was never created cannot flash a dashboard). A handshake that cannot run (no `fugaro`, a spawn error, no parsable version line) is `refused` with its own console-owned reason, never `ok`. The handshake spawns `fugaro version` bare (Task 1.3's table: it takes no `--project`).
+2. **The mode reaches the renderer by one new IPC channel, in the frozen allow-list.** `startup:mode`: read-only, no arguments, returning the schema-checked document `{ mode: "ok" | "reduced" | "refused", hiddenViews: string[], reason: <a closed enum code>, builtFor: string, found: string | null }`. The main process validates the document against the closed schema **before** returning it (an unknown `mode`, a `hiddenViews` entry that is not a known view id, or an unparsable `found` makes the channel return `refused`, not the raw value). It takes no path, no command and no URL, adds no generic invoke, and the preload exposes it as one more named member of the frozen object (Task 1.2's rules apply unchanged, `Object.isFrozen` included). The renderer asks for it **once at load, before it draws anything**, and draws nothing until it has an answer.
+3. **The refusal screen is console-owned text.** `createRefusalWindow` loads a refusal document that is not the dashboard entry (a distinct `app://` path served by Task 1.1's protocol handler, under the same CSP and navigation rules), and the screen renders **only** strings the console wrote: which versions it supports, the closed `reason` code mapped to a message the console owns, and the install remedy. **Any CLI-produced text on that screen (the version line the CLI printed) is displayed only after Task 2.0's sanitiser, through a text node, truncated to a fixed length, and labelled as the CLI's own output**; it is never concatenated into a console message, never `innerHTML`, never a URL. A stub CLI that prints control characters, an ANSI escape, markup or a 10 000-character line must produce a screen with none of them live.
+4. **The renderer refuses to draw hidden views.** In `reduced` mode the views in `hiddenViews` are not rendered and not reachable (no tab, no route, no deep link): the renderer's router consults the mode document and a hidden id resolves to the banner's explanation, not to the view with its data. In `refused` mode the renderer's entry point renders the refusal screen and **does not subscribe to any feed**, so even a refusal window loaded with the dashboard bundle (a regression of step 3) draws no spend. The defence is in both places on purpose: the main process creates the right window, and the renderer independently refuses to draw without an `ok`/`reduced` answer.
+
+**Interfaces.** `shared/mode.ts` exports `StartupMode` (the schema above), `parseStartupMode(unknown): StartupMode` (fail-closed: anything that does not parse is `refused`) and `isViewHidden(mode, viewId): boolean`. `window.ts` exports `startupWindow(deps): Promise<{ mode: StartupMode, window: BrowserWindow }>` (the Task 3.2 function, now called) and `createRefusalWindow()`, which no longer shares `APP_ENTRY_URL`. `ipc.ts` registers `startup:mode`; `preload/index.ts` exposes `getStartupMode()`.
+
+**Tests.**
+
+- `startup.test.ts`: `index.ts`'s startup path calls `startupWindow` before any `createConsoleWindow` (asserted on the call order with spies, and on `createConsoleWindow` never being called in `refused`); a handshake that throws or prints nothing parsable is `refused`.
+- `ipc.test.ts` (the mutation-proof half, extending Task 1.2's): `startup:mode` is in the frozen allow-list and is read-only; the never-reachable table still holds; **adding `startup:mode` with an argument, or any write verb, fails a named test**; the channel's response schema rejects an unknown mode, an unknown view id and a non-string `found`; the preload object is still `Object.isFrozen` with no generic invoke.
+- `mode.test.ts`: `parseStartupMode` fails closed on malformed input; `isViewHidden` for each `reduced` case.
+- `startup-skew.spec.ts` (Playwright + Electron): launched with `FUGARO_BIN` pointing at `stub-fugaro-version.sh`, **a stub CLI printing an old version line shows the refusal screen and never the dashboard** (asserted by the dashboard's root element never existing in any window, and by exactly one window), **so does one printing an odd line** (`fugaro version banana`, an empty line, a hostile line); a stub below the ceiling but above the floor shows the banner and no hidden view; a stub at the built version shows the dashboard. The hostile-line case asserts the sanitised, truncated, labelled rendering of step 3.
+
+**Command:** `npm run test:unit && npm run test:e2e -- startup-skew`
+
+**Depends on:** Task 3.2 (**hard**: #514 must be merged first; this task edits the `startupWindow` and `createRefusalWindow` it introduces) and Task 1.2 (the allow-list it extends).
+
+**Commit:** `console: the version handshake runs at startup, and a refused version never draws the dashboard`
+
+**Red step - `Expected: FAIL`** - `startup-skew.spec.ts`'s old-version case against the tree as Task 3.2 leaves it (`index.ts` with no handshake: the dashboard draws); and `ipc.test.ts`'s allow-list test against an entry with an argument.
+
+**Status: NOT APPROVED TO IMPLEMENT.** Adding this task to the plan is not approval to implement it; implementation waits for the owner's go and for #514 to merge. It is, however, a **release gate for the console MVP** (Task 4.6 and "What ships with the MVP" below): the console does not ship with 0.8.5 without it.
+
 ---
 
 ## Phase 4 — macOS packaging
@@ -629,6 +662,8 @@ An agent then makes one docs-only follow-up: the README's console-release row ga
 
 **Depends on:** Task 1.5 (**hard**: this must not merge before the check exists — and it has, by three phases).
 
+**Release gate, in addition: Task 3.3 must be merged before the console MVP is released.** The gate edit above is about CI; this one is about content. The console that carries phase 4 must be one whose startup runs the version handshake (D7), so the release checklist for the release that first ships the console (0.8.5) lists Task 3.3 as a precondition, and a console tree on which `index.ts` does not call `startupWindow` does not ship. Task 4.6's own test adds one assertion to that effect: `TestConsoleMVPRequiresTheStartupHandshake` reads this plan and asserts the "What ships with the MVP" list below names Task 3.3.
+
 **Commit:** `release: the gate requires the console check`
 
 **Red step — `Expected: FAIL`** — `TestReleaseGateRequiresTheConsoleCheck` against `names="test terraform rules"`.
@@ -675,10 +710,13 @@ An agent then makes one docs-only follow-up: the README's console-release row ga
 
 Every task's "Depends on" is a *build* dependency, and none of them is a merge dependency beyond its own phase: phases 1, 2 and 3 each leave a working artifact even if the next phase never ships, and phase 4's two owner-run steps (Tasks 4.3 and 4.5) sit after the agent-written packaging work, so 4.1/4.2/4.4 merge as ordinary reviewed PRs whether or not the owner ever runs the rest. The two places a reader might expect a dependency that does not exist: **phase 2 does not depend on project-centric phases 1 or 4** — it renders what exists and says so when a section is not built (Task 2.3) — and **phase 4 does not depend on the CLI's release process being changed**; it adds an artifact to the existing tag, which is what D11 decided.
 
-**Three dependencies that are real and are *merge* dependencies, not build ones**, listed here because a reader checking the "nothing in phase *n* is required by phase *n-1*'s merge" claim would otherwise read them as exceptions it missed:
+**What ships with the MVP.** The first console release (0.8.5) ships phases 0 to 4 and **requires**: (1) the hardened shell (Tasks 1.1 to 1.3); (2) the four screens (phase 2); (3) the honest-when-missing states (Task 3.1); (4) the version-skew handshake **and its startup wiring (Tasks 3.2 and 3.3: both, since 3.2 alone builds a check nothing calls)**; (5) the signed, notarised build and its round trip (Tasks 4.1 to 4.5, Check 59, owner-run); and (6) the release gate (Task 4.6). A console build missing item 4 does not ship, whatever else is green.
+
+**Four dependencies that are real and are *merge* dependencies, not build ones**, listed here because a reader checking the "nothing in phase *n* is required by phase *n-1*'s merge" claim would otherwise read them as exceptions it missed:
 
 - **Task 1.5 (the owner's copy-in of the tests workflow) must merge before Task 4.6 (the gate edit).** Merged the other way round, `scripts/release-gate.sh` requires a check that no workflow produces and **every tag on this repository is refused** — including the releases that ship none of the console. This is the one ordering in the plan whose inversion breaks other people's releases, and it is why 4.6 is its own PR group (I) rather than sharing G's. **The ordering alone is not enough, and the plan says so where it matters**: the gate names a check, so the check must exist on *every* `main` commit and on every pull request head for the `identical_tree_checks` fallback — which is why the console job carries no `paths:` filter and why Task 1.4 asserts its name and triggers (`TestConsoleWorkflowJobIsGateable`). A path-filtered, correctly-ordered console job would still refuse every tag. **Round 2 is why this bullet names Task 1.5 and not Task 4.5**: the copy-in of the tests workflow moved to phase 1, the signing workflow's copy-in stayed in phase 4, and the gate follows the job it names.
 - **Task 4.2 (the staged signing workflow) must merge before Task 4.5**, trivially — the owner has nothing to copy otherwise. Task 4.2 does **not** gate Task 4.6, and the signing job is not the check the gate names.
+- **Task 3.3 (the handshake wired at startup) must merge before the console MVP is released, and after Task 3.2 (#514).** It gates the release rather than any other task's merge: Task 4.6's release gate section and "What ships with the MVP" both name it.
 - **The recordings of Task 1.4 do not gate any merge at all.** They are owner-run data, they land when the owner runs the recorder, and the fixture harness is green without them (the synthetic frame, C7). A stale or absent recording is a test failure, not a broken build.
 
 **And the fact a reader should not have to infer — corrected in round 2, because the previous revision had this wrong by three phases: no CI runs a single console test until Task 1.5.** The console's tests exist from Task 1.4 onward; until the owner copies `console-tests.yml` in, they are run by the task commands above and by whoever is working on them, and nothing else runs them. Task 1.5 closes that gap **inside phase 1**, so from Task 1.5 onward — the whole of phases 2, 3 and 4 — every pull request and every push to `main` runs the console's tests, and the only uncovered window is Tasks 1.0 through 1.4: the toolchain, the window, the IPC allow-list, the source, and the fixtures. **Those four pull requests have no console CI, and the plan says so rather than claiming CI "from the first pull request"** — a claim round 2 made in the design's §9.4 and §7.5 and round 3 corrected, because the copy-in is a task, not a merge hook, and an owner-run one at that. The signing workflow is still staged and unapplied until Task 4.5, which is deliberate (it holds the Apple material) and is not a testing gap: what it adds is a tag-time job, and the tests it would run have been running since Task 1.5.
