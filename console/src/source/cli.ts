@@ -575,7 +575,25 @@ export async function verifyCandidate(
 ): Promise<void> {
   const env = deps.appEnv ?? {}
   const directory = candidate.checkout ?? privateWorkingDirectory()
+  // A log this function opened is this function's to close; one it was handed
+  // is the caller's. Without the `finally`, each installation added held one
+  // descriptor until the process exited (review round 2 of PR 478).
   const log = deps.spawnLog ?? createSpawnLog(env)
+  try {
+    await verifyWith(candidate, deps, env, directory, log)
+  } finally {
+    if (log !== deps.spawnLog) log.close()
+  }
+}
+
+/** verifyWith is `verifyCandidate`'s body, with the log already chosen. */
+async function verifyWith(
+  candidate: InstallationCandidate,
+  deps: { readonly spawner?: ChildSpawner; readonly home?: string },
+  env: Readonly<Record<string, string | undefined>>,
+  directory: string,
+  log: SpawnLogWriter,
+): Promise<void> {
   const resolution = await resolveBinary({
     ...(candidate.binaryPath === undefined ? {} : { configuredPath: candidate.binaryPath }),
     appEnv: env,

@@ -106,7 +106,8 @@ export interface SpawnLogWriter {
   readonly error: string | null
   /** record appends one line, or does nothing -- see the interface comment. */
   record(spawn: RecordedSpawn): void
-  /** close releases the descriptor, if one was opened. */
+  /** close releases the descriptor, if one was opened, and ends the writer: a
+   * `record` after it is a no-op, never a reopen. */
   close(): void
 }
 
@@ -236,6 +237,9 @@ export function createSpawnLog(
       if (wrote) records += 1
     },
     close(): void {
+      // Closed is final: a later `record` must not reopen the path the caller
+      // just released and append to it (review round 2 of PR 478).
+      stopped = true
       if (fd === null) return
       try {
         fs.close(fd)
