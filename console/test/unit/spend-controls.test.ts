@@ -456,7 +456,7 @@ describe('the spend controls', () => {
     // however the state was reached.
     const decision = spendArguments({ ...SPEND_DEFAULT_CONTROLS, by: 'person' })
     expect(decision.ok).toBe(false)
-    expect(decision.ok ? '' : decision.reason).toContain('off for this installation')
+    expect(decision.ok ? '' : decision.reason).toContain('off by default')
 
     const console = await wired(PERSON_DOCUMENT)
     const outcome = await readSpend(console.read, { ...SPEND_DEFAULT_CONTROLS, by: 'person' }, null)
@@ -502,6 +502,33 @@ describe('the spend controls', () => {
     const pickerDay = only(day, 'spend-picker')
     expect(pickerDay.getAttribute('data-day')).toBe('true')
     expect(pickerDay.getAttribute('data-until')).toBe('set')
+  })
+
+  it('says the same true thing everywhere about the person knob: off by default, this session only, not remembered', async () => {
+    // D15 asks for a per-installation setting, but nothing persists the knob
+    // (it is renderer session state; persisting it needs a write channel this
+    // console does not have). So no sentence may claim an installation.
+    const off = renderSpend(factory, buildSpendModel(PERSON_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
+    const on = renderSpend(
+      factory,
+      buildSpendModel(PERSON_DOCUMENT, null, { persons: true }),
+      'light',
+      personView(SPEND_DEFAULT_CONTROLS, true),
+    )
+    const refusal = spendArguments({ ...SPEND_DEFAULT_CONTROLS, by: 'person' })
+    const sentences = [
+      texts(off, 'spend-persons-note')[0] ?? '',
+      texts(on, 'spend-persons-note')[0] ?? '',
+      refusal.ok ? '' : refusal.reason,
+    ]
+    for (const sentence of sentences) {
+      expect(sentence).toContain('off by default')
+      expect(sentence).toContain('this session only')
+      expect(sentence).toContain('not remembered')
+      expect(sentence).not.toContain('installation')
+    }
+    // And the behaviour is what the sentences say: a fresh state is off.
+    expect(SPEND_DEFAULT_CONTROLS.persons).toBe(false)
   })
 
   it('draws the person knob off, with no person row on the screen, until the knob is on', () => {

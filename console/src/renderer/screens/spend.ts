@@ -72,7 +72,10 @@
 // side of the seam.** The range picker, the breakdown switch and the operator's
 // person knob (D15) all feed `SpendControls`, and `spendArguments` turns that
 // state into the argument object `spend.report` already declares --
-// `--since`/`--until` from the picker, `--by` from the switch -- which
+// `--since` from the picker (`--until` is accepted by the schema and by
+// `spendArguments`, but no control this screen draws can set the end of the
+// range yet, so it is always absent and `report` uses its own today), `--by`
+// from the switch -- which
 // `readSpend` hands to the **existing** `runReport` operation. No new write, no
 // new spawn-table row and no new channel: the renderer supplies values, main
 // builds the argv (section 5.1 rule 6), and a value outside the screen's own
@@ -916,13 +919,13 @@ function capRowOf(raw: unknown): SpendCapRow | null {
  * that is off by default (`section 2.3`: "with a one-line note on what it
  * shows"). It is the console's own sentence, drawn as a literal. */
 const PERSON_OFF_NOTE =
-  'the person breakdown is off for this installation: these rows name the people whose runs spent the money'
+  'the person breakdown is off by default, and when turned on it is on for this session only and not remembered: these rows name the people whose runs spent the money'
 
 /** PERSON_ON_NOTE is the same line for the view once the operator has turned it
  * on: what it shows, and that an address on the wire is drawn as the console's
  * own marker (`sanitize.ts`'s `person` class). */
 const PERSON_ON_NOTE =
-  'the person breakdown is on for this session: it names the people whose runs spent the money, and each address is drawn as the console’s own marker'
+  'the person breakdown is on for this session only and not remembered (off by default): it names the people whose runs spent the money, and each address is drawn as the console’s own marker'
 
 /** dimensionOf reads the document's `by`. */
 function dimensionOf(raw: string | null): SpendDimension | null {
@@ -1102,7 +1105,7 @@ export type SpendWindow = (typeof SPEND_PICKER_WINDOWS)[number]
 export interface SpendControls {
   /** the picker's `--since`: one of `SPEND_PICKER_WINDOWS`, or a UTC day */
   readonly since: string
-  /** the picker's `--until`: a UTC day, or `null` for `report`'s own today */
+  /** `--until`: a UTC day, or `null` for `report`'s own today; no control sets it yet (the picker draws windows only) */
   readonly until: string | null
   /** the breakdown switch's `--by` */
   readonly by: SpendDimension
@@ -1146,7 +1149,7 @@ const WINDOW_UNKNOWN =
 const UNTIL_NOT_A_DAY = 'the range picker’s end of the range is not a UTC day (YYYY-MM-DD)'
 const BREAKDOWN_UNKNOWN = 'the breakdown switch asked for a breakdown this console does not know'
 const PERSON_OFF_BECAUSE =
-  'the breakdown switch asked for the person breakdown, which is off for this installation until the operator turns the person view on'
+  'the breakdown switch asked for the person breakdown, which is off by default, and on for this session only and not remembered, until the operator turns the person view on'
 
 /** pickerSince is the picker's `since` as `report --since`, or `null` for a
  * value outside the picker's own two forms: a window of `SPEND_PICKER_WINDOWS`,
@@ -1260,7 +1263,9 @@ export async function readSpend(
 
 /**
  * personView is the operator's own knob (design D15: the person breakdown is off
- * by default and turned on for the installation, per session). Turning it on
+ * by default and turned on per installation; **this knob is per session only
+ * and is not remembered**, because persisting it needs a write channel this
+ * console does not have -- an open owner question). Turning it on
  * asks for the person breakdown -- the same `runReport` with `by person` and
  * nothing more -- and turning it off leaves no read that names a person: the
  * switch's own word goes back to `day`, because `--by person` with the view off
