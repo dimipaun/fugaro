@@ -79,12 +79,18 @@ const (
 	websiteInstallFactsPath = "website/data/install.yaml"
 	// websiteDownloadSuffix is the shape the site may not carry while the
 	// console's downloads are off: the release-asset path of THIS repository,
-	// appended to site.yaml's own repository URL, so a page that links an
-	// asset of a tag that does not exist is caught, while some third party's
-	// download path in a lockfile or a document is not this rule's business.
-	// The archive a reader downloads is reached from the Releases page, which
-	// is a page and not a versioned asset URL (finding 25, Global Constraint
-	// 9).
+	// appended to site.yaml's own repository with its scheme stripped. The
+	// needle therefore carries no scheme and no leading "//", so every way a
+	// page can write the link holds it -- "https://host/path",
+	// "//host/path", a bare "host/path", which is how this repository's own
+	// documents spell a GitHub path (website/data/install.yaml's go install
+	// line), or a path relative to a host named elsewhere. A needle carrying
+	// the scheme would catch only the first of those, and the others render as
+	// a live link to an asset that does not exist. Some third party's download
+	// path in a lockfile or a document is not this rule's business, which is
+	// why the repository is named in full. The archive a reader downloads is
+	// reached from the Releases page, which is a page and not a versioned asset
+	// URL (finding 25, Global Constraint 9).
 	websiteDownloadSuffix = "/releases/download"
 )
 
@@ -95,13 +101,15 @@ type websiteFactsFile struct {
 	Version int `yaml:"version"`
 	// CanonicalURL is the one absolute URL every other absolute link, the
 	// sitemap, the canonical <link> and the OpenGraph tag are built from
-	// (D92: the owner registered the domain; the site states it here and no
-	// agent registers a domain or touches DNS).
+	// (W1.3). It is a reserved placeholder until W2.2 replaces it: no domain is
+	// registered and nothing is deployed, and the registration, the Firebase
+	// custom domain and the DNS records are the owner's steps rather than an
+	// agent's (D92).
 	CanonicalURL string `yaml:"canonical_url"`
 	// SecondaryDomain is the second domain the site would redirect to the
-	// canonical one, and there is none: D92's answer is one registration and
-	// no redirect domain, so the value is empty and W2.2 writes the redirect
-	// block in firebase.json only for a domain that exists.
+	// canonical one, and there is none: D92's answer is one domain and no
+	// redirect domain, so the value is empty and W2.2 writes the redirect block
+	// in firebase.json only for a domain that exists.
 	SecondaryDomain string `yaml:"secondary_domain"`
 	// Repository is the repository every GitHub link on the site is built
 	// from (W1.7), pinned below to go.mod's own module path.
@@ -288,6 +296,51 @@ func websiteBoundaryEmbedPatternReachesWebsite(fileRel, pattern string) bool {
 	return websiteBoundaryResolvedInto(fileRel, strings.TrimPrefix(pattern, "all:"))
 }
 
+// websiteDownloadNeedle returns the string the console-link scan refuses,
+// built from the site's own repository: "host/path/releases/download", with no
+// scheme and no leading "//", so a page that writes the link any way at all --
+// absolute, protocol-relative, bare or relative to a base URL -- carries the
+// needle. It follows site.yaml's `repository` rather than a hand-typed string,
+// so the rule moves with the repository the site links to, and it refuses a
+// value that is not a host and a path rather than scanning for a string no
+// page could hold.
+func websiteDownloadNeedle(t *testing.T, repository string) string {
+	t.Helper()
+	hostPath := repository
+	if i := strings.Index(hostPath, "://"); i >= 0 {
+		hostPath = hostPath[i+3:]
+	}
+	hostPath = strings.TrimSuffix(strings.TrimPrefix(hostPath, "//"), "/")
+	host, rest, ok := strings.Cut(hostPath, "/")
+	if !ok || rest == "" || !strings.Contains(host, ".") {
+		t.Fatalf("%s: repository = %q does not name a host and a path, so the console-link check cannot say what to look for", websiteFactsPath, repository)
+	}
+	return hostPath + websiteDownloadSuffix
+}
+
+// websitePlaceholderHost reports whether a host is a name reserved for
+// documentation: RFC 2606's `.test`, `.example`, `.invalid` and `.localhost`
+// TLDs, and the reserved example.com/example.net/example.org names. A name
+// under one of them can never resolve, which is the only kind of host
+// canonical_url may carry while the site has no domain -- a host that resolves
+// is a claim about a domain this repository has not registered.
+func websitePlaceholderHost(host string) bool {
+	host = strings.ToLower(host)
+	switch host {
+	case "example.com", "example.net", "example.org", "localhost":
+		return true
+	}
+	i := strings.LastIndex(host, ".")
+	if i < 0 {
+		return false
+	}
+	switch host[i+1:] {
+	case "example", "test", "invalid", "localhost":
+		return true
+	}
+	return false
+}
+
 // TestWebsiteIsOutsideTheGoModule: no Go file in this module builds against a
 // path under website/, and the site's own facts are where these tests read
 // them. The site is a second artifact with its own language and its own build
@@ -339,6 +392,82 @@ func TestWebsiteIsOutsideTheGoModule(t *testing.T) {
 			t.Errorf("%s: version = %d, want 1", websiteFactsPath, facts.Version)
 		}
 	})
+}
+
+// TestWebsiteBoundaryWalkReadsEveryDirectoryOfTheSite holds websiteWalk's rule,
+// both halves of it, because it is the one new rule in this file and all three
+// site-wide scans read whatever it returns: a later tightening that stepped out
+// of website/src/, website/dist/ or website/node_modules would silently shrink
+// the console-link scan over most of the site, and nothing else here would
+// notice.
+//
+// First: a name beginning with "." is stepped out of -- a toolchain's cache
+// directory (.astro/, .cache/) is not a source tree, and a walk that read one
+// would make the site's scans depend on whatever a local build happened to
+// leave behind. Second: everything else is read, and that includes node_modules
+// and a build output -- both are full of files under website/, and a file that
+// came back from a build is exactly the kind of file the console-link scan
+// exists for.
+//
+// The tree is built under t.TempDir() and passed to websiteWalk directly, so
+// the walk's own rule is the only thing exercised and the repository is never
+// written to. The console boundary test carries the same case for the same
+// reason: a planted file under a directory the walk quietly skipped failed no
+// test at all once, while the directory's own README promised it would.
+func TestWebsiteBoundaryWalkReadsEveryDirectoryOfTheSite(t *testing.T) {
+	root := t.TempDir()
+	plant := func(rel string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("planted\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The site's own layout, plus the two directories a walk could be tempted
+	// to skip: a dependency tree and a build output.
+	read := []string{
+		"website/data/site.yaml",
+		"website/data/install.yaml",
+		"website/src/pages/index.astro",
+		"website/src/lib/changelog.mjs",
+		"website/test/consent.mjs",
+		"website/node_modules/dep/index.js",
+		"website/dist/index.html",
+	}
+	// A dot-directory is the one thing the walk steps out of: a cache, not a
+	// source tree. The file under the dependency tree's own dot-directory is
+	// skipped with it, so the rule is about the name and not about the depth.
+	skipped := []string{
+		"website/.astro/types.d.ts",
+		"website/.cache/report.json",
+		"website/node_modules/dep/.bin/cli",
+	}
+	for _, rel := range append(slices.Clone(read), skipped...) {
+		plant(rel)
+	}
+
+	files, err := websiteWalk(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range read {
+		if !slices.Contains(files, rel) {
+			t.Errorf("the walk did not read %s: every file under %s/ is read except a dot-directory's, and a rule that stepped out of this directory would leave the site's scans looking at a fraction of the site (%v)", rel, websiteDirName, files)
+		}
+	}
+	for _, rel := range skipped {
+		if slices.Contains(files, rel) {
+			t.Errorf("the walk read %s: a name beginning with \".\" is a toolchain's cache rather than a source tree, and reading one would make the site's scans depend on whatever a local build left behind (plan Task W0.2 step 2)", rel)
+		}
+	}
+
+	// A walk that cannot read what it was pointed at returns the error: a
+	// silent empty result is how a scan passes by looking at nothing.
+	if _, err := websiteWalk(filepath.Join(root, "no-such-directory")); err == nil {
+		t.Error("websiteWalk on a path that does not exist returned no error: a read failure must fail loudly, not shorten the scan")
+	}
 }
 
 // TestGoModHasNoWebsiteDependency: the module gains nothing from the site --
@@ -461,10 +590,7 @@ func TestWebsiteLinksNoConsoleWhileTheFlagIsOff(t *testing.T) {
 	// repository rather than typed here, so the rule follows the repository the
 	// site links to (and the pin in TestWebsiteFactsMatchTheRepository keeps
 	// that value honest).
-	download := strings.TrimSuffix(facts.Repository, "/") + websiteDownloadSuffix
-	if !strings.HasPrefix(download, "https://") {
-		t.Fatalf("%s: repository = %q, which does not build an absolute URL; this check cannot say what to look for", websiteFactsPath, facts.Repository)
-	}
+	download := websiteDownloadNeedle(t, facts.Repository)
 
 	for _, rel := range websiteBoundaryFiles(t, root) {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -485,21 +611,29 @@ func TestWebsiteLinksNoConsoleWhileTheFlagIsOff(t *testing.T) {
 // every value a page reads has one source, and this is where the two are held
 // together.
 //
-// What is pinned to what:
+// What is pinned to what, and which task relaxes each pin. Every message below
+// names that task, because a later task that changes a value here meets this
+// test, and its failure has to say what to do rather than argue with the task
+// that owns the change (§7's file-conflict note records this file's writers):
 //
 //   - repository: go.mod's own module path, so every GitHub link W1.7 builds
-//     points at this repository and at no other;
+//     points at this repository and at no other. No task changes it;
 //   - min_runs: internal/stats.MinRuns, the aggregation's own minimum (D97's
-//     N is 20 and it is one number, not two);
-//   - canonical_url: https, no trailing slash and no path, and its host is on
-//     the site's own allowed_hosts list -- a canonical URL a browser is sent
-//     to is a host the site has promised to talk to;
-//   - secondary_domain: empty, because D92's answer is one registration and no
-//     redirect domain (a second domain would be a decision, and W2.2 writes
-//     the redirect rule only for one that exists);
-//   - analytics: off, with no measurement id, until W3.2 sets both (D93);
-//   - features: the console's downloads and the video are both off (D95,
-//     D107);
+//     N is 20 and it is one number, not two). A change to D97's N moves both
+//     values, in the aggregation's task rather than in a page's;
+//   - canonical_url: a reserved placeholder origin (websitePlaceholderHost)
+//     with no path, no query and no trailing slash, whose host is on the
+//     site's own allowed_hosts list. W2.2 replaces the value and relaxes this
+//     check in the same commit, when the domain exists and serves the site;
+//   - secondary_domain: empty, because D92's answer is one domain and no
+//     redirect domain. W2.2 writes a value here, with the redirect rule in
+//     firebase.json, only if the owner ever acquires a second domain;
+//   - analytics: the flag and the measurement id agree with each other -- on
+//     with a property, or off without one -- so W3.2 sets both when it turns
+//     the measurement on (D93) and does not have to edit this file at all;
+//   - features: the console's downloads and the video are both off. W3.1
+//     flips the first with the console's first release, and W2.4 the second
+//     when the video exists, each in the commit that relaxes its own check;
 //   - allowed_hosts: bare lowercase hosts, no scheme, no port and no path,
 //     carrying the two hosts the site's links need and the canonical host.
 func TestWebsiteFactsMatchTheRepository(t *testing.T) {
@@ -515,7 +649,8 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	}
 
 	// The canonical URL: an absolute https URL with no path, no query and no
-	// trailing slash, under a host the site's own list admits.
+	// trailing slash, under a reserved placeholder host the site's own list
+	// admits. W2.2 is the task that writes the real one.
 	const scheme = "https://"
 	host, found := strings.CutPrefix(facts.CanonicalURL, scheme)
 	switch {
@@ -524,21 +659,31 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	case host == "" || strings.ContainsAny(host, "/?#"):
 		t.Errorf("%s: canonical_url = %q, want the origin alone -- the canonical <link>, the sitemap and the OpenGraph tag are built from it, so a path or a query here would be copied into all of them", websiteFactsPath, facts.CanonicalURL)
 	default:
+		if !websitePlaceholderHost(host) {
+			t.Errorf("%s: canonical_url names the host %q, which is not a reserved placeholder: no domain is registered and nothing is deployed, so a real host here would make the canonical <link>, the sitemap, the OpenGraph tag and every absolute link the site builds point at a domain this repository does not serve. W2.2 sets the real canonical URL, in the same commit that relaxes this check (D92, plan Task W2.2 step 1)", websiteFactsPath, host)
+		}
 		if !slices.Contains(facts.AllowedHosts, host) {
-			t.Errorf("%s: canonical_url names the host %q, which allowed_hosts %v does not: the list admits exactly the hosts the site may send a reader to, and the site's own is one of them (W1.11, plan Task W0.2 step 1)", websiteFactsPath, host, facts.AllowedHosts)
+			t.Errorf("%s: canonical_url names the host %q, which allowed_hosts %v does not: the list admits exactly the hosts the site may send a reader to, and the site's own is one of them. W2.2 changes both lines together, in the same commit (W1.11, plan Task W0.2 step 1)", websiteFactsPath, host, facts.AllowedHosts)
 		}
 	}
 
 	if facts.SecondaryDomain != "" {
-		t.Errorf("%s: secondary_domain = %q, want empty: D92's answer is the one domain the owner registered -- there is no second domain and no redirect domain -- so a value here would be a redirect the site cannot make and a second source for a name (D92, plan Task W0.2 step 1)", websiteFactsPath, facts.SecondaryDomain)
+		t.Errorf("%s: secondary_domain = %q, want empty: D92's answer is one domain and no redirect domain, so a value here would be a redirect the site cannot make and a second source for a name. W2.2 sets it, with the redirect rule in firebase.json, only for a domain that exists (D92, plan Task W2.2 step 1)", websiteFactsPath, facts.SecondaryDomain)
 	}
 
-	if facts.Analytics.Enabled || facts.Analytics.MeasurementID != "" {
-		t.Errorf("%s: analytics is %+v, want it off and without a measurement id: D93's answer is Firebase Analytics behind a consent banner, and W3.2 -- which runs after W1.12's gate is in place -- is the task that turns it on and names the property (D93, W3.2)", websiteFactsPath, facts.Analytics)
+	// Analytics: the two values have to agree, and that is the invariant worth
+	// pinning -- W3.2 turns the measurement on by setting the property id and
+	// the flag together, so it meets no red test here, while a flag turned on
+	// with nowhere to report to is refused wherever it is done.
+	if facts.Analytics.Enabled != (facts.Analytics.MeasurementID != "") {
+		t.Errorf("%s: analytics is %+v, and its two values must agree: analytics that report nowhere and a property id nothing reports to are both broken states, and W3.2 sets both together when it turns the measurement on behind W1.12's consent gate (D93, plan Task W3.2)", websiteFactsPath, facts.Analytics)
 	}
 
-	if facts.Features.ConsoleDownloads || facts.Features.Video {
-		t.Errorf("%s: features is %+v, want both false: the console is designed and not shipped, and the explainer video does not exist yet, so neither may render as something a reader can follow (D95, D107, findings 23 and 57)", websiteFactsPath, facts.Features)
+	if facts.Features.ConsoleDownloads {
+		t.Errorf("%s: features.console_downloads is true: the console is designed and not shipped, so its section may not render as something a reader can follow. W3.1 flips this flag with the console's first release, in the same commit that extends TestWebsiteLinksNoConsoleWhileTheFlagIsOff (D95, finding 23, plan Task W3.1)", websiteFactsPath)
+	}
+	if facts.Features.Video {
+		t.Errorf("%s: features.video is true: the explainer video does not exist, so the hero may not render a player, an iframe, a poster or a play button. W2.4 sets this flag when the video exists, in the same commit that relaxes this check (D107, finding 57, plan Task W2.4 step 1)", websiteFactsPath)
 	}
 
 	// The host list: bare hosts, and the two the site's links need.
