@@ -1357,7 +1357,9 @@ about this directory rather than about the workflow:
   `.github/workflows/` once the owner has applied it.
 
 **Tasks 1.0 to 1.4 merged with no console CI at all.** The copy-in is Task 1.5,
-and this paragraph is not a claim that it already happened: the pinned
+and it has now happened (the line below names the commit): the pinned
 toolchain, the hardened window, the IPC allow-list, `FugaroSource` and the
 fixtures were written, reviewed and merged on the strength of a reviewer's
 machine, and no workflow ran a console test on any of their pull requests.
+
+Tests workflow applied at commit 8a17d941 (`Add console workflow`, on the `console` branch): the owner copied `docs/pending-workflows/console-tests.yml` to `.github/workflows/console-tests.yml` unchanged. Tasks 1.0 to 1.4 merged before that commit and had no console CI; commits after it are covered by the `console` check.
