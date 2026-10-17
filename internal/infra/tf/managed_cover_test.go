@@ -1346,6 +1346,83 @@ func TestManagedCoverModuleCallProjectFailsClosed(t *testing.T) {
 	}
 }
 
+// moduleCallPlan is moduleProjectPlan's shape with the call itself written by
+// the caller: a covered plan (module.m's own provider block writes proj-1 out
+// and its call passes proj-1) whose module call mut may change. It is the
+// baseline the assertions below need — a refusal has to be the key's own, so
+// the same plan without the key must be covered.
+func moduleCallPlan(t *testing.T, mut func(call map[string]any)) *Plan {
+	t.Helper()
+	module := map[string]any{
+		"resources": []any{map[string]any{"address": "google_storage_bucket.b", "mode": "managed",
+			"type": "google_storage_bucket", "name": "b", "provider_config_key": "module.m:google"}},
+		"variables": map[string]any{"project": map[string]any{"default": "proj-1"}},
+	}
+	call := map[string]any{"source": "./m", "expressions": map[string]any{"project": constant("proj-1")}, "module": module}
+	if mut != nil {
+		mut(call)
+	}
+	cfg := config(map[string]string{"google": googleProvider}, nil, map[string]any{"m": call})
+	cfg["provider_config"].(map[string]any)["module.m:google"] = map[string]any{"name": "google", "full_name": googleProvider,
+		"module_address": "module.m", "expressions": map[string]any{"project": constant("proj-1")}}
+	rc := bucketChange("module.m.google_storage_bucket.b", ManagedPrefix+"b", googleProvider)
+	return jsonPlan(t, []map[string]any{rc}, cfg)
+}
+
+// TestManagedCoverRefusesAModuleCallsOwnKeys: a module call is a place the
+// cover reads, not one it passes through. The call's own keys are not the
+// called module's resources, so nothing else in the walk sees them: its
+// version constraint, and the meta-arguments its expressions carry — count and
+// for_each, which decide how many instances the call makes, providers, which
+// decides which provider configuration the called module's resources use, and
+// depends_on, which decides what the apply waits for — are all refused rather
+// than read as inert, the same direction the plan's and the configuration's
+// own unknown keys take. The baseline is the same plan without them, so each
+// refusal below is the key's and not the shape's.
+func TestManagedCoverRefusesAModuleCallsOwnKeys(t *testing.T) {
+	if out := managedTestCover().NotCovered(moduleCallPlan(t, nil), nil); len(out) != 0 {
+		t.Fatalf("the baseline (a module call passing proj-1) gives %q, want it covered: the refusals below are then not the keys'", out)
+	}
+	for name, mut := range map[string]func(call map[string]any){
+		"count":    func(c map[string]any) { c["expressions"].(map[string]any)["count"] = constant(2) },
+		"for_each": func(c map[string]any) { c["expressions"].(map[string]any)["for_each"] = refs("var.projects") },
+		"providers": func(c map[string]any) {
+			c["expressions"].(map[string]any)["providers"] = map[string]any{"google": "google"}
+		},
+		"depends_on": func(c map[string]any) {
+			c["expressions"].(map[string]any)["depends_on"] = []any{"google_storage_bucket.b"}
+		},
+		"version_constraint": func(c map[string]any) { c["version_constraint"] = "~> 1.0" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(moduleCallPlan(t, mut), nil)
+			if !refusedWith(out, "configuration.root_module.module_calls.m", name) {
+				t.Errorf("a module call carrying %s gives %q, want it refused by that key", name, out)
+			}
+		})
+	}
+	// A call whose expressions the cover cannot read is refused too: not read
+	// as carrying no meta-argument.
+	out := managedTestCover().NotCovered(moduleCallPlan(t, func(c map[string]any) { c["expressions"] = "proj-1" }), nil)
+	if !refusedWith(out, "configuration.root_module.module_calls.m.expressions (", "does not decode") {
+		t.Errorf("a module call whose expressions do not decode gives %q, want it refused", out)
+	}
+	// And an empty one carries nothing: absent, null, [] and {} are what the
+	// rest of the cover reads as nothing, and this is the same rule.
+	for name, empty := range map[string]any{"an empty object": map[string]any{}, "null": nil} {
+		out := managedTestCover().NotCovered(moduleCallPlan(t, func(c map[string]any) {
+			if empty == nil {
+				c["expressions"] = map[string]any{"project": constant("proj-1"), "for_each": nil}
+				return
+			}
+			c["expressions"].(map[string]any)["for_each"] = empty
+		}), nil)
+		if len(out) != 0 {
+			t.Errorf("a module call with %s for_each gives %q, want it covered: an empty meta-argument carries nothing", name, out)
+		}
+	}
+}
+
 // TestManagedCoverRefusesASecondProjectInTerraformsOwnPlan is the same rule on
 // a plan nobody wrote by hand: terraform's own output for a root whose module
 // provider block bills proj-2 and whose resource is in proj-2. The resource is
