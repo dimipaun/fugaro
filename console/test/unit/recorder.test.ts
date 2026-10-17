@@ -298,6 +298,22 @@ describe("the recorder's arguments", () => {
     )
     expect(forced.force).toBe(true)
     expect(full().force).toBe(false)
+    // ...and the inline form every other flag accepts means the same thing.
+    // The review of Task 3.2 found `--force=true` refused with "`--force` is not
+    // a recorder flag": fail-closed, but a sentence that names the wrong reason
+    // -- it contradicted this file's own usage text, which documents `--force`
+    // -- and left the operator to guess. `--force=false` is the default, so the
+    // inline form reads as what it says.
+    const inline = (token: string): { force: boolean } =>
+      parseRecorderArgs(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1', token], CWD, {
+        consoleRoot: CWD,
+      })
+    expect(inline('--force=true').force).toBe(true)
+    expect(inline('--force=false').force).toBe(false)
+    // A value that is neither is refused for what it is: a switch with a value
+    // it does not take, and not a flag that does not exist.
+    expect(refusal(() => inline('--force=maybe'))).toMatch(/--force takes true or false, not "maybe"/)
+    expect(refusal(() => inline('--force=maybe'))).not.toMatch(/is not a recorder flag/)
     // The check is on the resolved path rather than the spelling: `--out` given
     // from another directory still cannot land on a fixture that is there.
     expect(

@@ -152,6 +152,10 @@ const KNOWN_FLAGS = new Set([
   'case',
   'duration',
   'repo',
+  // `force` takes no value of the audit's kind -- it never reaches `flags` --
+  // but it is in the list so that a use of it that the loop above did not handle
+  // is refused as *this* flag rather than as "not a recorder flag" (see the loop).
+  'force',
 ])
 
 /** GCP_PROJECT_ID_RE is a GCP project ID's own grammar. */
@@ -183,12 +187,28 @@ export function parseRecorderArgs(
       throw new RecorderRefusal(`unexpected argument ${JSON.stringify(token)}\n\n${USAGE}`)
     }
     const [name, inline] = splitFlag(token)
+    if (name === 'force') {
+      // A switch, and the one flag whose inline form is not a value: every other
+      // flag takes `--x=v`, so `--force=true` is what a reader who has just used
+      // them writes, and the review of Task 3.2 found it refused with "`--force`
+      // is not a recorder flag" -- a sentence that names the wrong reason and
+      // leaves the operator guessing about a flag the usage text documents.
+      // `force` is therefore a known flag, `--force=true` means force, and
+      // `--force=false` means the default, so the inline form says what it reads
+      // as. Anything else is refused with a sentence about the switch.
+      if (inline === undefined) {
+        switches.add(name)
+        continue
+      }
+      if (inline === 'true') {
+        switches.add(name)
+        continue
+      }
+      if (inline === 'false') continue
+      throw new RecorderRefusal(`--force takes true or false, not ${JSON.stringify(inline)}\n\n${USAGE}`)
+    }
     if (inline !== undefined) {
       setFlag(name, inline)
-      continue
-    }
-    if (name === 'force') {
-      switches.add(name)
       continue
     }
     const value = argv[i + 1]
