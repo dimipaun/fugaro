@@ -240,6 +240,43 @@ test('the site\'s own sources name no third-party font or script host', () => {
   }
 })
 
+test('every dependency is pinned exactly, and the lockfile resolves from the npm registry alone', () => {
+  const pkg = packageJSON()
+
+  // An exact version per dependency: a caret is a range, and a range means the tree
+  // `npm ci` installs today is not the tree it installs in a month. The lockfile is
+  // committed and the direct dependencies are pinned, so an install is one tree.
+  const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }
+  const names = Object.keys(deps)
+  assert.ok(names.length > 0, 'package.json declares no dependency, so the site has no toolchain')
+  for (const name of names) {
+    assert.match(
+      deps[name],
+      /^\d+\.\d+\.\d+$/,
+      `package.json pins ${name} at "${deps[name]}": the site's dependencies are exact versions, so the lockfile and the manifest cannot disagree about what is installed`,
+    )
+  }
+
+  // Where every package in the tree comes from, package by package: the lockfile's own
+  // `resolved` URLs, all of them, and the integrity hash npm verifies each tarball
+  // against. A dependency arriving from a git URL, a tarball on a third party's host or a
+  // path in somebody's checkout is a build that runs code this project did not choose --
+  // and one that would make `npm ci` fetch from somewhere other than the registry.
+  const lock = JSON.parse(readFileSync(path.join(SITE_ROOT, 'package-lock.json'), 'utf8'))
+  const packages = Object.entries(lock.packages ?? {}).filter(([key]) => key !== '')
+  assert.ok(packages.length > 10, `the lockfile records ${packages.length} packages, which is too few to be this site's dependency tree`)
+  for (const [key, entry] of packages) {
+    if (!entry.resolved) continue // a workspace link or the root entry: nothing to fetch
+    const url = new URL(entry.resolved)
+    assert.equal(
+      url.host,
+      'registry.npmjs.org',
+      `${key} resolves from ${url.host}: the site's packages come from the npm registry and from nowhere else (no git URL, no third-party host, no local path)`,
+    )
+    assert.ok(entry.integrity, `${key} carries no integrity hash: an install that cannot verify what it fetched is not a pinned install`)
+  }
+})
+
 test('.gitignore keeps the dependency tree and the build output out of the tree', () => {
   const ignore = path.join(SITE_ROOT, '.gitignore')
   assert.ok(existsSync(ignore), 'website/.gitignore is missing: a committed node_modules or dist/ is a build output in the repository')
