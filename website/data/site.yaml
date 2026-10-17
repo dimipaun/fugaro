@@ -1,0 +1,95 @@
+# website/data/site.yaml -- the site's own facts.
+#
+# The values every page reads and nobody hard-codes: the canonical URL, the
+# repository, what is switched on, the minimum sample a published figure may be
+# drawn from, and the hosts the site's own link and origin checks admit. The
+# site is a second artifact that lives in this repository under website/ (D90),
+# and this file is how a fact about the site is stated once instead of typed
+# into a component.
+#
+# Read as bytes by internal/cli/docs_website_boundary_test.go, which pins:
+# `repository` to go.mod's own module path (so every GitHub link W1.7 builds
+# points at this repository and at no other); `min_runs` to
+# internal/stats.MinRuns (D97's N is 20 and it is one number, not two);
+# `canonical_url` to an absolute https origin whose host is on `allowed_hosts`;
+# `secondary_domain` to empty, because D92's answer is the one domain the owner
+# registered and no redirect domain; `analytics` to off and unnamed, which is
+# the state D93's answer leaves it in until W3.2 -- which runs after W1.12's
+# consent gate -- turns it on and names the property; both `features` to false,
+# because the console is designed and not shipped and the explainer video does
+# not exist yet; and every entry of `allowed_hosts` to a bare lowercase host.
+# The same file is the source of the console-link rule that test enforces: while
+# `features.console_downloads` is false, no file under website/ may carry a
+# release-asset download URL of this repository (Global Constraint 9, finding
+# 25) -- and this file states the rule without printing the shape it forbids,
+# because the scan reads it too.
+#
+# Nothing under website/ is importable by the Go module, and the module gains no
+# dependency from the site: that boundary is a test (the console boundary test's
+# own shape), not a convention.
+version: 1
+
+# The one absolute URL the site's canonical <link>, its sitemap, its OpenGraph
+# tag and every absolute link it prints are built from (W1.3). D92's answer of
+# 2026-10-16 is that the owner registered this domain: the value is the site's,
+# the registration and the DNS records are the owner's, and no agent registers a
+# domain or touches DNS. A domain change is this line and a rebuild.
+canonical_url: https://fugaro.dev
+
+# There is no second domain, and that is D92's answer rather than an unfinished
+# value: one registration, no redirect domain, and therefore no redirect to
+# write. W2.2 writes the firebase.json redirect block only for a domain that
+# exists, and this value is where one would be named if the owner ever acquired
+# one.
+secondary_domain: ""
+
+# The repository every GitHub link on the site is built from (W1.7): the docs
+# hub links the guides it renders, the community page links CONTRIBUTING.md and
+# the issue templates, and the install path links the Releases page. It equals
+# go.mod's module path, so the site and the module name one repository.
+repository: https://github.com/dimipaun/fugaro
+
+# Analytics, which D93 answered on 2026-10-16 as Firebase Analytics behind a
+# consent banner -- against the reconciliation's recommendation, which is why
+# these two lines exist at all. `enabled` is false and stays false until W3.2
+# sets the measurement id and turns the flag on; even then the load is decided
+# by W1.12's consent gate and not by this flag, so nothing is fetched before a
+# visitor consents either way. `measurement_id` is empty while analytics is off:
+# a property id is a fact about a Firebase project, and it arrives with the task
+# that switches the measurement on.
+analytics:
+  enabled: false
+  measurement_id: ""
+
+# The features the site renders only when they exist. The console is designed
+# and not shipped (its release notes list it under "Not in this release"), so
+# its section renders as a placeholder with no link and no button, and the test
+# above refuses a download URL anywhere under website/ while this flag is false
+# (D95). The explainer video does not exist yet, so the hero carries no player,
+# no iframe, no poster and no play button (D107). W3.1 flips the first when the
+# console's first release ships; W2.4 renders around the second.
+features:
+  console_downloads: false
+  video: false
+
+# D97's N: no figure the site publishes is drawn from fewer runs than this, and
+# a group thinner than it is absent from the page rather than approximated. The
+# value is internal/stats.MinRuns -- the aggregation's own minimum -- because the
+# site publishes the aggregation's output and a second copy of its rule could
+# disagree with the command that applies it.
+min_runs: 20
+
+# The host list the site's own checks enforce (W1.11): every external link is
+# resolved against it, and every script, stylesheet, preload, image, iframe and
+# font origin is compared with it, so a host that is not on the list fails the
+# site's build rather than reaching a reader's browser. It carries the hosts the
+# site actually links -- github.com for the repository, the Releases page and
+# the issue templates, raw.githubusercontent.com for the documents the docs hub
+# renders -- and the site's own canonical origin, and nothing else. The one
+# third-party origin the owner decided on (D93's analytics script, loaded only
+# after consent) is admitted by the consent task's own check, not by an entry
+# here.
+allowed_hosts:
+  - github.com
+  - raw.githubusercontent.com
+  - fugaro.dev
