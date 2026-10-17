@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -42,11 +43,14 @@ const statsDefaultSince = "90d"
 
 // statsNotAPromise is the disclaimer every published figure travels with
 // (reconciliation D97): what a cap is, that a range is a measurement over a
-// window rather than a promise, and that every figure carries its sample size.
+// window rather than a promise, that every figure carries its sample size, and
+// that the bottom of every range is one run's own exact figure.
 const statsNotAPromise = "A cap is a ceiling, not an estimate: in observe a run counts and logs what it\n" +
 	"spent, and in enforce it halts. These figures are percentiles over one window of\n" +
 	"one installation's own run records: what those runs did, not a promise about\n" +
-	"another run. Every figure prints the number of runs behind it."
+	"another run. Every figure prints the number of runs behind it, and the min is\n" +
+	"always one run's own exact figure -- as is the median of an odd number of runs,\n" +
+	"and the p90 whenever 0.9 times (runs minus one) is a whole number."
 
 type statsOptions struct {
 	cloud   cloudOptions
@@ -160,6 +164,14 @@ func runStatsRuns(cmd *cobra.Command, o *statsOptions) error {
 	if o.minRuns < 1 {
 		return userErr("--min-runs %d: use at least 1", o.minRuns)
 	}
+	if o.minRuns < stats.MinRuns {
+		// Lowering the threshold is the operator's call (D97), and the figures
+		// are printed as asked for -- but a range from so few runs is one run's
+		// own figures with a range drawn around them, so the command says so
+		// rather than letting it read as a distribution.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: --min-runs %d is below the %d a range is meant to be read with: a range from so few runs is mostly one run's own figures, and every figure prints its sample size\n",
+			o.minRuns, stats.MinRuns)
+	}
 	since, err := parseSince(o.since)
 	if err != nil {
 		return userErr("%v", err)
@@ -194,18 +206,25 @@ func runStatsRuns(cmd *cobra.Command, o *statsOptions) error {
 // as runs ls and budget preview treat it: a run that has not finalized has no
 // record, and a corrupt or oversized one is that run's own (corruptObject).
 // Both are counted as a record with no figure and the figures are still
-// published -- one bad object must not make them unproducible. Any other read
-// failure is a remote failure and fails the whole command.
+// published -- one bad object must not make them unproducible.
+//
+// A read failure that is neither -- permission denied, say -- fails the whole
+// command, and the failure says only that a record could not be read, with its
+// place in the window. The run it was, the object it was, and the error under
+// it are identifiers of an installation's own data, and this command's whole
+// value is that none of them is printed.
 func readStatsRuns(ctx context.Context, env *cloudEnv, since time.Time) ([]stats.Run, error) {
 	slugs, err := runstore.ListSlugs(ctx, env.bucket.Bucket)
 	if err != nil {
-		return nil, remote(err)
+		return nil, remote(errors.New("the runs bucket could not be listed"))
 	}
 	var refs []statsRef
 	for _, slug := range slugs {
 		ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, since)
 		if err != nil {
-			return nil, remote(err)
+			// dirs' own error names the prefix, and the prefix names the
+			// repository: this one is not printed either.
+			return nil, remote(errors.New("a repository's runs could not be listed"))
 		}
 		for _, id := range ids {
 			refs = append(refs, statsRef{slug: slug, id: id})
@@ -219,14 +238,14 @@ func readStatsRuns(ctx context.Context, env *cloudEnv, since time.Time) ([]stats
 		recs[i], errs[i] = runstore.Open(env.bucket.Bucket, refs[i].slug, refs[i].id).ReadRecord(ctx)
 	})
 	runs := make([]stats.Run, 0, len(refs))
-	for i, ref := range refs {
+	for i := range refs {
 		switch err := errs[i]; {
 		case err == nil:
 			runs = append(runs, statsRun(recs[i]))
 		case errors.Is(err, runstore.ErrNotFound), corruptObject(err):
 			runs = append(runs, stats.Run{NoFigure: true})
 		default:
-			return nil, remote(fmt.Errorf("run %s/%s: %w", ref.slug, ref.id, err))
+			return nil, remote(fmt.Errorf("a run record could not be read (%d of %d)", i+1, len(refs)))
 		}
 	}
 	return runs, nil
@@ -235,24 +254,31 @@ func readStatsRuns(ctx context.Context, env *cloudEnv, since time.Time) ([]stats
 // statsRef is one run to read: the bucket directory it sits in, and its ID.
 type statsRef struct{ slug, id string }
 
-// statsRun is the narrow view of one record: a recipe, a duration, a cost and
-// whether the compute part is an estimate. Nothing that identifies the run,
-// its repository or its pull request is carried across, so no field of the
-// published aggregate can hold one -- this function is where the record's
-// repository, run ID, branch, pull request and account are left behind.
+// statsRun is the narrow view of one record: a recipe and where it came from,
+// a duration, a cost and whether the compute part is an estimate. Nothing that
+// identifies the run, its repository or its pull request is carried across, so
+// no field of the published aggregate can hold one -- this function is where
+// the record's repository, run ID, branch, pull request and account are left
+// behind.
 func statsRun(rec *runstore.Record) stats.Run {
 	r := stats.Run{NoFigure: true}
 	// The recipe is the group key, and it is read from the record's recipe
 	// rather than from anything that names the run. A record from before
-	// 0.5.0 has none, and internal/stats drops the empty name as unknown.
+	// 0.5.0 has none, and internal/stats groups only a catalog recipe: an
+	// empty name, and a repository's own recipe that reuses a catalog name,
+	// are both dropped as unknown.
 	if rec.Recipe != nil {
-		r.Recipe = rec.Recipe.Name
+		r.Recipe, r.RecipeSource = rec.Recipe.Name, rec.Recipe.Source
 	}
 	if rec.StartedAt.IsZero() || rec.FinishedAt == nil || rec.Cost == nil {
 		return r
 	}
 	d := rec.FinishedAt.Sub(rec.StartedAt)
-	if d < 0 {
+	// A figure that cannot be one is no figure: a duration that ran backwards,
+	// a negative cost, or a value past any cost. Two of them in one window are
+	// enough to make the interpolation produce an infinity, and --json then
+	// fails outright rather than printing a range.
+	if d < 0 || !statsFigure(d.Seconds()) || !statsFigure(rec.Cost.TotalUSD) {
 		return r
 	}
 	r.NoFigure = false
@@ -260,6 +286,19 @@ func statsRun(rec *runstore.Record) stats.Run {
 	r.CostUSD = rec.Cost.TotalUSD
 	r.ComputeNotEstimated = !rec.Cost.ComputeEstimated
 	return r
+}
+
+// statsMaxFigure is the largest figure this command can publish. Rounding a
+// cost to the cent multiplies it by 100 on the way, so a larger one -- 1e308
+// is a value a bad record can carry -- would round to an infinity and --json
+// would fail rather than print a range.
+const statsMaxFigure = math.MaxFloat64 / 100
+
+// statsFigure reports whether v can be one of the figures published: a cost or
+// a duration is never negative, never infinite, never NaN, and never so large
+// that publishing it rounds to an infinity.
+func statsFigure(v float64) bool {
+	return v >= 0 && v <= statsMaxFigure && !math.IsInf(v, 0) && !math.IsNaN(v)
 }
 
 // writeStats prints the figures as a table with their disclaimer, or as one
@@ -305,9 +344,9 @@ func writeStats(w io.Writer, project string, from, until time.Time, sinceLabel s
 	if !from.IsZero() {
 		window = fmt.Sprintf("%s to %s (%s)", doc.Since, doc.Until, sinceLabel)
 	}
-	fmt.Fprintf(w, "window:  %s, at least %d runs per recipe\n\n", window, minRuns)
+	fmt.Fprintf(w, "window:  %s, at least %d %s per recipe\n\n", window, minRuns, plural(minRuns, "run", "runs"))
 	if len(res.Groups) == 0 {
-		fmt.Fprintf(w, "no recipe reached %d runs in this window: no range is published\n", minRuns)
+		fmt.Fprintf(w, "no recipe reached %d %s in this window: no range is published\n", minRuns, plural(minRuns, "run", "runs"))
 	} else {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "RECIPE\tRUNS\tDURATION S (min median p90)\tCOST USD (min median p90)\tCOMPUTE NOT ESTIMATED")

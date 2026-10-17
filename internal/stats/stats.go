@@ -37,6 +37,12 @@ const MinRuns = 20
 type Run struct {
 	// Recipe is the run's recipe, as the record names it.
 	Recipe string
+	// RecipeSource is where that recipe came from (recipe.SourceCatalog,
+	// recipe.SourceRepo, recipe.SourceProject, or "" in a record from before
+	// the field existed). A repository or project recipe may reuse a built-in
+	// name -- resolveRecipe lets it shadow the catalog one -- so the name
+	// alone does not say which recipe ran: only a catalog recipe is grouped.
+	RecipeSource string
 	// DurationS is the run's wall-clock duration in seconds.
 	DurationS float64
 	// CostUSD is the run's total billed cost, in USD.
@@ -121,7 +127,7 @@ func Aggregate(runs []Run, minRuns int) Result {
 		if r.ComputeNotEstimated {
 			res.ComputeNotEstimated++
 		}
-		name, shipped := ShippedName(r.Recipe)
+		name, shipped := ShippedName(r.Recipe, r.RecipeSource)
 		if !shipped {
 			res.RunsUnknownRecipe++
 			continue
@@ -154,13 +160,20 @@ func Aggregate(runs []Run, minRuns int) Result {
 	return res
 }
 
-// ShippedName maps a record's recipe name to the name the tree ships today,
-// and reports false for a name it does not ship: a catalog name retired in
-// 0.7.0 (recipe.Renamed) keeps its figures under the name the catalog carries
-// now, and a name neither the catalog nor the rename table knows -- a recipe
-// of a project layer's own, or a record whose recipe is empty -- is one a
-// reader cannot look up, so it is never published as a group key.
-func ShippedName(name string) (string, bool) {
+// ShippedName maps a run's recipe -- its name and the source it came from --
+// to the catalog name the tree ships today, and reports false for a recipe
+// that is not the catalog's own. A catalog name retired in 0.7.0
+// (recipe.Renamed) keeps its figures under the name the catalog carries now.
+// Everything else is a recipe a reader cannot look up: a name the catalog does
+// not carry (a project layer's own, or a record whose recipe is empty), and --
+// the case the name alone cannot see -- a repository or project recipe that
+// reuses a catalog name, which resolveRecipe lets it shadow the built-in one
+// with. Publishing that one under the built-in label would put a repository's
+// own loop and its figures where a reader reads the catalog's.
+func ShippedName(name, source string) (string, bool) {
+	if source != string(recipe.SourceCatalog) {
+		return "", false
+	}
 	if to, ok := recipe.Renamed[name]; ok {
 		name = to
 	}
