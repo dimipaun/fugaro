@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -188,11 +189,43 @@ func (s Spec) read(ctx context.Context, planPath string) (*tf.Plan, error) {
 // notCovered is the scope-and-attribute gate's own list, and a refusal when
 // there is no cover at all: a managed plan is admitted by the managed cover of
 // the project's own allowlist, or by nothing.
+//
+// The owner's delete list goes to the cover beside the plan (Task 1.2a,
+// tf.Deletable): the list Gate hands tf.Guard is handed to the cover too, so
+// the two halves of the gate cannot be given different ones — a delete admitted
+// by the list one of them was told and not the other's is exactly the plan this
+// rule exists to refuse. A cover that cannot be told it judges no delete, so
+// nothing but the guard stands between a listed address and an unread resource:
+// unjudgedDeletes refuses that case rather than letting the address alone admit
+// it.
 func (s Spec) notCovered(p *tf.Plan) []string {
 	if s.Cover == nil {
 		return []string{"no cover: a managed plan is admitted by the managed cover of " + s.what() + ", or by nothing"}
 	}
-	return s.Cover.NotCovered(p, s.Imports)
+	if d, ok := s.Cover.(tf.Deletable); ok {
+		return d.WithDeleteList(s.AllowDelete).NotCovered(p, s.Imports)
+	}
+	return append(s.Cover.NotCovered(p, s.Imports), s.unjudgedDeletes(p)...)
+}
+
+// unjudgedDeletes lists every delete or replace of an address on the owner's
+// list, for the cover that cannot be told the list and so cannot judge the
+// resource: the address is the one thing that is not a judgement of it, and a
+// cover that admits every delete would otherwise have a listed one admitted
+// with nothing reading the resource at all. Fail closed, and named: a delete
+// the owner approved still needs the resource it removes to be one a managed
+// plan may carry.
+func (s Spec) unjudgedDeletes(p *tf.Plan) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		if slices.Contains(rc.Change.Actions, "delete") && slices.Contains(s.AllowDelete, rc.Address) {
+			out = append(out, rc.Address+" (a delete or a replace of an address on the owner's delete list, which this cover cannot be told the list: the resource is not judged, and the address alone never admits one)")
+		}
+	}
+	return out
 }
 
 // what names the project in the refusals and errors Gate writes itself.

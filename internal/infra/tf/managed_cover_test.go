@@ -1522,7 +1522,7 @@ func TestManagedCoverRefusesAListedDeleteOfAnAccountOutsideTheManagedProject(t *
 		"member":             "serviceAccount:" + managedAccount, "role": "roles/iam.serviceAccountUser"}
 	c := managedTestCover().WithDeleteList([]string{rc.Address})
 	out := c.NotCovered(managedPlan(rc), nil)
-	if len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
+	if len(out) != 1 || !strings.Contains(out[0], "not a service account of the managed project") {
 		t.Fatalf("a listed delete of a grant on the default compute account gives %q, want the account rule", out)
 	}
 }

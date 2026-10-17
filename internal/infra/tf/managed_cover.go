@@ -173,6 +173,10 @@ var managedGrantRules = map[string]bool{
 // What it adds to Cover is the managed answer to four questions, each of which
 // is a refusal rather than an inheritance:
 //
+//   - the delete (Task 1.2a): a delete or a replace is admitted only for an
+//     exact address on the owner's own list, and only when the resource it
+//     removes or creates is one the rules below admit — the list alone never
+//     admits one (NotCovered);
 //   - the type: managedTypes rather than allowedTypes, so the twelve entries
 //     of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
@@ -261,6 +265,15 @@ func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
 // the two attribute checks in place of the embedded modules' own: the billing
 // account a resource names (managedBilling, read before the type rule so that
 // it is read at all) and the project it is in (managedProject).
+//
+// A delete and a replace (Task 1.2a) are the one part of that walk the list
+// changes: they are admitted for an exact address on the owner's list alone —
+// managedActions says which action sets they are — and the resource is then
+// judged by the same chain as a create, on the view of it the change shows
+// (removed says which), so a listed address whose resource is not one a
+// managed plan may carry is refused for the resource. The list is what
+// managed.applies hands this cover beside the plan, the same slice tf.Guard
+// is handed, and a cover that was handed none admits no delete at all.
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
@@ -281,45 +294,110 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, managedProviderReason(rc.ProviderName))
 			continue
 		}
+		// The actions, and then the resource. A delete, or a replace in either
+		// of terraform's two orders, is admitted only for an exact address on
+		// the owner's list (Task 1.2a, D72/D74) — the same list tf.Guard is
+		// handed, compared the same way, by string equality: no prefix, module
+		// or instance key stands in for an address, so a listed x[0] admits
+		// nothing of x[1]. The list is not the decision about the resource:
+		// the resource is judged below exactly as a create is, and a resource
+		// that is not one a managed plan may carry is refused although its
+		// address is listed — otherwise the list would be a way past every
+		// rule about the resource, which is the failure this gate exists to
+		// avoid.
+		delete := slices.Contains(acts, "delete")
 		switch {
 		case len(acts) == 0:
 			add(rc, "no actions")
 			continue
-		case !allOf(acts, "create", "update", "no-op", "read"):
+		case !managedActions(acts):
 			add(rc, "actions "+strings.Join(acts, ", "))
+			continue
+		case delete && !slices.Contains(c.AllowDelete, rc.Address):
+			add(rc, "actions "+strings.Join(acts, ", ")+": an address that is not on the owner's delete list")
 			continue
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
 			continue
 		}
-		t := rc.Type
-		switch {
-		case strings.HasSuffix(t, "_iam_binding") || strings.HasSuffix(t, "_iam_policy") || strings.HasSuffix(t, "_iam_audit_config"):
-			add(rc, "an authoritative IAM resource")
-		case t == "google_service_account_key":
-			add(rc, "a service account key")
-		case c.managedBilling(rc) != "":
-			// Before the type rule: google_billing_budget is off the managed
-			// list, so read after it the billing account would never be read
-			// (managedBilling).
-			add(rc, c.managedBilling(rc))
-		case !managedTypes[t]:
-			add(rc, c.managedTypeReason(t))
-		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
-			add(rc, "imports "+rc.Change.Importing.ID+", which is not in the managed project's projects")
-		case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
-			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
-		case c.managedResource(rc) != "":
-			add(rc, c.managedResource(rc))
-		case c.managedProject(rc, declared) != "":
-			add(rc, c.managedProject(rc, declared))
-		case strings.HasSuffix(t, "_iam_member"):
-			if why := c.managedGrant(rc); why != "" {
+		// A replace is judged twice, on both resources: the one the plan
+		// creates, read from after as a create is, and the one it removes,
+		// read from before (removed). A destroy has no after to read, so only
+		// the removed resource is judged.
+		if !allOf(acts, "delete") {
+			if why := c.notCoveredResource(rc, declared, imports); why != "" {
+				add(rc, why)
+				continue
+			}
+		}
+		if delete {
+			if why := c.notCoveredResource(removed(rc), declared, imports); why != "" {
 				add(rc, why)
 			}
 		}
 	}
 	return out
+}
+
+// managedActions: the plan action sets a managed plan may carry. Terraform's
+// own sets, whole and in order, and nothing else: create, update, no-op and
+// read change or read a resource without removing it, and a delete or one of
+// the two orders of a replace is admitted only with the owner's list (read
+// beside this in NotCovered). Any other set — an action terraform has not
+// used, a delete of a resource that is not shown as one, a set no version of
+// terraform writes — is refused rather than read as one of these.
+func managedActions(acts []string) bool {
+	return allOf(acts, "create", "update", "no-op", "read") ||
+		slices.Equal(acts, []string{"delete"}) ||
+		slices.Equal(acts, []string{"create", "delete"}) ||
+		slices.Equal(acts, []string{"delete", "create"})
+}
+
+// removed is the change as the resource it takes away: terraform writes a
+// destroy with the resource in before and null in after, and a replace with
+// both. Reading the rules on this view is what judges the removed resource —
+// its name, its type, the account it is on — rather than reading the empty
+// after a delete has.
+func removed(rc ResourceChange) ResourceChange {
+	rc.Change.After = rc.Change.Before
+	rc.Change.AfterUnknown = nil
+	// An import is about the resource the plan takes over, which is the after
+	// view's; a removed resource is imported by nothing.
+	rc.Change.Importing = nil
+	return rc
+}
+
+// notCoveredResource is why the resource a change's view shows is not one a
+// managed plan may contain, "" when it is: the rule chain NotCovered reads a
+// create through, which a delete and both halves of a replace are judged by as
+// well. rc is either the change itself (the resource the plan creates, in
+// after) or removed(rc) (the resource it removes, in before).
+func (c ManagedCover) notCoveredResource(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) string {
+	t := rc.Type
+	switch {
+	case strings.HasSuffix(t, "_iam_binding") || strings.HasSuffix(t, "_iam_policy") || strings.HasSuffix(t, "_iam_audit_config"):
+		return "an authoritative IAM resource"
+	case t == "google_service_account_key":
+		return "a service account key"
+	case c.managedBilling(rc) != "":
+		// Before the type rule: google_billing_budget is off the managed
+		// list, so read after it the billing account would never be read
+		// (managedBilling).
+		return c.managedBilling(rc)
+	case !managedTypes[t]:
+		return c.managedTypeReason(t)
+	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
+		return "imports " + rc.Change.Importing.ID + ", which is not in the managed project's projects"
+	case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
+		return "imports " + rc.Change.Importing.ID + ", which this run's discovery did not find"
+	case c.managedResource(rc) != "":
+		return c.managedResource(rc)
+	case c.managedProject(rc, declared) != "":
+		return c.managedProject(rc, declared)
+	case strings.HasSuffix(t, "_iam_member"):
+		return c.managedGrant(rc)
+	}
+	return ""
 }
 
 // managedProviders are the providers a managed plan may use: Google's own two,
