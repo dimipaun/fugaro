@@ -248,3 +248,51 @@ func TestWithDeployerGrantBindsOnlyAServiceAccount(t *testing.T) {
 		t.Errorf("binding the same member twice changed the policy: %v, %v", got, changed)
 	}
 }
+
+// The role is pinned as a literal: object read and write on the state bucket,
+// never a bucket-level admin role (storage.admin could rewrite the bucket's
+// own policy, and the binding is made outside any plan the review reads).
+func TestDeployerStateRoleIsObjectAdmin(t *testing.T) {
+	if DeployerStateRole != "roles/storage.objectAdmin" {
+		t.Errorf("DeployerStateRole = %q, want roles/storage.objectAdmin", DeployerStateRole)
+	}
+}
+
+// A conditioned binding of the same role is somebody else's: the deployer is
+// never added to it, whether or not an unconditioned binding of the role
+// follows it. Joining it would bind the deployer under a condition this step
+// did not write, and leave it without the access the step is for.
+func TestWithDeployerGrantSkipsConditionedBindings(t *testing.T) {
+	want := deployerMember(gcpProject)
+	cond := func() *storage.PolicyBindings {
+		return &storage.PolicyBindings{Role: DeployerStateRole, Members: []string{"user:else@example.com"},
+			Condition: &storage.Expr{Title: "somebody-elses", Expression: "resource.name.startsWith(\"projects/_/buckets/y\")"}}
+	}
+	// Only a conditioned binding: a new unconditioned one is added.
+	got, changed := withDeployerGrant([]*storage.PolicyBindings{cond()}, DeployerStateRole, want)
+	if !changed || len(got) != 2 {
+		t.Fatalf("withDeployerGrant = %v, %v, want a second binding", got, changed)
+	}
+	if !slices.Equal(got[0].Members, []string{"user:else@example.com"}) || got[0].Condition == nil {
+		t.Errorf("the conditioned binding changed: %+v", got[0])
+	}
+	if got[1].Condition != nil || got[1].Role != DeployerStateRole || !slices.Equal(got[1].Members, []string{want}) {
+		t.Errorf("the deployer's binding is %+v, want it unconditioned and alone", got[1])
+	}
+	// A conditioned binding before the unconditioned one: the deployer joins
+	// the unconditioned one.
+	plain := &storage.PolicyBindings{Role: DeployerStateRole, Members: []string{"user:owner@example.com"}}
+	got, changed = withDeployerGrant([]*storage.PolicyBindings{cond(), plain}, DeployerStateRole, want)
+	if !changed || len(got) != 2 || !slices.Equal(got[0].Members, []string{"user:else@example.com"}) ||
+		!slices.Equal(got[1].Members, []string{"user:owner@example.com", want}) {
+		t.Errorf("withDeployerGrant = %+v, %+v, %v", got[0], got[1], changed)
+	}
+	// The deployer already in a conditioned binding is not the grant: it is
+	// still bound unconditioned.
+	c := cond()
+	c.Members = append(c.Members, want)
+	got, changed = withDeployerGrant([]*storage.PolicyBindings{c}, DeployerStateRole, want)
+	if !changed || len(got) != 2 || got[1].Condition != nil {
+		t.Errorf("a conditioned membership counted as the grant: %v, %v", got, changed)
+	}
+}

@@ -879,6 +879,21 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 		"projects/12/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com",
 		"projects/12/serviceAccounts/1234567890-compute@developer.gserviceaccount.com",
 		"projects/12/locations/global/keys/fugaro-web",
+		// An object carrying the prefix in a bucket that does not: the runs
+		// bucket's objects are reached by bucket name, never by object name
+		// (a clause testing the prefix anywhere in a storage name admits it).
+		"projects/_/buckets/fugaro-runs-x/objects/fmgd-y",
+		"projects/_/buckets/fugaro-runs-proj-1/objects/runs/fmgd-y/state.json",
+		"projects/_/buckets/fugaro-tfstate-proj-1/objects/fmgd-/default.tfstate",
+		"projects/_/buckets/x-fmgd-/objects/a",
+	}
+	admits := func(c DeployerClause, name string) bool {
+		switch c.Op {
+		case "startsWith":
+			return strings.HasPrefix(name, c.Value)
+		default:
+			return strings.Contains(name, c.Value)
+		}
 	}
 	for _, c := range cls {
 		if c.Type == "" || !strings.Contains(c.Type, "/") {
@@ -887,8 +902,19 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 		if !strings.Contains(c.Value, ManagedPrefix) {
 			t.Errorf("clause %+v does not test the managed prefix %q", c, ManagedPrefix)
 		}
-		if !strings.HasSuffix(c.Value, ManagedPrefix) && !strings.HasSuffix(c.Value, "/"+ManagedPrefix) {
-			t.Errorf("clause %+v does not end at the prefix: a name such as x-%s would match it", c, ManagedPrefix)
+		if !strings.HasSuffix(c.Value, "/"+ManagedPrefix) {
+			t.Errorf("clause %+v does not end at the prefix after a path separator: a name such as x-%s would match it", c, ManagedPrefix)
+		}
+		// The value is never the prefix alone (DeployerClause's doc comment):
+		// a value that admitted any name containing the prefix would admit a
+		// fugaro-* object in a bucket whose object name carries it.
+		if c.Value == ManagedPrefix || c.Value == "/"+ManagedPrefix {
+			t.Errorf("clause %+v tests the prefix alone", c)
+		}
+		// Cloud Storage names put the bucket at the front, so a storage clause
+		// tests the bucket's name with startsWith, on the bucket resource path.
+		if strings.HasPrefix(c.Type, "storage.googleapis.com/") && (c.Op != "startsWith" || c.Value != "projects/_/buckets/"+ManagedPrefix) {
+			t.Errorf("storage clause %+v is not startsWith(\"projects/_/buckets/%s\")", c, ManagedPrefix)
 		}
 		switch c.Op {
 		case "startsWith":
@@ -897,10 +923,7 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 			t.Errorf("clause %+v has an operator the condition does not use", c)
 		}
 		for _, name := range forbidden {
-			if match := strings.HasPrefix(name, c.Value); match && c.Op == "startsWith" {
-				t.Errorf("clause %+v admits %s", c, name)
-			}
-			if strings.Contains(name, c.Value) {
+			if admits(c, name) || strings.Contains(name, c.Value) {
 				t.Errorf("clause %+v admits %s", c, name)
 			}
 		}
@@ -1094,6 +1117,29 @@ func TestDeployerRoleCreationRefusesComputedProjectRoles(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if got := testCover.NotCovered(&Plan{ResourceChanges: tc.changes}, nil); (len(got) == 0) != tc.covered {
 				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+}
+
+// The refusal above holds for each of the deployer's roles on its own: a plan
+// that creates only fugaroDeployer, or only fugaroDeployerScoped, with a
+// computed project role beside it is refused — either role being created is a
+// plan in which the scoped role may be the computed one (the two are created
+// together by the module, and a plan that carried one could still bind the
+// other, already existing, under a role nobody can name).
+func TestDeployerRoleCreationRefusesComputedProjectRolesForEitherRole(t *testing.T) {
+	for _, id := range []string{DeployerRole, DeployerScopedRole} {
+		t.Run(id, func(t *testing.T) {
+			var perms []any
+			for _, p := range RolePermissions[id] {
+				perms = append(perms, p)
+			}
+			changes := []ResourceChange{customRole(id, "proj-1", perms),
+				rc("google_project_iam_member", map[string]any{"member": "user:me@example.com"}, map[string]any{"role": true}, "create")}
+			got := testCover.NotCovered(&Plan{ResourceChanges: changes}, nil)
+			if len(got) == 0 || !strings.Contains(strings.Join(got, "\n"), "could be it") {
+				t.Fatalf("NotCovered = %q, want the computed project role refused", got)
 			}
 		})
 	}
