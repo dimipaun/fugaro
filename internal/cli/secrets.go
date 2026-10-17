@@ -493,9 +493,8 @@ type secretEntry struct {
 	// project-wide secret (--project-wide only); never a live call.
 	Allowed []string `json:"allowed,omitempty"`
 	// Missing marks a required name no enabled version resolves for this
-	// repository: something this project knows about needs it (the
-	// repository's own fugaro.yaml, or config.ReservedSecrets) and nothing
-	// would mount it. Such a name has no container to be listed from, so it
+	// repository: a job of one of its workflows needs it
+	// (infra.RequiredSecrets) and nothing is there to mount. Such a name has no container to be listed from, so it
 	// gets a row of its own — the post-restore question is exactly "which
 	// required secret is gone", and a listing of containers alone can never
 	// answer it (design D67, Task 5.1).
@@ -511,31 +510,6 @@ func repoMayUseProject(lc *localcfg.Config, logical, repo string) bool {
 	return ok
 }
 
-// requiredSecretNames is the "required" set the MISSING column checks, in one
-// place so the two sources cannot drift: every name the platform itself mounts
-// (config.ReservedSecrets, required of every repository), plus every name the
-// repository's own fugaro.yaml declares (workflows.<w>.secrets:). cfg is the
-// checkout's fugaro.yaml when the working directory is a checkout of the
-// repository being listed, and nil otherwise — a listing must not fail because
-// the operator ran it from elsewhere, so an unreadable repository half simply
-// contributes nothing.
-func requiredSecretNames(cfg *config.Config) []string {
-	set := map[string]bool{}
-	for name := range config.ReservedSecrets {
-		set[name] = true
-	}
-	if cfg != nil {
-		for _, wf := range cfg.Workflows {
-			for _, s := range wf.Secrets {
-				if s.Name != "" {
-					set[s.Name] = true
-				}
-			}
-		}
-	}
-	return slices.Sorted(maps.Keys(set))
-}
-
 // markMissingRequired marks every required name no entry resolves to an
 // enabled version for, and is the whole point of the MISSING column: a missing
 // secret has no container, so it can only be reported by a row of its own. A
@@ -546,13 +520,13 @@ func requiredSecretNames(cfg *config.Config) []string {
 // are all disabled, resolves to nothing. A name that has a row already is
 // marked on that row rather than listed twice, so the table keeps one line per
 // name.
-func markMissingRequired(entries []secretEntry, cfg *config.Config) []secretEntry {
+func markMissingRequired(entries []secretEntry, required []string) []secretEntry {
 	at := map[string]int{}
 	for i, e := range entries {
 		at[e.Name] = i
 	}
 	var missing []secretEntry
-	for _, name := range requiredSecretNames(cfg) {
+	for _, name := range required {
 		if i, ok := at[name]; ok {
 			if entries[i].Latest == "" {
 				entries[i].Missing = true
@@ -605,18 +579,24 @@ shows, per name, SCOPE: repo (the repository's own container), project (an
 allow-listed project-wide container with no repo copy), or "project, repo
 override stored" (both exist; the repository's own version wins).
 
-MISSING marks a name something this project knows about needs and no enabled
+MISSING marks a name a job of this repository needs and no enabled
 version resolves for: the answer to "which required secret is gone" after a
-restore. "Required" is the union of what the checkout's fugaro.yaml declares
-(workflows.<w>.secrets) and the names the platform itself mounts
-(config.ReservedSecrets), and a required name with nothing behind it gets a
-row of its own — a missing secret has no container to be listed from, so it
-has no secret ID, and its SECRET, LATEST and CREATED read "-". The same marks
-a container that exists with no enabled version behind it, which resolves to
-nothing as surely as no container at all. Run this from a checkout of the
-repository to check the names its own configuration declares as well; a
-checkout whose fugaro.yaml does not parse says so on stderr, since then only
-the reserved names could be checked.
+restore. "Required" is what the jobs of the repository's workflows mount and
+cannot run without, worked out from the checkout's fugaro.yaml the way a
+deploy works it out: the git credential of its provider, the model
+credentials its agent.auth names (claude-oauth-token and each allowed
+claude_accounts token for oauth; each allowed model provider's key for
+api-key; none for vertex), and each workflows.<w>.secrets name.
+anthropic-api-key is never marked: the job mounts it only when it has a
+version and runs without it, and fugaro validate says when a pinned model
+needs it. A required name with nothing behind it gets a row of its own — a
+missing secret has no container to be listed from, so its SECRET, LATEST and
+CREATED read "-" (in --json its id is empty and it has no created). The same
+marks a container that exists with no enabled version behind it, which
+resolves to nothing as surely as no container at all. Run this from a
+checkout of the repository: only its fugaro.yaml says what is required, so
+elsewhere, or with a fugaro.yaml that does not parse, nothing is marked and a
+note on stderr says so.
 
 --project-wide lists the installation's project-wide containers instead,
 with the repositories the local config allows to use each one. It has no
@@ -707,17 +687,24 @@ func listRepoScope(cmd *cobra.Command, env *cloudEnv, o secretsOptions, r *secre
 		}
 		entries = append(entries, secretEntry{Name: name, Scope: scopeProject, SecretInfo: shared[name]})
 	}
-	// The repository's own half of "required" comes from its checkout's
-	// fugaro.yaml, and a file that does not parse contributes nothing: say so
-	// rather than listing the reserved names alone, which reads as an
-	// all-clear for the names that file declares. A working directory that is
-	// no checkout of this repository at all is the ordinary case the help
-	// states, and it gets no note.
+	// "Required" is what the jobs of this repository's workflows mount
+	// (infra.RequiredSecrets, the same SecretMounts a deploy uses), and only
+	// the checkout's fugaro.yaml says what that is. Without one nothing is
+	// marked, and the note says so rather than letting an unmarked listing
+	// read as an all-clear.
+	var required []string
 	cfg, problems := checkoutParse(ctx, r.repo)
-	if cfg == nil && len(problems) > 0 {
-		fmt.Fprintf(cmd.ErrOrStderr(), "note: this checkout's fugaro.yaml has %d problem(s), so the secrets its workflows declare were not checked; see fugaro validate\n", len(problems))
+	switch {
+	case cfg == nil && len(problems) > 0:
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: this checkout's fugaro.yaml has %d problem(s), so the secrets its jobs mount were not checked; see fugaro validate\n", len(problems))
+	case cfg == nil:
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: not run from a checkout of %s, so the secrets its jobs mount were not checked (MISSING needs its fugaro.yaml)\n", r.repo)
+	default:
+		if required, err = infra.RequiredSecrets(cfg, env.lc, r.repo); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: the secrets this repository's jobs mount could not be worked out, so none were checked: %v\n", err)
+		}
 	}
-	entries = markMissingRequired(entries, cfg)
+	entries = markMissingRequired(entries, required)
 	sortSecretEntries(entries)
 	return printSecrets(cmd.OutOrStdout(), r.repo, entries, o.asJSON, false)
 }
