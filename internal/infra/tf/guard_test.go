@@ -3,6 +3,7 @@ package tf
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -244,5 +245,123 @@ func TestGuardAdmitsTheListedAddressOwnRemovals(t *testing.T) {
 				t.Errorf("a listed removal of the address's own object refused: %v", err)
 			}
 		})
+	}
+}
+
+// hostile are the untrusted values every refusal site is tested with: a C1
+// CSI, a bidi override, a newline and a value far over any sane length.
+func hostile() map[string]string {
+	return map[string]string{
+		"C1 CSI":        "google_storage_bucket.a" + string(rune(0x9b)) + "31m",
+		"bidi override": "google_storage_bucket.a" + string(rune(0x202e)) + "gnp.exe",
+		"newline":       "google_storage_bucket.a\n  forged.line (delete)",
+		"10k":           "google_storage_bucket.a" + strings.Repeat("x", 10000),
+	}
+}
+
+// assertBounded fails when s carries a C1 control, a bidi or format
+// character, a line beyond want lines, or a run of 10k characters.
+func assertBounded(t *testing.T, what, s string, lines int) {
+	t.Helper()
+	for _, r := range s {
+		if (r >= 0x80 && r <= 0x9f) || r == 0x202e || (r < 0x20 && r != '\n') {
+			t.Errorf("%s carries %U:\n%q", what, r, s)
+		}
+	}
+	if n := strings.Count(s, "\n") + 1; n != lines {
+		t.Errorf("%s is %d lines, want %d:\n%q", what, n, lines, s)
+	}
+	if strings.Contains(s, strings.Repeat("x", 600)) {
+		t.Errorf("%s carries the 10k value unbounded (%d bytes)", what, len(s))
+	}
+}
+
+// Every value of the plan's that the guard prints — the address, the actions,
+// a moved object's previous address and its action_reason — is one bounded
+// field (Task 3.2's review, finding 4): a plan is read out of a root someone
+// else may have written, and its words reach the session the refusal stops.
+func TestGuardBoundsEveryValueOfThePlansItPrints(t *testing.T) {
+	for name, v := range hostile() {
+		for site, rc := range map[string]ResourceChange{
+			"address":         {Address: v, Change: Change{Actions: []string{"delete"}}},
+			"action":          {Address: "a.b", Change: Change{Actions: []string{v}}},
+			"no actions":      {Address: v},
+			"previous":        {Address: "a.b", PreviousAddress: v, Change: Change{Actions: []string{"delete"}}},
+			"action_reason":   {Address: "a.b", ActionReason: v, PreviousAddress: "c.d", Change: Change{Actions: []string{"delete"}}},
+			"moved's address": {Address: v, PreviousAddress: "c.d", Change: Change{Actions: []string{"delete"}}},
+		} {
+			// Listed, so a moved object's refusal is the one printed; the
+			// plain address is printed unlisted.
+			allow := []string{rc.Address}
+			if site == "address" {
+				allow = nil
+			}
+			err := Guard(&Plan{ResourceChanges: []ResourceChange{rc}}, allow)
+			if err == nil {
+				t.Fatalf("%s at %s: the guard admitted it", name, site)
+			}
+			assertBounded(t, name+" at "+site, err.Error(), 2)
+		}
+	}
+}
+
+// Listable is exactly the refusals naming an address would clear: an unlisted
+// delete or replace of the address's own object, and nothing else.
+func TestListableIsOnlyWhatNamingAnAddressClears(t *testing.T) {
+	rcs := []ResourceChange{
+		{Address: "plain.delete", Change: Change{Actions: []string{"delete"}}},
+		{Address: "plain.replace", Change: Change{Actions: []string{"create", "delete"}}},
+		{Address: "listed.delete", Change: Change{Actions: []string{"delete"}}},
+		{Address: "moved.prev", PreviousAddress: "old.prev", Change: Change{Actions: []string{"delete"}}},
+		{Address: "moved.reason", ActionReason: "delete_because_no_move_target", Change: Change{Actions: []string{"delete"}}},
+		{Address: "unknown.action", Change: Change{Actions: []string{"delete", "obliterate"}}},
+		{Address: "no.actions"},
+		{Address: "an.update", Change: Change{Actions: []string{"update"}}},
+	}
+	got := Listable(&Plan{ResourceChanges: rcs}, []string{"listed.delete"})
+	if want := []string{"plain.delete", "plain.replace"}; !slices.Equal(got, want) {
+		t.Errorf("Listable = %v, want %v", got, want)
+	}
+	if Listable(nil, nil) != nil {
+		t.Error("Listable of no plan is not empty")
+	}
+}
+
+// The covers' refusals print the plan's addresses too — a resource change's
+// and a configuration resource's — and each is one bounded field there as
+// well (Task 3.2's review, finding 4).
+func TestCoversBoundTheAddressesTheyPrint(t *testing.T) {
+	for name, v := range hostile() {
+		doc, err := json.Marshal(map[string]any{
+			"format_version": "1.2",
+			"resource_changes": []any{map[string]any{"address": v, "type": "google_compute_instance", "mode": "managed",
+				"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}}},
+			"configuration": map[string]any{"root_module": map[string]any{"resources": []any{
+				map[string]any{"address": v, "mode": "data", "type": "google_project"},
+				map[string]any{"address": v + "2", "mode": "managed", "type": "null_resource", "provisioners": []any{map[string]any{"type": "local-exec"}}},
+			}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var p Plan
+		if err := json.Unmarshal(doc, &p); err != nil {
+			t.Fatal(err)
+		}
+		for cover, items := range map[string][]string{
+			"Cover":        Cover{Projects: []string{"p"}}.NotCovered(&p, nil),
+			"ManagedCover": ManagedCover{Cover: Cover{Projects: []string{"p"}}}.NotCovered(&p, nil),
+		} {
+			seen := 0
+			for _, item := range items {
+				if strings.Contains(item, "google_storage_bucket.a") {
+					seen++
+					assertBounded(t, name+" in "+cover, item, 1)
+				}
+			}
+			if want := map[string]int{"Cover": 1, "ManagedCover": 3}[cover]; seen < want {
+				t.Errorf("%s: %s printed the hostile address %d time(s), want at least %d: %q", name, cover, seen, want, items)
+			}
+		}
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // knownActions are the plan actions terraform reports. Any other one is
@@ -51,12 +53,18 @@ func GuardWith(p *Plan, allowDelete []string, advice string) error {
 	var refused []string
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
+		// The address and the actions are the plan's words, and a plan is
+		// read out of a root someone else may have written: each is one
+		// bounded field (safetext.Field) wherever it is printed, so neither
+		// can add a line, a control or a bidi override to this refusal. An
+		// ordinary address and action are unchanged by it.
+		addr, said := safetext.Field(rc.Address), safetext.Field(strings.Join(acts, ", "))
 		if len(acts) == 0 {
-			refused = append(refused, rc.Address+" (no actions)")
+			refused = append(refused, addr+" (no actions)")
 			continue
 		}
 		if unknown := slices.IndexFunc(acts, func(a string) bool { return !knownActions[a] }); unknown >= 0 {
-			refused = append(refused, fmt.Sprintf("%s (%s)", rc.Address, strings.Join(acts, ", ")))
+			refused = append(refused, fmt.Sprintf("%s (%s)", addr, said))
 			continue
 		}
 		if !slices.Contains(acts, "delete") {
@@ -64,11 +72,11 @@ func GuardWith(p *Plan, allowDelete []string, advice string) error {
 		}
 		switch {
 		case !slices.Contains(allowDelete, rc.Address):
-			refused = append(refused, fmt.Sprintf("%s (%s)", rc.Address, strings.Join(acts, ", ")))
+			refused = append(refused, fmt.Sprintf("%s (%s)", addr, said))
 		case removesUnderAnotherAddress(rc):
 			// A listed address names what may be removed at that address,
 			// never an object moved there from another one.
-			refused = append(refused, fmt.Sprintf("%s (%s): %s", rc.Address, strings.Join(acts, ", "), movedRemovalReason(rc)))
+			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc)))
 		}
 	}
 	if len(refused) == 0 {
@@ -79,6 +87,33 @@ func GuardWith(p *Plan, allowDelete []string, advice string) error {
 		return fmt.Errorf("%s:\n  %s", head, strings.Join(refused, "\n  "))
 	}
 	return fmt.Errorf("%s. %s:\n  %s", head, advice, strings.Join(refused, "\n  "))
+}
+
+// Listable is the addresses Guard refuses only because allowDelete does not
+// name them: a delete or a replace, every action one the guard knows, of an
+// object that is the address's own. Naming one of these is what admits it.
+// Every other refusal — no actions, an action the guard does not know, an
+// object moved here from another address (refused whatever the list says) —
+// is not one any list clears, and a refusal made only of those must not tell
+// its reader that naming an address would help: that advice is false, and an
+// instruction to loop. The addresses are the plan's own, unbounded, for the
+// caller to compare and not to print.
+func Listable(p *Plan, allowDelete []string) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		acts := rc.Change.Actions
+		if !slices.Contains(acts, "delete") || slices.ContainsFunc(acts, func(a string) bool { return !knownActions[a] }) {
+			continue
+		}
+		if slices.Contains(allowDelete, rc.Address) || removesUnderAnotherAddress(rc) {
+			continue
+		}
+		out = append(out, rc.Address)
+	}
+	return out
 }
 
 // removesUnderAnotherAddress: a change whose actions remove an object (a
@@ -103,7 +138,7 @@ func movedRemovalReason(rc ResourceChange) string {
 	if from == "" || from == rc.Address {
 		from = "another address"
 	}
-	return "the object it removes was moved here from " + from + " (" + orNone(rc.ActionReason) + "), and the delete list names addresses, not moved objects"
+	return "the object it removes was moved here from " + safetext.Field(from) + " (" + safetext.Field(orNone(rc.ActionReason)) + "), and the delete list names addresses, not moved objects"
 }
 
 func orNone(s string) string {

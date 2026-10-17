@@ -12,10 +12,13 @@ import (
 	"testing"
 
 	"cloud.google.com/go/storage"
+	crm "google.golang.org/api/cloudresourcemanager/v1"
+	apistorage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
@@ -443,49 +446,72 @@ func (r *initRig) managedRuns(t *testing.T, name, gcp string) {
 	}
 }
 
-// Task 3.2 at the call site: in a managed project `fugaro init`'s guard
-// refusal is the managed one — it names the owner's own list and the owner-run
-// command that writes it, and no flag — and infra.DeleteHints, whose whole
-// purpose is to say which flags to re-pass, is not called at all there. In any
-// project that is not managed the refusal is today's, byte for byte, hints and
-// all: the removal D55 answered for is a managed project's and nothing else.
-func TestManagedInitRefusalNamesTheOwnersListAndNoFlag(t *testing.T) {
-	const a = "user:a@example.com"
-	// (a) A managed project: the refusal names the owner's object, the
-	// owner-run command that writes it and the address it refused, carries no
-	// flag and no DeleteHints line, and applies nothing.
-	r := newInitRig(t)
-	r.managedRuns(t, initProjectName, initProject)
-	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "init", "--yes")
+// stubManagedFact makes init's creation-fact read answer ok and err for this
+// test, and counts the reads: the fake APIs answer a 403 or a 404 as "not
+// managed" (by design) and the client retries a 5xx, so an error of the read
+// itself is reached only through isManagedFact.
+func stubManagedFact(t *testing.T, ok bool, err error) *int {
+	t.Helper()
+	reads := new(int)
+	old := isManagedFact
+	isManagedFact = func(context.Context, *apistorage.Service, *crm.Service, string, string) (bool, string, error) {
+		*reads++
+		return ok, "stubbed", err
+	}
+	t.Cleanup(func() { isManagedFact = old })
+	return reads
+}
+
+// managedRefusal checks the text of a managed project's init refusal: it names
+// the refused address, carries no flag, no agent marker and no DeleteHints
+// line, and does not point at the owner's delete list (which approves nothing
+// in fugaro's own roots). advice says whether it must end with
+// initManagedDeleteAdvice or carry none at all.
+func managedRefusal(t *testing.T, err error, address string, advice bool) {
+	t.Helper()
 	if ExitCode(err) != ExitUserError {
-		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+		t.Fatalf("exit %d, err %v; want the guard's refusal", ExitCode(err), err)
 	}
 	msg := err.Error()
-	for _, want := range []string{
-		"gs://" + initRunsBucket + "/fugaro/allow-delete.json",
-		"fugaro allow-delete",
-		`state["` + a + `"]`,
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("the managed refusal does not name %q:\n%s", want, msg)
-		}
+	if !strings.Contains(msg, address) {
+		t.Errorf("the managed refusal does not name %q:\n%s", address, msg)
+	}
+	if got := strings.Contains(msg, initManagedDeleteAdvice); got != advice {
+		t.Errorf("the managed refusal carries the advice: %v, want %v:\n%s", got, advice, msg)
 	}
 	noFlagName(t, msg)
+	for _, never := range []string{"hint: ", "allow-delete.json", "fugaro allow-delete", "Name an address"} {
+		if strings.Contains(msg, never) {
+			t.Errorf("the managed refusal carries %q:\n%s", never, msg)
+		}
+	}
 	for _, marker := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"} {
 		if strings.Contains(msg, marker) {
 			t.Errorf("the managed refusal names the marker %s:\n%s", marker, msg)
 		}
 	}
-	if strings.Contains(msg, "hint: ") {
-		t.Errorf("a managed refusal carried a hint, and DeleteHints tells a reader which flags to re-pass:\n%s", msg)
-	}
+}
+
+// Task 3.2 at the call site: in a managed project `fugaro init`'s guard
+// refusal ends with the managed sentence — no flag, no DeleteHints line, the
+// owner as the one who decides — and in any project that is not managed it is
+// today's, byte for byte, hints and all. Only the text differs: what is
+// refused is the same in both (the next test).
+func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
+	const a = "user:a@example.com"
+	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
+
+	// (a) A managed project, read through the real creation fact.
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	out, _, err := executeStdin(t, "", "init", "--yes")
+	managedRefusal(t, err, address, true)
 	if len(r.ran(t, "apply")) != 0 {
-		t.Fatal("a plan the guard refused was applied")
+		t.Fatalf("a plan the guard refused was applied\n%s", out)
 	}
 
-	// (b) The same plan in a project that is not managed — no creation fact —
-	// is today's refusal: the flag, and the hints beside it.
+	// (b) The same plan where the project is not managed is today's refusal.
 	r2 := newInitRig(t)
 	r2.stateBucket()
 	r2.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
@@ -493,51 +519,267 @@ func TestManagedInitRefusalNamesTheOwnersListAndNoFlag(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out2)
 	}
-	if !strings.Contains(err.Error(), "--allow-delete") || !strings.Contains(err.Error(), "--launcher and --operator") {
+	want := "the plan would delete or replace 1 resource(s), or do something the guard doesn't know; nothing was applied. " +
+		tf.AllowDeleteAdvice + ":\n  " + address
+	if !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "--launcher and --operator") {
 		t.Errorf("the unmanaged refusal is not today's (the flag and the hints):\n%s", err)
 	}
 	if len(r2.ran(t, "apply")) != 0 {
 		t.Fatal("a plan the guard refused was applied")
 	}
+}
 
-	// (c) The action the refusal prescribes admits the next plan, which is the
-	// half a wording test cannot hold: the owner records the address in their
-	// own object, and the same run with the same plan is admitted and applied.
-	// Without this, the sentence names a list that has no effect and the reader
-	// it refuses loops.
+// Task 3.2's review, finding 2 (the owner's ruling): the refusal TEXT is all
+// Task 3.2 changes. In fugaro's own roots a managed project's init approves
+// and refuses exactly what any other project's does: the owner's delete list
+// approves nothing here (D72/D74 scope it to a managed apply of the
+// agent-authored root), the command line's --allow-delete keeps its meaning,
+// and a plan with no delete is never refused because of the list or the flag.
+func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
+	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
-	r3 := newInitRig(t)
-	r3.managedRuns(t, initProjectName, initProject)
-	r3.allowDeleteList(t, initProject, address)
-	r3.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out3, _, err := executeStdin(t, "", "init", "--yes")
-	if err != nil {
-		t.Fatalf("the run the owner's list admits was refused: %v\n%s", err, out3)
-	}
-	if len(r3.ran(t, "apply")) != 1 {
-		t.Fatalf("the owner's list admits the address and the plan was not applied:\n%s", out3)
+
+	// (c) An address on the owner's list does not permit an init --yes delete.
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	r.allowDeleteList(t, initProject, address)
+	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	_, _, err := executeStdin(t, "", "init", "--yes")
+	managedRefusal(t, err, address, true)
+	if len(r.ran(t, "apply")) != 0 {
+		t.Fatal("the owner's delete list approved a delete in fugaro's own root")
 	}
 
-	// (d) The run's own addresses are refused as a source, in a managed project,
-	// and refused even when the owner's list names them (D74: what is refused is
-	// the source, not the value). The refusal names the address and the owner's
-	// object, carries no flag, and nothing is applied.
-	r4 := newInitRig(t)
-	r4.managedRuns(t, initProjectName, initProject)
-	r4.allowDeleteList(t, initProject, address)
-	r4.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out4, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out4)
-	}
-	for _, want := range []string{address, "gs://" + initRunsBucket + "/fugaro/allow-delete.json", "fugaro allow-delete"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal of the run's own address does not name %q:\n%s", want, err)
+	// (d) The command line's --allow-delete decides as it does in any
+	// project: managed or not, the same plan with the same flag is applied.
+	for name, managedProject := range map[string]bool{"managed": true, "not managed": false} {
+		r := newInitRig(t)
+		if managedProject {
+			r.managedRuns(t, initProjectName, initProject)
+		} else {
+			r.stateBucket()
+		}
+		r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+		out, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+		if err != nil || len(r.ran(t, "apply")) != 1 {
+			t.Errorf("%s: --allow-delete for the plan's delete: err %v, %d applies\n%s", name, err, len(r.ran(t, "apply")), out)
 		}
 	}
-	noFlagName(t, err.Error())
-	if len(r4.ran(t, "apply")) != 0 {
-		t.Fatal("an address the run passed on its command line was applied")
+
+	// (e) A plan with no delete is never refused because of the list or the
+	// flag: not with an unreadable list, not with an --allow-delete naming
+	// nothing in the plan, and the creation fact is not even read for it.
+	r = newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.AllowDeleteObject, []byte("not a list"), nil); err != nil {
+		t.Fatal(err)
+	}
+	reads := stubManagedFact(t, false, errors.New("must not be read"))
+	out, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+	if err != nil || len(r.ran(t, "apply")) != 1 {
+		t.Fatalf("a plan with no delete: err %v, %d applies\n%s", err, len(r.ran(t, "apply")), out)
+	}
+	if *reads != 0 {
+		t.Errorf("the creation fact was read %d time(s) for a plan the guard admits", *reads)
+	}
+}
+
+// Task 3.2's review, finding 5: a managed refusal made only of what no
+// approval clears — an object moved here from another address, an action the
+// guard does not know, a change with no actions — ends at what it refused.
+func TestManagedInitRefusalOfWhatNoApprovalClearsHasNoAdvice(t *testing.T) {
+	const addr = "module.installation.google_storage_bucket.runs"
+	for name, ch := range map[string]planChange{
+		"moved": {"address": addr, "type": "google_storage_bucket", "previous_address": "module.installation.google_storage_bucket.old",
+			"action_reason": "delete_because_no_move_target", "change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{}, "after": nil}},
+		"unknown action": change(addr, "delete", "obliterate"),
+		"no actions":     {"address": addr, "type": "google_storage_bucket", "change": map[string]any{"actions": []string{}, "before": map[string]any{}, "after": map[string]any{}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newInitRig(t)
+			r.managedRuns(t, initProjectName, initProject)
+			r.setPlan(t, ch)
+			// Listed on the command line, so the moved object's refusal is
+			// the moved one rather than an unlisted delete's.
+			_, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", addr)
+			managedRefusal(t, err, addr, false)
+			if len(r.ran(t, "apply")) != 0 {
+				t.Fatal("a plan the guard refused was applied")
+			}
+		})
+	}
+}
+
+// Task 3.2's review, finding 3: the creation-fact read fails closed. An error
+// reading it is not "not managed" — the refusal names no flag and no hint and
+// says the read failed — nothing is applied, and the error is not remembered:
+// the next refusal reads again.
+func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
+	const a = "user:a@example.com"
+	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
+	r := newInitRig(t)
+	r.stateBucket()
+	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	reads := stubManagedFact(t, false, errors.New("the storage API answered 400"))
+	_, _, err := executeStdin(t, "", "init", "--yes")
+	managedRefusal(t, err, address, false)
+	if !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "the storage API answered 400") {
+		t.Errorf("the refusal does not say the read failed:\n%s", err)
+	}
+	if len(r.ran(t, "apply")) != 0 {
+		t.Fatal("a plan the guard refused was applied")
+	}
+	if *reads != 1 {
+		t.Errorf("%d reads, want 1", *reads)
+	}
+
+	// Not cached: an initRun whose read failed reads again, and a managed
+	// answer after it is believed.
+	run := &initRun{o: &initOptions{}, projectName: initProjectName, gcpProject: initProject}
+	c := &infra.Clients{}
+	if _, err := run.managedProject(context.Background(), c); err == nil {
+		t.Fatal("the read's error was swallowed")
+	}
+	stubManagedFact(t, true, nil)
+	if ok, err := run.managedProject(context.Background(), c); err != nil || !ok {
+		t.Errorf("after a failed read, a managed answer gives %v, %v", ok, err)
+	}
+	// And "not managed" is not remembered either.
+	run = &initRun{o: &initOptions{}, projectName: initProjectName, gcpProject: initProject}
+	stubManagedFact(t, false, nil)
+	if ok, _ := run.managedProject(context.Background(), c); ok {
+		t.Fatal("not managed read as managed")
+	}
+	stubManagedFact(t, true, nil)
+	if ok, _ := run.managedProject(context.Background(), c); !ok {
+		t.Error("a not-managed answer was cached for the rest of the run")
+	}
+	// No clients is an error, never "not managed".
+	if _, err := (&initRun{o: &initOptions{}}).managedProject(context.Background(), nil); err == nil {
+		t.Error("a run with no clients read as not managed")
+	}
+}
+
+// A run that creates a managed project is managed before its marker is
+// written at the end of the converge, and once markCreated wrote it.
+func TestManagedInitCreationRunIsManagedBeforeTheMarker(t *testing.T) {
+	reads := stubManagedFact(t, false, nil)
+	run := &initRun{o: &initOptions{}, projectName: initProjectName, gcpProject: initProject}
+	run.o.managed = true
+	run.res.Created = initProject
+	if ok, err := run.managedProject(context.Background(), nil); err != nil || !ok {
+		t.Errorf("a managed creation run reads %v, %v before its marker", ok, err)
+	}
+	// Created a different project, or created none: the fact decides.
+	run.res.Created = "other-project"
+	if ok, _ := run.managedProject(context.Background(), &infra.Clients{}); ok {
+		t.Error("a run that created another project read this one as managed")
+	}
+	run.res.Created = ""
+	if ok, _ := run.managedProject(context.Background(), &infra.Clients{}); ok {
+		t.Error("a --managed run that created nothing read as managed")
+	}
+	if *reads != 2 {
+		t.Errorf("%d reads, want 2", *reads)
+	}
+}
+
+// Task 3.2's review, finding 7: every init call site of the guard gives the
+// managed refusal in a managed project and applies nothing — the repository
+// root, the Firebase root (applyRoot), the retirement and --forget, beside the
+// installation root above.
+func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
+	t.Run("repo", func(t *testing.T) {
+		stubManagedFact(t, true, nil)
+		const addr = "module.repo.google_service_account.build"
+		out, err, ri, _ := repoPlan(t, names(1), func(infra.RepoSpec) []planChange {
+			return []planChange{{"address": addr, "type": "google_service_account",
+				"change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{}, "after": nil}}}
+		})
+		managedRefusal(t, err, addr, true)
+		if len(ri.ran(t, "apply")) != 0 {
+			t.Fatalf("applied\n%s", out)
+		}
+	})
+	t.Run("firebase", func(t *testing.T) {
+		stubManagedFact(t, true, nil)
+		r := newFBRig(t)
+		addr := `module.firebase.google_project_iam_member.admin["user:old@example.com"]`
+		r.setPlan(t, planChange{"address": addr, "type": "google_project_iam_member",
+			"change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{}, "after": nil}})
+		r.script["plan"] = map[string]any{"exit": 2}
+		r.script["plan@installation"] = map[string]any{"exit": 0}
+		r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
+		r.save(t)
+		_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+		managedRefusal(t, err, addr, true)
+		if len(r.applies(t)) != 0 {
+			t.Errorf("applied: %v", r.applies(t))
+		}
+	})
+	t.Run("retire", func(t *testing.T) {
+		stubManagedFact(t, true, nil)
+		outside := "module.repo.google_storage_bucket_iam_member.job"
+		r := newRetireRig(t, retireOpts{protection: true, outside: outside})
+		_, _, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+		managedRefusal(t, err, outside, true)
+		if applies := r.applies(t); len(applies) != 0 {
+			t.Errorf("the refused plan was applied: %v", applies)
+		}
+		if deletes := r.run.JobDeletes(); len(deletes) != 0 {
+			t.Errorf("a job was deleted under a refused plan: %v", deletes)
+		}
+	})
+	t.Run("forget", func(t *testing.T) {
+		stubManagedFact(t, true, nil)
+		r := newInitRig(t)
+		r.stateBucket()
+		r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
+		_, _, err := executeStdin(t, "", "init", "--forget", "--yes")
+		managedRefusal(t, err, "module.installation.google_service_account.scheduler", true)
+		if len(r.ran(t, "apply"))+len(r.ran(t, "state rm")) != 0 {
+			t.Fatalf("calls = %q", r.calls(t))
+		}
+	})
+}
+
+// Task 3.2's review, finding 4, at init's sites: the refusal's address, and a
+// failed read's own words, are bounded fields.
+func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
+	for name, v := range map[string]string{
+		"C1 CSI":        "module.installation.google_storage_bucket.a" + string(rune(0x9b)) + "31m",
+		"bidi override": "module.installation.google_storage_bucket.a" + string(rune(0x202e)) + "gnp.exe",
+		"newline":       "module.installation.google_storage_bucket.a\nhint: forged line",
+		"10k":           "module.installation.google_storage_bucket.a" + strings.Repeat("x", 10000),
+	} {
+		for _, readErr := range []error{nil, errors.New(v)} {
+			t.Run(fmt.Sprintf("%s/read error %v", name, readErr != nil), func(t *testing.T) {
+				stubManagedFact(t, true, readErr)
+				r := newInitRig(t)
+				r.stateBucket()
+				r.setPlan(t, change(v, "delete"))
+				_, _, err := executeStdin(t, "", "init", "--yes")
+				if ExitCode(err) != ExitUserError {
+					t.Fatalf("exit %d, err %v", ExitCode(err), err)
+				}
+				msg := err.Error()
+				for _, r := range msg {
+					if (r >= 0x80 && r <= 0x9f) || r == 0x202e || (r < 0x20 && r != '\n') {
+						t.Errorf("the refusal carries %U:\n%q", r, msg)
+					}
+				}
+				if want := 2 + map[bool]int{true: 1}[readErr != nil]; strings.Count(msg, "\n")+1 != want {
+					t.Errorf("the refusal is %d lines, want %d:\n%s", strings.Count(msg, "\n")+1, want, msg)
+				}
+				if strings.Contains(msg, strings.Repeat("x", 600)) {
+					t.Errorf("the refusal carries the 10k value unbounded")
+				}
+				noFlagName(t, msg)
+				if len(r.ran(t, "apply")) != 0 {
+					t.Fatal("applied")
+				}
+			})
+		}
 	}
 }
 

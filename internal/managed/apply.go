@@ -42,6 +42,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The refusals this file's own rules make. They are values as well as
@@ -215,12 +216,13 @@ type RefusedError struct {
 // with the gate that refused it and the address and rule's own words, and then
 // the mode's advice when there is one.
 //
-// Every part of it that can come from somewhere else is folded to one line
-// first (oneLine): an address and a rule's own words are read out of a plan and
-// out of objects other people wrote, and a newline carried through them would
-// be this program printing a line of someone else's choosing — in text the
-// session that reads it acts on. The advice is this program's own and is
-// rendered as it is.
+// Every part of it that can come from somewhere else is one bounded field
+// first (safetext.Field): an address and a rule's own words are read out of a
+// plan and out of objects other people wrote, and a newline, a C1 control or a
+// bidi override carried through them would be this program printing text of
+// someone else's choosing — in text the session that reads it acts on — and a
+// value of any length would push the rest out of sight. The advice is this
+// program's own and is rendered as it is.
 func (e *RefusedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, so nothing is applied (%d refusal(s))", ErrRefused, len(e.Verdict.Refusals))
@@ -229,13 +231,13 @@ func (e *RefusedError) Error() string {
 		// The gate's name is this program's own, but it is rendered the way
 		// the rest is: the shape of the line is the same whatever any of its
 		// parts holds.
-		b.WriteString(oneLine(r.Gate))
+		b.WriteString(safetext.Field(r.Gate))
 		b.WriteString(": ")
 		if r.Address != "" {
-			b.WriteString(oneLine(r.Address))
+			b.WriteString(safetext.Field(r.Address))
 			b.WriteString(": ")
 		}
-		b.WriteString(oneLine(r.Why))
+		b.WriteString(safetext.Field(r.Why))
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
@@ -404,10 +406,10 @@ func (r Request) fact() error {
 		return fmt.Errorf("%w: reading the creation fact of %s: %w", ErrNotManaged, r.what(), r.Fact.Err)
 	case r.Fact.Managed:
 		return nil
-	case oneLine(r.Fact.Reason) == "":
+	case safetext.Field(r.Fact.Reason) == "":
 		return fmt.Errorf("%w: %s is not managed, and the read gave no reason a person could read, so nothing is applied: a read that answered nothing is not an answer", ErrNotManaged, r.what())
 	default:
-		return fmt.Errorf("%w: %s (%s), so nothing is applied here: the coding agent's refusal is removed only where the creation fact says the project is managed", ErrNotManaged, r.what(), oneLine(r.Fact.Reason))
+		return fmt.Errorf("%w: %s (%s), so nothing is applied here: the coding agent's refusal is removed only where the creation fact says the project is managed", ErrNotManaged, r.what(), safetext.Field(r.Fact.Reason))
 	}
 }
 
@@ -529,12 +531,18 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 }
 
 // advice is the sentence a refusal ends with, when the mode has one: a
-// refused plan that carries the guard's own refusal — it would delete or
-// replace something the owner did not approve — ends with DeleteAdvice, since
-// that is the one thing its reader can act on. A refusal from the cover or the
-// cost list alone says what the plan is, not who may approve it, so it carries
-// no advice rather than the wrong one.
+// refused plan whose guard refused a delete or replace the owner's list would
+// admit if it named the address (Verdict.Listable) ends with DeleteAdvice,
+// since that is the one thing its reader can act on. Nothing else gets it: a
+// refusal from the cover or the cost list alone says what the plan is, not who
+// may approve it, and a guard refusal made only of what no list clears — an
+// object moved here from another address, an action the guard does not know,
+// a change with no actions — would send the owner to list an address and the
+// next plan would be refused the same way. No advice rather than the wrong one.
 func (r Request) advice(v Verdict) string {
+	if len(v.Listable) == 0 {
+		return ""
+	}
 	for _, ref := range v.Refusals {
 		if ref.Gate == guardGate {
 			return DeleteAdvice(r.GCPProject)
@@ -616,20 +624,6 @@ func planHash(planPath string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// oneLine is a reason read as one line: the reason comes from an API answer or
-// from an object someone else may have written, so a newline or a control
-// character in it must not become a line of this program's own output.
-// (infra/managed's read already does this; this is the boundary for any caller
-// that hands Fact over directly.)
-func oneLine(s string) string {
-	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return ' '
-		}
-		return r
-	}, s)), " ")
 }
 
 // TerraformEnv is the environment a managed apply runs terraform with: tf.Env's
