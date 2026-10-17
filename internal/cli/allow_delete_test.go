@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 )
@@ -59,6 +61,12 @@ func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 	if !strings.Contains(out, "google_storage_bucket.data") {
 		t.Errorf("the command does not say which approval it would drop:\n%s", out)
 	}
+	// And the refusal names no flag this command lacks. It used to end "or
+	// pass --yes once you have read what it does", which fugaro allow-delete
+	// does not define (it registers the cloud flags and nothing else), so the
+	// owner was told to pass a flag that does not exist. Every --token the
+	// refusal prints is now checked against the command's own flags.
+	assertNamesNoFlagItLacks(t, newAllowDeleteCmd(), err)
 	if after, _ := allowDeleteAt(t, r.gcs, initRunsBucket); after != before {
 		t.Errorf("a refused removal changed the list: %s → %s", before, after)
 	}
@@ -88,6 +96,28 @@ func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 	// a removal.
 	if _, _, err := execute(t, "allow-delete", "google_cloud_run_v2_job.web"); err != nil {
 		t.Errorf("re-approving what is already approved asked for a confirmation: %v", err)
+	}
+}
+
+// assertNamesNoFlagItLacks: a refusal that tells the owner to pass a flag the
+// command does not define is advice that cannot be taken — fugaro allow-delete
+// registers the cloud flags and nothing else, so "or pass --yes" named a flag
+// that does not exist. Every --token the message prints is looked up in the
+// command's own flags, the way the docs tests look a --flag up in a command
+// before believing it.
+func assertNamesNoFlagItLacks(t *testing.T, cmd *cobra.Command, err error) {
+	t.Helper()
+	if cmd.Flags().Lookup("yes") != nil {
+		t.Fatalf("fugaro allow-delete defines --yes now: this assertion is about a command that has none")
+	}
+	for _, f := range strings.Fields(err.Error()) {
+		name := docFlagToken(f)
+		if name == "" {
+			continue
+		}
+		if cmd.Flags().Lookup(name) == nil && cmd.PersistentFlags().Lookup(name) == nil {
+			t.Errorf("the refusal names --%s, which this command does not define: %v", name, err)
+		}
 	}
 }
 

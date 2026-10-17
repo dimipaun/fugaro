@@ -585,12 +585,11 @@ func runInit(r *initRun) error {
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
 	if !o.forget && !o.configOnly {
 		// The default and --firebase modes: the converge loop over the
-		// engines (init_stages.go). The creation fact is recorded after the
-		// loop whatever the loop's own outcome (markCreated), which the run
-		// still returns.
-		err := e.converge(cmd.Context())
-		e.markCreated(cmd.Context())
-		return err
+		// engines (init_stages.go), whose own outcome records the creation
+		// fact before it prints the result (markCreated, called from
+		// outcome), whatever the loop's outcome — which the run still
+		// returns.
+		return e.converge(cmd.Context())
 	}
 
 	// 1. The environment, 2. the workdir, the clients and Cloud Resource
@@ -628,7 +627,9 @@ func runInit(r *initRun) error {
 // project's own, under the name the read of Task 0.2 looks in and no other —
 // which project number, and what to say when it cannot be written.
 //
-// It runs after the converge and never changes its outcome. A run that
+// It runs at the end of the converge and never changes its outcome: the
+// engine calls it from outcome, before the result is printed, so what it
+// warns is in the account a --json consumer reads and not only on stderr. A run that
 // created the project and then failed later still records the fact — the
 // project exists, and the part of the work that succeeded must not be lost
 // — and a write that fails is a warning, never a failure of the run: an

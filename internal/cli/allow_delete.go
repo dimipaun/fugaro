@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -184,7 +183,14 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 		for _, a := range dropped {
 			fmt.Fprintln(w, a)
 		}
-		if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, false,
+		// Strict rather than confirmTyped: this command has no --yes (it
+		// registers the cloud flags and nothing else), so a refusal offering
+		// one would tell the owner to pass a flag that does not exist. The
+		// typed name is the whole of the confirmation here, which is also the
+		// right way round: an approval is removed by a person reading what
+		// goes, not by a flag typed in advance.
+		if err := confirmTypedStrict(cmd, lc,
+			"removing an approval is confirmed by typing the project's name at a terminal, and by nothing else",
 			fmt.Sprintf("this removes %d address(es) %s had approved: every delete or replacement of them is refused again", len(dropped), lc.Name)); err != nil {
 			return err
 		}

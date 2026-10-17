@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
 // The gate at the call site, which internal/infra/managed's own test cannot
@@ -181,6 +184,56 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		}
 		noMarker(t, r.gcs, initRunsBucket)
 	})
+}
+
+// TestMarkCreatedWarningsAreInThePrintedResult pins the ordering rather than
+// an end-to-end run, because under --json there is no end-to-end run that
+// reaches it: the project stage is one --yes never covers (initflow's noYes),
+// so a --json run leaves it for the user and creates no project — with
+// --json, r.res.Created is always empty and markCreated has nothing to record
+// or warn about. What must hold is the ordering itself: outcome records the
+// creation fact before it prints the result, so a warning markCreated adds is
+// in the object --json prints and not on stderr alone. Before the fix the
+// marker warnings were the one thing appended to r.res after printResult had
+// encoded it, so the day any path lets a --json run create a project (a
+// programmatic project creation, or Task 6.1's marker command) it would have
+// shipped a run whose account said "warnings": [] while the run said the
+// project it had just created was not marked.
+func TestMarkCreatedWarningsAreInThePrintedResult(t *testing.T) {
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	r := &initRun{cmd: cmd, w: &errOut, o: &initOptions{asJSON: true}, gcpProject: newProj, projectName: initProjectName}
+	r.res.GCPProject, r.res.Created = newProj, newProj
+	// No client: markCreated's first warning branch, and the one a run that
+	// stopped before the installation stage takes.
+	e := &initEngine{r: r}
+	if err := e.outcome(context.Background(), &initflow.Result{}, nil); err != nil {
+		t.Fatalf("%v", err)
+	}
+	var doc struct {
+		Created  string   `json:"created_project"`
+		Warnings []string `json:"warnings"`
+	}
+	if jerr := json.Unmarshal(out.Bytes(), &doc); jerr != nil {
+		t.Fatalf("stdout is not the result object (%v):\n%s", jerr, out.String())
+	}
+	if doc.Created != newProj {
+		t.Errorf("created_project = %q, want %q:\n%s", doc.Created, newProj, out.String())
+	}
+	var found bool
+	for _, w := range doc.Warnings {
+		if strings.Contains(w, "no Google client was built") && strings.Contains(w, newProj) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the marker warning is not in the printed result's warnings (%v):\n%s", doc.Warnings, out.String())
+	}
+	if strings.Contains(errOut.String(), "no Google client was built") && !found {
+		t.Errorf("the warning went to stderr alone:\n%s", errOut.String())
+	}
 }
 
 // managedBucketLabels is the label the installation puts on the runs bucket,
