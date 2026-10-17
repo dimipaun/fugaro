@@ -251,6 +251,52 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 	h.mustDeny(consumer, "an ack of the wrong type", put(outbox(mbAlice, "c1")+"/acked", "yes"))
 }
 
+// TestMailboxHeartbeatDeleteIsDenied: the one mailbox node that is overwritten
+// by design — D113b's heartbeat is the consumer's *latest liveness*, not a
+// record — is still not removable, by either writer or by anyone.
+//
+// The heartbeat's `.write` is `CONSUMER && newData.exists()`, and the
+// `newData.exists()` half is what refuses a delete: RTDB does not run
+// validation on one, so a rule that only validated the shape would accept a
+// delete of the node it validated. That matters here more than for a message:
+// the staleness rule (P1.4) decides "offline" by how old the heartbeat is, so
+// removing the node is removing the evidence rather than updating it, and a
+// phone that could delete its own heartbeat could make the consumer's view
+// say anything (or nothing) about liveness.
+//
+// TestMailboxWritesAreExactlyTheFour pins the fragment against the generated
+// rules without an emulator; this is the case that proves what it does against
+// the database, which is what the fragment is for.
+func TestMailboxHeartbeatDeleteIsDenied(t *testing.T) {
+	h := newHarness(t)
+	alice, consumer := h.phone(mbAlice), h.consumer(mbAlice)
+	h.mustAllow(consumer, "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+
+	// The consumer may overwrite it — that is what the node is for — but not
+	// remove it, whole or field by field.
+	h.mustAllow(consumer, "overwriting the heartbeat", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-2"}))
+	h.mustDeny(consumer, "deleting its own heartbeat", map[string]any{beat(mbAlice): nil})
+	h.mustDeny(consumer, "deleting one field of its own heartbeat", map[string]any{beat(mbAlice) + "/at": nil})
+	// A denial is atomic: the message this multi-path update writes beside the
+	// delete is not written either.
+	h.mustDeny(consumer, "deleting the heartbeat in a multi-path update that writes a message too",
+		map[string]any{beat(mbAlice): nil, outbox(mbAlice, "c1"): aMessage("c1", mbAlice)})
+	h.wantValue(beat(mbAlice)+"/boot", `"boot-2"`)
+	h.wantValue(outbox(mbAlice, "c1"), "null")
+
+	// The phone holds no write grant on the heartbeat at all: it reads it
+	// (MAILBOX) and may not write it, delete it or replace it.
+	h.mustDeny(alice, "deleting the heartbeat from the phone", map[string]any{beat(mbAlice): nil})
+	h.wantValue(beat(mbAlice)+"/boot", `"boot-2"`)
+
+	// Nothing above the heartbeat grants a delete either: the mailbox node and
+	// the account node carry no `.write` at all, and a rule that grants nothing
+	// denies.
+	h.mustDeny(consumer, "deleting the mailbox that holds the heartbeat", map[string]any{mailbox(mbAlice): nil})
+	h.mustDeny(alice, "deleting its own mailbox", map[string]any{mailbox(mbAlice): nil})
+	h.wantValue(beat(mbAlice)+"/boot", `"boot-2"`)
+}
+
 // TestMailboxPhoneAcksWhatItSpoke: D113's second phone write — one field on a
 // message the consumer left it — and the fact that it carries no more than
 // that.
