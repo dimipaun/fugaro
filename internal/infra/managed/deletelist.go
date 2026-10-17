@@ -67,8 +67,9 @@ type DeleteList struct {
 
 // Bytes is the object's content. A list this package would not read back is
 // refused (ErrRefused) rather than written: the read is fail-closed, so a
-// list it cannot parse would refuse every delete while looking, to whoever
-// wrote it, like an approval.
+// list it cannot parse — or one over allowDeleteMaxBytes, which the read
+// refuses whole — would refuse every delete while looking, to whoever wrote
+// it, like an approval.
 func (d DeleteList) Bytes() ([]byte, error) {
 	switch {
 	case d.Version != AllowDeleteVersion:
@@ -83,7 +84,20 @@ func (d DeleteList) Bytes() ([]byte, error) {
 			return nil, refusedf("%s: an empty address: every entry names a resource to delete or replace", AllowDeleteObject)
 		}
 	}
-	return json.Marshal(d)
+	data, err := json.Marshal(d)
+	if err != nil {
+		return nil, err
+	}
+	// The cap the read applies, applied here too: a list past it would be
+	// written and printed as an approval and then read back as no addresses,
+	// silently refusing every delete the owner just approved. The two ends
+	// hold the same limit, so nothing this command records is a list its own
+	// read will not believe.
+	if len(data) > allowDeleteMaxBytes {
+		return nil, refusedf("%s: %d bytes, over the %d this package reads back, so this list would be written and then read as no addresses: approve fewer addresses",
+			AllowDeleteObject, len(data), allowDeleteMaxBytes)
+	}
+	return data, nil
 }
 
 // refusedf is a refusal of this package's own (ErrRefused): the caller's
@@ -168,10 +182,19 @@ func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 	// version whose addresses may mean something else — and the addresses
 	// beside it are not read as an approval.
 	dec.DisallowUnknownFields()
+	if dec.Decode(&d) != nil {
+		return nil, nil
+	}
+	// And nothing may follow the value either: a second value, or junk after
+	// the closing brace, is the same "this is not that object" the unknown
+	// field is refused over, and a body this package cannot account for is not
+	// read as an approval. Token returns io.EOF only when nothing but
+	// whitespace is left.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, nil
+	}
 	switch {
 	case len(data) > allowDeleteMaxBytes:
-		return nil, nil
-	case dec.Decode(&d) != nil:
 		return nil, nil
 	case d.Version != AllowDeleteVersion:
 		return nil, nil

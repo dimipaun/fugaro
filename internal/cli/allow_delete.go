@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -17,9 +18,9 @@ import (
 // fugaro allow-delete (design docs/design/managed-projects.md, decisions D72
 // and D74) is the owner's answer to "may this project ever delete or replace
 // this resource?": a list of Terraform addresses, at the root of the runs
-// bucket, that the commands which apply a plan read before they apply it —
-// instead of taking the answer from their own command line, which belongs to
-// whatever session is applying.
+// bucket, that is the whole of an approval in a managed project — the object
+// an apply reads its allow-list from, rather than its own command line, which
+// belongs to whatever session is applying.
 //
 // It is run by the owner, with the owner's own credentials, and it is the
 // only writer of the object. No credential a run holds has a write path to
@@ -33,12 +34,16 @@ func newAllowDeleteCmd() *cobra.Command {
 	var o cloudOptions
 	cmd := &cobra.Command{
 		Use:   "allow-delete [ADDRESS...]",
-		Short: "Approve the Terraform addresses a run may delete or replace (the project's owner)",
-		Long: `Record which Terraform addresses the project's runs may delete or replace,
-in a managed project's fugaro/allow-delete.json at the root of the runs
-bucket. A command that applies a plan refuses a delete or a replacement whose
-address is not on that list, and takes the list from the object alone: an
---allow-delete passed to the applying command itself is refused, not honoured.
+		Short: "Record the Terraform addresses a run may delete or replace (the project's owner)",
+		Long: `Record which Terraform addresses the project's owner approves for deletion or
+replacement, in a managed project's fugaro/allow-delete.json at the root of
+the runs bucket. An approval lives in that object and nowhere else: this
+command is its only writer, and it writes with the operator's own credentials.
+
+An address is the Terraform address a plan reports, as in
+google_cloud_run_v2_job.web or module.web.google_storage_bucket.data, and
+nothing else is recorded — no note and no reason: the object's own version
+history is the record of who approved what and when.
 
 Run it in your own terminal, as an operator, with your own credentials: the
 object sits where only an operator may write, and a coding agent's session is
@@ -48,11 +53,9 @@ list refuses more, so dropping an address is how a delete is refused again.
 With no addresses the command prints the list and writes nothing; it never
 empties the list, because an empty list is what an absent one already means.
 
-An address is the Terraform address a plan reports, as in
-google_cloud_run_v2_job.web or module.web.google_storage_bucket.data, and
-nothing else is recorded — no note and no reason: the object is written by
-this command alone, and the object's own version history is the record of who
-approved what and when.`,
+The list is read fail-closed: an absent object, an empty one, one naming
+another project, or one this package cannot read is no addresses — and no
+addresses refuses every delete and replacement rather than permitting them.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return allowDelete(cmd, o, args)
@@ -78,10 +81,26 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	if bucket == "" {
 		return userErr("project %s names no runs bucket (set runs_bucket, or a gs:// bucket_url): the delete list lives at gs://<runs bucket>/%s", lc.Name, managed.AllowDeleteObject)
 	}
+	// The default name and no other, which is the rule the managed objects
+	// already live by: init's owner() refuses any other (init_review.go:183)
+	// and markCreated writes the marker only into it, because the managed read
+	// locates the project's runs bucket as fugaro-runs-<gcp_project>. A list
+	// written into a custom bucket would be read by nobody, so it is refused
+	// here rather than recorded where nothing looks for it.
+	if want := "fugaro-runs-" + lc.GCPProject; bucket != want {
+		return userErr("the delete list needs the default runs bucket name %s (this installation's is %q): the managed read locates the project's runs bucket by that name, so a list written into another bucket would be read by nobody", want, bucket)
+	}
+	approved := make([]string, 0, len(addresses))
 	for _, a := range addresses {
+		// Trimmed, and tested for emptiness the way the writer tests it: an
+		// address is compared with a plan's by exact equality, so a stray
+		// space would be an approval of nothing, and a whitespace-only
+		// argument is an empty address rather than anything about the bucket.
+		a = strings.TrimSpace(a)
 		if a == "" {
 			return userErr("an empty address: every argument names a Terraform address to approve, as in google_cloud_run_v2_job.web")
 		}
+		approved = append(approved, a)
 	}
 	c, err := newInitClients(ctx, lc)
 	if err != nil {
@@ -95,7 +114,7 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 		return remote(err)
 	}
 	w := cmd.OutOrStdout()
-	if len(addresses) == 0 {
+	if len(approved) == 0 {
 		list, err := managed.AllowDelete(ctx, c.Storage, bucket, lc.GCPProject, number)
 		if err != nil {
 			return remote(err)
@@ -113,7 +132,7 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	}
 	// Sorted and deduplicated, so one approval has one encoding: two people
 	// adding the same two addresses in either order write the same object.
-	approved := slices.Compact(slices.Sorted(slices.Values(addresses)))
+	approved = slices.Compact(slices.Sorted(slices.Values(approved)))
 	if err := managed.WriteDeleteList(ctx, c.Storage, bucket, lc.GCPProject, number, approved); err != nil {
 		return allowDeleteWriteErr(lc, bucket, err)
 	}

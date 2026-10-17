@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -131,6 +132,81 @@ func TestAllowDeleteCommandRefusesUnderACodingAgentMarker(t *testing.T) {
 	// mistaken for the approval path.
 	if _, _, err := execute(t, "allow-delete"); err == nil {
 		t.Error("printing the list is allowed in a coding agent's session")
+	}
+}
+
+// TestAllowDeleteCommandRefusesAnAddressThatIsNotOne: an address is compared
+// with a plan's by exact equality, so a stray space around one would be an
+// approval of nothing at all. The command trims what it is given, and an
+// argument that is nothing but space is the empty address — the message for
+// it, not the one about the bucket the writer would otherwise fail on.
+func TestAllowDeleteCommandRefusesAnAddressThatIsNotOne(t *testing.T) {
+	r := allowDeleteRig(t)
+	for _, arg := range []string{"", "   ", "\t"} {
+		out, _, err := execute(t, "allow-delete", arg)
+		if err == nil {
+			t.Fatalf("the command accepted %q:\n%s", arg, out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("%q: exit %d, want %d", arg, ExitCode(err), ExitUserError)
+		}
+		if !strings.Contains(err.Error(), "an empty address") {
+			t.Errorf("%q was refused with the wrong reason: %v", arg, err)
+		}
+		if strings.Contains(err.Error(), "runs_bucket") {
+			t.Errorf("%q was reported as a bucket problem: %v", arg, err)
+		}
+	}
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
+	}
+	// And what it does write is trimmed, so the object holds addresses that
+	// can match a plan's.
+	if _, _, err := execute(t, "allow-delete", "  google_storage_bucket.data  "); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatal("the trimmed address was not written")
+	}
+	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`
+	if got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+}
+
+// TestAllowDeleteCommandNeedsTheDefaultRunsBucket: the managed objects are
+// only ever read from the project's runs bucket under its default name — the
+// rule init's owner() and markCreated already apply — so a list recorded in a
+// custom bucket is one nothing looks in. The command refuses rather than
+// recording an approval where the read will never find it.
+func TestAllowDeleteCommandNeedsTheDefaultRunsBucket(t *testing.T) {
+	r := allowDeleteRig(t)
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom := strings.Replace(string(cfg), "runs_bucket: "+initRunsBucket, "runs_bucket: aurora-own-runs", 1)
+	if custom == string(cfg) {
+		t.Fatal("the rig's config does not name the default runs bucket")
+	}
+	if err := os.WriteFile(r.cfg, []byte(custom), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"allow-delete", "google_storage_bucket.data"}, {"allow-delete"}} {
+		out, _, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%v ran against a custom runs bucket:\n%s", args, out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("%v: exit %d, want %d", args, ExitCode(err), ExitUserError)
+		}
+		if !strings.Contains(err.Error(), initRunsBucket) {
+			t.Errorf("%v: the refusal does not name the name it needs: %v", args, err)
+		}
+	}
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 	}
 }
 

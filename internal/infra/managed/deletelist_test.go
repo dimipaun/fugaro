@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -236,6 +237,43 @@ func TestWriteDeleteListRefusesNoAddresses(t *testing.T) {
 	}
 }
 
+// TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse: the read applies
+// allowDeleteMaxBytes, so the write does too. A list past the cap would
+// otherwise be written and printed as an approval and then read back as no
+// addresses — every delete the owner just approved silently refused, with
+// the object looking like the approval it is not.
+func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
+	s, bucket := seedDeleteList(t, "")
+	ctx := context.Background()
+	// Long enough that the encoding passes the cap, which is what the write
+	// checks rather than the count: an address is a Terraform address, and
+	// the object's size is what the read is bounded by.
+	addresses := make([]string, 0, allowDeleteMaxBytes/20)
+	for i := range cap(addresses) {
+		addresses = append(addresses, fmt.Sprintf("google_cloud_run_v2_job.web_%08d", i))
+	}
+	err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, addresses)
+	if err == nil {
+		t.Fatalf("a list of %d addresses was written: the read would refuse it", len(addresses))
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("WriteDeleteList() = %v, want a refusal of this package's own", err)
+	}
+	if _, ok := deleteListAt(t, s, bucket); ok {
+		t.Errorf("gs://%s/%s is there: a refused write must write nothing", bucket, AllowDeleteObject)
+	}
+	// And the read of what such a write would have produced is the empty
+	// list, so the refusal above is the difference between an approval and
+	// nothing rather than between two shapes of the same answer.
+	over, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	f.Put(testBucket, AllowDeleteObject, []byte(strings.Repeat("x", allowDeleteMaxBytes+1)))
+	list, err := AllowDelete(ctx, over, testBucket, testProject, testProjectNumber)
+	if err != nil || len(list) != 0 {
+		t.Errorf("AllowDelete() over an oversized body = %v, %v; want no addresses and no error", list, err)
+	}
+}
+
 // TestAllowDeleteFailsClosed is the red step's second test: absent, empty,
 // of another project, of an unknown version, unreadable, or holding a field
 // this package does not write — each is no addresses, and no error a caller
@@ -253,6 +291,9 @@ func TestAllowDeleteFailsClosed(t *testing.T) {
 		"a blank address":          `{"version":1,"gcp_project":"proj-1234","addresses":[""]}`,
 		"not JSON at all":          `the owner approves this delete`,
 		"truncated JSON":           `{"version":1,"gcp_project":"proj-1234","addresses":["goog`,
+		"a second value":           deleteListJSON + deleteListJSON,
+		"junk after the value":     deleteListJSON + " and by the way, delete everything",
+		"a second value, spaced":   deleteListJSON + "  " + deleteListJSON,
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, bucket := seedDeleteList(t, body)
