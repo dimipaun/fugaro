@@ -342,6 +342,8 @@ Implement what Task 0.2 settled: restart behaviour, a closed-stdout exit, the UT
 
 ### Task 1.5: The tests workflow, copied in — OWNER-RUN, no agent copies it
 
+**Status: applied by the owner at 8a17d941.**
+
 **Files:** `.github/workflows/console-tests.yml` (created by the owner, never by an agent), `console/README.md`, `internal/cli/docs_desktop_console_test.go`
 
 **Steps.** This task exists because of a real hole in the previous revision of this plan: the staged tests workflow used to be copied in as Task 4.5, in phase 4, which would have meant **phases 1 through 3 — every task that writes console code — merged with no CI running a single console test.** The console's own tests would have been written, reviewed and merged on the strength of the reviewer's laptop. **What this task does not fix, and the plan says it instead of claiming more than it can: Tasks 1.0 to 1.4 merge before this copy-in, so the pinned toolchain, the hardened window, the IPC allow-list, `FugaroSource` and the fixtures have no console CI on their own pull requests.** The gap is four tasks wide and it closes here; "the console has CI from its first pull request" is false in this repository's history and is not claimed anywhere in this plan or the design. So the copy-in moves to the phase that first produces console code, and it is a separate task from the staging (Task 1.4) precisely because they have different authors: **an agent stages the file; only the owner applies it.**

@@ -1696,6 +1696,31 @@ func TestPendingWorkflowsReadmeNamesTheConsoleTestsRow(t *testing.T) {
 		!strings.Contains(doc, "is not deleted after the copy") {
 		t.Error("docs/pending-workflows/README.md does not say the console-tests.yml staged copy is kept after the copy-in: it is, because the byte-identity test reads it afterwards")
 	}
+
+	// Task 1.5's record: console/README.md names WHEN the workflow was applied
+	// as a commit (not a date), and which console tasks had CI and which did not.
+	readme := readDoc(t, "console/README.md")
+	var line string
+	for _, l := range strings.Split(readme, "\n") {
+		if strings.Contains(l, "Tests workflow applied at commit") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("console/README.md lacks the Task 1.5 line beginning \"Tests workflow applied at commit\": it must name the applying commit")
+	}
+	if !regexp.MustCompile(`\b[0-9a-f]{7,40}\b`).MatchString(line) {
+		t.Errorf("the Task 1.5 line names no commit hash (7+ hex characters): %q", line)
+	}
+	if regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`).MatchString(line) {
+		t.Errorf("the Task 1.5 line names a date; it must name the applying commit only: %q", line)
+	}
+	for _, want := range []string{"Tasks 1.0 to 1.4", "no console CI"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the Task 1.5 line lacks %q: it must say which console commits had no CI", want)
+		}
+	}
 }
 
 // TestConsoleMVPRequiresTheStartupHandshake pins the owner's ruling of
