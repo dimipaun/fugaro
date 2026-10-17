@@ -1311,8 +1311,19 @@ describe('the day and window arguments', () => {
     ['2562047.7h', true, 'a fraction under the edge'],
     ['2562047.8h', false, 'and one over it'],
     ['3000000h', false, 'far past it'],
-    ['999999999h', false, 'the ten-character bound does not bound the magnitude'],
+    ['999999999h', false, 'a length bound does not bound the magnitude'],
     ['999999999m', false, 'in minutes either'],
+    // ...and its length: the bound is the grammar's longest canonical value,
+    // not ten characters (review round 2 of PR 514). Every accepted value below
+    // is one Go's parseSince accepts (each was run through it).
+    ['1000h30m15s', true, 'eleven characters, well inside the magnitude'],
+    ['2562047h47m16.854775807s', true, 'the largest duration ParseDuration accepts, spelled out'],
+    ['+2562047h47m16.854775807s', true, 'with a plus: the longest canonical form'],
+    ['2562047h47m16.854775808s', false, 'one nanosecond past it: the overflow rule still holds'],
+    ['12345678901d', true, 'an eleven-digit day count strconv.Atoi reads'],
+    ['9223372036854775807d', true, 'the largest day count Atoi reads'],
+    ['9223372036854775808d', false, 'one past it: Atoi refuses, and so does the schema'],
+    ['+2562047h47m16.8547758070s', false, 'a surplus fraction digit Go would drop: past the longest canonical form, so the length bound refuses it'],
   ]
 
   for (const [value, accepted, why] of runWindows) {

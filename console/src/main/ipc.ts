@@ -964,6 +964,19 @@ function isCalendarDay(value: string): boolean {
 }
 
 /**
+ * LONGEST_RUNS_SINCE is the longest canonical runs window the CLI accepts: the
+ * largest duration `time.ParseDuration` reads (`1<<63-1` nanoseconds), spelled
+ * out with its optional plus. Every other canonical form is shorter -- the
+ * largest `Nd` count `strconv.Atoi` reads is `+9223372036854775807d`, 21
+ * characters -- so its length is `runSince`'s bound. It used to be ten, which
+ * refused `1000h30m15s` and an eleven-digit day count the CLI takes (review
+ * round 2 of PR 514). A value longer than this is one padded with leading
+ * zeros, surplus fraction digits or repeated units; the CLI would read it, and
+ * the console refuses it before the grammar, as the price of a bound.
+ */
+const LONGEST_RUNS_SINCE = '+2562047h47m16.854775807s'
+
+/**
  * isRunsSince mirrors `parseSince` (`internal/cli/runs.go:496`) branch for
  * branch, and it exists because the console used to accept two things that
  * function always refuses: **a UTC calendar day** (there is no date branch) and
@@ -974,10 +987,9 @@ function isCalendarDay(value: string): boolean {
  * The branches, in the CLI's order:
  *
  *   1. `"0"` exactly -- no bound;
- *   2. a `d` suffix, whose digits `strconv.Atoi` reads and which must be at
- *      least one. The console's ten-character bound on a string argument is
- *      what keeps those digits inside `Atoi`'s range, so no integer bound is
- *      repeated here;
+ *   2. a `d` suffix, whose digits `strconv.Atoi` reads -- inside int64, so a
+ *      count past `1<<63-1` is refused here as `Atoi` refuses it -- and which
+ *      must be at least one;
  *   3. anything else is a Go duration, and `parseSince` refuses `d <= 0`. A
  *      leading `-` is that case, and so is a duration whose every digit is
  *      zero (`0s`, `0h0m`); `+5h` is a positive duration the CLI accepts.
@@ -986,7 +998,11 @@ function isRunsSince(value: string): boolean {
   if (value === '0') return true
   if (value.endsWith('d')) {
     const days = value.slice(0, -1)
-    return SINCE_DAYS_RE.test(days) && Number(days) >= 1
+    if (!SINCE_DAYS_RE.test(days)) return false
+    // `strconv.Atoi` is int64 on the CLI's platforms: a count past it is
+    // `value out of range`, which `parseSince` refuses.
+    const count = BigInt(days.replace(/^\+/, ''))
+    return count >= 1n && count < GO_INT64_EDGE
   }
   if (!GO_DURATION_RE.test(value)) return false
   if (value.startsWith('-')) return false
@@ -1023,9 +1039,8 @@ const GO_INT64_EDGE = 1n << 63n
  * float64 and truncated, each term and the running sum refused past `1<<63`, and
  * a positive total refused past `1<<63-1`. It returns null where Go returns
  * `time: invalid duration`, so a window the CLI would refuse after the spawn is
- * refused here, before it -- the ten-character bound keeps the *digits* inside
- * `Atoi`'s range but not the *magnitude* inside an int64 of nanoseconds
- * (`999999999h`; review round 2 of PR 478).
+ * refused here, before it -- a length bound keeps no *magnitude* inside an
+ * int64 of nanoseconds (`999999999h`; review round 2 of PR 478).
  */
 function goDurationNanos(value: string): bigint | null {
   let rest = value
@@ -1225,12 +1240,11 @@ function kindLimit(kind: ArgumentKind): number {
       // longer of the two, and the grammar decides which one a value is.
       return 10
     case 'runSince':
-      // The longest accepted form is a duration like `1h30m15s`; the bound is
-      // also what keeps a `Nd` day count inside `strconv.Atoi`'s range. It does
-      // not keep a *duration* inside an int64 of nanoseconds (`999999999h`), so
-      // `isRunsSince` bounds that magnitude itself, as `time.ParseDuration`
-      // does (`goDurationNanos`).
-      return 10
+      // The grammar's longest canonical value (`LONGEST_RUNS_SINCE`). It is a
+      // length bound only: the magnitude of a duration and of a `Nd` count is
+      // decided by `isRunsSince`, as `time.ParseDuration` and `strconv.Atoi`
+      // decide it.
+      return LONGEST_RUNS_SINCE.length
     case 'reportDimension':
       return 8
     case 'secretScope':
