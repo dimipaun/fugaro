@@ -63,8 +63,7 @@ account is one installation (D114), and its links are its own repository's and
 its own provider's.
 
 ```js
-import { validateExternalUrl } from '../url/index.js';
-
+// from the console's voice module, or from the app: one call, one list per account
 const result = validateExternalUrl(document.pr_url, account.hostAllowList);
 if (result.ok) {
   openExternal(result.url); // the input verbatim, never a re-serialisation

@@ -258,11 +258,12 @@ export function validateExternalUrl(candidate, hostAllowList = DEFAULT_HOST_ALLO
   const parsedHost = parsed.hostname.toLowerCase();
 
   // --- The host ------------------------------------------------------------
-  // An IP literal is refused before the invariant below, because the spellings
-  // the parser normalises are exactly the ones that break it: `2130706433` and
-  // `0x7f.1` are `127.0.0.1` to `new URL`, so their raw authority and their
-  // parsed host disagree -- and "an IP address in a disguise" is the more
-  // useful thing to say about them than "this string does not parse".
+  // An IP literal is refused here, before anything reads the host as a name,
+  // because the spellings the parser normalises are exactly the ones that would
+  // otherwise be answered as something else: `2130706433` and `0x7f.1` are
+  // `127.0.0.1` to `new URL`, so their raw authority and their parsed host
+  // disagree about them -- and "an IP address in a disguise" is the more useful
+  // thing to say about those two than "this string does not parse".
   if (IPV4_LITERAL.test(parsedHost) || parsedHost.startsWith('[')) {
     return refuse(URL_REFUSAL.IP_LITERAL);
   }
