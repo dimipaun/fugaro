@@ -29,10 +29,19 @@
 // `LEFT_ALONE_FUSES` names those two so that "left alone" is a decision in this
 // file rather than an omission from it.
 //
-// **The hook verifies what it wrote.** `@electron/fuses` against a path that is
-// not an Electron binary succeeds and changes nothing, so flipping and returning
-// would report a hardened build that is not one. `afterPack` therefore reads the
-// wire back and fails, naming the fuse and the binary, if a flip did not take.
+// **The hook verifies what it wrote.** `flipFuses` writes the wire and reports
+// how many fuses it changed, not what the binary now holds -- so a table entry
+// carrying the index of the fuse above it flips the wrong byte and the packer
+// says nothing. `afterPack` therefore reads the wire back and fails, naming the
+// fuse and the binary, if a flip did not take: reading it back is the only way
+// this build can state what the binary it is about to sign actually holds.
+//
+// It is not a guard against a path that is not an Electron binary: the pinned
+// `@electron/fuses` refuses that itself -- both calls reject with "Could not
+// find sentinel in the provided Electron binary, fuses are only supported in
+// Electron 12 and higher" (`fuses.test.ts` asserts exactly that, so a version
+// which started returning quietly would be a red test here rather than a hook
+// that had grown to trust it).
 //
 // **What this file deliberately does not do.** It does not sign, staple or
 // notarise -- electron-builder signs after this hook, `entitlements.mac.plist`

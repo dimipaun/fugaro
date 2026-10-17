@@ -1443,9 +1443,14 @@ because "left at its upstream default" is a decision and not an oversight:
 Three properties of the hook are worth stating here, because they are what make
 the six a fact rather than an intention:
 
-- **It verifies what it wrote.** `@electron/fuses` against a path that is not an
-  Electron binary succeeds and changes nothing, so the hook reads the fuse wire
-  back and fails — naming the fuse and the binary — if a flip did not take.
+- **It verifies what it wrote.** `flipFuses` reports how many fuses it changed,
+  not what the binary now holds — so a table entry carrying the index of the fuse
+  above it flips the wrong byte with nothing from the packer to say so. The hook
+  reads the fuse wire back and fails — naming the fuse and the binary — if a flip
+  did not take. (It is *not* a guard against a path that is not an Electron
+  binary: the pinned `@electron/fuses` refuses that itself, both calls rejecting
+  with "Could not find sentinel in the provided Electron binary", which
+  `fuses.test.ts` asserts rather than assumes.)
 - **It refuses a platform that is not darwin** instead of skipping. A build on
   any other platform would produce no `Contents/MacOS` bundle to flip, and a
   silently skipped hook is the one outcome that ships the fuses unset.

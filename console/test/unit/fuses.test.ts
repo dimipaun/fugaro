@@ -25,20 +25,24 @@
 //      no publish configuration at all, and the names Check 59a's launch line
 //      depends on.
 //
-// **Why the wire is read back.** Flipping is a write into the binary and a
-// silent no-op is possible -- run against a path that is not an Electron binary,
-// `@electron/fuses` succeeds and changes nothing. So the hook flips and then
-// reads the wire and fails, naming the fuse and the path, rather than trusting
-// the write. The fake below is what proves that check can fail: one wire with
-// `RunAsNode` left enabled, which is the plan's red step's second half.
+// **Why the wire is read back.** `flipFuses` reports how many fuses it changed,
+// not what the binary now holds, so a table entry carrying the index of the fuse
+// above it flips the wrong byte with nothing from the packer to say so. The hook
+// flips and then reads the wire and fails, naming the fuse and the path, rather
+// than trusting the write. The fake below is what proves that check can fail:
+// one wire with `RunAsNode` left enabled, which is the plan's red step's second
+// half. (It is not a guard against a path that is not an Electron binary -- the
+// pinned package refuses that itself, which the last test in the pinned-package
+// block asserts.)
 //
 // **What is deliberately not here.** No packaged macOS binary is inspected: the
 // unit suite runs on Linux, where there is none, so it reads the configuration
 // the packer will pass. The signature those fuses sit inside is verified on a
 // Mac, by the owner, in Check 59a.
 
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { FuseState, FuseV1Options, FuseVersion } from '@electron/fuses'
@@ -200,6 +204,24 @@ describe('the pinned @electron/fuses the hook is written against', () => {
     expect(fuses.FuseState.DISABLE).toBe(FuseState.DISABLE)
     expect(fuses.FuseVersion.V1).toBe(FuseVersion.V1)
   })
+
+  it('refuses a file that is not an Electron binary, rather than succeeding quietly', async () => {
+    // The hook reads the wire back because a flip can land on the wrong byte,
+    // *not* because this package would return happily having changed nothing --
+    // and the difference is a fact about the pin, so it is asserted here. A
+    // version that started resolving on a file with no fuse wire would leave
+    // `afterPack` unable to tell a hardened binary from an untouched one, and
+    // this test is where that arrives.
+    const fuses = await import('@electron/fuses')
+    const notABinary = join(mkdtempSync(join(tmpdir(), 'fuses-')), 'not-electron')
+    writeFileSync(notABinary, 'the console is not an Electron binary')
+    for (const call of [
+      () => fuses.flipFuses(notABinary, { version: FuseVersion.V1, 0: false }),
+      () => fuses.getCurrentFuseWire(notABinary),
+    ]) {
+      await expect(call()).rejects.toThrow(/sentinel/)
+    }
+  })
 })
 
 describe('the configuration the packer will pass', () => {
@@ -257,6 +279,38 @@ describe('the afterPack hook', () => {
 
   it('passes when the wire holds all six', async () => {
     await expect(afterPack(CONTEXT, fakeFuses())).resolves.toBeUndefined()
+  })
+
+  it('does not report success for a bundle whose executable carries no fuse wire', async () => {
+    // The hook with its real toolbox (the default argument), pointed at a bundle
+    // layout whose files are not an Electron binary. This is the shape of a pack
+    // that went wrong somewhere else -- and the failure has to come from the
+    // pinned package rather than be swallowed into a return value: the hook must
+    // not report a hardened build it did not produce.
+    //
+    // Both files are written because `@electron/fuses` does not stop at the
+    // executable on darwin: given `Contents/MacOS/<name>` it flips the binary
+    // inside `Contents/Frameworks/Electron Framework.framework`, which is the
+    // one Electron's Code Signature actually covers. That is a fact about the
+    // path the hook names, and it is why the file below is the second one
+    // written here rather than the only one.
+    const appOutDir = mkdtempSync(join(tmpdir(), 'fuses-bundle-'))
+    const name = 'Fugaro Console'
+    const executable = join(appOutDir, `${name}.app`, 'Contents', 'MacOS', name)
+    const framework = join(
+      appOutDir,
+      `${name}.app`,
+      'Contents',
+      'Frameworks',
+      'Electron Framework.framework',
+      'Electron Framework',
+    )
+    for (const file of [executable, framework]) {
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, 'the packed file, but not an Electron binary')
+    }
+    const context: AfterPackContext = { ...CONTEXT, appOutDir }
+    await expect(afterPack(context)).rejects.toThrow(/sentinel/)
   })
 
   it('refuses a platform that is not darwin rather than shipping an unflipped bundle', async () => {
