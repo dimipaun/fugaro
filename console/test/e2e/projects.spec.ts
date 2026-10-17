@@ -29,7 +29,7 @@
 // handed to the model as one: see the note the panel draws about it. Nothing
 // here reaches the network or the CLI: every document is an object in this file.
 //
-// **The goldens** are `test/e2e/__screenshots__/projects/{light,dark}.png`, in a
+// **The goldens** are `test/e2e/__screenshots__/projects/{light,dark}-<platform>.png`, in a
 // subdirectory of the golden directory rather than beside the Live screen's two
 // files for the reason `spend.spec.ts` records: `live.spec.ts` holds the
 // directory to exactly its own two PNGs, and that file is not this task's to
@@ -595,8 +595,8 @@ test.describe('the Projects screen', () => {
   test('resolves the golden names under the projects directory', ({}, testInfo) => {
     // Not a golden test: it asks Playwright where a recording would land, so a
     // name the template flattens is red before anyone records anything.
-    expect(testInfo.snapshotPath(...GOLDEN_NAMES.light)).toBe(join(goldenDir, 'light.png'))
-    expect(testInfo.snapshotPath(...GOLDEN_NAMES.dark)).toBe(join(goldenDir, 'dark.png'))
+    expect(testInfo.snapshotPath(...GOLDEN_NAMES.light)).toBe(join(goldenDir, `light-${process.platform}.png`))
+    expect(testInfo.snapshotPath(...GOLDEN_NAMES.dark)).toBe(join(goldenDir, `dark-${process.platform}.png`))
   })
 
   test('has a golden for each theme the design names', () => {
@@ -609,6 +609,12 @@ test.describe('the Projects screen', () => {
           .filter((file) => file.endsWith('.png'))
           .sort()
       : []
-    expect(present).toEqual(PROJECTS_THEMES.map((theme) => `${theme}.png`).sort())
+    // One per theme for THIS platform (the template adds `-<platform>`: macOS
+    // and Linux pixels differ and CI runs both), and nothing that is not a
+    // theme's recording for one of those two platforms.
+    expect(present.filter((file) => file.endsWith(`-${process.platform}.png`))).toEqual(
+      PROJECTS_THEMES.map((theme) => `${theme}-${process.platform}.png`).sort(),
+    )
+    for (const file of present) expect(file).toMatch(new RegExp(`^(${PROJECTS_THEMES.join('|')})-(darwin|linux)\\.png$`))
   })
 })

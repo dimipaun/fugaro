@@ -262,6 +262,226 @@ const INVISIBLE_RE =
   /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\ufff9-\ufffb\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
 
 /**
+ * AmbiguousSite is one place where a sequence the scanner removed swallowed
+ * printable characters that, in text never meant for a terminal, may have been
+ * text: the final byte (`ESC [ A` is "cursor up", but `ESC [` + an AWS key id is
+ * drawn `KIA...`), and the parameter and intermediate bytes before it (`ESC [ 1`
+ * + a token loses `1` and the token's first letter). ECMA-48 leaves the reading
+ * open, so `resolveAmbiguousSequences` reads each site every way -- dropped (as
+ * a terminal draws it), only the final byte kept, the whole body kept -- and
+ * redacts the union of what the credential rules match.
+ *
+ * `at` is where the swallowed text sat in the scanner's output; `final` is the
+ * final byte when the sequence had one; `body` is every printable byte the
+ * sequence consumed after its introducer, final byte included.
+ */
+export interface AmbiguousSite {
+  readonly at: number
+  readonly final: string | null
+  readonly body: string
+}
+
+/** SEQUENCE_PAD_RE is what the scanner steps over *inside* an escape sequence,
+ * as a terminal does: the invisible formatting characters (so ESC + a
+ * zero-width space + `[31m` is the sequence it renders as), the C0 controls a
+ * terminal executes in the middle of a sequence without ending it, and DEL.
+ *
+ * **Tab, line feed and carriage return are not padding** (review round 4 of PR
+ * 494): they are text this layer keeps everywhere else, and stepping over them
+ * made `ESC [ 1` + a line break + `x` lose the line break. Each of them ends the
+ * sequence as a byte outside its grammar does -- the sequence is malformed, it
+ * ends before that byte, and the byte is kept. BEL, ESC, CAN and SUB are not
+ * padding either: they end or abort a sequence. */
+const SEQUENCE_PAD_RE =
+  /^[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\ufff9-\ufffb\u0000-\u0006\u0008\u000b\u000c\u000e-\u0017\u0019\u001c-\u001f\u007f]$/u
+
+/** SEQUENCE_FAST_RE answers whether a string holds anything that can open a
+ * sequence (ESC or a C1 control); most strings do not, and are returned as
+ * they came. */
+const SEQUENCE_FAST_RE = /[\u001b\u0080-\u009f]/
+
+/** A significant character inside a sequence: its folded code, where it starts
+ * and where the scan resumes after it. */
+interface SequenceChar {
+  readonly code: number
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * sequenceChar is the next character of a sequence at or after `at`, stepping
+ * over `SEQUENCE_PAD_RE` and folding the character through NFKC (so a fullwidth
+ * `［` is the `[` it is drawn as, and a fullwidth digit a parameter byte). It is
+ * how NFKC and the zero-width strip run *before* a sequence is recognised,
+ * without a second pass over the string. `null` is the end of the input.
+ */
+function sequenceChar(text: string, at: number): SequenceChar | null {
+  let index = at
+  while (index < text.length) {
+    const point = text.codePointAt(index) ?? 0
+    const width = point > 0xffff ? 2 : 1
+    const character = String.fromCodePoint(point)
+    if (SEQUENCE_PAD_RE.test(character)) {
+      index += width
+      continue
+    }
+    let code = point
+    if (point > 0x9f) {
+      const folded = character.normalize('NFKC')
+      if (folded.length === 1) code = folded.charCodeAt(0)
+    }
+    return { code, start: index, end: index + width }
+  }
+  return null
+}
+
+/** controlStringEnd is where a control string (OSC, DCS, SOS, PM, APC) whose
+ * body starts at `from` ends: after BEL, after ST (ESC `\` or U+009C), *at* an
+ * ESC that is not ST (a terminal abandons the string there, and the ESC opens
+ * whatever follows), or at the end of the input. One pass, no backtracking. */
+function controlStringEnd(text: string, from: number): number {
+  for (let index = from; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    if (code === 0x07 || code === 0x9c) return index + 1
+    if (code === 0x1b) {
+      const next = sequenceChar(text, index + 1)
+      return next !== null && next.code === 0x5c ? next.end : index
+    }
+  }
+  return text.length
+}
+
+/** SequenceSpan is where one sequence ends, and -- when it consumed bytes that
+ * could have been text -- where those bytes start (`bodyFrom`) and whether the
+ * last of them was a final byte. A control string has no body here: a terminal
+ * draws none of it, and neither does this layer. */
+interface SequenceSpan {
+  readonly end: number
+  readonly bodyFrom: number | null
+  readonly hasFinal: boolean
+}
+
+const NO_SEQUENCE: SequenceSpan = { end: -1, bodyFrom: null, hasFinal: false }
+
+/**
+ * sequenceEnd answers where the escape sequence whose introducer is `final`
+ * (the byte after ESC, or a C1 control's ESC equivalent) and whose body starts
+ * at `from` ends. It is ECMA-48's grammar, read leniently:
+ *
+ *   - CSI (`[`): parameter bytes `0-?`, intermediate bytes ` -/`, one final
+ *     byte `@-~`. A malformed CSI ends before the byte that broke it;
+ *   - OSC, DCS, SOS, PM, APC (`]`, `P`, `X`, `^`, `_`): a control string, to
+ *     BEL, ST or the end of the input (`controlStringEnd`);
+ *   - nF (intermediates ` -/` then a final `0-~`), and the two-character Fp,
+ *     Fe and Fs escapes (`0-~`).
+ *
+ * Anything else after ESC is not a sequence, and only the ESC goes. There is
+ * one reading -- the terminal's -- and the bytes it swallowed are reported
+ * (`SequenceSpan`) so that `resolveAmbiguousSequences` can read them as text
+ * too.
+ */
+function sequenceEnd(text: string, final: SequenceChar | null, from: number): SequenceSpan {
+  if (final === null) return { end: from, bodyFrom: null, hasFinal: false }
+  const f = final.code
+  if (f === 0x5b) {
+    let next = sequenceChar(text, from)
+    while (next !== null && next.code >= 0x30 && next.code <= 0x3f) next = sequenceChar(text, next.end)
+    while (next !== null && next.code >= 0x20 && next.code <= 0x2f) next = sequenceChar(text, next.end)
+    if (next === null) return { end: text.length, bodyFrom: from, hasFinal: false }
+    if (next.code < 0x40 || next.code > 0x7e) return { end: next.start, bodyFrom: from, hasFinal: false }
+    return { end: next.end, bodyFrom: from, hasFinal: true }
+  }
+  if (f === 0x5d || f === 0x50 || f === 0x58 || f === 0x5e || f === 0x5f) {
+    return { end: controlStringEnd(text, from), bodyFrom: null, hasFinal: false }
+  }
+  if (f >= 0x20 && f <= 0x2f) {
+    let next = sequenceChar(text, from)
+    while (next !== null && next.code >= 0x20 && next.code <= 0x2f) next = sequenceChar(text, next.end)
+    if (next === null) return { end: text.length, bodyFrom: final.start, hasFinal: false }
+    return next.code >= 0x30 && next.code <= 0x7e
+      ? { end: next.end, bodyFrom: final.start, hasFinal: true }
+      : { end: next.start, bodyFrom: final.start, hasFinal: false }
+  }
+  if (f >= 0x30 && f <= 0x7e) return { end: from, bodyFrom: final.start, hasFinal: true }
+  return NO_SEQUENCE
+}
+
+/** siteOf reads the printable bytes a sequence swallowed between `from` and
+ * `end` (padding stepped over, each byte folded as the grammar read it) into an
+ * `AmbiguousSite`, or `null` when it swallowed nothing but whitespace -- a
+ * kept space can only split text, never join it. */
+function siteOf(text: string, at: number, from: number, end: number, hasFinal: boolean): AmbiguousSite | null {
+  const characters: string[] = []
+  let next = sequenceChar(text, from)
+  while (next !== null && next.start < end) {
+    characters.push(String.fromCharCode(next.code))
+    next = sequenceChar(text, next.end)
+  }
+  const body = characters.join('')
+  if (!/\S/.test(body)) return null
+  const last = characters[characters.length - 1]
+  return { at, final: hasFinal && last !== undefined ? last : null, body }
+}
+
+/**
+ * stripTerminalSequences removes every terminal escape sequence and control
+ * string from `text`, in one pass: what a terminal would swallow is gone, whole,
+ * so nothing of it is left glued to the next word. It is the one definition the
+ * three readers of CLI text share -- the sentence class and the refusal door
+ * here, and the recorder (`src/source/redact.ts` imports it) -- and it replaces
+ * a regular expression whose unterminated-OSC branch rescanned the rest of the
+ * string from every U+009D (seconds per call on 64 KiB of them).
+ *
+ * **It is linear**: the index only moves forward, every loop consumes what it
+ * reads, and a lookahead over padding that does not open a sequence is read at
+ * most twice. ESC and the C1 controls (U+0080..U+009F, each the one-character
+ * form of ESC + the byte 0x40 above it) introduce a sequence; the grammar is
+ * `sequenceEnd`'s. An unterminated control string runs to the end of the input:
+ * a terminal draws none of it, and neither does this. The other controls are
+ * left for `INVISIBLE_RE`, which every caller applies afterwards.
+ */
+export function stripTerminalSequences(text: string): string {
+  return scanTerminalSequences(text, null)
+}
+
+/** scanTerminalSequences is `stripTerminalSequences`, reporting into `sites`
+ * (when given) every sequence that swallowed printable bytes, at its place in
+ * the output. Reading the swallowed bytes back is linear too: they are bytes the
+ * scan consumed, read once more. */
+function scanTerminalSequences(text: string, sites: AmbiguousSite[] | null): string {
+  if (!SEQUENCE_FAST_RE.test(text)) return text
+  const kept: string[] = []
+  let keptLength = 0
+  let copyFrom = 0
+  let index = 0
+  while (index < text.length) {
+    const code = text.charCodeAt(index)
+    if (code !== 0x1b && (code < 0x80 || code > 0x9f)) {
+      index += 1
+      continue
+    }
+    const piece = text.slice(copyFrom, index)
+    kept.push(piece)
+    keptLength += piece.length
+    let span: SequenceSpan = NO_SEQUENCE
+    if (code === 0x1b) {
+      const final = sequenceChar(text, index + 1)
+      if (final !== null) span = sequenceEnd(text, final, final.end)
+    } else if (code === 0x9b || code === 0x9d || code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
+      span = sequenceEnd(text, { code: code - 0x40, start: index, end: index + 1 }, index + 1)
+    }
+    if (sites !== null && span.bodyFrom !== null && span.end > span.bodyFrom) {
+      const site = siteOf(text, keptLength, span.bodyFrom, span.end, span.hasFinal)
+      if (site !== null) sites.push(site)
+    }
+    index = span.end > index ? span.end : index + 1
+    copyFrom = index
+  }
+  kept.push(text.slice(copyFrom))
+  return kept.join('')
+}
+
+/**
  * CONTROL_RE matches the line and paragraph separators -- the two separators a
  * screen must not draw, and the two the recorder's set deliberately keeps. They
  * are removed rather than flattened, so a sentence that used one to smuggle a
@@ -277,7 +497,7 @@ const CONTROL_RE = /[\u2028\u2029]/g
  * `prepare`, copied.
  */
 function prepare(text: string): string {
-  return text.normalize('NFKC').replace(INVISIBLE_RE, '')
+  return stripTerminalSequences(text.normalize('NFKC')).replace(INVISIBLE_RE, '')
 }
 
 /**
@@ -375,6 +595,17 @@ export const TOKEN_SHAPES: readonly RegExp[] = Object.freeze([
     JWT_STYLE,
     String.raw`J[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`,
   ]),
+  // A JWT with a short, empty or missing signature: its header and payload are
+  // the readable part, so two JWT-style segments are a token whatever follows.
+  // Without it the refusal door drew `<header>.<payload>.sig` while the
+  // sentence class (whose host rule catches it) did not.
+  shape([
+    String.raw`(?<![A-Za-z0-9_-])`,
+    JWT_STYLE,
+    String.raw`J[A-Za-z0-9_-]{8,}\.`,
+    JWT_STYLE,
+    String.raw`J[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?`,
+  ]),
 ])
 
 /** ENTROPY_RE is a candidate for the high-entropy rule: a long run of the
@@ -457,17 +688,29 @@ const BRANCH_RE =
  * path rooted at `/` or `~/` with at least two segments. **A space is part of a
  * segment when more path follows it**, so `/Users/Zora Kell/plan/x` is one path
  * and a sentence after a path is not. Two slashes is what keeps a sentence from
- * being eaten: `and/or` is not rooted. */
+ * being eaten: `and/or` is not rooted.
+ *
+ * The separator between joined segments is `\s`, not `[ \t]` (review round 5 of
+ * PR 478): the rules read the *prepared* form, which keeps its line breaks, and
+ * a flattening that happens later means `checkout /home\nzora/.ssh here` was two
+ * matches that neither rule took -- the operator's home drawn whole, in the one
+ * class that is deny-by-default. A line break is whitespace between two segments
+ * the same way a space is, and the whole run still has to be followed by more
+ * path (`SEG/`) to join, so a sentence after a path is still not eaten. */
 const PATH_SEGMENT = String.raw`[^\s\/\\"'\x60<>|;,:()\[\]{}*?]+`
-const ABS_PATH_RE = new RegExp(
-  [
-    String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:[ \t]+SEG)*\/)+SEG`,
-    String.raw`(?:~\/|\/)(?:SEG\/)+SEG`,
-  ]
-    .join('|')
-    .replaceAll('SEG', PATH_SEGMENT),
-  'gu',
-)
+/** ABS_PATH_SOURCE is the one definition of the absolute-path pattern: the
+ * recorder (`src/source/redact.ts`) builds its `ABS_PATH_RE` from this same
+ * string, so the two layers cannot drift (review round 2 of PR 494: c32b14f
+ * changed this half to `\s` and left the recorder on `[ \t]`). Exported as a
+ * source string, not a shared `RegExp`, so neither module shares the other's
+ * `lastIndex`. */
+export const ABS_PATH_SOURCE = [
+  String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:\s+SEG)*\/)+SEG`,
+  String.raw`(?:~\/|\/)(?:SEG\/)+SEG`,
+]
+  .join('|')
+  .replaceAll('SEG', PATH_SEGMENT)
+const ABS_PATH_RE = new RegExp(ABS_PATH_SOURCE, 'gu')
 
 /** WIN_PATH_RE matches a Windows path and a UNC path. */
 const WIN_PATH_RE = /(?:\b[A-Za-z]:\\[^\s"'`,;:)\]}]*|\\\\[^\s"'`,;:)\]}]+)/g
@@ -541,12 +784,24 @@ function isAddressMarker(value: string): boolean {
 }
 
 // The sentinels hold a pseudonym aside while the rest of the pass runs. They are
-// private-use code points, which no document can carry in practice and which the
+// private-use code points, which no *screen* has a use for, and which the
 // invisible-character strip above never removes -- so a pseudonym cannot be
-// eaten by the net, and cannot be re-inserted into text that happened to contain
-// the sentinel, because the text cannot contain it.
+// eaten by the net.
+//
+// Review round 5 of PR 478 corrected the claim that used to stand here. It said
+// the text "cannot contain" the sentinel, and that is false: a private-use code
+// point is a code point like any other, and a document may carry one. A value
+// that carried `U+E000` `0` `U+E001` of its own would have had the first restore
+// land on the document's own characters, leaving a real sentinel in the drawn
+// value and moving the pseudonym into text the document chose. No value leaked,
+// but the drawn text was not the text the pass decided. So `SENTINEL_RE` takes
+// the two code points out of every value before the sentinels go in: the value
+// cannot contain one afterwards, which is what makes the restore exact and the
+// first-occurrence `replace` below correct. The cost is that a value loses two
+// characters nobody can read.
 const SENTINEL_START = '\ue000'
 const SENTINEL_END = '\ue001'
+const SENTINEL_RE = /[\ue000\ue001]/g
 
 /** PERCENT_RUN_RE is a run of the characters a percent-encoded value is made of:
  * one character class, scanned once. A run with an escape in it
@@ -595,7 +850,14 @@ const WRAPPED_BASE64_RE = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{16,}={0,2}(?![A-Z
  * the recorder's rule with a Web decoder: a run whose text is not mostly
  * printable is not text, and a run that does not decode is not a candidate. */
 function decodeBase64(run: string): string | null {
-  const standard = run.replace(/-/g, '+').replace(/_/g, '/')
+  // Read the way the recorder's `Buffer.from(run, 'base64')` reads it: the
+  // padding is dropped, and a run whose length is 1 mod 4 loses its last
+  // character (which carries fewer than eight bits) instead of being refused
+  // by `atob` -- review round 2 of PR 494 found the two layers disagreeing on
+  // exactly that run, which `WRAPPED_BASE64_RE` makes common by absorbing the
+  // first letter of the next word.
+  let standard = run.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '')
+  if (standard.length % 4 === 1) standard = standard.slice(0, -1)
   const padded = standard + '='.repeat((4 - (standard.length % 4)) % 4)
   let decoded: string
   try {
@@ -686,6 +948,10 @@ const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
   },
   { flag: 'branch-placeholder', apply: (text) => text.replace(BRANCH_RE, BRANCH_PLACEHOLDER) },
   {
+    flag: 'neutralised-credential',
+    apply: (text) => text.replace(ENTROPY_RE, (run) => (isPathShapedSecret(run) ? TOKEN_PLACEHOLDER : run)),
+  },
+  {
     flag: 'path-placeholder',
     apply: (text) =>
       text.replace(ABS_PATH_RE, PATH_PLACEHOLDER).replace(WIN_PATH_RE, PATH_PLACEHOLDER),
@@ -725,6 +991,18 @@ const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
 ])
 
 /**
+ * isPathShapedSecret is a high-entropy run the path rule would otherwise split:
+ * it does not start at a `/` (a rooted run is a path, redacted whole by the
+ * path rule) and holds two or more slashes, so the path rule's unrooted
+ * alternative would take `/a/b` and leave the run's first fragment on screen
+ * (review round 2 of PR 494). One slash is a repository path and is the
+ * repository rule's. The recorder runs the same rule at the same place.
+ */
+function isPathShapedSecret(run: string): boolean {
+  return !run.startsWith('/') && (run.match(/\//g) ?? []).length >= 2 && isHighEntropy(run)
+}
+
+/**
  * CREDENTIAL_RULES are the first two of them, and they are the whole pass a
  * value whose *key* declares what it is goes through. Running the whole list
  * over such a value would be wrong in both directions: `fixture-owner/fixture-repo`
@@ -737,6 +1015,19 @@ const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
  * legal git branch name, and so is a forge token with no underscore in it.
  */
 const CREDENTIAL_RULES: readonly OneRule[] = Object.freeze(FREE_TEXT_RULES.slice(0, 2))
+
+/**
+ * REFUSAL_RULES are every credential redaction the free-text path makes, and
+ * nothing else: the URL rule, the credential pass, the path-shaped secret and
+ * the entropy net. They are what `sanitizeRefusal` runs. The pattern classes
+ * that rewrite a remedy (repository, GCP name, path, host) are left out on
+ * purpose -- see `sanitizeRefusal` -- but a credential the text path would
+ * redact is redacted here too (`sanitize-agreement.test.ts` pins the two equal
+ * over a corpus).
+ */
+const REFUSAL_RULES: readonly OneRule[] = Object.freeze(
+  FREE_TEXT_RULES.filter((rule) => rule.flag === 'neutralised-credential' || rule.flag === 'replaced-url'),
+)
 
 /**
  * credentialPass is the recorder's "something credential-shaped" rule: a
@@ -771,11 +1062,13 @@ function credentialPass(text: string, nested: boolean): string {
 /**
  * runRules runs one list of rules in order and reports what fired. The
  * pseudonyms are held aside for the duration and put back at the end, so the
- * entropy net cannot eat a redaction the recorder already made.
+ * entropy net cannot eat a redaction the recorder already made. The value's own
+ * sentinel code points are removed first, which is what makes the hold exact --
+ * see `SENTINEL_RE`.
  */
 function runRules(text: string, rules: readonly OneRule[], nested: boolean): Changed {
   const held: string[] = []
-  let working = text.replace(ANY_PSEUDONYM_RE, (found) => {
+  let working = text.replace(SENTINEL_RE, '').replace(ANY_PSEUDONYM_RE, (found) => {
     held.push(found)
     return `${SENTINEL_START}${String(held.length - 1)}${SENTINEL_END}`
   })
@@ -791,6 +1084,322 @@ function runRules(text: string, rules: readonly OneRule[], nested: boolean): Cha
   return { text: working, flags }
 }
 
+// ---------------------------------------------------------------------------
+// Ambiguous escape sequences: every reading, and the union of what they find.
+// ---------------------------------------------------------------------------
+
+/** COVER_TOKEN and COVER_URL are what a tracked rule found at a position of the
+ * prepared form: a credential, or a URL. */
+const COVER_TOKEN = 1
+const COVER_URL = 2
+
+/** TrackedEdit is what a tracked rule does to one match: keep its first `keep`
+ * characters, replace the rest with `replacement`, and mark the replaced
+ * characters `kind` (0 for a rewrite that is not a credential: the nested
+ * pass over a percent-decoded run). */
+interface TrackedEdit {
+  readonly keep: number
+  readonly replacement: string
+  readonly kind: number
+}
+
+interface TrackedRule {
+  readonly pattern: RegExp
+  readonly decide: (match: RegExpExecArray, nested: boolean) => TrackedEdit | null
+}
+
+const TOKEN_EDIT: TrackedEdit = { keep: 0, replacement: TOKEN_PLACEHOLDER, kind: COVER_TOKEN }
+
+/**
+ * TRACKED_RULES are `REFUSAL_RULES` -- every credential redaction the free-text
+ * path makes, and the URL rule -- written as edits on matches rather than as
+ * string replacements, so that what each one replaced can be traced back to the
+ * characters of the reading it read. They are the same patterns in the same
+ * order, and `sanitize-ambiguity.test.ts` holds the text they produce equal to
+ * `REFUSAL_RULES`' over a corpus.
+ */
+const TRACKED_RULES: readonly TrackedRule[] = Object.freeze<TrackedRule[]>([
+  { pattern: URL_RE, decide: () => ({ keep: 0, replacement: URL_PLACEHOLDER, kind: COVER_URL }) },
+  {
+    pattern: PERCENT_RUN_RE,
+    decide: (match, nested) => {
+      const run = match[0]
+      if (!PERCENT_ESCAPE_RE.test(run)) return null
+      const decoded = percentDecode(run)
+      if (containsSecret(decoded) || isHighEntropy(decoded)) return TOKEN_EDIT
+      if (nested) return null
+      const redacted = runRules(prepare(decoded), FREE_TEXT_RULES, true).text
+      return redacted === prepare(decoded) ? null : { keep: 0, replacement: redacted, kind: 0 }
+    },
+  },
+  {
+    pattern: WRAPPED_BASE64_RE,
+    decide: (match) => {
+      const decoded = decodeBase64(match[0])
+      return decoded !== null && containsSecret(decoded) ? TOKEN_EDIT : null
+    },
+  },
+  ...TOKEN_SHAPES.map((pattern) => ({ pattern, decide: () => TOKEN_EDIT })),
+  {
+    pattern: BEARER_RE,
+    decide: (match) => ({ keep: (match[1] ?? '').length, replacement: ` ${TOKEN_PLACEHOLDER}`, kind: COVER_TOKEN }),
+  },
+  { pattern: PEM_RE, decide: () => TOKEN_EDIT },
+  {
+    pattern: CREDENTIAL_ASSIGNMENT_RE,
+    decide: (match) =>
+      isMarkerText(match[3] ?? '')
+        ? null
+        : { keep: (match[1] ?? '').length + (match[2] ?? '').length, replacement: TOKEN_PLACEHOLDER, kind: COVER_TOKEN },
+  },
+  { pattern: ENTROPY_RE, decide: (match) => (isPathShapedSecret(match[0]) ? TOKEN_EDIT : null) },
+  { pattern: ENTROPY_RE, decide: (match) => (isHighEntropy(match[0]) ? TOKEN_EDIT : null) },
+])
+
+/** Traced is one reading as the tracked rules rewrite it: its text, and for
+ * every character the position in the prepared form it came from (-1 for a
+ * character no position holds: a kept byte of a sequence, or a marker). */
+interface Traced {
+  readonly text: string
+  readonly origin: Int32Array
+}
+
+/** applyTracked runs one tracked rule over a reading, marking in `covered`
+ * every prepared position a replaced character came from. */
+function applyTracked(state: Traced, rule: TrackedRule, nested: boolean, covered: Uint8Array): Traced {
+  rule.pattern.lastIndex = 0
+  const edits: { readonly index: number; readonly length: number; readonly edit: TrackedEdit }[] = []
+  let length = state.text.length
+  for (const match of state.text.matchAll(rule.pattern)) {
+    const edit = rule.decide(match, nested)
+    if (edit === null) continue
+    edits.push({ index: match.index, length: match[0].length, edit })
+    length += edit.replacement.length - (match[0].length - edit.keep)
+  }
+  rule.pattern.lastIndex = 0
+  if (edits.length === 0) return state
+  const parts: string[] = []
+  const origin = new Int32Array(length)
+  let from = 0
+  let out = 0
+  for (const { index, length: matched, edit } of edits) {
+    const kept = index + edit.keep
+    parts.push(state.text.slice(from, kept))
+    origin.set(state.origin.subarray(from, kept), out)
+    out += kept - from
+    if (edit.kind !== 0) {
+      for (let at = kept; at < index + matched; at += 1) {
+        const position = state.origin[at] ?? -1
+        if (position >= 0 && (covered[position] === 0 || edit.kind === COVER_TOKEN)) covered[position] = edit.kind
+      }
+    }
+    parts.push(edit.replacement)
+    origin.fill(-1, out, out + edit.replacement.length)
+    out += edit.replacement.length
+    from = index + matched
+  }
+  parts.push(state.text.slice(from))
+  origin.set(state.origin.subarray(from), out)
+  return { text: parts.join(''), origin }
+}
+
+/** traceCredentials runs every tracked rule over one reading, in order. */
+function traceCredentials(reading: Traced, nested: boolean, covered: Uint8Array): Traced {
+  let state = reading
+  for (const rule of TRACKED_RULES) state = applyTracked(state, rule, nested, covered)
+  return state
+}
+
+/** tracedRefusalRules is `traceCredentials` over a plain string, for the test
+ * that holds the tracked rules equal to `REFUSAL_RULES`. */
+export function tracedRefusalRules(text: string): string {
+  const origin = new Int32Array(text.length).map((_, index) => index)
+  return traceCredentials({ text, origin }, false, new Uint8Array(text.length)).text
+}
+
+/** PREPARE_STRIP_RE is everything the resolver's prepared form drops after the
+ * sequences: `INVISIBLE_RE` and the two separators `CONTROL_RE` removes. */
+const PREPARE_STRIP_RE = new RegExp(`${INVISIBLE_RE.source.slice(0, -1)}\\u2028\\u2029]`, 'gu')
+
+/**
+ * MAX_AMBIGUOUS_COMBINATIONS bounds how many ways the sites of one cluster are
+ * read (a cluster is the sites that sit in one run of text with no whitespace
+ * between them, where a byte kept at one can join or split a token at
+ * another). Each site is read two or three ways -- dropped, its final byte
+ * kept, its whole body kept -- and every combination within a cluster is
+ * read. A cluster with more combinations than this is not read at all: the
+ * value is refused (**fail closed**), because a token split across that many
+ * sequences is a token no bounded reading is guaranteed to find.
+ */
+export const MAX_AMBIGUOUS_COMBINATIONS = 64
+
+/**
+ * MAX_AMBIGUOUS_SCAN is the bound on the work: readings times characters. The
+ * readings are full-length strings, so the cost is the number of readings
+ * times the length, whatever the number of sites -- 10,000 sites in separate
+ * words cost four readings -- and a value whose readings would cost more than
+ * this is refused rather than read slowly.
+ */
+export const MAX_AMBIGUOUS_SCAN = 1 << 20
+
+/** Ambiguity is what `resolveAmbiguousSequences` hands the three layers: the
+ * prepared form with every credential any reading found replaced, and whether
+ * anything was. */
+export interface Ambiguity {
+  readonly text: string
+  readonly masked: boolean
+}
+
+/**
+ * resolveAmbiguousSequences is the one rule the three readers of CLI text --
+ * the sentence class, the refusal door and the recorder -- apply to a value
+ * whose escape sequences swallowed printable bytes (`AmbiguousSite`), and it
+ * replaces review round 3's "pick one reading" (review round 4 of PR 494: with
+ * two keys and two readings that each found one, the pick drew the other).
+ *
+ * **The rule is the union, per sequence.** Each site is read dropped (as a
+ * terminal draws it), with its final byte kept, and with its whole body kept;
+ * the tracked credential rules (`TRACKED_RULES`) run over every combination of
+ * the readings of the sites in one cluster, all clusters at once; and a
+ * character of the terminal's reading is redacted if **any** reading's rules
+ * matched it. So `ESC [ K` + a token + ` ` + `ESC [` + a key draws neither: the
+ * first is found with the `K` dropped, the second with the key's first letter
+ * kept, and each reading's find is mapped back to the characters a terminal
+ * draws. Reading each sequence on its own is what keeps a real one-letter
+ * command (`ESC [ K`) from gluing itself to the token after it.
+ *
+ * Clusters are read side by side (reading `j` takes combination `j` of every
+ * cluster), which is exact for every rule that cannot cross whitespace -- the
+ * token families, the entropy net, a URL, a base64 or percent-encoded run. The
+ * three that can (a PEM block, a bearer header, an assignment) see each
+ * cluster's combinations aligned by index, plus every sequence dropped, every
+ * final byte kept and every body kept, all at once; a credential that needs
+ * two clusters read two different ways at once is the bound's stated limit.
+ *
+ * Returns `undefined` when no sequence swallowed anything (the caller's own
+ * prepared form is the reading), `null` when the readings would cost more than
+ * the bounds allow (the caller refuses the value: fail closed), and otherwise
+ * the prepared form, masked. The masked text is NFKC, sequence-free and free of
+ * every invisible character either layer strips.
+ */
+export function resolveAmbiguousSequences(raw: string): Ambiguity | null | undefined {
+  if (!SEQUENCE_FAST_RE.test(raw)) return undefined
+  const sites: AmbiguousSite[] = []
+  const stripped = scanTerminalSequences(raw.normalize('NFKC'), sites)
+  if (sites.length === 0) return undefined
+  // The prepared form, with each site's place carried through the strip.
+  const removed: number[] = []
+  const prepared = stripped.replace(PREPARE_STRIP_RE, (found: string, offset: number) => {
+    removed.push(offset, found.length)
+    return ''
+  })
+  const places: number[] = []
+  let shift = 0
+  let r = 0
+  for (const site of sites) {
+    while (r < removed.length && (removed[r] ?? 0) < site.at) {
+      shift += removed[r + 1] ?? 0
+      r += 2
+    }
+    places.push(site.at - shift)
+  }
+  // Each site's readings, and the clusters.
+  const options = sites.map((site) => {
+    const kept = new Set<string>([''])
+    if (site.final !== null) kept.add(site.final)
+    kept.add(site.body)
+    return [...kept]
+  })
+  const clusters: number[][] = []
+  for (let index = 0; index < sites.length; index += 1) {
+    const last = clusters[clusters.length - 1]
+    const previous = last?.[last.length - 1]
+    if (last !== undefined && previous !== undefined && !/\s/.test(prepared.slice(places[previous], places[index]))) {
+      last.push(index)
+    } else {
+      clusters.push([index])
+    }
+  }
+  let readings = 0
+  const sizes: number[] = []
+  for (const cluster of clusters) {
+    let size = 1
+    for (const index of cluster) {
+      size *= options[index]?.length ?? 1
+      if (size > MAX_AMBIGUOUS_COMBINATIONS) return null
+    }
+    sizes.push(size)
+    readings = Math.max(readings, size)
+  }
+  const inserted = sites.reduce((sum, site) => sum + site.body.length, 0)
+  if ((readings + 2) * (prepared.length + inserted) > MAX_AMBIGUOUS_SCAN) return null
+  const covered = new Uint8Array(prepared.length)
+  const read = (choose: (site: number, cluster: number, within: number) => number): void => {
+    const parts: string[] = []
+    const origins: { readonly at: number; readonly from: number; readonly length: number }[] = []
+    let from = 0
+    let out = 0
+    for (const [c, cluster] of clusters.entries()) {
+      for (const [within, index] of cluster.entries()) {
+        const place = places[index] ?? 0
+        const piece = prepared.slice(from, place)
+        parts.push(piece)
+        origins.push({ at: out, from, length: piece.length })
+        out += piece.length
+        const keep = options[index]?.[choose(index, c, within)] ?? ''
+        parts.push(keep)
+        out += keep.length
+        from = place
+      }
+    }
+    const tail = prepared.slice(from)
+    parts.push(tail)
+    origins.push({ at: out, from, length: tail.length })
+    out += tail.length
+    const origin = new Int32Array(out).fill(-1)
+    for (const span of origins) {
+      for (let offset = 0; offset < span.length; offset += 1) origin[span.at + offset] = span.from + offset
+    }
+    traceCredentials({ text: parts.join(''), origin }, false, covered)
+  }
+  // Every combination within each cluster, all clusters at once: reading `j`
+  // takes combination `j mod size` of each cluster, a mixed-radix number over
+  // its sites' readings. Reading 0 is the terminal's.
+  const digits = (j: number, c: number): number[] => {
+    const cluster = clusters[c] ?? []
+    let rest = j % (sizes[c] ?? 1)
+    return cluster.map((index) => {
+      const radix = options[index]?.length ?? 1
+      const digit = rest % radix
+      rest = Math.floor(rest / radix)
+      return digit
+    })
+  }
+  for (let j = 0; j < readings; j += 1) {
+    const chosen = clusters.map((_, c) => digits(j, c))
+    read((_site, c, within) => chosen[c]?.[within] ?? 0)
+  }
+  // Every final byte kept, and every body kept, everywhere at once.
+  read((site) => (sites[site]?.final === null ? 0 : 1))
+  read((site) => (options[site]?.length ?? 1) - 1)
+  let masked = false
+  const out: string[] = []
+  let index = 0
+  while (index < prepared.length) {
+    const kind = covered[index] ?? 0
+    let end = index
+    while (end < prepared.length && covered[end] === kind) end += 1
+    if (kind === 0) {
+      out.push(prepared.slice(index, end))
+    } else {
+      masked = true
+      out.push(kind === COVER_URL ? URL_PLACEHOLDER : TOKEN_PLACEHOLDER)
+    }
+    index = end
+  }
+  return { text: out.join(''), masked }
+}
+
 /**
  * freeText is the pass over one value of one class -- the recorder's own split
  * between "a field class" and "free text".
@@ -802,8 +1411,23 @@ function runRules(text: string, rules: readonly OneRule[], nested: boolean): Cha
  * that is the form the rule rewrote. The form as written is tried as well, for
  * the rare match that only it shows.
  */
-function freeText(text: string, prepared: string, textClass: TextClass): Changed {
+function freeText(text: string, prepared: string, ambiguity: Ambiguity | undefined, textClass: TextClass): Changed {
   const rules = textClass === 'sentence' || textClass === 'label' ? FREE_TEXT_RULES : CREDENTIAL_RULES
+  return withRules(text, prepared, ambiguity, rules)
+}
+
+/** withRules runs `rules` over the prepared form and, when they find nothing
+ * there, over the form as written: `freeText`'s rule, shared with
+ * `sanitizeRefusal`. When an ambiguous escape sequence made the resolver mask a
+ * credential (`resolveAmbiguousSequences`), the masked form is the only form
+ * read: the form as written is the terminal's reading alone, and it is the one
+ * that can still hold the rest of a token another reading found. */
+function withRules(text: string, prepared: string, ambiguity: Ambiguity | undefined, rules: readonly OneRule[]): Changed {
+  if (ambiguity?.masked === true) {
+    const masked = runRules(ambiguity.text, rules, false)
+    if (masked.flags.includes('neutralised-credential')) return masked
+    return { text: masked.text, flags: [...masked.flags, 'neutralised-credential'] }
+  }
   const fromPrepared = runRules(prepared, rules, false)
   if (fromPrepared.text !== prepared) return fromPrepared
   if (prepared === text) return fromPrepared
@@ -866,11 +1490,9 @@ const LABEL_BREAK_RE = /[\n\r\t\u000b\u000c]/
 
 /** stripInvisible removes the formatting characters and the controls, and says
  * whether it removed anything. */
-function stripInvisible(
-  text: string,
-): { readonly text: string; readonly flags: readonly SanitizeFlag[] } {
+function stripInvisible(text: string): { readonly text: string; readonly flags: readonly SanitizeFlag[] } {
   const flags: SanitizeFlag[] = []
-  let working = text.replace(INVISIBLE_RE, '')
+  let working = stripTerminalSequences(text).replace(INVISIBLE_RE, '')
   if (working !== text) flags.push('stripped-invisible')
   const before = working
   working = working.replace(CONTROL_RE, '')
@@ -1204,6 +1826,12 @@ function applyUrl(text: string, field: string): Sanitized {
   return ok(rebuilt, ['userinfo-removed'])
 }
 
+/** ambiguityRefusal is the sentence for a value whose escape sequences would
+ * take more readings than `resolveAmbiguousSequences` bounds. */
+function ambiguityRefusal(field: string): string {
+  return `${field} holds more terminal escape sequences than the console will read`
+}
+
 /**
  * sanitizeText is the one way a document's string becomes something a screen
  * may draw -- or a refusal saying why it may not.
@@ -1246,8 +1874,24 @@ export function sanitizeText(
     )
   }
 
+  // Every reading of an ambiguous escape sequence, and the union of what the
+  // credential rules find in them (`resolveAmbiguousSequences`).
+  const ambiguity = resolveAmbiguousSequences(raw)
+  if (ambiguity === null) return refuse(ambiguityRefusal(field))
+
   if (textClass === 'url') {
+    // A link is drawn and opened exactly as written, so a url whose escape
+    // sequences hide bytes no reading can settle is not a link.
+    if (ambiguity !== undefined) {
+      return refuse(`${field} is a url with a terminal escape sequence in it, so the console will not draw it`)
+    }
     return applyUrl(text, field)
+  }
+
+  if (ambiguity?.masked === true && textClass !== 'sentence' && textClass !== 'label' && textClass !== 'host') {
+    // A validating class draws the value whole or not at all, and one reading
+    // of this value holds a credential.
+    return refuse(`${field} holds a credential in one reading of its terminal escape sequences, so the console will not draw it`)
   }
 
   if (textClass === 'person') {
@@ -1269,7 +1913,7 @@ export function sanitizeText(
     return ok(HOST_PLACEHOLDER, [...flags, 'host-placeholder'])
   }
 
-  const rules = freeText(text, prepared, textClass)
+  const rules = freeText(text, prepared, ambiguity, textClass)
   flags.push(...rules.flags)
   text = rules.text
 
@@ -1331,6 +1975,66 @@ export function sanitizeText(
   // than a value that falls through unclassified.
   const exhaustive: never = textClass
   return refuse(`${field} has a text class the console does not draw: ${String(exhaustive)}`)
+}
+
+/**
+ * sanitizeRefusal is the way the **CLI's own refusal sentence** becomes
+ * something a screen may draw. It is a third door beside `sanitizeText` and
+ * `safeUrl`, and it exists because the two rules that meet on that channel
+ * disagreed (review round 5 of PR 478).
+ *
+ * The sentence is the child's stderr, delivered on the `SourceRefusal` channel
+ * (`src/source/source.ts`, `refusalFrom`), and design section 6.3 requires it on
+ * screen **"verbatim ... the console shows that text unedited"**, because for
+ * `report`'s permission refusal the sentence *is* the remedy: it names
+ * `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`, and a
+ * screen that redacted them would leave the operator with a refusal and no fix.
+ *
+ * `sentence` is the wrong class for it. `FREE_TEXT_RULES` runs the pattern
+ * classes, which are for text whose *shape* the console cannot vouch for, and
+ * two of them eat the remedy: `roles/datastore.viewer` is two long segments
+ * around a slash, so `REPO_TOKEN_RE` draws it `[redacted]`, and `project
+ * sandbox-db` is a GCP name in a sentence, so `GCP_CONTEXT_RE` draws it
+ * `<project>`. Meanwhile refusing to draw stderr at all would be the opposite
+ * error: stderr is not a document, but it is not the console's own text either,
+ * and a credential a child echoed into it must not reach a screen.
+ *
+ * So this pass is `REFUSAL_RULES` and only those -- a URL, a percent-encoded
+ * or base64-wrapped run decoded, the token families, an assignment, a
+ * path-shaped secret, the entropy net -- read, as every class reads them, on
+ * the **prepared** form (NFKC, so a fullwidth token is a token: review round 2
+ * of PR 494), plus this layer's own two: the invisible characters go (a value a screen is made to
+ * misspell is not a value), and the display bound applies. A refusal sentence
+ * that echoes a token is redacted; a refusal sentence that names a role, a
+ * project or a path is drawn as the CLI printed it, which is what the design
+ * asks for and what makes the screen useful. The last of those is the trade the
+ * design makes deliberately: `sentence` would draw `/home/zora/checkout` as
+ * `<path>`, and this does not, because the operator's own refusal is the one
+ * message on this console the console may not paraphrase.
+ *
+ * The whole of the `console` side is expected to reach this through one helper
+ * per screen, so that "the CLI's sentence is drawn verbatim" is one rule in two
+ * places rather than two rules that disagree.
+ */
+export function sanitizeRefusal(raw: unknown, field = 'the refusal'): Sanitized {
+  if (typeof raw !== 'string') return refuse(`${field} is a ${typeof raw}, not text`)
+  if (raw.length > MAX_TEXT_INPUT_LENGTH) {
+    return refuse(
+      `${field} is longer than the console will read (${String(MAX_TEXT_INPUT_LENGTH)} characters)`,
+    )
+  }
+  const stripped = stripInvisible(raw)
+  const prepared = prepare(stripped.text)
+  if (prepared.length > MAX_TEXT_INPUT_LENGTH) {
+    return refuse(
+      `${field} is longer than the console will read (${String(MAX_TEXT_INPUT_LENGTH)} characters)`,
+    )
+  }
+  const ambiguity = resolveAmbiguousSequences(raw)
+  if (ambiguity === null) return refuse(ambiguityRefusal(field))
+  const rules = withRules(stripped.text, prepared, ambiguity, REFUSAL_RULES)
+  const cut = clipped(oneLine(rules.text))
+  return ok(cut.text, [...stripped.flags, ...rules.flags, ...cut.flags])
 }
 
 /**

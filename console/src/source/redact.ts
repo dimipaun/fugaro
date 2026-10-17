@@ -87,6 +87,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
 
 import { decodeFeedLine } from '../main/spawn'
+import { ABS_PATH_SOURCE, resolveAmbiguousSequences, stripTerminalSequences } from '../shared/sanitize'
 
 /**
  * REDACTOR_VERSION is the marker written into every fixture's header and checked
@@ -177,9 +178,14 @@ const INVISIBLE_RE =
   /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
 
 /** prepare is the form every rule reads: NFKC first (so a fullwidth `＠` *is*
- * an `@` before the address rule looks), then the invisible characters gone. */
+ * an `@` before the address rule looks), then every terminal escape sequence
+ * and control string gone, whole (`stripTerminalSequences`, the display layer's
+ * one linear scanner, imported rather than copied so the three readers of CLI
+ * text cannot drift), then the invisible characters gone. A sequence that
+ * swallowed printable bytes is read every way by `redactFreeText` through the
+ * display layer's `resolveAmbiguousSequences`. */
 function prepare(text: string): string {
-  return text.normalize('NFKC').replace(INVISIBLE_RE, '')
+  return stripTerminalSequences(text.normalize('NFKC')).replace(INVISIBLE_RE, '')
 }
 
 /**
@@ -522,6 +528,9 @@ const TOKEN_RES: readonly RegExp[] = Object.freeze([
   /\bya29\.[0-9A-Za-z_-]{8,}/g,
   /(?<![\p{L}\p{N}])1\/\/0[0-9A-Za-z_-]{8,}/gu,
   /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+  // A JWT with a short, empty or missing signature: its header and payload are
+  // the readable part, so two `eyJ` segments are a token whatever follows.
+  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?/g,
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*/gi,
   // The body may not run past the next BEGIN or END line, so a string of BEGIN
   // lines with no END is one short scan each, not a scan to the end each.
@@ -594,19 +603,12 @@ const BRANCH_RE =
  * eaten: `and/or` is not rooted. A single-segment path (`/opt`) in free text is
  * not redacted; the structured `path` key is.
  */
-const PATH_SEGMENT = String.raw`[^\s\/\\"'\x60<>|;,:()\[\]{}*?]+`
-const ABS_PATH_RE = new RegExp(
-  [
-    // Rooted where a path can start: a segment may hold spaces.
-    String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:[ \t]+SEG)*\/)+SEG`,
-    // Rooted after a word character (`Data/Users/...`): no spaces, so the
-    // prose `i/o and input/output` is not one path.
-    String.raw`(?:~\/|\/)(?:SEG\/)+SEG`,
-  ]
-    .join('|')
-    .replaceAll('SEG', PATH_SEGMENT),
-  'gu',
-)
+// The pattern itself is defined once, in `src/shared/sanitize.ts`
+// (`ABS_PATH_SOURCE`), and built here from that same string: segments join
+// across any whitespace, a line break included (review round 2 of PR 494 --
+// this copy had stayed on `[ \t]` after the display layer's moved to `\s`, so
+// `/home\nzora/.ssh` passed the recorder's audit).
+const ABS_PATH_RE = new RegExp(ABS_PATH_SOURCE, 'gu')
 
 /** WIN_PATH_RE matches a Windows path and a UNC path. */
 const WIN_PATH_RE = /(?:\b[A-Za-z]:\\[^\s"'`,;:)\]}]*|\\\\[^\s"'`,;:)\]}]+)/g
@@ -907,6 +909,17 @@ const RULES: readonly Rule[] = Object.freeze([
   },
   { what: 'a branch name', apply: (text) => text.replace(BRANCH_RE, BRANCH_MARKER) },
   {
+    // A high-entropy run with two or more slashes that does not start at one
+    // would be split by the path rule's unrooted alternative, leaving its first
+    // fragment in the fixture and nothing for the net (or `problems()`) to see
+    // (review round 2 of PR 494). It goes whole, before the path rule.
+    what: 'something credential-shaped',
+    apply: (text) =>
+      text.replace(ENTROPY_RE, (run) =>
+        !run.startsWith('/') && (run.match(/\//g) ?? []).length >= 2 && isHighEntropy(run) ? TOKEN_MARKER : run,
+      ),
+  },
+  {
     what: 'a filesystem path',
     apply: (text) => text.replace(ABS_PATH_RE, PATH_MARKER).replace(WIN_PATH_RE, PATH_MARKER),
   },
@@ -1022,15 +1035,38 @@ function applyRules(text: string, ctx: Ctx, nested = false, persons = true): str
  * address. A string in which no rule finds anything comes back byte for byte as
  * it came (a hostile title keeps its bidi override); one in which a rule finds
  * something comes back prepared and redacted. The form as written is tried as
- * well, for the rare match that only it shows.
+ * well, for the rare match that only it shows. The one exception to "byte for
+ * byte" is a string carrying a terminal escape sequence or control string: it
+ * always comes back without them (review round 3 of PR 494), because a control
+ * string can hide a token from every rule -- `ESC P` + a token, unterminated,
+ * is no token to a rule and all of one to whoever reads the fixture -- and a
+ * fixture is a file a person reads, not a terminal.
+ *
+ * **A sequence that swallowed printable bytes is read every way** (review
+ * round 4 of PR 494): `resolveAmbiguousSequences`, the display layer's rule,
+ * masks every character of the terminal's reading that the credential rules
+ * matched in any reading -- the bytes dropped, the final byte kept, the body
+ * kept, per sequence -- and the rules then run over that masked form. A value
+ * whose readings would cost more than the resolver's bounds is written as the
+ * token marker whole: fail closed.
+ *
+ * The form as written is read with its sequences already gone, so a marker the
+ * rules write into it is never re-read by the scanner: `ESC` + a marker would
+ * otherwise lose its `[` and its first letter to a CSI (`edacted-token]`).
  */
 function redactFreeText(text: string, ctx: Ctx, persons = true): string {
   if (text === '' || isMarker(text)) return text
+  const ambiguity = resolveAmbiguousSequences(text)
+  if (ambiguity === null) return TOKEN_MARKER
+  if (ambiguity?.masked === true) return applyRules(ambiguity.text, ctx, false, persons)
   const prepared = prepare(text)
   const out = applyRules(prepared, ctx, false, persons)
   if (out !== prepared) return out
   if (prepared === text) return text
-  return applyRules(text, ctx, false, persons)
+  const written = stripTerminalSequences(text)
+  const fromText = applyRules(written, ctx, false, persons)
+  if (written === text) return fromText
+  return fromText === written ? prepared : prepare(fromText)
 }
 
 /** isAddressMarker answers whether an ADDRESS_RE match is the marker itself. */
@@ -1544,6 +1580,9 @@ function auditString(value: string, here: string, asKey = false): string[] {
   for (const rule of RULES) {
     if (forms.some((form) => rule.apply(form, AUDIT_CTX, false) !== form)) problems.push(say(rule.what))
   }
+  // The redactor never writes one (`redactFreeText`), and a control string is
+  // where a token hides from every rule above.
+  if (stripTerminalSequences(value) !== value) problems.push(say('a terminal escape sequence'))
   return dedupe(problems)
 }
 

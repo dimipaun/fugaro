@@ -70,6 +70,13 @@ import type { ElementLike } from '../app'
  */
 export const LIVE_BURN_WINDOW_SECONDS = 5 * 60
 
+/** LIVE_BURN_MAX_SAMPLES bounds one key's burn history whatever its stamps say
+ * (review round 3 of PR 494). The window is the first bound -- at the CLI's
+ * one document a second it holds about 300 samples -- and this is the second,
+ * for a feed that sends faster than that or stamps that bunch up: past it the
+ * oldest samples go first, which are the ones a window would drop next. */
+export const LIVE_BURN_MAX_SAMPLES = 1024
+
 /** LIVE_STALE_AFTER_SECONDS is `internal/watch/state.go`'s `StaleAfter`: the
  * 45 s after which the design's header calls the connection stale. */
 export const LIVE_STALE_AFTER_SECONDS = 45
@@ -313,22 +320,72 @@ export function contradiction(health: string, ageSeconds: number | null): string
  * returned is lost.
  */
 export class BurnHistory {
-  private readonly samples = new Map<string, Sample[]>()
+  /** Each key's samples, in time order, each with its stamp parsed once: the
+   * parse is the cost (review round 4 of PR 494: walking the list with a
+   * `Date.parse` per step made 20,000 reverse-ordered samples take 5.9 s). */
+  private readonly samples = new Map<string, Timed[]>()
 
-  /** observe adds one arrival and drops what has fallen out of the window. */
+  /**
+   * observe adds one arrival and drops what has fallen out of the window.
+   *
+   * The list is kept **ordered by time** and **one sample per stamp**: a sample
+   * at a stamp the key already holds is the same observation arriving again
+   * (a stale rebuild re-reads the last document and must not draw it a second
+   * time, design section 6.3), so it is dropped; and a gap that follows a gap
+   * replaces it, so one silence is one gap rather than a gap per rebuild. A
+   * sample stamped before the newest one is inserted where its time puts it
+   * rather than at the end, so a clock that steps back cannot reorder the bars.
+   *
+   * **It is O(log n) to place a sample** (a binary search over parsed stamps),
+   * and a sample already older than the window ending at the newest one is
+   * dropped on arrival -- the prune would drop it anyway -- so a feed whose
+   * clock runs backwards costs no more than one running forwards.
+   */
   observe(key: string, sample: Sample): void {
+    const when = Date.parse(sample.at)
+    // An unparseable stamp has no place in time, so no window can ever return
+    // it: keeping it would only grow the list (review round 3 of PR 494, where
+    // one bad `now` kept every later sample). `schema.ts` refuses such a `now`
+    // by name; this is the history's own guard.
+    if (Number.isNaN(when)) return
     const existing = this.samples.get(key)
     if (existing === undefined) {
-      this.samples.set(key, [sample])
+      this.samples.set(key, [{ sample, when }])
       return
     }
-    existing.push(sample)
-    const end = Date.parse(sample.at)
-    if (Number.isNaN(end)) return // an unparseable stamp is not a basis to drop anything
-    const cut = end - LIVE_BURN_WINDOW_SECONDS * 1000
-    let keep = 0
-    while (keep < existing.length && Date.parse(existing[keep]?.at ?? '') < cut) keep++
+    const windowMs = LIVE_BURN_WINDOW_SECONDS * 1000
+    const newestBefore = existing[existing.length - 1]?.when ?? when
+    if (when < newestBefore - windowMs) return
+    const isGap = sample.reading.state === 'gap'
+    // Where the stamp puts it: after everything at or before it, so a gap that
+    // shares the last measured sample's stamp still comes after it.
+    const index = firstAfter(existing, when)
+    // The same observation arriving again is dropped, and a gap replaces the gap
+    // before it (one silence is one gap). A measured sample and a gap at one
+    // stamp are two different things and both stay, measured first.
+    for (let at = index; at > 0 && existing[at - 1]?.when === when; at--) {
+      const held = existing[at - 1]
+      if ((held?.sample.reading.state === 'gap') === isGap) {
+        if (isGap) existing[at - 1] = { sample, when }
+        return
+      }
+    }
+    const last = existing[index - 1]
+    if (isGap && last !== undefined && last.sample.reading.state === 'gap' && index === existing.length) {
+      existing[index - 1] = { sample, when }
+    } else {
+      existing.splice(index, 0, { sample, when })
+    }
+    // The list is ordered, so the newest is last.
+    const newest = Math.max(when, existing[existing.length - 1]?.when ?? when)
+    const keep = Math.max(firstAtOrAfter(existing, newest - windowMs), existing.length - LIVE_BURN_MAX_SAMPLES)
     if (keep > 0) existing.splice(0, keep)
+  }
+
+  /** size is how many samples the history holds for `key`: what the bound
+   * (`LIVE_BURN_MAX_SAMPLES`) is a bound on. */
+  size(key: string): number {
+    return this.samples.get(key)?.length ?? 0
   }
 
   /**
@@ -346,11 +403,39 @@ export class BurnHistory {
     const end = Date.parse(at)
     if (Number.isNaN(end)) return []
     const cut = end - LIVE_BURN_WINDOW_SECONDS * 1000
-    return all.filter((sample) => {
-      const when = Date.parse(sample.at)
-      return !Number.isNaN(when) && when >= cut && when <= end
-    })
+    return all.slice(firstAtOrAfter(all, cut), firstAfter(all, end)).map((entry) => entry.sample)
   }
+}
+
+/** Timed is one sample of a `BurnHistory` list with its stamp parsed. */
+interface Timed {
+  readonly sample: Sample
+  readonly when: number
+}
+
+/** firstAfter is the index of the first entry stamped after `when` (the list's
+ * length when there is none): a binary search over an ordered list. */
+function firstAfter(list: readonly Timed[], when: number): number {
+  let low = 0
+  let high = list.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if ((list[middle]?.when ?? Infinity) <= when) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
+/** firstAtOrAfter is the index of the first entry stamped at or after `when`. */
+function firstAtOrAfter(list: readonly Timed[], when: number): number {
+  let low = 0
+  let high = list.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if ((list[middle]?.when ?? Infinity) < when) low = middle + 1
+    else high = middle
+  }
+  return low
 }
 
 /** SparkBar is one bar of the sparkline: the rate that arrived, and the height
@@ -518,6 +603,45 @@ export interface LiveModel {
    * field: a row the console cannot place is still a run that is spending. */
   readonly orphans: readonly LiveRunRow[]
   readonly queuedNote: string | null
+  /** the console's own reading of how long the feed has been quiet, when the
+   * caller keeps one. `null` is a caller that measures nothing -- the screen
+   * then draws no banner and no timestamp, which is every drawing the earlier
+   * tests and the goldens were taken from. */
+  readonly feed: FeedHealth | null
+}
+
+/**
+ * FeedHealth is the console's own staleness reading (design section 6.3;
+ * contract section 10.9's `watch.StaleAfter`, 45 s). It is quoted here from
+ * `src/source/cli.ts`'s `FeedSilence`, structurally rather than by import --
+ * the renderer may not import a module that spawns -- and `degraded.spec.ts`
+ * hands one to `buildLiveModel` in the other type's place, so a drift between
+ * the two fails the typecheck rather than the screen.
+ *
+ * The CLI announces its own `connection.state`, and this is **not** a second
+ * opinion about that word: `connection.staleByAge` already reads the age the
+ * document carries. This one reads the console's own clock against the
+ * *arrival* of the newest frame, which is the only thing that can see a CLI
+ * that has stopped talking altogether (contract section 10.11 item 2).
+ */
+export interface FeedHealth {
+  /** the arrival stamp of the newest frame, or `null` with none */
+  readonly since: string | null
+  /** the console's own clock at the moment of the reading */
+  readonly at: string
+  /** whole seconds between `since` and `at`, or `null` with no frame */
+  readonly seconds: number | null
+  /** whether `seconds` is past `LIVE_STALE_AFTER_SECONDS` */
+  readonly stale: boolean
+}
+
+/** feedReading is a feed's silence as a Reading, so the number cannot be drawn
+ * without its state: a console that has heard nothing has measured nothing. */
+export function feedReading(feed: FeedHealth): Reading {
+  if (feed.seconds === null) {
+    return unavailable('no document has arrived yet, so there is no silence to measure')
+  }
+  return measured(feed.seconds)
 }
 
 /** rowOf builds one run row. */
@@ -545,6 +669,17 @@ function rowOf(run: RunView): LiveRunRow {
   }
 }
 
+/** silenceStamp is where a silence ends **on the CLI's clock**: the stamp of
+ * the last document read plus the silence the console measured since it
+ * arrived. The silence is a duration, so no offset between the two clocks can
+ * move it; an unparseable stamp or an unmeasured silence leaves the gap at the
+ * document's own stamp. */
+function silenceStamp(now: string, seconds: number | null): string {
+  const when = Date.parse(now)
+  if (Number.isNaN(when) || seconds === null || seconds <= 0) return now
+  return new Date(when + seconds * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
 /**
  * buildLiveModel is one frame as the screen's data.
  *
@@ -554,10 +689,41 @@ function rowOf(run: RunView): LiveRunRow {
  * fresh one and gets a one-bar sparkline, which is the truth about a console
  * that has seen one document.
  */
-export function buildLiveModel(document: LiveDocument, history: BurnHistory = new BurnHistory()): LiveModel {
+export function buildLiveModel(
+  document: LiveDocument,
+  history: BurnHistory = new BurnHistory(),
+  feed: FeedHealth | null = null,
+): LiveModel {
   const repos: LiveRepoRow[] = document.repos.map((repo) => {
     const burn = burnReading(repo.burn)
+    // The document's sample is observed once, at the document's own stamp, and
+    // `observe` drops a second one at the same stamp: a stale rebuild is the
+    // last document read again, not a new measurement, and must not redraw it
+    // after the gap.
     history.observe(repo.slug, { at: document.now, reading: burn })
+    // A feed that has gone quiet is a **gap** in every series, not a flat line
+    // and not a repeat of the last sample: the console stopped observing, and
+    // `seriesSegments` splits the sparkline where it did (design section 6.3,
+    // "the graphs break rather than interpolate"). The last known sample stays
+    // where it is, which is what makes the break visible at all.
+    //
+    // Two clocks meet here: `document.now` is the CLI's and `feed.at` is the
+    // console's. The rule (review round 3 of PR 494): **every sample lives on
+    // the CLI's clock**, and the console's clock only decides *whether* the
+    // feed is stale. The gap is stamped at the last document's stamp plus the
+    // silence the console measured (`silenceStamp`), and the window ends there.
+    // A console clock behind the CLI's cannot put the gap before the last bar,
+    // and one ahead of it -- by any amount -- cannot stamp a gap in the CLI's
+    // future that would prune every fresh document on arrival. The banner still
+    // shows the console's own stamp (`feed.at`), which is the reading it took.
+    let at = document.now
+    if (feed !== null && feed.stale) {
+      at = silenceStamp(document.now, feed.seconds)
+      history.observe(repo.slug, {
+        at,
+        reading: gap(`no document has arrived for ${String(feed.seconds ?? 0)}s, so this series breaks here`),
+      })
+    }
     return {
       slug: repo.slug,
       repo: repo.repo,
@@ -568,7 +734,7 @@ export function buildLiveModel(document: LiveDocument, history: BurnHistory = ne
       percent: repo.percent,
       burnPerMin: burn,
       burnFast: repo.burn.fast,
-      spark: sparkline(history, repo.slug, document.now),
+      spark: sparkline(history, repo.slug, at),
       kill: repo.kill,
       runs: document.runs.filter((run) => run.slug === repo.slug).map(rowOf),
     }
@@ -596,6 +762,7 @@ export function buildLiveModel(document: LiveDocument, history: BurnHistory = ne
     repos,
     orphans,
     queuedNote: document.queuedNote,
+    feed,
   }
 }
 
@@ -806,7 +973,10 @@ function repoBlock(factory: ScreenFactory, repo: LiveRepoRow): ScreenElement {
   element.setAttribute('data-key', sanitizedKey(repo.slug))
   element.setAttribute('data-killed', repo.kill === null ? 'false' : 'true')
 
-  textCell(element, factory, 'span', repo.repo, 'repository', 'repos[].repo', 'live-repo-name')
+  // `repoDisplayName` (internal/watch/build.go) falls back to the slash-free
+  // slug when the host's config does not name the repository: the slash decides
+  // the class, as `spend.ts`'s `keyClass` does (review round 2 of PR 494).
+  textCell(element, factory, 'span', repo.repo, repo.repo.includes('/') ? 'repository' : 'slug', 'repos[].repo', 'live-repo-name')
   numberCell(element, factory, 'span', repo.countedUsd, 'usd', 'live-repo-counted')
   numberCell(element, factory, 'span', repo.dailyCapUsd, 'usd', 'live-repo-cap')
   bar(element, factory, repo.percent, 'live-repo-percent')
@@ -865,8 +1035,51 @@ function header(factory: ScreenFactory, model: LiveModel): ScreenElement {
     // like a project with none, which is a different fact.
     textCell(element, factory, 'p', model.queuedNote, 'sentence', 'queued_note', 'live-note')
   }
+  if (model.feed !== null) element.append(sinceLine(factory, model.feed))
+  if (model.feed !== null && model.feed.stale) element.append(staleBanner(factory, model.feed))
   return element
 }
+
+/** sinceLine is when the values on this screen were last read: the arrival
+ * stamp of the newest frame the console holds. It is drawn whenever a caller
+ * keeps a feed reading, because design section 6.3's stale condition is "the
+ * last-known values stay, **with their timestamps**" -- and a timestamp is only
+ * honest if it is drawn before the values are stale too. */
+function sinceLine(factory: ScreenFactory, feed: FeedHealth): ScreenElement {
+  const element = make(factory, 'p', 'live-since')
+  literal(cell(element, factory, 'span', 'live-since-word'), 'last read')
+  textCell(element, factory, 'span', feed.since, 'label', 'feed.since', 'live-since-at')
+  numberCell(element, factory, 'span', feedReading(feed), 'seconds', 'live-since-age')
+  return element
+}
+
+/**
+ * staleBanner is design section 6.3's stale condition: the console has not
+ * heard from the CLI for longer than `watch.StaleAfter`, so it says so, with
+ * the silence it measured and the clock reading it measured it at.
+ *
+ * The figure is drawn through `putReading` like every other number, and the two
+ * literals around it are the console's own words -- including the threshold,
+ * which is this file's `LIVE_STALE_AFTER_SECONDS`, interpolated from the
+ * constant rather than typed as a second copy of it.
+ */
+function staleBanner(factory: ScreenFactory, feed: FeedHealth): ScreenElement {
+  const element = make(factory, 'div', 'live-stale')
+  element.setAttribute('data-stale', 'true')
+  // `data-silence` is the measured silence as drawn, so a test reads the number
+  // the screen drew rather than recomputing it from the stamps.
+  element.setAttribute('data-silence', formatReading(feedReading(feed), 'seconds'))
+  literal(cell(element, factory, 'span', 'live-stale-word'), 'no document has arrived for')
+  numberCell(element, factory, 'span', feedReading(feed), 'seconds', 'live-stale-silence')
+  literal(cell(element, factory, 'span', 'live-stale-threshold'), STALE_BANNER_TAIL)
+  textCell(element, factory, 'span', feed.at, 'label', 'feed.at', 'live-stale-at')
+  return element
+}
+
+/** STALE_BANNER_TAIL is the one thing the banner says about the threshold. It
+ * is a constant with the number interpolated once, so a reader who changes
+ * `LIVE_STALE_AFTER_SECONDS` cannot leave the sentence claiming the old one. */
+const STALE_BANNER_TAIL = ` (a feed is stale after ${String(LIVE_STALE_AFTER_SECONDS)} s), so the values above are the last ones read and the graphs break where the console stopped observing`
 
 /** total draws the global cap bar with today's counted dollars and the cap. */
 function total(factory: ScreenFactory, model: LiveModel): ScreenElement {
@@ -894,6 +1107,11 @@ function total(factory: ScreenFactory, model: LiveModel): ScreenElement {
 export function renderLive(factory: ScreenFactory, model: LiveModel, theme: LiveTheme): ScreenElement {
   const root = make(factory, 'section', 'live')
   root.setAttribute('data-theme', theme)
+  // The arrival stamp of the frame the values came from, on the root as well as
+  // in the header's own line: a test (and a later screen) reads the timestamp of
+  // what it is looking at without walking the tree, and an empty value is a
+  // caller that keeps no feed reading at all.
+  root.setAttribute('data-received-at', model.feed === null ? '' : (model.feed.since ?? ''))
   root.append(header(factory, model))
   root.append(total(factory, model))
 

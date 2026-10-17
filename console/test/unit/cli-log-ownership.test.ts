@@ -19,7 +19,7 @@ import { join } from 'node:path'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SpawnLogFs } from '../../src/main/spawnlog'
+import type { SpawnLogFs, SpawnLogWriter } from '../../src/main/spawnlog'
 import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 import { CliSource } from '../../src/source/cli'
 import type { ChildSpawner } from '../../src/main/spawn'
@@ -89,5 +89,62 @@ describe('the spawn log a source opens for itself', () => {
     expect(counts.closed).toBe(0)
     await source.close()
     expect(counts.closed).toBe(1)
+  })
+})
+
+describe('a log the caller injected', () => {
+  it('is left open by a live feed that ends, so the next child still gets its line', async () => {
+    // Review round 5 of PR 478: `startSidecar`'s `finish()` closed the writer it
+    // was handed, so the first live feed that ended ended the log for every
+    // child after it -- three spawns, two lines, against design section 5.1 rule
+    // 10's "one line per child process it spawns". The sidecar never opens a
+    // log, so it is never the closer: `CliSource.close()` is, and only when the
+    // source opened it (`#ownsLog`), which this test holds from the other side.
+    const stub = installStub(directory(), {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        // A watch that refuses: exit 1 ends the feed without a restart, which is
+        // the case that used to close the log.
+        watch: { stdout: '{"day":"2026-10-15"}\n', stderr: 'no budget backend\n', code: 1 },
+        'runs ls': { stdout: '{}\n' },
+      },
+    })
+    let records = 0
+    let closes = 0
+    const injected: SpawnLogWriter = {
+      enabled: true,
+      path: '/nonexistent/spawn.jsonl',
+      get records(): number {
+        return records
+      },
+      error: null,
+      record: () => {
+        records += 1
+      },
+      close: () => {
+        closes += 1
+      },
+    }
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: ENV,
+      spawnLog: injected,
+    })
+    // The version probe at `create` is the first line.
+    expect(records).toBe(1)
+
+    const feed = source.subscribeLive({})
+    await feed.stop()
+    expect(closes).toBe(0)
+
+    await source.listRuns({})
+    expect(records).toBe(3)
+
+    await source.close()
+    // Still the caller's writer to close, after everything the source does.
+    expect(closes).toBe(0)
+    injected.close()
+    expect(closes).toBe(1)
   })
 })

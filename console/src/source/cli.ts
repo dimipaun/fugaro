@@ -41,6 +41,7 @@ import {
   MAX_FEED_LINE_LENGTH,
   SPAWN_COMMANDS,
   assertSpawnSurface,
+  binDirectories,
   cliSentence,
   decodeFeedLine,
   planFor,
@@ -91,6 +92,146 @@ export const FIRST_FRAME_BUDGET_MS = 15_000
  * least recently used feed is stopped (its child gets `SIGTERM`) and dropped.
  */
 export const MAX_LIVE_FEEDS = 4
+
+/**
+ * FEED_STALE_AFTER_SECONDS is `watch.StaleAfter` (`internal/watch/state.go`):
+ * the per-stream silence, keep-alives counting as events, after which the CLI's
+ * own `connection.state` becomes `stale`. It is the console's number too --
+ * design section 6.3's stale banner is the same 45 s, because a console that
+ * bannered at its own threshold would be telling the operator about a silence
+ * the CLI it is reading does not call one. It is stated here, beside the code
+ * that measures the silence off the source's own clock (§10.11 item 2: the
+ * child does not exit on a dead stream, so the console needs its own staleness
+ * clock), and `live.ts`'s `LIVE_STALE_AFTER_SECONDS` is the screen's copy of
+ * the same fact: `degraded.spec.ts` asserts the two cannot drift.
+ */
+export const FEED_STALE_AFTER_SECONDS = 45
+
+/**
+ * FeedSilence is what the console knows about how long the feed has been quiet:
+ * the stamp of the newest frame it holds, the console's own clock when it
+ * looked, the seconds between them, and whether that silence is a stale one.
+ *
+ * It is deliberately about **arrival**, not about the document's own `now`: a
+ * frame that arrived two seconds ago and says the day rolled is not silence,
+ * and a frame that has not arrived at all is silence no matter what the last one
+ * claimed. `seconds` is `null` -- not `0` -- when no frame has arrived, which is
+ * the availability rule every number on this console follows: a console that has
+ * heard nothing has not measured a silence of zero seconds.
+ */
+export interface FeedSilence {
+  /** the arrival stamp of the newest frame, or `null` when there is none */
+  readonly since: string | null
+  /** the console's own clock at the moment of the reading */
+  readonly at: string
+  /** whole seconds between `since` and `at`, or `null` with no frame */
+  readonly seconds: number | null
+  /** whether `seconds` is past `FEED_STALE_AFTER_SECONDS` */
+  readonly stale: boolean
+}
+
+/**
+ * feedSilence measures a feed's quiet. `latest` is the newest thing the console
+ * received -- a `Snapshot`, a `TextSnapshot` or a `Notice`, all of which carry
+ * `receivedAt` -- and `now` is the console's clock, passed in rather than read
+ * here so that a test can hold a feed to an exact silence instead of to a
+ * machine's speed.
+ *
+ * `at` is the clock reading in the same shape `receivedAt` uses (whole seconds,
+ * `Z`), so the two stamps can be compared and drawn together without a second
+ * formatter.
+ */
+export function feedSilence(
+  latest: { readonly receivedAt: string } | null,
+  now: Date,
+): FeedSilence {
+  const at = now.toISOString().replace(/\.\d{3}Z$/, 'Z')
+  if (latest === null) {
+    return { since: null, at, seconds: null, stale: false }
+  }
+  const arrived = Date.parse(latest.receivedAt)
+  const measured = Date.parse(at)
+  // A stamp the console itself wrote is always parseable; a frame's own stamp is
+  // not used here at all. An unreadable one is the same fact as no frame: the
+  // console cannot say how long it has been quiet, so it says `null`.
+  const seconds = Number.isNaN(arrived) || Number.isNaN(measured) ? null : Math.max(0, Math.round((measured - arrived) / 1000))
+  return {
+    since: latest.receivedAt,
+    at,
+    seconds,
+    stale: seconds !== null && seconds > FEED_STALE_AFTER_SECONDS,
+  }
+}
+
+/**
+ * FUGARO_INSTALL_COMMAND is the one line the absent-binary screen offers, and
+ * it is the README's own command rather than one this file invented:
+ * `console/README.md` and `docs/release.md` both hand the cask as the install
+ * step (`brew install dimipaun/tap/fugaro`). The console prints it and runs
+ * nothing -- installing a binary is the operator's act, not the app's.
+ */
+export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
+
+/**
+ * NoInstallationState is the console's state when there is no `fugaro` to read:
+ * everything design section 6.3's first screen needs, with no document in it.
+ * `renderer/screens/degraded.ts` draws it, and `degraded.spec.ts` holds one
+ * built here to the renderer's own type, so the two cannot drift.
+ */
+export interface NoInstallationState {
+  readonly kind: 'no-binary'
+  /** the resolution's own sentence, kept as the CLI-less reason it is */
+  readonly reason: string
+  readonly installCommand: string
+  /** every candidate the resolution looked at, in the order it looked */
+  readonly searched: readonly string[]
+  /** the path the installation named, when it named one */
+  readonly configuredPath: string | null
+}
+
+/**
+ * NoInstallation is thrown instead of a bare `SourceRefusal` when **binary
+ * resolution** failed -- the operator has no `fugaro`, or the one they have
+ * cannot say which version it is. It is still a `SourceRefusal` (so nothing that
+ * catches one changes behaviour) carrying the resolution's own sentence, and it
+ * adds the state a screen needs: this is not a refused read, it is a missing
+ * program, and the screen that follows says what to install rather than which
+ * read failed.
+ */
+export class NoInstallation extends SourceRefusal {
+  override readonly name = 'NoInstallation'
+  readonly state: NoInstallationState
+
+  constructor(state: NoInstallationState) {
+    super(state.reason)
+    this.state = state
+  }
+}
+
+/**
+ * noInstallationState is the state, built from the resolution that failed. The
+ * candidate list is re-derived from the same `binDirectories` the resolution
+ * walked, with the same options -- so the screen names the directories this
+ * machine would actually be searched in, not a list written down twice.
+ */
+export function noInstallationState(options: {
+  readonly reason: string
+  readonly configuredPath?: string | undefined
+  readonly appEnv?: Readonly<Record<string, string | undefined>>
+  readonly home?: string
+}): NoInstallationState {
+  return {
+    kind: 'no-binary',
+    reason: options.reason,
+    installCommand: FUGARO_INSTALL_COMMAND,
+    searched: binDirectories({
+      ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
+      appEnv: options.appEnv ?? {},
+      ...(options.home === undefined ? {} : { home: options.home }),
+    }),
+    configuredPath: options.configuredPath === undefined || options.configuredPath === '' ? null : options.configuredPath,
+  }
+}
 
 /** CliSourceOptions is everything a v1 source is built from. `appEnv` is the
  * app's own environment, used for `HOME`, `TMPDIR`, `LANG`/`LC_ALL`, the five
@@ -169,7 +310,14 @@ export class CliSource implements FugaroSource {
     }
     if (!resolution.ok) {
       if (ownsLog) log.close()
-      throw new SourceRefusal(resolution.reason)
+      throw new NoInstallation(
+        noInstallationState({
+          reason: resolution.reason,
+          configuredPath: options.configuredBinaryPath,
+          appEnv: env,
+          ...(options.home === undefined ? {} : { home: options.home }),
+        }),
+      )
     }
 
     const installation: InstallationRef = {
@@ -372,25 +520,66 @@ interface ResolvedSource {
 }
 
 /**
- * parseStdout reads a one-shot read's stdout. A document that a human sentence
- * accompanies is still a document -- the CLI writes its degraded-mode notices to
- * stdout on the same stream -- so the lines are decoded one by one and **the last
- * JSON object wins**, with every line that was not one kept as a notice. A read
- * whose stdout holds no JSON object at all answers `document: null`, which the
- * caller turns into a refusal rather than an empty screen.
+ * parseStdout reads a one-shot read's stdout. Every one-shot command in the
+ * console's set prints ONE document indented over several lines
+ * (`console/docs/json-contract.md` section 9.2: a line parser is right only for
+ * `watch` and `logs`), so the document is read whole: it opens with a `{` at
+ * the start of a line and closes with a `}` alone at the start of a line --
+ * the shape `json.MarshalIndent` and `SetIndent` write, where every nested line
+ * is indented -- or it is one compact line. A nested `{}` is indented and is
+ * never taken for the document. A line outside the document that is not blank
+ * is kept as a notice (the CLI's degraded-mode sentences share the stream).
+ *
+ * A read whose stdout holds no document, a torn one, or more than one answers
+ * `document: null`, which the caller turns into a refusal rather than an empty
+ * screen or a guess at which document was meant.
  */
 export function parseStdout(
   stdout: string,
   receivedAt = '',
 ): { readonly document: JSONObject | null; readonly notices: readonly Notice[] } {
   const notices: Notice[] = []
-  let document: JSONObject | null = null
-  for (const line of stdout.split('\n')) {
-    const decoded = decodeFeedLine(line)
-    if (decoded.kind === 'document') document = decoded.document
-    else if (decoded.kind === 'notice') notices.push({ text: decoded.text, receivedAt })
+  const documents: JSONObject[] = []
+  let torn = false
+  const lines = stdout.split('\n').map((line) => line.replace(/\r$/, ''))
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] as string
+    if (line.trim() === '') continue
+    if (!line.startsWith('{')) {
+      notices.push({ text: line, receivedAt })
+      continue
+    }
+    const compact = decodeFeedLine(line)
+    if (compact.kind === 'document') {
+      documents.push(compact.document)
+      continue
+    }
+    // An indented document: read to the `}` that closes it at column 0.
+    let end = i + 1
+    while (end < lines.length && lines[end] !== '}') end += 1
+    if (end >= lines.length) {
+      torn = true
+      break
+    }
+    const decoded = decodeDocument(lines.slice(i, end + 1).join('\n'))
+    if (decoded === null) torn = true
+    else documents.push(decoded)
+    i = end
   }
+  const document = !torn && documents.length === 1 ? (documents[0] as JSONObject) : null
   return { document, notices }
+}
+
+/** decodeDocument is one JSON object, or null for anything else. */
+function decodeDocument(text: string): JSONObject | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  return parsed as JSONObject
 }
 
 /**
@@ -418,7 +607,8 @@ export interface LogEntries {
 /**
  * parseLogEntries reads `logs RUN --json`'s stdout: one compact `logLine`
  * object per line (contract section 6.2), so **every** line is an entry -- not
- * the last one, which is the rule for the indented documents (`parseStdout`).
+ * one document read whole, which is the rule for the indented documents
+ * (`parseStdout`).
  *
  * Each line is held to the entry's shape before it is kept: a line past the
  * feed's line cap is refused without being parsed, a torn or non-object line is

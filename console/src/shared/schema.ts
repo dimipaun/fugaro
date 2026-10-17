@@ -205,6 +205,8 @@ export type SchemaRefusalName =
   | 'not-an-array'
   /** a key that must be a boolean is not one */
   | 'not-a-boolean'
+  /** a key that must be an RFC 3339 timestamp is not one */
+  | 'not-a-timestamp'
   /** a live document was expected where a degraded one arrived */
   | 'wrong-shape'
 
@@ -311,6 +313,21 @@ function stringAt(raw: unknown, field: string, where: string): string {
   return raw
 }
 
+/** TIMESTAMP_RE is RFC 3339's date-time, as Go's `time.RFC3339Nano` writes it:
+ * a full date, a `T`, a time with optional fractional seconds, and `Z` or an
+ * offset. */
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/
+
+/** timestampAt is a string key that must be a timestamp the console can place
+ * in time (`now`). It is refused by field name, as `boolAt` refuses a boolean
+ * (review round 3 of PR 494): a `now` the burn history cannot parse is a frame
+ * it can neither window nor prune by. */
+function timestampAt(raw: unknown, field: string, where: string): string {
+  const text = stringAt(raw, field, where)
+  if (!TIMESTAMP_RE.test(text) || Number.isNaN(Date.parse(text))) return refuse('not-a-timestamp', field, where)
+  return text
+}
+
 function boolAt(raw: unknown, field: string, where: string): boolean {
   if (typeof raw !== 'boolean') return refuse('not-a-boolean', field, where)
   return raw
@@ -339,11 +356,15 @@ function optionalInt(raw: Record<string, unknown>, key: string): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-/** optionalBool reads a key the shape may leave out (`queued`, `stuck`): absent
- * means false, which is what the CLI's own `omitempty` means. */
-function optionalBool(raw: Record<string, unknown>, key: string): boolean {
+/** optionalBool reads a key the shape may leave out (`queued`, `stuck`,
+ * `compute_estimated`): absent or null means false, which is what the CLI's own
+ * `omitempty` means. A value that is there and is not a boolean is refused by
+ * field name, as `boolAt` refuses one (review round 2 of PR 494): reading
+ * `"true"` as false would draw an estimated figure as a measured one. */
+function optionalBool(raw: Record<string, unknown>, key: string, field: string, where: string): boolean {
   const value = raw[key]
-  return value === undefined || value === null ? false : value === true
+  if (value === undefined || value === null) return false
+  return boolAt(value, field === '' ? key : `${field}.${key}`, where)
 }
 
 /** readingOf is the tolerant axis: every number goes through `readNumber`, so an
@@ -595,7 +616,27 @@ const TOTAL_KEYS = [
   'runs',
   'run_hours',
 ]
-const REPO_KEYS = ['slug', 'repo', ...TOTAL_KEYS]
+/** REPO_KEYS is `JSONRepo`'s own key set (`internal/watch/json.go:42`): a
+ * repository is a total, and the two keys it does *not* carry are `runs` and
+ * `run_hours`, which are on `JSONTotal` alone. Review round 5 of PR 478: this
+ * was `['slug', 'repo', ...TOTAL_KEYS]`, so `closed()` accepted those two on a
+ * `repos[]` entry -- keys the struct cannot write, decoded as understood rather
+ * than becoming the skew state this module promises for a key it does not know
+ * ("the live half of this file closes every object it decodes"). The list is
+ * written out rather than spread, so a later key added to a *total* is a
+ * decision about repositories too. Exported so `schema.test.ts` can pin it
+ * against the struct the way it pins `RECORD_KEYS`. */
+export const REPO_KEYS = [
+  'slug',
+  'repo',
+  'counted_usd',
+  'spent_usd',
+  'notional_usd',
+  'daily_cap_usd',
+  'percent',
+  'burn',
+  'kill',
+]
 const RUN_KEYS = [
   'run',
   'slug',
@@ -777,8 +818,8 @@ function runAt(raw: unknown, index: number, where: string): RunView {
     health: stringAt(required(run, 'health', field, where), `${field}.health`, where),
     deadline: stringAt(required(run, 'deadline', field, where), `${field}.deadline`, where),
     halted: optionalText(run, 'halted', field, where),
-    queued: optionalBool(run, 'queued'),
-    stuck: optionalBool(run, 'stuck'),
+    queued: optionalBool(run, 'queued', field, where),
+    stuck: optionalBool(run, 'stuck', field, where),
     workflow: optionalText(run, 'workflow', field, where),
     requestedBy: optionalText(run, 'requested_by', field, where),
   }
@@ -819,7 +860,7 @@ function costAt(raw: unknown, field: string, where: string): CostView {
     // `compute_estimated`: when it is false, `compute_usd` 0 means "not
     // estimated", not "free" -- so the flag is the state of the number, exactly
     // as `burn.known` is.
-    computeEstimated: optionalBool(cost, 'compute_estimated'),
+    computeEstimated: optionalBool(cost, 'compute_estimated', field, where),
     totalUsd: readingOf(cost, 'total_usd', `${field}.total_usd`),
     modelBasis: stringAt(cost.model_basis ?? '', `${field}.model_basis`, where),
   }
@@ -874,7 +915,7 @@ function liveAt(raw: Record<string, unknown>, where: string): LiveDocument {
     project: stringAt(required(raw, 'project', '', where), 'project', where),
     mode: stringAt(required(raw, 'mode', '', where), 'mode', where),
     day: stringAt(required(raw, 'day', '', where), 'day', where),
-    now: stringAt(required(raw, 'now', '', where), 'now', where),
+    now: timestampAt(required(raw, 'now', '', where), 'now', where),
     connection: {
       state: stringAt(required(connection, 'state', 'connection', where), 'connection.state', where),
       reason: optionalText(connection, 'reason', 'connection', where),

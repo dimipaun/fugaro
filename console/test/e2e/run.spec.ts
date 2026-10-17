@@ -27,7 +27,7 @@
 // the panel is drawn from the buffer this task's other half is. Nothing here
 // reaches the network or the CLI.
 //
-// **The goldens** are `test/e2e/__screenshots__/run/{light,dark}.png`, in a
+// **The goldens** are `test/e2e/__screenshots__/run/{light,dark}-<platform>.png`, in a
 // subdirectory of the golden directory rather than beside the Live screen's two
 // files for the reason `spend.spec.ts` records: `live.spec.ts` holds the
 // directory to exactly its own two PNGs, and that file is not this task's to
@@ -585,8 +585,8 @@ test.describe('the Run detail screen', () => {
   test('resolves the golden names under the run directory', ({}, testInfo) => {
     // Not a golden test: it asks Playwright where a recording would land, so a
     // name the template flattens is red before anyone records anything.
-    expect(testInfo.snapshotPath(...GOLDEN_NAMES.light)).toBe(join(goldenDir, 'light.png'))
-    expect(testInfo.snapshotPath(...GOLDEN_NAMES.dark)).toBe(join(goldenDir, 'dark.png'))
+    expect(testInfo.snapshotPath(...GOLDEN_NAMES.light)).toBe(join(goldenDir, `light-${process.platform}.png`))
+    expect(testInfo.snapshotPath(...GOLDEN_NAMES.dark)).toBe(join(goldenDir, `dark-${process.platform}.png`))
   })
 
   test('has a golden for each theme the design names', () => {
@@ -596,6 +596,12 @@ test.describe('the Run detail screen', () => {
           .filter((file) => file.endsWith('.png'))
           .sort()
       : []
-    expect(present).toEqual(RUN_THEMES.map((theme) => `${theme}.png`).sort())
+    // One per theme for THIS platform (the template adds `-<platform>`: macOS
+    // and Linux pixels differ and CI runs both), and nothing that is not a
+    // theme's recording for one of those two platforms.
+    expect(present.filter((file) => file.endsWith(`-${process.platform}.png`))).toEqual(
+      RUN_THEMES.map((theme) => `${theme}-${process.platform}.png`).sort(),
+    )
+    for (const file of present) expect(file).toMatch(new RegExp(`^(${RUN_THEMES.join('|')})-(darwin|linux)\\.png$`))
   })
 })

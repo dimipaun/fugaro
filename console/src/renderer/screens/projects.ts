@@ -58,7 +58,7 @@ import { measured, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
 import type { KillView } from '../../shared/schema'
-import { sanitizeText } from '../../shared/sanitize'
+import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
@@ -157,6 +157,11 @@ export type ProjectPanelState = 'read' | 'unavailable' | 'not-built'
  * an unbuilt section is *never* drawn as a zero: a screen has no reading to
  * format, so there is nothing that could render as `0`.
  */
+/** ProjectsBecauseKind names the two doors a panel's reason may go through: see
+ * `ProjectsPanel.becauseKind`. It is a named type rather than an inline union
+ * because the panel constructors take it as a defaulted argument. */
+type ProjectsBecauseKind = 'refusal' | 'document'
+
 export interface ProjectsPanel {
   readonly key: ProjectsPanelKey
   readonly title: string
@@ -168,6 +173,21 @@ export interface ProjectsPanel {
   /** `because` is why there is nothing, in the CLI's words when it printed a
    * sentence and in the console's own otherwise. Non-null unless `read`. */
   readonly because: string | null
+  /** `becauseKind` says which door `because` goes through, and it is not
+   * decoration: review round 5 of PR 478 found the same channel drawn two ways
+   * (this panel through `putText`, the refused-read screen through a literal).
+   *
+   *   - `refusal` -- the console's account of a read that produced nothing,
+   *     carrying the CLI's own sentence when the child printed one (`absent`).
+   *     It goes through `sanitizeRefusal`: the credential rules and this
+   *     layer's own, so a token echoed into stderr is redacted and the CLI's
+   *     remedy -- `roles/datastore.viewer` -- is *not* drawn as `[redacted]`,
+   *     which is what design section 6.3 requires ("the console shows that text
+   *     unedited").
+   *   - `document` -- a string a **document** wrote (`accounts`' `note`). Task
+   *     2.0's rule applies to it unchanged: it goes through `putText` with its
+   *     wire class, or it does not reach the screen. */
+  readonly becauseKind: ProjectsBecauseKind
   readonly count: Reading | null
 }
 
@@ -479,6 +499,7 @@ function readPanel(
     operation,
     state: 'read',
     because: null,
+    becauseKind: 'refusal',
     count: measured(count),
   }
 }
@@ -489,6 +510,7 @@ function unavailablePanel(
   operation: OperationName,
   because: string,
   source?: string,
+  becauseKind: ProjectsBecauseKind = 'refusal',
 ): ProjectsPanel {
   return {
     key,
@@ -496,13 +518,23 @@ function unavailablePanel(
     source: source ?? PROJECTS_SOURCE_LINES[operation] ?? `fugaro ${operation}`,
     operation,
     state: 'unavailable',
-    because,
+    because: becauseKind === 'refusal' ? drawnRefusal(because) : because,
+    becauseKind,
     count: null,
   }
 }
 
 function notBuiltPanel(key: ProjectsPanelKey, title: string, source: string, because: string): ProjectsPanel {
-  return { key, title, source, operation: null, state: 'not-built', because, count: null }
+  return {
+    key,
+    title,
+    source,
+    operation: null,
+    state: 'not-built',
+    because: drawnRefusal(because),
+    becauseKind: 'refusal',
+    count: null,
+  }
 }
 
 /** POLICY_BECAUSE and ENROLLMENT_BECAUSE are the two not-built reasons, in the
@@ -513,6 +545,36 @@ const POLICY_BECAUSE =
 
 const ENROLLMENT_BECAUSE =
   'not readable with this CLI: the enrollment allow-list ships with project-centric phase 1 and phase 4; the repositories below are the ones the CLI reports, not the ones the project admits'
+
+/** REFUSAL_UNREADABLE is what a panel says when its reason cannot be drawn at
+ * all (`sanitizeRefusal` refuses it -- a string longer than the console reads,
+ * or one that is not text). The console still knows the read refused, which is
+ * what the panel's own state and source line say. */
+const REFUSAL_UNREADABLE =
+  'the CLI refused this read, and its own sentence is longer than the console will draw'
+
+/**
+ * drawnRefusal is `sanitizeRefusal`'s decision for a panel's reason, applied
+ * where the reason is **built** rather than where it is drawn.
+ *
+ * Review round 5 of PR 478: this screen drew the CLI's refusal sentence through
+ * `putText`, so a refusal naming `roles/datastore.viewer` was drawn
+ * `[redacted]` here while the refused-read screen drew it verbatim -- one
+ * channel, two treatments, and this one lost the remedy design section 6.3
+ * requires ("the console shows that text unedited"). Now both screens run the
+ * same pass: the credential rules and this layer's own, never the pattern
+ * classes that eat a role name. A document's own string never reaches this
+ * function; the accounts panel's `note` is drawn through `putText` like every
+ * other document string (`becauseKind`).
+ *
+ * Sanitizing in the panel constructors is also what keeps `panelShell`'s
+ * `literal` call honest: every `because` it draws is either a string this pass
+ * produced or one of the console's own constants.
+ */
+function drawnRefusal(because: string): string {
+  const drawn = sanitizeRefusal(because, 'the reason this panel has nothing to draw')
+  return drawn.ok ? drawn.text : REFUSAL_UNREADABLE
+}
 
 /** absent is the sentence for a panel whose read produced nothing and whose
  * refusal carried no CLI sentence of its own. */
@@ -727,6 +789,10 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
             'Claude accounts',
             'accounts.inventory',
             accountNote ?? 'the document says complete: false: the project config could not be selected',
+            undefined,
+            // A document's own `note` is a document's string: it goes through
+            // `putText`, not through the refusal door.
+            accountNote === null ? 'refusal' : 'document',
           ),
     secretList === null
       ? unavailablePanel('secrets', 'secrets inventory', 'secrets.inventory', absent('secrets.inventory', inputs.sentences))
@@ -760,6 +826,23 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
 function labelOf(entry: RepoEntry): string {
   return entry.repo ?? entry.slug
 }
+
+/** labelClass is the class a `labelOf` value is drawn with: `owner/name` is a
+ * repository and the slash-free bucket key is a slug -- the two shapes the CLI
+ * writes, decided the way `spend.ts`'s `keyClass` decides them. Drawing the slug
+ * fallback with the `repository` class could only ever draw `n/a` (review
+ * round 2 of PR 494). */
+function labelClass(label: string): TextClass {
+  return label.includes('/') ? 'repository' : 'slug'
+}
+
+/** EVERY_REPOSITORY are the two values `secrets ls --project-wide` writes in
+ * `allowed` for a secret open to every repository
+ * (`projectSecretAllowed`, `internal/cli/secrets.go`): a provider with no
+ * allow-list answers the words, and an explicit `["*"]` is passed through. They
+ * are console vocabulary, matched exactly and drawn through the `label`
+ * class; anything else in that list is held to the `repository` class. */
+const EVERY_REPOSITORY: readonly string[] = Object.freeze(['any repository', '*'])
 
 // ---------------------------------------------------------------------------
 // The drawing.
@@ -893,9 +976,21 @@ function panelShell(factory: ScreenFactory, panel: ProjectsPanel): ScreenElement
   // not-built panel from rendering as a zero: there is no reading to format.
   if (panel.count !== null) numberCell(element, factory, 'span', panel.count, 'count', 'projects-count')
   // `because` is the console's sentence *or* the CLI's own refusal sentence
-  // (`absent`), which is stderr text the console did not write: it goes through
-  // `putText` like every other string from outside.
-  if (panel.because !== null) textCell(element, factory, 'p', panel.because, 'sentence', 'because', 'projects-because')
+  // (`absent`), and the two doors it may go through are named by
+  // `becauseKind`. A `refusal` reason was already drawn through
+  // `sanitizeRefusal` where it was built (`drawnRefusal`), which is why a
+  // `literal` call is honest here; a `document` reason -- the accounts panel's
+  // own `note` -- goes through `putText` with its wire class, like every other
+  // document string. Review round 5 of PR 478: this cell used to send *both*
+  // through `putText`, which drew the CLI's remedy as `[redacted]` while the
+  // refused-read screen drew it verbatim.
+  if (panel.because !== null) {
+    if (panel.becauseKind === 'document') {
+      textCell(element, factory, 'p', panel.because, 'sentence', 'because', 'projects-because')
+    } else {
+      literal(cell(element, factory, 'p', 'projects-because'), panel.because)
+    }
+  }
   return element
 }
 
@@ -946,7 +1041,7 @@ function killPanel(factory: ScreenFactory, model: ProjectsModel): ScreenElement 
   else global.append(killBanner(factory, model.kill.global))
   for (const row of model.kill.rows) {
     const line = cell(element, factory, 'div', 'projects-kill-row')
-    textCell(line, factory, 'span', row.repo ?? row.slug, 'repository', 'repo', 'projects-kill-repo')
+    textCell(line, factory, 'span', row.repo ?? row.slug, labelClass(row.repo ?? row.slug), 'repo', 'projects-kill-repo')
     if (row.kill === null) literal(cell(line, factory, 'span', 'projects-kill-none'), 'not killed')
     else line.append(killBanner(factory, row.kill))
   }
@@ -961,7 +1056,7 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
   numberCell(enrolled, factory, 'span', model.enrolledCount, 'count', 'projects-enrolled-count')
   const enrolledList = cell(enrolled, factory, 'ul', 'projects-enrolled-list')
   for (const entry of model.enrolled) {
-    textCell(enrolledList, factory, 'li', labelOf(entry), 'repository', 'repo', 'projects-enrolled-repo')
+    textCell(enrolledList, factory, 'li', labelOf(entry), labelClass(labelOf(entry)), 'repo', 'projects-enrolled-repo')
   }
 
   const seen = cell(element, factory, 'div', 'projects-seen')
@@ -969,19 +1064,19 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
   numberCell(seen, factory, 'span', model.seenCount, 'count', 'projects-seen-count')
   const seenList = cell(seen, factory, 'ul', 'projects-seen-list')
   for (const entry of model.seen) {
-    textCell(seenList, factory, 'li', labelOf(entry), 'repository', 'repo', 'projects-seen-repo')
+    textCell(seenList, factory, 'li', labelOf(entry), labelClass(labelOf(entry)), 'repo', 'projects-seen-repo')
   }
   if (model.onlySeen.length > 0) {
     // A repository running with no cap row is the case worth a line of its own.
     const line = cell(element, factory, 'p', 'projects-only-seen')
     literal(line, 'running with no cap row:')
-    for (const entry of model.onlySeen) textCell(line, factory, 'span', entry, 'repository', 'repo', 'projects-only-seen-repo')
+    for (const entry of model.onlySeen) textCell(line, factory, 'span', entry, labelClass(entry), 'repo', 'projects-only-seen-repo')
   }
   if (model.onlyEnrolled.length > 0) {
     const line = cell(element, factory, 'p', 'projects-only-enrolled')
     literal(line, 'a cap row and no run yet:')
     for (const entry of model.onlyEnrolled) {
-      textCell(line, factory, 'span', entry, 'repository', 'repo', 'projects-only-enrolled-repo')
+      textCell(line, factory, 'span', entry, labelClass(entry), 'repo', 'projects-only-enrolled-repo')
     }
   }
   return element
@@ -1057,7 +1152,10 @@ function secretsPanel(factory: ScreenFactory, model: ProjectSecrets): ScreenElem
       textCell(pair, factory, 'span', label.value, 'label', 'secrets[].labels', 'projects-secret-label-value')
     }
     for (const allowed of entry.allowed) {
-      textCell(line, factory, 'span', allowed, 'repository', 'secrets[].allowed', 'projects-secret-allowed')
+      // The two "every repository" values still go through the door, as a
+      // label; only the exact console vocabulary takes that class.
+      const textClass: TextClass = typeof allowed === 'string' && EVERY_REPOSITORY.includes(allowed) ? 'label' : 'repository'
+      textCell(line, factory, 'span', allowed, textClass, 'secrets[].allowed', 'projects-secret-allowed')
     }
   }
   return element

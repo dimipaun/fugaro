@@ -48,7 +48,7 @@ import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/ren
 import { RUN_LOG_CAP, buildRunModel, linkFor, pullRequestUrl, renderRun } from '../../src/renderer/screens/run'
 import type { RunInputs } from '../../src/renderer/screens/run'
 import { ReplayBuffer } from '../../src/shared/replay'
-import { ADDRESS_PLACEHOLDER, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
+import { ADDRESS_PLACEHOLDER, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { githubToken, highEntropyRun } from '../support/fakeSecrets'
 
 // ---------------------------------------------------------------------------
@@ -610,9 +610,12 @@ describe('renderProjects', () => {
     }
   })
 
-  it('puts the CLI\'s refusal sentence through the sanitizer before a panel draws it', () => {
-    // A refused read's reason is the CLI's stderr sentence: text the console
-    // did not write, so a credential echoed into it is redacted, not drawn.
+  it('puts the CLI\'s refusal sentence through the refusal door, not through `putText`', () => {
+    // A refused read's reason is the CLI's stderr sentence: text the console did
+    // not write, so a credential echoed into it is redacted, not drawn. Review
+    // round 5 of PR 478: it goes through `sanitizeRefusal` rather than the
+    // `sentence` class, because the class would also redact the remedy -- this
+    // panel and the refused-read screen drew the same channel two ways.
     const token = githubToken()
     const sentence = `permission denied for ${token}`
     const tree = renderProjects(
@@ -623,6 +626,25 @@ describe('renderProjects', () => {
     expect(drawn(tree)).not.toContain(token)
     const reasons = all(panel(tree, 'caps'), 'projects-because').map((node) => node.textContent ?? '')
     expect(reasons).toEqual([`permission denied for ${TOKEN_PLACEHOLDER}`])
+  })
+
+  it('draws the CLI\'s remedy in a refusal verbatim, as the refused-read screen does', () => {
+    // Design section 6.3: "The CLI's own message, verbatim, plus the one-line
+    // remedy the CLI prints ... the console shows that text unedited." Through
+    // `putText` this panel drew `[redacted]` where the role name belongs.
+    const sentence =
+      "you need the Cloud Datastore Viewer role (roles/datastore.viewer) on project sandbox-db"
+    const tree = renderProjects(
+      factory,
+      buildProjectsModel(inputs({ budget: null, sentences: { 'budget.show': sentence } })),
+      'light',
+    )
+    const reasons = all(panel(tree, 'caps'), 'projects-because').map((node) => node.textContent ?? '')
+    expect(reasons).toEqual([sentence])
+    // The `sentence` class is what would have eaten it, asserted rather than
+    // argued: `roles/datastore.viewer` is two long segments around a slash.
+    const through = sanitizeText(sentence, 'sentence', 'the CLI sentence')
+    expect(through.ok && through.text).not.toBe(sentence)
   })
 
   it('draws a cap the document does not carry as n/a, never as zero', () => {
@@ -1081,3 +1103,28 @@ const REPLAY_FRAMES = [
   { at: '2026-10-15T12:04:00Z', document: { project: 'example-project', day: '2026-10-15' } },
   { at: '2026-10-15T12:08:00Z', document: { project: 'example-project', day: '2026-10-15' } },
 ].map((record) => ({ receivedAt: record.at, document: record.document, notices: [] }))
+
+describe('the shapes the CLI writes where a repository is expected (review round 2 of PR 494)', () => {
+  it('draws the two "every repository" values `secrets ls` writes, and still refuses anything else', () => {
+    const secrets = [{ ...SECRETS[0], allowed: ['any repository', '*', 'not a repository'] }]
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ secrets })), 'light')
+    expect(texts(tree, 'projects-secret-allowed')).toEqual(['any repository', '*', 'n/a'])
+  })
+
+  it('draws a repository the document names only by its slash-free slug with the slug class', () => {
+    // `repo` is omitempty: a host whose local config does not list a
+    // repository with spend has only the bucket slug for it.
+    const slug = 'teammate-app-dc4d4e59e884fc44'
+    const block = { ...BUDGET.repos[1], slug }
+    delete (block as { repo?: string }).repo
+    const budget = { ...BUDGET, repos: [BUDGET.repos[0], block] }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ budget })), 'light')
+    expect(texts(tree, 'projects-kill-repo')).toContain(slug)
+    expect(texts(tree, 'projects-enrolled-repo')).toContain(slug)
+    expect(texts(tree, 'projects-only-enrolled-repo')).toContain(slug)
+    // A slug-shaped value that is not a slug is still refused.
+    const bad = { ...block, slug: 'Not A Slug' }
+    const refused = renderProjects(factory, buildProjectsModel(inputs({ budget: { ...BUDGET, repos: [bad] } })), 'light')
+    expect(texts(refused, 'projects-enrolled-repo')).toEqual(['n/a'])
+  })
+})
