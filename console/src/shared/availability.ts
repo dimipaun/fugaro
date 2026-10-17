@@ -268,11 +268,15 @@ export function seriesSegments(samples: readonly Sample[]): readonly (readonly S
  */
 function fixed(value: number, digits: number): string {
   const magnitude = Math.abs(value)
-  const [whole = '0', fraction = ''] = magnitude.toFixed(digits).split('.')
+  const rounded = magnitude.toFixed(digits)
+  const [whole = '0', fraction = ''] = rounded.split('.')
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  // `-0` is a zero: `Object.is(-0, 0)` is false but a screen showing `-$0.00`
-  // for a repository that has spent nothing is a wrong number.
-  const negative = value < 0
+  // The sign is decided AFTER rounding, because the rounded text is the number
+  // a person reads. `-0.001` rounds to `0.00`, and `-$0.00` -- or `-0.0%` --
+  // says a repository spent below nothing when what it spent is nothing. A
+  // negative that survives rounding keeps its sign. (`-0` itself compares equal
+  // to `0`, so the test is `value < 0` and not `Object.is`.)
+  const negative = value < 0 && Number(rounded) !== 0
   return `${negative ? '-' : ''}${grouped}${fraction === '' ? '' : `.${fraction}`}`
 }
 

@@ -190,6 +190,32 @@ describe('formatting', () => {
   it('gives -0 and 0 the same rendering', () => {
     expect(formatReading(measured(-0), 'usd')).toBe('$0.00')
   })
+
+  it('decides the sign after rounding, so a small negative is not `-$0.00`', () => {
+    // A refund, a rounding artefact or a float subtraction that landed at
+    // -0.001 is a zero at the precision the screen draws. `-$0.00` and `-0.0%`
+    // are wrong numbers: they say a repository spent below nothing when what it
+    // spent is nothing. So the sign comes from the ROUNDED text -- the number a
+    // person reads -- and a value that rounds away to zero at the unit's own
+    // precision is drawn as zero (`-0.4 s` is `0 s`, because the unit draws
+    // whole seconds). A negative that survives rounding keeps its sign.
+    expect(formatReading(measured(-0.001), 'usd')).toBe('$0.00')
+    expect(formatReading(measured(-0.004), 'usd')).toBe('$0.00')
+    expect(formatReading(measured(-0.005), 'usd')).toBe('-$0.01')
+    expect(formatReading(measured(-0.001), 'hours')).toBe('0.00 h')
+    expect(formatReading(measured(-0.004), 'percent')).toBe('0.0%')
+    expect(formatReading(measured(-0.04), 'percent')).toBe('0.0%')
+    expect(formatReading(measured(-0.06), 'percent')).toBe('-0.1%')
+    expect(formatReading(measured(-0.001), 'minutes')).toBe('0.0 min')
+    expect(formatReading(measured(-0.4), 'seconds')).toBe('0 s')
+    expect(formatReading(measured(-0.6), 'seconds')).toBe('-1 s')
+    expect(formatReading(measured(-0.49), 'count')).toBe('0')
+    expect(formatReading(measured(-1.5), 'usd')).toBe('-$1.50')
+    // And a state's marker is not a sign: the marks go before the number, not
+    // before the minus.
+    expect(formatReading(notional(-0.001), 'usd')).toBe('NOTIONAL~$0.00')
+    expect(formatReading(estimated(-0.001), 'usd')).toBe('est. $0.00')
+  })
 })
 
 describe('a series', () => {
