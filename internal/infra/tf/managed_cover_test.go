@@ -654,16 +654,17 @@ func TestManagedCoverIsACover(t *testing.T) {
 // TestManagedCoverRefusesDeletesAndReplacements: the action set is create,
 // update, no-op and read, and a delete or a replacement is admitted only for
 // an exact address on the owner's delete list — which this cover was not told
-// (Task 1.2a), so it admits none of them. An unknown action is refused rather
-// than read as none, whatever the list says. The listed cases are below, in
-// the tests of the delete rule itself.
+// (design D72/D74), so it admits none of them. An action the managed list does
+// not carry is refused rather than read as none, whatever the list says — a
+// forget included, which tf.Guard allows and this cover does not (managedActions).
+// The listed cases are below, in the tests of the delete rule itself.
 func TestManagedCoverRefusesDeletesAndReplacements(t *testing.T) {
 	for name, acts := range map[string][]string{
-		"a delete":                         {"delete"},
-		"a replacement, delete first":      {"delete", "create"},
-		"a replacement, create first":      {"create", "delete"},
-		"an action terraform has not used": {"forget"},
-		"no actions":                       {},
+		"a delete":                           {"delete"},
+		"a replacement, delete first":        {"delete", "create"},
+		"a replacement, create first":        {"create", "delete"},
+		"forget, an action the guard allows": {"forget"},
+		"no actions":                         {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rc := managedKeptFixture["google_storage_bucket"]
@@ -1435,7 +1436,8 @@ func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 	}
 }
 
-// The delete rule (Task 1.2a): the managed cover takes the owner's delete list
+// The delete rule (design D72/D74): the managed cover takes the owner's delete
+// list
 // as an input beside the plan, and a delete or a replace is judged twice — the
 // address must be on the list exactly, as tf.Guard compares it — and the
 // resource must be one the managed allowlist admits, judged exactly as a
@@ -1516,6 +1518,25 @@ func TestManagedCoverRefusesAnActionSetTerraformDoesNotWrite(t *testing.T) {
 			out := c.NotCovered(managedPlan(rc), nil)
 			if len(out) != 1 || !strings.Contains(out[0], "actions "+strings.Join(acts, ", ")) {
 				t.Fatalf("the action set %v of a listed address gives %q, want the actions rule", acts, out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverAdmitsTheActionsThatRemoveNothing: read and no-op change or
+// read a resource without removing it, so neither asks for the owner's list and
+// neither reads a resource rule. read is the one of the four with no other
+// fixture in the tree — every read the real terraform outputs here is a data
+// source, refused by managedMode before the actions are read — so a
+// managed-mode read is pinned here for the action rule itself, beside the no-op
+// the other fixtures reach.
+func TestManagedCoverAdmitsTheActionsThatRemoveNothing(t *testing.T) {
+	for _, acts := range [][]string{{"read"}, {"no-op"}} {
+		t.Run(strings.Join(acts, ","), func(t *testing.T) {
+			rc := managedKeptFixture["google_storage_bucket"]
+			rc.Change.Actions = acts
+			if out := managedTestCover().NotCovered(managedPlan(rc), nil); len(out) != 0 {
+				t.Fatalf("a managed %s gives %q, want it covered: it removes nothing", strings.Join(acts, ", "), out)
 			}
 		})
 	}

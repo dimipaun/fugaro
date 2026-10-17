@@ -9,7 +9,8 @@
 // project admits (design D61) — and, for a delete or a replace, it refuses the
 // resource the change removes or creates unless that resource is one the
 // allowlist admits, so an address on the owner's list never admits a resource
-// nothing judged (Task 1.2a, D72/D74). The model's review is not part of it: it
+// nothing judged (D72/D74 — design rows, not a task number: the plan carries
+// no task of its own for this rule). The model's review is not part of it: it
 // is advisory, recorded, and can only ever add a refusal (D60).
 package managed
 
@@ -80,7 +81,7 @@ type Spec struct {
 	// cover, which is told it through tf.Deletable), so the two cannot be given
 	// different ones, and it is one half of the decision rather than the whole
 	// of it: the resource is judged whatever its address is on this list
-	// (Task 1.2a).
+	// (D72/D74).
 	AllowDelete []string
 	// Imports are the import blocks the root's discovery wrote: an import is
 	// admitted only when its address and ID are exactly one of them
@@ -199,7 +200,7 @@ func (s Spec) read(ctx context.Context, planPath string) (*tf.Plan, error) {
 // there is no cover at all: a managed plan is admitted by the managed cover of
 // the project's own allowlist, or by nothing.
 //
-// The owner's delete list goes to the cover beside the plan (Task 1.2a,
+// The owner's delete list goes to the cover beside the plan (D72/D74,
 // tf.Deletable): the list Gate hands tf.Guard is handed to the cover too, so
 // the two halves of the gate cannot be given different ones — a delete admitted
 // by the list one of them was told and not the other's is exactly the plan this

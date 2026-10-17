@@ -170,13 +170,14 @@ var managedGrantRules = map[string]bool{
 // region, the buckets, the registry and the billing account — taken from it
 // unchanged, because they are the review's and not this list's.
 //
-// What it adds to Cover is the managed answer to five questions, each of which
+// What it adds to Cover is the managed answer to six questions, each of which
 // is a refusal rather than an inheritance:
 //
-//   - the delete (Task 1.2a): a delete or a replace is admitted only for an
-//     exact address on the owner's own list, and only when the resource it
-//     removes or creates is one the rules below admit — the list alone never
-//     admits one (NotCovered);
+//   - the delete (the design's D72/D74 — the plan carries no task of its own
+//     for this rule, and Tasks 1.2 and 1.4 are where its material is): a delete
+//     or a replace is admitted only for an exact address on the owner's own
+//     list, and only when the resource it removes or creates is one the rules
+//     below admit — the list alone never admits one (NotCovered);
 //   - the type: managedTypes rather than allowedTypes, so the twelve entries
 //     of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
@@ -204,12 +205,12 @@ var managedGrantRules = map[string]bool{
 // an object's Locked retention can never be undone, so it is refused whatever
 // the delete rule would later allow (managedBucketLock, managedObjectLock).
 //
-// And one rule under all five: every value the cover reads — a name, the
+// And one rule under all six: every value the cover reads — a name, the
 // account a job, a scheduler or a grant is on, a member, a role — must be
 // known at plan time. A computed one is refused, never trusted for what it
 // references (managedNames says why).
 //
-// And one rule before all five, because a managed apply runs as the operator
+// And one rule before all six, because a managed apply runs as the operator
 // (D75: the operator's shell impersonates the deployer): nothing in the plan
 // runs at apply besides Google's own provider making the resources' API
 // calls. No provisioner anywhere, no provider but Google's two, no data
@@ -237,7 +238,7 @@ type ManagedCover struct {
 
 // Deletable is a cover that can be told the owner's delete list, and the one
 // thing a cover must be for a delete or a replace to be judged at all. The
-// list is an input of the gate beside the plan (Task 1.2a, design D72/D74), so
+// list is an input of the gate beside the plan (design D72/D74), so
 // a cover that cannot be told it cannot judge a delete — and
 // managed.Spec.notCovered refuses a listed one rather than letting the address
 // alone admit a resource nothing read.
@@ -266,7 +267,7 @@ func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
 // account a resource names (managedBilling, read before the type rule so that
 // it is read at all) and the project it is in (managedProject).
 //
-// A delete and a replace (Task 1.2a) are the one part of that walk the list
+// A delete and a replace are the one part of that walk the list
 // changes: they are admitted for an exact address on the owner's list alone —
 // managedActions says which action sets they are — and the resource is then
 // judged by the same chain as a create, on the view of it the change shows
@@ -308,7 +309,7 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 		}
 		// The actions, and then the resource. A delete, or a replace in either
 		// of terraform's two orders, is admitted only for an exact address on
-		// the owner's list (Task 1.2a, D72/D74) — the same list tf.Guard is
+		// the owner's list (D72/D74) — the same list tf.Guard is
 		// handed, compared the same way, by string equality: no prefix, module
 		// or instance key stands in for an address, so a listed x[0] admits
 		// nothing of x[1]. The list is not the decision about the resource:
@@ -359,9 +360,20 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 // own sets, whole and in order, and nothing else: create, update, no-op and
 // read change or read a resource without removing it, and a delete or one of
 // the two orders of a replace is admitted only with the owner's list (read
-// beside this in NotCovered). Any other set — an action terraform has not
-// used, a delete of a resource that is not shown as one, a set no version of
+// beside this in NotCovered). Any other set — an action this list does not
+// carry, a delete of a resource that is not shown as one, a set no version of
 // terraform writes — is refused rather than read as one of these.
+//
+// forget is the one set worth naming, because it is a real terraform action
+// that tf.Guard deliberately allows: a `removed` block takes a resource out of
+// the state without destroying it, so the guard has nothing to refuse
+// (guard.go:12-14). A managed plan may not carry it. The managed root's state
+// is Fugaro's own (D77), and a forget writes it with no cloud change beside
+// it: the resource would leave the plan while staying in the project, which is
+// exactly the kind of change none of the rules here can judge — every one of
+// them reads a resource's type, name, project and attributes, and none says
+// what leaving the state means. Refused, fail closed like the rest: a plan
+// that needs it is refused and falls back to the confirmation.
 func managedActions(acts []string) bool {
 	return allOf(acts, "create", "update", "no-op", "read") ||
 		slices.Equal(acts, []string{"delete"}) ||

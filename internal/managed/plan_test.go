@@ -45,7 +45,7 @@ func (a admitAll) WithDeleteList(allowDelete []string) tf.Deletable {
 }
 
 // judgesNothing is a cover that admits everything and cannot be told the
-// owner's delete list at all: the fail-closed case of Task 1.2a. A listed
+// owner's delete list at all: the fail-closed case of the delete rule. A listed
 // address must not be admitted through it, because the resource is never
 // judged — the address on the owner's list is not a judgement of the resource.
 type judgesNothing struct{}
@@ -63,7 +63,7 @@ func cover() tf.Cover {
 // managedCover is the gate a managed apply really hands Gate: Task 1.1's
 // managed allowlist over the same review the installation's cover would have
 // been given. A test of the delete rule uses it, because it is the cover that
-// judges the resource (Task 1.2a); admitAll judges nothing.
+// judges the resource (D72/D74); admitAll judges nothing.
 func managedCover() tf.ManagedCover {
 	return tf.ManagedCover{Cover: cover()}
 }
@@ -479,7 +479,7 @@ func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 	}
 }
 
-// The red step of Task 1.2a, and the rule it is about: the owner's delete list
+// The red step of the delete rule, and the rule it is about: the owner's list
 // is one half of the decision and the resource is the other. A cover that
 // judges no delete at all — the shape a cover would have to have for the
 // address alone to decide, and the fail-closed case the wiring exists for —
@@ -553,7 +553,7 @@ func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
 	}
 }
 
-// Task 1.2a through Gate with the real managed cover: a listed delete of a
+// The delete rule through Gate with the real managed cover: a listed delete of a
 // resource the managed allowlist admits is admitted, and the same listed
 // address admits nothing whose resource is not one a managed plan may carry.
 func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
@@ -636,6 +636,50 @@ func TestGateListNeverAuthorizesACreate(t *testing.T) {
 	if v := gate(t, r, spec(t, r, managedCover())); len(v.Refusals) != 1 || v.Refusals[0].Why !=
 		"a resource type outside the managed project's allowlist" {
 		t.Errorf("refusals %v, want the same single refusal with no list at all", v.Refusals)
+	}
+}
+
+// The same rule through the cover that cannot be told the list: an address on
+// the owner's list is read for the change that removes something and for
+// nothing else there either, so a create at a listed address is admitted
+// exactly as one at an address that is not. It is one rule, and unjudgedDeletes
+// reads the actions to apply it — a predicate that refused every listed address
+// whatever the change would fail here.
+func TestGateListNeverAuthorizesACreateThroughACoverThatJudgesNothing(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"create"}, map[string]any{"name": "fugaro-runs-" + gcpProject}))
+	for _, allow := range [][]string{nil, {planBucket}} {
+		if v := gate(t, r, spec(t, r, judgesNothing{}, allow...)); !v.OK || len(v.Refusals) != 0 {
+			t.Errorf("a create with %v listed gives %v, want it admitted: the list is read for a remove and for nothing else", allow, v.Refusals)
+		}
+	}
+}
+
+// The managed path receives Spec.Imports: the cover a managed apply hands Gate
+// is told the list beside the plan as tf.Deletable, and an import discovery did
+// not find is refused through that branch exactly as through a plain tf.Cover.
+// TestGateImportsMustBeOnTheSpecList above takes the other branch, because
+// tf.Cover is not Deletable and only that test's cover is.
+func TestGateManagedCoverReceivesSpecImports(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.data"
+	id := gcpProject + "/data-bucket"
+	r := newRig(t)
+	imp := managedChange(addr, "google_storage_bucket", []string{"no-op"}, nil, map[string]any{"name": "fmgd-data"})
+	imp["change"].(map[string]any)["importing"] = map[string]any{"id": id}
+	r.managedShow(t, imp)
+	s := spec(t, r, managedCover())
+	v := gate(t, r, s)
+	if v.OK {
+		t.Fatal("an import discovery did not find was admitted by the managed cover")
+	}
+	if len(v.Refusals) != 1 || v.Refusals[0].Gate != coverGate || !strings.Contains(v.Refusals[0].Why, "which this run's discovery did not find") {
+		t.Fatalf("refusals %v, want the managed cover's missing-import refusal of %s", v.Refusals, addr)
+	}
+	// The same plan with the key discovery wrote: the list is what admitted it,
+	// so the branch that hands the cover its inputs is the one under test.
+	s.Imports = []tf.ImportKey{{Address: addr, ID: id}}
+	if v := gate(t, r, s); !v.OK {
+		t.Errorf("an import discovery found was refused by the managed cover: %v", v.Refusals)
 	}
 }
 
