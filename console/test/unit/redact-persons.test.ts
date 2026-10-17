@@ -25,6 +25,7 @@ import {
   createRedactor,
 } from '../../src/source/redact'
 import { SYNTHETIC_META } from './synthetic'
+import { inert, pemBlock } from '../support/fakeSecrets'
 
 const KEY = 'redact-persons-test-only-key'
 
@@ -48,15 +49,19 @@ function message(run: () => unknown): string {
 // A fixed "random" body, so a failure prints the same thing twice.
 const BODY60 = 'Q7xk2PzR9mWb4LcV8nTy3HdJ6fGs1AeU5oKi0rZqXwYvBpNjMhCtDlEgFuSa'
 const HEX12 = 'a1b2c3d4e5f6'
+/** SPLIT_BODY is a forge-shaped token, assembled here because three tests below
+ * embed it in a sentence: a literal one would be a shape a scanner matches, and
+ * the tests are about what the redactor does with the shape, not the value. */
+const SPLIT_BODY = inert('gh', 'p_', 'abcdEFGH1234abcdEFGH1234abcdEFGH1234')
 
 describe('people are matched after every pattern rule, so a person cannot switch one off', () => {
   // [the requester, the text, what must not survive, what must be there]
   const cases: readonly (readonly [string, string, string, string])[] = [
-    ['ya29', `ya29.${BODY60}`, BODY60.slice(0, 20), TOKEN_MARKER],
+    ['ya29', inert('ya', '29.', BODY60), BODY60.slice(0, 20), TOKEN_MARKER],
     ['password', 'login failed: password=hunter2xyz rejected', 'hunter2xyz', TOKEN_MARKER],
     ['bearer', `Authorization: Bearer ${HEX12}`, HEX12, TOKEN_MARKER],
-    ['BEGIN', '-----BEGIN PRIVATE KEY-----\nMIIabcDEF\n-----END PRIVATE KEY-----', 'MIIabcDEF', TOKEN_MARKER],
-    ['private', '-----BEGIN PRIVATE KEY-----\nMIIabcDEF\n-----END PRIVATE KEY-----', 'MIIabcDEF', TOKEN_MARKER],
+    ['BEGIN', pemBlock('MIIabcDEF'), 'MIIabcDEF', TOKEN_MARKER],
+    ['private', pemBlock('MIIabcDEF'), 'MIIabcDEF', TOKEN_MARKER],
     ['local', 'on zoras-laptop.local now', 'zoras', HOST_MARKER],
     ['com', 'on zoras-laptop.corp.acme.com now', 'acme', HOST_MARKER],
     ['internal', 'dial db.acme.internal', 'acme', HOST_MARKER],
@@ -83,7 +88,7 @@ describe('people are matched after every pattern rule, so a person cannot switch
   it('still replaces the person wherever the pattern rules left them', () => {
     const out = redactor().redactDocument({
       requested_by: 'Zora Kell',
-      t: 'Zora Kell pushed ghp_abcdEFGH1234abcdEFGH1234abcdEFGH1234 from zoras-laptop.local',
+      t: `Zora Kell pushed ${SPLIT_BODY} from zoras-laptop.local`,
     }) as { requested_by: string; t: string }
     expect(out.t).toBe(`${out.requested_by} pushed ${TOKEN_MARKER} from ${HOST_MARKER}`)
   })
@@ -161,7 +166,7 @@ describe('which values are persons, and where a person is replaced', () => {
 
   it('never takes a marker word for a person, so a marker stays a marker', () => {
     for (const person of ['token', 'redacted', 'person', 'host', 'redacted-token']) {
-      const out = redactor().redactDocument({ requested_by: person, t: `key ghp_abcdEFGH1234abcdEFGH1234abcdEFGH1234 on db.acme.com` }) as {
+      const out = redactor().redactDocument({ requested_by: person, t: `key ${SPLIT_BODY} on db.acme.com` }) as {
         t: string
       }
       expect(out.t, person).toBe(`key ${TOKEN_MARKER} on ${HOST_MARKER}`)
@@ -333,5 +338,51 @@ describe('a person refusal names no person', () => {
 
   it('reports RedactionRefusal instances', () => {
     expect(() => createRedactor().redactFeedLine(`{"a":${'['.repeat(5_000)}${']'.repeat(5_000)}}`)).toThrow(RedactionRefusal)
+  })
+})
+
+describe('a notice goes through the person pass too (review round 2 of PR 478)', () => {
+  // A notice is free text with no fields, so the only people the redactor can
+  // find in it are the ones the recording's documents named. At da86190 a
+  // notice saw no people at all: `redactText` ran with an empty person table,
+  // and a requester's name went into the fixture verbatim while the same name
+  // in a document became a pseudonym.
+  const name = 'Dana Whitfield'
+
+  it('replaces a person a document named, with the pseudonym the document gave them', () => {
+    const r = redactor()
+    const document = r.redactDocument({ runs: [{ requested_by: name }] }) as { runs: { requested_by: string }[] }
+    const pseudonym = document.runs[0]?.requested_by ?? ''
+    expect(pseudonym).toMatch(PERSON_PSEUDONYM_RE)
+    const notice = r.redactText(`queued run 1234 by ${name} for review`)
+    expect(notice).toBe(`queued run 1234 by ${pseudonym} for review`)
+    expect(r.redactText(`queued for whitfield, dana`)).toBe(`queued for ${pseudonym}`)
+  })
+
+  it('keeps people across documents, so a later notice still knows an earlier requester', () => {
+    const r = redactor()
+    r.redactDocument({ runs: [{ requested_by: name }] })
+    r.redactDocument({ runs: [{ requested_by: 'Ola Brandt' }] })
+    const notice = r.redactText(`retrying for ${name} and Ola Brandt`)
+    expect(notice).not.toContain('Whitfield')
+    expect(notice).not.toContain('Brandt')
+  })
+
+  it('cannot know a person no document has named yet, which is why the recorder re-runs notices at the end', () => {
+    const r = redactor()
+    expect(r.redactText(`queued by ${name}`)).toBe(`queued by ${name}`)
+    r.redactDocument({ runs: [{ requested_by: name }] })
+    expect(r.redactText(`queued by ${name}`)).not.toContain('Whitfield')
+  })
+
+  it('audits against the same people, so a name left in a notice is a problem', () => {
+    // `problems()` is the audit a recording runs over what it is about to
+    // write. Audited against no people, a requester's name left in a notice
+    // was clean; against the redactor's own table, it is a finding.
+    const r = redactor()
+    expect(r.problems(`queued by ${name}`)).toEqual([])
+    r.redactDocument({ runs: [{ requested_by: name }] })
+    expect(r.problems(`queued by ${name}`).join('\n')).toMatch(/a person the document names/)
+    expect(r.problems(r.redactText(`queued by ${name}`))).toEqual([])
   })
 })

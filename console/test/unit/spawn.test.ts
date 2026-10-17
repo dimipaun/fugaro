@@ -212,9 +212,9 @@ function scriptedChild(): SpawnedChildLike & {
   return {
     stdout: { on: (_event, listener) => stdoutListeners.push(listener) },
     stderr: { on: (_event, listener) => stderrListeners.push(listener) },
-    on(event: 'error' | 'exit', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
+    on(event: 'error' | 'exit' | 'close', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
       if (event === 'error') errorListeners.push(listener as (error: Error) => void)
-      else exitListeners.push(listener as (code: number | null, signal: string | null) => void)
+      else if (event === 'exit') exitListeners.push(listener as (code: number | null, signal: string | null) => void)
       return undefined
     },
     kill(signal?: NodeJS.Signals) {
@@ -508,6 +508,27 @@ describe('the spawn table and the argv it builds', () => {
         ),
       ),
     ).toThrow(/the operation does not accept/)
+  })
+
+  it('fails a table that drops or adds --project, or moves --dir (rules 3 and 5)', () => {
+    // Review round 2 of PR 478: the doc-comment named "a row that drops
+    // `takesProject` from `watch`" as a mutation this check fails, and the body
+    // never read the column -- a table with both columns false on every row
+    // was accepted, and `argvFor` would then spawn watch and doctor with no
+    // --project and no --dir.
+    const flip = (operation: string, change: Partial<SpawnCommand>): SpawnCommand[] =>
+      SPAWN_COMMANDS.map((row) => (row.operation === operation ? { ...row, ...change } : row))
+    expect(() => assertSpawnSurface(flip('live.watch', { takesProject: false }))).toThrow(
+      /live\.watch .*--project/,
+    )
+    expect(() => assertSpawnSurface(flip('cli.version', { takesProject: true }))).toThrow(/cli\.version .*--project/)
+    expect(() => assertSpawnSurface(flip('environment.report', { dirFlag: false }))).toThrow(
+      /environment\.report .*--dir/,
+    )
+    expect(() => assertSpawnSurface(flip('runs.list', { dirFlag: true }))).toThrow(/runs\.list .*--dir/)
+    expect(() =>
+      assertSpawnSurface(SPAWN_COMMANDS.map((row) => ({ ...row, takesProject: false, dirFlag: false }))),
+    ).toThrow(/--project/)
   })
 
   it('fails a table with a command-bearing operation missing from it', () => {

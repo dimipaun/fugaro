@@ -26,9 +26,12 @@
 //   4. a run that has gone silent, and a connection whose age says so;
 //   5. a **gap**: the next document is 160 s later, and the run is lost (the
 //      console's stale banner trips at 45 s, so the gap is visible on screen);
-//   6. a run with fields the CLI omits -- no `recipe`, no `deadline` -- which is
-//      the absent-field case, and a repository at its cap, which is the
-//      repo-at-cap case in miniature.
+//   6. a run with fields the CLI omits -- a live run whose `recipe`, `halted`,
+//      `workflow` and `requested_by` are `omitempty` and so are not there at
+//      all, beside a **queued** run, whose round, verify, models and auth the
+//      CLI writes as `"-"` and whose spend is `null` -- which is the
+//      absent-field case, and a repository at its cap, which is the repo-at-cap
+//      case in miniature.
 //
 // The values are invented: `fixture-sandbox`, `fixture-owner/fixture-repo`,
 // `fixture-operator`. The literals list below is the recorder's own second half
@@ -61,8 +64,25 @@ export const SYNTHETIC_PSEUDONYM_KEY = 'synthetic-fixture-only-not-a-secret'
 const REPO = 'fixture-owner/fixture-repo'
 const SLUG = 'github-com-fixture-owner-fixture-repo'
 
-/** runBlock is one live run as `watch --json` writes it (json-contract section
- * 10.13); the overrides are where each record differs. */
+/** runBlock is one live run as `watch --json` writes it (`internal/watch/json.go`
+ * `JSONRun`); the overrides are where each record differs.
+ *
+ * Two corrections against the wire are worth naming, because this corpus was
+ * written from the contract and both were wrong in the first revision:
+ *
+ *   - `round` is a **string** (`strconv.Itoa`, `internal/watch/build.go:403`),
+ *     not a number. `budget show --json` carries an int under the same name,
+ *     which is exactly the kind of near-miss a corpus is supposed to catch:
+ *     a decoder written from the wrong one of the two would refuse every
+ *     queued run, whose round the CLI writes as `"-"`.
+ *   - `recipe`, `halted`, `queued`, `stuck`, `workflow` and `requested_by` are
+ *     `omitempty`, so a live run with nothing to say about them **does not
+ *     carry the key at all**. A corpus that wrote `recipe: ''` would teach the
+ *     decoder that the key is always there.
+ *
+ * `spent_usd` and `age_seconds` are `*float64` with no `omitempty`: absent
+ * spend is the key present and `null`, which is the contract's own way of
+ * saying "not known", and is why the run below carries both. */
 function runBlock(overrides: JSONDoc = {}): JSONDoc {
   return {
     run: '20261015-120000-aa01',
@@ -70,26 +90,23 @@ function runBlock(overrides: JSONDoc = {}): JSONDoc {
     repo: REPO,
     title: 'wire the console to the live feed',
     stage: 'implement',
-    round: 2,
+    round: '2',
     verify: 'pending',
-    models: 'claude-sonnet-5',
-    recipe: '',
-    auth: 'subscription',
-    notional: false,
+    models: 'claude-sonnet-4-5-20250929 / claude-opus-4-1',
+    auth: 'oauth',
+    notional: true,
     spent_usd: 12.5,
     age_seconds: 1500,
     health: 'ok',
     deadline: 'ok',
-    halted: '',
-    queued: false,
-    stuck: false,
-    workflow: 'web',
-    requested_by: '',
     ...overrides,
   }
 }
 
-/** repoBlock is one repository: a cap, a bar and an off kill switch. */
+/** repoBlock is one repository: a cap, a bar and an off kill switch. `kill`
+ * is `null` and not an object, because `jsonKill` returns nil unless the switch
+ * is on (`internal/watch/json.go:134`) -- "not killed" is the key present with
+ * no value, and the console reads it as a measured fact. */
 function repoBlock(overrides: JSONDoc = {}): JSONDoc {
   return {
     slug: SLUG,
@@ -100,7 +117,7 @@ function repoBlock(overrides: JSONDoc = {}): JSONDoc {
     daily_cap_usd: 50,
     percent: 25,
     burn: { known: true, usd_per_min: 0.02, fast: false },
-    kill: { on: false, by: '', at: 0, reason: '' },
+    kill: null,
     ...overrides,
   }
 }
@@ -112,7 +129,7 @@ function liveDocument(at: string, overrides: JSONDoc = {}): JSONDoc {
     mode: 'observe',
     day: at.slice(0, 10),
     now: at,
-    connection: { state: 'live', reason: '', age_seconds: 2 },
+    connection: { state: 'live', age_seconds: 2 },
     total: {
       counted_usd: 12.5,
       spent_usd: 0,
@@ -120,7 +137,7 @@ function liveDocument(at: string, overrides: JSONDoc = {}): JSONDoc {
       daily_cap_usd: 50,
       percent: 25,
       burn: { known: true, usd_per_min: 0.02, fast: false },
-      kill: { on: false, by: '', at: 0, reason: '' },
+      kill: null,
       runs: 1,
       run_hours: 0.42,
     },
@@ -128,7 +145,6 @@ function liveDocument(at: string, overrides: JSONDoc = {}): JSONDoc {
     runs: [runBlock()],
     finished: [],
     ready: [],
-    queued_note: '',
     ...overrides,
   }
 }
@@ -140,7 +156,7 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
   {
     at: '2026-10-15T12:00:05Z',
     document: liveDocument('2026-10-15T12:00:05Z', {
-      connection: { state: 'live', reason: '', age_seconds: 4 },
+      connection: { state: 'live', age_seconds: 4 },
       total: {
         counted_usd: 12.54,
         spent_usd: 0,
@@ -148,12 +164,12 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
         daily_cap_usd: 50,
         percent: 25.08,
         burn: { known: true, usd_per_min: 0.03, fast: false },
-        kill: { on: false, by: '', at: 0, reason: '' },
+        kill: null,
         runs: 1,
         run_hours: 0.43,
       },
       repos: [repoBlock({ counted_usd: 12.54, notional_usd: 3.29, percent: 25.08 })],
-      runs: [runBlock({ spent_usd: 12.54, age_seconds: 1505 })],
+      runs: [runBlock({ spent_usd: 12.54, age_seconds: 1505, recipe: 'console-text-path' })],
       finished: [
         {
           run: '20261015-101500-aa02',
@@ -174,7 +190,7 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
   {
     at: '2026-10-15T12:01:40Z',
     document: liveDocument('2026-10-15T12:01:40Z', {
-      connection: { state: 'live', reason: '', age_seconds: 102 },
+      connection: { state: 'live', age_seconds: 102 },
       runs: [runBlock({ age_seconds: 1600, health: 'silent' })],
     }),
   },
@@ -193,7 +209,7 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
     // repository that has reached its cap.
     at: '2026-10-15T12:04:21Z',
     document: liveDocument('2026-10-15T12:04:21Z', {
-      connection: { state: 'live', reason: '', age_seconds: 1 },
+      connection: { state: 'live', age_seconds: 1 },
       total: {
         counted_usd: 50,
         spent_usd: 0,
@@ -201,7 +217,7 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
         daily_cap_usd: 50,
         percent: 100,
         burn: { known: true, usd_per_min: 0, fast: false },
-        kill: { on: false, by: '', at: 0, reason: '' },
+        kill: null,
         runs: 2,
         run_hours: 0.73,
       },
@@ -209,20 +225,26 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
       runs: [
         runBlock({ age_seconds: 1761, health: 'lost' }),
         {
+          // A queued run: known only from the runs bucket, so its stage, round
+          // and models are the CLI's own dashes and its spend is `null`
+          // (`queuedRow`, `internal/watch/queued.go:40`). `notional` is false
+          // because `auth` is not `oauth` -- there is no account yet to be
+          // notional against.
           run: '20261015-120400-aa03',
           slug: SLUG,
           repo: REPO,
           title: 'rotate the fixture tokens',
           stage: 'queued',
-          verify: 'pending',
-          models: 'claude-sonnet-5',
-          auth: 'oauth',
-          notional: true,
+          round: '-',
+          verify: '-',
+          models: '-',
+          auth: '-',
+          notional: false,
+          spent_usd: null,
           age_seconds: 21,
           health: 'ok',
-          halted: '',
+          deadline: 'ok',
           queued: true,
-          stuck: false,
           workflow: 'web',
           requested_by: 'fixture-operator@example.invalid',
         },

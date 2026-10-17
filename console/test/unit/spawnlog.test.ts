@@ -30,7 +30,7 @@ import { describe, expect, it } from 'vitest'
 import { SPAWN_LOG_ENV, SPAWN_LOG_LIMIT, SPAWN_LOG_MODE, TRUNCATION_LINE, createSpawnLog, rfc3339Seconds } from '../../src/main/spawnlog'
 import type { SpawnLogFs } from '../../src/main/spawnlog'
 import { planFor } from '../../src/main/spawn'
-import { CliSource } from '../../src/source/cli'
+import { CliSource, createInstallationStore } from '../../src/source/cli'
 import { installStub } from './stub'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
@@ -142,6 +142,46 @@ describe('the spawn log', () => {
     expect(fs.closed).toHaveLength(1)
   })
 
+  it('stays closed once it is closed: a later record neither reopens nor appends', () => {
+    // Review round 2 of PR 478: close() released the descriptor but left the
+    // writer live, so the next record() reopened the path the caller had just
+    // closed and appended to it.
+    const fs = recordingFs()
+    const writer = createSpawnLog({ [SPAWN_LOG_ENV]: '/tmp/operator-chose-this.jsonl' }, fs)
+    writer.record(spawnRecord())
+    writer.close()
+    writer.record(spawnRecord())
+    expect(fs.opened).toHaveLength(1)
+    expect(fs.written).toHaveLength(1)
+    expect(writer.records).toBe(1)
+    expect(fs.closed).toHaveLength(1)
+    // ...and a writer closed before it ever opened never opens either.
+    const unused = recordingFs()
+    const early = createSpawnLog({ [SPAWN_LOG_ENV]: '/tmp/operator-chose-this.jsonl' }, unused)
+    early.close()
+    early.record(spawnRecord())
+    expect(unused.opened).toEqual([])
+  })
+
+  it('an installation check closes the log it opened, so each add leaks no descriptor', async () => {
+    // `verifyCandidate` opens its own log when it is not handed one, and at
+    // da86190 never closed it: one descriptor per installation added, held
+    // until the process exits. Counted on /dev/fd, which macOS and Linux both
+    // have; a leak is one descriptor per add, so ten adds are well clear of
+    // whatever the test runner opens meanwhile.
+    const directory = freshDirectory()
+    const logPath = join(directory, 'spawn.jsonl')
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const store = createInstallationStore({ appEnv: { [SPAWN_LOG_ENV]: logPath } })
+    await store.add({ project: PROJECT, binaryPath: stub.binary })
+    const before = readdirSync('/dev/fd').length
+    for (let i = 0; i < 10; i += 1) await store.add({ project: PROJECT, binaryPath: stub.binary })
+    const after = readdirSync('/dev/fd').length
+    expect(after - before).toBeLessThan(5)
+    // The log was written all the same: the handshake and doctor, per add.
+    expect(readFileSync(logPath, 'utf8').split('\n').filter((line) => line !== '')).toHaveLength(22)
+  })
+
   it('creates the file with mode 0600 and one line per spawn', async () => {
     const directory = freshDirectory()
     const logPath = join(directory, 'spawn.jsonl')
@@ -228,6 +268,45 @@ describe('the spawn log', () => {
     expect(handshake?.project).toBe('chosen')
     expect(handshake?.cwd).toBe(stub.reports()[0]?.cwd)
     expect(new Set(entries.map((entry) => entry.project))).toEqual(new Set(['chosen']))
+  })
+
+  it('is closed by the source that opened it, and only by that one', async () => {
+    // Review round 3 of PR 478: `verifyCandidate` closed only the log it opened,
+    // but `CliSource.close()` closed an injected one too -- a caller's writer
+    // ended under it. The ownership is now the same in both.
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, 'runs ls': { stdout: '{}\n' } },
+    })
+    const lines: string[] = []
+    let closes = 0
+    const injected = createSpawnLog({ [SPAWN_LOG_ENV]: '/tmp/unused.jsonl' }, {
+      open: () => 1,
+      write: (_fd, data) => lines.push(data),
+      close: () => {
+        closes += 1
+      },
+    })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+      spawnLog: injected,
+    })
+    await source.listRuns({})
+    await source.close()
+    expect(closes).toBe(0)
+    expect(lines).toHaveLength(2)
+    // The caller's writer is still live after the source is gone.
+    await (await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+      spawnLog: injected,
+    })).close()
+    expect(lines).toHaveLength(3)
+    injected.close()
+    expect(closes).toBe(1)
   })
 
   it('stops at the bound: one truncation line at record 1001, then nothing', () => {

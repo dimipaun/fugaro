@@ -111,6 +111,7 @@ class StubChild implements SpawnedChildLike {
   readonly stderr: ReadableLike = new StubStream()
   readonly signals: NodeJS.Signals[] = []
   readonly #exits: ((code: number | null, signal: string | null) => void)[] = []
+  readonly #closes: ((code: number | null, signal: string | null) => void)[] = []
   readonly #errors: ((error: Error) => void)[] = []
   #alive = true
 
@@ -119,25 +120,44 @@ class StubChild implements SpawnedChildLike {
     this.signals.push(signal)
     // A child that is SIGKILLed is gone; one that is SIGTERMed may yet exit on
     // its own, and that difference is what the grace timer is for.
-    if (signal === 'SIGKILL') this.#alive = false
+    // Node then reports the exit, and the close once the pipes have drained.
+    if (signal === 'SIGKILL') {
+      this.#alive = false
+      for (const listener of this.#exits) listener(null, signal)
+      for (const listener of this.#closes) listener(null, signal)
+    }
     return true
   }
 
   on(event: 'error', listener: (error: Error) => void): unknown
-  on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
+  on(event: 'exit' | 'close', listener: (code: number | null, signal: string | null) => void): unknown
   on(
-    event: 'error' | 'exit',
+    event: 'error' | 'exit' | 'close',
     listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void),
   ): unknown {
     if (event === 'error') this.#errors.push(listener as (error: Error) => void)
-    else this.#exits.push(listener as (code: number | null, signal: string | null) => void)
+    else if (event === 'exit') this.#exits.push(listener as (code: number | null, signal: string | null) => void)
+    else this.#closes.push(listener as (code: number | null, signal: string | null) => void)
     return this
   }
 
-  /** exit is the child going away by itself. */
+  /** exit is the child going away by itself, its pipes drained: `exit`, then
+   * `close`, as Node reports them. */
   exit(code: number | null): void {
+    this.exitOnly(code)
+    this.close(code)
+  }
+
+  /** exitOnly is the process gone with its pipes still holding output: Node may
+   * emit `exit` before the last stdout chunk, and `close` only after it. */
+  exitOnly(code: number | null): void {
     this.#alive = false
     for (const listener of this.#exits) listener(code, null)
+  }
+
+  /** close is the pipes drained after an `exitOnly`. */
+  close(code: number | null): void {
+    for (const listener of this.#closes) listener(code, null)
   }
 
   /** fail is a spawn that never started (`ENOENT`). */
@@ -594,6 +614,173 @@ describe('a recording in progress', () => {
     const result = await recording.finished
     expect(result.exitCode).toBe(1)
     expect(result.records).toHaveLength(1)
+  })
+
+  it('reads until the pipes close, not until the process exits', async () => {
+    // Review round 3 of PR 478: the recording settled on `exit`, which Node may
+    // emit before the last stdout chunk, and a chunk after it was dropped.
+    const { stub, recording } = started()
+    stub.write('{"day":"2026-10-15"}\n')
+    stub.exitOnly(0)
+    stub.write('{"day":"2026-10-16"}\n')
+    stub.write('{"day":"2026-10-17"}')
+    stub.close(0)
+    const result = await recording.finished
+    expect(result.exitCode).toBe(0)
+    expect(result.records).toHaveLength(3)
+  })
+
+  it('still ends a recording whose pipes never close after the SIGKILL', async () => {
+    // A grandchild holding the pipe open would keep `close` from ever coming;
+    // the recording ends one grace period after the SIGKILL anyway.
+    const stub = new StubChild()
+    stub.kill = (signal: NodeJS.Signals = 'SIGTERM'): boolean => {
+      stub.signals.push(signal)
+      return true
+    }
+    const { timers, recording } = started(full('--duration', '30'), new FakeTimers(), stub)
+    stub.write('{"day":"2026-10-15"}\n')
+    timers.advanceTo(30_000 + SHUTDOWN_GRACE_MS)
+    expect(stub.signals).toEqual(['SIGTERM', 'SIGKILL'])
+    timers.advanceTo(30_000 + 2 * SHUTDOWN_GRACE_MS)
+    const result = await recording.finished
+    expect(result.records).toHaveLength(1)
+    expect(timers.scheduled).toEqual([])
+  })
+
+  it('keeps reading after the SIGKILL until the pipes close', async () => {
+    // Review round 4 of PR 478: the SIGKILL is not the end of the output. Node
+    // reports the exit, and the chunks still in the pipe arrive before `close`;
+    // a recording that settled at the signal would drop them.
+    const stub = new StubChild()
+    stub.kill = (signal: NodeJS.Signals = 'SIGTERM'): boolean => {
+      stub.signals.push(signal)
+      if (signal === 'SIGKILL') stub.exitOnly(null)
+      return true
+    }
+    const { timers, recording } = started(full('--duration', '30'), new FakeTimers(), stub)
+    let settled = false
+    void recording.finished.then(() => {
+      settled = true
+    })
+    stub.write('{"day":"2026-10-15"}\n')
+    timers.advanceTo(30_000 + SHUTDOWN_GRACE_MS)
+    expect(stub.signals).toEqual(['SIGTERM', 'SIGKILL'])
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    stub.write('{"day":"2026-10-16"}\n')
+    stub.write('{"day":"2026-10-17"}')
+    stub.close(null)
+    const result = await recording.finished
+    expect(result.refusal).toBeNull()
+    expect(result.records).toHaveLength(3)
+    expect(timers.scheduled).toEqual([])
+  })
+
+  it('waits for the pipes of a child that can no longer be signalled', async () => {
+    // A child that cannot be signalled has already exited, but its last chunks
+    // can still be in the pipe: the recording waits for `close` (or one grace
+    // period), it does not settle at once.
+    const stub = new StubChild()
+    stub.kill = (signal: NodeJS.Signals = 'SIGTERM'): boolean => {
+      stub.signals.push(signal)
+      return false
+    }
+    const { timers, recording } = started(full('--duration', '30'), new FakeTimers(), stub)
+    let settled = false
+    void recording.finished.then(() => {
+      settled = true
+    })
+    stub.write('{"day":"2026-10-15"}\n')
+    recording.stop()
+    expect(stub.signals).toEqual(['SIGTERM'])
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    stub.write('{"day":"2026-10-16"}\n')
+    stub.close(0)
+    const result = await recording.finished
+    expect(result.records).toHaveLength(2)
+    expect(timers.scheduled).toEqual([])
+  })
+
+  it('records nothing that arrives after a refusal', async () => {
+    // The refusal guard on stdout: once a frame is refused nothing is written,
+    // so nothing more is read either -- not even a document that would redact.
+    let documents = 0
+    const base = redactor()
+    const broken: Redactor = {
+      ...base,
+      redactDocument: (document) => {
+        documents += 1
+        return base.redactDocument(document)
+      },
+      redactText: () => {
+        throw new RedactionRefusal('the audit would not vouch for this sentence')
+      },
+    }
+    const { stub, timers, recording } = started(undefined, undefined, undefined, broken)
+    stub.write('{"day":"2026-10-15"}\n')
+    stub.write('a sentence the redactor refuses\n')
+    expect(stub.signals).toEqual(['SIGTERM'])
+    // The child ignores the SIGTERM and keeps writing.
+    stub.write('{"day":"2026-10-16"}\n')
+    stub.write('{"day":"2026-10-17"}\n')
+    expect(documents).toBe(1)
+    timers.advanceTo(SHUTDOWN_GRACE_MS)
+    const result = await recording.finished
+    expect(result.refusal).toBeInstanceOf(RedactionRefusal)
+    expect(result.records).toHaveLength(1)
+  })
+
+  it('keeps a final frame the child wrote without a newline, and still drops a torn one', async () => {
+    // Review round 2 of PR 478: a CLI whose last document had no terminating
+    // newline lost it, and when it was the only one the whole recording was
+    // refused. A frame that decodes as a whole document cannot be a torn
+    // write, so it is recorded; anything else at the end is still dropped.
+    const whole = started()
+    whole.stub.write('{"day":"2026-10-15"}')
+    whole.stub.exit(0)
+    const kept = await whole.recording.finished
+    expect(kept.refusal).toBeNull()
+    expect(kept.records).toEqual([{ at: '2026-10-15T12:00:00Z', document: { day: '2026-10-15' } }])
+
+    const torn = started()
+    torn.stub.write('{"day":"2026-10-15"}\n')
+    torn.stub.write('{"day":"2026-10-')
+    torn.stub.exit(0)
+    expect((await torn.recording.finished).records).toEqual([
+      { at: '2026-10-15T12:00:00Z', document: { day: '2026-10-15' } },
+    ])
+  })
+
+  it('redacts the unterminated final frame like any other', async () => {
+    const { stub, recording } = started()
+    stub.write('{"project":"fixture-sandbox"}')
+    stub.exit(0)
+    const result = await recording.finished
+    expect(result.records).toEqual([{ at: '2026-10-15T12:00:00Z', document: { project: PROJECT_MARKER } }])
+  })
+
+  it('takes a person out of a notice, even one written before the document that named them', async () => {
+    // Review round 2 of PR 478: a notice is free text, so the only people the
+    // redactor can find in it are the ones the recording's documents named --
+    // and a notice can come first. The recorder re-runs every notice through
+    // the redactor once the recording is over, with every person in hand.
+    const { stub, recording } = started()
+    stub.write('queued run 1234 by Dana Whitfield for review\n')
+    stub.write('{"runs":[{"requested_by":"Dana Whitfield"}]}\n')
+    stub.write('retrying for Dana Whitfield\n')
+    stub.exit(0)
+    const result = await recording.finished
+    expect(result.refusal).toBeNull()
+    const written = JSON.stringify(result.records)
+    expect(written).not.toContain('Whitfield')
+    expect(written).not.toContain('Dana')
+    const [first, document, last] = result.records
+    const pseudonym = (document as unknown as { document: { runs: { requested_by: string }[] } }).document.runs[0]?.requested_by
+    expect(pseudonym).toMatch(/^person-[0-9a-f]{8}$/)
+    expect(first).toEqual({ at: '2026-10-15T12:00:00Z', notice: `queued run 1234 by ${String(pseudonym)} for review` })
+    expect(last).toEqual({ at: '2026-10-15T12:00:00Z', notice: `retrying for ${String(pseudonym)}` })
   })
 
   it('reports a spawn that never started', async () => {

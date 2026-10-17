@@ -11,7 +11,7 @@
 //     in a sentence -- fails "repository names, in the field and in a sentence";
 //   - one that keeps `feat/...` fails "branch names";
 //   - one that keeps `/Users/<someone>/...` fails "filesystem paths";
-//   - one that keeps a `ghp_...` token, or the value of a key called `secret`,
+//   - one that keeps a forge-shaped token, or the value of a key called `secret`,
 //     fails "tokens, by shape and by key";
 //   - one that keeps `https://user:pw@host/...` fails "URLs with userinfo";
 //   - one that keeps the project's own name fails "the installation's own
@@ -28,6 +28,8 @@
 //     fails "fails closed on a frame it cannot parse".
 
 import { describe, expect, it } from 'vitest'
+
+import { inert } from '../support/fakeSecrets'
 
 import {
   ADDRESS_MARKER,
@@ -214,7 +216,7 @@ describe('the redactor', () => {
 
   it('redacts tokens, by shape and by key', () => {
     const out = doc({
-      runs: [{ message: 'pushing with ghp_ABCDEFGHIJKLMNOPQRSTUVWX' }],
+      runs: [{ message: `pushing with ${inert('gh', 'p_', 'ABCDEFGHIJKLMNOPQRSTUVWX')}` }],
       secrets: [{ name: 'GH_TOKEN', token: 'not-token-shaped-at-all' }],
       report: { authorization: 'Bearer abcdefghijklmnop', api_key: 'x' },
     })
@@ -302,7 +304,7 @@ describe('the redactor', () => {
         {
           title: 'feat/console-fixtures for ana@example.com at /Users/ana/src/fugaro',
           requested_by: 'ana@example.com',
-          message: 'ghp_ABCDEFGHIJKLMNOPQRSTUVWX',
+          message: inert('gh', 'p_', 'ABCDEFGHIJKLMNOPQRSTUVWX'),
         },
       ],
       pr_url: 'https://ana:s3cret@github.com/dimipaun/fugaro/pull/1',

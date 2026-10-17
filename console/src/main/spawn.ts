@@ -588,9 +588,21 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
 }
 
 /**
+ * COMMANDS_WITHOUT_PROJECT and COMMANDS_TAKING_DIR are rules 3 and 5 as the CLI
+ * states them, keyed by the *operation's* command (Task 1.2's table), not by the
+ * spawn row: `version` is the one command with no `--project`
+ * (`newVersionCmd` has no flags at all), and `doctor` is the one with a `--dir`.
+ * `assertSpawnSurface` holds every row's `takesProject` and `dirFlag` to these,
+ * so the columns `argvFor` keys off cannot drift from the rule.
+ */
+export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version'])
+export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
+
+/**
  * assertSpawnSurface fails a table that does not correspond one-to-one with the
  * operations Task 1.2 declared, drives something on the never-reachable table,
- * declares an argument the operation does not have, omits a flag it does fix, or
+ * declares an argument the operation does not have, omits a flag it does fix,
+ * gets `takesProject` or `dirFlag` wrong for its command (rules 3 and 5), or
  * emits a flag outside `SPAWN_FLAGS`. It takes the table as an argument so the
  * test can hand it the mutation directly -- a row for `budget kill`, a row that
  * drops `takesProject` from `watch` -- instead of the check being reachable only
@@ -621,6 +633,16 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
     }
     for (const flag of operation.flags) {
       if (!row.words.includes(flag)) refused(`${row.operation} fixes ${flag} and its argv does not carry it`)
+    }
+    const wantsProject = !COMMANDS_WITHOUT_PROJECT.includes(operation.command)
+    if (row.takesProject !== wantsProject) {
+      refused(
+        `${row.operation} ${wantsProject ? 'must carry' : 'must not carry'} ${PROJECT_FLAG}: every command but version takes it (rule 3)`,
+      )
+    }
+    const wantsDir = COMMANDS_TAKING_DIR.includes(operation.command)
+    if (row.dirFlag !== wantsDir) {
+      refused(`${row.operation} ${wantsDir ? 'must carry' : 'must not carry'} ${DIR_FLAG}: only doctor takes it (rule 5)`)
     }
     const declared = new Set<string>(operation.args.map((spec) => spec.key))
     for (const spec of row.args) {
@@ -880,6 +902,9 @@ export interface SpawnedChildLike {
   readonly stderr: ReadableLike | null
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
+  /** `close` comes after `exit`, once the child's stdio has drained: a reader
+   * that must see every byte (the fixture recorder) settles on it. */
+  on(event: 'close', listener: (code: number | null, signal: string | null) => void): unknown
   kill(signal?: NodeJS.Signals): boolean
 }
 
