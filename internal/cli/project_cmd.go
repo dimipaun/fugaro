@@ -17,7 +17,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -940,20 +939,7 @@ func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (in
 // policy until it finishes. A flag typed in advance must not be what stops a
 // run that is already running, so this asks for the name itself.
 func confirmRemovalStrict(cmd *cobra.Command, lc *localcfg.Config, what string) error {
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s: --yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", initflow.NeedsTerminal("the typed confirmation of this step"))
-	}
-	fmt.Fprintf(out, "Type %s to confirm: ", lc.Name)
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
-	}
-	if strings.TrimSpace(line) != lc.Name {
-		return userErr("not confirmed (the project's name was not typed); nothing was changed")
-	}
-	return nil
+	return confirmTypedStrict(cmd, lc, "--yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", what)
 }
 
 // confirmRemoval is confirmRemovalStrict where --yes may stand in for the

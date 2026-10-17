@@ -553,10 +553,10 @@ var (
 
 // ownerCommands are the commands only the user runs, and only from a
 // user-runs block: they change a budget, store a secret, or (init) apply.
-var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set"}
+var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro allow-delete"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro allow-delete", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.
