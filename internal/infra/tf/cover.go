@@ -84,8 +84,14 @@ var grantRules = map[string]map[string]who{
 		// cannot see).
 		customKey + DeployerRole:                  toDeployer,
 		customKey + DeployerScopedRole:            toDeployer,
+		// The whole-project inventory's read role (Task 4.1a, the owner's
+		// ruling of 2026-10-17): the installation's own custom role, granted
+		// to the operators who run a managed apply. The predefined
+		// roles/cloudasset.viewer is deliberately absent — a plan granting it,
+		// or any other Cloud Asset role, is refused, because viewer carries
+		// cloudasset.assets.listResource and the read makes no ListAssets call.
+		customKey + CloudAssetRole:                toPeople,
 		"roles/aiplatform.user":                   toAccounts,
-		"roles/cloudasset.viewer":                 toPeople,
 		"roles/datastore.user":                    toAccounts,
 		"roles/datastore.viewer":                  toPeople,
 		"roles/firebaseauth.admin":                toAccounts,
@@ -170,13 +176,30 @@ type Cover struct {
 	Ghcr, Owner string
 }
 
+// CloudAssetRole is the installation's whole-project inventory read role
+// (Task 4.1a of docs/plans/2026-10-16-managed-projects.md, the owner's ruling
+// of 2026-10-17): a custom role of the installation holding exactly
+// cloudasset.assets.searchAllResources, the one permission the whole-project
+// read's SearchAllResources call needs. The predefined roles/cloudasset.viewer
+// Task 4.1 first granted is deliberately not it — viewer also carries
+// cloudasset.assets.listResource and more — so the identity that runs the
+// inventory (the operator applying a managed plan, and through Task 1.5 the
+// deployer it impersonates) gains the read and no write.
+//
+// The module declares it beside the launcher's and job runner's roles
+// (installation/iam.tf) and grants it to the operators; RolePermissions pins
+// its one permission, so a plan that creates or updates the role with any
+// other is refused, and TestRolePinsAreTheModules fails when the module's list
+// and this one differ.
+const CloudAssetRole = "fugaroCloudAssetReader"
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) is
 // deliberately NOT among FugaroAccounts: it holds its two roles and nothing
 // else, so it is its own kind of principal (toDeployer).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", DeployerRole, DeployerScopedRole}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", CloudAssetRole, DeployerRole, DeployerScopedRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer"}
 )
 
@@ -359,6 +382,11 @@ var RolePermissions = map[string][]string{
 	"fugaroTagMover":       {"artifactregistry.tags.delete"},
 	"fugaroTokenMinter":    {"iam.serviceAccounts.signJwt"},
 	"fugaroHistory":        {"run.executions.list", "run.executions.get", "run.jobs.get", "run.jobs.list", "run.operations.get"},
+	// The whole-project inventory's read role (Task 4.1a, the owner's ruling
+	// of 2026-10-17): the one permission SearchAllResources needs, and nothing
+	// else — no write, and no cloudasset.assets.listResource, which belongs to
+	// the wider predefined role this replaced.
+	CloudAssetRole: {"cloudasset.assets.searchAllResources"},
 	// The deployer's two roles (D75, Task 1.5). They are not installation
 	// roles: nothing a run does needs them, and their bound is the split
 	// between them — creation, reads and serviceusage.services.enable here,

@@ -305,7 +305,7 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// the managed apply that makes the read: the installation's own custom
 		// role, holding cloudasset.assets.searchAllResources alone (Task 4.1a,
 		// the owner's ruling of 2026-10-17).
-		{project, "projects/proj-1/roles/fugaroCloudAssetReader", person, true},
+		{project, "projects/proj-1/roles/" + CloudAssetRole, person, true},
 		{project, "roles/firebasedatabase.admin", account, true},
 		{project, "roles/logging.logWriter", account, true},
 		{sacct, "projects/fp-2/roles/fugaroTokenMinter", person, true},
@@ -336,7 +336,7 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// make (Task 4.1a).
 		{project, "roles/cloudasset.viewer", person, false},
 		{project, "roles/cloudasset.owner", person, false},
-		{project, "projects/proj-1/roles/fugaroCloudAssetReader", account, false},
+		{project, "projects/proj-1/roles/" + CloudAssetRole, account, false},
 		{project, "roles/firebaseauth.admin", person, false},
 		{project, "roles/aiplatform.user", person, false},
 		{sacct, "projects/proj-1/roles/fugaroTokenMinter", account, false},
@@ -458,6 +458,47 @@ func TestDeployerRolesAndAccountAreTheDeployersAlone(t *testing.T) {
 				t.Fatalf("NotCovered = %q, covered want %v", got, c.covered)
 			}
 		})
+	}
+}
+
+// The whole-project inventory's read role is the installation's own custom
+// role, holding exactly the one permission SearchAllResources needs and no
+// other (Task 4.1a, the owner's ruling of 2026-10-17). The wider predefined
+// role Task 4.1 first granted is gone from the table: no Cloud Asset role but
+// this one is covered, on any type, and this one is held by people alone. A pin
+// that gained cloudasset.assets.listResource, or a row that readmitted a
+// predefined Cloud Asset role, would hand every operator a read the inventory
+// never makes — ListAssets is not called anywhere.
+func TestCloudAssetRoleIsTheSearchReadOnly(t *testing.T) {
+	want := []string{"cloudasset.assets.searchAllResources"}
+	if got := RolePermissions[CloudAssetRole]; !slices.Equal(got, want) {
+		t.Errorf("RolePermissions[%s] = %v, want exactly %v", CloudAssetRole, got, want)
+	}
+	if !slices.Contains(FugaroRoles, CloudAssetRole) {
+		t.Errorf("FugaroRoles does not name %s, so a grant of the role the module creates is refused", CloudAssetRole)
+	}
+	if w := grantRules["google_project_iam_member"][customKey+CloudAssetRole]; w != toPeople {
+		t.Errorf("google_project_iam_member %s is held by %d, want people alone", CloudAssetRole, w)
+	}
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if !strings.Contains(key, "cloudasset") {
+				continue
+			}
+			if key != customKey+CloudAssetRole {
+				t.Errorf("%s %s is covered: the inventory's read is the installation's own %s, and no Cloud Asset role but it", typ, key, CloudAssetRole)
+			}
+			if w&toAccounts != 0 || w&toDeployer != 0 {
+				t.Errorf("%s %s may be held by an account or the deployer, want people alone", typ, key)
+			}
+		}
+	}
+	for _, id := range FugaroRoles {
+		for _, p := range RolePermissions[id] {
+			if strings.HasPrefix(p, "cloudasset.") && p != "cloudasset.assets.searchAllResources" {
+				t.Errorf("%s holds %s: the installation's only Cloud Asset permission is the search read", id, p)
+			}
+		}
 	}
 }
 
