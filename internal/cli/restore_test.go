@@ -664,16 +664,16 @@ func TestRestoreNamesWhatItDoesNotBringBack(t *testing.T) {
 		"spend history",     // the spend history
 		"kill switch",       // and the kill-switch state
 		"Firestore", "RTDB", // the application data
-		"location",                  // the Firestore database's location, which is permanent
-		"secret",                    // any secret value
-		"plan file",                 // the plan files that were never stored
-		"fugaro/allow-delete.json",  // the owner-written delete list
-		"fugaro allow-delete",       // and the command that writes it again
-		"fugaro config publish",     // the project layer
-		"project-layer.yaml",        //
-		"fugaro recipes publish",    // and the project's recipes
-		"fugaro/recipes/",           //
-		initProject,                 // the old project is named: the reader has to be able to look there
+		"location",                 // the Firestore database's location, which is permanent
+		"secret",                   // any secret value
+		"plan file",                // the plan files that were never stored
+		"fugaro/allow-delete.json", // the owner-written delete list
+		"fugaro allow-delete",      // and the command that writes it again
+		"fugaro config publish",    // the project layer
+		"project-layer.yaml",       //
+		"fugaro recipes publish",   // and the project's recipes
+		"fugaro/recipes/",          //
+		initProject,                // the old project is named: the reader has to be able to look there
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the not-restored list does not name %q:\n%s", want, text)
