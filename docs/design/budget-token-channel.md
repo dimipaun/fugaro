@@ -47,7 +47,9 @@ deletes the earlier object first (D17); the launcher's own errors are redacted o
 object moves to `tokens/<slug>/<run>/budget-token` (`token.ObjectPrefix`), `PutObject` has no
 plaintext form, and the take is read-only — no delete, no fallback keyed on a 403 (§7.2). A mixed
 fleet fails closed both ways: the launcher refuses to mint against a job image whose release base
-predates `sealSince` (the gate D19 allows), and a runner handed a marker of `1` — a launcher from
+predates `sealSince` (the gate D19 allows) — and, on the owner's answer of 2026-10-17, against a
+development image whose build record says it was built before the seal's runner half
+(`sealRunnerIntroduced`), while any other development image only warns — and a runner handed a marker of `1` — a launcher from
 before the seal — refuses at the take with the old side named, never reading a plaintext object.
 The grants moved with the object (§7.2, §7.5): the job account's `tokens/<slug>/` is
 `roles/storage.objectViewer` (`google_storage_bucket_iam_member.job_tokens`, in the workflow
