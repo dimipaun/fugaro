@@ -139,33 +139,21 @@ func TestInventoryReadThatFailsFallsBack(t *testing.T) {
 // No read at all is a fallback too, and it is not attempted: a check that
 // cannot run means ask for confirmation, never "clean" (Global Constraint 3).
 func TestInventoryNoReadFallsBack(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		in   Inventory
-	}{{
-		"no read",
-		Inventory{Project: project, GCPProject: gcpProject},
-	}, {
-		"no project",
-		inventory(&fakeAssets{}),
-	}} {
-		t.Run(tc.name, func(t *testing.T) {
-			in := tc.in
-			if tc.name == "no project" {
-				in.GCPProject = ""
-			}
-			d := in.Check(context.Background())
-			if !d.Fallback || d.Cause != CauseNoReader {
-				t.Fatalf("decided %+v, want a fallback with cause %q", d, CauseNoReader)
-			}
-			if strings.Contains(d.Why, "confirmation") == false {
-				t.Errorf("the warning does not say what happens next: %s", d.Why)
-			}
-		})
+	// No reader at all.
+	d := Inventory{Project: project, GCPProject: gcpProject}.Check(context.Background())
+	if !d.Fallback || d.Cause != CauseNoReader {
+		t.Fatalf("decided %+v, want a fallback with cause %q", d, CauseNoReader)
 	}
-	// A read that is asked about no project is not asked at all.
+	if !strings.Contains(d.Why, "confirmation") {
+		t.Errorf("the warning does not say what happens next: %s", d.Why)
+	}
+
+	// A reader, but no project to read it for: the read is not made at all.
 	a := &fakeAssets{}
-	Inventory{Project: project, Assets: a}.Check(context.Background())
+	d = Inventory{Project: project, Assets: a}.Check(context.Background())
+	if !d.Fallback || d.Cause != CauseNoReader {
+		t.Fatalf("decided %+v, want a fallback with cause %q", d, CauseNoReader)
+	}
 	if len(a.calls) != 0 {
 		t.Errorf("the read was called %v for no project", a.calls)
 	}
