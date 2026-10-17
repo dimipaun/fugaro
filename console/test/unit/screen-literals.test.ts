@@ -52,12 +52,18 @@
 // naming it (`MUTATION` below runs the same scan over a doctored copy), and one
 // doctored copy per way around the `literal(` scan.
 
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, relative, sep } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
 const SCREENS = join(__dirname, '..', '..', 'src', 'renderer', 'screens')
+
+/** SHARED is the other directory that may draw: `src/shared` already holds one
+ * drawer (`version.ts`), and a module added there with a `literal` of its own
+ * would be a place this scan exists for. */
+const SHARED = join(__dirname, '..', '..', 'src', 'shared')
 
 /** SINKS are the functions whose argument is written to the screen unsanitized,
  * with the index of that argument. `note` is `projects.ts`'s wrapper around
@@ -589,22 +595,88 @@ function attributeOtherUses(code: string): number[] {
   return out
 }
 
-const FILES = readdirSync(SCREENS).filter((name) => name.endsWith('.ts'))
+/** SOURCE_EXTENSIONS is every extension a module that could draw may have. A
+ * single `.ts` test was the review's finding: a drawer added as `x.tsx` or
+ * `x.mts` was neither scanned nor noticed, so the defect this file exists for
+ * could be reintroduced in a new file with the suite green. */
+const SOURCE_EXTENSIONS: readonly string[] = Object.freeze(['.ts', '.tsx', '.mts', '.cts'])
 
-/** SHARED_DRAWER is the one file outside `src/renderer/screens` that writes to
- * the console's document: `src/shared/version.ts`, which draws the version skew
- * banner and the refusal screen (Task 3.2). It paths through `SCREENS` so that
- * every read and every vocabulary lookup in this file finds it the same way it
- * finds a screen.
- *
- * A new file with a `literal` of its own is a new place for the defect the
- * review of Task 2.3 found four times, so the same scan reads it: the reason
- * `offences` takes a file argument at all is that this list could grow. */
+/**
+ * walkFiles lists every module under `directory`, **recursively**, as a path
+ * relative to `from`. A walk rather than a one-level `readdirSync`: the review
+ * found that `screens/<sub>/x.ts` -- and any extension this file did not name --
+ * was invisible to the scan, and a drawer in a directory nobody listed is the
+ * Task 2.3 defect back again in a new file. Paths are returned with `/` on every
+ * platform, because they are keys into the vocabulary tables below.
+ */
+function walkFiles(directory: string, from: string = directory): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) out.push(...walkFiles(path, from))
+    else if (SOURCE_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) {
+      out.push(relative(from, path).split(sep).join('/'))
+    }
+  }
+  return out
+}
+
+/** SCREEN_FILES are the screens, and they are the files that must each have a
+ * sink call: an empty or renamed scan must fail rather than pass quietly. */
+const SCREEN_FILES: readonly string[] = Object.freeze(
+  walkFiles(SCREENS).sort((a, b) => a.localeCompare(b)),
+)
+
+/** SHARED_FILES are the modules outside `src/renderer/screens` that may draw --
+ * `src/shared/version.ts` does, and draws the version skew banner and the
+ * refusal screen (Task 3.2). They are scanned exactly as a screen is, but they
+ * are not required to have a sink: most of them draw nothing at all. Their paths
+ * are relative to `SCREENS` (`../../shared/version.ts`), so every read and every
+ * vocabulary lookup in this file finds them the way it finds a screen. */
+const SHARED_FILES: readonly string[] = Object.freeze(
+  walkFiles(SHARED, SCREENS).sort((a, b) => a.localeCompare(b)),
+)
+
+/** FILES is everything the scan reads: the screens, and the shared modules. */
+const FILES: readonly string[] = Object.freeze([...SCREEN_FILES, ...SHARED_FILES])
+
+/** SHARED_DRAWER is the shared module that draws today, kept as its own name
+ * because the block below is about it. */
 const SHARED_DRAWER = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
   it('reads the five screens', () => {
-    expect(FILES.sort()).toEqual(['degraded.ts', 'live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
+    expect([...SCREEN_FILES]).toEqual(['degraded.ts', 'live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
+  })
+
+  it('reads the shared modules as well, so a drawer outside the screens is scanned', () => {
+    expect([...SHARED_FILES]).toEqual([
+      '../../shared/availability.ts',
+      '../../shared/replay.ts',
+      '../../shared/sanitize.ts',
+      '../../shared/schema.ts',
+      '../../shared/stringify.ts',
+      '../../shared/version.ts',
+    ])
+    expect(FILES).toContain(SHARED_DRAWER)
+  })
+
+  it('walks into subdirectories and reads every module extension (MUTATION)', () => {
+    // The review's finding, as a test: with the one-level `.ts` listing this
+    // walk replaces, none of these files was found -- a nested `range.ts`, a
+    // `panel.tsx`, a `sink.mts`. The tree is a temporary directory rather than
+    // the repository's own, so the test proves the walk without adding a file
+    // to `src/` for the walk to find.
+    const root = mkdtempSync(join(tmpdir(), 'fugaro-console-scan-'))
+    mkdirSync(join(root, 'spend'), { recursive: true })
+    mkdirSync(join(root, 'panels', 'deep'), { recursive: true })
+    writeFileSync(join(root, 'live.ts'), '')
+    writeFileSync(join(root, 'spend', 'range.ts'), '')
+    writeFileSync(join(root, 'panels', 'deep', 'bar.mts'), '')
+    writeFileSync(join(root, 'panel.tsx'), '')
+    writeFileSync(join(root, 'notes.md'), '') // not a module: not scanned
+    writeFileSync(join(root, 'spend', 'data.json'), '')
+    expect(walkFiles(root).sort()).toEqual(['live.ts', 'panel.tsx', 'panels/deep/bar.mts', 'spend/range.ts'])
   })
 
   it('hands literal no document-controlled argument', () => {
@@ -637,7 +709,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
   })
 
   it('finds a sink call in every screen, so an empty scan cannot pass', () => {
-    for (const file of FILES) {
+    for (const file of SCREEN_FILES) {
       expect(sinkCalls(readFileSync(join(SCREENS, file), 'utf8')).length, file).toBeGreaterThan(2)
     }
   })
