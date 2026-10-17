@@ -22,9 +22,10 @@
 //
 //   id      string, required. The explicit message id D110 supersedes D49
 //           with: P1.1 dedupes on (sender, id). It is a Realtime Database
-//           node key — a message lives at <mailbox>/<message>/<id> — so it is
-//           held to the tree's own key rule (see FORBIDDEN_KEY_CHARS) and to
-//           the key length bound the rules already carry.
+//           node key — a message is stored under its own id, in whichever
+//           inbox or outbox node P2.1's template chooses (the plan's C3) — so
+//           it is held to the tree's own key rule (see FORBIDDEN_KEY_CHARS)
+//           and to the key length bound the rules already carry.
 //   sender  string, required. The writer's identity, opaque to the schema:
 //           P1.1 does not dedupe an id from a different sender against one
 //           already seen, and P2.1's rules are what bind this value to the

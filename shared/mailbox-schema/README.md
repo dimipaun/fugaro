@@ -44,8 +44,9 @@ the absence of the field rather than a false one.
 
 ### Why the id is a database key and the sender is not
 
-A message lives at the mailbox's message node under **its own id**, so the id is a
-Realtime Database node key. The rule applied to it is the tree's own, ported rather
+A message is stored under **its own id**, in whichever inbox or outbox node P2.1's
+template chooses (the plan's own choice **C3**), so the id is a Realtime Database node
+key. The rule applied to it is the tree's own, ported rather
 than invented: `internal/budget`'s `Key`/`Unkey` treat a string as a valid key exactly
 when it contains none of `%` (the escape `Unkey` parses), `.`, `$`, `#`, `[`, `]`, `/`
 and no control character including DEL. An id the database cannot hold is not an id,
