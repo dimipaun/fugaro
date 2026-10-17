@@ -39,9 +39,10 @@
 //
 // **Fail closed.** Every input is either exactly the shape documented here or
 // a refusal carrying a code of its own: an unknown field, a missing one, a
-// wrong type, a blank, padded, invisible or oversize holder, a timestamp that
-// is not a whole number of milliseconds, a TTL that is not a positive whole
-// number of milliseconds, and a held claim this module cannot read. Nothing is
+// wrong type, a blank, padded, invisible, look-alike, non-NFC or oversize
+// holder, a timestamp that is not a whole number of milliseconds from 1 to
+// MAX_TIMESTAMP, a TTL that is not one from 1 to MAX_TTL, and a held claim
+// this module cannot read. Every input object is read once (`snapshot`). Nothing is
 // coerced, nothing is defaulted, and nothing is "close
 // enough" -- a timestamp that arrives as a string is refused rather than
 // parsed, because a guessed timestamp is how a lease goes stale early.
@@ -59,6 +60,26 @@
  * its own.
  */
 export const CLAIM_TTL = 10 * 60 * 1000;
+
+/**
+ * How far ahead of the caller's clock a held lease's timestamp may be and
+ * still be honoured, in milliseconds: five minutes. Two clocks disagree, so a
+ * lease a little ahead is not evidence of a dead holder; but a lease ahead by
+ * more than this is treated as EXPIRED and may be taken over, because
+ * "ahead" without a bound lets one holder (`at: MAX_TIMESTAMP`) block every
+ * other until it chooses to release. An owner-reviewable decision; the
+ * alternative is to refuse the far-future take instead (see README).
+ */
+export const MAX_CLOCK_SKEW = 5 * 60 * 1000;
+
+/**
+ * The latest instant a lease timestamp may name: 2100-01-01T00:00:00Z, in
+ * milliseconds since the epoch. Anything later is refused as `bad-timestamp`.
+ */
+export const MAX_TIMESTAMP = Date.UTC(2100, 0, 1);
+
+/** The longest TTL a lease state may carry: one day, in milliseconds. */
+export const MAX_TTL = 24 * 60 * 60 * 1000;
 
 /**
  * The longest holder this module accepts. The CLI's bound is the bucket's
@@ -112,7 +133,19 @@ const RELEASE_FIELDS = ['holder'];
 // RuneError, and a JS string can hold one where a Go string cannot), and
 // `Printable`'s tab is not exempt here. It has to print something readable;
 // a holder is an identity and has nothing to print.
-const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
+//
+// Beyond `Printable`, so that two holders that print the same cannot differ:
+// **every** whitespace code point (`\p{White_Space}`, which includes all of
+// **Zs**, so a holder has no spaces at all), the default-ignorable code points
+// (variation selectors, the combining grapheme joiner, the Hangul fillers),
+// U+2800 BRAILLE PATTERN BLANK and the Hangul fillers by name (they print as
+// blank and are letters or symbols, not spaces), **Co** (private use, which
+// prints as whatever a font chooses) and **Cn** (unassigned, which prints as
+// nothing in particular -- per the Unicode version of the running engine).
+// A holder must also already be NFC: a non-NFC holder is refused, not
+// normalized, since normalizing it would make two inputs one identity.
+const NON_PRINTABLE =
+  /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Z}\p{White_Space}\p{Default_Ignorable_Code_Point}\u2800\u115F\u1160\u3164\uFFA0]/u;
 
 function refusal(code, message, extra) {
   return Object.freeze({ ok: false, code, message, ...extra });
@@ -124,20 +157,28 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-/** The first field of `value` that `allowed` does not name, or null. */
-function unknownField(value, allowed) {
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) return key;
+/**
+ * Read a plain object's fields **exactly once** each, into a frozen copy that
+ * every later check and every result is built from. A getter (or a Proxy)
+ * that answered one value to the validation and another to the comparison
+ * would otherwise pass as one lease and act as another, so nothing below
+ * reads an input object twice. Answers `{ ok: true, fields }`, or a refusal
+ * for a non-object, an unknown field or a missing one.
+ */
+function snapshot(value, fields, what) {
+  if (!isPlainObject(value)) return refusal(LEASE_CODES.BAD_TYPE, `${what} is a plain object`);
+  const keys = Object.getOwnPropertyNames(value);
+  for (const key of keys) {
+    if (!fields.includes(key)) {
+      return refusal(LEASE_CODES.UNKNOWN_FIELD, `${what} has no field ${JSON.stringify(key)}`);
+    }
   }
-  return null;
-}
-
-/** The first field of `required` that `value` does not carry, or null. */
-function missingField(value, required) {
-  for (const key of required) {
-    if (!Object.hasOwn(value, key)) return key;
+  for (const key of fields) {
+    if (!keys.includes(key)) return refusal(LEASE_CODES.MISSING_FIELD, `${what} has no ${key}`);
   }
-  return null;
+  const copy = {};
+  for (const key of fields) copy[key] = value[key];
+  return Object.freeze({ ok: true, fields: Object.freeze(copy) });
 }
 
 function validateHolder(holder) {
@@ -153,8 +194,11 @@ function validateHolder(holder) {
   if (NON_PRINTABLE.test(holder)) {
     return refusal(
       LEASE_CODES.BAD_HOLDER,
-      'a lease holder carries no control, format or line-separator characters',
+      'a lease holder carries no whitespace, control, format, ignorable, blank-looking, private-use or unassigned characters',
     );
+  }
+  if (holder.normalize('NFC') !== holder) {
+    return refusal(LEASE_CODES.BAD_HOLDER, 'a lease holder is in Unicode NFC form');
   }
   if (holder.length > MAX_HOLDER_LENGTH) {
     return refusal(LEASE_CODES.OVERSIZE, `a lease holder is at most ${MAX_HOLDER_LENGTH} characters`);
@@ -162,16 +206,20 @@ function validateHolder(holder) {
   return Object.freeze({ ok: true, holder });
 }
 
-/** A whole, positive number of milliseconds: a timestamp and a TTL. */
-function isWholeMilliseconds(value) {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+/**
+ * A whole number of milliseconds from 1 to `max`, inclusive: a timestamp
+ * (`max` is MAX_TIMESTAMP) and a TTL (`max` is MAX_TTL). Zero and -0 are
+ * refused -- `Number.isSafeInteger(-0)` is true, and `-0 >= 1` is false.
+ */
+function isBoundedMilliseconds(value, max) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= max;
 }
 
 function validateTimestamp(at) {
-  if (typeof at !== 'number' || !Number.isSafeInteger(at) || at < 0) {
+  if (!isBoundedMilliseconds(at, MAX_TIMESTAMP)) {
     return refusal(
       LEASE_CODES.BAD_TIMESTAMP,
-      'a lease timestamp is a whole number of milliseconds since the epoch',
+      `a lease timestamp is a whole number of milliseconds since the epoch, from 1 to ${MAX_TIMESTAMP}`,
     );
   }
   return Object.freeze({ ok: true, at });
@@ -183,20 +231,11 @@ function validateTimestamp(at) {
  * object with a third field.
  */
 export function validateLease(value) {
-  if (!isPlainObject(value)) {
-    return refusal(LEASE_CODES.BAD_TYPE, 'a lease is a plain object with a holder and a timestamp');
-  }
-  const unknown = unknownField(value, LEASE_FIELDS);
-  if (unknown !== null) {
-    return refusal(LEASE_CODES.UNKNOWN_FIELD, `a lease has no field ${JSON.stringify(unknown)}`);
-  }
-  const missing = missingField(value, LEASE_FIELDS);
-  if (missing !== null) {
-    return refusal(LEASE_CODES.MISSING_FIELD, `a lease has no ${missing}`);
-  }
-  const holder = validateHolder(value.holder);
+  const snap = snapshot(value, LEASE_FIELDS, 'a lease');
+  if (!snap.ok) return snap;
+  const holder = validateHolder(snap.fields.holder);
   if (!holder.ok) return holder;
-  const at = validateTimestamp(value.at);
+  const at = validateTimestamp(snap.fields.at);
   if (!at.ok) return at;
   return Object.freeze({
     ok: true,
@@ -226,29 +265,18 @@ export function emptyLeaseState(ttl = CLAIM_TTL) {
  * one.
  */
 function readState(state) {
-  if (!isPlainObject(state)) {
-    return refusal(
-      LEASE_CODES.BAD_TYPE,
-      'a lease state is a plain object holding one claim and one TTL',
-    );
-  }
-  const unknown = unknownField(state, STATE_FIELDS);
-  if (unknown !== null) {
-    return refusal(LEASE_CODES.UNKNOWN_FIELD, `a lease state has no field ${JSON.stringify(unknown)}`);
-  }
-  const missing = missingField(state, STATE_FIELDS);
-  if (missing !== null) {
-    return refusal(LEASE_CODES.MISSING_FIELD, `a lease state has no ${missing}`);
-  }
-  if (!isWholeMilliseconds(state.ttl)) {
+  const snap = snapshot(state, STATE_FIELDS, 'a lease state');
+  if (!snap.ok) return snap;
+  const { claim, ttl } = snap.fields;
+  if (!isBoundedMilliseconds(ttl, MAX_TTL)) {
     return refusal(
       LEASE_CODES.BAD_TTL,
-      'a lease TTL is a positive whole number of milliseconds',
+      `a lease TTL is a whole number of milliseconds from 1 to ${MAX_TTL}`,
     );
   }
-  if (state.claim === null) return Object.freeze({ ok: true, claim: null, ttl: state.ttl });
+  if (claim === null) return Object.freeze({ ok: true, claim: null, ttl });
 
-  const held = validateLease(state.claim);
+  const held = validateLease(claim);
   if (!held.ok) {
     // Deliberately stricter than the CLI. `takeClaim` treats an unreadable
     // claim as stale and takes it over, and it may: its read carries a
@@ -263,7 +291,7 @@ function readState(state) {
       { because: held.code },
     );
   }
-  return Object.freeze({ ok: true, claim: held.lease, ttl: state.ttl });
+  return Object.freeze({ ok: true, claim: held.lease, ttl });
 }
 
 /** Re-attach the state to a refusal, so a caller can keep threading it. */
@@ -287,6 +315,20 @@ export function readLease(state) {
 }
 
 /**
+ * Is the held lease `current` still fresh at the caller's instant `at`?
+ *
+ * Fresh is the CLI's rule (`takeClaim`: `now.Sub(cur.At) < claimTTL`) with
+ * one bound added: a lease timestamped ahead of `at` by MORE than
+ * MAX_CLOCK_SKEW is not fresh. Within the tolerance a lease ahead of the
+ * caller is fresh, as before, and only until its own timestamp plus the TTL.
+ * Both timestamps are bounded by MAX_TIMESTAMP, so the subtractions are exact.
+ */
+function isFresh(current, at, ttl) {
+  if (current.at - at > MAX_CLOCK_SKEW) return false;
+  return at - current.at < ttl;
+}
+
+/**
  * Take the lease, or be told who holds it.
  *
  * `request` is `{ holder, at }`: `at` is the caller's own reading of the
@@ -299,9 +341,10 @@ export function readLease(state) {
  * holds it and the state's TTL has not run out. A held lease is stale -- and
  * so takeable -- when the caller's `at` is at least the TTL past the held
  * one, which is the CLI's own boundary (`takeClaim`: fresh is `now.Sub(cur.At)
- * < claimTTL`). A held lease timestamped **ahead** of the caller's clock is
- * therefore fresh rather than stale: a negative age is two clocks
- * disagreeing, not a dead holder.
+ * < claimTTL`). A held lease timestamped **ahead** of the caller's clock by
+ * at most MAX_CLOCK_SKEW is fresh rather than stale -- a small negative age
+ * is two clocks disagreeing, not a dead holder -- and one ahead by more than
+ * that is treated as expired, so no timestamp can hold a lease forever.
  *
  * A holder that already holds the lease is answered `already-claimed` too,
  * whatever its holder string: `Store.Claim` answers ErrExists to a second
@@ -314,34 +357,16 @@ export function takeLease(state, request) {
   const held = readState(state);
   if (!held.ok) return refusalWithState(held, state);
 
-  if (!isPlainObject(request)) {
-    return refusalWithState(
-      refusal(LEASE_CODES.BAD_TYPE, 'a take request is a plain object'),
-      state,
-    );
-  }
-  const unknown = unknownField(request, TAKE_FIELDS);
-  if (unknown !== null) {
-    return refusalWithState(
-      refusal(LEASE_CODES.UNKNOWN_FIELD, `a take request has no field ${JSON.stringify(unknown)}`),
-      state,
-    );
-  }
-  const missing = missingField(request, TAKE_FIELDS);
-  if (missing !== null) {
-    return refusalWithState(
-      refusal(LEASE_CODES.MISSING_FIELD, `a take request has no ${missing}`),
-      state,
-    );
-  }
-  const holder = validateHolder(request.holder);
+  const snap = snapshot(request, TAKE_FIELDS, 'a take request');
+  if (!snap.ok) return refusalWithState(snap, state);
+  const holder = validateHolder(snap.fields.holder);
   if (!holder.ok) return refusalWithState(holder, state);
-  const at = validateTimestamp(request.at);
+  const at = validateTimestamp(snap.fields.at);
   if (!at.ok) return refusalWithState(at, state);
 
   const mine = Object.freeze({ holder: holder.holder, at: at.at });
   const current = held.claim;
-  if (current !== null && mine.at - current.at < held.ttl) {
+  if (current !== null && isFresh(current, mine.at, held.ttl)) {
     return Object.freeze({
       ok: false,
       code: LEASE_CODES.ALREADY_CLAIMED,
@@ -371,29 +396,9 @@ export function releaseLease(state, request) {
   const held = readState(state);
   if (!held.ok) return refusalWithState(held, state);
 
-  if (!isPlainObject(request)) {
-    return refusalWithState(
-      refusal(LEASE_CODES.BAD_TYPE, 'a release request is a plain object'),
-      state,
-    );
-  }
-  const unknown = unknownField(request, RELEASE_FIELDS);
-  if (unknown !== null) {
-    return refusalWithState(
-      refusal(
-        LEASE_CODES.UNKNOWN_FIELD,
-        `a release request has no field ${JSON.stringify(unknown)}`,
-      ),
-      state,
-    );
-  }
-  if (missingField(request, RELEASE_FIELDS) !== null) {
-    return refusalWithState(
-      refusal(LEASE_CODES.MISSING_FIELD, 'a release request has no holder'),
-      state,
-    );
-  }
-  const holder = validateHolder(request.holder);
+  const snap = snapshot(request, RELEASE_FIELDS, 'a release request');
+  if (!snap.ok) return refusalWithState(snap, state);
+  const holder = validateHolder(snap.fields.holder);
   if (!holder.ok) return refusalWithState(holder, state);
 
   const current = held.claim;

@@ -51,7 +51,10 @@ import test from 'node:test';
 import {
   CLAIM_TTL,
   LEASE_CODES,
+  MAX_CLOCK_SKEW,
   MAX_HOLDER_LENGTH,
+  MAX_TIMESTAMP,
+  MAX_TTL,
   emptyLeaseState,
   readLease,
   releaseLease,
@@ -123,16 +126,77 @@ test('a lease past its TTL can be taken', () => {
   assert.equal(later.lease.holder, 'consumer-c');
 });
 
-test('a claim timestamped in the future is never stale', () => {
-  // Two clocks can disagree. A negative age is not evidence that the holder
-  // died, so it is refused rather than taken over: the failure mode of
-  // getting this direction wrong is two consumers on one message.
-  const ahead = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT + 10 * CLAIM_TTL });
-  assert.equal(ahead.ok, true);
+test('a claim timestamped ahead of the caller is fresh only within the skew tolerance', () => {
+  // Two clocks can disagree, so a lease a little ahead of the caller's clock
+  // is not evidence that its holder died. But "ahead" without a bound is a
+  // denial of service: a holder that writes `at: Number.MAX_SAFE_INTEGER`
+  // (or any far-future instant) would block every other holder until it
+  // chose to release. The ruling: ahead by more than MAX_CLOCK_SKEW is
+  // treated as EXPIRED, and within it the lease is fresh only until its own
+  // timestamp plus the TTL, as usual.
+  assert.equal(MAX_CLOCK_SKEW, 5 * 60 * 1000);
 
-  const now = takeLease(ahead.state, { holder: 'consumer-b', at: AT });
-  assert.equal(now.ok, false);
-  assert.equal(now.code, 'already-claimed');
+  // Ahead by exactly the tolerance: still fresh.
+  const atSkew = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT + MAX_CLOCK_SKEW });
+  assert.equal(atSkew.ok, true);
+  const refused = takeLease(atSkew.state, { holder: 'consumer-b', at: AT });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'already-claimed');
+
+  // ...and fresh only until its own timestamp plus the TTL.
+  const lastFresh = takeLease(atSkew.state, {
+    holder: 'consumer-b',
+    at: AT + MAX_CLOCK_SKEW + CLAIM_TTL - 1,
+  });
+  assert.equal(lastFresh.code, 'already-claimed');
+  const stale = takeLease(atSkew.state, { holder: 'consumer-b', at: AT + MAX_CLOCK_SKEW + CLAIM_TTL });
+  assert.equal(stale.ok, true);
+
+  // Ahead by one millisecond more than the tolerance: expired, taken over.
+  const beyond = takeLease(emptyLeaseState(), {
+    holder: 'consumer-a',
+    at: AT + MAX_CLOCK_SKEW + 1,
+  });
+  const takeover = takeLease(beyond.state, { holder: 'consumer-b', at: AT });
+  assert.equal(takeover.ok, true);
+  assert.equal(takeover.lease.holder, 'consumer-b');
+  assert.equal(takeover.lease.at, AT);
+
+  // The far-future lease (the DoS) is taken over, not obeyed.
+  const far = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: MAX_TIMESTAMP });
+  assert.equal(far.ok, true);
+  assert.equal(takeLease(far.state, { holder: 'consumer-b', at: AT }).ok, true);
+});
+
+test('a timestamp and a TTL are bounded: finite whole milliseconds, at least 1, at most the ceiling', () => {
+  // The ceiling is 2100-01-01T00:00:00Z in milliseconds, and the TTL's is a day.
+  assert.equal(MAX_TIMESTAMP, Date.UTC(2100, 0, 1));
+  assert.equal(MAX_TTL, 24 * 60 * 60 * 1000);
+
+  for (const at of [0, -0, -1, MAX_TIMESTAMP + 1, Number.MAX_SAFE_INTEGER, Number.POSITIVE_INFINITY]) {
+    assert.equal(
+      validateLease({ holder: 'consumer-a', at }).code,
+      LEASE_CODES.BAD_TIMESTAMP,
+      `at ${Object.is(at, -0) ? '-0' : at} was accepted by validateLease`,
+    );
+    assert.equal(
+      takeLease(emptyLeaseState(), { holder: 'consumer-a', at }).code,
+      LEASE_CODES.BAD_TIMESTAMP,
+      `at ${Object.is(at, -0) ? '-0' : at} was accepted by a take`,
+    );
+  }
+  // The bounds themselves are inside.
+  assert.equal(takeLease(emptyLeaseState(), { holder: 'consumer-a', at: 1 }).ok, true);
+  assert.equal(takeLease(emptyLeaseState(), { holder: 'consumer-a', at: MAX_TIMESTAMP }).ok, true);
+
+  for (const ttl of [-0, MAX_TTL + 1, Number.MAX_SAFE_INTEGER]) {
+    assert.equal(
+      takeLease(emptyLeaseState(ttl), { holder: 'consumer-a', at: AT }).code,
+      LEASE_CODES.BAD_TTL,
+    );
+  }
+  assert.equal(takeLease(emptyLeaseState(1), { holder: 'consumer-a', at: AT }).ok, true);
+  assert.equal(takeLease(emptyLeaseState(MAX_TTL), { holder: 'consumer-a', at: AT }).ok, true);
 });
 
 test('a holder cannot renew its own lease by taking it again', () => {
@@ -172,6 +236,16 @@ test('a lease is released only by its holder, and only when one is held', () => 
   const none = releaseLease(emptyLeaseState(), { holder: 'consumer-a' });
   assert.equal(none.ok, false);
   assert.equal(none.code, LEASE_CODES.NO_LEASE);
+});
+
+test('a release carries the TTL on: the next take is protected the same way', () => {
+  const short = takeLease(emptyLeaseState(1_000), { holder: 'consumer-a', at: AT });
+  const released = releaseLease(short.state, { holder: 'consumer-a' });
+  assert.equal(released.ok, true);
+  assert.equal(released.state.ttl, 1_000); // not reset to CLAIM_TTL
+  const next = takeLease(released.state, { holder: 'consumer-b', at: AT + 1 });
+  assert.equal(next.ok, true);
+  assert.equal(takeLease(next.state, { holder: 'consumer-c', at: AT + 1_001 }).ok, true);
 });
 
 test('the TTL is a parameter of the lease, and ClaimTTL is its default', () => {
@@ -306,6 +380,40 @@ test('a blank, padded, invisible or oversize holder is refused', () => {
     );
   }
 
+  // Whitespace anywhere (Zs and every other White_Space code point), the
+  // blank-looking letters (U+2800 BRAILLE PATTERN BLANK, the Hangul fillers),
+  // default-ignorable code points, private-use and unassigned code points:
+  // each is a way for two holders to print the same and differ.
+  const lookalike = [
+    0x20, 0xa0, 0x1680, 0x2003, 0x202f, 0x3000, // Zs
+    0x0b, 0x0c, // other White_Space
+    0x2800, // braille pattern blank
+    0x115f, 0x1160, 0x3164, 0xffa0, // Hangul fillers
+    0x034f, 0xfe0f, 0x180e, // default-ignorable: CGJ, VS16, Mongolian vowel separator
+    0xe000, 0xf8ff, 0xf0000, 0x10fffd, // Co: private use
+    0x0378, 0xfdd0, 0xffff, 0xe0080, // Cn: unassigned and noncharacters
+    0x1d173, 0xe0001, // Cf outside the BMP
+  ];
+  for (const point of lookalike) {
+    const holder = `consumer${String.fromCodePoint(point)}a`;
+    const hex = `U+${point.toString(16).padStart(4, '0')}`;
+    assert.equal(validateLease({ holder, at: AT }).code, LEASE_CODES.BAD_HOLDER, `${hex} was accepted in a holder`);
+    assert.equal(
+      takeLease(emptyLeaseState(), { holder, at: AT }).code,
+      LEASE_CODES.BAD_HOLDER,
+      `${hex} was accepted by a take`,
+    );
+  }
+
+  // A holder must already be in NFC, and a non-NFC one is refused rather than
+  // normalized: "e" + COMBINING ACUTE prints as the precomposed "é", so the
+  // two would be two identities that print as one.
+  const decomposed = 'konsume\u0301';
+  assert.notEqual(decomposed, decomposed.normalize('NFC'));
+  assert.equal(validateLease({ holder: decomposed, at: AT }).code, LEASE_CODES.BAD_HOLDER);
+  assert.equal(takeLease(emptyLeaseState(), { holder: decomposed, at: AT }).code, LEASE_CODES.BAD_HOLDER);
+  assert.equal(validateLease({ holder: 'konsum\u00e9', at: AT }).ok, true); // the NFC form
+
   // An unpaired surrogate too: a JS string can hold one where a Go string
   // cannot, and Printable escapes it as RuneError.
   const lone = `consumer${String.fromCharCode(0xd800)}a`;
@@ -414,4 +522,69 @@ test('a state is a value: the input is unchanged and every result is frozen', ()
   assert.equal(Object.isFrozen(taken.lease), true);
   assert.equal(Object.isFrozen(taken.state.claim), true);
   assert.equal(Object.isFrozen(validateLease({ holder: 'consumer-a', at: AT }).lease), true);
+});
+
+// A plain object whose fields are getters that count their reads and may
+// answer differently on a later read.
+function counted(fields, reads) {
+  const out = {};
+  for (const [key, values] of Object.entries(fields)) {
+    let n = 0;
+    Object.defineProperty(out, key, {
+      enumerable: true,
+      get() {
+        reads[key] = (reads[key] ?? 0) + 1;
+        const v = values[Math.min(n, values.length - 1)];
+        n += 1;
+        return v;
+      },
+    });
+  }
+  return out;
+}
+
+test('every field of a state, a claim and a request is read exactly once', () => {
+  const stateReads = {};
+  const claimReads = {};
+  const takeReads = {};
+  const claim = counted({ holder: ['consumer-a'], at: [AT] }, claimReads);
+  const state = counted({ claim: [claim], ttl: [CLAIM_TTL] }, stateReads);
+  const request = counted({ holder: ['consumer-b'], at: [AT + 1] }, takeReads);
+  assert.equal(takeLease(state, request).code, 'already-claimed');
+  assert.deepEqual(stateReads, { claim: 1, ttl: 1 });
+  assert.deepEqual(claimReads, { holder: 1, at: 1 });
+  assert.deepEqual(takeReads, { holder: 1, at: 1 });
+
+  const releaseReads = {};
+  const relState = counted({ claim: [{ holder: 'consumer-a', at: AT }], ttl: [CLAIM_TTL] }, (stateReads.r = {}));
+  const relRequest = counted({ holder: ['consumer-a'] }, releaseReads);
+  assert.equal(releaseLease(relState, relRequest).ok, true);
+  assert.deepEqual(stateReads.r, { claim: 1, ttl: 1 });
+  assert.deepEqual(releaseReads, { holder: 1 });
+
+  const leaseReads = {};
+  assert.equal(validateLease(counted({ holder: ['consumer-a'], at: [AT] }, leaseReads)).ok, true);
+  assert.deepEqual(leaseReads, { holder: 1, at: 1 });
+});
+
+test('a getter that changes between reads cannot pass validation with one value and act with another', () => {
+  // The TTL is validated as ten minutes and then, on a second read, is NaN:
+  // `x < NaN` is false, so a module that read it twice would let consumer-b
+  // take a fresh lease over.
+  const held = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT });
+  const flipTTL = counted({ claim: [held.state.claim], ttl: [CLAIM_TTL, Number.NaN] }, {});
+  assert.equal(takeLease(flipTTL, { holder: 'consumer-b', at: AT + 1 }).code, 'already-claimed');
+
+  // The held claim reads as a valid lease and then as something else.
+  const flipClaim = counted(
+    { claim: [{ holder: 'consumer-a', at: AT }, null], ttl: [CLAIM_TTL] },
+    {},
+  );
+  assert.equal(takeLease(flipClaim, { holder: 'consumer-b', at: AT + 1 }).code, 'already-claimed');
+
+  // A request whose holder validates and then changes is acted on as validated.
+  const flipHolder = counted({ holder: ['consumer-b', ' consumer-b'], at: [AT] }, {});
+  const taken = takeLease(emptyLeaseState(), flipHolder);
+  assert.equal(taken.ok, true);
+  assert.equal(taken.lease.holder, 'consumer-b');
 });
