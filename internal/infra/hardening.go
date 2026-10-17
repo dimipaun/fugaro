@@ -19,6 +19,12 @@ import (
 // bucket (docs/design/bucket-iam.md H9).
 type BucketFinding struct{ Severity, Member, Role, Problem, Fix string }
 
+// sealRelease is the release whose launchers write the sealed budget token
+// under tokens/, and so need the widened launcher condition
+// (gcp.LauncherBucketCondition): an installation initialised before it has
+// the runs/-only one. It names the release the seal ships in.
+const sealRelease = "0.9.0"
+
 // bucketWriteRoles are the predefined roles that write objects.
 var bucketWriteRoles = []string{"roles/storage.objectAdmin", "roles/storage.objectUser", "roles/storage.objectCreator",
 	"roles/storage.legacyBucketWriter", "roles/storage.legacyBucketOwner", "roles/storage.admin"}
@@ -75,7 +81,7 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 				// A job or build account under its own prefixes (the guard checks the shape).
 			case bd.Condition != nil:
 				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
-					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " under a condition that is not the launchers' runs/ condition",
+					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " under a condition that is not the launchers' runs/ and tokens/ condition",
 					Fix:     removeCmd(m, bd.Role) + " --all"})
 			case slices.Contains(operators, m) && bd.Role == "roles/storage.objectAdmin":
 			case customRole(bd.Role):
@@ -110,8 +116,8 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 	for _, m := range launchers {
 		if launcherOnly(m) && (!reader[m] || !writer[m]) {
 			out = append(out, BucketFinding{Severity: "warning", Member: pluginwire.Printable(m),
-				Problem: "launcher " + pluginwire.Printable(m) + " lacks the 0.7.0 runs bucket grants (read everything, write runs/)",
-				Fix:     "an operator runs fugaro init (0.7.0 or later)"})
+				Problem: "launcher " + pluginwire.Printable(m) + " lacks the runs bucket grants (read everything, write runs/ and tokens/: the 0.7.0 hardening, widened to tokens/ when the budget token moved there)",
+				Fix:     "an operator runs fugaro init (" + sealRelease + " or later)"})
 		}
 	}
 	return out
