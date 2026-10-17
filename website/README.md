@@ -17,10 +17,10 @@ first page.
 
 **Node 22 LTS**, pinned in `package.json`'s `engines`: `>=22.22.0 <23`. The floor is
 Astro's own requirement rather than a preference, and the ceiling is the major line this
-site is built and checked on — the lockfile and every check in this directory were produced
-with **Node 22.23.3** (npm 10.9.9). The engines range and this paragraph carry the same
-value on purpose: a reader who installs what this section names has the toolchain the
-lockfile was written with.
+site is built and checked on — the engines range is the supported toolchain. What was
+verified is narrower: `npm run check` passed on **Node 26.x** (the version the author of
+this change runs, installed with `--engine-strict=false`), and the engines floor is the one
+Astro states. The lockfile was not regenerated on Node 22 here, and no check was run on it.
 
 The dependency tree is pinned exactly: `package.json` names `astro` at one version, and
 `package-lock.json` is **committed**, so `npm ci` installs the tree this site was checked
@@ -158,6 +158,6 @@ installs from the committed lockfile, and the last two are build output.
 The deploy comes later and it is **not a Fugaro run's to write**: W2.1 stages a workflow
 under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to deploy
 to the Firebase project created for the website only (D91, D109) — a run may not change
-`.github/workflows/`. `docs/pending-workflows/` holds other pending workflows today (`images.yml`, `ci.yml`),
+`.github/workflows/`. `docs/pending-workflows/` holds other pending workflows today (`ci.yml`),
 but no deploy workflow and no `firebase.json` exists yet: they are W2.1's, and this document describes them in advance
 rather than claiming them.
