@@ -234,12 +234,12 @@ function replaceFolded(text: string, re: RegExp, replacement: string): string {
 export type PseudonymPrefix = 'r' | 'slug' | 'person'
 
 /**
- * Redactor is the redactor for one recording: the installation's own literals,
- * a pseudonym key nobody can read back, and the functions the recorder and the
- * loader use.
+ * Redactor is the redactor for one recording: the functions the recorder and the
+ * loader use. **It holds no data a caller can see**: the installation's literals
+ * and the pseudonym key live in a closure, so `JSON.stringify` or `inspect` of a
+ * redactor prints neither.
  */
 export interface Redactor {
-  readonly literals: readonly string[]
   /** redactDocument returns a redacted copy of a whole document. */
   redactDocument(document: unknown, where?: string): unknown
   /** redactText returns redacted free text (a notice line, a log message). */
@@ -273,29 +273,28 @@ export function createRedactor(literals: readonly string[] = [], options: Redact
   const key = options.pseudonymKey === undefined ? randomBytes(32) : Buffer.from(options.pseudonymKey)
   const ctx: Ctx = {
     literals: literalPatterns(literals),
-    persons: [],
+    persons: null,
     // The key is held by this closure only: it is not a property of the
     // redactor, so it is neither enumerable nor serialisable.
     pseudonym: (prefix, value) =>
       `${prefix}-${createHmac('sha256', key).update(`${prefix}\u0000${value}`).digest('hex').slice(0, 8)}`,
   }
   return {
-    literals: Object.freeze([...literals]),
     redactDocument: (document, where) => redactDocument(document, ctx, where),
     redactText: (text) => redactFreeText(text, ctx),
     redactFeedLine: (line) => redactFeedLine(line, ctx),
     redactRepository: (value) => redactRepository(value, ctx),
     pseudonym: (prefix, value) => ctx.pseudonym(prefix, value),
-    problems: (value, where) => auditProblems(value, ctx.literals, [], where),
+    problems: (value, where) => auditProblems(value, ctx.literals, null, where),
   }
 }
 
 /** Ctx is what every rule below may reach for. `persons` are the person-class
- * values of the document being redacted (empty outside one), each with the
+ * values of the document being redacted (null outside one), each with the
  * pseudonym its own field got. */
 interface Ctx {
   readonly literals: readonly LiteralRule[]
-  readonly persons: readonly PersonRule[]
+  readonly persons: PersonTable | null
   readonly pseudonym: (prefix: PseudonymPrefix, value: string) => string
 }
 
@@ -560,7 +559,7 @@ const BRANCH_RE =
  * at least two segments. A segment is anything but a delimiter -- whitespace,
  * a quote, a bracket, `<>|;,:*?` -- so a non-ASCII segment (`/Users/zorá/...`)
  * is consumed whole. **A space is part of a segment when more path follows it**:
- * `/Users/Zora Kell/secret-plan/x` is one path, because `Paun` is followed by
+ * `/Users/Zora Kell/secret-plan/x` is one path, because `Kell` is followed by
  * `/`; a sentence after a path (`/etc/hosts for details`) is not, because no
  * slash follows its words. Two slashes is what keeps a sentence from being
  * eaten: `and/or` is not rooted. A single-segment path (`/opt`) in free text is
@@ -698,10 +697,95 @@ function byLength<T extends { readonly value: string }>(rules: T[]): T[] {
   return rules.sort((a, b) => b.value.length - a.value.length)
 }
 
-/** PersonRule is a person-class value of the document being redacted, as a
- * pattern, with the pseudonym its own field got. */
-interface PersonRule extends LiteralRule {
+/**
+ * PersonTable is the person-class values of the document being redacted, **as
+ * a hash table of word sequences**, not as one pattern per person: a document
+ * may name thousands of people (one per queued run), and a pattern per person
+ * over every string costs persons x text. A name is its words -- the runs of
+ * letters, digits and marks of its prepared, confusable-folded form, lower-cased
+ * -- so `Ana Smith`, `ana  smith`, `Ana-Smith`, `ana_smith` and `ANA\tSMITH` are
+ * one name, and a name of two words or more is also entered last word first
+ * (`Smith, Ana`). `findPersons` scans a string's words once and looks each run
+ * of up to `maxWords` of them up: linear in the string, whatever the number of
+ * people.
+ */
+interface PersonTable {
+  /** words maps each word any person is spelled with to a small id. */
+  readonly words: Map<string, number>
+  /** names maps a name's word ids, joined by commas, to its replacement. */
+  readonly names: Map<string, string>
+  maxWords: number
+}
+
+/** MAX_DISTINCT_PERSONS bounds the persons one document may name. A watch
+ * document names one requester per queued run -- a handful -- and a document
+ * past the bound is refused, not redacted in part. */
+export const MAX_DISTINCT_PERSONS = 4096
+/** MAX_PERSON_WORDS bounds the words in one person's name. */
+export const MAX_PERSON_WORDS = 16
+
+/** WORD_RE is a word, as a person's name and the text it is looked for in are
+ * split into words. */
+const WORD_RE = /[\p{L}\p{N}\p{M}]+/gu
+
+/** PersonMatch is one person found in a string, as offsets. */
+interface PersonMatch {
+  readonly start: number
+  readonly end: number
   readonly replacement: string
+}
+
+/** findPersons finds every person in `text` (prepared), longest first at each
+ * position, left to right, never overlapping. One scan of the words, and at
+ * most `maxWords` lookups per word. Offsets are `text`'s own, because folding
+ * maps one code unit to one. */
+function findPersons(text: string, table: PersonTable | null, firstOnly = false): PersonMatch[] {
+  const found: PersonMatch[] = []
+  if (table === null || table.names.size === 0) return found
+  const folded = foldConfusables(text)
+  const starts: number[] = []
+  const ends: number[] = []
+  const ids: number[] = []
+  WORD_RE.lastIndex = 0
+  for (const match of folded.matchAll(WORD_RE)) {
+    starts.push(match.index)
+    ends.push(match.index + match[0].length)
+    ids.push(table.words.get(match[0].toLowerCase()) ?? -1)
+  }
+  for (let i = 0; i < ids.length; ) {
+    let best = -1
+    let replacement = ''
+    let key = ''
+    for (let j = i; j < ids.length && j - i < table.maxWords && (ids[j] ?? -1) >= 0; j += 1) {
+      key = j === i ? String(ids[j]) : `${key},${String(ids[j])}`
+      const hit = table.names.get(key)
+      if (hit !== undefined) {
+        best = j
+        replacement = hit
+      }
+    }
+    if (best < 0) {
+      i += 1
+      continue
+    }
+    found.push({ start: starts[i] ?? 0, end: ends[best] ?? 0, replacement })
+    if (firstOnly) return found
+    i = best + 1
+  }
+  return found
+}
+
+/** replacePersons replaces every person `findPersons` finds. */
+function replacePersons(text: string, table: PersonTable | null): string {
+  const found = findPersons(text, table)
+  if (found.length === 0) return text
+  let out = ''
+  let last = 0
+  for (const match of found) {
+    out += text.slice(last, match.start) + match.replacement
+    last = match.end
+  }
+  return out + text.slice(last)
 }
 
 /** hits is `RegExp.test` for a shared, global pattern, re-anchored first. */
@@ -855,30 +939,53 @@ function redactRepository(value: string, ctx: Ctx): string {
 /** redactPerson replaces a person: anything holding an address becomes the
  * address marker, and anything else a pseudonym, so two requesters stay two. */
 function redactPerson(value: string, ctx: Ctx): string {
-  if (isMarker(value)) return value
+  if (isMarker(value) || value === PLACEHOLDER) return value
   const form = prepare(value)
   if (value.includes('@') || form.includes('@')) return ADDRESS_MARKER
   return ctx.pseudonym('person', form)
 }
 
-/** applyRules runs the document's people first (so a requester's name in a
- * title is the requester's pseudonym, not a name half-eaten by a later rule),
- * then every pattern class, then the installation's literals. People and
- * literals are matched on the confusable-folded text. */
-function applyRules(text: string, ctx: Ctx, nested = false): string {
+/**
+ * applyPass runs every pattern class, then the document's people, then the
+ * installation's literals. **People and literals run last, after every pattern
+ * rule**: a name is a word, and a word replaced first can switch a pattern off
+ * -- a requester called `ya29` would turn `ya29.<token>` into a pseudonym and
+ * the token after it, `local` would leave `zoras-laptop.` behind, `42` would
+ * split an IP address. Run last, a name can only replace what the patterns
+ * left. People and literals are matched on the confusable-folded text.
+ */
+function applyPass(text: string, ctx: Ctx, nested: boolean, persons: boolean): string {
   let out = text
-  for (const rule of ctx.persons) out = replaceFolded(out, rule.re, rule.replacement)
   for (const rule of RULES) out = rule.apply(out, ctx, nested)
+  if (persons) out = replacePersons(out, ctx.persons)
   for (const rule of ctx.literals) out = replaceFolded(out, rule.re, LITERAL_MARKER)
+  return out
+}
+
+/** MAX_PASSES bounds `applyRules`. A replacement can make a shape a rule finds
+ * (a pseudonym before a `/`), so the passes repeat until nothing changes; two
+ * suffice for every input known, and a string still changing after the bound is
+ * refused by the document's fixed-point check. */
+const MAX_PASSES = 3
+
+/** applyRules runs `applyPass` to a fixed point, at most `MAX_PASSES` times. */
+function applyRules(text: string, ctx: Ctx, nested = false, persons = true): string {
+  let out = text
+  for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+    const next = applyPass(out, ctx, nested, persons)
+    if (next === out) return out
+    out = next
+  }
   return out
 }
 
 /**
  * redactFreeText runs every pattern class over one string, in the order that
- * keeps a rule from eating another rule's input: the document's people, URLs
- * (they contain everything else), tokens, addresses, branches, paths,
- * repository paths, GCP names, network addresses, hosts, high-entropy runs, and
- * last the installation's own literals.
+ * keeps a rule from eating another rule's input: URLs (they contain everything
+ * else), tokens, addresses, branches, paths, repository paths, GCP names,
+ * network addresses, hosts, high-entropy runs, and last the document's people
+ * and the installation's own literals. `persons` is false for a contract field
+ * (`CONTRACT_KEYS`), whose value the console reads as an enumeration.
  *
  * **The rules read the prepared form** -- NFKC, invisible characters stripped --
  * so a fullwidth `＠` is an `@` and a zero-width space does not split an
@@ -887,13 +994,13 @@ function applyRules(text: string, ctx: Ctx, nested = false): string {
  * something comes back prepared and redacted. The form as written is tried as
  * well, for the rare match that only it shows.
  */
-function redactFreeText(text: string, ctx: Ctx): string {
+function redactFreeText(text: string, ctx: Ctx, persons = true): string {
   if (text === '' || isMarker(text)) return text
   const prepared = prepare(text)
-  const out = applyRules(prepared, ctx)
+  const out = applyRules(prepared, ctx, false, persons)
   if (out !== prepared) return out
   if (prepared === text) return text
-  return applyRules(text, ctx)
+  return applyRules(text, ctx, false, persons)
 }
 
 /** isAddressMarker answers whether an ADDRESS_RE match is the marker itself. */
@@ -921,14 +1028,81 @@ function checkLength(value: string, what: string): void {
   }
 }
 
+/** MAX_DEPTH bounds how deeply a document may nest. A watch document is four
+ * levels deep; a hostile one ten thousand deep would otherwise end the walk in a
+ * raw `RangeError` instead of a refusal. */
+export const MAX_DEPTH = 256
+
+/** tooDeep is the refusal for a document past `MAX_DEPTH`. */
+function tooDeep(what: string): string {
+  return `${what} nested deeper than ${String(MAX_DEPTH)} levels is refused`
+}
+
+/** checkDepth refuses a value past `MAX_DEPTH`. */
+function checkDepth(depth: number): void {
+  if (depth > MAX_DEPTH) throw new RedactionRefusal(tooDeep('a document'))
+}
+
+/**
+ * MAX_EXPANSION bounds what NFKC may make of a string: a string whose
+ * compatibility form is more than twice its length (plus a little, so one
+ * ligature or ellipsis is fine) is refused, and so is a document whose strings
+ * together grow by more than `MAX_DOCUMENT_EXPANSION`. One code point can be
+ * eighteen in NFKC (U+FDFA), and every rule reads the prepared form: without
+ * the bound a 1 MiB line is 18 MiB of rule input.
+ */
+const MAX_EXPANSION_SLACK = 32
+const MAX_DOCUMENT_EXPANSION = 64 * 1024
+
+/** expansionOf is how many characters NFKC adds to `value`, or a refusal. */
+function expansionOf(value: string): number {
+  const grown = value.normalize('NFKC').length
+  if (grown > 2 * value.length + MAX_EXPANSION_SLACK) {
+    throw new RedactionRefusal(expansionRefusal())
+  }
+  return Math.max(0, grown - value.length)
+}
+
+function expansionRefusal(): string {
+  return 'a string whose compatibility form (NFKC) is more than twice its length is refused'
+}
+
+/** CONTRACT_KEYS are the fields whose values the console reads as an
+ * enumeration or an identifier the CLI made (`stage`, `status`, a run id,
+ * `auth`): the pattern classes still run over them, but **the person pass never
+ * rewrites them**, so a requester called `queued` or `api` cannot turn a run's
+ * stage or its auth into a pseudonym. */
+const CONTRACT_KEYS: ReadonlySet<string> = new Set([
+  'run', 'run_id', 'id', 'stage', 'status', 'auth', 'health', 'deadline', 'verify', 'outcome', 'mode', 'state',
+])
+
+/** CONTRACT_WORDS are the values those fields hold, and the words a run is
+ * described with: a person value that is one of them is a placeholder or a
+ * keyword, not a name, and is not looked for elsewhere. */
+const CONTRACT_WORDS: ReadonlySet<string> = new Set([
+  'run', 'runs', 'queued', 'running', 'coding', 'implement', 'review', 'verify', 'done', 'succeeded', 'failed',
+  'halted', 'cancelled', 'canceled', 'infra_error', 'ready', 'none', 'ok', 'silent', 'lost', 'near', 'over',
+  'live', 'stale', 'api', 'oauth', 'observe', 'enforce', 'pass', 'fail', 'tests',
+])
+
+/** isContractKey answers whether a key is one of `CONTRACT_KEYS`. */
+function isContractKey(key: string | null): boolean {
+  return key !== null && CONTRACT_KEYS.has(normaliseKey(key))
+}
+
+/** PLACEHOLDER is the CLI's "nothing here" (`-`): kept as written in a slug or
+ * a person field, because it names nobody. */
+const PLACEHOLDER = '-'
+
 /** redactValue redacts one value. `cls` is the class its key (or a reserved
  * ancestor's) gives it; `key` is the key it sits under, which an array passes
  * to its items so that `kill[0].by` reads its parent as `kill`. */
-function redactValue(value: unknown, cls: FieldClass | undefined, key: string | null, ctx: Ctx): unknown {
-  if (typeof value === 'string') return redactString(value, cls, ctx)
+function redactValue(value: unknown, cls: FieldClass | undefined, key: string | null, ctx: Ctx, depth = 0): unknown {
+  checkDepth(depth)
+  if (typeof value === 'string') return redactString(value, cls, ctx, isContractKey(key))
   if (typeof value === 'number') return redactNumber(value, cls, ctx)
   if (Array.isArray(value)) {
-    const items = value.map((item) => redactValue(item, cls, key, ctx))
+    const items = value.map((item) => redactValue(item, cls, key, ctx, depth + 1))
     if (cls !== undefined) return items
     const split = joinedCredentialElements(items)
     return split.size === 0 ? items : items.map((item, index) => (split.has(index) ? TOKEN_MARKER : item))
@@ -937,7 +1111,7 @@ function redactValue(value: unknown, cls: FieldClass | undefined, key: string | 
     const out: Record<string, unknown> = {}
     for (const [childKey, child] of entriesOf(value)) {
       checkLength(childKey, 'a key')
-      out[childKey] = redactValue(child, subtreeClass(cls) ?? classFor(childKey, key), childKey, ctx)
+      out[childKey] = redactValue(child, subtreeClass(cls) ?? classFor(childKey, key), childKey, ctx, depth + 1)
     }
     return out
   }
@@ -949,14 +1123,14 @@ const HEX_RE = /^[0-9a-f]{7,64}$/i
 
 /** redactString applies the field class when there is one, and the pattern
  * classes otherwise. An empty string is never a class's value. */
-function redactString(value: string, cls: FieldClass | undefined, ctx: Ctx): string {
+function redactString(value: string, cls: FieldClass | undefined, ctx: Ctx, contract = false): string {
   checkLength(value, 'a string')
   if (value !== '' && cls !== undefined) {
     switch (cls) {
       case 'repository':
         return redactRepository(value, ctx)
       case 'slug':
-        return SLUG_PSEUDONYM_RE.test(value) ? value : ctx.pseudonym('slug', value)
+        return SLUG_PSEUDONYM_RE.test(value) || value === PLACEHOLDER ? value : ctx.pseudonym('slug', value)
       case 'project':
         return PROJECT_MARKER
       case 'bucket':
@@ -982,7 +1156,7 @@ function redactString(value: string, cls: FieldClass | undefined, ctx: Ctx): str
         break
     }
   }
-  return redactFreeText(value, ctx)
+  return redactFreeText(value, ctx, !contract)
 }
 
 /**
@@ -1067,12 +1241,18 @@ function credentialRanges(text: string): [number, number][] {
 }
 
 /** MARKER_WORDS are the words the markers and pseudonyms are spelled with: a
- * person called `person` or `redacted` would otherwise match every marker the
- * redaction itself wrote. */
+ * person whose every word is one of them (`person`, `redacted`, `redacted-token`)
+ * would otherwise match the markers the redaction itself wrote. */
 const MARKER_WORDS: ReadonlySet<string> = new Set([
-  'person', 'slug', 'redacted', 'redacted-token', 'redacted-url', 'example', 'invalid', 'example.invalid',
-  'path', 'project', 'bucket', 'host', 'branch', 'token', 'url',
+  'person', 'slug', 'redacted', 'example', 'invalid', 'path', 'project', 'bucket', 'host', 'branch', 'token', 'url',
 ])
+
+/** CollectState is what one walk of `collectPersons` counts. */
+interface CollectState {
+  expanded: number
+  distinct: number
+  readonly where: string
+}
 
 /**
  * collectPersons gathers every person-class value in a document -- a requester,
@@ -1082,49 +1262,99 @@ const MARKER_WORDS: ReadonlySet<string> = new Set([
  * (`internal/watch/queued.go`), and `requested_by` is the config's free-form
  * `user:`, so a pseudonym in one field and the name in the next is a leak.
  * A value with fewer than two letters or digits (`-`, the CLI's placeholder) is
- * not a name and is not collected.
+ * not a name and is not collected, and nor is a contract keyword
+ * (`CONTRACT_WORDS`). The same walk holds the document to `MAX_DEPTH` and to
+ * its NFKC budget, so a hostile document is refused before any rule runs.
  */
 function collectPersons(
   value: unknown,
   cls: FieldClass | undefined,
   key: string | null,
   ctx: Ctx,
-  into: Map<string, PersonRule>,
+  table: PersonTable,
+  state: CollectState,
+  depth: number,
 ): void {
+  checkDepth(depth)
   if (typeof value === 'string') {
     if (value.length > MAX_REDACTABLE_STRING_LENGTH) return
-    if (cls === 'person' || (cls === 'by' && !REPORT_DIMENSIONS.has(value))) addPerson(value, ctx, into)
+    budget(value, state)
+    if (cls === 'person' || (cls === 'by' && !REPORT_DIMENSIONS.has(value))) addPerson(value, ctx, table, state)
     return
   }
   if (Array.isArray(value)) {
-    for (const item of value) collectPersons(item, cls, key, ctx, into)
+    for (const item of value) collectPersons(item, cls, key, ctx, table, state, depth + 1)
     return
   }
   if (value !== null && typeof value === 'object') {
     for (const [childKey, child] of Object.entries(value as Record<string, unknown>)) {
-      collectPersons(child, subtreeClass(cls) ?? classFor(childKey, key), childKey, ctx, into)
+      if (childKey.length <= MAX_REDACTABLE_STRING_LENGTH) budget(childKey, state)
+      collectPersons(child, subtreeClass(cls) ?? classFor(childKey, key), childKey, ctx, table, state, depth + 1)
     }
   }
 }
 
-function addPerson(value: string, ctx: Ctx, into: Map<string, PersonRule>): void {
-  if (value === '' || isMarker(value)) return
+/** budget charges one string's NFKC growth to the document. */
+function budget(value: string, state: CollectState): void {
+  state.expanded += expansionOf(value)
+  if (state.expanded > MAX_DOCUMENT_EXPANSION) throw new RedactionRefusal(`${state.where}: ${expansionRefusal()} (summed over the document)`)
+}
+
+/** addPerson enters one person in the table: their words, and their words last
+ * word first. */
+function addPerson(value: string, ctx: Ctx, table: PersonTable, state: CollectState): void {
+  if (value === '' || value === PLACEHOLDER || isMarker(value)) return
   const form = nameForm(value)
-  const name = form.toLowerCase()
-  if ((form.match(/[\p{L}\p{N}]/gu) ?? []).length < 2 || MARKER_WORDS.has(name) || into.has(name)) return
-  into.set(name, { ...nameRule(form), replacement: redactPerson(value, ctx) })
+  const lowered = form.toLowerCase()
+  if ((form.match(/[\p{L}\p{N}]/gu) ?? []).length < 2 || CONTRACT_WORDS.has(lowered)) return
+  const words = lowered.match(WORD_RE) ?? []
+  if (words.length === 0 || words.every((word) => MARKER_WORDS.has(word))) return
+  if (words.length > MAX_PERSON_WORDS) {
+    throw new RedactionRefusal(
+      `${state.where} names a person in more than ${String(MAX_PERSON_WORDS)} words, which the redactor does not look for elsewhere; refused`,
+    )
+  }
+  const ids = words.map((word) => {
+    let id = table.words.get(word)
+    if (id === undefined) {
+      id = table.words.size
+      table.words.set(word, id)
+    }
+    return id
+  })
+  const key = ids.join(',')
+  if (table.names.has(key)) return
+  state.distinct += 1
+  if (state.distinct > MAX_DISTINCT_PERSONS) {
+    throw new RedactionRefusal(
+      `${state.where} names more than ${String(MAX_DISTINCT_PERSONS)} distinct persons, more than the redactor accepts in one document; refused`,
+    )
+  }
+  const replacement = redactPerson(value, ctx)
+  table.names.set(key, replacement)
+  if (ids.length >= 2) {
+    const reversed = [ids[ids.length - 1], ...ids.slice(0, -1)].join(',')
+    if (!table.names.has(reversed)) table.names.set(reversed, replacement)
+  }
+  table.maxWords = Math.max(table.maxWords, ids.length)
 }
 
 /** redactDocument redacts a whole document and then audits it: first the
- * people it names, then every value, then the audit with both in hand. */
+ * people it names, then every value, then the audit with both in hand, and last
+ * **the fixed-point check**: redacting the output again must change nothing.
+ * A rule that a later replacement switched off, or a shape a replacement made,
+ * is a refusal, not a fixture. */
 function redactDocument(document: unknown, ctx: Ctx, where = 'a document'): unknown {
-  const found = new Map<string, PersonRule>()
-  collectPersons(document, undefined, null, ctx, found)
-  const persons = byLength([...found.values()])
-  const redacted = redactValue(document, undefined, null, { ...ctx, persons })
-  const problems = auditProblems(redacted, ctx.literals, persons, where)
+  const table: PersonTable = { words: new Map(), names: new Map(), maxWords: 0 }
+  collectPersons(document, undefined, null, ctx, table, { expanded: 0, distinct: 0, where }, 0)
+  const inner: Ctx = { ...ctx, persons: table }
+  const redacted = redactValue(document, undefined, null, inner)
+  const problems = auditProblems(redacted, ctx.literals, table, where)
   if (problems.length > 0) {
     throw new RedactionRefusal(`${where} is still carrying a redaction class after redaction: ${problems.join('; ')}`)
+  }
+  if (JSON.stringify(redactValue(redacted, undefined, null, inner)) !== JSON.stringify(redacted)) {
+    throw new RedactionRefusal(`${where} is not a fixed point of the redaction: redacting it again changes it`)
   }
   return redacted
 }
@@ -1151,7 +1381,7 @@ function redactFeedLine(line: string, ctx: Ctx): string {
 /** AUDIT_CTX is the context the audit applies rules in. Its pseudonym is a
  * constant: the audit only asks whether a rule *would change* a string, and the
  * repository rule leaves an existing pseudonym alone whatever the key. */
-const AUDIT_CTX: Ctx = { literals: [], persons: [], pseudonym: (prefix) => `${prefix}-00000000` }
+const AUDIT_CTX: Ctx = { literals: [], persons: null, pseudonym: (prefix) => `${prefix}-00000000` }
 
 /** SHOWN_KEY_RE is a key a refusal may print in the path it names: a plain
  * snake_case name, as every key the CLI writes is. Any other key -- and any key
@@ -1173,17 +1403,22 @@ const SHOWN_KEY_RE = /^[a-z][a-z0-9_]{0,39}$/
 function auditProblems(
   value: unknown,
   literals: readonly LiteralRule[],
-  persons: readonly PersonRule[],
+  persons: PersonTable | null,
   where = 'a document',
   trail = '',
   cls: FieldClass | undefined = undefined,
   key: string | null = null,
+  depth = 0,
 ): string[] {
   const here = at(where, trail)
   const problems: string[] = []
+  if (depth > MAX_DEPTH) return [`${here} is ${tooDeep('a value')}`]
   if (typeof value === 'string') {
     if (value.length > MAX_REDACTABLE_STRING_LENGTH) {
       return [`${here} holds ${tooLong('a string', MAX_REDACTABLE_STRING_LENGTH)}`]
+    }
+    if (value.normalize('NFKC').length > 2 * value.length + MAX_EXPANSION_SLACK) {
+      return [`${here} holds ${expansionRefusal()}`]
     }
     if (cls !== undefined && !matchesClass(value, cls)) {
       problems.push(`${here} holds a value (${String(value.length)} characters) that is not this class's marker`)
@@ -1191,7 +1426,7 @@ function auditProblems(
     // A hex digest under a digest key is not identity, and the entropy rule
     // is not asked about it.
     if (cls === 'digest' && HEX_RE.test(value)) return problems
-    problems.push(...auditNames(value, literals, persons, here, 'still carries'))
+    problems.push(...auditNames(value, literals, isContractKey(key) ? null : persons, here, 'still carries'))
     problems.push(...auditString(value, here))
     return dedupe(problems)
   }
@@ -1202,7 +1437,7 @@ function auditProblems(
   }
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
-      problems.push(...auditProblems(item, literals, persons, where, `${trail}[${String(index)}]`, cls, key))
+      problems.push(...auditProblems(item, literals, persons, where, `${trail}[${String(index)}]`, cls, key, depth + 1))
     })
     if (cls === undefined && joinedCredentialElements(value).size > 0) {
       problems.push(`${here} holds adjacent strings that join into something credential-shaped`)
@@ -1225,7 +1460,9 @@ function auditProblems(
       problems.push(...keyProblems)
       const shown = keyProblems.length === 0 && SHOWN_KEY_RE.test(childKey) ? childKey : `<key ${String(index + 1)}>`
       const childClass = subtreeClass(cls) ?? classFor(childKey, key)
-      problems.push(...auditProblems(child, literals, persons, where, `${trail}.${shown}`, childClass, childKey))
+      problems.push(
+        ...auditProblems(child, literals, persons, where, `${trail}.${shown}`, childClass, childKey, depth + 1),
+      )
     })
     return dedupe(problems)
   }
@@ -1237,7 +1474,7 @@ function auditProblems(
 function auditNames(
   value: string,
   literals: readonly LiteralRule[],
-  persons: readonly PersonRule[],
+  persons: PersonTable | null,
   here: string,
   verb: string,
 ): string[] {
@@ -1246,7 +1483,7 @@ function auditNames(
   if (literals.some((rule) => hits(rule.re, value) || hits(rule.re, form))) {
     problems.push(`${here} ${verb} one of the installation's own literals`)
   }
-  if (persons.some((rule) => hits(rule.re, form))) {
+  if (findPersons(form, persons, true).length > 0) {
     problems.push(`${here} ${verb} a person the document names in a person field`)
   }
   return problems
@@ -1256,7 +1493,7 @@ function auditNames(
 function auditKey(
   key: string,
   literals: readonly LiteralRule[],
-  persons: readonly PersonRule[],
+  persons: PersonTable | null,
   here: string,
 ): string[] {
   const problems = auditNames(key, literals, persons, `${here} is a key that`, 'carries')
@@ -1288,11 +1525,13 @@ function matchesClass(value: string, cls: FieldClass): boolean {
     case 'repository':
       return REPO_PSEUDONYM_RE.test(value)
     case 'slug':
-      return SLUG_PSEUDONYM_RE.test(value)
+      return SLUG_PSEUDONYM_RE.test(value) || value === PLACEHOLDER
     case 'person':
-      return PERSON_PSEUDONYM_RE.test(value) || isAddressMarker(value)
+      return PERSON_PSEUDONYM_RE.test(value) || isAddressMarker(value) || value === PLACEHOLDER
     case 'by':
-      return REPORT_DIMENSIONS.has(value) || PERSON_PSEUDONYM_RE.test(value) || isAddressMarker(value)
+      return (
+        REPORT_DIMENSIONS.has(value) || PERSON_PSEUDONYM_RE.test(value) || isAddressMarker(value) || value === PLACEHOLDER
+      )
     case 'project':
       return value === PROJECT_MARKER
     case 'bucket':
@@ -1328,7 +1567,7 @@ function dedupe(values: readonly string[]): string[] {
  * Every other class -- addresses, hosts, branch fields, tokens, paths -- needs
  * no list, and is checked. */
 export function auditRedacted(value: unknown, where = 'a fixture record'): readonly string[] {
-  return auditProblems(value, [], [], where)
+  return auditProblems(value, [], null, where)
 }
 
 /** assertRedacted throws when the audit finds anything, naming what. */
