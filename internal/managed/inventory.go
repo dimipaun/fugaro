@@ -112,9 +112,10 @@ type Inventory struct {
 }
 
 // Cause is why a decision fell back. It is a string so a caller can print it,
-// and the four causes below are the ones an operator acts differently on: the
-// first is the project's own contents, the next three are the three ways the
-// read itself fails.
+// and the causes below are the ones an operator acts differently on: the first
+// is the project's own contents, and the rest are the ways the read itself
+// fails — three an operator does something about (enable the API, grant the
+// role, wait out a quota) and two that are simply "it did not run".
 type Cause string
 
 const (
@@ -139,11 +140,12 @@ const (
 // purpose, because D59's answer is that a foreign resource falls the run back
 // to its confirmations and never that it halts.
 //
-// Fallback is true when the run must keep today's confirmations. Cause says
-// which of the reasons it was. Why is the sentence a person reads: it names
-// the project, the cause, and — for a foreign resource — the resources
-// themselves. Foreign is every resource the state does not account for, in the
-// order the read returned them, whether or not the warning could name them all.
+// Fallback is true when the run must keep today's confirmations, and then Why
+// is the sentence a person reads: it names the project, the cause, and — for a
+// foreign resource — the resources themselves. A decision that does not fall
+// back is the zero value: no cause, nothing foreign, and nothing to say.
+// Foreign is every resource the state does not account for, in the order the
+// read returned them, whether or not the warning could name them all.
 type Decision struct {
 	Fallback bool
 	Cause    Cause
@@ -158,11 +160,11 @@ type Decision struct {
 // feature makes).
 func (in Inventory) Check(ctx context.Context) Decision {
 	if in.Assets == nil || in.GCPProject == "" {
-		return Decision{} // RED STEP: no read at all read as a clean project.
+		return in.fallback(CauseNoReader, "no whole-project read was made")
 	}
 	listed, err := in.Assets.List(ctx, in.GCPProject)
 	if err != nil {
-		return Decision{} // RED STEP: an unreadable inventory read as a clean project.
+		return in.fallback(classify(err), err.Error())
 	}
 	foreign := in.foreign(listed)
 	if len(foreign) == 0 {
