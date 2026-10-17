@@ -50,7 +50,7 @@ func change(addr, typ string, actions []string, after map[string]any) map[string
 	if after == nil {
 		after = map[string]any{}
 	}
-	return map[string]any{"address": addr, "type": typ,
+	return map[string]any{"address": addr, "type": typ, "mode": "managed",
 		"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": after}}
 }
 
@@ -445,5 +445,41 @@ func TestGateImportsMustBeOnTheSpecList(t *testing.T) {
 	s.Imports = []tf.ImportKey{{Address: planBucket, ID: id}}
 	if v := gate(t, r, s); !v.OK {
 		t.Errorf("an import discovery found was refused: %v", v.Refusals)
+	}
+}
+
+// The cost list (Task 1.3) is enforced here, in the verdict, and nowhere else:
+// a plan the guard and the cover both admit but that states a blocked cost
+// attribute comes back not OK, with the cost gate's own refusal. Dropping the
+// wiring from Gate turns this red.
+func TestGateRefusesABlockedCostAttribute(t *testing.T) {
+	const svc = "module.managed.google_cloud_run_v2_service.api"
+	r := newRig(t)
+	r.show(t, change(svc, "google_cloud_run_v2_service", []string{"create"}, map[string]any{
+		"template": []any{map[string]any{"scaling": []any{map[string]any{"min_instance_count": 3}}}}}))
+	v := gate(t, r, spec(t, r, admitAll{}))
+	if v.OK {
+		t.Fatal("a plan with a blocked cost attribute was admitted")
+	}
+	if len(v.Refusals) != 1 {
+		t.Fatalf("refusals %v, want the cost gate's one", v.Refusals)
+	}
+	got := v.Refusals[0]
+	if got.Gate != costGate || got.Address != svc || !strings.Contains(got.Why, "cloud-run-min-instances") {
+		t.Errorf("refusal %+v, want the cost gate's refusal of %s with the entry's words", got, svc)
+	}
+	if applied := r.applied(t); len(applied) != 0 {
+		t.Errorf("the gate applied something: %v", applied)
+	}
+}
+
+// And the ordinary plan beside it: a service with min instances 0 fires no
+// entry, so the cost gate does not refuse ordinary work.
+func TestGateAdmitsAPlanBelowTheCostLines(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change("module.managed.google_cloud_run_v2_service.api", "google_cloud_run_v2_service", []string{"create"}, map[string]any{
+		"template": []any{map[string]any{"scaling": []any{map[string]any{"min_instance_count": 0}}}}}))
+	if v := gate(t, r, spec(t, r, admitAll{})); !v.OK {
+		t.Fatalf("a plan below the cost lines is refused: %v", v.Refusals)
 	}
 }

@@ -460,3 +460,43 @@ func TestManagedCostChecksAnUpdate(t *testing.T) {
 		t.Errorf("an update that lowers the minimum instance count fires %q, want no entry", fs)
 	}
 }
+
+// TestManagedCostFlagOnlyEntryIsFlaggedButNotRefused holds the one behaviour
+// ManagedCostRefusals adds to ManagedCosts: an entry with block false is
+// recorded and shown (D62: "flag by default; an entry added for a property the
+// owner has not named is added with block false") and is not in the refusals.
+// Every entry the owner named blocks, so the list has none of its own; this one
+// is added for the test and removed with it.
+func TestManagedCostFlagOnlyEntryIsFlaggedButNotRefused(t *testing.T) {
+	saved := managedCostList
+	t.Cleanup(func() { managedCostList = saved })
+	managedCostList = append(slices.Clone(saved), managedCostEntry{
+		key:   "test-flag-only",
+		block: false,
+		why:   "a property the owner has not named",
+		rules: []managedCostRule{{
+			typ: "test_flag_only_thing", what: "the size", path: []any{"size"},
+			above: func(any) string { return "the size is large" },
+		}},
+	})
+	rc := mrc("test_flag_only_thing", map[string]any{"size": "large"})
+	p := managedPlan(rc)
+
+	f, ok := costFinding(ManagedCosts(p), "test-flag-only", rc.Address)
+	if !ok {
+		t.Fatalf("the flag-only entry is not recorded: %q", ManagedCosts(p))
+	}
+	if f.Block || f.Detail == "" {
+		t.Errorf("the finding is %+v, want it recorded with words and not blocking", f)
+	}
+	if out := ManagedCostRefusals(p); len(out) != 0 {
+		t.Errorf("a flag-only entry is refused: %q", out)
+	}
+
+	// Alongside a blocking entry, only the blocking one is refused.
+	vm := costVM("n2-standard-64", nil)
+	out := ManagedCostRefusals(managedPlan(rc, vm))
+	if len(out) != 1 || !refusedWith(out, vm.Address, managedCostMachineType) {
+		t.Errorf("the refusals are %q, want only the VM's", out)
+	}
+}
