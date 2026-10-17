@@ -274,6 +274,18 @@ func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
 // managed plan may carry is refused for the resource. The list is what
 // managed.Spec.notCovered hands this cover beside the plan, the same slice
 // tf.Guard is handed, and a cover that was handed none admits no delete at all.
+//
+// The whole chain is read on the removed view, and the two lock rules with it
+// (managedBucketLock, managedObjectLock): a listed delete of a bucket or an
+// object whose retention is already locked is refused. The lock is then a fact
+// of the state in before rather than a setting the plan writes, which is not
+// what those rules were written about — they are about what a managed plan
+// locks — and the refusal is deliberate rather than incidental: a lock can
+// never be undone and holds the resource, its bucket and the project, so a
+// resource in that state is not one the allowlist admits, and reading the chain
+// in full is the fail-closed direction. A narrower reading would be a rule
+// loosened for deletes, which is what this task must not do. The refusal falls
+// back to the confirmation, as every refusal does.
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}

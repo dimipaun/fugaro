@@ -1534,6 +1534,34 @@ func TestManagedCoverRefusesAListedDeleteOfAnAccountOutsideTheManagedProject(t *
 	}
 }
 
+// TestManagedCoverRefusesAListedDeleteOfALockedResource: the whole chain is
+// read on the removed view, the two lock rules included, so a resource whose
+// own state carries a locked retention is refused however its address is
+// listed — a decision NotCovered states, and the fail-closed direction: the
+// lock is not the plan's, and reading a shorter chain for a delete would be a
+// rule loosened rather than one read.
+func TestManagedCoverRefusesAListedDeleteOfALockedResource(t *testing.T) {
+	b := destroyed(managedKeptFixture["google_storage_bucket"])
+	b.Change.Before = map[string]any{"name": ManagedPrefix + "bucket",
+		"retention_policy": []any{map[string]any{"is_locked": true, "retention_period": "604800s"}}}
+	o := destroyed(managedKeptFixture["google_storage_bucket_object"])
+	o.Change.Before = map[string]any{"bucket": ManagedPrefix + "bucket", "name": "results.json",
+		"retention": []any{map[string]any{"mode": "Locked", "retain_until_time": "2030-01-01T00:00:00Z"}}}
+	for _, tc := range []struct {
+		rc   ResourceChange
+		want string // managedBucketLock's own words, and managedObjectLock's
+	}{
+		{b, "a bucket whose retention policy is locked"},
+		{o, "an object whose retention mode is Locked"},
+	} {
+		c := managedTestCover().WithDeleteList([]string{tc.rc.Address})
+		out := c.NotCovered(managedPlan(tc.rc), nil)
+		if len(out) != 1 || !strings.Contains(out[0], tc.want) {
+			t.Fatalf("a listed delete of a locked %s gives %q, want %q", tc.rc.Type, out, tc.want)
+		}
+	}
+}
+
 // TestManagedCoverReplacesAreJudgedLikeDeletes: both of terraform's action
 // orders, and both halves — the resource the plan removes and the one it
 // creates. A replace of a listed address is refused when either half is not
