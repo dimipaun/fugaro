@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -501,6 +502,38 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		},
 		// The amount is a monthly line above 0, so a negative one is no more
 		// an amount than 0 is.
+		"version 2 with a lower-case currency": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"usd"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 2 with a newline inside the currency": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"XXXXXXXX\n"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 2 with the largest int64 amount": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":9223372036854775807,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 2 with an amount one above the ceiling": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":10000001,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
 		"version 2 with a negative amount": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
@@ -767,5 +800,47 @@ func TestIsManagedNeverTreatsAnErrorAsManaged(t *testing.T) {
 				t.Error("no reason")
 			}
 		})
+	}
+}
+
+// The read's bounds are the write's (Budget.Check), so the largest amount a
+// creation may record and the smallest are read back as they were written:
+// the ceiling is a bound, not an off-by-one that refuses the value the write
+// accepted.
+func TestReadBudgetAcceptsTheBounds(t *testing.T) {
+	ctx := context.Background()
+	for _, amount := range []int64{MinBudgetAmount, MaxBudgetAmount} {
+		s, f, c, _ := managedWorld(t)
+		f.Put(testBucket, MarkerObject, []byte(fmt.Sprintf(`{"version":2,"gcp_project":"%s","budget":{"amount":%d,"currency":"EUR"}}`, testProject, amount)))
+		budget, ok, reason, err := ReadBudget(ctx, s, c, testFugaroProject, testProject)
+		if err != nil || !ok || budget.Amount != amount || budget.Currency != "EUR" {
+			t.Errorf("amount %d: ReadBudget = %+v, %v, %q, %v; want it read back", amount, budget, ok, reason, err)
+		}
+	}
+}
+
+// A version-1 creation fact — every --create-project run without --managed
+// writes one, and every project created before Task 4.2 carries one — is
+// managed (IsManaged true: the compatibility the merged code and its tests
+// keep) and has no budget (ReadBudget ok=false). The two answers differ on
+// purpose, and this pins both so Task 4.4 cannot forget it: the apply gate
+// and `fugaro managed apply` must ask ReadBudget, not IsManaged, or a v1
+// project — managed without a budget — reaches an apply with no line to
+// compare a spend against (docs/plans/2026-10-16-managed-projects.md, Task
+// 4.4; docs/design/managed-projects.md).
+func TestVersion1IsManagedWithoutABudget(t *testing.T) {
+	ctx := context.Background()
+	s, f, c, _ := managedWorld(t)
+	f.Put(testBucket, MarkerObject, []byte(markerJSON))
+	ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || !ok {
+		t.Fatalf("IsManaged = %v, %q, %v; want true: a version-1 fact stays managed", ok, reason, err)
+	}
+	budget, ok, reason, err := ReadBudget(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || ok {
+		t.Fatalf("ReadBudget = %+v, %v, %q, %v; want ok=false and no error: a version-1 fact records no budget", budget, ok, reason, err)
+	}
+	if !strings.Contains(reason, "records no budget amount") {
+		t.Errorf("reason = %q, want it to say the fact records no budget amount", reason)
 	}
 }

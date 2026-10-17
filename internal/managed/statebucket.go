@@ -148,7 +148,10 @@ func EnsureManagedStateBucket(ctx context.Context, s StateStore, project, region
 		return err
 	}
 	member := "serviceAccount:" + DeployerAccount(project)
-	bindings, changed := withDeployerGrant(p.Bindings, DeployerStateRole, member)
+	bindings, changed, err := withDeployerGrant(p.Bindings, DeployerStateRole, member)
+	if err != nil {
+		return fmt.Errorf("granting %s on gs://%s: %w", DeployerStateRole, bucket, err)
+	}
 	if !changed {
 		return nil
 	}
@@ -167,10 +170,15 @@ func EnsureManagedStateBucket(ctx context.Context, s StateStore, project, region
 //
 // The member always carries its "serviceAccount:" prefix: a grant to a bare
 // email address is a grant to nobody, and the one identity this step is about
-// is always a service account.
-func withDeployerGrant(p []*storage.PolicyBindings, role, member string) ([]*storage.PolicyBindings, bool) {
-	if member == "" || !strings.HasPrefix(member, "serviceAccount:") {
-		return p, false
+// is always a service account. A member that is not one is an error and not
+// changed=false: false is what this function says about a member that is
+// already bound, and the caller takes it as "nothing to do" and reports the
+// step done — so an unbindable member reported that way would be a run that
+// says it granted the deployer access it never granted.
+func withDeployerGrant(p []*storage.PolicyBindings, role, member string) ([]*storage.PolicyBindings, bool, error) {
+	acct, ok := strings.CutPrefix(member, "serviceAccount:")
+	if !ok || acct == "" {
+		return nil, false, fmt.Errorf("%q is not a service account member: the deployer's grant names serviceAccount:<address>, and anything else is a grant to nobody", member)
 	}
 	out := make([]*storage.PolicyBindings, 0, len(p)+1)
 	for _, b := range p {
@@ -187,11 +195,11 @@ func withDeployerGrant(p []*storage.PolicyBindings, role, member string) ([]*sto
 		// someone else's condition would grant it only there.
 		if b.Role == role && b.Condition == nil {
 			if slices.Contains(b.Members, member) {
-				return p, false
+				return p, false, nil
 			}
 			b.Members = append(b.Members, member)
-			return out, true
+			return out, true, nil
 		}
 	}
-	return append(out, &storage.PolicyBindings{Role: role, Members: []string{member}}), true
+	return append(out, &storage.PolicyBindings{Role: role, Members: []string{member}}), true, nil
 }

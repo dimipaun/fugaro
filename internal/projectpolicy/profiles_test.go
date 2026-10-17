@@ -496,18 +496,25 @@ func TestProfileTimeoutUsesFugaroYAMLsOwnDurationSpelling(t *testing.T) {
 	base := func(timeout string) string {
 		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"` + timeout + `"}}`
 	}
-	for _, class := range []string{"90m", "6h", "1d12h", "7d", "168h"} {
+	// The accepted list ends at the bound, which is Cloud Run's ceiling minus
+	// the slack the job's own task timeout adds (backend.TaskTimeoutSlack):
+	// 167h58m is 604680 s, and the job is deployed with 604800 — exactly the
+	// ceiling. 168h was in this list and is not any more: it deployed at
+	// 604920 s, which Cloud Run refuses, so an installation whose profile
+	// named it failed its apply and every launch on that profile was refused.
+	for _, class := range []string{"90m", "6h", "1d12h", "6d", "167h58m"} {
 		if _, err := decodeProfiles(t, base(class)); err != nil {
 			t.Errorf("the timeout %q was refused: %v", class, err)
 		}
 	}
 	// A day count is parsed rather than refused as a spelling: 14d is 336h, so
-	// it breaks Cloud Run's 168h ceiling — and the refusal says so, instead of
-	// claiming the value is not a duration.
-	for _, class := range []string{"14d", "8d"} {
+	// it breaks Cloud Run's ceiling — and the refusal says so, instead of
+	// claiming the value is not a duration. 168h is here for the reason above,
+	// and one second past the bound is the boundary itself.
+	for _, class := range []string{"14d", "8d", "168h", "167h58m1s"} {
 		_, err := decodeProfiles(t, base(class))
 		if err == nil {
-			t.Errorf("the timeout %q was accepted, past Cloud Run's 168h ceiling", class)
+			t.Errorf("the timeout %q was accepted, past what a Cloud Run task allows", class)
 			continue
 		}
 		if strings.Contains(err.Error(), "is not a duration") {

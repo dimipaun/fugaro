@@ -506,7 +506,18 @@ func managedModeReason(mode string) string {
 // not their plan; plan-time execution is Task 3.x's.
 func managedConfiguration(p *Plan) []string {
 	cfg := p.Configuration
-	if cfg == nil {
+	// An empty configuration is no configuration. terraform's own
+	// `show -json` always writes a configuration with a root_module (and a
+	// provider_config), so "{}" is a document nothing here wrote — and read
+	// as a configuration, it has no provisioner, no provider and no data
+	// source, so every rule below passes and the plan is taken to have none.
+	// That is the one reading this function exists to refuse.
+	//
+	// raw is set only by UnmarshalJSON, so it is what tells a configuration
+	// read out of a document — the only one that can be the empty object —
+	// from one a fixture built in Go, which carries no keys for the same
+	// reason: it never went through the decoder.
+	if cfg == nil || (cfg.raw != nil && len(cfg.fields) == 0) {
 		if len(p.ResourceChanges) == 0 {
 			return nil
 		}

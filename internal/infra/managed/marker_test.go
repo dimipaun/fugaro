@@ -168,6 +168,10 @@ func TestMarkerBudgetVersionShape(t *testing.T) {
 		"an amount of 0":             {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Currency: "USD"}},
 		"a negative amount":          {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: -1, Currency: "USD"}},
 		"an amount with no currency": {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: 7}},
+		"a lower-case currency":      {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: 7, Currency: "usd"}},
+		"a currency with a newline":  {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: 7, Currency: "XXXXXXXX\n"}},
+		"an amount above the range":  {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: MaxBudgetAmount + 1, Currency: "USD"}},
+		"the largest int64 amount":   {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: 9223372036854775807, Currency: "USD"}},
 		"a version this build does not know": {
 			Version: MarkerVersionBudget + 1, GCPProject: testProject,
 		},
@@ -2117,3 +2121,45 @@ func unquote(s string) string { return strings.Trim(s, `"`) }
 // fieldREs are field's patterns, one per attribute name. The tests that use
 // them do not run in parallel.
 var fieldREs = map[string]*regexp.Regexp{}
+
+// Budget.Check is the one rule the write and the read share: an amount in
+// [MinBudgetAmount, MaxBudgetAmount] whole units of its currency, and a
+// currency of exactly three ASCII uppercase letters (the ISO 4217 code
+// shape). The rows on each side of each bound are the ones a mutation of the
+// bound moves; the probes are the values a review read back as a valid
+// budget before the rule existed.
+func TestBudgetCheck(t *testing.T) {
+	for _, b := range []Budget{
+		{Amount: MinBudgetAmount, Currency: "USD"},
+		{Amount: MaxBudgetAmount, Currency: "EUR"},
+		{Amount: 50, Currency: "JPY"},
+		{Amount: 7, Currency: "AZZ"},
+	} {
+		if err := b.Check(); err != nil {
+			t.Errorf("%+v.Check() = %v, want nil", b, err)
+		}
+	}
+	for name, b := range map[string]Budget{
+		"an amount of 0":         {Amount: 0, Currency: "USD"},
+		"a negative amount":      {Amount: -1, Currency: "USD"},
+		"one above the ceiling":  {Amount: MaxBudgetAmount + 1, Currency: "USD"},
+		"the largest int64":      {Amount: 9223372036854775807, Currency: "USD"},
+		"no currency":            {Amount: 7},
+		"a lower-case currency":  {Amount: 7, Currency: "usd"},
+		"a mixed-case currency":  {Amount: 7, Currency: "Usd"},
+		"two letters":            {Amount: 7, Currency: "US"},
+		"four letters":           {Amount: 7, Currency: "USDX"},
+		"the probe XXXXXXXX\\n":  {Amount: 7, Currency: "XXXXXXXX\n"},
+		"a newline inside":       {Amount: 7, Currency: "U\nS"},
+		"a trailing newline":     {Amount: 7, Currency: "US\n"},
+		"a digit":                {Amount: 7, Currency: "US1"},
+		"a letter outside ASCII": {Amount: 7, Currency: "\u00dcS"},
+		"a byte just before A":   {Amount: 7, Currency: "@SD"},
+		"a byte just after Z":    {Amount: 7, Currency: "US["},
+		"a space":                {Amount: 7, Currency: "US "},
+	} {
+		if err := b.Check(); err == nil {
+			t.Errorf("%s: %+v.Check() = nil, want a refusal", name, b)
+		}
+	}
+}
