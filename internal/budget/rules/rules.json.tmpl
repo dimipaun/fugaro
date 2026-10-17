@@ -199,7 +199,7 @@
             "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
             "sender": { ".validate": "STR && newData.val() == $mb" },
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
-            "at": { ".validate": "AMOUNT" },
+            "at": { ".validate": "TIMESTAMP" },
             "$other": { ".validate": false }
           }
         },
@@ -211,7 +211,7 @@
             "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
             "sender": { ".validate": "STR && newData.val() == $mb" },
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
-            "at": { ".validate": "AMOUNT" },
+            "at": { ".validate": "TIMESTAMP" },
             "acked": {
               ".write": "MAILBOX && newData.exists()",
               ".validate": "newData.isBoolean()"
@@ -223,7 +223,7 @@
           ".read": "MAILBOX",
           ".write": "CONSUMER && newData.exists()",
           ".validate": "newData.hasChildren(['at', 'boot'])",
-          "at": { ".validate": "AMOUNT" },
+          "at": { ".validate": "TIMESTAMP" },
           "boot": { ".validate": "STR" },
           "$other": { ".validate": false }
         }

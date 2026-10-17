@@ -289,7 +289,7 @@
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 4096"
             },
             "at": {
-              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0)"
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
             },
             "$other": {
               ".validate": false
@@ -311,7 +311,7 @@
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 4096"
             },
             "at": {
-              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0)"
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
             },
             "acked": {
               ".write": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid) && $mb == auth.uid) && newData.exists()",
@@ -327,7 +327,7 @@
           ".write": "(auth != null && auth.token.mc != null && auth.token.mc == $mb) && newData.exists()",
           ".validate": "newData.hasChildren(['at', 'boot'])",
           "at": {
-            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0)"
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
           },
           "boot": {
             ".validate": "(newData.isString() && newData.val().length <= 200)"

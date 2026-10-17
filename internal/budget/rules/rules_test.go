@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"os"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -610,6 +612,159 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 			if !inList[p] {
 				t.Errorf("/%s is writable by a run token but is not one of this test's rows: add it", p)
 			}
+		}
+	}
+}
+
+// ---- The mailbox and the shared schema (mobile plan P2.1, design m9 §6.4).
+
+// schemaPath is the shared schema, from this package's directory: the two
+// artifacts are separate (the schema is the phone's, the rules are the
+// database's) and nothing but a test can hold them together.
+const schemaPath = "../../../shared/mailbox-schema/index.js"
+
+// schemaCatalog reads shared/mailbox-schema/index.js and returns its exported
+// constants by name, and the string literals of its two field lists. It is a
+// deliberately small reader of a deliberately simple file: every export in it
+// is `export const NAME = <number, Number.MAX_SAFE_INTEGER, or a frozen array
+// of strings>;`, so a value this cannot parse is a failure rather than a
+// silently unchecked number.
+func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []string) {
+	t.Helper()
+	b, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("reading the shared schema: %v", err)
+	}
+	consts = map[string]int64{}
+	for _, m := range regexp.MustCompile(`(?m)^export const ([A-Z_]+) = ([^;]+);`).FindAllStringSubmatch(string(b), -1) {
+		name, expr := m[1], strings.TrimSpace(m[2])
+		switch {
+		case regexp.MustCompile(`^\d+$`).MatchString(expr):
+			n, err := strconv.ParseInt(expr, 10, 64)
+			if err != nil {
+				t.Fatalf("%s = %s: %v", name, expr, err)
+			}
+			consts[name] = n
+		case expr == "Number.MAX_SAFE_INTEGER":
+			consts[name] = 1<<53 - 1
+		case strings.HasPrefix(expr, "Object.freeze({"):
+			// A frozen map of names (REFUSALS): no bound in it to compare.
+		case strings.HasPrefix(expr, "Object.freeze(["):
+			consts[name] = 0
+			var got []string
+			for _, s := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(expr, -1) {
+				got = append(got, s[1])
+			}
+			switch name {
+			case "FIELDS":
+				fields = got
+			case "REQUIRED_FIELDS":
+				required = got
+			}
+		default:
+			t.Fatalf("shared/mailbox-schema exports %s = %s, which this reader does not understand: teach it, so the number stays checked", name, expr)
+		}
+	}
+	if len(consts) == 0 || len(fields) == 0 || len(required) == 0 {
+		t.Fatalf("shared/mailbox-schema: read %d constants, %d fields and %d required fields", len(consts), len(fields), len(required))
+	}
+	return consts, fields, required
+}
+
+// TestMailboxRulesAgreeWithTheSharedSchema pins, without the emulator, the part
+// of §6.4's "the two artifacts cannot disagree" that can be pinned in Go: the
+// four bounds the rules apply to a message are the schema's own numbers, and
+// the fields the rules accept are the schema's field set. Both directions
+// matter, and the direction that matters more is the one that would refuse a
+// message the phone accepted: a bound the rules apply tighter than the schema
+// (at held to MaxAmount, an id to something the schema allows longer) fails
+// here.
+//
+// What this test cannot pin is the rest of the schema's judgement, and §6.4
+// says where the rules are looser rather than claiming they are the same: the
+// rules cannot inspect characters, so the id's key rule (no `%`, no control
+// character, no lone surrogate — all of which the schema refuses) is the
+// schema's alone, and `text`'s control characters with it. The emulator cases
+// (emulator_mailbox_test.go) prove what the rules do refuse.
+func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
+	consts, fields, required := schemaCatalog(t)
+	if got, want := MaxKeyLength, consts["ID_MAX"]; int64(got) != want {
+		t.Errorf("MaxKeyLength = %d, the schema's ID_MAX = %d", got, want)
+	}
+	if got, want := MaxString, consts["SENDER_MAX"]; int64(got) != want {
+		t.Errorf("MaxString = %d, the schema's SENDER_MAX = %d", got, want)
+	}
+	if got, want := MaxText, consts["TEXT_MAX"]; int64(got) != want {
+		t.Errorf("MaxText = %d, the schema's TEXT_MAX = %d", got, want)
+	}
+	if got, want := MaxTimestamp, consts["AT_MAX"]; got != want {
+		t.Errorf("MaxTimestamp = %d, the schema's AT_MAX = %d", got, want)
+	}
+	if want := []string{"id", "sender", "text", "at"}; !slices.Equal(required, want) {
+		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
+	}
+	if want := []string{"id", "sender", "text", "at", "acked"}; !slices.Equal(fields, want) {
+		t.Errorf("the schema's FIELDS = %v, want %v", fields, want)
+	}
+
+	// The generated mailbox applies those numbers, in the fields the schema
+	// names. The heartbeat's `at` is the fourth, and its `boot` is a sender-like
+	// string: the schema does not model the heartbeat, so only the bound is
+	// shared.
+	paths := generatedPaths(t)
+	for _, c := range []struct {
+		path string
+		frag string
+	}{
+		{`mailbox/$mb/inbox/$msg`, `$msg.length <= ` + strconv.Itoa(MaxKeyLength)},
+		{`mailbox/$mb/inbox/$msg/id`, `newData.val().length <= ` + strconv.Itoa(MaxKeyLength)},
+		{`mailbox/$mb/inbox/$msg/sender`, `newData.val().length <= ` + strconv.Itoa(MaxString)},
+		{`mailbox/$mb/inbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
+		{`mailbox/$mb/inbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/outbox/$msg`, `$msg.length <= ` + strconv.Itoa(MaxKeyLength)},
+		{`mailbox/$mb/outbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
+		{`mailbox/$mb/outbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/heartbeat/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+	} {
+		attrs, ok := paths[c.path]
+		if !ok {
+			t.Errorf("the template does not generate /%s", c.path)
+			continue
+		}
+		v, _ := attrs[".validate"].(string)
+		if !strings.Contains(v, c.frag) {
+			t.Errorf("/%s .validate = %q, want it to carry the schema's own bound (%q)", c.path, v, c.frag)
+		}
+	}
+
+	// The fields, per node: exactly the schema's set, no more. An inbox message
+	// has the four required ones — `acked` is the phone's ack of a message it
+	// spoke, which lives on an outbox message — and an outbox message has all
+	// five.
+	for _, c := range []struct {
+		path string
+		want []string
+	}{
+		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at"}},
+		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "acked"}},
+	} {
+		if _, ok := paths[c.path]; !ok {
+			t.Errorf("the template does not generate /%s", c.path)
+			continue
+		}
+		var got []string
+		for p := range paths {
+			name, ok := strings.CutPrefix(p, c.path+"/")
+			if !ok || name == "$other" || strings.Contains(name, "/") {
+				continue
+			}
+			got = append(got, name)
+		}
+		slices.Sort(got)
+		want := slices.Clone(c.want)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("/%s holds %v, the schema's field set for it is %v", c.path, got, want)
 		}
 	}
 }

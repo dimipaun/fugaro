@@ -81,8 +81,25 @@ const (
 	// MaxText bounds one mailbox message's body: D118's size bound per
 	// message, the same number the shared schema enforces before a message is
 	// written (shared/mailbox-schema's TEXT_MAX), so that the phone and the
-	// rules cannot disagree about how much one write may carry.
+	// rules cannot disagree about how much one write may carry. The agreement
+	// is not a comment: TestMailboxRulesAgreeWithTheSharedSchema reads
+	// shared/mailbox-schema/index.js and fails when either artifact's number
+	// moves without the other.
 	MaxText = 4096
+	// MaxTimestamp bounds every epoch-millisecond instant the rules store: a
+	// mailbox message's `at` and the heartbeat's. It is the largest integer a
+	// double represents exactly (2^53-1), which is what the shared schema
+	// applies (shared/mailbox-schema's AT_MAX) and what every other time in
+	// the tree already stays below.
+	//
+	// It is deliberately not MaxAmount. An amount and an instant are different
+	// kinds of number: the first is the project's money and is held below
+	// $10M, the second is a clock reading and is held to the exact-double line
+	// and nothing else. Holding `at` to MaxAmount would refuse a timestamp the
+	// phone's own validator accepts (any time after the year 2286), which is
+	// the direction that matters — the database refusing a message the schema
+	// passed (the review finding on P2.1).
+	MaxTimestamp int64 = 1<<53 - 1
 )
 
 // Generate returns the rules JSON, indented and deterministic.
@@ -354,6 +371,11 @@ func wordMacro(m string, depth int) (string, error) {
 		return "($day == " + todayExpr + " || $day == " + yesterdayExpr + ")", nil
 	case "AMOUNT":
 		return fmt.Sprintf("(newData.isNumber() && newData.val() >= 0 && newData.val() <= %d && newData.val() %% 1 == 0)", MaxAmount), nil
+	case "TIMESTAMP":
+		// An epoch-millisecond instant, bounded at the schema's own AT_MAX
+		// (MaxTimestamp), so a message the phone's validator accepts is not
+		// refused by the database. Not AMOUNT: see MaxTimestamp.
+		return fmt.Sprintf("(newData.isNumber() && newData.val() >= 0 && newData.val() <= %d && newData.val() %% 1 == 0)", MaxTimestamp), nil
 	case "STR":
 		return fmt.Sprintf("(newData.isString() && newData.val().length <= %d)", MaxString), nil
 	case "RBOK":
