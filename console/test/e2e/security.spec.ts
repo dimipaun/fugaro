@@ -218,15 +218,32 @@ test.describe('the hardened window', () => {
   })
 
   test('cannot read a file:// URL either', async () => {
-    const outcome = await page.evaluate(async () => {
-      try {
-        await fetch('file:///etc/passwd')
-        return 'resolved'
-      } catch {
-        return 'rejected'
+    // Chromium's `fetch()` never supports `file:`, so "the fetch rejected" holds
+    // under any CSP and proves nothing (review round 2 of PR 514). The probe is
+    // the one its siblings use: the CSP's own violation event, which is
+    // dispatched only when the policy -- not the scheme -- refused the request.
+    // Both halves were run: under `connect-src 'none'` this passes; under
+    // `connect-src * file:` the fetch still rejects but no violation is
+    // dispatched, and the violation assertion fails. (`connect-src *` alone does
+    // not admit `file:`, so it is not the mutation that shows this.)
+    const probe = await page.evaluate(async (target) => {
+      const violations: string[] = []
+      const onViolation = (event: Event) => {
+        violations.push((event as SecurityPolicyViolationEvent).violatedDirective)
       }
-    })
-    expect(outcome).toBe('rejected')
+      document.addEventListener('securitypolicyviolation', onViolation)
+      let outcome = 'resolved'
+      try {
+        await fetch(target)
+      } catch {
+        outcome = 'rejected'
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      document.removeEventListener('securitypolicyviolation', onViolation)
+      return { outcome, violations }
+    }, 'file:///etc/passwd')
+    expect(probe.outcome).toBe('rejected')
+    expect(probe.violations).toContain('connect-src')
     expect(remoteRequests).toEqual([])
   })
 
