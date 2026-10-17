@@ -405,6 +405,8 @@ func TestManagedCoverRefusesWiderPrincipals(t *testing.T) {
 		"the installations scheduler": grant("serviceAccount:fugaro-scheduler@proj-1.iam.gserviceaccount.com", "roles/storage.objectViewer"),
 		"a person not on the screen":  grant("user:stranger@example.com", "roles/storage.objectViewer"),
 		"no member":                   grant("", "roles/storage.objectViewer"),
+		"the project's owner role":    grant("user:owner@example.com", "roles/owner"),
+		"the project's editor role":   grant("user:owner@example.com", "roles/editor"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if out := managedTestCover().NotCovered(managedPlan(fixture), nil); len(out) != 1 {
