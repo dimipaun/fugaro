@@ -122,25 +122,33 @@ func managedDroppedTypes() []string {
 	return slices.Sorted(maps.Keys(managedDropped))
 }
 
-// managedNames is the attribute a managed type's own name is read from, and
-// the resource that name may be computed from: a name known only after apply
-// is a reference to a resource the plan creates itself, and that resource's
-// own name is checked where it is declared — the rule Cover.NotCovered
-// already follows for a computed member or role (cover.go:255-263). An empty
-// from means the plan must spell the name out and a computed one is refused.
-var managedNames = map[string]struct{ attr, from string }{
-	"google_apikeys_key":                             {"name", ""},
-	"google_artifact_registry_repository":            {"repository_id", ""},
-	"google_artifact_registry_repository_iam_member": {"repository", "google_artifact_registry_repository"},
-	"google_cloud_run_v2_job":                        {"name", ""},
-	"google_cloud_run_v2_job_iam_member":             {"name", "google_cloud_run_v2_job"},
-	"google_cloud_scheduler_job":                     {"name", ""},
-	"google_secret_manager_secret":                   {"secret_id", ""},
-	"google_secret_manager_secret_iam_member":        {"secret_id", "google_secret_manager_secret"},
-	"google_service_account":                         {"account_id", ""},
-	"google_storage_bucket":                          {"name", ""},
-	"google_storage_bucket_iam_member":               {"bucket", "google_storage_bucket"},
-	"google_storage_bucket_object":                   {"bucket", "google_storage_bucket"},
+// managedNames is the attribute a managed type's name — its own, or the name
+// of the resource it is on — is read from. The plan must spell every one of
+// them out: a name known only after apply is refused, whatever the plan
+// creates beside it.
+//
+// Why no computed value is trusted, here or anywhere in this cover: a saved
+// plan records which resources an expression references, never the expression
+// itself, so "computed from a resource the plan creates" cannot be proved from
+// it. bucket = "${substr(google_storage_bucket.b.name,0,0)}fugaro-runs-<p>"
+// is unknown at plan time, references a created bucket, and applies as the
+// runs bucket. init's own Cover may trust such a value (cover.go:255-263)
+// because its plans are Fugaro's own modules; a managed plan is the agent's.
+// The refusal falls back to the confirmation path, and the agent can always
+// write the name literally — every name here is one the plan chooses.
+var managedNames = map[string]string{
+	"google_apikeys_key":                             "name",
+	"google_artifact_registry_repository":            "repository_id",
+	"google_artifact_registry_repository_iam_member": "repository",
+	"google_cloud_run_v2_job":                        "name",
+	"google_cloud_run_v2_job_iam_member":             "name",
+	"google_cloud_scheduler_job":                     "name",
+	"google_secret_manager_secret":                   "secret_id",
+	"google_secret_manager_secret_iam_member":        "secret_id",
+	"google_service_account":                         "account_id",
+	"google_storage_bucket":                          "name",
+	"google_storage_bucket_iam_member":               "bucket",
+	"google_storage_bucket_object":                   "bucket",
 }
 
 // managedGrantRules are the *_iam_member types a managed plan may grant a role
@@ -176,6 +184,11 @@ var managedGrantRules = map[string]bool{
 //   - the runs bucket, by name: a bucket grant on it is refused before the
 //     prefix is read, because that is where the marker and the owner's delete
 //     list live (Task 1.4).
+//
+// And one rule under all four: every value the cover reads — a name, the
+// account a job, a scheduler or a grant is on, a member, a role — must be
+// known at plan time. A computed one is refused, never trusted for what it
+// references (managedNames says why).
 type ManagedCover struct {
 	Cover
 }
@@ -199,12 +212,6 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	}
 	var out []string
 	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
-	creates := map[string]bool{}
-	for _, rc := range p.ResourceChanges {
-		if slices.Contains(rc.Change.Actions, "create") {
-			creates[modulePrefix(rc)+"|"+rc.Type] = true
-		}
-	}
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
 		switch {
@@ -230,10 +237,10 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "imports "+rc.Change.Importing.ID+", which is not in the managed project's projects")
 		case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
 			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
-		case c.managedResource(rc, creates) != "":
-			add(rc, c.managedResource(rc, creates))
+		case c.managedResource(rc) != "":
+			add(rc, c.managedResource(rc))
 		case strings.HasSuffix(t, "_iam_member"):
-			if why := c.managedGrant(rc, creates); why != "" {
+			if why := c.managedGrant(rc); why != "" {
 				add(rc, why)
 			}
 		}
@@ -256,12 +263,16 @@ func (c ManagedCover) managedTypeReason(t string) string {
 // managed project's own, and its bucket must not be the runs bucket — which is
 // refused by name, before the prefix rule answers a different question about
 // it. "" when it is the plan's own resource.
-func (c ManagedCover) managedResource(rc ResourceChange, creates map[string]bool) string {
+func (c ManagedCover) managedResource(rc ResourceChange) string {
 	a := rc.Change.After
 	if a == nil {
 		a = map[string]any{}
 	}
-	pre := modulePrefix(rc)
+	// The name first: a computed bucket reads as "" and would pass the by-name
+	// rule below unseen, so it is refused before that rule reads it.
+	if attr, ok := managedNames[rc.Type]; ok && unknown(rc.Change, attr) {
+		return rc.Type + " whose " + attr + " is not known at plan time: write it out literally, starting " + ManagedPrefix
+	}
 	// Rule (b): the installation's own runs bucket, by name, wherever a plan
 	// points at it. The marker and the owner's delete list live at its root,
 	// so it is the one bucket a managed plan never touches.
@@ -270,8 +281,8 @@ func (c ManagedCover) managedResource(rc ResourceChange, creates map[string]bool
 			return "on bucket " + b + ", which is not the managed project's"
 		}
 	}
-	if n, ok := managedNames[rc.Type]; ok {
-		if why := c.managedName(rc, n.attr, creates[pre+"|"+n.from]); why != "" {
+	if attr, ok := managedNames[rc.Type]; ok {
+		if why := c.managedName(rc, attr); why != "" {
 			return why
 		}
 	}
@@ -297,25 +308,27 @@ func (c ManagedCover) managedResource(rc ResourceChange, creates map[string]bool
 			unknownAt(rc.Change.AfterUnknown, "http_target", 0, "oidc_token", 0, "service_account_email") {
 			return "a scheduler whose service account is not known"
 		}
-		email := str(at(ht, "oauth_token", "service_account_email"))
-		if email == "" {
-			email = str(at(ht, "oidc_token", "service_account_email"))
+		// Either token may carry the account; GCP takes one, and every one
+		// the plan sets must be a managed account.
+		var emails []string
+		for _, tok := range []string{"oauth_token", "oidc_token"} {
+			if e := str(at(ht, tok, "service_account_email")); e != "" {
+				emails = append(emails, e)
+			}
 		}
-		switch {
-		case email == "":
+		if len(emails) == 0 {
 			return "a scheduler with no service account, which would call as the project's default compute account"
-		case !c.managedAccount("serviceAccount:" + email):
-			return "calls as " + email + ", which is not a service account of the managed project carrying the prefix " + ManagedPrefix
+		}
+		for _, email := range emails {
+			if !c.managedAccount("serviceAccount:" + email) {
+				return "calls as " + email + ", which is not a service account of the managed project carrying the prefix " + ManagedPrefix
+			}
 		}
 	case "google_service_account_iam_member":
-		// The account the grant is on, not the member it names: a computed one
-		// is a reference to an account the plan creates, whose own account_id
-		// is checked where it is declared.
+		// The account the grant is on, not the member it names: refused when
+		// computed, for managedNames' reason.
 		if unknown(rc.Change, "service_account_id") {
-			if !creates[pre+"|google_service_account"] {
-				return "a grant on an account that is not known and none is created with it"
-			}
-			return ""
+			return "a grant on an account that is not known at plan time: write service_account_id out literally, as projects/<project>/serviceAccounts/" + ManagedPrefix + "<id>@<project>.iam.gserviceaccount.com"
 		}
 		id := str(a["service_account_id"])
 		switch {
@@ -328,17 +341,10 @@ func (c ManagedCover) managedResource(rc ResourceChange, creates map[string]bool
 	return ""
 }
 
-// managedName says why a managed resource's own name is not one a managed plan
-// may carry: known only after apply with nothing created to account for it,
-// empty, or outside the managed prefix. created is whether the resource the
-// name may be computed from is created in the same module.
-func (c ManagedCover) managedName(rc ResourceChange, attr string, created bool) string {
-	if unknown(rc.Change, attr) {
-		if created {
-			return ""
-		}
-		return rc.Type + " whose " + attr + " is not known"
-	}
+// managedName says why a managed resource's name, known at plan time
+// (managedResource refuses a computed one first), is not one a managed plan may
+// carry: empty, or outside the managed prefix.
+func (c ManagedCover) managedName(rc ResourceChange, attr string) string {
 	n := str(rc.Change.After[attr])
 	switch {
 	case n == "":
@@ -353,32 +359,32 @@ func (c ManagedCover) managedName(rc ResourceChange, attr string, created bool) 
 // the resource it is on is managedResource's, the member must be one the
 // review listed or a managed account of the managed project, and the role must
 // be spelled out. "" when the grant is one a managed plan may make.
-func (c ManagedCover) managedGrant(rc ResourceChange, creates map[string]bool) string {
+func (c ManagedCover) managedGrant(rc ResourceChange) string {
 	if !managedGrantRules[rc.Type] {
 		return "a grant of a type a managed plan may not make"
 	}
 	ch := rc.Change
+	// A computed member is refused even beside an account the plan creates,
+	// for managedNames' reason: the plan cannot show that it names that
+	// account and not allUsers. A grant to a created account names it.
 	if unknown(ch, "member") {
-		if !creates[modulePrefix(rc)+"|google_service_account"] {
-			return "a member that is not known and no service account is created with it"
+		return "a member that is not known at plan time: name the account literally, as serviceAccount:" + ManagedPrefix + "<id>@<project>.iam.gserviceaccount.com"
+	}
+	m := str(ch.After["member"])
+	switch {
+	case m == "":
+		return "no member"
+	case m == "allUsers" || m == "allAuthenticatedUsers":
+		return fmt.Sprintf("grants to %s, which is everyone", m)
+	case strings.HasPrefix(m, "domain:"):
+		return fmt.Sprintf("grants to %s, a whole domain", m)
+	case c.managedAccount(m):
+	case slices.Contains(c.Listed, m):
+		if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") {
+			return fmt.Sprintf("grants to %s, which is not a user or a group", m)
 		}
-	} else {
-		m := str(ch.After["member"])
-		switch {
-		case m == "":
-			return "no member"
-		case m == "allUsers" || m == "allAuthenticatedUsers":
-			return fmt.Sprintf("grants to %s, which is everyone", m)
-		case strings.HasPrefix(m, "domain:"):
-			return fmt.Sprintf("grants to %s, a whole domain", m)
-		case c.managedAccount(m):
-		case slices.Contains(c.Listed, m):
-			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") {
-				return fmt.Sprintf("grants to %s, which is not a user or a group", m)
-			}
-		default:
-			return fmt.Sprintf("grants to %s, who is not on the review screen and is not a service account of the managed project", m)
-		}
+	default:
+		return fmt.Sprintf("grants to %s, who is not on the review screen and is not a service account of the managed project", m)
 	}
 	if unknown(ch, "role") {
 		return "a role that is not known"

@@ -340,25 +340,96 @@ func withUnknown(rc ResourceChange, unknown map[string]any) ResourceChange {
 	return rc
 }
 
-// TestManagedCoverComputedValues pins the rules for a value the plan knows
-// only after apply, in both directions. A computed name or member is admitted
-// only when the resource it may be computed from is created in the same
-// module (that resource's own name is checked where it is declared), and is
-// refused otherwise — the fail-open half, where a plan points at something it
-// did not create. An account a job or a scheduler runs as is never trusted
-// computed: refused with its own reason.
+// TestManagedCoverComputedValues pins the rule for a value the plan knows only
+// after apply: every name, account and member the cover reads is refused when
+// it is computed, whatever else the plan creates beside it. A saved plan keeps
+// only the references an expression uses, never the expression, so "computed
+// from a resource the plan creates" cannot be proved from it: the attack rows
+// below are each a value that is unknown at plan time yet whose result the plan
+// chooses — member = "${substr(google_service_account.x.unique_id,0,0)}allUsers"
+// reads as unknown, references a created account, and applies as allUsers.
+// A refusal falls back to the confirmation path; a plan that names its own
+// accounts and resources literally is covered.
 func TestManagedCoverComputedValues(t *testing.T) {
 	const mod = "module.managed"
 	sa := inModule(mrc("google_service_account", map[string]any{"account_id": ManagedPrefix + "sa"}), mod)
 	bucket := inModule(mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "bucket"}), mod)
-	saElsewhere := inModule(sa, "module.other")
-	bucketElsewhere := inModule(bucket, "module.other")
-	grantOnComputedBucket := inModule(withUnknown(mrc("google_storage_bucket_iam_member", map[string]any{
-		"member": "serviceAccount:" + managedAccount, "role": "roles/storage.objectViewer"}), map[string]any{"bucket": true}), mod)
-	grantToComputedMember := inModule(withUnknown(mrc("google_storage_bucket_iam_member", map[string]any{
-		"bucket": ManagedPrefix + "bucket", "role": "roles/storage.objectViewer"}), map[string]any{"member": true}), mod)
-	grantOnComputedAccount := inModule(withUnknown(mrc("google_service_account_iam_member", map[string]any{
-		"member": "serviceAccount:" + managedAccount, "role": "roles/iam.serviceAccountUser"}), map[string]any{"service_account_id": true}), mod)
+	secret := inModule(mrc("google_secret_manager_secret", map[string]any{"secret_id": ManagedPrefix + "token"}), mod)
+	repo := inModule(mrc("google_artifact_registry_repository", map[string]any{"repository_id": ManagedPrefix + "repo"}), mod)
+	job := inModule(managedKeptFixture["google_cloud_run_v2_job"], mod)
+	everything := []ResourceChange{sa, bucket, secret, repo, job}
+	// computed is the kept fixture of typ with attr known only after apply,
+	// in the module that creates everything a computed value could name.
+	computed := func(typ, attr string, set map[string]any) ResourceChange {
+		after := map[string]any{}
+		for k, v := range managedKeptFixture[typ].Change.After {
+			after[k] = v
+		}
+		delete(after, attr)
+		for k, v := range set {
+			after[k] = v
+		}
+		return inModule(withUnknown(mrc(typ, after), map[string]any{attr: true}), mod)
+	}
+	const memberWhy = "a member that is not known at plan time"
+	for name, tc := range map[string]struct {
+		rc  ResourceChange
+		why string
+	}{
+		// (1) the member: the review's attack, on every grant type.
+		"allUsers as storage.admin through a computed member": {computed("google_storage_bucket_iam_member", "member",
+			map[string]any{"role": "roles/storage.admin"}), memberWhy},
+		"token creator to an outsider through a computed member": {computed("google_service_account_iam_member", "member",
+			map[string]any{"role": "roles/iam.serviceAccountTokenCreator"}), memberWhy},
+		"a secret grant to a computed member":     {computed("google_secret_manager_secret_iam_member", "member", nil), memberWhy},
+		"a repository grant to a computed member": {computed("google_artifact_registry_repository_iam_member", "member", nil), memberWhy},
+		"a job grant to a computed member":        {computed("google_cloud_run_v2_job_iam_member", "member", nil), memberWhy},
+		// (2) the names: "${substr(google_storage_bucket.b.name,0,0)}fugaro-runs-proj-1"
+		// reads as unknown and applies as the runs bucket.
+		"the marker through a computed bucket": {computed("google_storage_bucket_object", "bucket",
+			map[string]any{"name": "fugaro/managed.json"}), "google_storage_bucket_object whose bucket is not known at plan time"},
+		"a grant on a computed bucket": {computed("google_storage_bucket_iam_member", "bucket", nil),
+			"google_storage_bucket_iam_member whose bucket is not known at plan time"},
+		"a grant on a computed secret": {computed("google_secret_manager_secret_iam_member", "secret_id", nil),
+			"google_secret_manager_secret_iam_member whose secret_id is not known at plan time"},
+		"a grant on a computed repository": {computed("google_artifact_registry_repository_iam_member", "repository", nil),
+			"google_artifact_registry_repository_iam_member whose repository is not known at plan time"},
+		"a grant on a computed job": {computed("google_cloud_run_v2_job_iam_member", "name", nil),
+			"google_cloud_run_v2_job_iam_member whose name is not known at plan time"},
+		"a grant on a computed account": {computed("google_service_account_iam_member", "service_account_id", nil),
+			"a grant on an account that is not known at plan time"},
+		// The resources' own names were never trusted computed.
+		"a computed bucket name": {computed("google_storage_bucket", "name", nil), "google_storage_bucket whose name is not known at plan time"},
+		"a computed account id":  {computed("google_service_account", "account_id", nil), "google_service_account whose account_id is not known at plan time"},
+		"a computed secret id":   {computed("google_secret_manager_secret", "secret_id", nil), "google_secret_manager_secret whose secret_id is not known at plan time"},
+		"a computed job name":    {computed("google_cloud_run_v2_job", "name", nil), "google_cloud_run_v2_job whose name is not known at plan time"},
+		"a computed key name":    {computed("google_apikeys_key", "name", nil), "google_apikeys_key whose name is not known at plan time"},
+		"a computed repository":  {computed("google_artifact_registry_repository", "repository_id", nil), "google_artifact_registry_repository whose repository_id is not known at plan time"},
+		"a computed schedule":    {computed("google_cloud_scheduler_job", "name", nil), "google_cloud_scheduler_job whose name is not known at plan time"},
+		"a computed role":        {computed("google_storage_bucket_iam_member", "role", nil), "a role that is not known"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(managedPlan(append(slices.Clone(everything), tc.rc)...), nil)
+			if len(out) != 1 || !strings.HasPrefix(out[0], tc.rc.Address+" (") || !strings.Contains(out[0], tc.why) {
+				t.Fatalf("gives %q, want one refusal of %s: %q", out, tc.rc.Address, tc.why)
+			}
+		})
+	}
+	// The refusal says what to write instead: the account spelled out.
+	out := managedTestCover().NotCovered(managedPlan(sa, computed("google_storage_bucket_iam_member", "member", nil)), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "serviceAccount:"+ManagedPrefix) {
+		t.Errorf("a computed member gives %q, want a refusal naming the literal form", out)
+	}
+	// A grant to an account the module creates, written with its member, its
+	// account and its bucket spelled out, is covered.
+	literal := []ResourceChange{sa, bucket,
+		inModule(managedKeptFixture["google_storage_bucket_iam_member"], mod),
+		inModule(managedKeptFixture["google_service_account_iam_member"], mod)}
+	if out := managedTestCover().NotCovered(managedPlan(literal...), nil); len(out) != 0 {
+		t.Errorf("a grant to a created account, spelled out, gives %q, want it covered", out)
+	}
+
+	// The job's and the scheduler's accounts: never trusted computed either.
 	jobComputedAccount := inModule(withUnknown(mrc("google_cloud_run_v2_job", map[string]any{
 		"name": ManagedPrefix + "job", "template": []any{map[string]any{"template": []any{map[string]any{}}}}}),
 		map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"service_account": true}}}}}), mod)
@@ -370,44 +441,17 @@ func TestManagedCoverComputedValues(t *testing.T) {
 		map[string]any{"http_target": []any{map[string]any{"oidc_token": []any{map[string]any{"service_account_email": true}}}}}), mod)
 	schedComputedTarget := inModule(withUnknown(mrc("google_cloud_scheduler_job", map[string]any{
 		"name": ManagedPrefix + "sweep"}), map[string]any{"http_target": true}), mod)
-
 	for name, tc := range map[string]struct {
-		plan []ResourceChange
-		why  string // "" when the plan is covered
+		rc  ResourceChange
+		why string
 	}{
-		// managedName's created-trusted path.
-		"a grant on a bucket the module creates": {[]ResourceChange{bucket, grantOnComputedBucket}, ""},
-		"a grant on a computed bucket, none created": {[]ResourceChange{grantOnComputedBucket},
-			"google_storage_bucket_iam_member whose bucket is not known"},
-		"a grant on a computed bucket created in another module": {[]ResourceChange{bucketElsewhere, grantOnComputedBucket},
-			"google_storage_bucket_iam_member whose bucket is not known"},
-		// managedGrant's created-trusted path.
-		"a grant to an account the module creates": {[]ResourceChange{sa, grantToComputedMember}, ""},
-		"a grant to a computed member, no account created": {[]ResourceChange{grantToComputedMember},
-			"a member that is not known and no service account is created with it"},
-		"a grant to a computed member, the account created in another module": {[]ResourceChange{saElsewhere, grantToComputedMember},
-			"a member that is not known and no service account is created with it"},
-		// The service-account grant's guard.
-		"a grant on an account the module creates": {[]ResourceChange{sa, grantOnComputedAccount}, ""},
-		"a grant on a computed account, none created": {[]ResourceChange{grantOnComputedAccount},
-			"a grant on an account that is not known and none is created with it"},
-		"a grant on a computed account created in another module": {[]ResourceChange{saElsewhere, grantOnComputedAccount},
-			"a grant on an account that is not known and none is created with it"},
-		// The job's and the scheduler's guards: never trusted, even with an
-		// account created beside them.
-		"a job whose account is computed":             {[]ResourceChange{sa, jobComputedAccount}, "a job whose service account is not known"},
-		"a scheduler whose OAuth account is computed": {[]ResourceChange{sa, schedComputedOAuth}, "a scheduler whose service account is not known"},
-		"a scheduler whose OIDC account is computed":  {[]ResourceChange{sa, schedComputedOIDC}, "a scheduler whose service account is not known"},
-		"a scheduler whose whole target is computed":  {[]ResourceChange{sa, schedComputedTarget}, "a scheduler whose service account is not known"},
+		"a job whose account is computed":             {jobComputedAccount, "a job whose service account is not known"},
+		"a scheduler whose OAuth account is computed": {schedComputedOAuth, "a scheduler whose service account is not known"},
+		"a scheduler whose OIDC account is computed":  {schedComputedOIDC, "a scheduler whose service account is not known"},
+		"a scheduler whose whole target is computed":  {schedComputedTarget, "a scheduler whose service account is not known"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			out := managedTestCover().NotCovered(managedPlan(tc.plan...), nil)
-			if tc.why == "" {
-				if len(out) != 0 {
-					t.Fatalf("gives %q, want it covered", out)
-				}
-				return
-			}
+			out := managedTestCover().NotCovered(managedPlan(sa, tc.rc), nil)
 			if len(out) != 1 || !strings.Contains(out[0], tc.why) {
 				t.Fatalf("gives %q, want one refusal %q", out, tc.why)
 			}
@@ -585,5 +629,109 @@ func TestManagedCoverIsACover(t *testing.T) {
 	} = managedTestCover()
 	if got := managedTestCover().NotCovered(nil, nil); len(got) != 1 || got[0] != "no plan" {
 		t.Fatalf("a nil plan gives %q, want one refusal", got)
+	}
+}
+
+// TestManagedCoverRefusesDeletesAndReplacements: the action set is create,
+// update, no-op and read. A delete or a replacement is refused here whatever
+// the owner's delete list says (the open question the PR records), and an
+// unknown action is refused rather than read as none.
+func TestManagedCoverRefusesDeletesAndReplacements(t *testing.T) {
+	for name, acts := range map[string][]string{
+		"a delete":                         {"delete"},
+		"a replacement, delete first":      {"delete", "create"},
+		"a replacement, create first":      {"create", "delete"},
+		"an action terraform has not used": {"forget"},
+		"no actions":                       {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rc := managedKeptFixture["google_storage_bucket"]
+			rc.Change.Actions = acts
+			if out := managedTestCover().NotCovered(managedPlan(rc), nil); len(out) != 1 || !strings.HasPrefix(out[0], rc.Address+" (") {
+				t.Fatalf("%v gives %q, want one refusal", acts, out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverImports: an import is covered only when its ID is in the
+// managed project's projects AND this run's discovery found it at that
+// address — and a no-op that imports is an import, not a no-op to skip.
+func TestManagedCoverImports(t *testing.T) {
+	sa := managedKeptFixture["google_service_account"]
+	const inProject = "projects/proj-1/serviceAccounts/" + managedAccount
+	const elsewhere = "projects/other/serviceAccounts/" + ManagedPrefix + "sa@other.iam.gserviceaccount.com"
+	importing := func(id string, acts ...string) ResourceChange {
+		rc := sa
+		rc.Change.Actions = acts
+		rc.Change.Importing = &Importing{ID: id}
+		return rc
+	}
+	for name, tc := range map[string]struct {
+		rc      ResourceChange
+		imports []ImportKey
+		why     string
+	}{
+		"an import discovery found": {importing(inProject, "no-op"), []ImportKey{{sa.Address, inProject}}, ""},
+		"an import of another project's account, even one discovery listed": {importing(elsewhere, "no-op"),
+			[]ImportKey{{sa.Address, elsewhere}}, "which is not in the managed project's projects"},
+		"a no-op import discovery did not find":     {importing(inProject, "no-op"), nil, "which this run's discovery did not find"},
+		"an updating import discovery did not find": {importing(inProject, "update"), nil, "which this run's discovery did not find"},
+		"an import discovery found at another address": {importing(inProject, "no-op"),
+			[]ImportKey{{"module.other.google_service_account.this", inProject}}, "which this run's discovery did not find"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := managedTestCover().NotCovered(managedPlan(tc.rc), tc.imports)
+			if tc.why == "" {
+				if len(out) != 0 {
+					t.Fatalf("gives %q, want it covered", out)
+				}
+				return
+			}
+			if len(out) != 1 || !strings.Contains(out[0], tc.why) {
+				t.Fatalf("gives %q, want one refusal %q", out, tc.why)
+			}
+		})
+	}
+}
+
+// TestManagedCoverListedMembersArePeople: the review's listed members admit a
+// person or a group, never an account — a service account on the review
+// screen is still not one the managed project owns, and only a managed account
+// is granted to as an account.
+func TestManagedCoverListedMembersArePeople(t *testing.T) {
+	const outsider = "serviceAccount:ci@other.iam.gserviceaccount.com"
+	c := managedTestCover()
+	c.Listed = append(slices.Clone(c.Listed), outsider)
+	rc := mrc("google_storage_bucket_iam_member", map[string]any{
+		"bucket": ManagedPrefix + "bucket", "member": outsider, "role": "roles/storage.objectViewer"})
+	if out := c.NotCovered(managedPlan(rc), nil); len(out) != 1 || !strings.Contains(out[0], "which is not a user or a group") {
+		t.Fatalf("a listed service account gives %q, want one refusal: not a user or a group", out)
+	}
+}
+
+// TestManagedCoverSchedulerOIDC: a scheduler may call with an OIDC token as
+// well as an OAuth one, and the OIDC account is held to the same rule.
+func TestManagedCoverSchedulerOIDC(t *testing.T) {
+	sched := func(tokens map[string]string) ResourceChange {
+		ht := map[string]any{}
+		for tok, email := range tokens {
+			ht[tok] = []any{map[string]any{"service_account_email": email}}
+		}
+		return mrc("google_cloud_scheduler_job", map[string]any{"name": ManagedPrefix + "sweep", "http_target": []any{ht}})
+	}
+	const compute = "123456789-compute@developer.gserviceaccount.com"
+	if out := managedTestCover().NotCovered(managedPlan(sched(map[string]string{"oidc_token": managedAccount})), nil); len(out) != 0 {
+		t.Errorf("a scheduler calling with an OIDC token as a managed account gives %q, want it covered", out)
+	}
+	for name, tokens := range map[string]map[string]string{
+		"OIDC as the default compute account":             {"oidc_token": compute},
+		"OAuth managed, OIDC the default compute account": {"oauth_token": managedAccount, "oidc_token": compute},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(managedPlan(sched(tokens)), nil); len(out) != 1 || !strings.Contains(out[0], compute) {
+				t.Fatalf("gives %q, want one refusal naming %s", out, compute)
+			}
+		})
 	}
 }
