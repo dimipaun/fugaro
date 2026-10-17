@@ -28,7 +28,7 @@
 | **0. The ground** | the JSON contract written down and pinned (`console/docs/json-contract.md`); the child-process contract settled; the Go/`console` boundary with three tests holding it (imports, `go:embed`, and the one-entry read exception) | nothing | nothing |
 | **1. The shell** | the hardened Electron main process, the frozen IPC allow-list, `FugaroSource` with its `cli` and `fixture` implementations, the recorder/redactor, and **the console's CI — which begins with Task 1.5's copy-in, so Tasks 1.0 to 1.4 have none** | **the eight fixture recordings** (Task 1.4) and **the copy-in of the staged tests workflow** (Task 1.5) | phase 0 |
 | **2. The screens** | Live, Spend, Projects, Run detail — with the availability states and the replay buffer | nothing | phase 1 |
-| **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)** | nothing | phase 2 |
+| **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)**; **the renderer entry — the preload, the handlers and the installation picker (Task 3.4, proposed 2026-10-17, not approved)** | nothing required (3.4's header and picker goldens are optional and owner-run) | phase 2 |
 | **4. macOS packaging** | the builder config and entitlements; the staged signing/notarisation workflow (a file of its own, tag-only); the update feed; **Checks 59a and 59b** | **all of it**: the certificate, the API key, the first signed build, the update round trip (Check 59); the protected GitHub environment the signing secrets live in; and Task 4.5's copy-in of the staged **signing** workflow | phase 3 |
 | **5. Later, unscheduled** | Windows and Linux packaging; the v1.1 write actions | each, when the owner decides | phase 4 |
 
@@ -77,7 +77,7 @@ These hold for every task below, and the plan's own review checks them:
 6. **`belong` is never touched** by any step, agent-run or owner-run, and no fixture is ever recorded from it.
 7. **Nothing under `.github/workflows/` is created or edited by an agent.** The console's workflow text is written as **two staged files under `docs/pending-workflows/`** for the owner to copy — **`console-tests.yml`** (staged by Task 1.4, copied in by the owner as Task 1.5) and **`console-release.yml`** (the signing pipeline, staged by Task 4.2, copied in as Task 4.5) — which is the mechanism this repo already uses (`docs/pending-workflows/README.md`) and names as an owner step in `docs/release.md`'s "Before you tag". **The two are separate files because they must have different triggers**: the tests job runs on every pull request and every `main` push and holds no secret, the signing job runs only on a version tag and reads its secrets from a protected environment (design §9.4). One file carrying both would put the signing key's job on every pull-request run.
 8. **The Go module is untouched.** `console/` holds no Go package, `go.mod` and `go.sum` do not change, and no Go file references a path under `console/`. Task 0.3's test is what makes this a fact rather than an intention.
-9. **Security-sensitive tasks are flagged `SECURITY-SENSITIVE, independent opus review`** in their own heading and are not merged on a self-review. **This list is the headings, and nothing else is on it**: 1.1, 1.2, 1.3, 2.0, 3.3, 4.1, 4.2 and 4.4, plus 5.2 when it is scheduled. (An earlier revision listed 2.1 and 4.3 and omitted 2.0, 4.4 and 4.5; the headings are the authority, and Task 2.1 is not flagged — it draws the states Task 2.0 defines rather than handling hostile text itself.) **A separate flag, `OWNER-RUN`, marks the tasks no agent performs at all** — 1.4's recordings, **Task 1.5's copy-in**, 4.3, and 4.5's copy-in — and the two flags are independent: a task may carry neither, either, or both.
+9. **Security-sensitive tasks are flagged `SECURITY-SENSITIVE, independent opus review`** in their own heading and are not merged on a self-review. **This list is the headings, and nothing else is on it**: 1.1, 1.2, 1.3, 2.0, 3.3, 4.1, 4.2 and 4.4, plus 3.4 (proposed 2026-10-17, not approved to implement; each of its three parts, 3.4a, 3.4b and 3.4c, carries the flag) and 5.2 when it is scheduled. (An earlier revision listed 2.1 and 4.3 and omitted 2.0, 4.4 and 4.5; the headings are the authority, and Task 2.1 is not flagged — it draws the states Task 2.0 defines rather than handling hostile text itself.) **A separate flag, `OWNER-RUN`, marks the tasks no agent performs at all** — 1.4's recordings, **Task 1.5's copy-in**, 4.3, and 4.5's copy-in — and the two flags are independent: a task may carry neither, either, or both.
 10. **Docs-only tasks keep the docs suite green**: every task that touches a `.md` file under `docs/` runs `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`, the command this repository's docs tests are reached by.
 
 ## Review Focus
@@ -108,8 +108,12 @@ console/
   src/main/spawnlog.ts            # Task 1.3: the opt-in JSONL spawn log of §5.1 rule 10 (D20)
   src/main/updates.ts             # Task 4.4: the update check and the signed feed
   src/preload/index.ts            # the frozen, versioned object the renderer sees
+  src/preload/installations.ts    # Task 3.4b (proposed): the picker window's own frozen object
+  src/main/installations.ts       # Task 3.4b (proposed): the installation store in userData, and its validation
   src/renderer/index.html         # the bundled document, the CSP meta as belt-and-braces
   src/renderer/app.ts
+  src/renderer/entry.ts           # Task 3.4a (proposed): the script the dashboard document loads; startConsole first
+  src/renderer/installations.{html,ts}  # Task 3.4b (proposed): the picker document
   src/renderer/screens/{live,spend,projects,run}.ts
   src/renderer/theme/tokens.css
   src/source/source.ts            # the FugaroSource interface - the whole data plane
@@ -121,6 +125,7 @@ console/
   test/e2e/__screenshots__/       # the golden frames
   test/fixtures/*.ndjson          # recorded and redacted; never from belong
   tools/record-fixture/{index,redact}.ts
+  tools/bundle-renderer/index.ts  # Task 3.4a (proposed): the dependency-free renderer bundle step
 ```
 
 Edited by this plan:
@@ -155,6 +160,7 @@ Each row is one mergeable PR, green on its own:
 | G | 4.1, 4.2, 4.4 | **SECURITY-SENSITIVE** (supply chain) |
 | H | 4.3, 4.5 | **OWNER-RUN**, no agent performs any step of either; 4.5 copies in the **signing** workflow |
 | I | 4.6 | the release gate; **merges only after C2**, and refuses a tag until the console job runs |
+| F3 | **3.4a**, **3.4b**, **3.4c** (three PRs) | **SECURITY-SENSITIVE** (the preload, the handlers and the installation store); **NOT APPROVED TO IMPLEMENT** — proposed 2026-10-17; merges after F2 and before the console MVP ships. Listed last only because it was added last |
 
 ---
 
@@ -507,6 +513,8 @@ The owner copies `docs/pending-workflows/console-tests.yml` to `.github/workflow
 3. **The refusal screen is console-owned text.** It draws `renderVersionSkew`'s output for a `refused` compatibility: the console's own sentence and remedy. The only CLI-chosen strings, the version, pass through `sanitizeText` inside `version.ts` already; a stub printing control characters, an ANSI escape, markup or a 10 000-character line must leave none of them live on the screen, and the raw unparsable line is never carried (Task 3.2's rule).
 4. **The renderer independently refuses to draw hidden views and refuses to draw at all without an answer.** In `refused` it subscribes to no feed, so even a refusal window that regressed to the dashboard document draws no spend. The defence is in both places on purpose.
 
+**The renderer entry is Task 3.4's, not this task's (added 2026-10-17).** This task builds steps 2 and 4 as library code and wires the startup handshake. Attaching them to the real windows is **Task 3.4**: the preload on the dashboard window, `registerConsoleHandlers` after the handshake (never in `refused`), the script the document loads, and the installation the handlers read from. Any sentence elsewhere in this task that calls that wiring "owned by no task" (the review-round-2 note of PR #541) is answered by Task 3.4.
+
 **Tests.**
 
 - `startup.test.ts`: the startup path calls `startupWindow` before any `createConsoleWindow` (call order on spies); on `refused`, `createConsoleWindow` is never called and `createRefusalWindow` is; a reader that throws or returns nothing parsable ends `refused`.
@@ -523,6 +531,335 @@ The owner copies `docs/pending-workflows/console-tests.yml` to `.github/workflow
 **Red step - `Expected: FAIL`** - `startup-skew.spec.ts`'s old-version case against the tree as Task 3.2 leaves it (`index.ts` with no handshake: the dashboard draws); and `ipc.test.ts`'s allow-list test against an entry with an argument.
 
 **Status: NOT APPROVED TO IMPLEMENT.** Adding this task to the plan is not approval to implement it; implementation waits for the owner's go. It is, however, a **release gate for the console MVP** (Task 4.6 and "What ships with the MVP"): the console does not ship with 0.8.5 without it.
+
+---
+
+### Task 3.4: The renderer entry: the preload, the handlers, the installation picker — SECURITY-SENSITIVE, independent opus review
+
+**Status: NOT APPROVED TO IMPLEMENT — proposed 2026-10-17, awaiting the owner's go.** Adding this task to the plan is not approval to implement it. It is proposed as a **release gate for the console MVP**, like Tasks 3.2 and 3.3 (Task 4.6 and "What ships with the MVP"): without it the console has nothing to show in production. It also needs the owner's answers to **C8, C9 and C10** (the plan's own decisions, below) before 3.4b starts.
+
+**Why this task exists.** As of `console` with PR #541 (Task 3.3) on top, the console cannot show a real dashboard. An independent review found this, and the Task 3.3 fixer confirmed it:
+
+- **No window sets a preload.** `consoleWebPreferences()` (`console/src/main/window.ts`) has no `preload` key, so `window.fugaro` never exists in a real window.
+- **Nothing in `console/src/main/` calls `registerConsoleHandlers` or `startupCompatibility`.** Every `fugaro:console/*` channel is unanswered.
+- **Neither `index.html` nor `refusal.html` loads a script.** `startConsole` (`console/src/renderer/app.ts`) runs only in unit tests and in e2e specs that inject the compiled renderer with `executeJavaScript`. The CommonJS `dist/` that `tsc` emits cannot be loaded by a sandboxed document anyway.
+- **No task owns any of it.**
+  - Task 1.1 defers the preload to Task 1.2.
+  - Task 1.2's files are `ipc.ts`, the preload and its test. It neither sets `preload` nor registers handlers.
+  - Tasks 2.1 to 2.3 (and the spend-controls follow-up, #516) each leave "the entry point" to an unnamed later task (`console/src/renderer/screens/spend.ts`'s header says so in as many words).
+  - Tasks 3.1 to 3.3 build states and a gate that nothing mounts.
+  - Task 4.1 (#540) packs `src/renderer/index.html` and records that "whichever task does it has to put the compiled file inside the served root".
+- **The handlers have no installation to read from.** `registerConsoleHandlers` needs all thirteen handlers, and twelve of them need a `FugaroSource` bound to an installation (D13). `createInstallationStore` (`console/src/source/cli.ts`) is in memory only, and no UI calls it.
+
+The app as built therefore draws a static sentence in either window. D7 holds at the document level, but no spend figure, run or cap is ever drawn from a real CLI. This task is that wiring, and it is the owner of everything Task 3.3's own text calls "not in this task".
+
+**What it reuses unchanged.** It adds no new policy:
+
+- the IPC allow-list and its argument schemas: `CONSOLE_OPERATIONS`, `validateArguments`, `registerConsoleHandlers`, `assertReachableSurface` and `isConsoleSender` (`src/main/ipc.ts`);
+- the frozen bridge: `EXPOSED_OPERATIONS`, `createConsoleBridge` and `exposeConsoleBridge` (`src/preload/index.ts`);
+- `handlersFor` and `CliBackedHandlers` (`src/source/source.ts`);
+- `CliSource`, `verifyCandidate`, `NoInstallation` and `noInstallationState` (`src/source/cli.ts`);
+- the spawn table, `resolveBinary`, `probeVersion`, `isExecutableFile` and `privateWorkingDirectory` (`src/main/spawn.ts`);
+- the handshake: `runVersionHandshake`, `openWindowFor` and `createConsoleLifecycle` (`src/main/window.ts`);
+- the compatibility type: `CliCompatibility`, `REDUCED_VIEWS` and `hidesView` (`src/shared/version.ts`);
+- the gate: `startConsole` and `compatibilityFrom` (`src/renderer/app.ts`);
+- the screens' `build*Model` and `render*` functions;
+- the CSP and the `app://` handler (`src/main/protocol.ts`).
+
+**The CSP does not change.** Both the header and the meta copy already carry `script-src 'self'`, which is exactly what a bundled script file served from `app://console/` needs. **The CSP delta of this task is none.** A test pins that (3.4a), so a later "just add `'unsafe-inline'`" fails a test rather than passing a review.
+
+**Decisions this task needs from the owner** (rows C8 to C10 of "Decisions this plan defers to the owner"):
+
+- **C8: may the installation list be persisted?** D13 says "the choice is the app's own setting" and "stores the tuples". Design §5.1 rule 10 and §7.4 say the app writes nothing to disk but the opt-in spawn log, which is why `createInstallationStore` is in memory today. The two cannot both stand.
+  - **Recommendation: persist.** Use one JSON file in Electron's `userData` directory, written only when the operator adds, chooses or removes an installation. 3.4b's first step amends §5.1 rule 10, §7.4 and D20's "the only thing the app ever writes" to name it.
+  - If the owner rules against, 3.4b keeps the in-memory store and the picker opens on every launch. Nothing else in this task changes.
+- **C9: where does switching happen?** D13 says "a picker in the header". This task keeps the dashboard's preload read-only, so it proposes otherwise:
+  - the header **names** the active installation (project, binary path, the version the handshake read, checkout);
+  - **choosing, adding and removing** happen in a separate picker window opened from the application menu (`Installations…`, built in the main process). That window has its own document and its own preload.
+  - **Recommendation: accept.** It is the only shape in which the dashboard's bridge carries no write to the app's own state.
+- **C10: the kill fields in reduced mode.** In `reduced` mode `hidden` is all three views (`classifyCliVersion`). `spend` and `caps` have channels of their own (`spend.report`, `budget.show`) that the main process can refuse. `kill` does not: the kill state also arrives inside `live.watch`'s document (`JSONKill`).
+  - **Recommendation: do not strip.** Rewriting a CLI document in the main process would be a second schema. The renderer's gate (`drawScreen('kill', …)` answering `withheld`) stays the one defence for the kill banner inside the Live screen. That limit is stated here rather than discovered later.
+
+**The split: three PRs, and the files each one touches.** Size estimates count source and tests together, from the size of comparable merged tasks (#541 is 2,800 lines across 29 files):
+
+| Part | What | Estimate | Depends on |
+|---|---|---|---|
+| **3.4a** | preload set on the dashboard window, handlers registered after the handshake, reduced-mode refusal, the renderer bundle and its document wiring, CSP and preload-surface tests | ~1,100 to 1,400 lines, ~14 files | Task 3.3 (**hard**: #541 merged) |
+| **3.4b** | the installation store, its validation, the per-installation handshake, the picker window and its preload, the header's `installation.current` read, the design amendment | ~1,600 to 2,000 lines, ~16 files | Task 3.3 (**hard**). C8 and C9 answered. Task 3.4a (**hard** for the picker document, its bundle and the sender narrowing). The store, validation and handshake commits may be written **in parallel with 3.4a** and rebased onto it. |
+| **3.4c** | the screens wired to the real source, live polling, the stub CLI extended, the end-to-end proof | ~1,200 to 1,500 lines, ~10 files | Tasks 3.4a and 3.4b (**hard**) |
+
+**Shared files.** An `x` marks a file the part edits; `new` marks a file it creates. Rows touched by more than one part are the serialization points, and the open PRs that touch the same file are named, so the merge order is visible before anyone starts:
+
+| File | 3.4a | 3.4b | 3.4c | Also touched by an open PR |
+|---|---|---|---|---|
+| `console/src/main/index.ts` | x | x | x | #541 |
+| `console/src/main/window.ts` | x | x | | #541 |
+| `console/src/main/ipc.ts` | x | x (sender narrowing, `installation.current`) | | #540, #541, #548 |
+| `console/src/main/protocol.ts` | x (served root, served-file list) | x (picker entry URL) | | #541 |
+| `console/src/main/installations.ts` | | new | | |
+| `console/src/preload/index.ts` | x (comment only, the surface is unchanged) | x (`installation.current`) | | #541 |
+| `console/src/preload/installations.ts` | | new | | |
+| `console/src/renderer/entry.ts` | new | | x | |
+| `console/src/renderer/index.html` | x (one script tag) | | | |
+| `console/src/renderer/refusal.html` | x (comment only: still script-free) | | | #541 |
+| `console/src/renderer/installations.{html,ts}` | | new | | |
+| `console/src/renderer/app.ts` | | | x (only if `startConsole`'s deps need widening) | #541 |
+| `console/src/source/cli.ts` | | x (the store's persistence seam) | x (the source factory) | |
+| `console/tools/bundle-renderer/index.ts` | new | x (second entry) | | |
+| `console/package.json` | x (`build` script, `build.files`) | x (`build.files`) | | #540 |
+| `console/test/fixtures/bin/fugaro`, `console/test/support/cliStub.ts` | | | x | #541 |
+| `console/test/unit/*` | new `preload-surface`, `csp-document`, `bundle`; extended `startup`, `window`, `ipc` | new `installations-store`, `installations-ipc`; extended `configread`, `ipc` | new `entry-wiring` | #540, #541, #548 |
+| `console/test/e2e/entry.spec.ts` | new | x | x | |
+| `docs/design/desktop-console.md` | | x (§5.1 rule 10, §7.4, D13, D20; only after C8 is answered) | | |
+
+#### 3.4a: The preload, the handlers and the document's script
+
+**Files:** `console/src/main/{index,window,ipc,protocol}.ts`, `console/src/renderer/entry.ts`, `console/src/renderer/index.html`, `console/src/renderer/refusal.html` (comment only), `console/tools/bundle-renderer/index.ts`, `console/tsconfig.build.json`, `console/package.json` (`build` script and `build.files`, never `dependencies`), `console/test/unit/{preload-surface,csp-document,bundle,startup,window,ipc}.test.ts`, `console/test/e2e/entry.spec.ts`
+
+**Steps.**
+
+1. **The preload is set on the dashboard window and nowhere else.** `buildConsoleWindow`'s dashboard path uses `dashboardWebPreferences(preloadPath)`: `consoleWebPreferences()` plus exactly one key, `preload`, an absolute path inside `app.getAppPath()` (`dist/preload/index.js`).
+   - `createRefusalWindow` keeps `consoleWebPreferences()` with no `preload` key at all.
+   - The bridge surface is **exactly what Task 3.3 ships**: the thirteen `EXPOSED_OPERATIONS` (eleven CLI reads, the validated `link.openExternal` of design §5.1 rule 2, and `startup.compatibility`), plus `version` and `operations`. The object is frozen and has no generic invoke.
+   - **No event emitter crosses the bridge.** There is no `on`, `once`, `addListener`, `send` or callback-taking method. Live updates are polls of `live.watch` (3.4c), and a push channel would be a SECURITY-SENSITIVE task of its own.
+   - Electron's sandboxed preload can `require` only `electron` and a handful of built-ins, never a relative path. So the compiled `dist/preload/index.js` must require nothing but `electron`. Today it imports only types, and a test keeps it that way.
+2. **The handlers are registered after the handshake, never in `refused`.** `createConsoleLifecycle` gains an `onDecided(compatibility)` step that runs **after** `runVersionHandshake` answers and **before** the dashboard window's `loadURL`.
+   - For `ok` and `reduced` it calls `registerConsoleHandlers(ipcMain, gated)` **once per process**. Electron's `ipcMain.handle` throws on a second registration, so an `activate` must not repeat it.
+   - For `refused` it registers nothing, ever, including on a later `activate`.
+   - `gated` is `{ ...handlersFor(activeSource, deps), 'startup.compatibility': startupCompatibility(() => current) }`. `activeSource` is an indirection that answers the console's own `NO_ACTIVE_INSTALLATION` refusal until 3.4b supplies an installation. The surface is complete from the first registration, as `registerConsoleHandlers` demands.
+3. **Reduced mode is refused in the main process as well as in the renderer** (defence in depth). `src/main/ipc.ts` gains:
+   ```ts
+   export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
+     Object.freeze({ spend: ['spend.report'], caps: ['budget.show'], kill: [] })
+   export const REDUCED_REFUSAL = 'this console withholds that view for the fugaro it is driving'
+   export function reducedModeHandlers(handlers: ConsoleHandlers, current: () => CliCompatibility): ConsoleHandlers
+   ```
+   A wrapped handler whose operation belongs to a view in `current().hidden` answers `REDUCED_REFUSAL` **without calling the source**.
+   - `kill: []` is C10's recorded limit, and a test names it, so filling it in later is a deliberate edit.
+   - Every wrapped handler also refuses outright when `current().mode` is `refused`. This is a second guard behind the registration rule.
+4. **The document loads one bundled script from its own origin, with no inline script and no CSP change.**
+   - **The bundle.** `tsc` stays the compiler (the pinning rule allows no bundler dependency, `test/unit/pinning.test.ts`). `console/tools/bundle-renderer/index.ts` is a dependency-free TypeScript step run by `npm run build` after `tsc`. It walks the compiled CommonJS closure of `dist/renderer/entry.js` by its **string-literal relative** `require` calls only, and fails the build on any other `require` (a bare specifier, a computed one, `electron`, a Node built-in). It wraps each module in a function inside one registry and writes `dist/bundle/console.js`.
+   - This is the shape the e2e specs' hand-built `MODULES` registries already use, now produced by the build rather than by each spec. It contains no `eval` and no `new Function`, and none would run anyway, because the CSP has no `'unsafe-eval'`.
+   - **The served root.** The step copies `index.html` and `refusal.html` verbatim into `dist/bundle/`, and `rendererRoot` (`src/main/index.ts`) becomes `dist/bundle`, so the served root holds **exactly** the files named in a `SERVED_FILES` list in `protocol.ts` and nothing compiled beside them. `build.files` (Task 4.1, #540) names those files in place of `src/renderer/index.html`. Note that #540's list today omits `refusal.html`, which #541 adds; whichever of the two merges second must add it.
+   - **The document.** `index.html` gains exactly `<script src="./console.js" defer></script>` and nothing inline. `refusal.html` stays script-free.
+   - **The rejected alternative.** Native ES modules (`<script type="module">`) would need every relative import in `src/shared/` and `src/renderer/` rewritten with an extension, and a second `tsc` configuration. That is recorded here as rejected rather than left for the implementer to rediscover.
+5. **The entry's first call is `startConsole`.** `src/renderer/entry.ts` reads `globalThis.fugaro`, hands it to `startConsole({ bridge, mount, factory, theme })` and **draws nothing before that promise settles**.
+   - A missing bridge (`window.fugaro === undefined`) is treated as `refused`, exactly as `compatibilityFrom` treats a rejected call.
+   - In 3.4a the entry stops at the gate: the refusal or the banner, then an empty dashboard frame that names no figure. The screens are 3.4c's.
+
+**Interfaces.**
+
+- `dashboardWebPreferences(preloadPath: string): WebPreferences` in `window.ts`.
+- `ConsoleLifecycleDeps` gains `onDecided(compatibility: CliCompatibility): void`.
+- `REDUCED_VIEW_OPERATIONS`, `REDUCED_REFUSAL` and `reducedModeHandlers` in `ipc.ts`.
+- `SERVED_FILES: readonly string[]` in `protocol.ts`.
+- `bundleRenderer(options: { entry: string; out: string }): void` in `tools/bundle-renderer/index.ts`.
+- `bootDashboard(scope: { readonly fugaro: unknown; readonly document: Document }): Promise<void>` in `entry.ts`.
+
+**Tests.**
+
+- **`preload-surface.test.ts`** (mutation-proof). `exposeConsoleBridge` is run against a recording `contextBridge` and a sentinel `ipcRenderer`, and the test asserts:
+  - exactly one key is exposed, `fugaro`;
+  - the object is frozen, and its own keys equal the `SHIPPED_SURFACE` literal plus `version` and `operations`, no more and no fewer;
+  - a deep walk of the exposed value never reaches the sentinel (so leaking `ipcRenderer`, or any object holding it, fails);
+  - no member is named `invoke`, `send`, `sendSync`, `on`, `once`, `addListener` or `removeListener`;
+  - every method's reply goes through the envelope check (`isConsoleReply`) before the renderer sees it.
+
+  Separately, it reads the **built** `dist/preload/index.js` and asserts its only `require` is `require('electron')`.
+- **`csp-document.test.ts`.** The test asserts:
+  - `CONTENT_SECURITY_POLICY` equals a pinned literal, Task 1.1's string byte for byte (**the delta is none**);
+  - its `script-src` is exactly `'self'`, with no `'unsafe-inline'`, `'unsafe-eval'`, `'wasm-unsafe-eval'`, `'strict-dynamic'`, nonce, hash, `data:`, `blob:`, `*` or scheme source;
+  - every served HTML file's meta copy is byte-identical to the header;
+  - each document's script elements are exactly its expected list: `index.html` has `./console.js` alone, and `refusal.html` has none;
+  - no document has inline script text, an `on*=` attribute or a `javascript:` URL.
+- **`bundle.test.ts`.** The bundle exists after `npm run build`, holds the entry's whole relative closure, and contains no `eval(`, `new Function` or `require('electron')`. The bundler refuses a planted computed `require` and a bare specifier. The served root's listing equals `SERVED_FILES`.
+- **`startup.test.ts`** (extended), with an `IpcMainLike` spy and a source spy:
+  - for `ok` and `reduced`, the handshake resolves, then `handle` is called for every channel, then the window loads (call order on spies);
+  - for `refused`, `handle` is never called, including after `activate`;
+  - two `activate`s register nothing twice;
+  - in `reduced`, `spend.report` and `budget.show` answer `REDUCED_REFUSAL` and the source spy is not called, while `live.watch` reaches the source.
+- **`window.test.ts`** (extended). The refusal window's `webPreferences` has no `preload` key. The dashboard's keys are exactly `consoleWebPreferences()`'s plus `preload`, and the path is absolute and inside the app path.
+- **`entry.spec.ts`** (e2e, the stub CLI of Task 3.3):
+  - **In range:** the dashboard window's URL is `APP_ENTRY_URL`, `console.js` was requested from `app://console/`, `typeof window.fugaro === 'object'` and `Object.isFrozen(window.fugaro)`, its keys equal `SHIPPED_SURFACE`, `window.require`, `window.process` and `window.ipcRenderer` are all undefined, and an inline `<script>` added through the DOM does not run and raises a `securitypolicyviolation`.
+  - **Refused** (stub prints `0.5.0`): exactly one window, `REFUSAL_ENTRY_URL`, `window.fugaro === undefined`, no `<script>` element, and the spawn log (`FUGARO_CONSOLE_SPAWN_LOG` in a scratch directory) holds `version` spawns only. That is the evidence that no handler ran a read.
+  - **Reduced:** `await window.fugaro.runReport({})` called directly from the page answers `REDUCED_REFUSAL`, and the spawn log holds no `report` argv. This proves the main-process refusal independently of the renderer's gate.
+
+**Command:** `npm run build && npm run test:unit && npm run test:e2e -- entry`
+
+**Depends on:** Task 3.3 (**hard**: #541 merged; this task edits its lifecycle, its refusal document and its stub harness). Task 4.1 (#540) is **soft**: whichever merges second edits `build.files`.
+
+**Commit:** `console: the dashboard gets its preload, its handlers and its script, and a refused console gets none of them`
+
+**Red step — `Expected: FAIL`.** Run each test against the tree as Task 3.3 leaves it, then against a mutation:
+
+- `entry.spec.ts`'s in-range case against the tree as Task 3.3 leaves it (no preload: `window.fugaro` is undefined);
+- `preload-surface.test.ts` against a bridge with an added `ipcRenderer` member, and against a fourteenth channel;
+- `csp-document.test.ts` against `'unsafe-inline'` added to `script-src`, against an inline `<script>` in `index.html`, and against a `<script>` added to `refusal.html`;
+- `startup.test.ts` against a lifecycle that registers handlers before the handshake, and against one that registers them in `refused`.
+
+#### 3.4b: The installation store and the picker
+
+**Files:** `console/src/main/installations.ts`, `console/src/main/{index,window,ipc,protocol}.ts`, `console/src/preload/installations.ts`, `console/src/preload/index.ts`, `console/src/renderer/installations.{html,ts}`, `console/src/source/cli.ts`, `console/tools/bundle-renderer/index.ts`, `console/package.json` (`build.files`), `console/test/unit/{installations-store,installations-ipc,configread,ipc,startup}.test.ts`, `console/test/e2e/entry.spec.ts`, `docs/design/desktop-console.md` (only once C8 is answered)
+
+**Steps.**
+
+1. **Where the tuples live (C8).** In `<userData>/installations.json`, where `<userData>` is `app.getPath('userData')`.
+   - The file is mode `0600` in a `0700` directory and written atomically (a temporary file in the same directory, then `rename`).
+   - It is written **only** when the operator adds, chooses or removes an installation. It is read once at startup and never sent anywhere.
+   - Its schema is closed and versioned:
+     ```ts
+     export interface StoredInstallation {
+       readonly id: string            // 16 random hex characters, the app's own
+       readonly project: string       // isSafeInstallationValue, at most 200 characters
+       readonly binaryPath: string    // absolute, at most 1024 characters
+       readonly configPath?: string   // absolute; a STRING passed as --config, never opened
+       readonly checkout?: string     // absolute directory, the child's cwd (§3.4 rule 5)
+     }
+     export interface InstallationFile {
+       readonly version: 1
+       readonly active: string | null // an id in installations, or null
+       readonly installations: readonly StoredInstallation[]
+     }
+     ```
+   - It is bounded: at most `MAX_INSTALLATIONS = 16`, and a read is refused past 64 KiB.
+   - Any other key, wrong type, duplicate id or dangling `active` refuses **the whole file**. Then the console starts with no installation, says so in its own sentence naming the path, **does not overwrite or delete the file**, and refuses an add until the operator has moved it.
+   - **It never holds a credential, an environment or anything the CLI printed.** The version is not stored either: it is re-read by the handshake at every launch and every choose.
+   - **It is never inside the operator's CLI config.** On Linux `userData` is `~/.config/<app name>`, so an app named `fugaro` would land in `~/.config/fugaro`, the CLI's own directory. The store therefore refuses a path under `~/.config/fugaro`, `$XDG_CONFIG_HOME/fugaro` or `$FUGARO_CONFIG`'s directory, and a test pins the app name (`fugaro-console`, `package.json`'s `name`) to a `userData` outside all three.
+   - `createInstallationStore` gains a persistence seam (`load`/`save` dependencies) so its verification logic stays the one in `cli.ts`.
+2. **How a tuple is validated**, in this order, stopping at the first refusal and storing nothing:
+   1. the schema;
+   2. the binary: absolute, exists, a regular file, executable (`isExecutableFile`);
+   3. the config path, when given: absolute and an existing file, checked with `stat` only and **never opened** (§3.4 rule 7);
+   4. the checkout, when given: absolute and an existing directory;
+   5. **`fugaro version` for that binary** (`probeVersion`, then `classifyCliVersion`). `refused` is not stored, and the operator sees the console's own skew sentence. `reduced` is stored, and the picker marks it;
+   6. **`verifyCandidate`**: `doctor --json` with `--project` and `--config`, with the checkout or the private directory as the child's working directory. A CLI refusal, including `this checkout belongs to project %s; --project says %s`, is shown verbatim through `sanitizeText` and nothing is stored.
+
+   Every spawn goes through `spawn.ts`, so the spawn log records each one with the candidate's project.
+3. **How `--project` and `--config` are passed (D13).** They go on every allow-listed command except `version`, from the **active** installation, through `SpawnTarget`. `spawn.ts`'s table already enforces this (`COMMANDS_WITHOUT_PROJECT`), and this task adds no spawn row. The startup handshake's `SpawnTarget` carries the active installation's project, so the bare `version` spawn records it in the spawn log (Task 1.3's schema). Task 3.3's entry passes `{ project: '' }`, which would give Check 59a's `jq -r '.project' | sort -u` two lines instead of one.
+4. **The ambient installation of a Finder-launched app: there is none.** At startup the console uses the stored `active` installation:
+   - its `binaryPath` is the resolver's configured path (rule 4 puts it first);
+   - its handshake decides the window, as Task 3.3 does.
+
+   With no stored or active installation, the console makes **no guess**: not from `FUGARO_PROJECT`, not from the working directory's checkout, and never by reading the CLI's config (§3.4 rules 3 and 7).
+   - The handshake runs against rule 4's resolution exactly as Task 3.3 does.
+   - The dashboard shows a "no installation chosen" state that names no figure.
+   - The picker opens once, automatically, on that first run.
+   - The CLI-backed handlers answer `NO_ACTIVE_INSTALLATION`.
+
+   This is also the binary picker Task 3.1's no-`fugaro` screen names.
+5. **The picker (C9).** It is a separate window, opened only from the application menu's `Installations…` item (main process, available in every mode, including `refused`, since that is how an operator fixes a refused console). Its document is `installations.html` with `installations.js` from the same bundle step, under the same CSP header and meta. Its preload, `src/preload/installations.ts`, is a single file that requires only `electron` and exposes a frozen `fugaroInstallations` object:
+   ```ts
+   list(): Promise<ConsoleReply>                        // display fields only: id, project, binary, config, checkout, active, mode
+   pickBinary(): Promise<ConsoleReply>                  // main shows dialog.showOpenDialog; answers a pick token, not a path
+   pickConfig(): Promise<ConsoleReply>
+   pickCheckout(): Promise<ConsoleReply>
+   add(args: { project: string; binary: string; config?: string; checkout?: string }): Promise<ConsoleReply>  // tokens, not paths
+   choose(args: { id: string }): Promise<ConsoleReply>
+   remove(args: { id: string }): Promise<ConsoleReply>
+   ```
+   - **No path ever comes from the renderer.** A pick token is a random id that the main process maps to the path the native dialog returned. Tokens are single-use and dropped when the picker closes, with at most 8 outstanding.
+   - Its channels use their own prefix, `fugaro:installations/`, with their own closed argument schemas in `installations.ts`. **`isConsoleSender` is narrowed** so `fugaro:console/*` answers only a frame on `APP_ENTRY_URL` and `fugaro:installations/*` answers only the picker's URL.
+   - **Choose** runs the version handshake for that installation.
+     - `refused`: not chosen, and the console's sentence is shown.
+     - Otherwise: `active` is persisted, the previous `CliSource` is closed (its children stopped), a new one is bound, the stored compatibility is replaced, the handlers are registered if they were not yet, and the window is reopened through `openWindowFor`. So a refused-to-ok switch replaces the refusal window with the dashboard, never the reverse.
+   - **Remove** of the active installation leaves none active.
+6. **The header's read.** The dashboard's bridge gains one argument-free read row, `installation.current`. It returns the active installation's project, binary path, handshake version, checkout and mode, or the no-installation state. It is the fourteenth `EXPOSED_OPERATIONS` entry and is added to `SHIPPED_SURFACE` deliberately. It is a read: no add, choose or remove is on the dashboard's bridge.
+7. **The design follows C8 and C9** (once answered). §5.1 rule 10, §7.4 and D20's "the only thing the app ever writes" name `installations.json` as the second file and say when it is written. D13 records C9's header-names, menu-switches shape.
+
+**Interfaces:** `StoredInstallation`, `InstallationFile`, `MAX_INSTALLATIONS`, `installationStorePath(userData: string, env): string`, `readInstallationFile(raw: string): InstallationFile | { refused: string }`, `validateInstallation(candidate, deps): Promise<{ ok: true; compatibility: CliCompatibility } | { ok: false; sentence: string }>` and `INSTALLATION_OPERATIONS` (the picker's closed allow-list) in `installations.ts`. Also `NO_ACTIVE_INSTALLATION` in `ipc.ts`.
+
+**Tests.**
+
+- **`installations-store.test.ts`:**
+  - the round trip;
+  - mode `0600` and the atomic write (no partial file after a simulated crash between write and rename);
+  - each refusal (an unknown key, a 17th entry, an oversized file, a dangling `active`, a relative path, a project with a space) refuses the whole file and leaves its bytes unchanged;
+  - the key set of a stored entry is exactly the five above, so an added `token` or `env` field fails a named test;
+  - the path refusal under `~/.config/fugaro` and `$XDG_CONFIG_HOME/fugaro`.
+- **Validation, against stub binaries:** a non-executable file, a missing file, a `0.5.0` stub (refused, not stored), a reduced-band stub (stored, marked), and a stub checkout whose `doctor` refuses with the pairing sentence (not stored, sentence shown) each behave as step 2 says.
+- **`installations-ipc.test.ts`:** the picker's allow-list is closed and frozen; `add` refuses a string that is not an outstanding token, so a renderer cannot name a path; a token is single-use; the dashboard sender is refused on `fugaro:installations/*` and the picker sender on `fugaro:console/*`.
+- **`configread.test.ts`** (extended): `installations.ts` may `stat` a config path and never `open`, `readFile` or `createReadStream` it. The mutation is a `readFileSync(configPath)` in `installations.ts`.
+- **`startup.test.ts`** (extended):
+  - with an active installation, the handshake's `configuredPath` is its binary and the spawn-log target carries its project;
+  - with none, nothing is read from `FUGARO_PROJECT` (planted in the app's environment) and the picker opens once;
+  - a choose of a refused installation leaves the active one and the window unchanged.
+- **`entry.spec.ts`** (extended): with `--user-data-dir` set to a scratch directory seeded with one installation naming the stub (`binaryPath` is the configured path, so the stub wins even on a machine with a real `fugaro` in `/usr/local/bin`, and these cases need no skip), the picker opened through the menu lists it, and the header names its project and binary.
+
+**Command:** `npm run build && npm run test:unit && npm run test:e2e -- entry`
+
+**Depends on:** Task 3.3 (**hard**). Task 3.4a (**hard** for steps 5 and 6; steps 1 to 4 may be written in parallel and rebased). C8 and C9 answered.
+
+**Commit:** `console: the operator's installations, stored outside the CLI's config, checked before they are kept, and chosen in a picker of their own`
+
+**Red step — `Expected: FAIL`.**
+
+- the key-set test against an entry with a planted `token` field;
+- the path test against an app named `fugaro` on Linux;
+- the validation test against a store that keeps a `0.5.0` stub;
+- `installations-ipc.test.ts` against an `add` that accepts a literal path;
+- `configread.test.ts` against a planted `readFileSync` of the config path.
+
+#### 3.4c: The screens, wired to the real source
+
+**Files:** `console/src/renderer/entry.ts`, `console/src/main/index.ts` (the source factory), `console/src/source/cli.ts` (only if the factory needs a seam), `console/src/renderer/app.ts` (only if `startConsole`'s deps must widen), `console/test/fixtures/bin/fugaro`, `console/test/support/cliStub.ts`, `console/test/unit/entry-wiring.test.ts`, `console/test/e2e/entry.spec.ts`
+
+**Steps.**
+
+1. **The real source.** The main process binds a `CliSource` to the active installation (`sourceFor(installation)`). That is the only source the shipped app can construct.
+   - **The fixture source (`src/source/fixture.ts`) is reachable only through the unit tests' injected `sourceFor`.** No environment variable, argv or setting selects it. It is the same rule as Task 3.3's "no `FUGARO_BIN`": a variable that chose the console's data would be a new way to make it show numbers nobody measured.
+   - A grep-style test asserts that `src/main/index.ts` imports nothing from `fixture.ts`, and `build.files` already excludes `dist/source/fixture.js` (#540).
+2. **The screens are mounted only through the gate.** After `startConsole`, the entry builds a navigation listing only views that `drawScreen` would draw, and mounts:
+   - **Live** (the default): polls `subscribeLive` every 1,000 ms, `watch`'s own document gap. At most one call is in flight; polling stops while the view is hidden or the window is not visible.
+   - **Spend:** `readSpend` and its controls (#516).
+   - **Projects.**
+   - **Run detail:** reached from a run row.
+   - **The header:** `installation.current`.
+
+   Every bridge reply is decoded through `src/shared/schema.ts` before a `build*Model` sees it. A refusal or an undecodable reply draws `renderUnavailable` or `refusedState` with the sentence, never a zero (Global Constraint 5).
+3. **The stub CLI answers enough for the dashboard, and still refuses the rest.** `test/fixtures/bin/fugaro` answers:
+   - `version`;
+   - `doctor --json --dir D --project P` with a minimal document;
+   - `watch --json --project P …` with the committed synthetic frame (`test/fixtures/synthetic.ndjson`).
+
+   It **exits 2 on any other argv**, and on any argv but `version` that lacks `--project <the seeded project>`. That turns D13's flag rule into an end-to-end assertion. It never answers a never-reachable verb.
+
+**Tests.**
+
+- **`entry-wiring.test.ts`:**
+  - with a fake bridge, a `refused` answer mounts no screen and makes no read call;
+  - a `reduced` answer never calls `runReport` or `showBudget`;
+  - an undecodable `live.watch` reply draws the unavailable state, not a zero;
+  - at most one poll is in flight;
+  - the fixture-source grep test.
+- **`entry.spec.ts`** (extended):
+  - with the seeded stub installation, the Live screen renders the synthetic frame's repository row and its run, with no `executeJavaScript` used to load code (the spec asserts it injects none);
+  - the spawn log shows `watch --json` carrying `--project` and the stub's absolute path as `argv[0]`;
+  - in refused mode the window carries no preload and the spawn log holds no read;
+  - in reduced mode no Spend entry is in the navigation and the spawn log holds no `report`.
+
+**Command:** `npm run build && npm run test:unit && npm run test:e2e -- entry`
+
+**Depends on:** Tasks 3.4a and 3.4b (**hard**).
+
+**Commit:** `console: the screens draw what the chosen installation's fugaro says, and nothing when it says nothing`
+
+**Red step — `Expected: FAIL`.**
+
+- `entry.spec.ts`'s Live case against 3.4b's tree (no screen mounted);
+- `entry-wiring.test.ts`'s reduced case against an entry that mounts Spend regardless;
+- the stub's `--project` refusal against a source that omits the flag from `watch`.
+
+**Owner-run additions.** None is required.
+
+- The new e2e assertions read the DOM and the spawn log, not pixels, so no golden gates this task.
+- The synthetic frame suffices, and Task 1.4's eight recordings are not needed for it.
+- **Optional:** goldens for the header and the picker, recorded by the owner on both platforms by Task 2.1's procedure (`snapshotPathTemplate` per platform, `--update-snapshots`, then commit). If the owner wants them, they land as a follow-up commit and do not gate this task.
+
+**What this task is not.**
+
+- It adds no spawn row, no write verb and no CLI change. Design §4.3's gap 5 (`fugaro config list --json`, the v2 plan's task) would turn 3.4b's typed project name into a pick from a list. This task does not wait for it.
+- It adds no push channel and no environment variable that selects a binary or a source.
+- It does not change the CSP.
 
 ---
 
@@ -682,6 +1019,15 @@ An agent then makes one docs-only follow-up: the README's console-release row ga
 
 **Release gate, in addition: Task 3.3 must be merged before the console MVP is released.** The gate edit above is about CI; this one is about content. The console that carries phase 4 must be one whose startup runs the version handshake (D7), so the release checklist for the release that first ships the console (0.8.5) lists Task 3.3 as a precondition, and a console tree on which `index.ts` does not call `startupWindow` does not ship. The test for that is `TestConsoleMVPRequiresTheStartupHandshake` in `internal/cli/docs_desktop_console_test.go` (added with Task 3.3's plan entry, not by Task 4.6): it reads this plan, asserts the Task 3.3 heading itself carries `SECURITY-SENSITIVE, independent opus review`, that Task 3.3 depends on 3.2, that Task 4.6 names Task 3.3, that the policy list in Global Constraints rule 9 includes 3.3, and asserts the "What ships with the MVP" list below names Task 3.3.
 
+**Release gate, in addition: Task 3.4 must be merged before the console MVP is released** (proposed 2026-10-17, not approved to implement). All three parts, 3.4a, 3.4b and 3.4c, are covered. Without them the shipped console draws a static sentence in either window: no preload, no handlers, no script and no installation. So the release that first ships the console (0.8.5) lists Task 3.4 as a precondition next to Task 3.3. The test for that is `TestConsoleMVPRequiresTheRendererEntry` in `internal/cli/docs_desktop_console_test.go`, a sibling of the Task 3.3 test added with Task 3.4's plan entry. It asserts:
+
+- the Task 3.4 heading carries `SECURITY-SENSITIVE, independent opus review`;
+- Task 3.4 depends on Task 3.3 and carries its status line;
+- this paragraph names Task 3.4;
+- "What ships with the MVP" names Task 3.4;
+- the phase summary and the cross-task dependencies name it;
+- Task 3.3's own section names Task 3.4 as the owner of the wiring.
+
 **Commit:** `release: the gate requires the console check`
 
 **Red step — `Expected: FAIL`** — `TestReleaseGateRequiresTheConsoleCheck` against `names="test terraform rules"`.
@@ -728,20 +1074,26 @@ An agent then makes one docs-only follow-up: the README's console-release row ga
 
 Every task's "Depends on" is a *build* dependency, and none of them is a merge dependency beyond its own phase: phases 1, 2 and 3 each leave a working artifact even if the next phase never ships, and phase 4's two owner-run steps (Tasks 4.3 and 4.5) sit after the agent-written packaging work, so 4.1/4.2/4.4 merge as ordinary reviewed PRs whether or not the owner ever runs the rest. The two places a reader might expect a dependency that does not exist: **phase 2 does not depend on project-centric phases 1 or 4** — it renders what exists and says so when a section is not built (Task 2.3) — and **phase 4 does not depend on the CLI's release process being changed**; it adds an artifact to the existing tag, which is what D11 decided.
 
-**What ships with the MVP.** The first console release (0.8.5) ships phases 0 to 4 and **requires**: (1) the hardened shell (Tasks 1.1 to 1.3); (2) the four screens (phase 2); (3) the honest-when-missing states (Task 3.1); (4) the version-skew handshake **and its startup wiring (Tasks 3.2 and 3.3: both, since 3.2 alone builds a check nothing calls)**; (5) the signed, notarised build and its round trip (Tasks 4.1 to 4.5, Check 59, owner-run); and (6) the release gate (Task 4.6). A console build missing item 4 does not ship, whatever else is green.
+**What ships with the MVP.** The first console release (0.8.5) ships phases 0 to 4 and **requires**: (1) the hardened shell (Tasks 1.1 to 1.3); (2) the four screens (phase 2); (3) the honest-when-missing states (Task 3.1); (4) the version-skew handshake **and its startup wiring (Tasks 3.2 and 3.3: both, since 3.2 alone builds a check nothing calls)**; (5) **the renderer entry (Task 3.4: 3.4a, 3.4b and 3.4c, proposed 2026-10-17, not approved to implement). Without it no window has a preload, no handler is registered, no document loads a script and no installation is chosen, so nothing is drawn from a real CLI**; (6) the signed, notarised build and its round trip (Tasks 4.1 to 4.5, Check 59, owner-run); and (7) the release gate (Task 4.6). A console build missing item 4 or item 5 does not ship, whatever else is green.
 
-**Four dependencies that are real and are *merge* dependencies, not build ones**, listed here because a reader checking the "nothing in phase *n* is required by phase *n-1*'s merge" claim would otherwise read them as exceptions it missed:
+**Five dependencies that are real and are *merge* dependencies, not build ones**, listed here because a reader checking the "nothing in phase *n* is required by phase *n-1*'s merge" claim would otherwise read them as exceptions it missed:
 
 - **Task 1.5 (the owner's copy-in of the tests workflow) must merge before Task 4.6 (the gate edit).** Merged the other way round, `scripts/release-gate.sh` requires a check that no workflow produces and **every tag on this repository is refused** — including the releases that ship none of the console. This is the one ordering in the plan whose inversion breaks other people's releases, and it is why 4.6 is its own PR group (I) rather than sharing G's. **The ordering alone is not enough, and the plan says so where it matters**: the gate names a check, so the check must exist on *every* `main` commit and on every pull request head for the `identical_tree_checks` fallback — which is why the console job carries no `paths:` filter and why Task 1.4 asserts its name and triggers (`TestConsoleWorkflowJobIsGateable`). A path-filtered, correctly-ordered console job would still refuse every tag. **Round 2 is why this bullet names Task 1.5 and not Task 4.5**: the copy-in of the tests workflow moved to phase 1, the signing workflow's copy-in stayed in phase 4, and the gate follows the job it names.
 - **Task 4.2 (the staged signing workflow) must merge before Task 4.5**, trivially — the owner has nothing to copy otherwise. Task 4.2 does **not** gate Task 4.6, and the signing job is not the check the gate names.
 - **Task 3.3 (the handshake wired at startup) must merge before the console MVP is released, and after Task 3.2 (#514).** It gates the release rather than any other task's merge: Task 4.6's release gate section and "What ships with the MVP" both name it.
+- **Task 3.4 (the renderer entry, proposed 2026-10-17) must merge before the console MVP is released, and after Task 3.3.** Its three parts form a small DAG:
+  - **3.4a** (the preload, the handlers and the document's script) depends on 3.3;
+  - **3.4b** (the installation store and the picker) depends on 3.3 and on the owner's answers to C8 and C9. Its store, validation and handshake commits may be written in parallel with 3.4a, and its picker window waits for 3.4a's bundle step and sender narrowing;
+  - **3.4c** (the screens wired to the real source) depends on both.
+
+  Task 3.4's shared-files table names the files more than one part touches, and the open PRs (#540, #541 and #548) that touch them too.
 - **The recordings of Task 1.4 do not gate any merge at all.** They are owner-run data, they land when the owner runs the recorder, and the fixture harness is green without them (the synthetic frame, C7). A stale or absent recording is a test failure, not a broken build.
 
 **And the fact a reader should not have to infer — corrected in round 2, because the previous revision had this wrong by three phases: no CI runs a single console test until Task 1.5.** The console's tests exist from Task 1.4 onward; until the owner copies `console-tests.yml` in, they are run by the task commands above and by whoever is working on them, and nothing else runs them. Task 1.5 closes that gap **inside phase 1**, so from Task 1.5 onward — the whole of phases 2, 3 and 4 — every pull request and every push to `main` runs the console's tests, and the only uncovered window is Tasks 1.0 through 1.4: the toolchain, the window, the IPC allow-list, the source, and the fixtures. **Those four pull requests have no console CI, and the plan says so rather than claiming CI "from the first pull request"** — a claim round 2 made in the design's §9.4 and §7.5 and round 3 corrected, because the copy-in is a task, not a merge hook, and an owner-run one at that. The signing workflow is still staged and unapplied until Task 4.5, which is deliberate (it holds the Apple material) and is not a testing gap: what it adds is a tag-time job, and the tests it would run have been running since Task 1.5.
 
 ## Decisions this plan defers to the owner
 
-Its own, continuing the design's D-series with **C1 onward**, each vetoable before its phase starts. **The owner's answers of 2026-10-15 cover this list too**: the design's D1 to D20 were answered (the table in Task 5.0 mirrors them) and nothing on this list was objected to, so every row below stands as recommended.
+Its own, continuing the design's D-series with **C1 onward**, each vetoable before its phase starts. **The owner's answers of 2026-10-15 cover this list too**: the design's D1 to D20 were answered (the table in Task 5.0 mirrors them) and nothing on this list was objected to, so every row below stands as recommended, **except C8 to C10, which were added on 2026-10-17 with the proposed Task 3.4 and are not answered**.
 
 | # | Question | Recommendation | Owner's answer 2026-10-15 |
 |---|---|---|---|
@@ -752,6 +1104,9 @@ Its own, continuing the design's D-series with **C1 onward**, each vetoable befo
 | **C5** | Does the console ship a `--json` mode of its own (a headless `console --json`) as the CLI does? | **No.** The CLI already has the machine view; a second one would be a second contract to version. The console is a renderer. | **Accepted as recommended.** |
 | **C6** | Does the release gate gain the console check (Task 4.6) in the same release that first ships the console, or the one after? | **The same release.** Waiting a release means the first console build ships ungated, which is the hole Task 4.6 exists to close; by then the check has run on **every pull request and every push to `main` since Task 1.5**, three phases of track record rather than one task's worth, because round 2 moved the copy-in of the tests workflow into phase 1. | **Accepted as recommended.** |
 | **C7** | Task 1.4's eight recordings are owner-run. Does phase 1's PR merge with the synthetic fixture and the recordings follow, or does it wait for them? | **Merge with the synthetic fixture** — the recorder, the redactor and the replay source are the reviewable artifacts, and the recordings are data that lands in their own commit. Blocking the shell on a live sandbox session would put owner work on the critical path of an agent-runnable PR, which is the thing this plan avoids everywhere else. | **Accepted as recommended.** |
+| **C8** | (Task 3.4b, proposed 2026-10-17.) May the installation list be persisted? D13 says the choice is "the app's own setting". §5.1 rule 10 and §7.4 say the app writes nothing but the opt-in spawn log. | **Persist it**: one `installations.json` in Electron's `userData` directory, `0600`, schema-closed, bounded, never a credential and never under the CLI's own config directory, written only when the operator adds, chooses or removes one. 3.4b amends rule 10, §7.4 and D20 to name it. The alternative is the in-memory store `createInstallationStore` has today, with the picker on every launch. | **Not answered** (added 2026-10-17). |
+| **C9** | (Task 3.4b, proposed 2026-10-17.) Where does switching happen? D13 says "a picker in the header". | **The header names the installation, and a separate picker window opened from the application menu adds, chooses and removes.** The dashboard's bridge then stays read-only (plus `startup.compatibility`). The picker gets its own document, preload and channel prefix, and takes no path from the renderer: native dialogs answer pick tokens. | **Not answered** (added 2026-10-17). |
+| **C10** | (Task 3.4a, proposed 2026-10-17.) In `reduced` mode the main process refuses `spend.report` and `budget.show`. The kill state also rides inside `live.watch`. Should the main process strip it? | **No.** Rewriting a CLI document in the main process would be a second schema. The renderer's gate is the one defence for the kill banner inside the Live screen, and `REDUCED_VIEW_OPERATIONS.kill` is `[]`, named by a test. | **Not answered** (added 2026-10-17). |
 
 ## Open items, listed rather than fixed
 
