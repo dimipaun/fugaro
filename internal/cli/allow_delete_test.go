@@ -423,6 +423,12 @@ func TestAllowDeleteCommandWritesNothingWhenItCannotReadTheList(t *testing.T) {
 	if !strings.Contains(err.Error(), "nothing was written") {
 		t.Errorf("the refusal does not say nothing was written: %v", err)
 	}
+	// The read's own refusal, not the write's generation precondition: a
+	// command that wrote anyway after the failed read would be stopped by
+	// that precondition here only because the list already exists.
+	if !strings.Contains(err.Error(), "could not be read") {
+		t.Errorf("the refusal is not the failed read's: %v", err)
+	}
 	if after := allowDeleteGeneration(t, r.gcs, initRunsBucket); after != before {
 		t.Errorf("a write after a failed read rewrote the list (generation %d → %d)", before, after)
 	}

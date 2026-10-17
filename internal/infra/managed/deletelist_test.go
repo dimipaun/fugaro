@@ -666,3 +666,116 @@ func TestReadDeleteListForWriteFailsClosed(t *testing.T) {
 		t.Errorf("over another project's bucket: %v, want ErrRefused", err)
 	}
 }
+
+// countingBody serves n bytes — data, then spaces — and counts what is read
+// from it, so a test can tell a capped read from one that drains the body.
+type countingBody struct {
+	data []byte
+	n    int
+	read int
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	if b.read >= b.n {
+		return 0, io.EOF
+	}
+	if len(p) > b.n-b.read {
+		p = p[:b.n-b.read]
+	}
+	for i := range p {
+		if b.read+i < len(b.data) {
+			p[i] = b.data[b.read+i]
+		} else {
+			p[i] = ' '
+		}
+	}
+	b.read += len(p)
+	return len(p), nil
+}
+
+func (b *countingBody) Close() error { return nil }
+
+// deleteListTransport answers the bucket read with the project's own runs
+// bucket, the object's metadata read with generation 5, and the media read
+// with body(r), the request it answers.
+func deleteListTransport(body func(r *http.Request) io.ReadCloser) roundTripFunc {
+	return func(r *http.Request) (*http.Response, error) {
+		switch {
+		case !strings.Contains(r.URL.Path, "/o/"):
+			return bucketResponse(r, testProjectNumber, testManaged), nil
+		case r.URL.Query().Get("alt") != "media":
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK",
+				Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body:   io.NopCloser(strings.NewReader(`{"name":"` + AllowDeleteObject + `","generation":"5"}`)), Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK",
+			Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body(r), Request: r}, nil
+	}
+}
+
+// TestTheDeleteListReadsAreCapped: both reads stop at the cap plus one byte
+// however long the body is — the length check after the read is what refuses
+// an oversized list, and the cap is what keeps a planted 16 MB object from
+// being read whole into memory first. A body exactly one byte past the cap,
+// whose first allowDeleteMaxBytes are a valid list, is refused by both: a
+// read capped one byte short would see only the valid list.
+func TestTheDeleteListReadsAreCapped(t *testing.T) {
+	ctx := context.Background()
+	reads := map[string]func(s *storage.Service) ([]string, error){
+		"AllowDelete": func(s *storage.Service) ([]string, error) {
+			return AllowDelete(ctx, s, testBucket, testProject, testProjectNumber)
+		},
+		"ReadDeleteListForWrite": func(s *storage.Service) ([]string, error) {
+			st, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber)
+			if err == nil && !st.Unreadable {
+				return st.Addresses, errors.New("an oversized body read as a list")
+			}
+			return st.Addresses, err
+		},
+	}
+	for name, read := range reads {
+		t.Run(name, func(t *testing.T) {
+			for _, size := range []int{16 << 20, allowDeleteMaxBytes + 1} {
+				body := &countingBody{data: []byte(deleteListJSON), n: size}
+				list, err := read(storageWithTransport(t, deleteListTransport(func(*http.Request) io.ReadCloser { return body })))
+				if err != nil || len(list) != 0 {
+					t.Errorf("a %d-byte body gives %v, %v; want no addresses", size, list, err)
+				}
+				if body.read > allowDeleteMaxBytes+1 {
+					t.Errorf("a %d-byte body: read %d bytes, past the cap of %d+1", size, body.read, allowDeleteMaxBytes)
+				}
+			}
+		})
+	}
+}
+
+// TestReadDeleteListForWriteReadsTheGenerationItReports: the media read is
+// pinned to the generation the metadata read returned, so the generation the
+// write is conditioned on is the one whose list the command showed — never a
+// newer list read under an older generation, which would let the write drop
+// approvals the owner was never shown.
+func TestReadDeleteListForWriteReadsTheGenerationItReports(t *testing.T) {
+	newer := `{"version":1,"gcp_project":"` + testProject + `","addresses":["google_storage_bucket.newer"]}`
+	s := storageWithTransport(t, deleteListTransport(func(r *http.Request) io.ReadCloser {
+		if r.URL.Query().Get("generation") == "5" {
+			return io.NopCloser(strings.NewReader(deleteListJSON))
+		}
+		return io.NopCloser(strings.NewReader(newer))
+	}))
+	st, err := ReadDeleteListForWrite(context.Background(), s, testBucket, testProject, testProjectNumber)
+	if err != nil || st.Generation != 5 || !slices.Equal(st.Addresses, deleteListAddresses) {
+		t.Fatalf("ReadDeleteListForWrite() = %+v, %v; want generation 5's list %v", st, err, deleteListAddresses)
+	}
+}
+
+// TestReadDeleteListForWriteCallsAnEmptyListUnreadable: an object with no
+// addresses is not one this package writes (Bytes refuses it), so the writer's
+// read reports it as unreadable, and replacing it asks for the typed
+// confirmation as any other object the command cannot read does.
+func TestReadDeleteListForWriteCallsAnEmptyListUnreadable(t *testing.T) {
+	s, bucket := seedDeleteList(t, `{"version":1,"gcp_project":"`+testProject+`","addresses":[]}`)
+	st, err := ReadDeleteListForWrite(context.Background(), s, bucket, testProject, testProjectNumber)
+	if err != nil || !st.Unreadable || st.Addresses != nil {
+		t.Fatalf("over an empty list: %+v, %v; want Unreadable and no addresses", st, err)
+	}
+}
