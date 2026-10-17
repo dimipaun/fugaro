@@ -343,7 +343,26 @@ Each row: the question, **this work's recommendation**, the **alternative and wh
 
 ## 4. Open for the owner
 
-**Every D-row in §3 was answered by the owner on 2026-10-17.**
+**Every D-row in §3 was answered by the owner on 2026-10-17. What is still open is the list below: three tensions the answers create between themselves. This document states them and does not resolve them; each needs the owner's ruling, and each names the task it holds back.**
+
+### Open tensions
+
+**(a) D112 against D124: the job list cannot have both sources as written.** D112's answer is **direct RTDB reads**; D124's answer is that the job list **reuses the documented feed** (`fugaro watch --json`, [json-contract.md](../../console/docs/json-contract.md)). A phone cannot run `fugaro watch` (F35), and the feed is a process's output, not a database node, so one of the two has to give way. The choices:
+
+1. **The app reads RTDB directly, and treats each node it reads as a validated document under the feed's reader rules** — json-contract.md §10.13's rules about documents (a field that does not validate is skipped, a missing field is `unavailable` and never `0`, a changed `day` is a break, silence is not death) — so D124 is kept as "reuse the reader rules and the document shapes", not the `watch --json` transport. Cost: the queued and finished rows come from the **runs bucket**, not the database (`internal/cli/watch_queued.go`'s `openQueueBucket`/`queuedScanner`, F14), so a database reader does not see them; `/outcomes/**` carries no `.read` today (F13); and what `internal/watch/json.go`'s `BuildJSON` computes (the burn rate, the cap fractions) is computed again on the phone, or not shown.
+2. **A mirror.** A writer that can run the feed — D113c's new command on the laptop, or the phase-2 service under D115 — writes the feed's documents into a node the phone reads directly, so the phone still reads RTDB and D124's feed is reused whole. Cost: this is D112's alternative **(i)**, which the answer did not choose, so taking it revises D112's answer; it is a **third** write for D113b's writer, whose answer fences it to two; it is a new node family with a retention question (D118); and the list goes stale whenever the writer is not running.
+
+**Ask:** which one — or a third the owner names. **Holds back:** P2.1 (which read grants), P3.2 and P3.3.
+
+**(b) What D112's answer does to D113, D111 and D118.**
+
+- **D113 — read grants.** D113's answer kept "no `.read` on any existing node is loosened"; direct reads need exactly that. D112's row named the families a job list would read: `agents/$slug/$run` (`internal/budget/model.go`'s `PathAgent`), `config/caps/**` (`PathCapsGlobal`, `PathCapsDefaults`, `PathCapsRepo`), `spend/$day/**` (`PathSpendGlobal`, `PathSpendRepo`), `config/kill/**` (`PathKillGlobal`, `PathKillRepo`), and a `.read` added to `outcomes/$day/$slug/$run`, which has none — plus the phone's reads of its own outbox and the heartbeat. **Which of these the user claim may read, and whether a user reads every run of its installation or a narrower set, is the owner's ruling.** Whatever it is, P2.2's emulator cases must assert the **read** denials as well as the write denials: another account's mailbox, `/fugaro/**`, and every family the grant does not name.
+- **D111 — the token's scope.** The Firebase Auth ID token D111 lets the phone hold was argued as a credential for one mailbox subtree; under D112 it also reads the families above, so a lost phone exposes them until the Auth user is deleted. **And D111's second item, the per-pairing MAC key, is the one D113b's option (a) creates — D113b's answer does not choose between (a), (b) and (c).** The owner's D111 answer presupposes (a); the owner confirms or corrects it.
+- **D118 — read-side exposure.** D118's answer governs what is **written** (redacted text, a TTL, a size bound). Direct reads add what is **read**: the agent registry's titles and repositories — the hostile agent text console D1's reason was about — and the spend nodes, readable by any token in a phone. **Ask:** whether D118's redaction and retention also bound what the phone may read and cache, or whether the read grant is accepted as it is.
+
+**Holds back:** P2.1, P2.2, P3.1 (the secure-storage items) and P3.6.
+
+**(c) D113c's command name.** The answer is a **new** `fugaro` command, and **no document in this repository fixes its name**. `internal/cli/mailbox.go` in the plan is a placeholder for the file, following the tree's one-file-per-command layout (`internal/cli/watch.go`'s `newWatchCmd`); it is not a ruling on the name. **Ask:** the command's name, which the CLI plan (console D19) then carries. **Holds back:** P4.1.
 
 ### The decisions, as answered
 
