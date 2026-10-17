@@ -383,6 +383,71 @@ describe('the replaying source', () => {
   })
 })
 
+describe('the writer serialises with a stack, and says the same bytes', () => {
+  /** written is one record as a fixture line, without the header: what the
+   * writer produced for a document, which is where a serialiser bug would show
+   * up as a changed file rather than as an error. */
+  function written(value: unknown): string {
+    // The cast is the test's point: `FixtureRecord` says a document is an
+    // object, and these cases deliberately are not, because the serialiser is
+    // what decides what a non-object becomes.
+    const document = value as Readonly<Record<string, unknown>>
+    const line = writeFixture([{ at: '2026-10-15T12:00:00Z', document }], SYNTHETIC_META)
+    const newline = line.indexOf('\n')
+    return line.slice(newline + 1).trimEnd()
+  }
+
+  it('produces byte for byte what `JSON.stringify` produces', () => {
+    // The writer's own contract: it is `JSON.stringify` with an explicit stack
+    // and nothing else. The cases below are the ones a hand-written serialiser
+    // gets wrong -- an empty container, a value that drops out of an object, a
+    // value that becomes `null` in an array, a non-finite number, a string that
+    // needs escaping, and `toJSON`.
+    const cases: readonly unknown[] = [
+      null,
+      true,
+      0,
+      -0,
+      1.5,
+      'plain',
+      'quote " backslash \ newline \n tab \t',
+      [],
+      {},
+      [1, 'a', true, null],
+      { a: 1, b: 'two', c: false, d: null },
+      { nested: { deeper: [{ x: [] }, {}] } },
+      { gone: undefined, kept: 1 },
+      [undefined, 1],
+      { big: 1e21, small: 1e-7, neg: -12.5 },
+      { stamped: new Date('2026-10-15T12:00:00Z') },
+      { nestedJson: { toJSON: () => ({ a: 1, b: [2] }) } },
+      { emptyJson: { toJSON: () => undefined }, after: 1 },
+      { deep: { a: { b: { c: { d: [1, [2, [3]]] } } } } },
+    ]
+    for (const value of cases) {
+      expect(written(value), JSON.stringify(value) ?? 'undefined').toBe(
+        JSON.stringify({ at: '2026-10-15T12:00:00Z', document: value }),
+      )
+    }
+  })
+
+  it('serialises a document nested ten thousand deep instead of crashing', () => {
+    // The hostiles-are-refusals-not-crashes rule, at the writer: V8's recursive
+    // serialiser throws `RangeError: Maximum call stack size exceeded` around
+    // four thousand levels, and a writer that dies there turns a document the
+    // redactor and the loader both refuse into a lost process. The line is
+    // written, and the *loader* is what refuses it -- by name.
+    const depth = 10_000
+    const deep = JSON.parse(`{"a":${'['.repeat(depth)}${']'.repeat(depth)}}`) as Readonly<Record<string, unknown>>
+    const text = writeFixture([{ at: '2026-10-15T12:00:00Z', document: deep }], SYNTHETIC_META)
+    expect(() => loadFixture(text, 'deep.ndjson')).toThrow(FixtureRefusal)
+    // And the same document at an ordinary depth writes and loads as usual.
+    const shallow = JSON.parse(`{"a":${'['.repeat(100)}${']'.repeat(100)}}`) as Readonly<Record<string, unknown>>
+    const shallowText = writeFixture([{ at: '2026-10-15T12:00:00Z', document: shallow }], SYNTHETIC_META)
+    expect(loadFixture(shallowText, 'shallow.ndjson').records).toHaveLength(1)
+  })
+})
+
 describe('the committed synthetic fixture', () => {
   it("is redaction-clean, so the loader's audit is not doing the heavy lifting", () => {
     const text = theSource()
