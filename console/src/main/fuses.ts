@@ -220,8 +220,8 @@ export interface FuseTools {
 const ELECTRON_FUSES: FuseTools = { flipFuses, getCurrentFuseWire }
 
 /**
- * macExecutable is the binary inside the packed bundle that carries the fuse
- * wire: `<appOutDir>/<productFilename>.app/Contents/MacOS/<productFilename>`.
+ * macExecutable is the path `@electron/fuses` is given:
+ * `<appOutDir>/<productFilename>.app/Contents/MacOS/<productFilename>`.
  *
  * It mirrors electron-builder's own resolution rather than inventing one. In
  * app-builder-lib, `AppInfo.productFilename` is `sanitizeFileName(productName)`
@@ -230,6 +230,14 @@ const ELECTRON_FUSES: FuseTools = { flipFuses, getCurrentFuseWire }
  * darwin. The bundle and the executable are therefore both named by
  * `package.json`'s `productName`, which is `Fugaro Console` -- the name Check
  * 59a's launch line and the window's own title depend on.
+ *
+ * **It is not the file the fuse bytes land in**, and the pinned package's own
+ * resolution is why: given this path on darwin, `flipFuses` flips the binary
+ * inside `<productFilename>.app/Contents/Frameworks/Electron Framework.framework`
+ * (the one Electron's code signature covers), which is the path it resolves
+ * relative to this one. This function names the entry point the library takes,
+ * not the byte it writes; `fuses.test.ts` drives the real package over a bundle
+ * layout and records that.
  */
 export function macExecutable(context: AfterPackContext): string {
   const name = context.packager.appInfo.productFilename
