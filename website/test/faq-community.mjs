@@ -124,10 +124,16 @@ function builtPage(rel) {
   return readFileSync(file, 'utf8')
 }
 
-/** The page's text, as a reader reads it: the body, tags and scripts gone, whitespace collapsed. */
+/**
+ * The text of a page — or of an element of one — as a reader reads it: the body, tags and
+ * scripts gone, whitespace collapsed. A whole page is sliced from `<body`, because the head
+ * carries the title and the meta description rather than prose a reader reads; a fragment
+ * (`element(...)`, which is how the CI sentences below are read) has no head and no `<body>`,
+ * so it is read whole.
+ */
 function pageText(html) {
-  return html
-    .slice(html.indexOf('<body'))
+  const body = html.includes('<body') ? html.slice(html.indexOf('<body')) : html
+  return body
     .replace(/<script[\s\S]*?<\/script>/g, ' ')
     .replace(/<style[\s\S]*?<\/style>/g, ' ')
     .replace(/<[^>]+>/g, ' ')
@@ -143,7 +149,7 @@ function pageText(html) {
 
 /** One element of the page, as written in the build output. */
 function element(html, id) {
-  const m = new RegExp(`<([a-z]+)[^>]*\\bid="${id}"[\\s\\S]*?</\\1>`).exec(html)
+  const m = new RegExp(`<([a-z]+)[^>]*\\bid="${escaped(id)}"[\\s\\S]*?</\\1>`).exec(html)
   assert.ok(m, `the built page carries no element with id="${id}"`)
   return m[0]
 }
