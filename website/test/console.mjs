@@ -1,0 +1,399 @@
+// website/test/console.mjs — the console page (website plan, Task W1.6).
+//
+// The spec asks for "Console downloads: per-OS download links (placeholder until the
+// console ships)" and there is nothing to download: `console/` holds two documents and no
+// code, the release notes list the desktop console under "Not in this release", and a link
+// to an unsigned or unreleased artifact is the one outcome here with a real consequence for
+// a reader (finding 23, finding 25, D95). Four things are checked here:
+//
+//   1. **The placeholder carries no link.** While `features.console_downloads` is false the
+//      built page contains no download URL, and the downloads section contains no element a
+//      reader can follow — no `<a>`, no `<button>`. This is the red step's test: written
+//      against a page that renders a hard-coded placeholder link, it fails, and the task
+//      is the commit that removes it.
+//   2. **The page renders its data file and types nothing of its own.** Every sentence in
+//      the built page's article appears in `website/content/downloads.json` — the
+//      mechanical form of the rule this site is written to, "a page renders a fact; it
+//      never restates one" (F37, Global Constraint 6).
+//   3. **Every claim is traceable to a decision.** Each sentence in the data file names the
+//      document it came from, that document is in this repository, and every decision id
+//      the source names is a decision that document actually carries (W1.6 step 3) — so a
+//      claim about the console cannot be written without provenance.
+//   4. **The rule the Go test enforces over the tree is wired into the build.** A download
+//      URL in the data file while the flag is false fails the build here, naming the file;
+//      and with the flag on — W3.1's state, once the console ships — the section renders
+//      the platform link the data carries, so the flip is a data change and not a code
+//      change.
+//
+// How it builds: the negative cases mutate a file and build again, so the builds happen in
+// a copy of the repository in a temp directory rather than in this checkout (the shape
+// `layout.mjs` uses for the same reason). The copy is the repository minus everything a
+// site build cannot read, with the installed `node_modules` symlinked rather than copied,
+// and every build is network-free: the only executable it starts is the site's own
+// installed Astro.
+
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const REPO = path.dirname(SITE)
+
+// What a site build cannot read, and therefore what the copies below leave out: the Go
+// module's own tree and test data, the console application, and the installed and built
+// directories (the last two are symlinked and rebuilt instead).
+const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
+const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
+
+const DOWNLOADS_JSON = 'website/content/downloads.json'
+const SITE_YAML = 'website/data/site.yaml'
+
+/** The bytes of a file in the checkout, for a test to hold the build's output against. */
+function repoFile(relative) {
+  return readFileSync(path.join(REPO, relative), 'utf8')
+}
+
+/** The console's data file, parsed: the facts the page renders and this test checks. */
+function downloadsData() {
+  return JSON.parse(repoFile(DOWNLOADS_JSON))
+}
+
+/**
+ * One decision row of the console's design, as that document writes it: the row is the
+ * decision, and a claim that cites `D2` is citing this line and not a remembered summary
+ * of it. Every check below reads the row rather than a copy of it, so a decision that is
+ * reworded fails a test instead of silently disagreeing with the page.
+ */
+function decisionRow(id) {
+  const design = repoFile('docs/design/desktop-console.md')
+  const row = new RegExp(`^\\|\\s*\\*\\*${id}\\*\\*\\s*\\|.*$`, 'm').exec(design)
+  assert.ok(row, `docs/design/desktop-console.md carries no ${id} row, and the console's page cites it`)
+  return row[0]
+}
+
+/**
+ * The string a console download URL of this repository contains, built from `site.yaml`'s
+ * own repository rather than typed here: while the flag is false the built page may carry
+ * none of it, and the same shape is what the Go boundary test scans the whole site for
+ * (Global Constraint 9). It is assembled at run time so that this file is not itself a
+ * second spelling of a URL the site must not carry.
+ */
+function downloadNeedle() {
+  const repository = /^repository:\s*(\S+)$/m.exec(repoFile(SITE_YAML))[1]
+  return `${new URL(repository).host}${new URL(repository).pathname}/releases/download`
+}
+
+/** A copy of the repository in a temp directory, ready to be mutated and built. */
+function copyOfTheRepository() {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-console-'))
+  const root = path.join(dir, 'repo')
+  cpSync(REPO, root, {
+    recursive: true,
+    filter: (src) => {
+      const name = path.basename(src)
+      const parent = path.basename(path.dirname(src))
+      if (path.dirname(src) === REPO && SKIP.has(name)) return false
+      if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
+      return true
+    },
+  })
+  symlinkSync(path.join(SITE, 'node_modules'), path.join(root, 'website', 'node_modules'), 'dir')
+  return { dir, root }
+}
+
+/** Build the copy, and hand back what the build said and what it produced. */
+function build(root) {
+  const site = path.join(root, 'website')
+  const result = spawnSync(process.execPath, [path.join(site, 'node_modules', 'astro', 'bin', 'astro.mjs'), 'build'], {
+    cwd: site,
+    encoding: 'utf8',
+    env: { ...process.env, ASTRO_TELEMETRY_DISABLED: '1' },
+  })
+  const page = path.join(site, 'dist', 'console', 'index.html')
+  return {
+    status: result.status,
+    output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
+    page: existsSync(page) ? readFileSync(page, 'utf8') : null,
+  }
+}
+
+/** Build a fresh copy, mutate one or more files, build again, and clean up after the test. */
+function buildWith(t, mutate) {
+  const copy = copyOfTheRepository()
+  t.after(() => rmSync(copy.dir, { recursive: true, force: true }))
+  mutate(copy)
+  return build(copy.root)
+}
+
+/** The built page, for a test that expects the build to have succeeded. */
+function builtPage(built) {
+  assert.equal(built.status, 0, `the build failed:\n${built.output}`)
+  assert.ok(built.page, 'the build produced no console page')
+  return built.page
+}
+
+/** The built page's downloads section: the element the placeholder rule is about. */
+function downloadsSection(page) {
+  const m = /<section[^>]*id="downloads"[\s\S]*?<\/section>/.exec(page)
+  assert.ok(m, 'the built page carries no downloads section')
+  return m[0]
+}
+
+/**
+ * The page's text as a reader sees it: Astro escapes the characters below, and a test that
+ * compared escaped text with the data file would fail on an apostrophe rather than on a
+ * claim.
+ */
+function decode(html) {
+  return html
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#8212;/g, '—')
+    .replace(/&amp;/g, '&')
+}
+
+test('the console page renders the facts its data file carries', async (t) => {
+  const built = buildWith(t, () => {})
+  const page = decode(builtPage(built))
+  const data = downloadsData()
+
+  // Every sentence rendered on the page is the data file's own: the name, what the console
+  // is, and each property with its title.
+  assert.ok(page.includes(`<h1>${data.name}</h1>`), `the page's heading is not ${JSON.stringify(data.name)}, the name the data file carries`)
+  assert.ok(page.includes(data.what.text), `the page does not render what.text ${JSON.stringify(data.what.text)}`)
+  for (const property of data.properties) {
+    assert.ok(page.includes(property.text), `the page does not render the property "${property.id}"`)
+    assert.ok(page.includes(property.title), `the page does not render the title of the property "${property.id}"`)
+  }
+
+  // And the section that carries the placeholder renders the data file's own not-released
+  // sentence rather than a copy of it written into the markup.
+  assert.ok(
+    downloadsSection(page).includes(data.not_released.text),
+    `the downloads section does not render not_released.text ${JSON.stringify(data.not_released.text)}`,
+  )
+})
+
+test('the downloads section carries no link and no download URL while the flag is false', async (t) => {
+  const built = buildWith(t, () => {})
+  const page = builtPage(built)
+
+  // The flag the whole of this rests on: the console is designed and unshipped, and
+  // `site.yaml` says so.
+  assert.match(repoFile(SITE_YAML), /^\s*console_downloads:\s*false\s*$/m, `${SITE_YAML} does not have features.console_downloads false`)
+
+  const needle = downloadNeedle()
+  assert.ok(
+    !page.includes(needle),
+    'console page links releases/download/ while features.console_downloads is false',
+  )
+
+  // And nothing a reader can follow at all: the placeholder is prose, and the two elements
+  // that would make it actionable are absent from the section (D95).
+  const section = downloadsSection(page)
+  assert.ok(!/<a[\s>]/.test(section), 'the downloads section carries a link while the console is unreleased')
+  assert.ok(!/<button[\s>]/.test(section), 'the downloads section carries a button while the console is unreleased')
+})
+
+test("the page names the console's read-only and no-telemetry properties", async (t) => {
+  const built = buildWith(t, () => {})
+  const page = decode(builtPage(built))
+  const data = downloadsData()
+
+  // The two properties the console's own decisions fix and a reader is owed (D2, F17, D5):
+  // it writes nothing, and it sends nothing.
+  const ids = data.properties.map((property) => property.id)
+  for (const id of ['read-only', 'no-telemetry']) {
+    assert.ok(ids.includes(id), `the console's data file states no "${id}" property, and the page states both (W1.6 step 3)`)
+  }
+
+  assert.match(page, /read-only/i, 'the page does not say the console is read-only')
+  assert.match(page, /no telemetry/i, 'the page does not say the console has no telemetry')
+})
+
+test('every console claim is traceable to the document it came from', () => {
+  const data = downloadsData()
+
+  // Every sentence the page renders carries a source, and the source is a document in this
+  // repository that is about the console. A claim with no provenance is the failure W1.6
+  // step 3 exists to prevent, and this is the mechanical form of it.
+  const claims = [data.what, data.not_released, ...data.properties]
+  assert.ok(claims.length >= 3, 'the console\'s data file carries too few claims to be the page\'s facts')
+
+  const decisions = new Set()
+  for (const claim of claims) {
+    assert.ok(typeof claim.source === 'string' && claim.source.trim() !== '', `a claim with no source: ${JSON.stringify(claim.text)}`)
+
+    const [file, ...named] = claim.source.trim().split(/\s+/)
+    const absolute = path.join(REPO, file)
+    assert.ok(file.startsWith('docs/'), `${JSON.stringify(claim.source)} does not name a document under docs/`)
+    assert.ok(existsSync(absolute), `${JSON.stringify(claim.source)} names ${file}, which is not in this repository`)
+
+    const text = readFileSync(absolute, 'utf8')
+    assert.match(text, /console/i, `${file} is cited as the source of a console claim and does not mention the console`)
+
+    // A decision id in a source has to be a decision that document actually carries: the
+    // page cites D2, D5 and D11, and each of them is a row in the console's own design.
+    for (const id of named) {
+      assert.match(id, /^D\d+[a-z]?$/, `${JSON.stringify(claim.source)} names ${id}, which is not a decision id`)
+      assert.ok(
+        new RegExp(`\\|\\s*\\*\\*${id}\\*\\*\\s*\\|`).test(text),
+        `${JSON.stringify(claim.source)} cites ${id}, and ${file} carries no ${id} row — a citation of a decision that does not exist is a claim with no source at all`,
+      )
+      decisions.add(id)
+    }
+  }
+
+  for (const id of ['D2', 'D5', 'D11']) {
+    assert.ok(
+      decisions.has(id),
+      `no console claim cites ${id}: the page states that the console is read-only (D2), that it has no telemetry (D5) and that it is its own artifact (D11), and each of those is one of those decisions`,
+    )
+  }
+})
+
+test("the console's guarantees are stated as the document that decides them states them", () => {
+  // Traceability is not enough on its own: a sentence can cite a decision and still
+  // misstate it. The two guarantees the page publishes are read out of the document that
+  // decides them here, part by part — the defect this catches is a property that drops one
+  // of a decision's parts and thereby promises more than the product does.
+  const design = repoFile('docs/design/desktop-console.md')
+  const data = downloadsData()
+
+  const property = (id) => {
+    const found = data.properties.find((entry) => entry.id === id)
+    assert.ok(found, `the console's data file states no "${id}" property`)
+    return found
+  }
+
+  // --- Strictly read-only (D2) ------------------------------------------------
+  // D2 defers the three commands that write, and it names them: the console is read-only
+  // because those commands stay in the CLI, not because the console is careful.
+  const d2 = decisionRow('D2')
+  assert.match(d2, /read-only/i, 'the design\'s D2 row no longer decides that the console is read-only; re-read D2 before restating it')
+  const readOnly = property('read-only')
+  assert.match(readOnly.text, /read-only/i, 'the read-only property does not say the console is read-only')
+  for (const command of ['kill', 'resume', 'cancel']) {
+    assert.ok(d2.includes(command), `the design's D2 row no longer names \`${command}\`, so the property that defers it can no longer be checked against it`)
+    assert.ok(
+      readOnly.text.includes(command),
+      `the read-only property does not name \`${command}\`, which D2 defers to the CLI: a guarantee that names some of the commands that write and not the others is a narrower promise than the design makes`,
+    )
+  }
+
+  // --- No telemetry (D5, and the design's section 7.4) ------------------------
+  // Four promises in one sentence, and the page may not drop one of them. The update check
+  // is the one that is easy to lose — an earlier revision of this property said the only
+  // outbound requests were the CLI's own, which reads as "nothing else leaves the machine"
+  // and is false: the console updates itself **on by default** (D5, section 7.3), so that
+  // check is an outbound request of its own and has to be named.
+  const promised = /No telemetry[^.]*\./.exec(design)
+  assert.ok(promised, "the design's section 7.4 no longer carries the console's telemetry promise; re-read it before the page states one")
+  assert.match(decisionRow('D5'), /On by default/, 'the design\'s D5 row no longer puts the update check on by default, which is why the check has to appear in the promise the page copies')
+
+  const noTelemetry = property('no-telemetry')
+  for (const part of ['telemetry', 'crash reporting', 'analytics', 'update check']) {
+    assert.ok(promised[0].includes(part), `the design no longer promises "${part}" in section 7.4, and the page repeats that sentence's parts`)
+    assert.ok(
+      noTelemetry.text.includes(part),
+      `the no-telemetry property does not name "${part}": the console's promise has four parts (telemetry, crash reporting, analytics and the update check's identifier) and a property that drops one promises more than the design does`,
+    )
+  }
+  // And where the property enumerates what does leave the machine, the update check has to
+  // be listed among those things — the precise shape of the defect above. "Names the update
+  // check somewhere" is not the rule and does not catch it: the defective sentence did name
+  // the check, twice, and then enumerated the outbound requests as the CLI's own and
+  // stopped. The rule is where the mention falls: if the property says "only outbound
+  // requests", an update check has to be named *in that enumeration*, after it.
+  const enumerated = noTelemetry.text.indexOf('only outbound requests')
+  if (enumerated >= 0) {
+    assert.ok(
+      noTelemetry.text.indexOf('update check', enumerated) > enumerated,
+      `the no-telemetry property ${JSON.stringify(noTelemetry.text)} names the CLI's requests as the only outbound ones without listing the update check among them: the console updates itself on by default (D5, section 7.3), that check fetches its own feed, and a property that stops at the CLI promises more than the design does`,
+    )
+  }
+
+  // --- What the console is (D1, and the design's section 1) -------------------
+  // One sentence of the design's own, and the page carries its parts.
+  const isWhat = /It has no [^.]*\./.exec(design)
+  assert.ok(isWhat, "the design's section 1 no longer says what the console holds; re-read it before the page repeats it")
+  for (const part of ['no credential', 'no database client']) {
+    assert.ok(isWhat[0].includes(part), `the design's section 1 no longer says the console has "${part}"`)
+    assert.ok(
+      data.what.text.includes(part),
+      `what.text does not carry "${part}", and ${JSON.stringify(isWhat[0])} is where the page's sentence comes from`,
+    )
+  }
+})
+
+test('the build refuses a download URL while the flag is false', async (t) => {
+  // The rule W0.2's Go test enforces over the whole tree, wired into the build (W1.6 step
+  // 2): a URL in the data file while the console is unreleased stops the build here, naming
+  // the file — and the URL is synthetic, because no real artifact exists to point at.
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads = [{ id: 'macos', platform: 'macOS', url: 'https://downloads.example.invalid/console-macos.tar.gz' }]
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+
+  assert.notEqual(built.status, 0, `the build accepted a download URL while the console is unreleased:\n${built.output}`)
+  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
+  assert.match(built.output, /available is false/, 'the failure does not say why the URL was refused')
+  assert.equal(built.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+})
+
+test('with the console released, the section renders the platform link the data carries', async (t) => {
+  // W3.1's state: the console has shipped, the flag in `site.yaml` and the data file's own
+  // `available` are both true, and the section renders what the data carries. Nothing in
+  // the page changes, which is the point of rendering the section from a data file.
+  const url = 'https://downloads.example.invalid/console-macos.tar.gz'
+  const built = buildWith(t, (copy) => {
+    const yaml = path.join(copy.root, 'website', 'data', 'site.yaml')
+    writeFileSync(yaml, readFileSync(yaml, 'utf8').replace(/^(\s*console_downloads:\s*)false\s*$/m, '$1true'))
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.available = true
+    data.downloads = [{ id: 'macos', platform: 'macOS', url }]
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+
+  const page = builtPage(built)
+  assert.ok(page.includes(`href="${url}"`), `the section does not render the download the data carries (${url})`)
+  assert.ok(!page.includes(downloadsData().not_released.text), 'the section still renders the not-released sentence with the console released')
+})
+
+test('the page states nothing its data file does not carry', async (t) => {
+  const built = buildWith(t, () => {})
+  const page = decode(builtPage(built))
+  const data = downloadsData()
+
+  // Every sentence on the page — the article's text, less the short labels (the heading,
+  // the section titles, the navigation's words) that are the page's own furniture — appears
+  // in the data file. A page that paraphrased a claim, or wrote a new sentence of its own
+  // about the console, fails here (F37, Global Constraint 6).
+  const article = /<article>([\s\S]*?)<\/article>/.exec(page)
+  assert.ok(article, 'the built page carries no article')
+
+  const rendered = article[1]
+    .replace(/<[^>]+>/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 40)
+
+  assert.ok(rendered.length >= 5, `the page renders ${rendered.length} sentence(s), which is too few to prove anything`)
+
+  const sources = [data.name, data.what.text, data.not_released.text, ...data.properties.map((property) => property.text)]
+  for (const sentence of rendered) {
+    assert.ok(
+      sources.includes(sentence),
+      `the page renders ${JSON.stringify(sentence)}, which ${DOWNLOADS_JSON} does not carry: a page renders a fact; it never restates one`,
+    )
+  }
+})
