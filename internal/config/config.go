@@ -321,15 +321,16 @@ const DefaultJobProfile = "standard"
 // DefaultJobProfile when it names none. One accessor, so the default cannot
 // differ between the readers of the selection.
 //
-// The run reads the selection without this accessor, deliberately: a workflow
-// that names no profile has nothing to refuse for, and internal/runner's
-// checkJobProfile refuses only an explicit name the published policy does not
-// define (a policy that carries a profiles block must define the default, so
-// the default is always defined where profiles exist, and a policy with no
-// profiles block is one this release applies nothing from). The readers that do
-// need the default — the job layout Task 3.2 builds, which makes one Cloud Run
-// job and one job service account per (profile, provider, account) — read it
-// here, so the default is spelled in one place.
+// A workflow that names no profile has nothing for the policy to refuse:
+// internal/runner's checkJobProfile refuses an explicit name the published
+// policy does not define (a policy that carries a profiles block must define
+// the default, so the default is always defined where profiles exist, and a
+// policy with no profiles block is one this release applies nothing from), and
+// it reads the *default* through this accessor to compare it with the profile
+// of the Cloud Run job the run is in. The readers that do need the default —
+// that comparison, and the job layout Task 3.2 builds, which makes one Cloud
+// Run job and one job service account per (profile, provider, account) — read
+// it here, so the default is spelled in one place.
 func (w Workflow) JobProfileOrDefault() string {
 	if w.JobProfile == "" {
 		return DefaultJobProfile
