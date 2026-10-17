@@ -779,3 +779,67 @@ func TestReadDeleteListForWriteCallsAnEmptyListUnreadable(t *testing.T) {
 		t.Fatalf("over an empty list: %+v, %v; want Unreadable and no addresses", st, err)
 	}
 }
+
+// TestTheDeleteListRefusesWhenTheBucketReadFails: the bucket read that proves
+// the runs bucket the project's own failing is a refusal for every caller of
+// proveRunsBucket, never "nothing to prove". The object reads and the write
+// beside it all succeed here, so a proof that returned nil on a failed bucket
+// read would read the planted list as the owner's and write over it.
+func TestTheDeleteListRefusesWhenTheBucketReadFails(t *testing.T) {
+	ctx := context.Background()
+	wrote := false
+	s := storageWithTransport(t, func(r *http.Request) (*http.Response, error) {
+		json := func(code int, body string) *http.Response {
+			return &http.Response{StatusCode: code, Status: http.StatusText(code),
+				Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body:   io.NopCloser(strings.NewReader(body)), Request: r}
+		}
+		switch {
+		case r.Method == http.MethodPost:
+			wrote = true
+			return json(http.StatusOK, `{"name":"`+AllowDeleteObject+`","generation":"6"}`), nil
+		case !strings.Contains(r.URL.Path, "/o/"):
+			return json(http.StatusForbidden, `{"error":{"code":403,"message":"forbidden"}}`), nil
+		case r.URL.Query().Get("alt") != "media":
+			return json(http.StatusOK, `{"name":"`+AllowDeleteObject+`","generation":"5"}`), nil
+		}
+		return json(http.StatusOK, deleteListJSON), nil
+	})
+	if list, err := AllowDelete(ctx, s, testBucket, testProject, testProjectNumber); err != nil || len(list) != 0 {
+		t.Errorf("AllowDelete() with the bucket read failing = %v, %v; want no addresses and no error", list, err)
+	}
+	if st, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber); err == nil {
+		t.Errorf("ReadDeleteListForWrite() with the bucket read failing = %+v and no error", st)
+	}
+	if err := WriteDeleteList(ctx, s, testBucket, testProject, testProjectNumber, deleteListAddresses, 5); err == nil || wrote {
+		t.Errorf("WriteDeleteList() with the bucket read failing = %v (wrote: %v); want an error and no write", err, wrote)
+	}
+}
+
+// TestReadDeleteListForWriteRefusesNoClient: the writer's strict read refuses
+// a missing storage client, as it refuses a missing bucket, project or
+// number, rather than reaching a read it cannot make.
+func TestReadDeleteListForWriteRefusesNoClient(t *testing.T) {
+	ctx := context.Background()
+	s, _ := seedDeleteList(t, deleteListJSON)
+	for name, call := range map[string]func() error{
+		"no client": func() error {
+			_, err := ReadDeleteListForWrite(ctx, nil, testBucket, testProject, testProjectNumber)
+			return err
+		},
+		"no bucket":         func() error { _, err := ReadDeleteListForWrite(ctx, s, "", testProject, testProjectNumber); return err },
+		"no project":        func() error { _, err := ReadDeleteListForWrite(ctx, s, testBucket, "", testProjectNumber); return err },
+		"no project number": func() error { _, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, 0); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("panicked instead of refusing: %v", r)
+				}
+			}()
+			if err := call(); !errors.Is(err, ErrRefused) {
+				t.Errorf("ReadDeleteListForWrite() = %v, want ErrRefused", err)
+			}
+		})
+	}
+}
