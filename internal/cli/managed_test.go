@@ -725,6 +725,7 @@ var initFlagCases = map[string]string{
 	"plan-only":       "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
 	// Flags whose steps confirm through the paths the property drives.
 	"create-project":   "its creation confirms through the Typed class (askTyped/canType, both covered)",
+	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
 	"link-billing":     "the billing link confirms through the Typed class (askTyped/canType, both covered)",
 	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
 	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",

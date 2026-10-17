@@ -85,6 +85,17 @@ type initOptions struct {
 	createProject                    bool
 	displayName, parent, linkBilling string
 
+	// --managed is a creation of a managed project (Task 4.2, design D68's
+	// spelling of the command): the monthly budget amount is required, with
+	// no default (D64), and it is written into the project's creation fact
+	// so a later run and a restore can read what was chosen
+	// (internal/infra/managed, MarkerVersionBudget). It goes with
+	// --create-project and nothing else — a project that already exists is
+	// flagged managed by an owner-run command of its own (D58, Task 6.1) —
+	// and it removes no confirmation: a managed creation is a creation with
+	// more guards, not fewer.
+	managed bool
+
 	// name is the project's name, for a project config fugaro init
 	// creates; with one, it must be that config's name.
 	name string
@@ -366,6 +377,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it init prints the one gcloud command that links it")
 	f.StringVar(&o.displayName, "display-name", "", "with --create-project: the project's display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "with --create-project: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed)")
+	f.BoolVar(&o.managed, "managed", false, "with --create-project: create a Fugaro-managed project. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. A project that already exists is flagged managed by an owner-run command of its own, never by init")
 	f.StringVar(&o.linkBilling, "link-billing", "", "with --create-project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
@@ -677,9 +689,20 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// The number is what makes the marker about this project and not about a
 	// bucket of the same name in someone else's project (managed.WriteMarker
 	// checks the bucket against it).
+	// The amount a managed creation was required to choose, and nothing else:
+	// --managed is the one flag that says this creation is managed, and its
+	// own check refuses a run that passed it without the trio
+	// (init_project.go), so a non-nil budget here is one this run was given
+	// and the installation's Terraform budget carries the same figures. A
+	// creation that is not managed passes nil and writes the object it
+	// always wrote, byte for byte (Task 4.2: the change reaches nobody else).
+	var budget *managed.Budget
+	if r.o.managed {
+		budget = &managed.Budget{Amount: r.o.budget, Currency: r.o.budgetCurrency}
+	}
 	number, err := infra.ProjectNumber(ctx, e.c, r.res.Created)
 	if err == nil {
-		err = managed.WriteMarker(ctx, e.c.Storage, bucket, r.res.Created, r.gcpProject, number)
+		err = managed.WriteMarker(ctx, e.c.Storage, bucket, r.res.Created, r.gcpProject, number, budget)
 	}
 	if err != nil {
 		r.warn(fmt.Sprintf("project %s was created but not marked as managed in gs://%s (%v): the marker is written once, by the run that creates the project, so nothing is skipped for it until an owner-run command marks it", r.res.Created, bucket, err))
@@ -1961,7 +1984,7 @@ func (o *initOptions) installationFlags() []string {
 		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
-		"--create-project": o.createProject, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
+		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
