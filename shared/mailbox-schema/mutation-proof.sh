@@ -82,8 +82,11 @@ suite() {
   local out code tests fails
   out=$( (cd shared && npm test) 2>&1 )
   code=$?
-  tests=$(printf '%s\n' "$out" | sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' | tail -1)
-  fails=$(printf '%s\n' "$out" | sed -n 's/^# fail \([0-9][0-9]*\)$/\1/p' | tail -1)
+  # The summary is `# tests N` under the TAP reporter and `ℹ tests N` under the
+  # spec reporter (node 23+ default); the runner flag cannot be pinned through
+  # `npm test`, whose glob would swallow it, so both forms are read.
+  tests=$(printf '%s\n' "$out" | sed -En 's/^(#|ℹ) tests ([0-9]+)$/\2/p' | tail -1)
+  fails=$(printf '%s\n' "$out" | sed -En 's/^(#|ℹ) fail ([0-9]+)$/\2/p' | tail -1)
   LAST_OUT=$out
   LAST_TESTS=${tests:-0}
   [ "$code" -eq 0 ] && [ "$LAST_TESTS" -ge 1 ] && [ "${fails:-1}" -eq 0 ]
@@ -196,7 +199,7 @@ run "timestamp: type guard" \
 run "timestamp: safe-integer/range guard" \
   "  if (!Number.isSafeInteger(value) || value < 0) return { bad: refuse(REFUSALS.BAD_TIMESTAMP, 'at') };" ""
 run "acked: boolean guard" \
-  "    if (typeof value.acked !== 'boolean') {" "    if (false) {"
+  "    if (typeof acked !== 'boolean') {" "    if (false) {"
 run "the message is frozen" \
   "  return { ok: true, message: Object.freeze(message) };" "  return { ok: true, message };"
 run "the message is a copy, not the caller's object" \

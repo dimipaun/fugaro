@@ -8,19 +8,12 @@ D50's operative rulings: the code lives **in this repository**, it is **not an n
 `package.json` is `private` and the version is `0.0.0`, so nothing here is published and
 nothing here is a public API — and there is **no `fugaro voice` command**.
 
-**Status: the skeleton (P0.1) and the message schema (P0.2).** The URL validator (P0.3), the
-mailbox state machine (P1.1), the consumer lease (P1.2), the digest and its redactor (P1.3),
-the staleness rule (P1.4) and the mailbox simulator (P1.5) are planned, unbuilt, and each is
-its own directory. What exists today is the runner, the skeleton module with its test, this
-document, and `mailbox-schema/` — the mailbox's schema and its validation, with its own test
-beside it.
-
-The owner **approved the first wave — P0.1–P0.3 and P1.1–P1.5 — on 2026-10-17**
-([implementation-plan.md](../docs/mobile/implementation-plan.md), whose own approval-gate
-text still reads "nothing is approved": the approval arrived as an instruction and no task has
-written it back into the plan, which is P0.4's row to keep and this task's to leave alone). So
-the two modules here are approved work rather than a reader's assumption — and the rest of the
-plan is still not evidence of anything.
+**Status: the skeleton, and `mailbox-schema/` (P0.2, the message schema).** The
+URL validator (P0.3), the mailbox state machine (P1.1), the consumer lease
+(P1.2), the digest and its redactor (P1.3), the staleness rule (P1.4) and the mailbox
+simulator (P1.5) are planned, unbuilt, and each is its own directory. What exists today is
+the runner, the skeleton module and `mailbox-schema/`, each with its test, and this document. No task of that plan is
+approved, and this directory is not evidence that one is.
 
 ## The runner, and the glob
 

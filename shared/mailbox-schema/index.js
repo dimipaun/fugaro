@@ -171,10 +171,11 @@ export function validateMessage(value) {
 
   const message = { id: id.value, sender: sender.value, text: text.value, at: at.value };
   if (Object.hasOwn(value, 'acked')) {
-    if (typeof value.acked !== 'boolean') {
+    const acked = value.acked;
+    if (typeof acked !== 'boolean') {
       return refuse(REFUSALS.WRONG_TYPE, 'acked');
     }
-    message.acked = value.acked;
+    message.acked = acked;
   }
   return { ok: true, message: Object.freeze(message) };
 }
