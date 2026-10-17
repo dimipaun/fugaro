@@ -12,9 +12,10 @@
 //   2. **it leaves no residue**: nF, Fp, Fe and Fs escapes, CSI, OSC, DCS, SOS,
 //      PM and APC (ESC or C1 introduced, with zero-width or fullwidth padding)
 //      are removed whole, so nothing is glued to a token;
-//   3. **an ambiguous CSI is read both ways**: `ESC [` followed by a letter is
-//      either a parameterless command or an introducer before text, and the
-//      credential rules run over both readings.
+//   3. **an ambiguous sequence is read every way**: `ESC [` followed by a letter
+//      is either a parameterless command or an introducer before text, and the
+//      credential rules run over every reading of each such sequence, the union
+//      redacted (sanitize-ambiguity.test.ts holds the gaming inputs).
 //
 // Every credential-shaped value is built at run time (test/support/fakeSecrets).
 
@@ -26,6 +27,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_TEXT_INPUT_LENGTH,
   TOKEN_PLACEHOLDER,
+  resolveAmbiguousSequences,
   sanitizeRefusal,
   sanitizeText,
   stripTerminalSequences,
@@ -90,7 +92,7 @@ describe('a hostile 64 KiB input costs every layer milliseconds', () => {
   it.each(HOSTILE)('%s', (_name, input) => {
     expect(input.length).toBeLessThanOrEqual(MAX_TEXT_INPUT_LENGTH)
     expect(timed(() => stripTerminalSequences(input))).toBeLessThan(BOUND_MS)
-    expect(timed(() => stripTerminalSequences(input, 'conservative'))).toBeLessThan(BOUND_MS)
+    expect(timed(() => resolveAmbiguousSequences(input))).toBeLessThan(BOUND_MS)
     expect(timed(() => sanitizeText(input, 'sentence'))).toBeLessThan(BOUND_MS)
     expect(timed(() => sanitizeText(input, 'label'))).toBeLessThan(BOUND_MS)
     expect(timed(() => sanitizeRefusal(input))).toBeLessThan(BOUND_MS)
@@ -161,6 +163,33 @@ describe('a sequence glued to a token leaves no residue in any layer', () => {
     }
   })
 
+  it('redacts every credential behind every prefix that swallows its first bytes (review round 4)', () => {
+    // Each of these is incomplete on its own: a terminal completes it with the
+    // token's first letter, so only a reading that keeps that letter finds it.
+    const swallowing = [
+      `${ESC}[`,
+      `${ESC}[1`,
+      `${ESC}[;`,
+      `${ESC}[?`,
+      `${ESC}[ `,
+      c1(0x9b),
+      `${c1(0x9b)}1`,
+      `${ESC}(`,
+      `${ESC}#`,
+      `${ESC} `,
+      ESC,
+      `${ESC}[K${ESC}[`,
+      `${ESC}c${ESC}[`,
+      `${ESC}[1m${ESC}(B${ESC}[m${ESC}[1`,
+    ]
+    for (const prefix of [...GARBAGE.map(([, garbage]) => garbage), ...swallowing]) {
+      for (const [credentialName, token] of credentials()) {
+        const sentence = `denied for ${prefix}${token} while reading`
+        expect(allThree(sentence), `${JSON.stringify(prefix)} + ${credentialName}`).toEqual([EXPECTED, EXPECTED, EXPECTED])
+      }
+    }
+  })
+
   it('redacts every credential followed by every garbage suffix', () => {
     for (const [garbageName, garbage] of GARBAGE) {
       for (const [credentialName, token] of credentials()) {
@@ -189,7 +218,7 @@ describe('a sequence glued to a token leaves no residue in any layer', () => {
   })
 })
 
-describe('a parameterless CSI before a letter is read both ways', () => {
+describe('a sequence before a letter is read every way', () => {
   it('redacts a token whose first letter a terminal would take as the final byte', () => {
     for (const [name, token] of credentials()) {
       if (!/^[A-Za-z]/.test(token)) continue
@@ -213,11 +242,11 @@ describe('a parameterless CSI before a letter is read both ways', () => {
     expect(drawn(sanitizeRefusal(`${ESC}[Kpermission denied`))).toBe('permission denied')
   })
 
-  it('exposes the two readings', () => {
+  it('strips as a terminal does, and masks only what a reading found', () => {
     expect(stripTerminalSequences(`x${ESC}[Ay`)).toBe('xy')
-    expect(stripTerminalSequences(`x${ESC}[Ay`, 'conservative')).toBe('xAy')
-    expect(stripTerminalSequences(`x${ESC}[1Ay`, 'conservative')).toBe('xy')
-    expect(stripTerminalSequences(`x${ESC}[@y`, 'conservative')).toBe('xy')
+    expect(stripTerminalSequences(`x${ESC}[1Ay`)).toBe('xy')
+    expect(resolveAmbiguousSequences(`x${ESC}[Ay`)).toEqual({ text: 'xy', masked: false })
+    expect(resolveAmbiguousSequences(`x${ESC}[1Ay`)).toEqual({ text: 'xy', masked: false })
   })
 })
 

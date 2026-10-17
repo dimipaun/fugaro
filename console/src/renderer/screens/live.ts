@@ -320,7 +320,10 @@ export function contradiction(health: string, ageSeconds: number | null): string
  * returned is lost.
  */
 export class BurnHistory {
-  private readonly samples = new Map<string, Sample[]>()
+  /** Each key's samples, in time order, each with its stamp parsed once: the
+   * parse is the cost (review round 4 of PR 494: walking the list with a
+   * `Date.parse` per step made 20,000 reverse-ordered samples take 5.9 s). */
+  private readonly samples = new Map<string, Timed[]>()
 
   /**
    * observe adds one arrival and drops what has fallen out of the window.
@@ -332,6 +335,11 @@ export class BurnHistory {
    * replaces it, so one silence is one gap rather than a gap per rebuild. A
    * sample stamped before the newest one is inserted where its time puts it
    * rather than at the end, so a clock that steps back cannot reorder the bars.
+   *
+   * **It is O(log n) to place a sample** (a binary search over parsed stamps),
+   * and a sample already older than the window ending at the newest one is
+   * dropped on arrival -- the prune would drop it anyway -- so a feed whose
+   * clock runs backwards costs no more than one running forwards.
    */
   observe(key: string, sample: Sample): void {
     const when = Date.parse(sample.at)
@@ -342,42 +350,35 @@ export class BurnHistory {
     if (Number.isNaN(when)) return
     const existing = this.samples.get(key)
     if (existing === undefined) {
-      this.samples.set(key, [sample])
+      this.samples.set(key, [{ sample, when }])
       return
     }
+    const windowMs = LIVE_BURN_WINDOW_SECONDS * 1000
+    const newestBefore = existing[existing.length - 1]?.when ?? when
+    if (when < newestBefore - windowMs) return
     const isGap = sample.reading.state === 'gap'
     // Where the stamp puts it: after everything at or before it, so a gap that
     // shares the last measured sample's stamp still comes after it.
-    let index = existing.length
-    while (index > 0) {
-      const before = Date.parse(existing[index - 1]?.at ?? '')
-      if (Number.isNaN(before) || before <= when) break
-      index--
-    }
+    const index = firstAfter(existing, when)
     // The same observation arriving again is dropped, and a gap replaces the gap
     // before it (one silence is one gap). A measured sample and a gap at one
     // stamp are two different things and both stay, measured first.
-    let at = index
-    while (at > 0 && Date.parse(existing[at - 1]?.at ?? '') === when) {
+    for (let at = index; at > 0 && existing[at - 1]?.when === when; at--) {
       const held = existing[at - 1]
-      if ((held?.reading.state === 'gap') === isGap) {
-        if (isGap) existing[at - 1] = sample
+      if ((held?.sample.reading.state === 'gap') === isGap) {
+        if (isGap) existing[at - 1] = { sample, when }
         return
       }
-      at--
     }
     const last = existing[index - 1]
-    if (isGap && last !== undefined && last.reading.state === 'gap' && index === existing.length) {
-      existing[index - 1] = sample
+    if (isGap && last !== undefined && last.sample.reading.state === 'gap' && index === existing.length) {
+      existing[index - 1] = { sample, when }
     } else {
-      existing.splice(index, 0, sample)
+      existing.splice(index, 0, { sample, when })
     }
-    // The list is ordered and every stamp in it parses, so the newest is last.
-    const newest = Math.max(when, Date.parse(existing[existing.length - 1]?.at ?? ''))
-    const cut = newest - LIVE_BURN_WINDOW_SECONDS * 1000
-    let keep = 0
-    while (keep < existing.length && Date.parse(existing[keep]?.at ?? '') < cut) keep++
-    keep = Math.max(keep, existing.length - LIVE_BURN_MAX_SAMPLES)
+    // The list is ordered, so the newest is last.
+    const newest = Math.max(when, existing[existing.length - 1]?.when ?? when)
+    const keep = Math.max(firstAtOrAfter(existing, newest - windowMs), existing.length - LIVE_BURN_MAX_SAMPLES)
     if (keep > 0) existing.splice(0, keep)
   }
 
@@ -402,11 +403,39 @@ export class BurnHistory {
     const end = Date.parse(at)
     if (Number.isNaN(end)) return []
     const cut = end - LIVE_BURN_WINDOW_SECONDS * 1000
-    return all.filter((sample) => {
-      const when = Date.parse(sample.at)
-      return !Number.isNaN(when) && when >= cut && when <= end
-    })
+    return all.slice(firstAtOrAfter(all, cut), firstAfter(all, end)).map((entry) => entry.sample)
   }
+}
+
+/** Timed is one sample of a `BurnHistory` list with its stamp parsed. */
+interface Timed {
+  readonly sample: Sample
+  readonly when: number
+}
+
+/** firstAfter is the index of the first entry stamped after `when` (the list's
+ * length when there is none): a binary search over an ordered list. */
+function firstAfter(list: readonly Timed[], when: number): number {
+  let low = 0
+  let high = list.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if ((list[middle]?.when ?? Infinity) <= when) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
+/** firstAtOrAfter is the index of the first entry stamped at or after `when`. */
+function firstAtOrAfter(list: readonly Timed[], when: number): number {
+  let low = 0
+  let high = list.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if ((list[middle]?.when ?? Infinity) < when) low = middle + 1
+    else high = middle
+  }
+  return low
 }
 
 /** SparkBar is one bar of the sparkline: the rate that arrived, and the height

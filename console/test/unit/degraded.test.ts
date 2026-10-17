@@ -550,6 +550,27 @@ describe('the stale Live screen', () => {
     expect(placed.window('k', new Date(Date.parse(frame.now) + 4999 * 10).toISOString()).length).toBeGreaterThan(0)
   })
 
+  it('places 20,000 out-of-order samples in milliseconds, in time order', () => {
+    // Review round 4 of PR 494: each out-of-order sample walked the list back
+    // with a `Date.parse` per step, so 20,000 reverse-ordered samples took
+    // 5.9 s. Placement is now a binary search over stamps parsed once.
+    const frame = theLiveFrame()
+    const burn = buildLiveModel(frame, new BurnHistory()).repos[0]?.burnPerMin ?? measured(0)
+    const base = Date.parse(frame.now)
+    for (const step of [1000, 10]) {
+      const history = new BurnHistory()
+      const start = performance.now()
+      for (let index = 20_000; index > 0; index -= 1) {
+        history.observe('k', { at: new Date(base + index * step).toISOString(), reading: burn })
+      }
+      expect(performance.now() - start, String(step)).toBeLessThan(250)
+      expect(history.size('k')).toBeLessThanOrEqual(LIVE_BURN_MAX_SAMPLES)
+      const stamps = history.window('k', new Date(base + 20_000 * step).toISOString()).map((sample) => Date.parse(sample.at))
+      expect(stamps.length).toBeGreaterThan(0)
+      expect(stamps).toEqual([...stamps].sort((a, b) => a - b))
+    }
+  })
+
   it('keeps the last-known values and says when they were read', () => {
     const frame = theLiveFrame()
     const model = buildLiveModel(frame, new BurnHistory(), aFeed(frame, 90))

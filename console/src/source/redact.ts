@@ -87,12 +87,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
 
 import { decodeFeedLine } from '../main/spawn'
-import {
-  ABS_PATH_SOURCE,
-  type TerminalReading,
-  preferConservative,
-  stripTerminalSequences,
-} from '../shared/sanitize'
+import { ABS_PATH_SOURCE, resolveAmbiguousSequences, stripTerminalSequences } from '../shared/sanitize'
 
 /**
  * REDACTOR_VERSION is the marker written into every fixture's header and checked
@@ -186,10 +181,11 @@ const INVISIBLE_RE =
  * an `@` before the address rule looks), then every terminal escape sequence
  * and control string gone, whole (`stripTerminalSequences`, the display layer's
  * one linear scanner, imported rather than copied so the three readers of CLI
- * text cannot drift), then the invisible characters gone. `reading` is how an
- * ambiguous `ESC [` + letter is read (`TerminalReading`). */
-function prepare(text: string, reading: TerminalReading = 'terminal'): string {
-  return stripTerminalSequences(text.normalize('NFKC'), reading).replace(INVISIBLE_RE, '')
+ * text cannot drift), then the invisible characters gone. A sequence that
+ * swallowed printable bytes is read every way by `redactFreeText` through the
+ * display layer's `resolveAmbiguousSequences`. */
+function prepare(text: string): string {
+  return stripTerminalSequences(text.normalize('NFKC')).replace(INVISIBLE_RE, '')
 }
 
 /**
@@ -1045,25 +1041,32 @@ function applyRules(text: string, ctx: Ctx, nested = false, persons = true): str
  * string can hide a token from every rule -- `ESC P` + a token, unterminated,
  * is no token to a rule and all of one to whoever reads the fixture -- and a
  * fixture is a file a person reads, not a terminal.
+ *
+ * **A sequence that swallowed printable bytes is read every way** (review
+ * round 4 of PR 494): `resolveAmbiguousSequences`, the display layer's rule,
+ * masks every character of the terminal's reading that the credential rules
+ * matched in any reading -- the bytes dropped, the final byte kept, the body
+ * kept, per sequence -- and the rules then run over that masked form. A value
+ * whose readings would cost more than the resolver's bounds is written as the
+ * token marker whole: fail closed.
+ *
+ * The form as written is read with its sequences already gone, so a marker the
+ * rules write into it is never re-read by the scanner: `ESC` + a marker would
+ * otherwise lose its `[` and its first letter to a CSI (`edacted-token]`).
  */
 function redactFreeText(text: string, ctx: Ctx, persons = true): string {
   if (text === '' || isMarker(text)) return text
+  const ambiguity = resolveAmbiguousSequences(text)
+  if (ambiguity === null) return TOKEN_MARKER
+  if (ambiguity?.masked === true) return applyRules(ambiguity.text, ctx, false, persons)
   const prepared = prepare(text)
   const out = applyRules(prepared, ctx, false, persons)
-  const conservative = prepare(text, 'conservative')
-  if (conservative !== prepared) {
-    // An ambiguous `ESC [` + letter: the rules read both readings, and the
-    // display layer's own rule (`preferConservative`) picks the one drawn.
-    const fromConservative = applyRules(conservative, ctx, false, persons)
-    if (fromConservative !== conservative && preferConservative(out !== prepared ? out : null, fromConservative)) {
-      return fromConservative
-    }
-  }
   if (out !== prepared) return out
   if (prepared === text) return text
-  const fromText = applyRules(text, ctx, false, persons)
-  if (stripTerminalSequences(text) === text) return fromText
-  return fromText === text ? prepared : prepare(fromText)
+  const written = stripTerminalSequences(text)
+  const fromText = applyRules(written, ctx, false, persons)
+  if (written === text) return fromText
+  return fromText === written ? prepared : prepare(fromText)
 }
 
 /** isAddressMarker answers whether an ADDRESS_RE match is the marker itself. */
@@ -1574,8 +1577,6 @@ function auditString(value: string, here: string, asKey = false): string[] {
   const forms = [value]
   const prepared = prepare(value)
   if (prepared !== value) forms.push(prepared)
-  const conservative = prepare(value, 'conservative')
-  if (conservative !== prepared) forms.push(conservative)
   for (const rule of RULES) {
     if (forms.some((form) => rule.apply(form, AUDIT_CTX, false) !== form)) problems.push(say(rule.what))
   }
