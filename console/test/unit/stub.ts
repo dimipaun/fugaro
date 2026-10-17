@@ -25,6 +25,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { SPAWN_COMMANDS } from '../../src/main/spawn'
+
 /** StubAnswer is what one command does when the stub is asked for it. */
 export interface StubAnswer {
   /** `stdout` is written as-is and the process exits. */
@@ -50,9 +52,13 @@ export interface StubAnswer {
   readonly split?: boolean
 }
 
-/** StubScenario keys answers by the command the stub was asked for. The keys are
- * `version`, `watch`, `budget show`, `report`, `runs ls`, `diagnose`, `logs`,
- * `logs --url`, `secrets ls`, `accounts ls` and `doctor`. */
+/** StubScenario keys answers by the command the stub was asked for: the command
+ * path the *child* sees, which `commandKey` reads off its argv. The keys are
+ * `STUB_COMMAND_KEYS` -- `version`, `watch`, `budget show`, `report`,
+ * `runs ls`, `diagnose`, `logs`, `logs --url`, `secrets ls`, `accounts ls`,
+ * `doctor` -- derived from the console's spawn table rather than written here.
+ * `installStub` refuses a key this list cannot produce, so the spawn table's
+ * spelling (`logs --json`) is a loud error and not a silent fallback. */
 export interface StubScenario {
   readonly commands?: Readonly<Record<string, StubAnswer>>
   readonly default?: StubAnswer
@@ -105,6 +111,7 @@ export interface Stub {
  * resolver's order without touching `/opt/homebrew`.
  */
 export function installStub(directory: string, scenario: StubScenario): Stub {
+  refuseUnknownCommands(scenario)
   mkdirSync(directory, { recursive: true })
   const binary = join(directory, 'fugaro')
   const scenarioPath = join(directory, 'scenario.json')
@@ -202,14 +209,12 @@ const scenario = JSON.parse(readFileSync(SCENARIO, 'utf8'))
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// The command path this invocation is for: the leading words that do not start
-// with a dash, with the two log operations told apart by --url.
-const words = []
-for (const element of argv) {
-  if (element.startsWith('-')) break
-  words.push(element)
-}
-const key = words[0] === 'logs' ? (argv.includes('--url') ? 'logs --url' : 'logs') : words.join(' ')
+// The command path this invocation is for. It is commandKey's own source,
+// injected rather than written out again: the stub's scenario keys and the key
+// this child computes are then one function, and a second copy of the rules
+// cannot drift from the first.
+${commandKey.toString()}
+const key = commandKey(argv)
 const answer = (scenario.commands && scenario.commands[key]) || scenario.default || {}
 
 async function main() {
@@ -251,9 +256,14 @@ main()
 
 /** commandKey is the stub's own reading of its argv: the leading words that do
  * not start with a dash, with `logs --url` told apart from `logs` because the
- * console's two log operations differ by exactly that flag. It is a copy of the
- * CLI's command *path*, and the test asserts it agrees with the spawn table's
- * `words` rather than trusting this comment. */
+ * console's two log operations differ by exactly that flag.
+ *
+ * It is not a copy of anything: `STUB_COMMAND_KEYS` below is derived from the
+ * spawn table by calling *this* function on each row's `words`, and the generated
+ * child runs this function's own source, so the key a scenario must use and the
+ * key the child computes cannot drift apart. (The review of Task 3.2 found the
+ * opposite arrangement: this export was referenced nowhere, the docstring claimed
+ * a test that did not exist, and the child carried a second, inlined copy.) */
 export function commandKey(argv: readonly string[]): string {
   const words: string[] = []
   for (const element of argv) {
@@ -263,4 +273,40 @@ export function commandKey(argv: readonly string[]): string {
   const key = words.join(' ')
   if (words[0] === 'logs') return argv.includes('--url') ? 'logs --url' : 'logs'
   return key
+}
+
+/**
+ * STUB_COMMAND_KEYS is every key a scenario may use: the console's own spawn
+ * table (`src/main/spawn.ts`'s `SPAWN_COMMANDS`), read through `commandKey`, so
+ * a new operation in the table is a key the stub answers without this file
+ * changing and without a second list to keep in step.
+ *
+ * It is exported so a test can hold it, and so `installStub` can refuse a key the
+ * stub can never be asked for (see `refuseUnknownCommands`).
+ */
+export const STUB_COMMAND_KEYS: readonly string[] = Object.freeze(
+  SPAWN_COMMANDS.map((row) => commandKey([...row.words])),
+)
+
+/**
+ * refuseUnknownCommands throws when a scenario names a command the stub can
+ * never be asked for -- `logs --json`, which is the spawn table's own spelling,
+ * rather than `logs`, which is what the child sees.
+ *
+ * This is a guard rather than a nicety: `commands` is a lookup table with a
+ * `default` behind it, so a misspelled key is not an error anywhere at runtime.
+ * The child answers the default (exit 0, no output), and the test asserts against
+ * a fallback instead of its fixture -- a green test about nothing. The table's
+ * spelling is exactly the one a test author has just read in `spawn.test.ts`, so
+ * the miss is easy to make and silent, and this is what makes it loud.
+ */
+function refuseUnknownCommands(scenario: StubScenario): void {
+  for (const name of Object.keys(scenario.commands ?? {})) {
+    if (STUB_COMMAND_KEYS.includes(name)) continue
+    const suggestion = STUB_COMMAND_KEYS.find((key) => name.replace(/ --json$/, '') === key)
+    throw new Error(
+      `the stub cannot be asked for ${JSON.stringify(name)}: its commands are ${STUB_COMMAND_KEYS.map((key) => JSON.stringify(key)).join(', ')}` +
+        (suggestion === undefined ? '' : ` -- did you mean ${JSON.stringify(suggestion)}?`),
+    )
+  }
 }
