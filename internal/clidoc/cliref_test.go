@@ -60,6 +60,27 @@ func TestCliReferenceGeneratorSkipsHiddenCommandsAndFlags(t *testing.T) {
 	}
 }
 
+// TestCliReferenceDocumentsCobraDefaults is the regression test for the claim
+// the preamble makes: cobra adds its `help` and `completion` commands and the
+// `-h, --help` flag of every command inside Execute, not when the tree is
+// built, and `fugaro --help` lists all three. A reference generated from the
+// un-executed tree would print "every command and flag `fugaro` ships" while
+// omitting them, and no test could catch it, because a test deriving its
+// expectations from the same un-executed tree agrees with the mistake.
+func TestCliReferenceDocumentsCobraDefaults(t *testing.T) {
+	doc := Generate(cli.NewRootCmd())
+	for _, want := range []string{
+		"## `fugaro completion`",
+		"## `fugaro completion bash`",
+		"## `fugaro help`",
+		"| `-h`, `--help` | bool | `false` | no | help for fugaro |",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the reference does not carry %q, which `fugaro --help` lists:\n%s", want, doc)
+		}
+	}
+}
+
 // TestCliReferenceGeneratorStatesFlags: a flag's type, default, required-ness
 // and description come from the pflag itself, so a required flag is marked
 // required (from cobra's own annotation, not from a reading of the default)

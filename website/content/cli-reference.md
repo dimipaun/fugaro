@@ -3,7 +3,9 @@
 # Fugaro CLI reference
 
 Every command and flag `fugaro` ships, generated from the command tree
-(`internal/cli.NewRootCmd`) by `go run ./internal/clidoc`. Commands the CLI
+(`internal/cli.NewRootCmd`) by `go run ./internal/clidoc`. Cobra's own `help`
+and `completion` commands, and the `-h, --help` flag of every command, are
+part of what `fugaro --help` lists, so they are here too. Commands the CLI
 hides are not listed: they are internal, and a hidden command is not user
 documentation.
 
@@ -13,7 +15,11 @@ Fleeting cloud workers for coding agents
 
 Usage: `fugaro`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for fugaro |
 
 Subcommands:
 
@@ -21,9 +27,11 @@ Subcommands:
 - `fugaro artifacts` -- List and download what an artifact run delivered
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
+- `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro init` -- Stand up or adopt the installation's, or a repository's, cloud resources through Terraform
 - `fugaro logs` -- Print a run's logs from Cloud Logging
@@ -46,7 +54,11 @@ List the named Claude accounts a repository may use
 
 Usage: `fugaro accounts`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for accounts |
 
 Subcommands:
 
@@ -81,6 +93,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -111,7 +124,11 @@ What it writes is never opened, executed or unpacked.
 
 Usage: `fugaro artifacts`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for artifacts |
 
 Subcommands:
 
@@ -146,6 +163,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--force` | bool | `false` | no | replace a file that is already at a destination path |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for get |
 | `--out` | string | "" | no | the directory to create the run's artifact directory in (default: the working directory) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -175,6 +193,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -198,7 +217,11 @@ which a plain project Viewer cannot (see docs/gcp-setup.md).
 
 Usage: `fugaro budget`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for budget |
 
 Subcommands:
 
@@ -227,6 +250,7 @@ Flags:
 | `--all` | bool | `false` | no | the whole project |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for kill |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -299,6 +323,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for preview |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | yes | the recipe to preview (default, lint-fix, pick, premium, review-only, solo, standard, test-and-fix) |
@@ -330,6 +355,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for prices |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -354,6 +380,7 @@ Flags:
 | `--all` | bool | `false` | no | the whole project |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for resume |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -396,6 +423,7 @@ Flags:
 | `--defaults` | bool | `false` | no | the default caps of repositories without their own |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--global` | bool | `false` | no | the project's own caps |
+| `-h`, `--help` | bool | `false` | no | help for set |
 | `--max-reserve` | float64 | `0` | no | the largest single lease, in US dollars (with --global) |
 | `--mode` | string | "" | no | observe or enforce (with --global) |
 | `--per-run` | float64 | `0` | no | the per-run cap, in US dollars |
@@ -428,6 +456,7 @@ Flags:
 | `--all` | bool | `false` | no | every repository in the database |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -462,10 +491,166 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--grace` | duration | `3m0s` | no | how long to wait for the runner to finalize before cancelling the execution (at least the run's finalize reserve plus 40s) |
+| `-h`, `--help` | bool | `false` | no | help for cancel |
 | `--json` | bool | `false` | no | print the result as JSON |
 | `--now` | bool | `false` | no | cancel the execution at once, without waiting for a draft PR |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro completion`
+
+Generate the autocompletion script for the specified shell
+
+Generate the autocompletion script for fugaro for the specified shell.
+See each sub-command's help for details on how to use the generated script.
+
+Usage: `fugaro completion`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for completion |
+
+Subcommands:
+
+- `fugaro completion bash` -- Generate the autocompletion script for bash
+- `fugaro completion fish` -- Generate the autocompletion script for fish
+- `fugaro completion powershell` -- Generate the autocompletion script for powershell
+- `fugaro completion zsh` -- Generate the autocompletion script for zsh
+
+## `fugaro completion bash`
+
+Generate the autocompletion script for bash
+
+Generate the autocompletion script for the bash shell.
+
+This script depends on the 'bash-completion' package.
+If it is not installed already, you can install it via your OS's package manager.
+
+To load completions in your current shell session:
+
+	source <(fugaro completion bash)
+
+To load completions for every new session, execute once:
+
+#### Linux:
+
+	fugaro completion bash > /etc/bash_completion.d/fugaro
+
+#### macOS:
+
+	fugaro completion bash > $(brew --prefix)/etc/bash_completion.d/fugaro
+
+You will need to start a new shell for this setup to take effect.
+
+Usage: `fugaro completion bash`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for bash |
+| `--no-descriptions` | bool | `false` | no | disable completion descriptions |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro completion fish`
+
+Generate the autocompletion script for fish
+
+Generate the autocompletion script for the fish shell.
+
+To load completions in your current shell session:
+
+	fugaro completion fish | source
+
+To load completions for every new session, execute once:
+
+	fugaro completion fish > ~/.config/fish/completions/fugaro.fish
+
+You will need to start a new shell for this setup to take effect.
+
+Usage: `fugaro completion fish`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for fish |
+| `--no-descriptions` | bool | `false` | no | disable completion descriptions |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro completion powershell`
+
+Generate the autocompletion script for powershell
+
+Generate the autocompletion script for powershell.
+
+To load completions in your current shell session:
+
+	fugaro completion powershell | Out-String | Invoke-Expression
+
+To load completions for every new session, add the output of the above command
+to your powershell profile.
+
+Usage: `fugaro completion powershell`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for powershell |
+| `--no-descriptions` | bool | `false` | no | disable completion descriptions |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro completion zsh`
+
+Generate the autocompletion script for zsh
+
+Generate the autocompletion script for the zsh shell.
+
+If shell completion is not already enabled in your environment you will need
+to enable it.  You can execute the following once:
+
+	echo "autoload -U compinit; compinit" >> ~/.zshrc
+
+To load completions in your current shell session:
+
+	source <(fugaro completion zsh)
+
+To load completions for every new session, execute once:
+
+#### Linux:
+
+	fugaro completion zsh > "${fpath[1]}/_fugaro"
+
+#### macOS:
+
+	fugaro completion zsh > $(brew --prefix)/share/zsh/site-functions/_fugaro
+
+You will need to start a new shell for this setup to take effect.
+
+Usage: `fugaro completion zsh`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for zsh |
+| `--no-descriptions` | bool | `false` | no | disable completion descriptions |
 
 Subcommands:
 
@@ -477,7 +662,11 @@ Work with fugaro.yaml
 
 Usage: `fugaro config`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for config |
 
 Subcommands:
 
@@ -493,7 +682,11 @@ Print an annotated fugaro.yaml template
 
 Usage: `fugaro config example`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for example |
 
 Subcommands:
 
@@ -518,6 +711,7 @@ Flags:
 | `--base-branch` | string | "" | no | the repository's base branch, when it is not main |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for init |
 | `--profile` | string | "" | no | the project layer's profile to use (default: its default_profile) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -537,6 +731,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for layer |
 | `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
@@ -556,6 +751,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for publish |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -573,6 +769,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one |
@@ -600,6 +797,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for diagnose |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -652,11 +850,31 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for doctor |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--plugin` | bool | `false` | no | check only the plugin's wiring (offline, no credentials) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro help`
+
+Help about any command
+
+Help provides help for any command in the application.
+Simply type fugaro help [path to command] for full details.
+
+Usage: `fugaro help [command]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for help |
 
 Subcommands:
 
@@ -668,7 +886,11 @@ Build and inspect a workflow's derived container image
 
 Usage: `fugaro image`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for image |
 
 Subcommands:
 
@@ -707,6 +929,7 @@ Flags:
 | `--base` | string | "" | no | base image (default: for a Cloud Build build the local config's base_images entry for the workflow's base, else the published fugaro-base matching this fugaro version) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for build |
 | `--json` | bool | `false` | no | print machine-readable output (--local only: a Cloud Build is never submitted with --json, nobody can type its confirmation) |
 | `--local` | bool | `false` | no | build with the local Docker daemon from the checkout you are in |
 | `--no-smoke` | bool | `false` | no | skip the smoke test of the built image (on Cloud Build, latest is then promoted unsmoked) |
@@ -751,6 +974,7 @@ Flags:
 | `--dry-run` | bool | `false` | no | never submit a build (locally the check never does anyway) |
 | `--force` | bool | `false` | no | decide rebuild whatever the triggers say (with --job: a build is submitted) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for check |
 | `--job` | bool | `false` | no | run as the repository's daily check job (reads FUGARO_CHECK_SPEC; submits rebuilds) |
 | `--json` | bool | `false` | no | print machine-readable output (locally; the job always logs JSON) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
@@ -807,6 +1031,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--expect-digest` | stringArray | `[]` | no | cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for fugaro init (repeatable) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for refresh |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from, as for fugaro init (default ghcr.io/dimipaun) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -833,6 +1058,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for render |
 | `--workflow` | string | "" | no | workflow to render; optional when fugaro.yaml defines one |
 
 Subcommands:
@@ -856,6 +1082,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -1111,6 +1338,7 @@ Flags:
 | `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it) |
+| `-h`, `--help` | bool | `false` | no | help for init |
 | `--image-source` | string | "" | no | the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme) |
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
 | `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
@@ -1157,8 +1385,9 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--follow` | bool | `false` | no | keep printing new entries until the execution ends |
+| `-f`, `--follow` | bool | `false` | no | keep printing new entries until the execution ends |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for logs |
 | `--json` | bool | `false` | no | print one JSON object per entry |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -1174,7 +1403,11 @@ The project's policy, its allow-list and the repositories enrolled
 
 Usage: `fugaro project`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for project |
 
 Subcommands:
 
@@ -1188,7 +1421,11 @@ The project's published policy (config/policy/shared)
 
 Usage: `fugaro project policy`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for policy |
 
 Subcommands:
 
@@ -1243,6 +1480,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--delete` | bool | `false` | no | remove the published policy (project-centric mode off again) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for publish |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--remove-routing` | bool | `false` | no | drop the published policy's routing block on purpose (an active route stops being taken) |
@@ -1265,6 +1503,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -1279,7 +1518,11 @@ The project's allow-list: which repositories may run
 
 Usage: `fugaro project repos`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for repos |
 
 Subcommands:
 
@@ -1305,6 +1548,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for add |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -1324,6 +1568,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -1352,6 +1597,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--yes` | bool | `false` | no | confirm the removal without typing the project's name (not while a run is in flight) |
@@ -1381,6 +1627,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -1399,7 +1646,11 @@ project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog
 
 Usage: `fugaro recipes`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for recipes |
 
 Subcommands:
 
@@ -1420,6 +1671,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -1441,6 +1693,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for publish |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -1460,6 +1713,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -1478,6 +1732,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for validate |
 | `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
@@ -1526,6 +1781,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--csv` | bool | `false` | no | print CSV (RFC 4180) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for report |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -1573,6 +1829,7 @@ Flags:
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for run |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
@@ -1598,7 +1855,11 @@ List and inspect runs
 
 Usage: `fugaro runs`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for runs |
 
 Subcommands:
 
@@ -1629,6 +1890,7 @@ Flags:
 | `--batch` | string | "" | no | only runs of this batch |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
@@ -1648,7 +1910,11 @@ Store and list a repository's secrets in Secret Manager
 
 Usage: `fugaro secrets`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for secrets |
 
 Subcommands:
 
@@ -1684,6 +1950,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--project-wide` | bool | `false` | no | the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo) |
@@ -1748,6 +2015,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--project-wide` | bool | `false` | no | the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo) |
@@ -1788,6 +2056,7 @@ Flags:
 | `--allow-fork` | bool | `false` | no | move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag |
 | `--check` | bool | `false` | no | print the state and exit 1 unless it is ok (informational states pass); write nothing |
 | `--dir` | string | `.` | no | a directory in the checkout |
+| `-h`, `--help` | bool | `false` | no | help for update-skills |
 | `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
@@ -1860,6 +2129,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--expect-digest` | stringArray | `[]` | no | cross-check the digest of a base image's release signature, KIND=sha256:<hex> (repeatable; one PATH only) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for upgrade |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository (default ghcr.io/dimipaun) |
 | `--local` | bool | `false` | no | run the pin and plugin steps only (the only mode that does everything it can inside a coding agent's session) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
@@ -1882,6 +2152,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for validate |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--offline` | bool | `false` | no | never read the runs bucket: resolve against the cached project layer, if any |
 | `--project-layer` | string | "" | no | resolve against this project layer file instead of the published one (also checks the file; for CI without bucket access, and before fugaro config publish) |
@@ -1900,6 +2171,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for verify |
 | `--rerun-failed` | bool | `false` | no | rerun only the tests that failed in the previous test run, to detect flaky tests |
 
 Subcommands:
@@ -1912,7 +2184,11 @@ Print the fugaro version
 
 Usage: `fugaro version`
 
-This command has no flags of its own.
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for version |
 
 Subcommands:
 
@@ -1955,6 +2231,7 @@ Flags:
 | `--ascii` | bool | `false` | no | use ASCII instead of ⚠ ▓░ ▸ |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for watch |
 | `--interval` | duration | `0s` | no | the least time between plain frames (default 10s) and the polling period (default 5s) |
 | `--json` | bool | `false` | no | print one JSON document per change instead of a screen |
 | `--keep` | duration | `6h0m0s` | no | how long a finished run stays shown (with --keep-count, whichever is stricter) |

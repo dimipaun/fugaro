@@ -49,10 +49,37 @@ const (
 // H2.
 var cliRefHeadingRE = regexp.MustCompile("^## `(.+)`$")
 
-// cliRefFlagRowRE matches a flag-table row's first cell, "| `--name` |": the
-// only place a flag name is a fact rather than prose. A flag named inside a
-// command's long description is read as text, not as a documented flag.
-var cliRefFlagRowRE = regexp.MustCompile("^\\| `(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)` \\|")
+// cliRefFlagCellRE matches a flag-table row's first cell, "| `--name` |" or
+// "| `-h`, `--help` |": the only place a flag is a fact rather than prose. A
+// flag named inside a command's long description is read as text, not as a
+// documented flag.
+var cliRefFlagCellRE = regexp.MustCompile("^\\| (`-{1,2}[A-Za-z0-9][A-Za-z0-9-]*`[^|]*?) \\|")
+
+// cliRefFlagTokenRE finds the flag tokens of a flag-table row's first cell.
+var cliRefFlagTokenRE = regexp.MustCompile("`(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)`")
+
+// cliRefRoot is the tree the reference is generated from: NewRootCmd() with
+// cobra's own defaults filled in -- the `help` command, the `completion`
+// command and the `-h, --help` flag of every command, all of which cobra adds
+// inside Execute. The generator makes the same three calls (internal/clidoc's
+// Prepare), and it has to: a test that read the un-executed tree would call
+// `fugaro completion` invented, because the reference names it and this walk
+// would not have seen it. A walk that skipped them would instead agree with a
+// reference that omits two commands `fugaro --help` lists.
+func cliRefRoot() *cobra.Command {
+	root := NewRootCmd()
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		c.InitDefaultHelpFlag()
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	return root
+}
 
 // cliRefSections splits the reference into its command sections, keyed by the
 // command path in the heading, with every line below the heading up to the
@@ -114,16 +141,36 @@ func cliRefFlagNames(c *cobra.Command) (visible, hidden []string) {
 	return visible, hidden
 }
 
-// cliRefFlagRows returns the flag names the given section documents, read off
-// the flag table's first column and stripped of the dashes a reader types: the
-// names are compared with pflag's own, which carry none.
-func cliRefFlagRows(lines []string) []string {
-	var out []string
+// cliRefFlagRows returns what the given section's flag table names: the long
+// names, stripped of the dashes a reader types (pflag's own names carry none),
+// and the shorthands.
+func cliRefFlagRows(lines []string) (names, shorthands []string) {
 	for _, line := range lines {
-		if m := cliRefFlagRowRE.FindStringSubmatch(line); m != nil {
-			out = append(out, strings.TrimLeft(m[1], "-"))
+		m := cliRefFlagCellRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		for _, tok := range cliRefFlagTokenRE.FindAllStringSubmatch(m[1], -1) {
+			if strings.HasPrefix(tok[1], "--") {
+				names = append(names, tok[1][2:])
+				continue
+			}
+			shorthands = append(shorthands, tok[1][1:])
 		}
 	}
+	return names, shorthands
+}
+
+// cliRefShorthands maps a command's shorthands to the flags they stand for,
+// read off the flags themselves. The `-h` of cobra's help flag is one of
+// these, which is why the reference prints it.
+func cliRefShorthands(c *cobra.Command) map[string]string {
+	out := map[string]string{}
+	c.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if !f.Hidden && f.Shorthand != "" {
+			out[f.Shorthand] = f.Name
+		}
+	})
 	return out
 }
 
@@ -137,18 +184,23 @@ func TestCliReferenceNamesEveryCommandAndFlag(t *testing.T) {
 		t.Errorf("%s does not begin with the generated-file header %q: it is generated, and a reader has to be able to see that", cliRefPath, cliRefHeader)
 	}
 	sections := cliRefSections(doc)
-	documented := cliRefDocumented(NewRootCmd())
+	documented := cliRefDocumented(cliRefRoot())
 	for _, path := range slices.Sorted(maps.Keys(documented)) {
 		lines, ok := sections[path]
 		if !ok {
 			t.Errorf("%s does not name command %q", cliRefPath, path)
 			continue
 		}
-		got := cliRefFlagRows(lines)
+		names, shorthands := cliRefFlagRows(lines)
 		visible, _ := cliRefFlagNames(documented[path])
 		for _, name := range visible {
-			if !slices.Contains(got, name) {
+			if !slices.Contains(names, name) {
 				t.Errorf("%s's %q section does not name the flag --%s, which the command has", cliRefPath, path, name)
+			}
+		}
+		for shorthand, name := range cliRefShorthands(documented[path]) {
+			if slices.Contains(visible, name) && !slices.Contains(shorthands, shorthand) {
+				t.Errorf("%s's %q section does not name -%s, the shorthand of --%s", cliRefPath, path, shorthand, name)
 			}
 		}
 	}
@@ -161,28 +213,41 @@ func TestCliReferenceNamesEveryCommandAndFlag(t *testing.T) {
 // a hidden command nor a hidden flag may appear anywhere in the file.
 func TestCliReferenceInventsNothing(t *testing.T) {
 	doc := readDoc(t, cliRefPath)
-	documented := cliRefDocumented(NewRootCmd())
-	for _, path := range slices.Sorted(maps.Keys(cliRefSections(doc))) {
-		lines := cliRefSections(doc)[path]
+	root := cliRefRoot()
+	documented := cliRefDocumented(root)
+	sections := cliRefSections(doc)
+	for _, path := range slices.Sorted(maps.Keys(sections)) {
+		lines := sections[path]
 		cmd, ok := documented[path]
 		if !ok {
 			t.Errorf("%s names command %q, which the command tree does not have or hides: a command a reader cannot run is a command the reference must not document", cliRefPath, path)
 			continue
 		}
 		visible, hidden := cliRefFlagNames(cmd)
-		for _, name := range cliRefFlagRows(lines) {
+		names, shorthands := cliRefFlagRows(lines)
+		real := cliRefShorthands(cmd)
+		for _, name := range names {
 			if !slices.Contains(visible, name) {
-				t.Errorf("%s's %q section names the flag %s, which that command does not have", cliRefPath, path, name)
+				t.Errorf("%s's %q section names the flag --%s, which that command does not have", cliRefPath, path, name)
 			}
 		}
+		for _, shorthand := range shorthands {
+			if _, ok := real[shorthand]; !ok {
+				t.Errorf("%s's %q section names -%s, which is no flag of that command", cliRefPath, path, shorthand)
+			}
+		}
+		section := strings.Join(lines, "\n")
 		for _, name := range hidden {
-			if strings.Contains(strings.Join(lines, "\n"), "`--"+name+"`") {
+			if strings.Contains(section, "`--"+name+"`") {
 				t.Errorf("%s's %q section names the flag --%s, which the tree hides", cliRefPath, path, name)
+			}
+			if f := cmd.LocalFlags().Lookup(name); f != nil && f.Shorthand != "" && strings.Contains(section, "`-"+f.Shorthand+"`") {
+				t.Errorf("%s's %q section names -%s, the shorthand of the hidden flag --%s", cliRefPath, path, f.Shorthand, name)
 			}
 		}
 	}
 	undocumented := map[string]bool{}
-	for path := range cliRefEveryCommand(NewRootCmd()) {
+	for path := range cliRefEveryCommand(root) {
 		if _, ok := documented[path]; !ok {
 			undocumented[path] = true
 		}

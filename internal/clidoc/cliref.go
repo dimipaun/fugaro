@@ -47,12 +47,44 @@ func main() {
 	path := stdflag.String("out", defaultPath, "write the CLI reference here")
 	stdflag.Parse()
 
-	doc := Generate(cli.NewRootCmd())
+	root := Prepare(cli.NewRootCmd())
+	doc := Generate(root)
 	if err := os.WriteFile(*path, []byte(doc), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "clidoc:", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "clidoc: wrote %s from the command tree (%d commands)\n", *path, len(documentedCommands(cli.NewRootCmd())))
+	fmt.Fprintf(os.Stderr, "clidoc: wrote %s from the command tree (%d commands)\n", *path, len(documentedCommands(root)))
+}
+
+// Prepare returns root with the commands and flags cobra adds for itself, so
+// that the tree a generator reads is the tree a reader runs.
+//
+// Cobra adds its `help` command, its `completion` command (with one
+// subcommand per shell) and the `-h, --help` flag of every command inside
+// Execute, not when the tree is built. A reference generated from the
+// un-executed tree would therefore print "every command and flag `fugaro`
+// ships" while omitting the two commands `fugaro --help` lists under Available
+// Commands and the help flag of every command in the CLI -- a claim the page
+// does not keep, and one no test can catch, because a test that derives its
+// expectations from the same un-executed tree agrees with the generator's
+// mistake. Calling cobra's own initializers first (all three are exported)
+// makes the tree the CLI actually presents.
+//
+// It is idempotent, and it is the same three calls the drift tests in
+// internal/cli make (cliRefRoot) -- if the two ever disagree, the reference
+// names a command that test calls invented.
+func Prepare(root *cobra.Command) *cobra.Command {
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		c.InitDefaultHelpFlag()
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	return root
 }
 
 // Generate renders the CLI reference for root: one Markdown section per
@@ -60,12 +92,18 @@ func main() {
 // own words (its short and long description), its usage line, its flags with
 // their types, defaults and required-ness, and its visible subcommands. It is
 // a pure function of the tree, so a test can hold the committed file to it.
+//
+// It calls Prepare first: see the note there on cobra's own help and
+// completion commands.
 func Generate(root *cobra.Command) string {
+	root = Prepare(root)
 	var b strings.Builder
 	b.WriteString(header + "\n\n")
 	b.WriteString("# Fugaro CLI reference\n\n")
 	b.WriteString("Every command and flag `fugaro` ships, generated from the command tree\n")
-	b.WriteString("(`internal/cli.NewRootCmd`) by `go run ./internal/clidoc`. Commands the CLI\n")
+	b.WriteString("(`internal/cli.NewRootCmd`) by `go run ./internal/clidoc`. Cobra's own `help`\n")
+	b.WriteString("and `completion` commands, and the `-h, --help` flag of every command, are\n")
+	b.WriteString("part of what `fugaro --help` lists, so they are here too. Commands the CLI\n")
 	b.WriteString("hides are not listed: they are internal, and a hidden command is not user\n")
 	b.WriteString("documentation.\n\n")
 
@@ -130,8 +168,8 @@ func writeSection(b *strings.Builder, cmd *cobra.Command, path string) {
 		b.WriteString("| --- | --- | --- | --- | --- |\n")
 		for _, name := range names {
 			f := cmd.LocalFlags().Lookup(name)
-			fmt.Fprintf(b, "| `--%s` | %s | %s | %s | %s |\n",
-				name, cell(f.Value.Type()), defaultCell(f.DefValue), requiredCell(f), cell(f.Usage))
+			fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n",
+				flagCell(f), cell(f.Value.Type()), defaultCell(f.DefValue), requiredCell(f), cell(f.Usage))
 		}
 		b.WriteString("\n")
 	}
@@ -192,6 +230,15 @@ func visibleSubcommands(cmd *cobra.Command, path string) []subcommand {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
 	return out
+}
+
+// flagCell is a flag as a reader types it: its shorthand first when it has one
+// (`-h, --help`), the long name alone otherwise.
+func flagCell(f *pflag.Flag) string {
+	if f.Shorthand == "" {
+		return "`--" + f.Name + "`"
+	}
+	return fmt.Sprintf("`-%s`, `--%s`", f.Shorthand, f.Name)
 }
 
 // requiredCell says whether cobra refuses to run the command without the flag,
