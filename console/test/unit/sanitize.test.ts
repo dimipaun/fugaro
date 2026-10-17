@@ -725,7 +725,12 @@ describe('the class rules', () => {
 
   it('rewrites a host to the placeholder, and never draws an address literal', () => {
     expect(text('<host>', 'host')).toBe(HOST_PLACEHOLDER)
-    expect(text('fixture.invalid', 'host')).toBe('fixture.invalid')
+    // A valid DNS name is a machine name too: the recorder's host class
+    // redacts it unconditionally, and this layer may not keep what the
+    // recorder removed (review round 2 of PR 478: it used to be drawn).
+    expect(text('fixture.invalid', 'host')).toBe(HOST_PLACEHOLDER)
+    expect(text('build-07.corp.fixture.invalid', 'host')).toBe(HOST_PLACEHOLDER)
+    expect(flags('fixture.invalid', 'host')).toContain('host-placeholder')
     expect(text('192.0.2.10', 'host')).toBe(HOST_PLACEHOLDER)
     expect(text('10.0.0.1', 'host')).toBe(HOST_PLACEHOLDER)
     // A name with no dot is not a hostname, so it is not shown as one.

@@ -847,10 +847,6 @@ const WHOLE_ADDRESS_RE = /^[\p{L}\p{N}\p{M}._%+-]+@[\p{L}\p{N}\p{M}-]+(?:\.[\p{L
 /** RUN_ID_RE is a Fugaro run id: `YYYYMMDD-HHMMSS-xxxx`. */
 const RUN_ID_RE = /^[0-9]{8}-[0-9]{6}-[a-z0-9]{4}$/
 
-/** HOSTNAME_RE is a DNS name: at least two labels, each of the allowed
- * characters, no label starting or ending with a hyphen. */
-const HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/
-
 /** WHOLE_PATH_RE recognises a value that is a filesystem path, so the `path`
  * class can say what it is refusing rather than only that it refused. */
 const WHOLE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\\\\|\/|~\/)/
@@ -995,11 +991,12 @@ export function sanitizeText(
   }
 
   if (textClass === 'host') {
+    // Every machine name is drawn as the placeholder, valid DNS name or not:
+    // that is the class's contract (`TextClass`) and the recorder's host class,
+    // which returns its marker unconditionally (`src/source/redact.ts`). A
+    // marker the recorder already wrote is kept as it is.
     if (isMarkerText(text)) return ok(text, flags)
-    if (hits(IPV4_RE, text) || !HOSTNAME_RE.test(text)) {
-      return ok(HOST_PLACEHOLDER, [...flags, 'host-placeholder'])
-    }
-    return ok(text, flags)
+    return ok(HOST_PLACEHOLDER, [...flags, 'host-placeholder'])
   }
 
   const rules = freeText(text, textClass)
