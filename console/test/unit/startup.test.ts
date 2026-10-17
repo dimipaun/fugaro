@@ -44,7 +44,10 @@ import type {
 import { APP_ENTRY_URL, REFUSAL_ENTRY_URL } from '../../src/main/protocol'
 import { CONSOLE_WINDOW_TITLE, openStartupWindow, openWindowFor } from '../../src/main/window'
 import type { ConsoleWindowDeps, VersionRead } from '../../src/main/window'
+import { RENDERER_UNREADABLE, startConsole } from '../../src/renderer/app'
+import type { ScreenGate } from '../../src/renderer/app'
 import { CLI_VERSION_BUILT_AGAINST, SKEW_HEADLINES, classifyCliVersion } from '../../src/shared/version'
+import type { CliCompatibility, SkewElement, SkewFactory } from '../../src/shared/version'
 
 /**
  * assertNoReader is never called and it is not a test: it is the compile-time
@@ -213,6 +216,190 @@ describe('the window the stored answer opens (the activate path)', () => {
     expect(windows.loaded).toEqual([REFUSAL_ENTRY_URL])
     expect(windows.loaded).not.toContain(APP_ENTRY_URL)
     expect(windows.titles[0]).toContain(SKEW_HEADLINES.refused)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The renderer's half of the same handshake
+// ---------------------------------------------------------------------------
+
+/**
+ * FakeScreen and drawnFactory are a recording DOM, local to this file for the
+ * same reason `recordingWindows` is: `version.test.ts` asserts what
+ * `renderVersionSkew` draws, and what this section asserts is *whether* it was
+ * drawn and what the gate did afterwards.
+ */
+class FakeScreen {
+  textContent: string | null = null
+  readonly attributes = new Map<string, string>()
+  readonly nodes: FakeScreen[] = []
+  constructor(readonly tag: string) {}
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value)
+  }
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null
+  }
+  removeAttribute(name: string): void {
+    this.attributes.delete(name)
+  }
+  append(child: SkewElement): void {
+    this.nodes.push(child as FakeScreen)
+  }
+}
+
+const drawnFactory: SkewFactory = { create: (tag: string) => new FakeScreen(tag) }
+
+/** drawnTree is every node of a tree, the root first. */
+function drawnTree(node: SkewElement): readonly FakeScreen[] {
+  const root = node as FakeScreen
+  return [root, ...root.nodes.flatMap((child) => drawnTree(child))]
+}
+
+/** aMount is where the entry point's drawings go, and it counts them. */
+function aMount(): { append(child: SkewElement): void; drawings: FakeScreen[] } {
+  const drawings: FakeScreen[] = []
+  return {
+    drawings,
+    append(child: SkewElement) {
+      drawings.push(child as FakeScreen)
+    },
+  }
+}
+
+/** answers is a bridge that answers whatever it is handed, once. */
+function answers(answer: unknown) {
+  return { getCompatibility: async (): Promise<unknown> => answer }
+}
+
+const okHandshake = classifyCliVersion(CLI_VERSION_BUILT_AGAINST)
+const reducedHandshake = classifyCliVersion('0.9.0')
+const refusedHandshake = classifyCliVersion('0.5.0')
+
+/** REJECTS is a bridge whose call fails, the way a dead channel does. */
+const rejects = { getCompatibility: async (): Promise<unknown> => Promise.reject(new Error('gone')) }
+
+describe('the renderer’s gate', () => {
+  it('draws nothing at all until the answer has arrived', async () => {
+    // The order this task is about, on the renderer's side. A screen that drew
+    // first and asked later would already have drawn, so the entry point's
+    // first act is the question -- and the mount stays empty until it is
+    // answered.
+    const mount = aMount()
+    const slow = {
+      getCompatibility: async (): Promise<unknown> => {
+        // A handshake answer that takes a tick to arrive, so the assertion
+        // below is made while the console still has no answer.
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        return { ok: true, data: okHandshake }
+      },
+    }
+    const started = startConsole({ bridge: slow, mount, factory: drawnFactory, theme: 'dark' })
+    expect(mount.drawings).toHaveLength(0)
+    const gate = await started
+    // An `ok` handshake has nothing to draw: the dashboard is mounted by the
+    // caller, through the gate.
+    expect(mount.drawings).toHaveLength(0)
+    expect(gate.compatibility.mode).toBe('ok')
+  })
+
+  it('lets an `ok` console draw every view', async () => {
+    const mount = aMount()
+    const gate = await startConsole({
+      bridge: answers({ ok: true, data: okHandshake }),
+      mount,
+      factory: drawnFactory,
+      theme: 'dark',
+    })
+    const drew: string[] = []
+    for (const view of ['spend', 'caps', 'kill'] as const) {
+      expect(gate.drawScreen(view, () => drew.push(view)), view).toBe('drawn')
+    }
+    expect(drew).toEqual(['spend', 'caps', 'kill'])
+  })
+
+  it('draws the banner in a reduced mode, and refuses to draw a withheld view', async () => {
+    const mount = aMount()
+    const gate = await startConsole({
+      bridge: answers({ ok: true, data: reducedHandshake }),
+      mount,
+      factory: drawnFactory,
+      theme: 'dark',
+    })
+    expect(mount.drawings).toHaveLength(1)
+    const banner = mount.drawings[0]
+    expect(banner?.getAttribute('data-mode')).toBe('reduced')
+    expect(banner?.getAttribute('data-skew')).toBe('newer')
+    expect(banner?.getAttribute('data-theme')).toBe('dark')
+    expect(
+      drawnTree(banner as SkewElement).some((node) => node.textContent === SKEW_HEADLINES.reduced),
+    ).toBe(true)
+    // The three views `hidesView` withholds are the three the gate refuses, and
+    // the screen's own drawing is not called at all -- the second half of the
+    // defence, in the document rather than in the main process.
+    for (const view of ['spend', 'caps', 'kill'] as const) {
+      let called = false
+      expect(gate.drawScreen(view, () => (called = true)), view).toBe('withheld')
+      expect(called, view).toBe(false)
+    }
+  })
+
+  it('draws the refusal screen and gates every view off for a refused console', async () => {
+    const mount = aMount()
+    const gate = await startConsole({
+      bridge: answers({ ok: true, data: refusedHandshake }),
+      mount,
+      factory: drawnFactory,
+      theme: 'dark',
+    })
+    expect(gate.compatibility.mode).toBe('refused')
+    expect(mount.drawings).toHaveLength(1)
+    const screen = mount.drawings[0]
+    expect(screen?.getAttribute('data-mode')).toBe('refused')
+    expect(
+      drawnTree(screen as SkewElement).some((node) => node.textContent === SKEW_HEADLINES.refused),
+    ).toBe(true)
+    for (const view of ['spend', 'caps', 'kill'] as const) {
+      let called = false
+      expect(gate.drawScreen(view, () => (called = true)), view).toBe('refused')
+      expect(called, view).toBe(false)
+    }
+  })
+
+  it.each([
+    ['a rejected call', rejects],
+    ['the console’s own refusal reply', answers({ ok: false, reason: 'the console is not reachable' })],
+    ['no answer at all', answers(null)],
+    ['an answer that is not a compatibility', answers({ ok: true, data: { mode: 'probably' } })],
+    [
+      'a compatibility whose hidden list disagrees with its mode',
+      answers({ ok: true, data: { ...okHandshake, hidden: ['spend', 'caps', 'kill'] } }),
+    ],
+  ])('treats %s as the refusal, which is the answer that draws no figures', async (_why, bridge) => {
+    const mount = aMount()
+    const gate = await startConsole({ bridge, mount, factory: drawnFactory, theme: 'light' })
+    expect(gate.compatibility.mode).toBe('refused')
+    expect(gate.compatibility.skew).toBe('unreadable')
+    // The renderer's own sentence, and nothing the answer carried.
+    expect(gate.compatibility.because).toBe(RENDERER_UNREADABLE)
+    expect(mount.drawings).toHaveLength(1)
+    expect(mount.drawings[0]?.getAttribute('data-mode')).toBe('refused')
+    expect(gate.drawScreen('spend', () => undefined)).toBe('refused')
+  })
+
+  it('gates on the compatibility it was handed, and not on a copy of it', async () => {
+    // The identity matters: `compatibilityFrom` answers the value it read, so
+    // the gate's question (`hidesView`) is asked of the same object the main
+    // process sent, and a fabricated `ok` cannot be handed to `drawScreen`.
+    const mount = aMount()
+    const gate: ScreenGate = await startConsole({
+      bridge: answers({ ok: true, data: reducedHandshake }),
+      mount,
+      factory: drawnFactory,
+      theme: 'light',
+    })
+    expect(gate.compatibility).toBe(reducedHandshake)
+    expect((gate.compatibility as CliCompatibility).hidden).toContain('spend')
   })
 })
 
