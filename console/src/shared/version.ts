@@ -322,7 +322,7 @@ function minorOf(version: string): string {
  */
 export function classifyCliVersion(text: string): CliCompatibility {
   const parsed = parseCliVersion(text)
-  if (!parsed.ok) return compatibility('refused', 'unreadable', null, [])
+  if (!parsed.ok) return compatibility('refused', 'unreadable', null, [...REDUCED_VIEWS])
   if (parsed.version.kind === 'dev') {
     // A `dev` build is the operator's own working copy: newer than any release
     // by construction, and unplaceable by comparison. It proceeds in the reduced

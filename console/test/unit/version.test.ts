@@ -613,6 +613,12 @@ describe('hidesView', () => {
       classifyCliVersion(CAPTURED_DEV_OUTPUT),
       classifyCliVersion('0.5.0'),
       unreadableCompatibility('the binary did not answer'),
+      // The other road to "unreadable": a version read that succeeded and
+      // printed something that is not a version (`window.ts` hands it straight
+      // to `classifyCliVersion`). It must withhold what the read failure does.
+      classifyCliVersion(''),
+      classifyCliVersion('usage: fugaro version'),
+      classifyCliVersion('not a version'),
     ]
     for (const compatibility of reductions) {
       for (const view of REDUCED_VIEWS) {
