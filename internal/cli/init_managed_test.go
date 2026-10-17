@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
+
+	"cloud.google.com/go/storage"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -193,6 +197,10 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		r := newProjectRig(t)
 		r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
 		r.gcs.AddBucket("fugaro-runs-shared", gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
+		// The default-named bucket exists too, labelled and the project's
+		// own, so a run that fell through to the name the read knows would
+		// succeed in writing there, and the assertion below would see it.
+		r.gcs.AddBucket("fugaro-runs-"+newProj, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
 		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"runs_bucket": "fugaro-runs-shared"})}
 		r.save(t)
 		r.bill.AddAccount(billingAcc, true)
@@ -219,6 +227,9 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// the owner can mark it (D58's owner-run command, Task 6.1).
 	t.Run("--create-project with no client built", func(t *testing.T) {
 		r := newProjectRig(t)
+		// The bucket a marker for the created project would go in, so the
+		// assertion of absence reads a bucket that exists.
+		r.gcs.AddBucket("fugaro-runs-"+newProj, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
 		out, _, err := r.run(t, true, newProj+"\n", "--create-project", "--display-name", "Fugaro New")
 		if err == nil {
 			t.Fatalf("the run finished without a client:\n%s", out)
@@ -229,7 +240,7 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		if !strings.Contains(out, "no Google client was built for the run") || !strings.Contains(out, newProj) {
 			t.Errorf("the run did not warn that the project it created is unmarked:\n%s", out)
 		}
-		noMarker(t, r.gcs, initRunsBucket)
+		noMarker(t, r.gcs, "fugaro-runs-"+newProj)
 	})
 }
 
@@ -378,16 +389,34 @@ func TestMarkCreatedWarningsAreInThePrintedResult(t *testing.T) {
 var managedBucketLabels = map[string]string{"fugaro": "managed"}
 
 // markerAt is the creation fact's bytes in bucket, and whether it is there.
+// Only an absent object is "not there": a bucket that does not exist, or a
+// read that fails any other way, fails the test, since an assertion of
+// absence against a bucket nothing could write into passes whatever the run
+// did.
 func markerAt(t *testing.T, g *gcpfake.GCS, bucket string) (string, bool) {
 	t.Helper()
-	b, err := g.Bucket(t, bucket).Bucket.ReadAll(context.Background(), managed.MarkerObject)
-	if err != nil {
+	ctx := context.Background()
+	h := g.Client(t).Bucket(bucket)
+	if _, err := h.Attrs(ctx); err != nil {
+		t.Fatalf("gs://%s is unreadable (%v): an assertion about its marker would prove nothing", bucket, err)
+	}
+	rd, err := h.Object(managed.MarkerObject).NewReader(ctx)
+	if errors.Is(err, storage.ErrObjectNotExist) {
 		return "", false
+	}
+	if err != nil {
+		t.Fatalf("gs://%s/%s: %v", bucket, managed.MarkerObject, err)
+	}
+	defer rd.Close()
+	b, err := io.ReadAll(rd)
+	if err != nil {
+		t.Fatalf("gs://%s/%s: %v", bucket, managed.MarkerObject, err)
 	}
 	return string(b), true
 }
 
-// noMarker asserts the run wrote no creation fact: nothing is skipped for a
+// noMarker asserts the run wrote no creation fact into bucket, a bucket that
+// exists (markerAt fails on one that does not): nothing is skipped for a
 // project nothing recorded.
 func noMarker(t *testing.T, g *gcpfake.GCS, bucket string) {
 	t.Helper()
