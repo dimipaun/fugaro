@@ -12,12 +12,37 @@
     "test:unit": "vitest run --dir test/unit",
     "test:e2e": "npm run build && playwright test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
-    "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js"
+    "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
+    "package": "npm run build && npx --yes electron-builder@26.0.12 --mac"
+  },
+  "build": {
+    "appId": "io.github.dimipaun.fugaro-console",
+    "productName": "Fugaro Console",
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "dist/**",
+      "src/renderer/**/*.html",
+      "!**/*.map"
+    ],
+    "afterPack": "dist/main/fuses.js",
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist"
+    }
   },
   "dependencies": {
     "electron-updater": "6.8.9"
   },
   "devDependencies": {
+    "@electron/fuses": "2.0.0",
     "@playwright/test": "1.64.1",
     "@types/node": "22.20.5",
     "electron": "44.7.2",
