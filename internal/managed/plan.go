@@ -112,6 +112,42 @@ type Verdict struct {
 	// here for whoever confirms, from the cost list's non-blocking findings. They
 	// never affect OK.
 	Flags []Refusal
+	// Changes counts what the plan the verdict is about changes, for the
+	// question a person is asked before the apply (Request.Ask). It never
+	// affects OK.
+	Changes Changes
+}
+
+// Changes counts a plan's managed resource changes by kind: a replace is one
+// change (delete and create of one address), and an import is counted beside
+// whatever else the change does.
+type Changes struct {
+	Create, Update, Replace, Delete, Import int
+}
+
+// countChanges is the Changes of a plan.
+func countChanges(p *tf.Plan) Changes {
+	var c Changes
+	for _, rc := range p.ResourceChanges {
+		if rc.Mode != "managed" {
+			continue
+		}
+		if rc.Change.Importing != nil {
+			c.Import++
+		}
+		acts := rc.Change.Actions
+		switch {
+		case slices.Contains(acts, "delete") && slices.Contains(acts, "create"):
+			c.Replace++
+		case slices.Contains(acts, "create"):
+			c.Create++
+		case slices.Contains(acts, "delete"):
+			c.Delete++
+		case slices.Contains(acts, "update"):
+			c.Update++
+		}
+	}
+	return c
 }
 
 // costFindings is tf.ManagedCosts; a variable only so a test can supply a
@@ -154,7 +190,7 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 	if err != nil {
 		return Verdict{}, err
 	}
-	var v Verdict
+	v := Verdict{Changes: countChanges(plan)}
 	guardErr := guard(plan, spec.AllowDelete)
 	if guardErr != nil {
 		v.Refusals = append(v.Refusals, refusals(guardGate, guardErr.Error())...)
