@@ -352,3 +352,83 @@ func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
 	}
 }
+
+// The figures a managed creation records are held, before anything is
+// created, to the rule the creation fact's write and read share
+// (managed.Budget.Check): a currency that is not three ASCII uppercase
+// letters and an amount outside 1 to 10,000,000 whole units are refused, the
+// run does nothing, and no fact is written. Without the check the run created
+// the project and only the marker's write refused the figures — a managed
+// project left unmarked by a typo.
+func TestManagedBudgetFiguresAreChecked(t *testing.T) {
+	for name, flags := range map[string][]string{
+		"a lower-case currency":     {"--budget", "7", "--budget-currency", "usd"},
+		"a four-letter currency":    {"--budget", "7", "--budget-currency", "USDX"},
+		"an amount above the range": {"--budget", "10000001", "--budget-currency", "USD"},
+		"the largest int64 amount":  {"--budget", "9223372036854775807", "--budget-currency", "USD"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, bucket := newManagedCreateRig(t)
+			args := append([]string{"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+				"--managed", "--billing-account", billingAcc}, flags...)
+			out, errOut, err := r.run(t, true, createStdin, args...)
+			if err == nil {
+				t.Fatalf("a managed creation with %s was accepted:\n%s", name, refusalText(out, errOut, nil))
+			}
+			s := refusalText(out, errOut, err)
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, s)
+			}
+			if !strings.Contains(s, "ISO 4217") {
+				t.Errorf("the refusal does not say what a budget must be:\n%s", s)
+			}
+			r.nothingDone(t, "a managed creation refused for its budget figures")
+			noMarker(t, r.gcs, bucket)
+		})
+	}
+
+	// The bound is a bound: the largest amount is a creation like any other.
+	t.Run("the largest amount in the range", func(t *testing.T) {
+		r, bucket := newManagedCreateRig(t)
+		out, errOut, err := r.run(t, true, createStdin,
+			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+			"--managed", "--budget", "10000000", "--budget-currency", "EUR", "--billing-account", billingAcc)
+		if err != nil {
+			t.Fatalf("%v\n%s", err, refusalText(out, errOut, nil))
+		}
+		b, ok := markerAt(t, r.gcs, bucket)
+		want := `{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":10000000,"currency":"EUR"}}`
+		if !ok || b != want {
+			t.Errorf("gs://%s/%s = %s (present %v), want %s", bucket, managed.MarkerObject, b, ok, want)
+		}
+	})
+}
+
+// A budget Terraform (or the Budget API behind it) rejects is never recorded:
+// the budget is a resource of the installation root's apply, and markCreated
+// writes the fact only once that apply has succeeded — it needs the runs
+// bucket from r.res.Outputs, which writeConfig sets after a successful
+// installation apply and nothing else sets in a creation run. So a creation
+// whose installation apply fails (a currency that is not the billing
+// account's, say) created the project and records nothing: unmarked, the
+// fail-closed direction, and the warning says so. Pinned because the order is
+// what makes the fact true, and a refactor that read the bucket name from
+// the spec instead would record an amount no budget carries.
+func TestManagedFactIsNotWrittenWhenTheInstallationApplyFails(t *testing.T) {
+	r, bucket := newManagedCreateRig(t)
+	r.script["apply"] = map[string]any{"exit": 1}
+	r.save(t)
+	out, errOut, err := r.run(t, true, createStdin,
+		"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+		"--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+	if err == nil {
+		t.Fatalf("the installation apply failed, yet init succeeded:\n%s", refusalText(out, errOut, nil))
+	}
+	if n := len(r.crm.Creates()); n != 1 {
+		t.Fatalf("%d project(s) created, want the one this run created before the apply failed:\n%s", n, refusalText(out, errOut, err))
+	}
+	noMarker(t, r.gcs, bucket)
+	if s := refusalText(out, errOut, err); !strings.Contains(s, "not marked") {
+		t.Errorf("the run does not say the created project is not marked:\n%s", s)
+	}
+}

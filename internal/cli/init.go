@@ -664,6 +664,18 @@ func runInit(r *initRun) error {
 // — and a write that fails is a warning, never a failure of the run: an
 // unmarked project is the fail-closed direction (nothing is skipped for it,
 // which is where a project that was not created in this run stays).
+//
+// The budget a managed fact records is never one the run failed to create:
+// the Terraform budget is a resource of the installation root, and the fact
+// is written only when r.res.Outputs names the runs bucket, which only
+// writeConfig sets, after that root's apply succeeded. An apply the budget
+// failed (a currency that is not the billing account's, say) leaves Outputs
+// unset, so the project is left unmarked and the warning below says so
+// (TestManagedFactIsNotWrittenWhenTheInstallationApplyFails). Later stages
+// (images, secrets, the repository) do not carry the budget, so their
+// failure does not take back a fact the installation apply made true. The
+// figures themselves are checked before anything is created
+// (checkCreateProject, managed.Budget.Check).
 func (e *initEngine) markCreated(ctx context.Context) {
 	r := e.r
 	// Created is set by the project stage alone, inside its create branch

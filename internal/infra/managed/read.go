@@ -239,8 +239,15 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 		// be a managed project with no line to compare a spend against (the
 		// state Task 4.4's read fails closed on). A budget of 0 or of no
 		// currency is the same: an amount is above 0 and a pair.
-		if m.Budget == nil || m.Budget.Amount <= 0 || m.Budget.Currency == "" {
+		if m.Budget == nil {
 			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount, and version %d is a creation that was required to choose one, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBudget, project), nil
+		}
+		// The same rule the write holds (Budget.Check): a currency that is
+		// not the ISO 4217 shape or an amount outside the range is not a
+		// figure this build wrote, so the object is refused whole rather
+		// than believed with a line nothing should be compared against.
+		if err := m.Budget.Check(); err != nil {
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), nil
 		}
 	default:
 		return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows versions %d and %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, project), nil
