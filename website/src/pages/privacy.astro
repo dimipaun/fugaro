@@ -65,8 +65,8 @@ const analyticsEnabled = site.facts.analytics.enabled
         <strong>This site collects nothing.</strong> It is a set of static pages built from the
         files in the Fugaro repository: no account, no form, no comment box, and no code of the
         site's own running on a server. Nothing counts your visit, and nothing about it is sent
-        anywhere. Should measurement ever be switched on, this page changes in the same commit
-        that switches it on, and the site asks you first.
+        anywhere. Should measurement ever be switched on, this page changes at the same time,
+        and the site asks you first.
       </p>
     )}
 
@@ -126,8 +126,9 @@ const analyticsEnabled = site.facts.analytics.enabled
     <h2>What this site does not do</h2>
     <ul>
       <li>
-        It sets no cookie of its own, and — before you accept anything — it loads nothing that
-        could set one.
+        {analyticsEnabled
+          ? 'It sets no cookie of its own, and — before you accept anything — it loads nothing that could set one.'
+          : 'It sets no cookie of its own, and it loads nothing that could set one.'}
       </li>
       <li>It asks you for nothing: no account, no email address, no form to fill in.</li>
       <li>
@@ -136,8 +137,9 @@ const analyticsEnabled = site.facts.analytics.enabled
           : 'It loads nothing from another origin — no font, no stylesheet, no script, no image, no embedded player. The typefaces are served from this site, and the build refuses a page that names another host.'}
       </li>
       <li>
-        It sells nothing, because it collects nothing to sell. The only thing that leaves your
-        browser is what the analytics script sends, and only if you accepted it.
+        {analyticsEnabled
+          ? 'It sells nothing, because it collects nothing to sell. The only thing that leaves your browser is what the analytics script sends, and only if you accepted it.'
+          : 'It sells nothing, because it collects nothing to sell: nothing leaves your browser at all.'}
       </li>
     </ul>
 
