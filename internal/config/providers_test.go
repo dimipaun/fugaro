@@ -363,3 +363,33 @@ func TestCheckClaudeClaimIsOneShape(t *testing.T) {
 		}
 	}
 }
+
+// TestTheSecretNameRuleIsOneRule: CheckSecretName (the project policy's
+// profiles hold every secret name to it) and ValidateModelProviders (the
+// providers block) are two readers with two wordings and one rule —
+// SecretNameRE and keyPrefix. This test is what holds them together: for
+// every name the shared rule refuses, the providers block refuses it too, and
+// for every name it accepts the providers block accepts it (the provider-only
+// rules — a name Fugaro already uses, two providers claiming one secret — are
+// outside the comparison, which is the point: they are the provider path's
+// own, and a profile's secrets do not have them).
+//
+// The mutation is a reader that keeps its own copy of the rule: give either
+// one a regex or a prefix the other does not have and the verdicts part.
+func TestTheSecretNameRuleIsOneRule(t *testing.T) {
+	for _, name := range []string{
+		"openrouter-api-key", "deploy-key", "a", "sk-ant-abc123", "sk-or-v1-deadbeef",
+		"UpperCase", "with_underscore", "has space", "", "trailing-",
+	} {
+		shared := CheckSecretName(name)
+		p := okProvider()
+		p.Secret = name
+		ps := ValidateModelProviders(map[string]ModelProvider{"openrouter": p})
+		if shared != "" && len(ps) == 0 {
+			t.Errorf("CheckSecretName refuses %q and the providers block accepts it", name)
+		}
+		if shared == "" && len(ps) != 0 && !strings.Contains(problemsText(ps), "already") {
+			t.Errorf("CheckSecretName accepts %q and the providers block refuses it: %s", name, problemsText(ps))
+		}
+	}
+}

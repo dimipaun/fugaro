@@ -39,7 +39,15 @@ import (
 // credential out first.
 func admissionRun(t *testing.T, kind, slugRepo, mode, capUSD, policy string, script ...anthropicfake.Reply) *bk {
 	t.Helper()
-	b := newBK(t, gwConfig(t, ""), mode, capUSD, script...)
+	return admissionRunCfg(t, kind, slugRepo, mode, capUSD, gwConfig(t, ""), policy, script...)
+}
+
+// admissionRunCfg is admissionRun with the repository's own fugaro.yaml given
+// by the caller, for a test that needs a config the fixture does not have (a
+// workflow's job_profile selection is the one so far).
+func admissionRunCfg(t *testing.T, kind, slugRepo, mode, capUSD, cfg, policy string, script ...anthropicfake.Reply) *bk {
+	t.Helper()
+	b := newBK(t, cfg, mode, capUSD, script...)
 	slug, err := task.Slug(kind, slugRepo)
 	if err != nil {
 		t.Fatal(err)
