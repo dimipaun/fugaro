@@ -1,0 +1,14 @@
+{
+  "name": "fugaro-shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fugaro's shared pure-logic package (mobile plan D119): the message schema, the mailbox semantics, the digest and its redactor, the presence rule and the URL validator, for the console's voice module and the mobile app. Never published; it imports no runtime, no database and no network client.",
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "test": "node --test \"**/*.test.js\""
+  }
+}
