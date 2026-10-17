@@ -87,9 +87,17 @@ const nameOf = (id: string): string => platformNames.get(id) ?? id
 
         {installPath.note !== '' && <p>{installPath.note}</p>}
 
-        <p class="source">
-          Commands as printed in <code>{installPath.source}</code>{installPath.devOnly && ' — development only'}.
-        </p>
+        {/* The line and the blocks below it are one fact: a path with no commands of its
+            own — the release archive, whose facts are a page and a name template rather
+            than a command line — renders neither, because "commands as printed in
+            README.md" over an empty list tells a reader to read something that is not
+            there. install.yaml is allowed to carry a path with no commands, so the page
+            has to render that shape as well as the other one. */}
+        {installPath.commands.length > 0 && (
+          <p class="source">
+            Commands as printed in <code>{installPath.source}</code>{installPath.devOnly && ' — development only'}.
+          </p>
+        )}
 
         <p class="platforms">
           Platforms: {installPath.platforms.map((id) => nameOf(id)).join(', ')}

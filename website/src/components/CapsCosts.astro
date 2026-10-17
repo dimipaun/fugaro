@@ -89,10 +89,13 @@ const commands = readReference(reference)
  * covers. The sentence is a map from a scope to a command and not a claim about one: what
  * the command does is the reference's line, rendered beside it.
  *
- * The same array is the coverage the guide owes (the project's caps, the defaults a
- * repository without its own inherits, one repository's own caps, the lease limit and the
- * mode, and both halves of the kill switch) — a command it loses is a cap with no command
- * beside it, which `website/test/caps-and-costs.mjs` fails on.
+ * The same array is the coverage the guide owes — every subcommand of `fugaro budget` the
+ * reference carries, checked just below, so a subcommand added to the command tree cannot
+ * be left off the page while the page says it prints the whole of the interface. What each
+ * scope sentence covers (the project's caps, the defaults a repository without its own
+ * inherits, one repository's own caps, the lease limit and the mode, both halves of the
+ * kill switch, the estimate before a batch runs and the price table behind it) is a
+ * sentence beside the command's own line, and not a claim about what the command does.
  */
 const GUIDE = [
   {
@@ -105,6 +108,14 @@ const GUIDE = [
     scope: "What is set now, what today has counted, what is left under the caps, the kill switches and the runs in flight.",
   },
   {
+    path: 'fugaro budget preview',
+    scope: 'What a batch would cost before it runs: the worst case for a number of planned runs against the cap that is left today — a ceiling, not a forecast.',
+  },
+  {
+    path: 'fugaro budget prices',
+    scope: 'The model prices the budget counts with: the table built into this binary, the day it was last checked, and any local override the project config applies.',
+  },
+  {
     path: 'fugaro budget kill',
     scope: 'The kill switch: the whole project, or one repository, with the reason recorded.',
   },
@@ -113,6 +124,23 @@ const GUIDE = [
     scope: 'Clear a kill switch again.',
   },
 ]
+
+/**
+ * The guide's claim is coverage, so coverage is what is checked: the reference carries the
+ * whole `fugaro budget` command tree, and a subcommand it has and this guide does not is a
+ * sentence on the page that is false — the F50 class of defect, a public claim nothing
+ * backs. The build stops rather than dropping a subcommand silently, which is why the page
+ * may say it prints the whole of the interface. A subcommand added to the command is
+ * carried by the regenerated reference and lands here, or the rebuild stops.
+ */
+const uncovered = [...commands.keys()].filter(
+  (path) => path.startsWith('fugaro budget ') && !GUIDE.some((entry) => entry.path === path),
+)
+if (uncovered.length > 0) {
+  throw new Error(
+    `the CLI reference carries ${uncovered.join(', ')}, which the caps guide does not cover: this page prints the whole of the command's interface, so an omitted subcommand makes its own sentence false. Add it to GUIDE in website/src/components/CapsCosts.astro, or stop the page claiming coverage (W1.5).`,
+  )
+}
 
 const parent = commands.get('fugaro budget')
 for (const entry of [{ path: 'fugaro budget' }, ...GUIDE]) {
@@ -171,8 +199,9 @@ const windowRecipes = countOf('recipes')
   <p>
     A cap is a ceiling on what a run may spend, and the mode decides what happens when one
     bites: in <code>observe</code> the project counts what a run spent and logs what a cap
-    would have refused, and in <code>enforce</code> it halts. The commands below are the
-    whole of the interface, and each row is one of the scopes a cap can be set at.
+    would have refused, and in <code>enforce</code> it halts. Every subcommand the CLI's own
+    reference renders is below — the build stops if this guide covers fewer — and each row is
+    one of the scopes a cap can be set at or one of the questions asked of it.
   </p>
 
   <dl class="commands">

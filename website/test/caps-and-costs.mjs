@@ -330,6 +330,29 @@ test('the fugaro budget invocations match the CLI reference', async (t) => {
   assert.ok(!textOf(withoutRendered).includes('fugaro budget'), 'the caps page writes a `fugaro budget` command of its own instead of rendering the reference\'s')
 })
 
+test('the caps guide covers every budget subcommand the CLI reference carries', async (t) => {
+  // The page says it prints the whole of the command's interface, and a claim of
+  // coverage is the F50 class of defect when nothing backs it: a subcommand the
+  // reference documents and the guide omits — `preview` and `prices` were exactly
+  // that — leaves a reader with a command they cannot find and a page that says
+  // there is nothing else. The reference is generated from the command tree, so
+  // the tree is the list this page owes.
+  const built = buildWith(t, publish(FIGURES))
+  const page = builtPage(built, '/caps-and-costs/')
+
+  const reference = repoFile('website/content/cli-reference.md')
+  const subcommands = [...reference.matchAll(/^## `(fugaro budget \S+)`$/gm)].map((match) => match[1])
+  assert.ok(subcommands.length > 1, `the CLI reference carries ${subcommands.length} budget subcommand heading(s), which is too few to be the interface this page covers`)
+
+  const rendered = [...page.matchAll(/data-guide="([^"]*)"/g)].map((match) => decode(match[1]))
+  for (const path of subcommands) {
+    assert.ok(
+      rendered.includes(path),
+      `the CLI reference carries \`${path}\` and the caps guide renders no row for it: the page says it prints the whole of the interface, so an omitted subcommand makes that sentence false`,
+    )
+  }
+})
+
 test('the caps page states the empty state while the aggregation has not been run', async (t) => {
   // The costs file is absent from this checkout, which is the honest day-one
   // state: the aggregation is owner-run and no run may read an installation's
@@ -368,6 +391,38 @@ test('getting started renders the install commands from install.yaml, and no com
 
   const printed = [...page.matchAll(/<pre[^>]*>([\s\S]*?)<\/pre>/g)].map((match) => collapse(decode(match[1].replace(/<[^>]+>/g, ''))))
   assert.deepEqual(printed, commands, 'the commands the page prints are not exactly install.yaml\'s, in its own order')
+})
+
+test('getting started promises commands only where install.yaml carries them', async (t) => {
+  // install.yaml is allowed to carry a path with no commands — the release archive,
+  // whose facts are a Releases page and a name template rather than a command line —
+  // and a page that printed "commands as printed in README.md" above that path's empty
+  // list would be telling a reader to read something that is not there. The line and
+  // the blocks are the same fact, so the page renders both or neither.
+  const built = buildWith(t, () => {})
+  const page = builtPage(built, '/getting-started/')
+
+  const articles = [...page.matchAll(/<article data-path="([^"]+)"[\s\S]*?<\/article>/g)].map((match) => ({
+    id: decode(match[1]),
+    block: match[0],
+  }))
+  assert.ok(articles.length > 0, 'the getting-started page renders no install path at all')
+
+  let withCommands = 0
+  for (const article of articles) {
+    const hasCommands = /<pre[^>]*>/.test(article.block)
+    const promises = /Commands as printed in/.test(article.block)
+    if (hasCommands) withCommands++
+    assert.equal(
+      promises,
+      hasCommands,
+      `install path \`${article.id}\` ${promises ? 'says its commands are printed below' : 'says nothing about commands'} and renders ${hasCommands ? 'command blocks' : 'none'}: the sentence and the blocks are one fact, and a path with no commands says nothing about them`,
+    )
+  }
+
+  // Both shapes are in the file, or this check is only looking at one of them.
+  assert.ok(withCommands > 0, 'no install path carries a command, so install.yaml is not the file this page renders')
+  assert.ok(withCommands < articles.length, 'every install path carries commands, so the no-commands shape install.yaml allows is not exercised')
 })
 
 test('getting started offers the platforms install.yaml marks, and states Windows as untested', async (t) => {
