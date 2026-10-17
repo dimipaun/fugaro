@@ -1571,7 +1571,8 @@ func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
 // Each check below is a separate way the `console` check stops existing on a
 // commit the gate asks about, and the two mutations to try first are the ones
 // that are invisible until a tag is refused: rename the job to `console-tests`,
-// and add `paths: ['console/**']` to its trigger.
+// and add `paths: ['console/**']` to its trigger -- either trigger, since the
+// filter guard below reads both.
 func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 	_, wf, on, rawJobs := readConsoleTestsWorkflow(t)
 
@@ -1633,17 +1634,22 @@ func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 	// failure that refuses every release, including the ones that ship none of
 	// the console: once Task 4.6's `names="test terraform rules console"` is in
 	// place, the gate would require a check this filter skipped.
+	//
+	// **Every trigger is read, not just `push`.** This loop used to `continue`
+	// on anything that was not `push`, so `pull_request: paths: ['console/**']`
+	// went unnoticed -- a filter that skips the check for exactly the pull
+	// requests a console-tests workflow exists for, and one the gate then looks
+	// for on the head commit of the pull request it was skipped on. A trigger
+	// written with no value (`pull_request:`) is every event of that kind and
+	// carries no filter by construction; one written as a mapping is read here.
 	for key, value := range on {
-		if key != "push" {
+		trigger, ok := value.(map[string]any)
+		if !ok {
 			continue
 		}
-		push, ok := value.(map[string]any)
-		if !ok {
-			t.Fatalf("%s's push trigger is %T, want a mapping", consoleTestsWorkflowPath, value)
-		}
 		for _, filter := range []string{"paths", "paths-ignore"} {
-			if _, ok := push[filter]; ok {
-				t.Errorf("%s's push trigger carries `%s:`: the console job must run unconditionally or the release gate refuses every tag", consoleTestsWorkflowPath, filter)
+			if _, ok := trigger[filter]; ok {
+				t.Errorf("%s's %s trigger carries `%s:`: the console job must run unconditionally or the release gate refuses the commits it is skipped on", consoleTestsWorkflowPath, key, filter)
 			}
 		}
 	}
