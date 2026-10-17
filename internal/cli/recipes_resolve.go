@@ -61,14 +61,70 @@ func parseRecipeAt(data []byte, name, where string) (*recipe.Recipe, error) {
 // build): mode: review only ever reviews an existing pull request and
 // never pushes or opens one (design generic-tool.md §3.6, G12), so it
 // cannot continue one either. The runner refuses the same mismatch again,
-// at bootstrap, for a recipe this never sees (a bare agent.recipe name, or
-// a repository recipe whose text isn't read until the run itself); this is
-// the CLI's own chance to say so before any cloud work starts.
+// at bootstrap, for a recipe this never sees — a repository recipe whose
+// text isn't read until the run itself, or a follow-up that inherits no
+// recipe at all, which gets no agent.recipe: the runner applies that key to
+// first runs only (internal/runner/recipe.go) and falls back to the
+// default name, .fugaro/recipes/default.yaml at the run's base; this is the
+// CLI's own chance to say so before any cloud work starts.
 func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
 	if rcp.Mode == recipe.ModeReview {
 		return userErr("recipe %s is mode: review, which only reviews an existing pull request and cannot continue one; launch it with --recipe %s --pr N instead (no other --pr)", name, name)
 	}
 	return nil
+}
+
+// refuseFollowUpArtifactMode refuses rcp for a follow-up (fugaro run --pr N
+// continuing PR N): a mode: artifact recipe renders a deliverable into the
+// run's bucket and opens no pull request, so it has no pull request to
+// continue. The follow-up path exists to resolve a pull request's chain —
+// its branch, its previous run, its account, and the ref and workflow it
+// inherits — and an artifact run has none of that to resolve, so the
+// refusal is at the launch rather than a refusal to carry the mode. The
+// runner refuses the same mismatch again, at bootstrap, for a recipe this
+// never sees: it keys on the RESOLVED recipe (internal/runner/runner.go),
+// which is the backstop for a follow-up that inherits a repository recipe by
+// name — a task.Recipe with no text — since that file is read at the run's
+// own base, and for one that inherits no recipe at all, which resolves to
+// the repository's .fugaro/recipes/default.yaml (agent.recipe is a first-run
+// key only). refuseFollowUpRepoRecipe reads the ones this checkout has, so
+// most of those are refused here too.
+func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
+	if rcp.Mode == recipe.ModeArtifact {
+		return userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; it takes no --pr, and there is no pull request for it to continue", name)
+	}
+	return nil
+}
+
+// refuseFollowUpRepoRecipe refuses the same two mismatches for a follow-up
+// that INHERITS a repository recipe by name — the previous task's
+// task.Recipe{Name, Source: repo}, and the chosen recipe carryChosenRecipe
+// keeps the same way — which carries no text for either refusal above to
+// read. The file is read from the working directory's checkout when there is
+// one; a name that checkout does not have, or a file it cannot parse, is
+// left alone, because the runner reads the name at THIS task's base
+// (readRepoRecipe, internal/runner/recipe.go) and refuses a bad or artifact
+// one there itself. Nothing but the checkout is consulted: the previous run
+// ran a repository recipe, and a same-named project or catalog recipe is not
+// the one it ran.
+func refuseFollowUpRepoRecipe(ctx context.Context, repo, name string) error {
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
+		return nil
+	}
+	data, found, err := recipe.ReadRepoFile(root, name)
+	if err != nil || !found {
+		return nil
+	}
+	where := filepath.Join(root, filepath.FromSlash(recipe.RepoPath(name)))
+	rcp, err := parseRecipeAt(data, name, where)
+	if err != nil {
+		return nil
+	}
+	if err := refuseFollowUpReviewMode(rcp, name); err != nil {
+		return err
+	}
+	return refuseFollowUpArtifactMode(rcp, name)
 }
 
 // projectRecipesNote is why lc's project recipes are not read, or "": as

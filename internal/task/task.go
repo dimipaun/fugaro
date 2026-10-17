@@ -86,6 +86,123 @@ type Spec struct {
 	// CLI checks the job's build record first, the same way it already
 	// does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
+	// Mode is the recipe's mode, written by the launcher from the recipe it
+	// resolved ("artifact" today; implement and review write nothing, so
+	// every existing spec is byte-identical to what the previous release
+	// wrote). The runner cannot read the recipe before it reads the
+	// configuration, so the spec is what selects the shape at bootstrap —
+	// exactly as ReviewPRs does for mode: review — and the resolved recipe
+	// is cross-checked against it afterwards, both ways.
+	//
+	// An EMPTY Mode is a real case and not a default to the implement
+	// path: the launcher leaves the recipe to the runner when it cannot
+	// resolve one (runnerChooses, internal/cli/run.go), so the spec carries
+	// no mode at all and the runner reads agent.recipe at the ref. The
+	// runner's rule is "this Mode when set, the resolved recipe's mode when
+	// not" — never "empty means implement". A runner before 0.8.0 refuses
+	// the field outright (Parse disallows unknown fields), so the
+	// launcher's own image gate refuses an artifact launch before this
+	// field is ever set at such a job.
+	Mode string `json:"mode,omitempty"`
+	// Inputs are the files the launching CLI attached (fugaro run
+	// --attach; design artifact-runs.md §4): what it uploaded, under
+	// runs/<slug>/<run>/inputs/<name>, with the size and the hash it read
+	// on the way up. Nil for every launch that attached nothing, so a spec
+	// this release writes for a launch without --attach is byte-identical
+	// to what the previous release wrote.
+	//
+	// It is only meaningful to a mode: artifact run: the runner refuses a
+	// task that carries inputs under a resolved recipe of another mode
+	// (design §8.2), and the launcher refuses --attach unless the launch
+	// resolves to an artifact recipe. A runner before this field refuses
+	// the spec outright (Parse disallows unknown fields), which is why the
+	// launcher's image gate refuses an --attach launch at such a job before
+	// this field is ever set (plan P9).
+	Inputs []InputFile `json:"inputs,omitempty"`
+}
+
+// InputFile is one attached file, as the launcher recorded it: the name it
+// is stored under (runs/<slug>/<run>/inputs/<name>, and <checkout>/inputs/
+// <name> in the run), its size, and the sha256 the launcher read while
+// uploading it. Name, Bytes and SHA256 are the launcher's own claims about
+// bytes it has already written; the runner verifies them against the object
+// it downloads and enforces its own caps and its own name refusals on them,
+// because a task spec is text a launcher wrote (design §8.2, §8.4).
+type InputFile struct {
+	Name   string `json:"name"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// inputSHA256RE is the form of an InputFile's SHA256: the same lower-case
+// hex sha256 every other hash in a run's record uses.
+var inputSHA256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// MaxInputNameBytes bounds an attached file's name, and it is deliberately
+// well under a filesystem's NAME_MAX (255): the runner downloads into
+// <checkout>/inputs/<name> through blobx.GetFile, which writes a temporary
+// beside the destination whose name is "." + the base name + ".part-" plus
+// random digits, so a name at the limit would fail with ENAMETOOLONG after
+// the bytes were already read. A name is a name: this is a refusal, not a
+// truncation.
+const MaxInputNameBytes = 200
+
+// InputNameBlank reports whether an attached file's name is no name at all:
+// empty, or nothing but whitespace. It is the ONE predicate for that rule,
+// shared by InputNameProblem below and by Spec.Validate's required-name check,
+// because a name one of them accepts has to be a name the other accepts.
+//
+// They disagreed once, and the disagreement was not academic: "   " is a legal
+// file name and a legal JSON string, so the launcher (which asked only for
+// non-empty) uploaded it and wrote the task.json naming it, and the runner's
+// decoder (which asked for TrimSpace(name) != "") refused that task at
+// bootstrap — bytes in the bucket under a run that never starts, the one
+// outcome design §4 step 1's ordering exists to prevent.
+func InputNameBlank(name string) bool { return strings.TrimSpace(name) == "" }
+
+// InputNameProblem reports what is wrong with an attached file's name as a
+// filesystem path — "" when nothing is — for the two places one becomes a
+// path: the launcher, choosing it (the base name of the path --attach named),
+// and the runner, writing <checkout>/inputs/<name> from a task spec it did
+// not write (design artifact-runs.md §8.2). It is one function rather than
+// two copies of a list because the two refusals must be the same list.
+//
+// The rules are the design's own list for an input name: not empty, no
+// absolute path, no ".." element (and no "." or empty element either, so a
+// name that is not already its own cleaned form is refused rather than
+// cleaned into something plausible), no NUL or newline, and the length limit
+// above. A name beginning with a dot is deliberately NOT refused here, unlike
+// an artifact name on the way back out: an input is written under inputs/,
+// which is never a checkout root, so `.git/hooks/pre-commit` lands inside
+// inputs/ and cannot reach the repository's own .git — and inputs/ is
+// excluded from git anyway (design §4 step 5).
+func InputNameProblem(name string) string {
+	switch {
+	case name == "":
+		return "is empty"
+	case InputNameBlank(name):
+		// Nothing but whitespace: the name Spec.Validate refuses as missing,
+		// so it is refused here too — before the file is uploaded, rather
+		// than by the runner reading the task back (InputNameBlank).
+		return "is only whitespace"
+	case len(name) > MaxInputNameBytes:
+		return fmt.Sprintf("is longer than %d bytes", MaxInputNameBytes)
+	case strings.ContainsAny(name, "\x00\n\r"):
+		return "holds a NUL or a newline"
+	case strings.HasPrefix(name, "/"):
+		return "is an absolute path"
+	}
+	for _, elem := range strings.Split(name, "/") {
+		switch elem {
+		case "":
+			return "has an empty path element"
+		case ".":
+			return `has a "." path element`
+		case "..":
+			return `has a ".." path element`
+		}
+	}
+	return ""
 }
 
 // Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
@@ -281,6 +398,36 @@ func (s *Spec) Validate() error {
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
 		bad("task spec: oauth_token %q is not a Claude account name", s.OAuthToken)
+	}
+	// Mode is the recipe's mode, so the only values a spec may carry are
+	// the recipe modes; "" (the launcher could not resolve a recipe, or the
+	// recipe is implement or review) is legal and means "the runner reads
+	// it from the resolved recipe".
+	switch s.Mode {
+	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact:
+	default:
+		bad("task spec: mode %q must be %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact)
+	}
+	// The entries' own shapes only. What an input NAME may be — no absolute
+	// path, no ".." element, no NUL or newline, a length limit, no duplicate
+	// — is deliberately NOT checked here: the runner applies that list where
+	// the name becomes a filesystem path (design §8.2), and the launcher
+	// applies it where the name is chosen. Refusing those shapes here would
+	// make the runner's own check unreachable — this decoder runs first —
+	// and the list belongs beside the write it protects.
+	for i, in := range s.Inputs {
+		// The same predicate the launcher's InputNameProblem applies to a
+		// name, so that a name this refuses is a name the launcher refuses
+		// before it uploads anything (InputNameBlank).
+		if InputNameBlank(in.Name) {
+			bad("task spec: inputs[%d].name is required", i)
+		}
+		if in.Bytes < 0 {
+			bad("task spec: inputs[%d].bytes must not be negative", i)
+		}
+		if !inputSHA256RE.MatchString(in.SHA256) {
+			bad("task spec: inputs[%d].sha256 %q must be 64 lower-case hex digits, the sha256 of the file", i, in.SHA256)
+		}
 	}
 	o := s.Overrides
 	if o.ReviewRounds != nil && (*o.ReviewRounds < 1 || *o.ReviewRounds > 10) {

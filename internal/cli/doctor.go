@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
@@ -295,9 +296,24 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if c := doctorOpenProvidersCheck(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
-	if co, err := checkoutProject(ctx, ""); err == nil && needsAnchorHint(ctx, co, lc) {
-		o.Checks = append(o.Checks, doctorCheck{ID: "gcp-project-line", Severity: "info", Problem: anchorHintText,
-			Fix: "fugaro init --anchor writes the gcp_project line into fugaro.yaml after checking the job images"})
+	// The checkout and its fugaro.yaml are resolved here, before the policy
+	// checks, and reused below. doctorRoutingChecks (inside them) resolves the
+	// published switch over the routes a run of a repository has, and a run's
+	// routes are its own providers with the project layer's claude_models
+	// merged in (runner.resolveConfig) — claims that are read from this
+	// checkout over the layer it resolves, so the resolution has to be here
+	// rather than in the block below. Resolved once: fugaroYAMLCheck reads the
+	// layer bucket, and doctor is a command an operator runs on a bad day.
+	co, _ := checkoutProject(ctx, "")
+	var fyCheck *doctorCheck
+	var fy *doctorFugaroYAML
+	var rf *resolvedFile
+	if co != nil {
+		if needsAnchorHint(ctx, co, lc) {
+			o.Checks = append(o.Checks, doctorCheck{ID: "gcp-project-line", Severity: "info", Problem: anchorHintText,
+				Fix: "fugaro init --anchor writes the gcp_project line into fugaro.yaml after checking the job images"})
+		}
+		fyCheck, fy, rf = fugaroYAMLCheck(ctx, co.Root, lc)
 	}
 
 	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
@@ -337,7 +353,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
 	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
-	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc)...)
+	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
@@ -361,37 +377,34 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
-	if co, _ := checkoutProject(ctx, ""); co != nil {
-		var resolved *resolvedFile
-		if c, fy, rf := fugaroYAMLCheck(ctx, co.Root, lc); c != nil {
-			o.Checks = append(o.Checks, *c)
+	if co != nil {
+		if fyCheck != nil {
+			o.Checks = append(o.Checks, *fyCheck)
 			o.FugaroYAML = fy
 			if fy.Valid && rf != nil {
 				o.Checks = append(o.Checks, doctorLayerChecks(ctx, lc, co.Root, *rf)...)
-				resolved = rf
 			}
 		}
 		o.Secrets = doctorSecrets(cmd, lc)
-		token := oauthTokenOf(resolved)
+		token := oauthTokenOf(rf)
 		if repo, err := originRepo(ctx); err == nil {
-			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets); c != nil {
+			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets, projSecrets, projOK); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 			// The two per-repository project-secret checks need the
 			// repository's own resolved fugaro.yaml (which logical names its
 			// jobs mount): an invalid one already failed its own check, so
 			// there is nothing to compute from.
-			if resolved != nil && resolved.Cfg != nil {
-				if facts, ok := doctorRepoSecretsOf(lc, resolved.Cfg, repo); ok {
-					if c := doctorProjectSecretStoredCheck(lc, facts, o.Secrets, projSecrets, projOK); c != nil {
-						o.Checks = append(o.Checks, *c)
-					}
+			if rf != nil && rf.Cfg != nil {
+				if facts, ok := doctorRepoSecretsOf(lc, rf.Cfg, repo); ok {
+					o.Checks = append(o.Checks, doctorProjectSecretStoredChecks(facts, o.Secrets, projSecrets, projOK)...)
 					if c := doctorProjectSecretScopeCheck(ctx, lc, facts, o.Secrets, projSecrets); c != nil {
 						o.Checks = append(o.Checks, *c)
 					}
+					o.Checks = append(o.Checks, doctorSecretScopeChecks(facts, o.Secrets, projSecrets, projOK)...)
 				}
 			}
-			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(resolved)); c != nil {
+			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 		} else {
@@ -750,6 +763,12 @@ type doctorRepoSecrets struct {
 	logical    map[string]string // a secret ID either scope stores this name under -> logical name
 	repoIDs    map[string]string // logical -> the repository's own secret ID
 	jobs       map[string]string // workflow name -> its default-account job
+	// keyNeeded is whether this checkout's config needs the optional Anthropic
+	// key at all (needsAnthropicKey, the CLI's one rule for it). False is the
+	// provider-only repository: every call routes to a provider, and its job
+	// drops the key's mount rather than gate the deploy (Readiness), so no
+	// stored value is missing.
+	keyNeeded bool
 }
 
 // doctorRepoSecretsOf computes doctorRepoSecrets for repo from cfg (the
@@ -781,21 +800,42 @@ func doctorRepoSecretsOf(lc *localcfg.Config, cfg *config.Config, repo string) (
 			}
 		}
 	}
+	// Whether the optional key is needed at all is the checkout's own answer,
+	// not the local config's: needsAnthropicKey merges the owner's ceiling with
+	// this file and reads the routes the run would take, exactly as init's
+	// prompt, init --repo's missing list and validate's note do.
+	facts.keyNeeded = needsAnthropicKey(lc, cfg, repo)
 	return facts, true
 }
 
-// doctorProjectSecretStoredCheck is doctor's "project-secret-stored" check:
+// doctorProjectSecretStoredChecks are doctor's "project-secret-stored" pair:
 // every logical name this repository may use project-wide (facts.candidates:
-// the names its jobs mount that the owner's local config allow-lists it for)
-// must hold an enabled version somewhere -- its own container, or the
-// project's. Neither means no run of a workflow mounting it can start, which
-// is red, since only storing a value fixes it.
+// the names its jobs mount that the owner's local config allow-lists it for,
+// D2's sweep included) must hold an enabled version somewhere -- its own
+// container, or the project's. Neither means no run of a workflow mounting it
+// can start, which is red, since only storing a value fixes it.
+//
+// The optional Anthropic key is the one name that is not that, and the reason
+// this returns two checks: a job can go without it (infra.OptionalSecret), so
+// with no version anywhere Readiness drops its mount and deploys anyway, and
+// a repository whose models all route through a provider needs no key at all.
+// Requiring one there made doctor red for a repository whose runs are fine
+// (code review, high), so the key is named only when the config really needs
+// it (facts.keyNeeded) and then as a warning: the deploy is right, and a run
+// that calls Anthropic is refused until a key is stored -- what Readiness
+// says as its own note, and validate as its own.
 //
 // It reads metadata only (two listings doctor already has) and never a
 // value, and it adds no check at all for an installation that opted no
 // secret into project-wide storage: there is nothing it could say.
-func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) *doctorCheck {
-	names := slices.Sorted(maps.Keys(facts.candidates))
+func doctorProjectSecretStoredChecks(facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) []doctorCheck {
+	var names []string
+	for _, name := range slices.Sorted(maps.Keys(facts.candidates)) {
+		if infra.OptionalSecret(name) && !facts.keyNeeded {
+			continue
+		}
+		names = append(names, name)
+	}
 	if len(names) == 0 {
 		return nil
 	}
@@ -804,10 +844,10 @@ func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets
 		// Fail closed: an owner could not otherwise tell an installation
 		// that stores nothing from one whose secrets could not be read.
 		// A warning, since nothing here proves a value is missing.
-		return &doctorCheck{ID: "project-secret-stored", Severity: "warning",
+		return []doctorCheck{{ID: "project-secret-stored", Severity: "warning",
 			Problem: fmt.Sprintf("could not list the secrets %s may use project-wide (%s), so whether they have a stored value could not be checked",
 				printableRepo, strings.Join(printableNames(names), ", ")),
-			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(facts.repo) + ", and " + selfCommand() + " secrets ls --project-wide"}
+			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(facts.repo) + ", and " + selfCommand() + " secrets ls --project-wide"}}
 	}
 	have := projectSecretEnabledFromEntries(listed)
 	for name, enabled := range projectSecretEnabled(project) {
@@ -815,22 +855,49 @@ func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets
 			have[name] = true
 		}
 	}
-	var missing, cmds []string
+	var missing, cmds, optionalMissing, optionalCmds []string
 	for _, name := range names {
 		if have[name] {
 			continue
 		}
+		// D2 (plan Task 2.1) made the project copy the default store for
+		// exactly these names, so the Fix leads with the bare command -- which
+		// stores the value where the default puts it, reaching exactly the
+		// repositories the owner allow-listed it for -- as the sibling
+		// claude-accounts check does (code review, low). Leading with
+		// --repo <repo> offered a repository copy first, and a repository copy
+		// wins over the project copy forever (§5, the footgun these checks
+		// exist to name), to a person whose repository may mount the shared
+		// one.
+		set := selfCommand() + " secrets set " + quoteWord(name)
+		both := []string{set, set + " --repo " + quoteWord(facts.repo)}
+		if infra.OptionalSecret(name) {
+			optionalMissing = append(optionalMissing, pluginwire.Printable(name))
+			optionalCmds = append(optionalCmds, both...)
+			continue
+		}
 		missing = append(missing, pluginwire.Printable(name))
-		cmds = append(cmds, selfCommand()+" secrets set "+quoteWord(name)+" --repo "+quoteWord(facts.repo),
-			selfCommand()+" secrets set "+quoteWord(name)+" --project-wide")
+		cmds = append(cmds, both...)
 	}
-	if len(missing) == 0 {
-		return &doctorCheck{ID: "project-secret-stored", OK: true}
+	var out []doctorCheck
+	switch {
+	case len(missing) > 0:
+		// A name a run mounts whatever the config says: red.
+		out = append(out, doctorCheck{ID: "project-secret-stored",
+			Problem: fmt.Sprintf("%s may use %s project-wide, and neither its own container nor the project's holds an enabled version: no run of a workflow mounting one can start",
+				printableRepo, strings.Join(missing, ", ")),
+			Fix: strings.Join(cmds, ", or ")})
+	case len(optionalMissing) == 0:
+		// Nothing this repository may use project-wide is missing.
+		out = append(out, doctorCheck{ID: "project-secret-stored", OK: true})
 	}
-	return &doctorCheck{ID: "project-secret-stored",
-		Problem: fmt.Sprintf("%s may use %s project-wide, and neither its own container nor the project's holds an enabled version: no run of a workflow mounting one can start",
-			printableRepo, strings.Join(missing, ", ")),
-		Fix: strings.Join(cmds, ", or ")}
+	if len(optionalMissing) > 0 {
+		out = append(out, doctorCheck{ID: "project-secret-optional", Severity: "warning",
+			Problem: fmt.Sprintf("%s may use %s project-wide, and neither its own container nor the project's holds an enabled version: the job deploys without it, and a run that calls Anthropic is refused until one is stored",
+				printableRepo, strings.Join(optionalMissing, ", ")),
+			Fix: strings.Join(optionalCmds, ", or ")})
+	}
+	return out
 }
 
 // projectSecretEnabledFromEntries is projectSecretEnabled over doctor's own
@@ -929,6 +996,110 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 	return &doctorCheck{ID: "project-secret-scope-stale", Severity: "warning",
 		Problem: strings.Join(stale, "; ") + ": the deployed job was applied before the secret's scope changed",
 		Fix:     "run " + selfCommand() + " init --repo " + quoteWord(facts.repo) + " in your own terminal to reapply the repository, so the next run mounts the copy Fugaro resolves"}
+}
+
+// doctorSecretScopeChecks are doctor's "secret-scope" pair (plan Task 2.3
+// step 1): what this checkout's jobs mount, and from where — the surface
+// the cross-cutting list asks for next to the launcher grants, since under
+// D2 the same name can resolve to two different containers and only one of
+// them is the one a job reads.
+//
+// "secret-scope" is the info line: for every name this checkout's jobs
+// mount, the copy Fugaro resolves for it (facts.logical, facts.repoIDs,
+// facts.candidates, and the two listings doctor already fetched), naming
+// the scope rather than either container's ID — "project scope", "repository
+// copy", or "no enabled copy this repository can resolve" for a name neither
+// listing holds an enabled version of that this repository may resolve
+// (code review, minor: the docs say the line answers this for every name, so
+// it does, rather than silently dropping the names nothing is stored for; and
+// the wording says exactly that, not "no copy stored", which is false twice
+// over — a container that exists holding only disabled versions, and a
+// project-wide copy that is enabled but not eligible for this repository,
+// both reach this branch). Informational and never failing, exactly like
+// provider-open-to-every-repository: the state is the owner's, and this only
+// makes it readable in one place.
+//
+// "secret-scope-shadowed" is the warning: a name stored both project-wide
+// and in this repository's own container, where the repository copy wins
+// (design project-secrets.md §5) — the footgun `fugaro secrets set` already
+// warns about at store time (internal/cli/secrets.go's storeSecretValue
+// notes), now visible from a checkout instead of only at the moment of
+// storing. A warning, not red: the next init --repo cannot change which copy
+// wins, so the fix is deliberate, and doctor without --strict still passes.
+//
+// It is the stored copies it compares, not a deployed job's mounts: that is
+// project-secret-scope-stale's own question, and a job that is merely behind
+// its repository's stored copies is already named there.
+//
+// Both read metadata only — names and version state — and never a value.
+// The pair says nothing when the listings could not be read (listed == nil,
+// or !projectOK): project-secret-stored already fails closed on exactly that
+// unreadable listing, so this stays silent rather than double-report a state
+// neither can vouch for.
+func doctorSecretScopeChecks(facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) []doctorCheck {
+	if listed == nil || !projectOK {
+		return nil
+	}
+	repoEnabled := projectSecretEnabledFromEntries(listed)
+	projEnabled := projectSecretEnabled(project)
+	names := map[string]bool{}
+	for name := range facts.repoIDs {
+		names[name] = true
+	}
+	for name := range facts.candidates {
+		names[name] = true
+	}
+	var lines, shadowed []string
+	for _, name := range slices.Sorted(maps.Keys(names)) {
+		_, isCandidate := facts.candidates[name]
+		inProject := isCandidate && projEnabled[name]
+		inRepo := repoEnabled[name]
+		printable := pluginwire.Printable(name)
+		switch {
+		case inRepo && inProject:
+			lines = append(lines, printable+" — repository copy, which wins over the project's")
+			shadowed = append(shadowed, name)
+		case inRepo:
+			lines = append(lines, printable+" — repository copy")
+		case inProject:
+			lines = append(lines, printable+" — project scope")
+		default:
+			// A name this checkout's jobs mount that resolves to no enabled
+			// copy at all: neither container holds an enabled version this
+			// repository may resolve — which is not the same as "nothing is
+			// stored" (a container can exist holding only disabled versions,
+			// or hold a project-wide copy this repository is not eligible
+			// for). The listing answers the question the docs ask it ("which
+			// copy does this name resolve to") for every name, not only for
+			// the ones something is stored for, and "nothing yet" is the
+			// answer that matters most to a reader (project-secret-stored is
+			// the red check for it).
+			lines = append(lines, printable+" — no enabled copy this repository can resolve")
+		}
+	}
+	var out []doctorCheck
+	if len(lines) > 0 {
+		out = append(out, doctorCheck{ID: "secret-scope", Severity: "info",
+			Problem: "secrets this checkout's jobs mount, by the copy Fugaro resolves for each: " + strings.Join(lines, "; "),
+			Fix: "run " + selfCommand() + " secrets ls --json for the project's containers and " +
+				selfCommand() + " secrets ls --repo " + quoteWord(facts.repo) + " --json for this repository's own"})
+	}
+	if len(shadowed) > 0 {
+		printable := printableNames(shadowed)
+		// Every shadowed name gets its own command (code review, minor): the
+		// fix is printed to be pasted, and naming only the first left the
+		// others with no command at all.
+		cmds := make([]string, 0, len(shadowed))
+		for _, name := range shadowed {
+			cmds = append(cmds, selfCommand()+" secrets set "+quoteWord(name)+" --repo "+quoteWord(facts.repo))
+		}
+		out = append(out, doctorCheck{ID: "secret-scope-shadowed", Severity: "warning",
+			Problem: fmt.Sprintf("%s: stored in %s's own container and project-wide at once, and a repository copy with an enabled version wins over the project copy, so the project's value never reaches this repository",
+				strings.Join(printable, ", "), pluginwire.Printable(facts.repo)),
+			Fix: "store the value you mean with " + strings.Join(cmds, ", or ") +
+				" to keep this repository's own copy up to date, or disable the repository copy's versions (gcloud secrets versions disable) if the project's value is the one this repository should mount"})
+	}
+	return out
 }
 
 // doctorProjectSecretAccessorChecks is doctor's project-wide
@@ -1033,16 +1204,30 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 // excluded, since that is the repository's existing, unconditionally
 // required secret and already covered by doctor's other checks) should have
 // a stored token. It adds no Secret Manager call of its own: listed is
-// whatever doctorSecrets already fetched (metadata only, by label, never a
-// value), so an installation with no claude_accounts configured for repo
-// triggers no new read at all. listed == nil means that listing itself
-// could not be attempted or failed (no origin, no credentials, Secret
-// Manager unreachable): this is reported as a warning, never silence,
-// since otherwise an owner could not tell whether a configured account is
-// actually usable (fail closed). Every name or slug this check echoes is
-// bounded by pluginwire.Printable, since a repository's origin remote and
-// the owner's own local config are both outside this function's control.
-func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secretEntry) *doctorCheck {
+// whatever doctorSecrets already fetched and project whatever
+// doctorProjectSecrets did (metadata only, by label, never a value), so an
+// installation with no claude_accounts configured for repo triggers no new
+// read at all.
+//
+// Both listings are read because D2 (plan Task 2.1) made the project copy
+// the default store for exactly these names: a named account's token is
+// project-wide-eligible when its own allow_data_to lists repositories, which
+// is the case every account here is in. Reading only the repository's own
+// containers made doctor call a token stored once for the project missing,
+// and its Fix -- `secrets set <secret> --repo <repo>` -- then stored a
+// repository copy that wins over the project copy forever (§5, the footgun
+// the project-secret checks already name). A missing token's Fix is
+// therefore the bare command, which stores it where D2's default puts it,
+// reaching exactly the repositories the account's allow_data_to lists.
+//
+// listed == nil or !projectOK means one of those listings could not be
+// attempted or failed (no origin, no credentials, Secret Manager
+// unreachable): this is reported as a warning, never silence, since
+// otherwise an owner could not tell whether a configured account is actually
+// usable (fail closed). Every name or slug this check echoes is bounded by
+// pluginwire.Printable, since a repository's origin remote and the owner's
+// own local config are both outside this function's control.
+func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) *doctorCheck {
 	var named []string
 	for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
 		if n != config.DefaultClaudeAccount {
@@ -1057,15 +1242,24 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		printableNamed[i] = pluginwire.Printable(n)
 	}
 	printableRepo := pluginwire.Printable(repo)
-	if listed == nil {
+	if listed == nil || !projectOK {
 		return &doctorCheck{ID: "claude-accounts-stored", Severity: "warning",
-			Problem: fmt.Sprintf("could not list %s's secrets, so whether its named Claude account(s) (%s) have a stored token could not be checked",
+			Problem: fmt.Sprintf("could not list %s's secrets (or the project's), so whether its named Claude account(s) (%s) have a stored token could not be checked",
 				printableRepo, strings.Join(printableNamed, ", ")),
-			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(repo)}
+			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(repo) + ", and " + selfCommand() + " secrets ls --project-wide"}
 	}
-	have := make(map[string]bool, len(listed))
-	for _, s := range listed {
-		have[s.Name] = true
+	// Either scope's container with an enabled version is a stored token: the
+	// repository's own copy wins where it exists (§5), and the project's is
+	// what the job mounts otherwise. Every name asked about here is one this
+	// repository may use project-wide (config.AllowedClaudeAccounts above is
+	// the account's own AllowsData, which is what
+	// infra.ProjectSecretCandidate reads for these names), so the project
+	// listing needs no per-name re-check.
+	have := projectSecretEnabledFromEntries(listed)
+	for name, enabled := range projectSecretEnabled(project) {
+		if enabled {
+			have[name] = true
+		}
 	}
 	var missing []string
 	var cmds []string
@@ -1073,7 +1267,7 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		secret := config.ClaudeAccountSecret(n)
 		if !have[secret] {
 			missing = append(missing, pluginwire.Printable(n))
-			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(secret)+" --repo "+quoteWord(repo))
+			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(secret))
 		}
 	}
 	if len(missing) == 0 {
@@ -1325,21 +1519,29 @@ func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcf
 // operator's own credentials, plus the local config. Nothing here writes,
 // and every outcome is a check — a database that cannot be reached is a
 // note, never a failure, which is the shape the rest of doctor has.
-func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+//
+// layer is the project layer's claude_models claims doctor's own checkout
+// resolved, for the routing checks at the end (doctorRoutingChecks): the
+// routes a run resolves the switch over carry them, and doctorRun resolves the
+// checkout before this, so they travel in rather than being read here.
+func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRoutingLayer) []doctorCheck {
 	shared := projectpolicy.PathShared()
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		// The state of every installation that has not run init --firebase:
 		// there is no node to read, and the runs take their ceiling from the
 		// job environment, exactly as they did before this model (P3).
-		return []doctorCheck{{ID: "policy-published", Severity: "info",
+		checks := []doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
 			Fix:     "fugaro init --firebase <firebase-project-id> --name " + lc.Name + " adds the backend the policy is published to"}}
+		return append(checks, doctorRoutingChecks(lc, nil,
+			fmt.Sprintf("project %s has no Firebase budget backend, so there is no policy node to read a switch from", lc.Name), layer)...)
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
-		return []doctorCheck{{ID: "policy-published", Severity: "info",
+		return append([]doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("whether project %s publishes a policy could not be checked: %v", lc.Name, err),
-			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}}
+			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
+			doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database could not be reached (%v), so the published switch cannot be read", err), layer)...)
 	}
 	checks := doctorRulesSkew(ctx, db)
 	// The node is read through projectpolicy.Read, the reader a run uses
@@ -1355,7 +1557,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 		// The marker is not a generation at all. doctorRulesSkew has reported it,
 		// and Read cannot get past it — neither can a run — so there is nothing
 		// further doctor can honestly say about the node.
-		return checks
+		return append(checks, doctorRoutingChecks(lc, nil,
+			fmt.Sprintf("%s does not record the rules generation a policy is read under, so no run reads the node and no switch can be resolved from it", projectpolicy.PathRulesMarker()), layer)...)
 	case errors.As(err, &ve):
 		// P8's release skew, both directions: Decode refuses a node of any other
 		// version, and the two remedies are opposite. A newer node needs a newer
@@ -1364,18 +1567,24 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 		// Fugaro" is backwards there and the remedy is the one the publisher
 		// itself words (publishedPolicyOf): remove it, then publish.
 		if ve.Found > ve.Understood {
-			return append(checks, doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
+			checks = append(checks, doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
 				Problem: fmt.Sprintf("%s: %s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood), shared),
 				Fix:     fmt.Sprintf("upgrade Fugaro to a release that understands version %d", ve.Found)})
+			return append(checks, doctorRoutingChecks(lc, nil,
+				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer)...)
 		}
-		return append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
+		checks = append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
 			Problem: fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood),
 			Fix:     fmt.Sprintf("fugaro project policy publish --delete removes it, then 'fugaro project policy publish' writes this Fugaro's version %d", ve.Understood)})
+		return append(checks, doctorRoutingChecks(lc, nil,
+			fmt.Sprintf("the node at %s is a policy of version %d, which no run applies, so no switch is in force", shared, ve.Found), layer)...)
 	case err != nil:
 		// A read that failed is not "no policy": doctor says which it is.
-		return append(checks, doctorCheck{ID: "policy-published", Severity: "info",
+		checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("the project policy could not be read (%v), so whether one is published, and whether the runs are bounded by it, is unknown", err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"})
+		return append(checks, doctorRoutingChecks(lc, nil,
+			fmt.Sprintf("the policy at %s could not be read (%v), so the switch it holds is unknown", shared, err), layer)...)
 	case !found:
 		info := doctorCheck{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("no policy is published at %s: runs take their ceiling from the job environment", shared),
@@ -1390,13 +1599,29 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 				shared, projectpolicy.PathRulesMarker())
 			info.Fix = "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal to deploy the rules a policy is read under, then 'fugaro project policy publish'"
 		}
-		return append(checks, info)
+		return append(checks, append([]doctorCheck{info},
+			doctorRoutingChecks(lc, nil, fmt.Sprintf("no policy is published at %s, so there is no switch to resolve", shared), layer)...)...)
 	}
 	// found, and Read returned no error: the node is in force, so the checks
 	// below can read it — Decode's error would have arrived as err above.
 	checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 		Problem: fmt.Sprintf("a policy is published at %s (version %d, %d allow-list entries)", shared, p.Version, len(p.AllowRepos)),
 		Fix:     "fugaro project policy show prints it"})
+	if err := refuseUnknownPolicyKeys(p); err != nil {
+		// Published and in force by version and marker, and refused by every
+		// reader anyway: `policy show`, `project show` and `repos ls` refuse it
+		// through this same helper, and so do the launch gates that decide
+		// whether a run is bounded by it at all (projectPolicyRead). A key
+		// nobody reads is a policy that never takes effect, and doctor — the
+		// command an operator runs to find out why a run stopped — reported
+		// this node as published and said nothing else, which read as "in
+		// force". The body is the helper's own sentence rather than a second
+		// wording of it, so what doctor prints is what the command that refused
+		// the operator printed, and the two cannot drift.
+		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
+			Problem: "no run is bounded by the policy node: " + err.Error(),
+			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (fugaro upgrade) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
+	}
 	if len(p.AllowRepos) == 0 {
 		// Empty inside a *published* policy is deny-all (design §5), which is a
 		// different state from an installation that published nothing: every
@@ -1411,7 +1636,362 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
 	}
-	return checks
+	// The two routing checks of plan task 1b.3 step 2, over the node in force:
+	// the switch is read off the policy the runs themselves read, and resolved
+	// the way a run resolves it (config.RoutingClaudeFor over the routes a run
+	// of each repository carries — doctorRoutingChecks).
+	return append(checks, doctorRoutingChecks(lc, p, "", layer)...)
+}
+
+// routingCacheMarkersUnmeasured is what doctor says when the policy routes a
+// Claude ID: whether a provider route reports cache_read/cache_write tokens at
+// all is unmeasured, and a routed Claude senior that never reports a cache read
+// is charged at the full input rate — the difference between list price and
+// several times list price for a long senior review (design §6.2). Check 50
+// (written by Task 1b.4) is the run that measures it, and until it is run the
+// cost of a routed Claude senior is a guess.
+const routingCacheMarkersUnmeasured = "a routed Claude senior's cost is unmeasured: whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN), and a routed Claude that never reports a cache read is charged at the full input rate rather than the cache rate"
+
+// routingCacheMarkersNothingRouted is the same check on a policy that routes no
+// Claude ID: the question is not live yet, and saying which state this is is
+// what keeps the sentence above from reading as a warning about nothing.
+const routingCacheMarkersNothingRouted = "no Claude ID is routed through a provider by this policy, so no call is charged at a route's rate: when the switch routes one, whether that route reports cache_read/cache_write tokens at all is unmeasured until Check 50 runs"
+
+// routingCacheMarkersUnread is the same check when the policy node itself could
+// not be read: no Firebase backend, an unreachable budget database, a marker or
+// a version this binary cannot read, a failed read. Every one of those paths
+// reaches doctorRoutingChecks with no node, and "no Claude ID is routed through
+// a provider by this policy" is a reading of a node nobody read — doctor said
+// the resolution was unresolved on the line beside it and then reported a
+// reading of the same node. It says which state this is instead, as
+// routing-resolution does.
+const routingCacheMarkersUnread = "the policy node was not read (see routing-resolution), so whether a Claude ID is routed through a provider — and so whether any call is charged at a route's rate — is unknown here: when one is, whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN)"
+
+// routingCacheMarkersUndetermined is the same check when the resolution above
+// could not be read at all: doctor cannot say a routed Claude's cost is
+// unmeasured (nothing may route) or that nothing is charged at a route's rate
+// (everything may), so it says which state this is rather than picking one.
+const routingCacheMarkersUndetermined = "whether a routed Claude senior's cost is unmeasured is undetermined here: no repository this machine's config names resolves the switch (see routing-resolution), so whether any call is charged at a route's rate at all is unknown; when one is, whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN)"
+
+// routingUnresolvedNoRepo is why the resolution is unresolved when the machine's
+// config names no repository: the routes a run resolves the switch over are per
+// repository (the providers whose allow_data_to admits it), so with no
+// repository named there is no set of routes to resolve over — and a resolution
+// doctor did not resolve is not printed as one, which is the resolver's own
+// rule (config.RoutingClaudeFor).
+const routingUnresolvedNoRepo = "this machine's project config names no repository, and the routes a run resolves the switch over are the ones that repository is allowed to send code to (allow_data_to); run 'fugaro init --repo' in the repository's checkout to record it here"
+
+// doctorRoutingChecks are doctor's two routing checks (plan task 1b.3 step 2).
+//
+// routing-resolution prints the resolution the published policy licenses: one
+// line per Claude ID the switch names, per repository this machine's config
+// names, resolved over the routes a run of that repository carries — the same
+// resolver as a run (config.RoutingClaudeFor) and the same table. Doctor first
+// resolved over the node's whole providers block, and that is a route a run may
+// not have: a provider entry that does not list the repository in
+// allow_data_to is not in FUGARO_MODEL_PROVIDERS at all, so that run halts with
+// "the project's routing switch is not usable" while doctor called the route
+// resolved — false confidence in the one command an operator runs to find out
+// why a run stopped. It resolves over this machine's providers, filtered by
+// allow_data_to for the repository (runner.ProvidersFor, what
+// runner.ProvidersEnv writes into the job's environment), with the project
+// layer's claude_models claims merged in for the repository the machine's
+// checkout resolved them for (doctorRoutingLayer) — the merge a run makes
+// (runner.resolveConfig: config.ClaimsOnRoutes, then config.ApplyClaudeClaims),
+// because a claim is how a route the owner defined comes to serve a Claude ID
+// the owner's own models list does not name.
+//
+// A state doctor cannot read is said to be unresolved, never printed as a
+// resolution: the node's own why, a machine whose config names no repository at
+// all, and a layer whose claims this machine has no checkout to read (the layer
+// applies to a repository whose fugaro.yaml names its project and gcp_project,
+// which is a fact about that repository's own file).
+//
+// routing-cache-markers names the live question a routed Claude senior leaves
+// open until Check 50 (written by Task 1b.4) is run.
+//
+// Both are info, and neither ever fails doctor: an unmeasured cost and a
+// resolution the credentials or the config do not let doctor read are not
+// defects in a configuration, and the resolution is a fact about the node
+// rather than a verdict on it.
+func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why string, layer doctorRoutingLayer) []doctorCheck {
+	if p == nil {
+		// The node nobody read: the layer is not consulted here, because a
+		// switch that is not in force resolves nothing whatever a layer claims.
+		return []doctorCheck{
+			{ID: "routing-resolution", Severity: "info",
+				Problem: "the routing resolution is unresolved: " + why,
+				Fix:     "fugaro project policy show prints the switch the published node holds, and `fugaro validate` prints this line from the operator's own config (offline)"},
+			{ID: "routing-cache-markers", Severity: "info",
+				Problem: routingCacheMarkersUnread,
+				Fix:     "fugaro project policy publish writes the switch the owner's config holds; Check 50 measures what a routed Claude costs"},
+		}
+	}
+	var c *config.RoutingClaude
+	if p.Routing != nil {
+		c = p.Routing.Claude
+	}
+	// The repositories this machine's config names, in the spelling a run
+	// passes and allow_data_to is written in — owner/name (infra.Inputs.Repo)
+	// — not the canonical provider/owner/name the allow-list is written in
+	// (doctorCanonicalRepos). Two questions, two spellings: a check that
+	// swapped them would resolve over a table no run has.
+	repos := slices.Sorted(maps.Keys(lc.Repos))
+	if len(repos) == 0 {
+		return []doctorCheck{
+			{ID: "routing-resolution", Severity: "info",
+				Problem: "the routing resolution is unresolved: " + routingUnresolvedNoRepo,
+				Fix:     "fugaro project policy show prints the switch the published node holds, and `fugaro validate` prints the resolution from the same config this check needs"},
+			{ID: "routing-cache-markers", Severity: "info", Problem: routingCacheMarkersUndetermined,
+				Fix: "fugaro run's model call lines record serving_model, priced_as, cache_read and cache_write_5m: Check 50 is the run that compares them on a routed Claude senior"},
+		}
+	}
+	var lines []string
+	routed := false
+	var named []string
+	if c != nil {
+		named = c.Models
+	}
+	if len(named) == 0 {
+		// Two states read as one here before: no switch at all, and a switch
+		// that is published and names no Claude ID. The second is a legal block
+		// — `via: direct` with an empty list routes nothing, which is D1b's
+		// default said out loud (CheckRoutingShape) — and "no routing switch is
+		// published" is a claim about the node that is false of it. c is
+		// non-nil here only for a block that reached the check: projectpolicy
+		// holds a node to CheckRoutingShape (validRouting), and an empty list
+		// under either open via, or a block written with no via at all, is
+		// refused there, so this prints the state the node can actually be in.
+		if c == nil {
+			lines = append(lines, "no routing switch is published, so every Claude ID goes direct (D1b's default)")
+		} else {
+			lines = append(lines, fmt.Sprintf("a switch is published with via: %s; every Claude ID goes direct (D1b's default)", c.ViaValue()))
+		}
+	}
+	// Whether a run reaches the switch is the runner's own decision
+	// (routingReachOf — runner.RoutingInertReason, the function applyRouting
+	// branches on), and it is not the same answer for every switch: a run whose
+	// gateway is off returns before it reads the switch, via: auto never routes
+	// a Vertex run, and with an Anthropic API key stored in the job auto keeps
+	// the pins direct. Every arm below reads it — a resolution printed as the
+	// run's where no run takes it is the false confidence this check exists not
+	// to give (the review finding on the resolved arm, which printed
+	// "-> route, sent as X" and claimed a routed cost for a run whose gateway
+	// is off), and a halt asserted where none happens is the same error the
+	// other way.
+	//
+	// It is asked once, outside the loop, because it is the same for every
+	// repository and every model: only the routes do not depend on it. It is
+	// asked of an api-key credential and the job's own budget mode — doctor
+	// reads the policy and this machine's config, not the repository's
+	// fugaro.yaml, so neither the credential nor the stored key is its to read.
+	// api-key is the credential auto's key question is about, and Vertex
+	// answers the same for every other via — the sentence the auto state prints
+	// names that difference itself. The mode is the job's (doctorNodeMode: the
+	// node's own, or the environment's where the node says nothing).
+	mode := doctorNodeMode(lc, p)
+	reach, reason := routingReachOf(c, "api-key", mode)
+	// inert is appended to a line whose resolution no run of this repository
+	// carries out, and its reader is the same one validate's note has: the line
+	// says what the switch licenses and the clause says that nothing here takes
+	// it, so the resolution is not read as a cost the project is paying.
+	inert := ""
+	if reach == routingInert {
+		inert = " (nothing takes it here: " + routingInertWhy(reason, "api-key", mode) + ", so the pins keep Claude's own IDs)"
+	}
+	for _, repo := range repos {
+		// The routes a run of this repository carries: this machine's
+		// providers, filtered by allow_data_to, with the project layer's
+		// claude_models merged in when this machine read them for this very
+		// repository (doctorRoutingLayer).
+		providers := doctorRoutes(lc, repo, layer.claimsFor(repo))
+		for _, m := range named {
+			route, sent, ok := config.RoutingClaudeFor(c, m, providers)
+			switch {
+			case !ok:
+				base := fmt.Sprintf("%s: %s -> unresolved: the switch names it and none of the routes a run of this repository carries claims it with allow_data_to written", repo, m)
+				tail := fmt.Sprintf(" — check the entry's models list, and that its allow_data_to admits %s", repo)
+				switch reach {
+				case routingAlways:
+					lines = append(lines, base+"; a run of this repository whose gateway is on halts at it (the project's routing switch is not usable)"+tail+layer.unknownFor(repo))
+				case routingKeyless:
+					lines = append(lines, base+"; via: auto is key-presence driven, so a run of this repository whose gateway is on halts at it unless the job has an Anthropic API key stored, and a Vertex run never reaches it at all"+tail+layer.unknownFor(repo))
+				default:
+					// The mode is the node's when it sets one and the job's own
+					// ceiling when it does not (doctorNodeMode), and the line
+					// says which: "the published policy's budget" is false of a
+					// node that says nothing about the budget, and that reading
+					// is what this sentence used to make for it.
+					who := "the job's own ceiling"
+					if p.Budget.Mode != "" {
+						who = "the published policy's budget"
+					}
+					lines = append(lines, base+", and under "+who+" no run of this repository reaches the switch (budget.mode is "+mode+"), so the switch is inert and nothing halts under it"+tail+layer.unknownFor(repo))
+				}
+			case route == config.RouteDirect:
+				lines = append(lines, fmt.Sprintf("%s: %s -> direct (via: %s)%s", repo, m, c.ViaValue(), inert))
+			default:
+				// routed is what routing-cache-markers turns on: a Claude ID a
+				// run of this repository really sends to a provider, whose
+				// cache cost Check 50 has not measured. A resolution no run
+				// takes is not that, so it does not set it — under a switch no
+				// run reaches, the markers check says no Claude ID is routed,
+				// which is what those runs do.
+				if reach != routingInert {
+					routed = true
+				}
+				lines = append(lines, fmt.Sprintf("%s: %s -> %s, sent as %s%s", repo, m, route, sent, inert))
+			}
+		}
+	}
+	markers := routingCacheMarkersNothingRouted
+	if routed {
+		markers = routingCacheMarkersUnmeasured
+	}
+	routes := "the config's providers, filtered by allow_data_to"
+	if layer.Claims != nil {
+		routes += ", with the project layer's claude_models this machine's checkout resolved merged in"
+	}
+	return []doctorCheck{
+		{ID: "routing-resolution", Severity: "info",
+			Problem: "routing resolves as a run of each repository this machine's config names takes it (the routes are that run's own: " + routes + "): " + strings.Join(lines, "; "),
+			Fix:     "fugaro project policy show prints the switch, and `fugaro validate` prints the same line for a repository's own pins"},
+		{ID: "routing-cache-markers", Severity: "info", Problem: markers,
+			Fix: "fugaro run's model call lines record serving_model, priced_as, cache_read and cache_write_5m: Check 50 is the run that compares them on a routed Claude senior"},
+	}
+}
+
+// doctorRoutingLayer is the project layer's claude_models claims doctor read,
+// and the repository it read them for.
+//
+// A run merges the layer into the routes a repository carries only when that
+// repository's own fugaro.yaml names the layer's project and gcp_project
+// (config.Resolution/resolveConfig's Applied), and the layer object itself is
+// the project's. doctor resolves its checkout's fugaro.yaml over that layer
+// (fugaroYAMLCheck), so it knows the claims and that they apply to the
+// repository that checkout is — and for no other repository its config names,
+// whose fugaro.yaml it has no checkout of. Repo is "" when the checkout's
+// repository could not be read (no parseable origin remote): the claims are
+// then unknown for every repository, which is what Repo == "" says.
+type doctorRoutingLayer struct {
+	Claims map[string][]string
+	Repo   string
+}
+
+// claimsFor are the layer's claims for repo, nil when this machine did not read
+// them for it.
+func (l doctorRoutingLayer) claimsFor(repo string) map[string][]string {
+	if l.Claims == nil || l.Repo != repo || repo == "" {
+		return nil
+	}
+	return l.Claims
+}
+
+// unknownFor is what a line about repo must add when a layer with claims was
+// read but not for repo: the resolution printed for it is this machine's own
+// providers' answer, and the repository's run may have one more route than that.
+// It is empty when no layer with claims was read at all (nothing to say) and for
+// the repository the claims were read for (the line already resolved with them).
+func (l doctorRoutingLayer) unknownFor(repo string) string {
+	if l.Claims == nil || l.Repo == repo {
+		return ""
+	}
+	return "; a project layer's claude_models can claim it for this repository, and this machine read the layer only for its own checkout's (a layer applies to a repository whose fugaro.yaml names its project and gcp_project), so whether one does is not a fact this check reads"
+}
+
+// doctorRoutingLayerOf is the layer claims the routing checks may merge, from
+// the checkout's resolved fugaro.yaml (nil when there is none, or no layer
+// applied): the runner's own reading of a layer (config.ClaudeClaimsOf).
+func doctorRoutingLayerOf(ctx context.Context, rf *resolvedFile) doctorRoutingLayer {
+	if rf == nil {
+		return doctorRoutingLayer{}
+	}
+	claims := config.ClaudeClaimsOf(rf.Layer.Layer)
+	if claims == nil {
+		return doctorRoutingLayer{}
+	}
+	// The repository the claims were resolved for is the checkout's own: it is
+	// that repository's fugaro.yaml the layer was applied to.
+	repo, err := originRepo(ctx)
+	if err != nil {
+		return doctorRoutingLayer{Claims: claims}
+	}
+	return doctorRoutingLayer{Claims: claims, Repo: repo}
+}
+
+// doctorRoutes are the routes a run of repo carries: this machine's providers
+// filtered by allow_data_to for it (runner.ProvidersFor, what
+// runner.ProvidersEnv writes into the job's FUGARO_MODEL_PROVIDERS), with the
+// project layer's claims merged in exactly as runner.resolveConfig merges them
+// — config.ClaimsOnRoutes first (a claim naming a route this repository does
+// not have is dropped, not refused: a run cannot tell that name apart from one
+// nothing defines), then config.ApplyClaudeClaims.
+//
+// A merge the rules refuse (a pattern collision, an empty claim) is a run that
+// does not start either: runner.resolveConfig fails bootstrap on the same
+// problems, so the unmerged table is returned rather than a route table no run
+// would ever have.
+func doctorRoutes(lc *localcfg.Config, repo string, claims map[string][]string) map[string]config.ModelProvider {
+	providers := runner.ProvidersFor(lc.Providers, repo)
+	if len(claims) == 0 {
+		return providers
+	}
+	merged, ps := config.ApplyClaudeClaims(providers, config.ClaimsOnRoutes(providers, claims))
+	if len(ps) > 0 {
+		return providers
+	}
+	return merged
+}
+
+// doctorNodeMode is the budget mode a run of the project has under the
+// published node: the node's own mode when it sets one, and the job
+// environment's own — this machine's config, whose ceiling init --repo deploys
+// into the job (localcfg.BudgetMode) — when it does not.
+//
+// The fallback is the whole point of the function. runner.policyCeiling
+// replaces the environment's ceiling per key, and replaces the mode only when
+// the node writes one (pp.Budget.Mode != ""), while projectpolicy's decoder
+// refuses a *present* budget block that names no mode — leaving the block out
+// is how a policy sets no budget at all. So "" here is "the node says nothing
+// about the mode", never "the node says off": reading it as off made this
+// check print "no run of this repository reaches the switch (budget.mode is
+// off) … nothing halts under it" for a node under an installation that
+// enforces, whose every run does halt on the switch.
+//
+// What the environment's mode is is this machine's own budget block read the
+// way the deploy reads it (localcfg.BudgetMode: an absent block, or one with no
+// mode, is off), which is the same reading the drift note compares the deployed
+// job with. It is not the repository's fugaro.yaml — doctor reads the policy
+// and this machine's config — and the credential is api-key for the same
+// reason, which the caller's own sentence names.
+func doctorNodeMode(lc *localcfg.Config, p *projectpolicy.Policy) string {
+	if p == nil || p.Budget.Mode == "" {
+		return lc.BudgetMode()
+	}
+	return p.Budget.Mode
+}
+
+// doctorCanonicalRepos are the repositories this machine's project config
+// names, as the allow-list spells them: the same conversion
+// (projectpolicy.Canonical) the publish seed and doctorAllowListUncovered use,
+// so the policy, the seed and this check cannot spell one repository three
+// ways. An entry with no provider recorded is skipped rather than guessed: the
+// checkout's fugaro.yaml decides it, and doctor does not read a repository's
+// file to answer a question about the project's policy.
+func doctorCanonicalRepos(lc *localcfg.Config) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		r := lc.Repos[name]
+		if r.Provider == "" {
+			continue
+		}
+		c, err := projectpolicy.Canonical(r.Provider, name)
+		if err != nil {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // doctorAllowListUncovered is the other half of allow-list-empty, and the
@@ -1429,15 +2009,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 // repository's file to answer a question about the project's policy.
 func doctorAllowListUncovered(lc *localcfg.Config, p *projectpolicy.Policy) *doctorCheck {
 	var refused []string
-	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
-		r := lc.Repos[name]
-		if r.Provider == "" {
-			continue
-		}
-		c, err := projectpolicy.Canonical(r.Provider, name)
-		if err != nil {
-			continue
-		}
+	for _, c := range doctorCanonicalRepos(lc) {
 		if !projectpolicy.AdmitRepo(p.AllowRepos, c) {
 			refused = append(refused, c)
 		}
@@ -1498,11 +2070,13 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // A warning, not an error: the fix is the owner's `fugaro init --firebase`
 // and doctor cannot perform it.
 //
-// The same check reports the marker's other wrong value: present and *below*
-// this generation's (see the gen < RulesVersion branch). An absent marker is
-// not one of them — it is generation 0 without a claim, and there is nothing
-// for the rules to be older than; what an absent marker does to a node is
-// doctorPolicyChecks's line to draw.
+// The same check reports the marker's other wrong values: a value that is not a
+// generation this Fugaro may read at all (not an integer, or the negative one no
+// deploy writes — both are Read's MarkerError, and both report its text here)
+// and present-and-*below* this generation's (see the gen < RulesVersion
+// branch). An absent marker is not one of them — it is generation 0 without a
+// claim, and there is nothing for the rules to be older than; what an absent
+// marker does to a node is doctorPolicyChecks's line to draw.
 func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	marker := projectpolicy.PathRulesMarker()
 	var raw json.RawMessage
@@ -1515,16 +2089,37 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		return nil
 	}
 	var gen int
-	if err := json.Unmarshal(raw, &gen); err != nil {
+	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+		// Two values, one state: a node that is not an integer at all, and one
+		// that is a negative integer no deploy writes. Read reads both as a
+		// MarkerError (projectpolicy's MarkerHandEdited carries the argument),
+		// so the report of a marker's wrong value is one text for both here
+		// too. The marker-below branch below is the other state, and its
+		// sentence says the installation's rules predate the policy nodes —
+		// true of an old generation and not of a hand edit, which would send
+		// the operator to redeploy rules that are not what is wrong (the
+		// review finding on this change).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
 			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
 	}
 	if gen > projectpolicy.RulesVersion {
+		// A marker above this binary's RulesVersion, and the review of PR
+		// #402's point: a newer Fugaro wrote it, so the deployed rules are a
+		// generation this binary does not know. The sentence this check used
+		// to print — "the deployed rules are newer than this Fugaro, which
+		// cannot read a project policy written under them" — is the opposite
+		// of what Read does with the marker: a generation at or above this
+		// one's reads as deployed (any marker above RulesVersion included), so
+		// a run under these rules *does* read the published policy. What is
+		// true is that the rules document itself is a shape this binary cannot
+		// verify and must not redeploy over, which is why init --firebase
+		// refuses the state — and the operator who was told the policy is
+		// unreadable would look for the wrong thing.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: fmt.Sprintf("%s records generation %d, and this Fugaro's rules are generation %d: the deployed rules are newer than this Fugaro, which cannot read a project policy written under them",
+			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's own rules carry: a newer Fugaro deployed them, so a policy published under them is read (a marker at or above this Fugaro's generation reads as deployed) while the rules themselves are a shape this binary cannot verify, and it cannot deploy its own over them",
 				marker, gen, projectpolicy.RulesVersion),
-			Fix: fmt.Sprintf("upgrade Fugaro first, and do not re-run 'fugaro init --firebase' with this binary: it would redeploy generation %d over the deployed rules",
+			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro init --firebase' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
 				projectpolicy.RulesVersion)}}
 	}
 	if gen < projectpolicy.RulesVersion {
@@ -1535,27 +2130,58 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// nothing here printed "a policy is published" as info while every run
 		// took the legacy path.
 		//
-		// The body cannot be rulesSkewText, which is the *other* state's
-		// sentence: it says the deployed rules are older than the marker, and
-		// here it is the marker that is below (the review of PR #402).
+		// The body is rulesMarkerBelowText, which is the very sentence the
+		// publish refuses with: one text per state, or the refusal and the
+		// report contradict each other (the reviews of PR #402 and of this
+		// branch).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: fmt.Sprintf("%s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules are the pre-policy ones, so no run reads a published policy and 'fugaro project policy publish' refuses until the marker is brought up",
-				marker, gen, projectpolicy.RulesVersion),
+			Problem: rulesMarkerBelowText(gen),
 			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				policySince, projectpolicy.RulesVersion)}}
 	}
 	live, err := db.Rules(ctx)
 	if err != nil {
-		return nil
+		// A read that failed is not "the rules are current", and it is not the
+		// skew either: doctor cannot tell a document it was refused from one
+		// that matches what this generation generates, so it says what it
+		// knows. Silence here let the policy-published line say that a policy
+		// is published while the document that carries it was never read, and
+		// said nothing about the read that failed. An unreadable read is a
+		// note, never a failure, which is what the rest of the policy checks
+		// do with one (doctorPolicyChecks's "the project policy could not be
+		// read"): the remedy is a credential, not the owner's rules deploy.
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
+			Problem: fmt.Sprintf("the deployed rules could not be read (%v), so whether %s is the generation this Fugaro reads a project policy under, and whether the policy it carries is the one deployed, is unknown", err, marker),
+			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}
-	want, err := rules.Generate()
-	if err != nil || infra.SameJSON(live, want) {
+	want, err := rulesGenerate()
+	if err != nil {
+		// The rules this Fugaro would generate are what the comparison needs,
+		// and not generating them is not "the rules are current": folding this
+		// into the no-skew branch below reported nothing at all, which reads
+		// exactly like a check that was made and found no skew (the review
+		// finding on this change). It is the unreadable-read case's sibling —
+		// doctor cannot tell whether the deployed rules are the generation this
+		// Fugaro reads a project policy under — so it is the same info note,
+		// naming what failed.
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
+			Problem: fmt.Sprintf("the rules this Fugaro would generate could not be generated (%v), so whether the deployed rules are the generation this Fugaro reads a project policy under, and whether the policy they carry is the one deployed, is unknown", err),
+			Fix:     fmt.Sprintf("this binary's embedded rules template is broken, so nothing can be said about %s; report it, and check the installation with a release build (fugaro doctor from one)", marker)}}
+	}
+	if infra.SameJSON(live, want) {
 		return nil
 	}
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
 		Fix:     fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
 }
+
+// rulesGenerate is rules.Generate, indirect so a test can drive the branch
+// that reads its error: the template is embedded in the binary, so no test can
+// break it from the outside, and a failure means this build's own rules cannot
+// be produced — which doctor must report rather than read as "no skew" (the
+// review finding on this change).
+var rulesGenerate = rules.Generate
 
 // emptyPolicyNode reports whether a node read back from the database is JSON
 // null or empty: both the fake and the real database report an absent node as

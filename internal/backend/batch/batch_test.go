@@ -28,7 +28,29 @@ const (
 	// testSecret is a Secret Manager secret *name*, never a value: the job
 	// definition carries names only.
 	testSecret = "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
+
+	// The VM the installation's runs get (Task 7): a machine type the price
+	// table carries, the preloaded boot image, and the two network names a
+	// run's VMs are placed in.
+	testMachineType = "e2-standard-4"
+	testBootImage   = "projects/fake-project/global/images/fugaro-base-0-7-5"
+
+	// testSocketGID is the gid the installation recorded after reading it off
+	// the VM's socket (`stat -c %g /var/run/docker.sock`, Check 57a step 6).
+	// It is deliberately NOT 412, which is what that one boot image answered
+	// on 2026-10-15: the backend must carry the gid it was given and never one
+	// of its own, so a test that passed by matching a hard-coded 412 would be
+	// testing the wrong thing.
+	testSocketGID = 998
 )
+
+// testNetwork is the network interface pair a run's VMs get. Both are named
+// because Batch refuses the no-external-IP field without both (design §1.7,
+// measured by Check 57a).
+func testNetwork() (network, subnetwork string) {
+	return "projects/" + testProject + "/global/networks/default",
+		"projects/" + testProject + "/regions/" + testRegion + "/subnetworks/default"
+}
 
 // testTimeouts is the config/policy read the backend asks for the workflow
 // timeouts (design §2.3). Task 8 wires the real one.
@@ -51,14 +73,23 @@ func (t testTimeouts) LongestTaskTimeout() (time.Duration, error) { return t.lon
 func testOptions(t *testing.T) Options {
 	t.Helper()
 	bf, lf := gcpfake.NewBatch(t), gcpfake.NewLogging(t)
+	network, subnetwork := testNetwork()
 	return Options{
 		GCPProject:     testProject,
 		Region:         testRegion,
 		FugaroProject:  "acme",
 		Image:          testImage,
 		ServiceAccount: testSA,
-		Timeouts:       testTimeouts{task: 30 * time.Minute, longest: time.Hour},
-		Endpoints:      Endpoints{Batch: bf.URL + "/", Logging: lf.URL + "/", NoAuth: true},
+		MachineType:    testMachineType,
+		BootImage:      testBootImage,
+		Network:        network,
+		Subnetwork:     subnetwork,
+		// The installation's socket: the gid the VM reported, and the path
+		// Batch mounts it at (design §2.2). A run asks for it with
+		// LaunchSpec.Docker.
+		Docker:    Docker{SocketGID: testSocketGID},
+		Timeouts:  testTimeouts{task: 30 * time.Minute, longest: time.Hour},
+		Endpoints: Endpoints{Batch: bf.URL + "/", Logging: lf.URL + "/", NoAuth: true},
 	}
 }
 
@@ -421,24 +452,110 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 	}
 }
 
-// TestLaunchSendsNoSecretValue is C10 stated as a search: the bytes Batch
-// receives must not contain a secret's value. The job carries names only, and
-// this is the test that would fail if someone later resolved one.
+// TestLaunchSendsNoSecretValue is C10 stated as a search of the bytes Batch
+// receives, over the one surface where a caller could actually put a value
+// there: Options.Secrets. The job carries names only, and this is the test
+// that fails if someone later resolves one.
+//
+// Hand mutation: in run.go, write the secrets into the task's plain
+// Variables as well (`vars[k] = v` beside `env.SecretVariables = ...`, or
+// `env.Variables = b.o.Secrets` in its place). It is the mutation the review
+// called M4, and it stayed green against the earlier version of this test:
+// that one searched for a value the backend was never given, so nothing could
+// make it fail. This one passes a recognisable value through the API surface
+// -- both halves of the map, the value slot and the variable-name slot -- and
+// then requires the job's serialized form to contain the secret's *name*
+// exactly once.
+//
+// It also covers the two refusals, with a value spelled the way real
+// credentials are: a name-shaped value passes envNameRE, so the entry whose
+// key is the secret is the one the value slot's message must not print. Hand
+// mutation: name that entry by its key in checkSecrets
+// (`fmt.Errorf("the Batch backend's secret for %s is not ...", k)`); red.
 func TestLaunchSendsNoSecretValue(t *testing.T) {
 	ctx := context.Background()
-	const value = "sk-ant-not-a-real-secret-value"
+	const (
+		// A value that is not name-shaped at all: its dashes fail envNameRE, so
+		// it is refused on either side of the map.
+		value = "sk-ant-not-a-real-secret-value"
+		// And a value that IS name-shaped -- an AWS access key id, a form real
+		// credentials really take. It passes envNameRE, so the shape check
+		// cannot tell it from a variable's name, and it is the value the old
+		// value-slot refusal would have printed back (it named the entry by its
+		// key, and the key was the secret).
+		nameShaped = "AKIAIOSFODNN7EXAMPLE"
+	)
+
+	// A value used as the variable's name: the key slot, which refuses without
+	// naming anything.
+	o := testOptions(t)
+	o.Secrets = map[string]string{value: testSecret}
+	b0, err := New(ctx, o)
+	if err == nil {
+		t.Fatalf("New accepted a secret value as a variable name (%+v)", b0)
+	}
+	if strings.Contains(err.Error(), value) || strings.Contains(err.Error(), "sk-ant-") {
+		t.Fatalf("the refusal repeats the secret value: %v", err)
+	}
+
+	// A value in the name slot with a key that is a variable's name: the value
+	// slot's refusal, and it must not repeat the value.
+	o = testOptions(t)
+	o.Secrets = map[string]string{"ANTHROPIC_API_KEY": value}
+	b1, err := New(ctx, o)
+	if err == nil {
+		t.Fatalf("New accepted a secret value in the name slot (%+v)", b1)
+	}
+	if strings.Contains(err.Error(), value) || strings.Contains(err.Error(), "sk-ant-") {
+		t.Fatalf("the refusal repeats the secret value: %v", err)
+	}
+
+	// The same refusal where the key IS a secret: `nameShaped` is a value that
+	// happens to be spelled like a variable's name, so the entry's key is the
+	// thing that must not be printed. The entry is named by position instead.
+	// Hand mutation: put the key back into the value slot's message
+	// (`fmt.Errorf("the Batch backend's secret for %s is not ...", k)`); red.
+	o = testOptions(t)
+	o.Secrets = map[string]string{nameShaped: "AWS_ACCESS_KEY_ID"}
+	b2, err := New(ctx, o)
+	if err == nil {
+		t.Fatalf("New accepted a secret value in the name slot, spelled like a variable name (%+v)", b2)
+	}
+	if strings.Contains(err.Error(), nameShaped) {
+		t.Fatalf("the refusal repeats an environment-name-shaped secret: %v", err)
+	}
+
+	// The documented use: an environment variable name mapped to the secret's
+	// resource name. The job may carry that name -- it is what the VM resolves
+	// -- and nothing else about the secret.
 	b, bf, _, _ := newTestBackend(t, func(o *Options) {
 		o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret}
 	})
 	if _, err := b.Launch(ctx, spec()); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
-	raw, err := json.Marshal(bf.Creates()[0].Job)
+	job := bf.Creates()[0].Job
+	raw, err := json.Marshal(job)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	if strings.Contains(string(raw), value) || strings.Contains(string(raw), "sk-ant-") {
 		t.Fatalf("the job definition carries a secret value: %s", raw)
+	}
+	// Exactly once, and therefore only under secretVariables: the platform
+	// resolves the entry there, so a copy of the name in the task's plain
+	// variables is the same leak under another label (and a copy in both would
+	// also be the collision jobDefinition refuses).
+	if n := strings.Count(string(raw), testSecret); n != 1 {
+		t.Fatalf("the secret's name appears %d times in the job definition, want once (under secretVariables): %s", n, raw)
+	}
+	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables"); len(got) != 6 {
+		t.Errorf("the task's plain variables = %v, want the job's own six and no secret", got)
+	}
+	for k, v := range object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables") {
+		if s, ok := v.(string); ok && strings.Contains(s, "secrets/") {
+			t.Errorf("variables[%s] = %q names a secret: secrets belong in secretVariables", k, s)
+		}
 	}
 }
 
@@ -959,11 +1076,20 @@ func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 	if x.Region != testRegion {
 		t.Errorf("Execution region = %q, want the backend's own %q", x.Region, testRegion)
 	}
-	// And the machine type is left unset: the job definition's machine type
-	// is Task 7's, so a Batch execution prices at no machine type --
-	// "compute not estimated" -- rather than at a guessed one.
-	if x.MachineType != "" {
-		t.Errorf("Execution machine type = %q, want none (the type is Task 7's)", x.MachineType)
+	// The machine type is the job's own, read off the job rather than off the
+	// installation's configuration, so a profile whose machine type changes
+	// does not silently re-price every run already recorded (design §5.2).
+	if x.MachineType != testMachineType {
+		t.Errorf("Execution machine type = %q, want the job's own %q", x.MachineType, testMachineType)
+	}
+	// The job's SCHEDULED time is still not read (design §2.3, §9), so the
+	// window falls back to the create time and says so -- a window that
+	// includes Batch's queue time, which errs high rather than low.
+	if x.Scheduled != (time.Time{}) {
+		t.Errorf("Execution scheduled = %v, want the zero time (Task 7 does not read it)", x.Scheduled)
+	}
+	if !strings.Contains(x.WindowNote(), "errs high") {
+		t.Errorf("WindowNote = %q, want the create-time fallback named", x.WindowNote())
 	}
 	// The number form is the same run, not a second one.
 	if x2, err := b.Execution(ctx, strings.Replace(want, "/projects/"+testProject+"/", "/projects/999/", 1)); err != nil || x2.Name != want {
@@ -1307,6 +1433,634 @@ func TestCodecIsTheBatchCodec(t *testing.T) {
 	}
 	if got := c.Format(id); got != ref.Name {
 		t.Fatalf("Codec().Format = %q, want %q", got, ref.Name)
+	}
+}
+
+// --- Task 7: the job definition, the socket and the VM --------------------
+
+// dockerSpec is the run every Task 7 test launches: the conformance suite's
+// run, with the workflow's `docker: true` ask (design §4.2, C16).
+func dockerSpec() backend.LaunchSpec {
+	s := spec()
+	s.Docker = true
+	return s
+}
+
+// TestJobDefinitionIsAVMWithTheDesignsNetwork is Task 7's job JSON, field by
+// field: a VM of the installation's machine type, booted from the preloaded
+// image (the only fast-start path a Docker run has, C4), placed in both the
+// named network and subnetwork with no external IP (C7 -- and both names are
+// required, which Check 57a measured), and asking for a share of that machine
+// type's quantities.
+func TestJobDefinitionIsAVMWithTheDesignsNetwork(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	call := bf.Creates()[0]
+
+	policy := object(t, call.Job, "allocationPolicy", "instances", "0", "policy")
+	// The machine type is the installation's, and the boot disk is the
+	// preloaded image: a run that pulled fugaro-base instead would spend about
+	// 145 s on a cold start against the budget's 133 s ceiling, and image
+	// streaming -- the other fast path -- cannot carry a socket (design §1.2).
+	if policy["machineType"] != testMachineType {
+		t.Errorf("machineType = %v, want %s", policy["machineType"], testMachineType)
+	}
+	boot := object(t, call.Job, "allocationPolicy", "instances", "0", "policy", "bootDisk")
+	if boot["image"] != testBootImage {
+		t.Errorf("bootDisk.image = %v, want the preloaded image %s", boot["image"], testBootImage)
+	}
+	if fmt.Sprint(boot["sizeGb"]) != "50" {
+		t.Errorf("bootDisk.sizeGb = %v, want 50 (the default Check 57a's jobs carried)", boot["sizeGb"])
+	}
+
+	// Both names, always, and the run's VMs carry no external IP: Batch
+	// refuses noExternalIpAddress without the pair, and the pair without the
+	// field is an external IP, which C7 has the run without.
+	network, subnetwork := testNetwork()
+	ni := object(t, call.Job, "allocationPolicy", "network", "networkInterfaces", "0")
+	if ni["network"] != network || ni["subnetwork"] != subnetwork {
+		t.Errorf("networkInterfaces[0] = network %v, subnetwork %v; want %s, %s", ni["network"], ni["subnetwork"], network, subnetwork)
+	}
+	if ni["noExternalIpAddress"] != true {
+		t.Errorf("noExternalIpAddress = %v, want true (C7)", ni["noExternalIpAddress"])
+	}
+
+	// The task asks for a share of the machine type, not the whole of it: the
+	// VM it lands on also runs the OS, the Batch agent and the Docker daemon,
+	// and a request for the whole type leaves nothing for them and sits
+	// QUEUED. 2000m/4096MiB on e2-standard-4 is what Check 57a scheduled with
+	// (design §7.2), and it is half the vCPUs and a quarter of the memory.
+	cr := object(t, call.Job, "taskGroups", "0", "taskSpec", "computeResource")
+	if fmt.Sprint(cr["cpuMilli"]) != "2000" || fmt.Sprint(cr["memoryMib"]) != "4096" {
+		t.Errorf("computeResource = %v, want e2-standard-4's 2000m/4096MiB (Check 57a's measured request)", cr)
+	}
+}
+
+// TestDockerRunMountsTheSocketAndJoinsItsGroup is the socket recipe C2 takes,
+// stated as the four things that make it work: the host's socket is mounted
+// into the container, the container joins the socket's group by the gid the
+// installation read off the VM (never a hard-coded one, and never the group's
+// name -- there is no docker group inside the image), the agent's environment
+// names it, and Batch's runAsNonRoot stays unset, because only that branch was
+// measured and setting it can move the uid the recipe works for (design §2.2).
+func TestDockerRunMountsTheSocketAndJoinsItsGroup(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if _, err := b.Launch(ctx, dockerSpec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	container := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "runnables", "0", "container")
+	if got := container["volumes"]; !equalJSON(got, []any{"/var/run/docker.sock:/var/run/docker.sock"}) {
+		t.Errorf("container.volumes = %v, want the socket bind mount", got)
+	}
+	if got := container["options"]; got != fmt.Sprintf("--group-add %d", testSocketGID) {
+		t.Errorf("container.options = %v, want \"--group-add %d\" (the gid read off the VM)", got, testSocketGID)
+	}
+	// --privileged is not the recipe (it changes nothing for a uid-1000
+	// process), and --user 0 is the fallback, not the choice: the uid must
+	// stay the image's own fugaro user.
+	if got := fmt.Sprint(container["options"]); strings.Contains(got, "--user") || strings.Contains(got, "--privileged") {
+		t.Errorf("container.options = %v, want the group join and nothing else", got)
+	}
+	// Streaming would drop the options field altogether (measured, 57a-6), so a
+	// Docker run must not turn it on: the field is `omitempty`, so "not on" is
+	// the key being absent from the job, not the key reading false.
+	// Hand mutation: set EnableImageStreaming unconditionally in run.go
+	// (`container.EnableImageStreaming = true`), which the streaming refusal
+	// does not catch because b.o.ImageStreaming is false; red.
+	if on, ok := container["enableImageStreaming"]; ok {
+		t.Errorf("container.enableImageStreaming = %v, want the key absent for a Docker run", on)
+	}
+
+	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if vars["DOCKER_HOST"] != "unix:///var/run/docker.sock" {
+		t.Errorf("DOCKER_HOST = %v, want the mounted socket's path", vars["DOCKER_HOST"])
+	}
+
+	// runAsNonRoot must stay unset: only that branch was measured, and Batch
+	// documents the true branch as running the runnables as an OS Login
+	// non-root user, which could move the container's uid (design §2.2, §9).
+	tg := object(t, bf.Creates()[0].Job, "taskGroups", "0")
+	if v, ok := tg["runAsNonRoot"]; ok {
+		t.Errorf("taskGroups[0].runAsNonRoot = %v, want the field absent", v)
+	}
+}
+
+// TestDockerRunMountsTheConfiguredSocketPath: the socket's path is the
+// installation's, not this package's (Docker.SocketPath, design §2.2). The
+// mount and the run's DOCKER_HOST are both built from it, and neither may
+// fall back to this package's default when one was configured -- a run whose
+// daemon listens at /run/docker.sock would otherwise get a mount of a path
+// that is not there and an address that is not its socket.
+//
+// Hand mutation: in run.go, use HostSocketPath instead of `d.path()` for the
+// volume and for DOCKER_HOST (`p := HostSocketPath`). This is the review's
+// M18, which stayed green while every test ran with the default path.
+func TestDockerRunMountsTheConfiguredSocketPath(t *testing.T) {
+	ctx := context.Background()
+	const p = "/run/docker.sock"
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.Docker.SocketPath = p })
+	if _, err := b.Launch(ctx, dockerSpec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	job := bf.Creates()[0].Job
+	container := object(t, job, "taskGroups", "0", "taskSpec", "runnables", "0", "container")
+	if got := container["volumes"]; !equalJSON(got, []any{p + ":" + p}) {
+		t.Errorf("container.volumes = %v, want the configured socket %s:%s", got, p, p)
+	}
+	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables")["DOCKER_HOST"]; got != "unix://"+p {
+		t.Errorf("DOCKER_HOST = %v, want unix://%s", got, p)
+	}
+	// And the default is not also sent: one socket, one mount.
+	if raw, err := json.Marshal(job); err != nil {
+		t.Fatalf("marshal: %v", err)
+	} else if strings.Contains(string(raw), HostSocketPath) {
+		t.Errorf("the job carries this package's default socket path %s as well: %s", HostSocketPath, raw)
+	}
+}
+
+// TestTheJobHasNoTaskEnvironments: a Batch task's environment comes from
+// taskSpec.environment, and the task-level place (TaskGroup.taskEnvironments)
+// is left empty on purpose. Check 57a-12 measured what a task-level
+// environment does to the pair Batch injects -- a task-level BATCH_TASK_INDEX
+// of 99 reached the container while BATCH_TASK_COUNT stayed 1 -- so a job of
+// this backend never writes there: the run's identity is the job env, and the
+// injected index is not a pair anything may depend on (design §2.5, §8.1
+// Task 7).
+//
+// Hand mutation: add `TaskEnvironments: map[string]*batch.Environment{...}`
+// to the TaskGroup in run.go with any variable in it. The review called the
+// earlier version's silence on this M15, which stayed green.
+func TestTheJobHasNoTaskEnvironments(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	job := bf.Creates()[0].Job
+	tg := object(t, job, "taskGroups", "0")
+	if v, ok := tg["taskEnvironments"]; ok && v != nil {
+		t.Errorf("taskGroups[0].taskEnvironments = %v, want it absent: a task-level environment overrides the task index Batch injects (Check 57a-12)", v)
+	}
+	// The deprecated map beside it, which the API still accepts and which
+	// would be the same override under an older name.
+	if v, ok := object(t, job, "taskGroups", "0", "taskSpec")["environments"]; ok && v != nil {
+		t.Errorf("taskSpec.environments = %v, want it absent (deprecated, and the same override)", v)
+	}
+	// The environment the job does carry is the task's own, and the run's
+	// identity is in it.
+	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables")["FUGARO_RUN"]; got == nil {
+		t.Errorf("the task's own environment is missing: %v", job)
+	}
+}
+
+// TestLaunchRefusesASecretThatIsAlsoAJobVariable: the job's own variables are
+// how the run is told which run, backend and project it is (§2.1, §2.5), and
+// secretVariables resolve into the same environment on the VM. A name in both
+// would leave which entry wins to the platform, so the launch is refused
+// before anything is created rather than launched with a run whose identity
+// may have come from a secret.
+//
+// Hand mutation: drop the collision loop in jobDefinition (leave
+// `env.SecretVariables = b.o.Secrets` alone), which launches the job with
+// FUGARO_RUN in both fields.
+func TestLaunchRefusesASecretThatIsAlsoAJobVariable(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, func(o *Options) {
+		o.Secrets = map[string]string{"FUGARO_RUN": testSecret}
+	})
+	_, err := b.Launch(ctx, spec())
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch(secret named FUGARO_RUN) = %v, want ErrRejected", err)
+	}
+	if !strings.Contains(err.Error(), "FUGARO_RUN") {
+		t.Errorf("the refusal does not name the colliding variable: %v", err)
+	}
+	if len(bf.Creates()) != 0 {
+		t.Fatalf("a refused launch still created %d job(s)", len(bf.Creates()))
+	}
+	// A secret that is not one of the job's own variables is unaffected.
+	b2, bf2, _, _ := newTestBackend(t, func(o *Options) {
+		o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret}
+	})
+	if _, err := b2.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch(a secret that collides with nothing): %v", err)
+	}
+	if got := object(t, bf2.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "secretVariables")["ANTHROPIC_API_KEY"]; got != testSecret {
+		t.Errorf("secretVariables = %v", got)
+	}
+}
+
+// TestLaunchCarriesTheSpecEnv: the launcher's per-execution variables (the
+// budget marker) go into the task's own variables, which is the whole of a
+// Batch task's environment on the VM (design §2.2). The marker is how a run
+// tells a minted token from a project that published no policy (plan
+// R2-8(a)), and a Batch backend that dropped it would leave every Batch run
+// reading the token's absence as "nothing was minted".
+//
+// The map is also why the job's own names are reserved here and not only on
+// Cloud Run: a later write to a map key is what the run would believe about
+// itself, so an entry naming FUGARO_RUN (the run's own identity, which
+// jobDefinition writes for the same map), FUGARO_BACKEND or FUGARO_PROJECT is
+// refused rather than applied — the same collision the secrets check below
+// refuses, for the same reason. The platform's own five are reserved beside
+// them (backend.ReservedEnvNames, which is the same list Cloud Run asks), so
+// the two backends refuse one set of launch entries rather than each its own.
+func TestLaunchCarriesTheSpecEnv(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	s := spec()
+	s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
+	if _, err := b.Launch(ctx, s); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if vars["FUGARO_BUDGET_TOKEN"] != "1" {
+		t.Errorf("the task's variables = %v, want the launch's own entry in them", vars)
+	}
+	// And the job's own identity is still the job's: the marker went in
+	// beside it, not over it.
+	if vars["FUGARO_RUN"] != backendtest.Slug+"/"+spec().RunID || vars["FUGARO_BACKEND"] != backend.CloudBatch {
+		t.Errorf("the task's variables = %v, want the job's own identity intact", vars)
+	}
+
+	// An entry that is not NAME=value, and one naming a variable this job
+	// already sets, are refused before the create: nothing was created, and
+	// the refusal is definitive (ErrRejected) rather than ambiguous, so the
+	// launcher drops its claim and the token it minted.
+	//
+	// The platform's own five are reserved here too, Cloud Run's list
+	// (backend.ReservedEnvNames), and FUGARO_BUCKET is the one of them no
+	// Batch job writes: an entry naming it would be the only writer of the
+	// bucket a run puts its results in, which is what the same entry is
+	// refused for on Cloud Run — where the job's environment already holds it
+	// — rather than a name this backend happens not to set (the review
+	// finding on this change).
+	before := len(bf.Creates())
+	for _, bad := range []string{
+		"FUGARO_BUDGET_TOKEN", "=1", "FUGARO_RUN=acme-app/someone-elses-run",
+		"FUGARO_PROJECT=someone-elses-project", "FUGARO_BUCKET=gs://someone-elses-bucket",
+		"FUGARO_REGION=elsewhere",
+	} {
+		s.Env = []string{bad}
+		if _, err := b.Launch(ctx, s); !errors.Is(err, backend.ErrRejected) {
+			t.Fatalf("Launch with Env %q = %v, want ErrRejected", bad, err)
+		}
+	}
+	// A Docker run's own socket variable is one of them, because that block
+	// writes it: the launch merge is after it, so the path the installation
+	// configured is the one that stays.
+	s.Docker, s.Env = true, []string{"DOCKER_HOST=unix:///tmp/other.sock"}
+	if _, err := b.Launch(ctx, s); !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch overriding a Docker run's DOCKER_HOST = %v, want ErrRejected", err)
+	}
+	if got := len(bf.Creates()); got != before {
+		t.Fatalf("a refused launch still created %d job(s)", got-before)
+	}
+}
+
+// TestARunWithoutDockerGetsNoSocket scopes the socket to the workflows that
+// asked for it (design §4.2, §4.4's last check): a run whose workflow did not
+// ask for Docker gets no mount, no group and no DOCKER_HOST, while still
+// being a VM of the same shape.
+func TestARunWithoutDockerGetsNoSocket(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	job := bf.Creates()[0].Job
+	container := object(t, job, "taskGroups", "0", "taskSpec", "runnables", "0", "container")
+	if got, ok := container["volumes"]; ok {
+		t.Errorf("container.volumes = %v, want none without docker: true", got)
+	}
+	if got, ok := container["options"]; ok {
+		t.Errorf("container.options = %v, want none without docker: true", got)
+	}
+	vars := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if got, ok := vars["DOCKER_HOST"]; ok {
+		t.Errorf("DOCKER_HOST = %v, want none without docker: true", got)
+	}
+	// The VM itself is unchanged: every run on this backend is a VM.
+	if got := object(t, job, "allocationPolicy", "instances", "0", "policy")["machineType"]; got != testMachineType {
+		t.Errorf("machineType = %v, want %s", got, testMachineType)
+	}
+}
+
+// TestLaunchRefusesDockerWithoutASocketGID: the gid is read off the VM, so an
+// installation that has not read it has nothing to join, and a run that asked
+// for Docker is refused before anything is created rather than launched with a
+// socket it cannot open (or with a guessed 412 that belongs to somebody else's
+// boot image).
+func TestLaunchRefusesDockerWithoutASocketGID(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.Docker = Docker{} })
+	_, err := b.Launch(ctx, dockerSpec())
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch(docker without a gid) = %v, want ErrRejected", err)
+	}
+	if len(bf.Creates()) != 0 {
+		t.Fatalf("a refused launch still created %d job(s)", len(bf.Creates()))
+	}
+	// A run that did not ask for Docker is unaffected: the socket is what it
+	// needs the gid for.
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch(no docker): %v", err)
+	}
+}
+
+// TestLaunchRefusesDockerWithImageStreaming: streaming makes Batch ignore the
+// container's options field -- measured on 2026-10-15, and the fact C2 and C4
+// rest on -- so the two are mutually exclusive and the combination is refused
+// rather than launched with a socket that silently is not there (design §1.1,
+// §1.2, §8.1 Task 7).
+func TestLaunchRefusesDockerWithImageStreaming(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.ImageStreaming = true })
+	_, err := b.Launch(ctx, dockerSpec())
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch(docker + streaming) = %v, want ErrRejected", err)
+	}
+	if len(bf.Creates()) != 0 {
+		t.Fatalf("a refused launch still created %d job(s)", len(bf.Creates()))
+	}
+	// A run without Docker may stream: it has no socket to lose.
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch(no docker, streaming): %v", err)
+	}
+	if got, ok := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "runnables", "0", "container")["enableImageStreaming"]; !ok || got != true {
+		t.Errorf("enableImageStreaming = %v (present: %v), want true for a streamed run", got, ok)
+	}
+}
+
+// TestNewRefusesAnIncompleteVMConfiguration: every field Task 7's job JSON
+// needs is required rather than defaulted into something wrong -- a machine
+// type the price table cannot price, a boot image nobody built (the preload is
+// C4's decision, not an optimisation), a network the job cannot be placed in,
+// and a socket gid that is not one.
+func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		tweak func(*Options)
+	}{
+		{"an unknown machine type", func(o *Options) { o.MachineType = "n2-standard-96" }},
+		{"no boot image", func(o *Options) { o.BootImage = "" }},
+		{"no network", func(o *Options) { o.Network = "" }},
+		{"no subnetwork", func(o *Options) { o.Subnetwork = "" }},
+		{"a network that is not a network name", func(o *Options) { o.Network = "default" }},
+		{"a subnetwork that is not a subnetwork name", func(o *Options) { o.Subnetwork = "default" }},
+		{"a subnetwork in another region", func(o *Options) {
+			o.Subnetwork = "projects/" + testProject + "/regions/elsewhere/subnetworks/default"
+		}},
+		{"a socket gid that is not one", func(o *Options) { o.Docker = Docker{SocketGID: -1} }},
+		{"a socket path with no gid", func(o *Options) { o.Docker = Docker{SocketPath: "/run/docker.sock"} }},
+		{"a socket path that is not absolute", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "run/docker.sock"}
+		}},
+		// The mount is `<path>:<path>`, so a path that is the root directory
+		// hands the run the whole filesystem of the machine that has the
+		// daemon, and a path that is not the daemon's socket is a bind of
+		// nothing the run can talk to (design §2.2).
+		{"a socket path that is the root directory", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "/"}
+		}},
+		{"a socket path that is a directory", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "/var/run"}
+		}},
+		{"a socket path that is not docker.sock", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "/var/run/fugaro.sock"}
+		}},
+		{"a socket path that is not clean", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "/var/run/../run/docker.sock/"}
+		}},
+		{"a negative boot disk size", func(o *Options) { o.BootDiskGB = -1 }},
+		// A secret is a NAME on both sides of the map: the value slot is the
+		// resource name the VM resolves, the key is the environment variable.
+		{"a secret value where a name belongs", func(o *Options) {
+			o.Secrets = map[string]string{"ANTHROPIC_API_KEY": "sk-ant-not-a-real-secret-value"}
+		}},
+		{"a secret value as the variable name", func(o *Options) {
+			o.Secrets = map[string]string{"sk-ant-not-a-real-secret-value": testSecret}
+		}},
+		{"a secret name that is not a resource name", func(o *Options) {
+			o.Secrets = map[string]string{"ANTHROPIC_API_KEY": "fugaro-acme-app-anthropic-api-key"}
+		}},
+		{"a variable name with a dash in it", func(o *Options) {
+			o.Secrets = map[string]string{"ANTHROPIC-API-KEY": testSecret}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := testOptions(t)
+			tc.tweak(&o)
+			if _, err := New(context.Background(), o); err == nil {
+				t.Fatalf("New accepted %s", tc.name)
+			}
+		})
+	}
+	// The untweaked configuration is accepted, so each refusal above is about
+	// its own field.
+	if _, err := New(context.Background(), testOptions(t)); err != nil {
+		t.Fatalf("New(refused a complete configuration): %v", err)
+	}
+	// And the forms that are right are not refused by a check written too
+	// tightly: a secret named with a pinned version, and a socket path that is
+	// not this package's default.
+	o := testOptions(t)
+	o.Secrets = map[string]string{
+		"ANTHROPIC_API_KEY": testSecret + "/versions/7",
+		"FUGARO_OTEL_TOKEN": "projects/" + testProject + "/secrets/fugaro-otel",
+	}
+	o.Docker.SocketPath = "/run/docker.sock"
+	if _, err := New(context.Background(), o); err != nil {
+		t.Fatalf("New(refused a valid secret name or socket path): %v", err)
+	}
+}
+
+// TestTheVMDefaultsAreTheDesignsOwn: the two fields an installation may leave
+// unset are the design's own values -- the e2-standard-4 the design names as
+// the likely default, which every price and size in prices.go is carried for,
+// and the 50 GB disk Check 57a's jobs carried (design §1.3, §7.2) -- and they
+// are defaults, not silent zeros: a job whose computeResource and boot disk
+// were zero would be a VM of the wrong shape or no VM at all.
+func TestTheVMDefaultsAreTheDesignsOwn(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.MachineType, o.BootDiskGB = "", 0 })
+	if defaultMachineType != "e2-standard-4" {
+		t.Errorf("defaultMachineType = %q, want the design's e2-standard-4 (§1.3)", defaultMachineType)
+	}
+	if defaultBootDiskGB != 50 {
+		t.Errorf("defaultBootDiskGB = %d, want the 50 Check 57a's jobs carried (§7.2)", defaultBootDiskGB)
+	}
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	policy := object(t, bf.Creates()[0].Job, "allocationPolicy", "instances", "0", "policy")
+	if policy["machineType"] != defaultMachineType {
+		t.Errorf("machineType = %v, want the default %s", policy["machineType"], defaultMachineType)
+	}
+	if got := object(t, policy, "bootDisk")["sizeGb"]; fmt.Sprint(got) != fmt.Sprint(defaultBootDiskGB) {
+		t.Errorf("bootDisk.sizeGb = %v, want the default %d", got, defaultBootDiskGB)
+	}
+	// The execution reports the same type, and it prices: the machine type's
+	// quantities are what a run of it is billed (design §5.2).
+	if x, err := b.Execution(ctx, ref.Name); err != nil {
+		t.Fatalf("Execution: %v", err)
+	} else if x.MachineType != defaultMachineType {
+		t.Errorf("Execution machine type = %q, want the default %s", x.MachineType, defaultMachineType)
+	}
+}
+
+// TestExecutionReportsTheJobsOwnMachineType: the machine type is a fact about
+// the execution, so it is read off the job that ran, not off the backend's
+// current Options. An operator who changes the profile's machine type -- a
+// bigger type for a heavier workflow, say -- must not silently re-price every
+// run already recorded at the new type's quantities (design §5.2), and a job's
+// record outlives the change by 60 days (§2.4).
+func TestExecutionReportsTheJobsOwnMachineType(t *testing.T) {
+	ctx := context.Background()
+	b, _, _, _ := newTestBackend(t, nil)
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	// The profile changes under the recorded run.
+	b.o.MachineType = "c2-standard-8"
+	x, err := b.Execution(ctx, ref.Name)
+	if err != nil {
+		t.Fatalf("Execution: %v", err)
+	}
+	if x.MachineType != testMachineType {
+		t.Errorf("Execution machine type = %q after the profile changed, want the job's own %q", x.MachineType, testMachineType)
+	}
+}
+
+// TestAJobThatNamesNoMachineTypeFallsBackToTheConfiguration: MachineType is a
+// fact about the execution, read off the job so that a later change of the
+// installation's profile cannot silently re-price runs already recorded
+// (design §5.2, and TestExecutionReportsTheJobsOwnMachineType). This
+// backend's own jobs always name one -- checkVM requires a machine type and
+// jobDefinition writes it into the job -- so a job that names none is one this
+// backend did not build, or one built before the field was sent. Reading it
+// must then fall back to the installation's configured type: an empty
+// MachineType is how backend.Execution says "not a VM", and a VM-backed run
+// read as one would be priced on Cloud Run's path instead of on the machine
+// type it really is.
+//
+// The bodies below are the four shapes that reach the fallback, one per guard
+// in jobMachineType plus the empty policy.
+//
+// Hand mutation: drop the fallback in toExecution (leave `x.MachineType =
+// jobMachineType(j)` with no second statement); every case here goes red.
+func TestAJobThatNamesNoMachineTypeFallsBackToTheConfiguration(t *testing.T) {
+	ctx := context.Background()
+	const configured = "c2-standard-8"
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.MachineType = configured })
+	for name, tc := range map[string]struct{ id, body string }{
+		"no allocation policy":          {"20260927-100000-a001", `{"taskGroups":[{"taskCount":"1"}]}`},
+		"no instances":                  {"20260927-100000-a002", `{"allocationPolicy":{"instances":[]}}`},
+		"a null instance":               {"20260927-100000-a003", `{"allocationPolicy":{"instances":[null]}}`},
+		"an instance with no policy":    {"20260927-100000-a004", `{"allocationPolicy":{"instances":[{}]}}`},
+		"a policy with no machine type": {"20260927-100000-a005", `{"allocationPolicy":{"instances":[{"policy":{}}]}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := JobID(backendtest.Slug, backendtest.Workflow, tc.id)
+			postRawJob(t, bf, id, tc.body)
+			x, err := b.Execution(ctx, "projects/"+testProject+"/locations/"+testRegion+"/jobs/"+id)
+			if err != nil {
+				t.Fatalf("Execution: %v", err)
+			}
+			if x.MachineType != configured {
+				t.Errorf("MachineType = %q, want the configured %s: a job that names none must not read as a non-VM execution", x.MachineType, configured)
+			}
+		})
+	}
+}
+
+// TestAFinishedBatchRunHasNoWindowToPrice: a Batch job's record outlives the
+// run by 60 days (design §2.4) and this backend reads no completion time
+// (Started and Completed are left zero: the job's status events are
+// UNVERIFIED, §2.3). So a finished run's window must be unknown -- "compute
+// not estimated" -- and must not grow with every read, which is what pricing
+// it from `now` would do: one hour, one day and ten days after the same job
+// ended would be three different estimates for one finished run.
+func TestAFinishedBatchRunHasNoWindowToPrice(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	bf.SetState(ref.Job, "SUCCEEDED")
+	x, err := b.Execution(ctx, ref.Name)
+	if err != nil {
+		t.Fatalf("Execution: %v", err)
+	}
+	if !x.State.Terminal() {
+		t.Fatalf("Execution state = %q, want a terminal one", x.State)
+	}
+	if x.MachineType == "" || x.Created.IsZero() {
+		t.Fatalf("Execution = %+v: the machine type and create time are what a window would be built from", x)
+	}
+	if !x.Completed.IsZero() {
+		t.Fatalf("Completed = %v, want the zero time (this backend reads none)", x.Completed)
+	}
+	for _, d := range []time.Duration{time.Hour, 24 * time.Hour, 240 * time.Hour} {
+		if got, ok := x.BilledWindow(x.Created.Add(d)); ok {
+			t.Errorf("%v after the job ended, BilledWindow = %v, true; want unknown, never a figure that grows", d, got)
+		}
+	}
+	// A running run is the opposite case and is priced: its VM really is
+	// billing, and the window says where it started (errs high).
+	bf.SetState(ref.Job, "RUNNING")
+	if y, err := b.Execution(ctx, ref.Name); err != nil {
+		t.Fatalf("Execution: %v", err)
+	} else if d, ok := y.BilledWindow(y.Created.Add(time.Hour)); !ok || d != time.Hour {
+		t.Errorf("a running job's window = %v, %v; want the hour since its creation, known", d, ok)
+	}
+}
+
+// TestTheTaskLeavesTheVMHeadroom: computeResource is a share of the machine
+// type, never the whole of it, on every type this build can price. Batch
+// places a task on a VM that can hold what it asks for, and that VM is also
+// running the OS, the Batch agent and the Docker daemon (design §1.3, §2.2):
+// a request for the whole type is a job that sits QUEUED, which is the failure
+// this leaves room against. The shares themselves are Check 57a's measured
+// request -- 2000m/4096MiB on e2-standard-4, half the vCPUs and a quarter of
+// the memory (§7.2) -- and Check 57b-9 is what measures whether they can be
+// raised.
+func TestTheTaskLeavesTheVMHeadroom(t *testing.T) {
+	for _, name := range KnownMachineTypes() {
+		mt, err := MachineTypeOf(name)
+		if err != nil {
+			t.Fatalf("MachineTypeOf(%s): %v", name, err)
+		}
+		got := taskResources(mt)
+		fullCPU, fullMem := int64(mt.VCPU)*1000, int64(mt.MemoryGiB)*1024
+		if want := fullCPU / 2; got.CpuMilli != want {
+			t.Errorf("%s: cpuMilli = %d, want half the type's %d = %d", name, got.CpuMilli, fullCPU, want)
+		}
+		if want := fullMem / 4; got.MemoryMib != want {
+			t.Errorf("%s: memoryMib = %d, want a quarter of the type's %d = %d", name, got.MemoryMib, fullMem, want)
+		}
+		if got.CpuMilli >= fullCPU || got.MemoryMib >= fullMem {
+			t.Errorf("%s: the task asked for the whole machine type (%+v)", name, got)
+		}
+		if got.CpuMilli <= 0 || got.MemoryMib <= 0 {
+			t.Errorf("%s: the task asked for nothing (%+v)", name, got)
+		}
+	}
+	// The design's own probe request, on the design's own type: the numbers
+	// above are not invented, they are what Check 57a submitted.
+	mt, err := MachineTypeOf("e2-standard-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := taskResources(mt); got.CpuMilli != 2000 || got.MemoryMib != 4096 {
+		t.Errorf("e2-standard-4 = %+v, want Check 57a's 2000m/4096MiB", got)
 	}
 }
 

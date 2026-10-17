@@ -791,3 +791,53 @@ func TestRetryRefusesTotalTimeout(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory is the launch's arm
+// of TestOutputCapsMustFitTheWorkflowsMemory's rule (Review Focus 12): the
+// same runner.RecipeGateProblems list is called in finishLaunch's pre-write
+// block, after the image gates and before createTask, so an over-memory
+// artifact launch is refused with nothing written at all — no task, no
+// execution. The runner's own bootstrap is the third arm, for a launch whose
+// recipe the launcher cannot resolve.
+func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
+	f := newCloudFixture(t)
+	testutil.IsolateGit(t)
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	// A job image whose runner knows mode: artifact (artifactsSince): a spec
+	// carrying the mode is refused outright by an older one, so the launch
+	// would be refused by that gate before it reached the memory arithmetic
+	// this test is about.
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release080)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\n" +
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
+		"    resources: { memory: 2Gi }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                 yaml,
+		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n",
+	})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "resources.memory 2Gi") ||
+		!strings.Contains(err.Error(), "5 GiB") {
+		t.Fatalf("err = %v", err)
+	}
+	// Nothing was written: the refusal comes before createTask, so the run
+	// exists neither as a task nor as an execution.
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	if _, err := runstore.Open(b, mustSlug("github", "acme/other"), "20261015-100000-a1b2").ReadTask(context.Background()); err == nil {
+		t.Fatal("the task was written before the caps were checked")
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want 0", n)
+	}
+	// A workflow whose memory holds the set launches (the same checkout, one
+	// key changed): the refusal is the arithmetic, not artifact recipes.
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": strings.Replace(yaml, "memory: 2Gi", "memory: 8Gi", 1)})
+	if _, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel"); err != nil {
+		t.Fatalf("a workflow with room for the set: %v", err)
+	}
+}

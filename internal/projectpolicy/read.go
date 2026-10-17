@@ -64,6 +64,18 @@ func (e *MarkerError) Error() string {
 // marker is generation 0: the pre-policy rules, under which the policy nodes
 // do not exist (the owner's rules deploy has not happened yet, and nothing
 // may halt on that).
+//
+// A *negative* generation is a MarkerError and not a small one. Read asks this
+// function only whether the generation is at least RulesVersion, so a marker of
+// -1 would answer "no": the whole node would read as "not found", which is the
+// legacy path, and a hand-edited -1 would silently take a project-centric
+// installation's policy out of every run's reach — the fail-open MarkerError's
+// own doc forbids, on the one node that decides whether a published policy is
+// read at all. No deploy writes a negative generation (RulesVersion is 1 and
+// only goes up), so a negative one is a hand edit, and it is named rather than
+// guessed at. The same reading applies to a generation far above RulesVersion:
+// that is a newer installation's marker, and it is at least this one's, so it
+// reads as deployed.
 func rulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
 	var raw json.RawMessage
 	found, err := db.Get(ctx, PathRulesMarker(), &raw)
@@ -77,8 +89,29 @@ func rulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
 	if err := json.Unmarshal(raw, &gen); err != nil {
 		return 0, &MarkerError{Value: nodeText(raw)}
 	}
+	if MarkerHandEdited(gen) {
+		return 0, &MarkerError{Value: nodeText(raw)}
+	}
 	return gen, nil
 }
+
+// MarkerHandEdited reports whether the generation a caller has read off
+// config/limits/policyRules is one no deploy writes, which is the value Read
+// refuses as a MarkerError (rulesGeneration's doc has the argument: a negative
+// generation would otherwise answer "no policy here" and take a project-centric
+// installation's published policy out of every run's reach).
+//
+// It is exported because the marker has three readers, and all three must agree
+// about what a negative generation is: Read, which refuses it, `fugaro project
+// policy publish` (internal/cli's requirePolicyRules), which refuses to publish
+// under it, and doctor's policy-rules-skew check, which reports it. Both of the
+// latter branched on "below RulesVersion" and printed rulesMarkerBelowText —
+// whose sentence claims the installation's rules predate the policy nodes, and
+// sends the operator to redeploy rules that are not what is wrong — while Read
+// read the same node as the hand edit it is (the review finding on this
+// change). One predicate, so a marker cannot be one state to the run and
+// another to the two commands that talk about it.
+func MarkerHandEdited(gen int) bool { return gen < 0 }
 
 // nodeText renders a node for an error message: one line, bounded, so a
 // hand-edited node cannot paste a document into a log.

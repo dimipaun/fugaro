@@ -2,14 +2,18 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // doctorPolicyRig is newDoctorRig with the project's budget backend: the RTDB
@@ -325,6 +329,67 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 	})
 
+	t.Run("the deployed rules cannot be read", func(t *testing.T) {
+		// A read that failed is not "the rules are current". doctorRulesSkew
+		// returned nothing when db.Rules errored, so an installation whose
+		// deployed rules the credentials cannot read was reported as one with
+		// no skew at all — and the policy-published line went on to say that
+		// a policy is published, with the document that carries it never read.
+		// Every other unreadable read in this file is a note (doctorPolicyChecks's
+		// "the project policy could not be read"), never silence.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.DenyRead(".settings/rules")
+		checks := doctorChecksByID(t)
+		c, ok := checks["policy-rules-skew"]
+		if !ok {
+			t.Fatalf("policy-rules-skew did not fire though the deployed rules could not be read, so doctor reported the installation as having no skew: %+v", checks)
+		}
+		if c.Severity != "info" {
+			t.Errorf("policy-rules-skew carries severity %q for an unreadable read, want the info note this file's other unreadable reads carry: %+v", c.Severity, c)
+		}
+		if !strings.Contains(c.Problem, "could not be read") || !strings.Contains(c.Problem, "whether") {
+			t.Errorf("the note does not say that the deployed rules were not read and what that leaves unknown: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "credentials") {
+			t.Errorf("the note does not name what to check: %+v", c)
+		}
+		// The note is about the read that failed, not a claim that the rules
+		// are stale: doctor cannot tell the two apart here, and sending the
+		// operator to redeploy on a credential problem would be a guess.
+		if strings.Contains(c.Problem, "older than the marker") {
+			t.Errorf("the unreadable-rules note claims the deployed rules are stale: %+v", c)
+		}
+	})
+
+	t.Run("this Fugaro cannot generate its own rules", func(t *testing.T) {
+		// The comparison needs the rules this binary would write, and
+		// doctorRulesSkew folded a failure to generate them into its no-skew
+		// branch: nothing was reported, which is indistinguishable from a check
+		// that was made and found the deployed rules current, while
+		// internal/infra (firebasedb.go) propagates the same error. The
+		// template is embedded, so no test can break it from the outside —
+		// rulesGenerate is the seam.
+		doctorPolicyRig(t, doctorPolicy(nil), "")
+		rulesGenerate = func() ([]byte, error) { return nil, errors.New("the template is not JSON") }
+		t.Cleanup(func() { rulesGenerate = rules.Generate })
+		checks := doctorChecksByID(t)
+		c, ok := checks["policy-rules-skew"]
+		if !ok {
+			t.Fatalf("policy-rules-skew did not fire though this Fugaro could not generate the rules it would compare against, so doctor reported the installation as having no skew: %+v", checks)
+		}
+		if c.Severity != "info" {
+			t.Errorf("policy-rules-skew carries severity %q, want the info note this file's other checks-that-could-not-be-made carry: %+v", c.Severity, c)
+		}
+		if !strings.Contains(c.Problem, "could not be generated") || !strings.Contains(c.Problem, "whether") {
+			t.Errorf("the note does not say that the rules could not be generated and what that leaves unknown: %+v", c)
+		}
+		// It is not the skew: the deployed rules were read and were not
+		// compared, so the operator must not be sent to redeploy them.
+		if strings.Contains(c.Problem, "older than the marker") {
+			t.Errorf("the note claims the deployed rules are stale: %+v", c)
+		}
+	})
+
 	t.Run("rules newer than this Fugaro", func(t *testing.T) {
 		// The other direction, and the review of PR #402's point: a marker above
 		// this binary's RulesVersion was written by a *newer* Fugaro, so the
@@ -340,8 +405,20 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
 		}
 		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion+1)) ||
-			!strings.Contains(c.Problem, "newer than this Fugaro") {
-			t.Errorf("the check does not say the deployed rules are newer than this binary: %+v", c)
+			!strings.Contains(c.Problem, "a newer Fugaro deployed them") {
+			t.Errorf("the check does not say the deployed rules are a newer Fugaro's: %+v", c)
+		}
+		// Not the claim this check used to make. "the deployed rules are newer
+		// than this Fugaro, which cannot read a project policy written under
+		// them" is the opposite of projectpolicy.Read, which takes a marker at
+		// or above its own generation as deployed — so a run under these rules
+		// does read the published policy, and the operator told otherwise looks
+		// for a node that is being read.
+		if strings.Contains(c.Problem, "cannot read a project policy") {
+			t.Errorf("the check says the policy under newer rules is unreadable, which is the opposite of what projectpolicy.Read does: %+v", c)
+		}
+		if !strings.Contains(c.Problem, "is read") {
+			t.Errorf("the check does not say the policy under newer rules is read: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "upgrade Fugaro") {
 			t.Errorf("the check does not name the fix that does not downgrade: %+v", c)
@@ -349,8 +426,12 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if strings.Contains(c.Fix, "re-run 'fugaro init --firebase' with fugaro") {
 			t.Errorf("the fix tells this binary to redeploy its own template over newer rules: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "would redeploy generation") {
-			t.Errorf("the fix does not say what running init --firebase here would do: %+v", c)
+		// The deploy path refuses this state itself (internal/infra's DB.Plan,
+		// added by the same change), so the fix must say what running init here
+		// does now — refuses — rather than warn about a redeploy the operator
+		// would have to avoid by reading a warning.
+		if !strings.Contains(c.Fix, "refuses this state rather than redeploying generation") {
+			t.Errorf("the fix does not say that init --firebase refuses this state: %+v", c)
 		}
 	})
 
@@ -369,6 +450,9 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion-1)) {
 			t.Errorf("the check does not name the generation the marker records: %+v", c)
 		}
+		if !strings.Contains(c.Problem, "below the generation") || !strings.Contains(c.Problem, "publishing one is refused") {
+			t.Errorf("the check does not say the marker is below the generation a policy is read under: %+v", c)
+		}
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
@@ -379,6 +463,47 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// contradiction (the review of PR #402).
 		if strings.Contains(c.Problem, "the deployed rules are older than the marker") {
 			t.Errorf("the marker-below body reuses the marker-current state's sentence: %+v", c)
+		}
+		// And it is the very sentence the publish refuses with, not a second
+		// wording of the same state: doctor reporting one text while the
+		// refusal prints another is how the two drifted apart in the first
+		// place.
+		if c.Problem != rulesMarkerBelowText(projectpolicy.RulesVersion-1) {
+			t.Errorf("the marker-below body is not the text requirePolicyRules refuses with:\n got %q\nwant %q", c.Problem, rulesMarkerBelowText(projectpolicy.RulesVersion-1))
+		}
+	})
+
+	t.Run("a marker that is a negative generation", func(t *testing.T) {
+		// A negative marker is an integer, so this check's gen < RulesVersion
+		// branch took it as an old deployment and printed
+		// rulesMarkerBelowText — whose sentence says the installation's rules
+		// predate the policy nodes — while projectpolicy.Read reads the same
+		// node as the hand edit it is (a MarkerError; a launcher's -1 would
+		// otherwise take a published policy out of every run's reach). The
+		// operator told "re-run init --firebase" would redeploy rules that are
+		// not what is wrong and come back to the same marker, and doctor's own
+		// report would contradict the publish refusal on the very same node
+		// (the review finding on this change). One predicate
+		// (projectpolicy.MarkerHandEdited), and the hand edit's own text, which
+		// is what this check already prints for a value that is not an integer.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), -1)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Problem, "cannot be told apart") || !strings.Contains(c.Problem, projectpolicy.PathRulesMarker()) {
+			t.Errorf("the check does not report the hand-edited marker as the MarkerError projectpolicy.Read refuses it as: %+v", c)
+		}
+		if strings.Contains(c.Problem, "below the generation") || strings.Contains(c.Problem, "records generation -1") {
+			t.Errorf("the check reports a hand-edited -1 as an old deployment, a claim about rules nothing read: %+v", c)
+		}
+		if strings.Contains(c.Problem, "older than the marker") {
+			t.Errorf("the hand-edited-marker body reuses the document state's sentence: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+			t.Errorf("the check does not name the fix that writes the marker: %+v", c)
 		}
 	})
 }
@@ -398,4 +523,530 @@ func TestDoctorPolicyChecksAreReadOnly(t *testing.T) {
 			t.Errorf("doctor made a non-read call to the database fake: %s %s", req.Method, req.Path)
 		}
 	}
+}
+
+// TestDoctorRoutingCheckNamesTheLiveQuestion is plan task 1b.3 step 2: the
+// routing-resolution check prints the resolution the published policy
+// licenses — or says it is unresolved, rather than printing one nobody read —
+// and routing-cache-markers names the question Check 50 answers: whether a
+// routed Claude senior's cache markers survive a provider route, and the cost
+// that hangs on it. Both are info: neither fails doctor.
+func TestDoctorRoutingCheckNamesTheLiveQuestion(t *testing.T) {
+	doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) {
+		p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: "anthropic-compat", BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+			AllowDataTo: []string{"*"},
+		}}}
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{
+			Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}}
+	}), doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n"))
+	checks := doctorChecksByID(t)
+	res, ok := checks["routing-resolution"]
+	if !ok || res.Severity != "info" {
+		t.Fatalf("routing-resolution = %+v (present %v), want an info check", res, ok)
+	}
+	if !strings.Contains(res.Problem, "claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Errorf("the resolution check does not print the resolution: %+v", res)
+	}
+	cm, ok := checks["routing-cache-markers"]
+	if !ok || cm.Severity != "info" {
+		t.Fatalf("routing-cache-markers = %+v (present %v), want an info check", cm, ok)
+	}
+	for _, want := range []string{"Check 50", "cache_read", "unmeasured"} {
+		if !strings.Contains(cm.Problem, want) {
+			t.Errorf("the cache-markers check does not name %q: %+v", want, cm)
+		}
+	}
+	// A node with no switch routes nothing: the check says that rather than
+	// printing a resolution for a switch that is not published.
+	doctorPolicyRig(t, doctorPolicy(nil), doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n"))
+	if c, ok := doctorChecksByID(t)["routing-resolution"]; !ok || !strings.Contains(c.Problem, "no routing switch is published") {
+		t.Fatalf("a policy with no switch: routing-resolution = %+v (present %v)", c, ok)
+	}
+	// A *published* switch that names no model is a different state and a
+	// different sentence: `via: direct` with an empty list is a legal block
+	// (CheckRoutingShape) that routes nothing — D1b's default is what it opts
+	// every ID into — but the node did publish a switch, and "no routing switch
+	// is published" is a claim about the node that is not true of it. This read
+	// the two states as one, the same conflation validate's own line was fixed
+	// for.
+	doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) {
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{Via: config.RouteDirect}}
+	}), doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n"))
+	c, ok := doctorChecksByID(t)["routing-resolution"]
+	if !ok || !strings.Contains(c.Problem, "a switch is published with via: direct; every Claude ID goes direct") {
+		t.Fatalf("a published via: direct switch: routing-resolution = %+v (present %v)", c, ok)
+	}
+	if strings.Contains(c.Problem, "no routing switch is published") {
+		t.Errorf("a published switch is reported as an unpublished one: %+v", c)
+	}
+	// Nothing published at all: the resolution is unresolved, and doctor says
+	// why instead of inventing one.
+	doctorPolicyRig(t, nil, "")
+	c, ok = doctorChecksByID(t)["routing-resolution"]
+	if !ok || c.Severity != "info" || !strings.Contains(c.Problem, "unresolved") {
+		t.Fatalf("no policy published: routing-resolution = %+v (present %v), want an info check saying unresolved", c, ok)
+	}
+	// The cost question beside it is in the same state, and it has to read as
+	// one: every path to this branch is a node doctor could not read (no
+	// backend, an unreachable database, a marker or version error, a read
+	// error), and "no Claude ID is routed through a provider by this policy" is
+	// a reading of a node nobody read — the second info line contradicting the
+	// first.
+	cm, ok = doctorChecksByID(t)["routing-cache-markers"]
+	if !ok || !strings.Contains(cm.Problem, "not read") {
+		t.Fatalf("an unread node: routing-cache-markers = %+v (present %v), want it to say the node was not read", cm, ok)
+	}
+	if strings.Contains(cm.Problem, "no Claude ID is routed") {
+		t.Errorf("doctor reports a reading of a node it did not read: %+v", cm)
+	}
+}
+
+// TestDoctorReportsAPolicyNodeEveryReaderRefuses is the review of this task's
+// doctor change: a node can be published, in force by version and marker, and
+// still be refused by every reader — policy show, project show, repos ls and
+// the launch gates all refuse a node that lists a top-level key this Fugaro
+// does not know, because a key nobody reads is a policy that never takes
+// effect. doctor, the command an operator runs to find out why a run stopped,
+// printed that node as "a policy is published" (info) and nothing else, so it
+// was the one reader that reported it as governing a run. The check is a
+// warning (it fails doctor under --strict, like allow-list-empty) and is
+// worded by refuseUnknownPolicyKeys, the helper the readers themselves use, so
+// doctor cannot come to say something else about the same node.
+//
+// Mutation (verified, run and restored): carry the check as Severity "info" —
+// the severity subtest fails, "policy-unknown-keys carries severity "info",
+// want warning: runs are refused by this node". Mutation (verified, run and
+// restored): make the branch fire on a node with only known keys
+// (`if err := refuseUnknownPolicyKeys(p); err != nil || len(p.AllowRepos) < 100`)
+// — the second half fails, the check appearing for a node nothing refuses.
+func TestDoctorReportsAPolicyNodeEveryReaderRefuses(t *testing.T) {
+	// The node is seeded as raw JSON: UnknownKeys is json:"-", filled in by
+	// Decode and never written back, so a Policy value built in Go cannot carry
+	// the key the case is about.
+	_, db := doctorPolicyRig(t, nil, "")
+	db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":      projectpolicy.Version,
+		"budget":       map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos":  []string{"github/acme/app"},
+		"nonsense_key": true,
+	})
+	checks := doctorChecksByID(t)
+	if _, ok := checks["policy-published"]; !ok {
+		t.Fatal("the node was not read at all: no policy-published check")
+	}
+	c, ok := checks["policy-unknown-keys"]
+	if !ok {
+		t.Fatalf("a node every reader refuses is reported without a policy-unknown-keys check: %+v", checks)
+	}
+	if c.Severity != "warning" {
+		t.Errorf("policy-unknown-keys carries severity %q, want warning: runs are refused by this node", c.Severity)
+	}
+	for _, want := range []string{"nonsense_key", projectpolicy.PathShared(), "does not know", "never takes effect"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("policy-unknown-keys does not name %q: %s", want, c.Problem)
+		}
+	}
+	// And it must not fire on a node whose keys are all known: a check that
+	// always fires is a check nobody reads.
+	_, known := doctorPolicyRig(t, nil, "")
+	known.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	if c, ok := doctorChecksByID(t)["policy-unknown-keys"]; ok {
+		t.Errorf("a node with only known keys is refused: %+v", c)
+	}
+}
+
+// TestDoctorResolvesTheSwitchOverTheRoutesARunCarries is the review of this
+// task's routing-resolution check, and the state it was wrong about. A run
+// resolves the published switch over FUGARO_MODEL_PROVIDERS, which
+// internal/infra/spec.go writes from the *config's* providers filtered by
+// allow_data_to for the repository being run (runner.ProvidersFor). doctor
+// resolved over the node's whole providers block: for a repository that block
+// does not admit, doctor printed a resolved route while the run had no such
+// route at all and halted — "the project's routing switch is not usable" — in
+// the one command an operator runs to find out why a run stopped.
+//
+// The check now reads the same table a run reads, per repository this machine's
+// config names, and says unresolved where it cannot: a repository the entry
+// does not admit, and a machine that names no repository at all.
+func TestDoctorResolvesTheSwitchOverTheRoutesARunCarries(t *testing.T) {
+	switchToOpenrouter := func(p *projectpolicy.Policy) {
+		// The node claims the model for every repository; the machine's own
+		// config is what decides which routes a run of a repository has.
+		p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: "anthropic-compat", BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+			AllowDataTo: []string{"*"},
+		}}}
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{
+			Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}}
+	}
+	// The route a run of acme/app has.
+	doctorPolicyRig(t, doctorPolicy(switchToOpenrouter), doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n"))
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Fatalf("the resolution is not printed for the repository a run names: %+v", res)
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "unmeasured") {
+		t.Errorf("a routed repository leaves the cost question live: %+v", cm)
+	}
+	// The same switch, and the entry admits another repository: a run of
+	// acme/app carries no such route, so the resolution is unresolved here and
+	// the check says what that run does — it halts.
+	doctorPolicyRig(t, doctorPolicy(switchToOpenrouter), doctorRunRoutes(`["acme/other"]`, "  acme/app:\n    provider: github\n"))
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("a route the repository is not allow-listed for is printed as resolved: %+v", res)
+	}
+	if strings.Contains(res.Problem, "-> openrouter") {
+		t.Errorf("the check prints a resolution a run of this repository does not take: %+v", res)
+	}
+	// The halt is the gateway's (D11, design §6.2): doctor reads the policy,
+	// not a repository's file, so it cannot say whether the run this line is
+	// about has one — the line says what halts, not that every run does.
+	for _, want := range []string{"halts", "gateway is on", "allow_data_to"} {
+		if !strings.Contains(res.Problem, want) {
+			t.Errorf("the unresolved line does not say %q: %+v", want, res)
+		}
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "no Claude ID is routed") {
+		t.Errorf("nothing routes here, and the cost question is stated as live: %+v", cm)
+	}
+	// With no repository named there is no route table to resolve over: the
+	// check says unresolved and why, rather than resolving over the node's
+	// block — the whole finding — or over nothing at all.
+	doctorPolicyRig(t, doctorPolicy(switchToOpenrouter), doctorRunRoutes(`["acme/app"]`, ""))
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "unresolved") || !strings.Contains(res.Problem, "names no repository") {
+		t.Fatalf("a machine naming no repository resolves the switch anyway: %+v", res)
+	}
+	if strings.Contains(res.Problem, "-> openrouter") {
+		t.Errorf("a resolution was printed with no repository to resolve for: %+v", res)
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "undetermined") {
+		t.Errorf("the cost question is stated as answered here: %+v", cm)
+	}
+}
+
+// TestDoctorDoesNotPromiseAHaltTheSwitchNeverReaches is the review finding on
+// the unresolved line: it said "a run of this repository whose gateway is on
+// halts" for every switch, which is false of two states doctor had the via to
+// read — via: auto keeps the pins direct when the job has an Anthropic API key
+// stored, and it never routes a Vertex run at all. The line is now worded from
+// the runner's own decision about the switch (routingReachOf —
+// runner.RoutingInertReason, the function applyRouting branches on), which is
+// the same question internal/runner's TestAutoDoesNotRouteAVertexRun pins.
+//
+// doctor reads the policy and this machine's config, not the repository's
+// fugaro.yaml, so the credential and the stored key are not its to read: it
+// says which run halts, never that every one does.
+func TestDoctorDoesNotPromiseAHaltTheSwitchNeverReaches(t *testing.T) {
+	switchTo := func(via string) func(*projectpolicy.Policy) {
+		return func(p *projectpolicy.Policy) {
+			// The node's own block: projectpolicy holds a published switch to
+			// claiming provider entries (validRouting), so a node written with
+			// a via and no entry that serves the model is refused as a whole
+			// and the check never sees it. The routes a *run* resolves over are
+			// this machine's config's (rows below), which is the table this
+			// line is about.
+			p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+				Kind: "anthropic-compat", BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+				Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+				AllowDataTo: []string{"*"},
+			}}}
+			p.Routing = &config.Routing{Claude: &config.RoutingClaude{Via: via, Models: []string{"claude-sonnet-5-5"}}}
+		}
+	}
+	// The machine's route admits acme/other only, so a run of acme/app carries
+	// none: the state this line is about.
+	const routes = "  acme/app:\n    provider: github\n"
+	rows := func() string {
+		return doctorRunRoutes(`["acme/other"]`, routes)
+	}
+	// via: auto: the run with no Anthropic API key stored halts, the run with
+	// one keeps the pins direct, and a Vertex run is never routed by auto — the
+	// unconditional halt this line used to print is true of neither of the last
+	// two.
+	doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteAuto)), rows())
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("the unresolved state is not printed: %+v", res)
+	}
+	for _, want := range []string{"halts", "gateway is on", "allow_data_to", "Anthropic API key stored", "Vertex run never reaches it"} {
+		if !strings.Contains(res.Problem, want) {
+			t.Errorf("the auto line does not say %q: %+v", want, res)
+		}
+	}
+	if strings.Contains(res.Problem, "so a run of this repository whose gateway is on halts (the project's routing switch is not usable)") {
+		t.Errorf("the halt is asserted unconditionally for via: auto: %+v", res)
+	}
+	// via: openrouter is the contrast on the same fixture: every run that has a
+	// gateway reaches the switch there, and the line says so.
+	doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteOpenRouter)), rows())
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "whose gateway is on halts at it") {
+		t.Fatalf("an explicit switch's halt is not reported: %+v", res)
+	}
+	// And with the node's own mode off, no run of the repository reaches the
+	// switch at all: nothing halts here, which the line now says instead of
+	// asserting the halt the budget's own state rules out. The mode is the
+	// node's, not this machine's config's: a run's ceiling is the node's key by
+	// key (runner.policyCeiling), so a machine whose own budget block says off
+	// under a node that says enforce runs with its gateway on — the check reads
+	// the node, and this is the state that shows it.
+	_, db := doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteAuto)), rows())
+	off := doctorPolicy(switchTo(config.RouteAuto))
+	off.Budget.Mode = "off"
+	db.Set(projectpolicy.PathShared(), off)
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
+		t.Fatalf("a switch the node's budget never reaches is reported as a halt: %+v", res)
+	}
+	if strings.Contains(res.Problem, "whose gateway is on halts") {
+		t.Errorf("nothing halts under a node that is off, and the line says one does: %+v", res)
+	}
+}
+
+// TestDoctorResolvesTheSwitchOverTheLayerARunMerges is the second review
+// finding on the routing-resolution line: it resolved over this machine's own
+// providers alone, and a run's routes are those providers with the project
+// layer's claude_models merged in (runner.resolveConfig: config.ClaimsOnRoutes
+// then config.ApplyClaudeClaims). A layer claim is exactly how a route the
+// owner defined comes to serve a Claude ID the owner's own models list does not
+// name, so with one doctor printed "none of the routes a run of this repository
+// carries claims it ... halts at it" for a run whose switch resolves — the
+// false confidence, in the other direction, of the finding beside it.
+//
+// The claims are read from the checkout doctor is in, over the layer that
+// checkout's fugaro.yaml resolves (fugaroYAMLCheck, the same resolution
+// doctorLayerChecks reads): a layer applies to a repository whose own
+// fugaro.yaml names the layer's project and gcp_project, which this machine can
+// read for its checkout alone. doctor therefore merges the claims for that
+// repository, and says so — rather than resolving over claims it cannot know —
+// for every other repository its config names.
+func TestDoctorResolvesTheSwitchOverTheLayerARunMerges(t *testing.T) {
+	// The layer claims the very model the switch names on the owner's route:
+	// the entry's own models list does not name it, so without the claim the
+	// route serves nothing the switch can resolve.
+	bucket := layerBucketWith(t, testProjectLayer+"claude_models:\n  openrouter: [anthropic/claude-sonnet-5.5]\n")
+	policy := doctorPolicy(func(p *projectpolicy.Policy) {
+		p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: "anthropic-compat", BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+			AllowDataTo: []string{"*"},
+		}}}
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{
+			Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}}
+	})
+	// The machine's own entry serves a different Claude model: the switch's ID
+	// is the layer's to claim, and the route is the owner's (base_url, auth,
+	// secret, allow_data_to and the ID are not the layer's to write).
+	rows := "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n" +
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"anthropic/claude-opus-4.5\"]\n" +
+		"    allow_data_to: [\"acme/app\"]\nrepos:\n  acme/app: { provider: github }\n  acme/other: { provider: github }\n"
+	doctorPolicyRig(t, policy, "bucket_url: "+bucket+"\n"+rows)
+	// doctor's own checkout is acme/app's, so acme/app's run is the one whose
+	// layer this machine can read.
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": minimalAnchored, "build.sh": "true\n", "test.sh": "true\n", "package-lock.json": "{}\n"})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5") {
+		t.Fatalf("the layer's claim does not resolve the switch for the repository doctor is in: %+v", res)
+	}
+	if strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Errorf("a run that resolves is reported as halting: %+v", res)
+	}
+	// The other repository's layer is that repository's own fugaro.yaml's to
+	// name, and this machine has no checkout of it: the line says the claim is
+	// unknown there rather than asserting either outcome.
+	other := res.Problem[strings.Index(res.Problem, "acme/other: "):]
+	if !strings.Contains(other, "acme/other: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("a repository with no checkout of its own is resolved over this checkout's layer: %+v", res)
+	}
+	if !strings.Contains(other, "project layer") {
+		t.Errorf("the unresolved line for another repository does not say the layer is unknown there: %+v", other)
+	}
+
+	// And with no layer published the owner's table is the whole truth: the
+	// same switch is unresolved for acme/app too, with nothing to hedge about.
+	doctorPolicyRig(t, policy, "bucket_url: "+layerBucketWith(t, "")+"\n"+rows)
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("without a layer the switch resolves over a claim that is not there: %+v", res)
+	}
+	if strings.Contains(res.Problem, "-> openrouter") {
+		t.Errorf("a resolution is printed for a run whose routes serve nothing the switch names: %+v", res)
+	}
+}
+
+// doctorSwitchTo is the node the routing-resolution tests publish: one route
+// entry that claims the model the switch names, and the switch itself. The node
+// needs its own providers block (projectpolicy holds a published switch to
+// claiming provider entries, validRouting), while the routes a *run* resolves
+// over are this machine's config's (doctorRunRoutes) — two tables, and the
+// check must read the second.
+func doctorSwitchTo(via string) func(*projectpolicy.Policy) {
+	return func(p *projectpolicy.Policy) {
+		p.Providers = map[string]projectpolicy.Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
+			AllowDataTo: []string{"*"},
+		}}}
+		p.Routing = &config.Routing{Claude: &config.RoutingClaude{Via: via, Models: []string{"claude-sonnet-5-5"}}}
+	}
+}
+
+// TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps is the review finding on
+// doctorNodeMode: it read a node with no budget block as mode off, and both
+// facts it stands on say otherwise. projectpolicy's decoder refuses a published
+// block that names no mode (validBudget), so leaving the key out is how a policy
+// sets no budget at all, and runner.policyCeiling replaces the environment's
+// ceiling key by key — a node that says nothing about the mode leaves the mode
+// the job was deployed with standing. An enforcing installation whose node says
+// nothing about the budget therefore runs with its gateway on, and halts on a
+// switch no run of the repository can carry out, while doctor printed "no run of
+// this repository reaches the switch (budget.mode is off) … nothing halts under
+// it" — the opposite of what every run does.
+//
+// The mode the check answers the node's silence with is the job's own: this
+// machine's config, whose ceiling init --repo deploys into the environment, the
+// same reading the drift note compares the deployed job with. Both sides are
+// exercised here, so the check is pinned to that reading rather than to the
+// string "off" happening to be wrong.
+func TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps(t *testing.T) {
+	// The node with no budget key at all: the block is deleted rather than
+	// emptied, because an empty one is a node projectpolicy refuses.
+	node := func(t *testing.T) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(doctorPolicy(doctorSwitchTo(config.RouteOpenRouter)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		delete(m, "budget")
+		return m
+	}
+	// The machine's route admits acme/other only, so a run of acme/app carries
+	// none and the switch is unresolved for it: the reach is the half that
+	// changes between the two states below.
+	rows := doctorRunRoutes(`["acme/other"]`, "  acme/app:\n    provider: github\n")
+	// The machine enforces (doctorPolicyRig's own ceiling): the job's gateway is
+	// on, so every run of the project reaches the switch and halts at it.
+	_, db := doctorPolicyRig(t, nil, rows)
+	db.Set(projectpolicy.PathShared(), node(t))
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "acme/app: claude-sonnet-5-5 -> unresolved") {
+		t.Fatalf("the unresolved state is not printed: %+v", res)
+	}
+	if !strings.Contains(res.Problem, "whose gateway is on halts at it") {
+		t.Errorf("a node that sets no budget is not read with the job's own mode (enforce): %+v", res)
+	}
+	if strings.Contains(res.Problem, "budget.mode is off") {
+		t.Errorf("a node that sets no budget key is read as mode off: %+v", res)
+	}
+	// The same node under a machine that is off: nothing reaches the switch
+	// now, which is the state the line has to say — the node's silence is
+	// answered by the environment, in both directions.
+	r, db2 := doctorPolicyRig(t, nil, rows)
+	cfg := strings.Replace(r.cfg, "budget: { mode: enforce", "budget: { mode: off", 1)
+	if cfg == r.cfg {
+		t.Fatal("the rig's ceiling moved: this test rewrites its mode")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.cfg = cfg
+	db2.Set(projectpolicy.PathShared(), node(t))
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
+		t.Fatalf("a machine that is off is read as reaching the switch: %+v", res)
+	}
+}
+
+// TestDoctorDoesNotResolveASwitchNoRunTakes is the review finding on the
+// resolved arm of the routing-resolution check: it printed the resolution and
+// set routed, without ever asking whether a run of the repository reaches the
+// switch. Under a node whose budget mode is off doctor printed
+// "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5"
+// — a route no run takes, since the gateway is off and applyRouting returns
+// before it reads the switch — and routing-cache-markers followed it into "a
+// routed Claude senior's cost is unmeasured", for a policy whose calls all go
+// to Anthropic. validate prints the same state as "nothing takes it here", and
+// the two commands read one switch.
+func TestDoctorDoesNotResolveASwitchNoRunTakes(t *testing.T) {
+	// The machine's route admits this repository, so the switch resolves for it:
+	// the resolved arm, which is the one that was never reach-aware.
+	rows := doctorRunRoutes(`["acme/app"]`, "  acme/app:\n    provider: github\n")
+	const resolved = "acme/app: claude-sonnet-5-5 -> openrouter, sent as anthropic/claude-sonnet-5.5"
+	_, db := doctorPolicyRig(t, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter)), rows)
+	off := doctorPolicy(doctorSwitchTo(config.RouteOpenRouter))
+	off.Budget.Mode = "off"
+	db.Set(projectpolicy.PathShared(), off)
+	res := doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, resolved) {
+		t.Fatalf("the resolution is not printed at all: %+v", res)
+	}
+	if !strings.Contains(res.Problem, "nothing takes it here") || !strings.Contains(res.Problem, "budget.mode is off") {
+		t.Fatalf("a resolution no run of this repository takes is printed as the run's: %+v", res)
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "no Claude ID is routed") {
+		t.Errorf("a cost no run of this policy pays is called unmeasured: %+v", cm)
+	}
+	// The contrast on the same fixture: with the node enforcing, every run takes
+	// the route, the line says so, and the cost question is live.
+	doctorPolicyRig(t, doctorPolicy(doctorSwitchTo(config.RouteOpenRouter)), rows)
+	res = doctorChecksByID(t)["routing-resolution"]
+	if !strings.Contains(res.Problem, resolved) {
+		t.Fatalf("the resolution is not printed: %+v", res)
+	}
+	if strings.Contains(res.Problem, "nothing takes it here") {
+		t.Errorf("a resolution the runs do take is hedged: %+v", res)
+	}
+	if cm := doctorChecksByID(t)["routing-cache-markers"]; !strings.Contains(cm.Problem, "unmeasured") {
+		t.Errorf("a routed cost is not called unmeasured: %+v", cm)
+	}
+}
+
+// layerBucketWith writes text as the project layer in a file:// bucket of the
+// test's own and returns the bucket_url a config must carry to read it. A
+// config with no bucket_url: computes the installation's gs:// runs bucket,
+// which fakeEndpointsOnGS refuses to read for real behind the doctor rig's fake
+// endpoints — so a test that wants a layer resolved names a real one, exactly
+// as newCloudFixture does.
+func layerBucketWith(t *testing.T, text string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, filepath.FromSlash(config.LayerKey))
+	if text == "" {
+		// An empty bucket: no object, so no layer applies.
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return "file://" + dir
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return "file://" + dir
+}
+
+// doctorRunRoutes is the machine's own side of a routing resolution: the
+// project config's providers block, whose allow_data_to is written with allow,
+// and the repositories the config names. It is what spec.go turns into
+// FUGARO_MODEL_PROVIDERS (the providers a run of one of those repositories
+// carries) and what this machine's doctor reads; the policy node's own
+// providers block is a separate thing, and the check must not resolve over it.
+func doctorRunRoutes(allow, repos string) string {
+	return "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"anthropic/claude-sonnet-5.5\"]\n    allow_data_to: " + allow + "\nrepos:\n" + repos
 }

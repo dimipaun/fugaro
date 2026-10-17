@@ -57,6 +57,23 @@ func TestBilledWindowOnAVM(t *testing.T) {
 			exec:      Execution{MachineType: "e2-standard-4", Started: vmNow.Add(-time.Minute)},
 			wantKnown: false,
 		},
+		{
+			// It has ended and no completion time was reported: the window
+			// has no end, so it is unknown rather than open -- a finished
+			// run must not be re-priced higher every time it is read, and a
+			// Batch job's record outlives it by 60 days (design §2.4).
+			name:      "ended with no completion time",
+			exec:      Execution{MachineType: "e2-standard-4", State: StateSucceeded, Created: vmNow.Add(-time.Hour), Started: vmNow.Add(-50 * time.Minute)},
+			wantKnown: false,
+		},
+		{
+			// The same execution while it was still running: its VM really
+			// is billing, so the window runs to now.
+			name:      "still running",
+			exec:      Execution{MachineType: "e2-standard-4", State: StateRunning, Created: vmNow.Add(-time.Hour), Started: vmNow.Add(-50 * time.Minute)},
+			want:      time.Hour,
+			wantKnown: true,
+		},
 	} {
 		got, ok := tc.exec.BilledWindow(vmNow)
 		if ok != tc.wantKnown || got != tc.want {

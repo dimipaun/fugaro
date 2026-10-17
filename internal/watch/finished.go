@@ -14,7 +14,7 @@ import (
 type FinishedRun struct {
 	Run, Slug, Title, Workflow string
 	Status                     string // runstore status: succeeded, failed, halted, cancelled, infra_error
-	Outcome                    string // ready, draft, none, reviewed
+	Outcome                    string // ready, draft, none, reviewed, artifacts
 	PRNumber                   int
 	PRURL                      string
 	FinishedAt                 time.Time

@@ -128,6 +128,25 @@ const catalogSince = "0.7.5"
 // docs/release.md's checklist line for catalogSince in that commit too.
 const catalogShipped = false
 
+// artifactsSince is the first fugaro release whose runner implements a
+// mode: artifact recipe: it reads the task's mode field
+// (internal/task/task.go), renders through commands.render and writes the
+// run record's render object. A runner before it refuses the task outright
+// (task.Parse decodes with DisallowUnknownFields), so an artifact launch
+// against an older job image is refused at launch, by this gate, through
+// the same seam every other spec-field skew uses.
+//
+// Unlike cloneSince it carries no shipped flag: refusing every image that
+// predates the mode is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same
+// as for every other *Since constant here — the runner fails closed on the
+// mode and the field anyway, so a warning cannot let an artifact run through
+// as an implement run.
+//
+// docs/release.md ("Before you tag") has the checklist verify it equals the
+// release that ships the mode.
+const artifactsSince = "0.8.0"
+
 // recipesV07Since is the first fugaro release whose runner knows the 0.7.0
 // recipe format: use_when, mode, roles.coder, a check step and
 // review.bounce; a parser before it refuses every one of those keys as
@@ -202,7 +221,12 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 		}
 	}
 	since := recipesSince
-	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
+	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV08(r) {
+		// UsesV08 implies UsesV07 (a 0.8.0 construct always comes with a
+		// 0.7.0 one: mode is one), and artifactsSince is the newer of the
+		// two, so it is the binding gate.
+		since = artifactsSince
+	} else if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
 		since = recipesV07Since
 	}
 	return checkImageSince(ctx, env, slug, spec, kind, since, subject, "recipes", alt, warn)
@@ -333,7 +357,12 @@ func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer)
 		}
 	}
 	since := recipesSince
-	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
+	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV08(r) {
+		// UsesV08 implies UsesV07 (a 0.8.0 construct always comes with a
+		// 0.7.0 one: mode is one), and artifactsSince is the newer of the
+		// two, so it is the binding gate.
+		since = artifactsSince
+	} else if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
 		since = recipesV07Since
 	}
 	return checkCloneImageSince(lc, spec, since, subject, "recipes", alt, warn)

@@ -171,15 +171,33 @@ func change(addr string, actions ...string) planChange {
 		"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": after}}
 }
 
-// setPlan makes the fake's show -json report changes.
+// setPlan makes the fake's show -json report changes, in every root.
 func (r *initRig) setPlan(t *testing.T, changes ...planChange) {
+	t.Helper()
+	r.script["show"] = map[string]any{"stdout": planJSON(t, changes...)}
+	r.save(t)
+}
+
+// setPlanAt makes ONE root's show -json report changes and leaves the other
+// roots' plans empty: the fake tries "show@<root>" before the plain "show"
+// (faketerraform's stepFor), so a test can aim a change at one stage. That
+// matters wherever a test is about a particular stage's own handling of a
+// plan: a change scripted for every root is seen by the FIRST stage that
+// plans, which is rarely the stage under test.
+func (r *initRig) setPlanAt(t *testing.T, root string, changes ...planChange) {
+	t.Helper()
+	r.script["show@"+root] = map[string]any{"stdout": planJSON(t, changes...)}
+	r.save(t)
+}
+
+// planJSON is the `terraform show -json` answer for a set of changes.
+func planJSON(t *testing.T, changes ...planChange) string {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": changes})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.script["show"] = map[string]any{"stdout": string(b)}
-	r.save(t)
+	return string(b)
 }
 
 // stateBucket makes the state bucket exist, marked, in the project.

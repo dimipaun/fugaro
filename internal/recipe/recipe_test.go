@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -309,7 +310,7 @@ func TestOrderWithChecksAndModes(t *testing.T) {
 		"mode: review\nsteps:\n  - review: { max_rounds: 2 }\n":                      "mode: review reviews once: max_rounds must be 1",
 		"mode: review\nroles: { coder: reviewer }\nsteps:\n  - review: {}\n":         "mode: review has no coder step to map roles onto",
 		"mode: review\nroles: { reviewer: coder }\nsteps:\n  - review: {}\n":         "mode: review has no coder step to map roles onto",
-		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement or review",
+		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement, review or artifact",
 		"use_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n":       "must be at most 300 bytes",
 	} {
 		_, ps := Parse([]byte("version: 1\nname: x\n" + src))
@@ -495,5 +496,295 @@ func TestReviewPRRange(t *testing.T) {
 	}
 	if _, _, ok := ReviewPRRange("my-custom-review"); ok {
 		t.Fatal("my-custom-review: ok = true, want false (unconstrained)")
+	}
+}
+
+// --- mode: artifact (0.8.0, docs/design/artifact-runs.md §3) ---------------
+//
+// The third Recipe.Mode: a run that renders files into the run's bucket and
+// opens no pull request. Parse takes only bytes, so nothing here knows where
+// a recipe came from, and there is deliberately no source-based refusal: the
+// catalog may ship an artifact recipe exactly as it ships mode: review ones
+// (plan P2).
+
+// artifactHead is the shortest artifact recipe's head; every case below adds
+// its own outputs block and steps.
+const artifactHead = "version: 1\nname: art\nmode: artifact\n"
+
+// artifactOutputs is a legal outputs block, as compact as YAML allows.
+const artifactOutputs = "outputs: { globs: [out/*.png] }\n"
+
+// problemsHave reports whether ps holds a problem at path whose message
+// contains msg.
+func problemsHave(ps []Problem, path, msg string) bool {
+	for _, p := range ps {
+		if p.Path == path && strings.Contains(p.Message, msg) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestArtifactOutputsParse: the outputs block's keys, the defaults behind the
+// three caps and the probe (which the accessors apply, never Parse), an
+// artifact recipe's two legal step shapes, and Outputs being non-nil exactly
+// when the mode is artifact.
+func TestArtifactOutputsParse(t *testing.T) {
+	r := mustParse(t, artifactHead+"description: Renders the sizzle\n"+
+		"outputs:\n  globs: [\"out/*.mp4\", \"out/*.png\"]\n  max_files: 4\n"+
+		"  max_bytes: 1048576\n  max_total_bytes: 4194304\n  probe: probe\n"+
+		"steps:\n  - plan: {}\n  - render: {}\n")
+	out := r.Outputs
+	if out == nil {
+		t.Fatal("an artifact recipe's outputs block parsed to nothing")
+	}
+	if !slices.Equal(out.Globs, []string{"out/*.mp4", "out/*.png"}) || out.MaxFiles != 4 ||
+		out.MaxBytes != 1048576 || out.MaxTotalBytes != 4194304 || out.Probe != "probe" {
+		t.Fatalf("outputs = %+v", out)
+	}
+	if out.FileCount() != 4 || out.MaxFileBytes() != 1048576 || out.MaxSetBytes() != 4194304 {
+		t.Fatalf("caps = %d %d %d", out.FileCount(), out.MaxFileBytes(), out.MaxSetBytes())
+	}
+	if r.Mode != ModeArtifact || len(r.Steps) != 2 || r.Steps[0].Kind != StepPlan || r.Steps[1].Kind != StepRender {
+		t.Fatalf("recipe = %+v", r)
+	}
+
+	// A block that names only its globs leaves all three caps at their
+	// default and probes nothing (P6: max_bytes is per artifact,
+	// max_total_bytes is the whole set).
+	r = mustParse(t, artifactHead+artifactOutputs+"steps:\n  - render: {}\n")
+	out = r.Outputs
+	if out.FileCount() != DefaultOutputFiles || out.MaxFileBytes() != DefaultOutputBytes ||
+		out.MaxSetBytes() != DefaultOutputTotalBytes || out.Probe != "none" {
+		t.Fatalf("defaults = %+v (%d, %d, %d)", out, out.FileCount(), out.MaxFileBytes(), out.MaxSetBytes())
+	}
+	const want = 8
+	if DefaultOutputFiles != want || DefaultOutputBytes != 256<<20 || DefaultOutputTotalBytes != 2<<30 {
+		t.Fatalf("defaults changed: %d files, %d and %d bytes", DefaultOutputFiles, DefaultOutputBytes, DefaultOutputTotalBytes)
+	}
+
+	// Outputs is non-nil exactly when Mode is ModeArtifact.
+	if other := mustParse(t, "version: 1\nname: a\nsteps:\n  - review: {}\n"); other.Outputs != nil {
+		t.Fatalf("Outputs = %+v on a mode: implement recipe", other.Outputs)
+	}
+	// An empty block is refused (it names nothing to deliver), so the zero
+	// Outputs of a hand-built recipe can never come from Parse.
+	if _, ps := Parse([]byte(artifactHead + "outputs: {}\nsteps:\n  - render: {}\n")); !problemsHave(ps, "outputs.globs", "is required") {
+		t.Fatalf("outputs: {}: %v", ps)
+	}
+}
+
+func TestArtifactModeRequiresOutputs(t *testing.T) {
+	// A mode: artifact recipe without outputs: declares no deliverable, so
+	// there is nothing to upload and nothing to cap.
+	_, ps := Parse([]byte(artifactHead + "steps:\n  - render: {}\n"))
+	if !problemsHave(ps, "outputs", "is required for mode: artifact") {
+		t.Fatalf("problems = %v", ps)
+	}
+	// outputs is refused in the other two modes: a run that opens a pull
+	// request delivers its diff, not a file set, and the caps would never be
+	// read by anything.
+	for _, tc := range []struct{ name, text string }{
+		{"implement, no mode key", "version: 1\nname: art\n" + artifactOutputs + "steps:\n  - review: {}\n"},
+		{"implement, written out", "version: 1\nname: art\nmode: implement\n" + artifactOutputs + "steps:\n  - review: {}\n"},
+		{"review", "version: 1\nname: art\nmode: review\n" + artifactOutputs + "steps:\n  - review: { max_rounds: 1 }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ps := Parse([]byte(tc.text)); !problemsHave(ps, "outputs", "is only for mode: artifact") {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+}
+
+func TestArtifactStepsArePlanThenRenderOrRenderAlone(t *testing.T) {
+	for _, tc := range []struct{ name, steps string }{
+		{"no steps", "steps: []\n"},
+		{"plan alone", "steps:\n  - plan: {}\n"},
+		{"two renders", "steps:\n  - render: {}\n  - render: {}\n"},
+		{"two plans", "steps:\n  - plan: {}\n  - plan: {}\n  - render: {}\n"},
+		{"render before plan", "steps:\n  - render: {}\n  - plan: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte(artifactHead + artifactOutputs + tc.steps))
+			if !problemsHave(ps, "steps", "one render step, optionally after one plan step") {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+	for _, steps := range []string{
+		"steps:\n  - render: {}\n",
+		"steps:\n  - plan: {}\n  - render: {}\n",
+	} {
+		if r, ps := Parse([]byte(artifactHead + artifactOutputs + steps)); len(ps) != 0 {
+			t.Errorf("%q: %s", steps, ProblemsText(ps))
+		} else if r.Mode != ModeArtifact {
+			t.Errorf("%q: mode = %q", steps, r.Mode)
+		}
+	}
+}
+
+func TestArtifactModeRefusesTheAgentSteps(t *testing.T) {
+	// check, first_line and review are the agent loop's steps: an artifact
+	// recipe has no implement to gate and one optional plan stage.
+	for _, tc := range []struct{ kind, step string }{
+		{"check", "check: { command: test }"},
+		{"first_line", "first_line: {}"},
+		{"review", "review: {}"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			_, ps := Parse([]byte(artifactHead + artifactOutputs + "steps:\n  - " + tc.step + "\n  - render: {}\n"))
+			if !problemsHave(ps, "steps[0]."+tc.kind, "is not a step of mode: artifact") {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+	// review.bounce is refused with review itself, so nothing separate
+	// refuses it: there is no review step for a bounce to belong to.
+	_, ps := Parse([]byte(artifactHead + artifactOutputs + "steps:\n  - review: { bounce: first_line }\n"))
+	if !problemsHave(ps, "steps[0].review", "is not a step of mode: artifact") {
+		t.Fatalf("problems = %v", ps)
+	}
+	// roles map the coder and reviewer onto each other: an artifact recipe
+	// has neither role.
+	_, ps = Parse([]byte(artifactHead + "roles: { reviewer: coder }\n" + artifactOutputs + "steps:\n  - render: {}\n"))
+	if !problemsHave(ps, "roles", "no agent steps to map roles onto") {
+		t.Fatalf("problems = %v", ps)
+	}
+	// The mirror: plan and render are refused in the other two modes, and
+	// each is its own message, not "is not a step type".
+	for _, tc := range []struct{ mode, steps string }{
+		{"", "steps:\n  - render: {}\n  - review: {}\n"},
+		{"mode: review\n", "steps:\n  - render: {}\n"},
+	} {
+		_, ps := Parse([]byte("version: 1\nname: a\n" + tc.mode + tc.steps))
+		if !problemsHave(ps, "steps[0]", "is only for mode: artifact") {
+			t.Fatalf("%q: problems = %v", tc.steps, ps)
+		}
+		if strings.Contains(ProblemsText(ps), "is not a step type") {
+			t.Fatalf("%q: an artifact step gets the unknown-step message: %v", tc.steps, ps)
+		}
+	}
+}
+
+func TestOutputsGlobsRefuseEscapes(t *testing.T) {
+	for _, tc := range []struct{ name, globs, want string }{
+		{"absolute", "[/etc/passwd]", "must be relative to the checkout root"},
+		{"dot dot element", "[out/../../etc/passwd]", "must not contain a .. path element"},
+		{"dot dot alone", "[\"..\"]", "must not contain a .. path element"},
+		{"dot dot trailing", "[out/..]", "must not contain a .. path element"},
+		{"empty list", "[]", "must name at least one glob"},
+		{"empty glob", "[\"\"]", "must not be empty"},
+		{"not a list", "out/*.png", "must be a list of globs"},
+		{"not strings", "[1]", "must be a string"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte(artifactHead + "outputs: { globs: " + tc.globs + " }\nsteps:\n  - render: {}\n"))
+			if !strings.Contains(ProblemsText(ps), tc.want) {
+				t.Fatalf("globs %s: problems %v lack %q", tc.globs, ps, tc.want)
+			}
+		})
+	}
+	// A name that merely begins with dots, and a dot inside a name, are not
+	// escapes: only a whole .. path element is.
+	r := mustParse(t, artifactHead+"outputs: { globs: [\"out/..hidden/*.png\", \"out/a..png\"] }\nsteps:\n  - render: {}\n")
+	if !slices.Equal(r.Outputs.Globs, []string{"out/..hidden/*.png", "out/a..png"}) {
+		t.Fatalf("globs = %v", r.Outputs.Globs)
+	}
+}
+
+func TestOutputsCapsHaveCeilings(t *testing.T) {
+	for _, tc := range []struct{ name, block, path, want string }{
+		{"33 files", "max_files: 33", "outputs.max_files", "must be between 1 and 32"},
+		{"0 files", "max_files: 0", "outputs.max_files", "must be between 1 and 32"},
+		{"files not a number", "max_files: many", "outputs.max_files", "must be a whole number"},
+		{"2 GiB plus one", "max_bytes: 2147483649", "outputs.max_bytes", "must be between 1 and 2147483648 bytes (2 GiB)"},
+		{"0 bytes", "max_bytes: 0", "outputs.max_bytes", "must be between 1 and"},
+		{"negative bytes", "max_bytes: -1", "outputs.max_bytes", "must be between 1 and"},
+		{"16 GiB plus one", "max_total_bytes: 17179869185", "outputs.max_total_bytes", "must be between 1 and 17179869184 bytes (16 GiB)"},
+		{"0 total", "max_total_bytes: 0", "outputs.max_total_bytes", "must be between 1 and"},
+		{"unknown probe", "probe: lint", "outputs.probe", "must be probe or none"},
+		{"probe not a string", "probe: 5", "outputs.probe", "must be a string"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte(artifactHead + "outputs: { globs: [out/*.png], " + tc.block + " }\nsteps:\n  - render: {}\n"))
+			if !problemsHave(ps, tc.path, tc.want) {
+				t.Fatalf("%s: problems %v lack %s: %q", tc.block, ps, tc.path, tc.want)
+			}
+		})
+	}
+	// The ceilings themselves are legal, and both probe values are.
+	r := mustParse(t, artifactHead+"outputs:\n  globs: [out/*.png]\n  max_files: 32\n  max_bytes: 2147483648\n  max_total_bytes: 17179869184\n  probe: none\nsteps:\n  - render: {}\n")
+	if r.Outputs.MaxFiles != 32 || r.Outputs.MaxBytes != MaxOutputBytes || r.Outputs.MaxTotalBytes != MaxOutputTotalBytes {
+		t.Fatalf("outputs = %+v", r.Outputs)
+	}
+}
+
+// TestOutputTotalCapHasACeiling is the set cap's own pair of rules: above its
+// ceiling it is refused like the other two caps, and a max_total_bytes below
+// max_bytes with max_files of 1 is refused too — the set is that one
+// artifact, so the smaller cap silently governs and one legal artifact
+// already breaks the set (plan Task 1's outputs rules; the plan lists this
+// test under internal/config, but an outputs block's caps are only ever
+// parsed here, by Parse).
+func TestOutputTotalCapHasACeiling(t *testing.T) {
+	_, ps := Parse([]byte(artifactHead + "outputs: { globs: [out/*.png], max_total_bytes: 34259738368 }\nsteps:\n  - render: {}\n"))
+	if !strings.Contains(ProblemsText(ps), "must be between 1 and 17179869184 bytes (16 GiB)") {
+		t.Fatalf("problems = %v", ps)
+	}
+	one := "outputs: { globs: [out/*.png], max_files: 1, max_bytes: 1048576, max_total_bytes: 262144 }\n"
+	_, ps = Parse([]byte(artifactHead + one + "steps:\n  - render: {}\n"))
+	if !problemsHave(ps, "outputs.max_total_bytes", "must be at least outputs.max_bytes") {
+		t.Fatalf("problems = %v", ps)
+	}
+	// With room for more than one artifact the pair is a set cap doing its
+	// job (a set of files each under max_bytes may still be over the total),
+	// so it is legal.
+	if _, ps := Parse([]byte(artifactHead + "outputs: { globs: [out/*.png], max_files: 2, max_bytes: 1048576, max_total_bytes: 262144 }\nsteps:\n  - render: {}\n")); len(ps) != 0 {
+		t.Fatalf("problems = %v", ps)
+	}
+	// Only the two written caps are compared: a defaulted one is not a
+	// relation the author wrote.
+	if _, ps := Parse([]byte(artifactHead + "outputs: { globs: [out/*.png], max_files: 1, max_total_bytes: 262144 }\nsteps:\n  - render: {}\n")); len(ps) != 0 {
+		t.Fatalf("problems = %v", ps)
+	}
+}
+
+// TestUsesV08IsPresenceNotValue: UsesV08 decides from the presence of a
+// 0.8.0 construct, never from a parsed value, the rule UsesV07 already
+// follows: a 0.7 parser refuses mode: artifact, the plan and render step
+// kinds and the outputs key outright, so any one of them means the run needs
+// a 0.8 runner even when everything around it looks like a no-op.
+//
+// (The plan's own example — "mode: implement plus an outputs: {} block" —
+// cannot exist: an outputs block is refused outright in the other two modes,
+// by the same task. The presence case here is therefore the artifact recipe
+// whose block holds nothing but its globs, every cap and the probe at their
+// defaults.)
+func TestUsesV08IsPresenceNotValue(t *testing.T) {
+	// Not one cap written, and it still counts.
+	r := mustParse(t, artifactHead+artifactOutputs+"steps:\n  - render: {}\n")
+	if !UsesV08(r) {
+		t.Fatal("an artifact recipe whose outputs block holds only its globs is not V08")
+	}
+	// Each construct on its own counts, whatever it sits beside.
+	for _, text := range []string{
+		"version: 1\nname: a\nmode: artifact\n" + artifactOutputs + "steps:\n  - plan: {}\n  - render: {}\n",
+		"version: 1\nname: a\nmode: artifact\noutputs: { globs: [x], max_files: 8, probe: none }\nsteps:\n  - render: {}\n",
+	} {
+		if r := mustParse(t, text); !UsesV08(r) {
+			t.Errorf("not V08: %s", text)
+		}
+	}
+	// A recipe using only 0.7 keys, and one using none, do not.
+	old := mustParse(t, "version: 1\nname: a\nuse_when: typical work\nmode: implement\nsteps:\n  - check: { command: test }\n  - first_line: {}\n  - review: { bounce: first_line }\n")
+	if UsesV08(old) {
+		t.Fatal("a mode: implement recipe with 0.7 keys only is V08")
+	}
+	if !UsesV07(old) {
+		t.Fatal("a mode: implement recipe with 0.7 keys only is not V07")
+	}
+	if r := mustParse(t, "version: 1\nname: a\nsteps:\n  - review: {}\n"); UsesV08(r) || UsesV07(r) {
+		t.Fatal("a bare recipe uses a 0.7 or 0.8 key")
 	}
 }

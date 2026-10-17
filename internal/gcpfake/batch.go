@@ -63,6 +63,33 @@ type Batch struct {
 	// FAILED_PRECONDITION, so the backend's tolerance of the race between a
 	// read and a cancel is exercised rather than assumed.
 	AllowCancelOfTerminal bool
+	// Unreachable, when non-empty, is the locations jobs.list reports it could
+	// not reach (ListJobsResponse.Unreachable): the shape of a partial listing.
+	// A caller that treats "the job is not in the listing" as "the job is not
+	// there" must notice it.
+	Unreachable []string
+	// IgnoreFilter makes jobs.list answer every job it holds whatever its
+	// filter was, as a server that does not honour a label filter would. It is
+	// how a caller's own client-side marker check is exercised: whether the
+	// API honours the filter or ignores it, the answer must be the same (the
+	// compute fake has the same knob, for the same reason). Unset, the fake
+	// applies the filter, as the API documents it.
+	IgnoreFilter bool
+	// CancelGone, keyed by job id, makes :cancel answer 404 as if the job had
+	// been removed between the listing that decided to cancel it and the call
+	// itself -- someone else's delete, or Batch's own 60-day one (§9). The job
+	// stays in the listing (which is read before it vanishes), so the same
+	// knob is the only way a test reaches a cancel whose job is gone: a
+	// listing and a cancel read the same stored map otherwise.
+	CancelGone map[string]bool
+	// CancelRace, keyed by job id, moves the job to that raw state as its
+	// :cancel arrives, before the cancel is answered: a job that started or
+	// finished between the listing that decided to cancel it and the call
+	// itself, which the real API refuses. It is the only way a test reaches
+	// that race -- a listing and a cancel read the same stored state -- and it
+	// is what makes the reaper's read-back tolerance a tested requirement
+	// rather than an assumption (design §2.3).
+	CancelRace map[string]string
 
 	mu      sync.Mutex
 	jobs    map[jobKey]*batchJob // by project, region and id
@@ -237,6 +264,72 @@ func (f *Batch) SetState(id, s string) {
 	}
 }
 
+// SetStateAt is SetState plus the job's status events: the job reports one
+// job-level STATUS_CHANGED event at at, which is when it entered the state and
+// therefore the only thing a per-state deadline can be measured from (the
+// reaper's stateSince). SetState alone leaves the events as they were, so a
+// test that wants a job whose time in state is unknown -- no event, no
+// runDuration -- writes that too.
+func (f *Batch) SetStateAt(id, s string, at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.find(id)
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetStateAt(%q): no such job", id)
+	}
+	j.state = s
+	st, _ := j.body["status"].(map[string]any)
+	if st == nil {
+		st = map[string]any{}
+		j.body["status"] = st
+	}
+	st["state"] = s
+	st["statusEvents"] = []any{map[string]any{
+		"type":        "STATUS_CHANGED",
+		"description": "Job state is " + s,
+		"eventTime":   stamp(at),
+	}}
+}
+
+// SetStatusEvents replaces a job's status events, as jobs.get would report
+// them: the shape a test needs to reach a job whose events date something other
+// than its current state (a task-level event, or none at all).
+func (f *Batch) SetStatusEvents(id string, events ...map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.find(id)
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetStatusEvents(%q): no such job", id)
+	}
+	st, _ := j.body["status"].(map[string]any)
+	if st == nil {
+		st = map[string]any{}
+		j.body["status"] = st
+	}
+	list := make([]any, 0, len(events))
+	for _, e := range events {
+		list = append(list, e)
+	}
+	st["statusEvents"] = list
+}
+
+// SetRunDuration sets the runDuration a RUNNING job reports, the fallback a
+// client that finds no event time reads (batch/v1.JobStatus).
+func (f *Batch) SetRunDuration(id, d string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.find(id)
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetRunDuration(%q): no such job", id)
+	}
+	st, _ := j.body["status"].(map[string]any)
+	if st == nil {
+		st = map[string]any{}
+		j.body["status"] = st
+	}
+	st["runDuration"] = d
+}
+
 // SetCreated back-dates (or post-dates) a job's create time, which the
 // listing and jobs.list's filter read.
 func (f *Batch) SetCreated(id string, t time.Time) {
@@ -409,7 +502,9 @@ func (f *Batch) delete(w http.ResponseWriter, r *http.Request, p string) {
 // to reach DELETION_IN_PROGRESS and tear the job's VMs down (Check 57a steps
 // 7 and 8 settle what it really answers and how long it takes). The backend
 // reads the job back rather than the operation, so the difference is not
-// visible to it.
+// visible to it. CancelRace moves the job before the answer, which is the one
+// thing a test cannot otherwise arrange: the listing that decided to cancel
+// the job read the state this request is about to change.
 func (f *Batch) cancel(w http.ResponseWriter, r *http.Request, p string) {
 	project, region, id, ok := batchJobPath(p)
 	if !ok || id == "" {
@@ -417,9 +512,15 @@ func (f *Batch) cancel(w http.ResponseWriter, r *http.Request, p string) {
 		return
 	}
 	j := f.jobs[jobKey{project, region, id}]
-	if j == nil {
+	if j == nil || f.CancelGone[id] {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+id+" not found")
 		return
+	}
+	if raced := f.CancelRace[id]; raced != "" {
+		j.state = raced
+		if st, ok := j.body["status"].(map[string]any); ok {
+			st["state"] = raced
+		}
 	}
 	if batchTerminal(j.state) {
 		if !f.AllowCancelOfTerminal {
@@ -484,6 +585,11 @@ func (f *Batch) list(w http.ResponseWriter, r *http.Request, parent string) {
 		}
 		wantKey, wantVal = m[1], m[2]
 	}
+	if f.IgnoreFilter {
+		// A server that did not honour the filter answers every job it holds:
+		// the shape a caller's own client-side check has to survive.
+		wantKey, wantVal = "", ""
+	}
 	var all []*batchJob
 	for _, k := range f.order {
 		// The listing is per region and per project: a job created under
@@ -526,6 +632,12 @@ func (f *Batch) list(w http.ResponseWriter, r *http.Request, parent string) {
 	resp := map[string]any{"jobs": out}
 	if end < len(all) {
 		resp["nextPageToken"] = strconv.Itoa(end)
+	}
+	if len(f.Unreachable) > 0 {
+		// jobs.list answers the locations it could not reach alongside the
+		// jobs it did: a caller that reads an unreachable listing as a complete
+		// one is reading absence as fact.
+		resp["unreachable"] = f.Unreachable
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

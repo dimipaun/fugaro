@@ -274,6 +274,9 @@ type Workflow struct {
 	// has been published — a separate, person-run step this plan does not
 	// do. Use checkout: baked to run a workflow today.
 	Checkout string `yaml:"checkout,omitempty"`
+	// Inputs caps what a launcher may attach to a run of this workflow
+	// (design artifact-runs.md §4). Binaries before 0.8.0 refuse the key.
+	Inputs Inputs `yaml:"inputs"`
 }
 
 // Checkout values of a workflow (design generic-tool.md §2, G3).
@@ -364,7 +367,16 @@ type Commands struct {
 	Lint string `yaml:"lint"`
 	// Fix is the check step's autofix command; it needs Lint, since the
 	// gate runs fix, then lint, to judge whether the fix worked.
-	Fix         string       `yaml:"fix"`
+	Fix string `yaml:"fix"`
+	// Render is a mode: artifact recipe's render command (design
+	// artifact-runs.md §3): repository text, run once, in the checkout, as
+	// the agent's user. "" means no artifact recipe may run against this
+	// workflow: the runner refuses one whose workflow leaves it empty.
+	Render string `yaml:"render"`
+	// Probe is the artifact recipe's optional check on what it rendered:
+	// one command, given the outputs directory and the names in its
+	// environment. "" means the recipe's outputs.probe must be none.
+	Probe       string       `yaml:"probe"`
 	RerunFailed *RerunFailed `yaml:"rerun_failed"`
 	Reports     []string     `yaml:"reports"`
 }
@@ -404,11 +416,20 @@ const AnthropicSecret = "anthropic-api-key"
 // deploy), or route the model through a provider.
 const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro init --repo, or route the model through a provider"
 
+// BitbucketSecret is the logical secret that holds a Bitbucket credential: a
+// repository access token, issued for one repository and unusable for any
+// other (docs/git-providers.md). It is the one reserved name D2's
+// project-scope default leaves out, so `fugaro secrets set` and init's
+// secrets stage store it in the repository's own copy unless the owner's
+// local config allow-lists a repository for it
+// (config.PerRepositorySecret, owner ruling of 2026-10-15).
+const BitbucketSecret = "bitbucket-token"
+
 // ReservedSecrets are the logical secret names the platform itself mounts,
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
 var ReservedSecrets = map[string]string{
-	"bitbucket-token":    "FUGARO_BITBUCKET_TOKEN",
+	BitbucketSecret:      "FUGARO_BITBUCKET_TOKEN",
 	"github-app-key":     "FUGARO_GITHUB_APP_PRIVATE_KEY",
 	"claude-oauth-token": "CLAUDE_CODE_OAUTH_TOKEN",
 	AnthropicSecret:      "ANTHROPIC_API_KEY",
@@ -422,10 +443,68 @@ type Resources struct {
 
 // Timeouts bound a run (design §4.5).
 type Timeouts struct {
-	Total           Duration `yaml:"total"`
-	Stage           Duration `yaml:"stage"`
-	Verify          Duration `yaml:"verify"`
+	Total  Duration `yaml:"total"`
+	Stage  Duration `yaml:"stage"`
+	Verify Duration `yaml:"verify"`
+	// Render bounds the render step alone (design artifact-runs.md §3);
+	// unset means min(verify, total - finalize_reserve), computed in
+	// applyDefaults beside the other three. The run's own deadline caps it
+	// further.
+	Render          Duration `yaml:"render"`
 	FinalizeReserve Duration `yaml:"finalize_reserve"`
+}
+
+// The ceilings and defaults of a workflow's inputs: block (design
+// artifact-runs.md §4, P6). MaxFiles, MaxBytes (per file) and MaxTotalBytes
+// (the whole set) are what fugaro.yaml may ask for; a written 0 means the
+// default, which the accessors below apply, so Validate can still tell a
+// cap the file wrote from one it left out.
+const (
+	MaxInputFiles      = 64
+	MaxInputBytes      = int64(1) << 30
+	MaxInputTotalBytes = int64(4) << 30
+
+	DefaultInputFiles      = 16
+	DefaultInputBytes      = int64(256) << 20
+	DefaultInputTotalBytes = int64(1) << 30
+)
+
+// Inputs caps what a launcher may attach to a run of this workflow: the same
+// shape as a recipe's outputs block, with the launcher on the other side of
+// the wire (design artifact-runs.md §4).
+type Inputs struct {
+	MaxFiles      int   `yaml:"max_files"`       // 0 means DefaultInputFiles
+	MaxBytes      int64 `yaml:"max_bytes"`       // 0 means DefaultInputBytes; PER FILE
+	MaxTotalBytes int64 `yaml:"max_total_bytes"` // 0 means DefaultInputTotalBytes; THE WHOLE SET
+}
+
+// MaxFileCount is how many files may be attached: MaxFiles, or
+// DefaultInputFiles when the workflow did not write it.
+func (i Inputs) MaxFileCount() int {
+	if i.MaxFiles <= 0 {
+		return DefaultInputFiles
+	}
+	return i.MaxFiles
+}
+
+// MaxFileBytes is the most one attached file may hold: MaxBytes, or
+// DefaultInputBytes when the workflow did not write it.
+func (i Inputs) MaxFileBytes() int64 {
+	if i.MaxBytes <= 0 {
+		return DefaultInputBytes
+	}
+	return i.MaxBytes
+}
+
+// MaxSetBytes is the most the whole set may hold: MaxTotalBytes, or
+// DefaultInputTotalBytes when the workflow did not write it. The memory
+// rule counts this beside the output set's doubled staging copy
+// (runner.RecipeGateProblems).
+func (i Inputs) MaxSetBytes() int64 {
+	if i.MaxTotalBytes <= 0 {
+		return DefaultInputTotalBytes
+	}
+	return i.MaxTotalBytes
 }
 
 // Duration is a time.Duration written in Go syntax, such as "90m" or "1h30m",

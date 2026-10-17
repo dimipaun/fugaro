@@ -106,6 +106,23 @@ func Open(dir string, env []string) (*Repo, error) {
 	return &Repo{Dir: dir, Env: env}, nil
 }
 
+// GitDir returns the git directory git names for this checkout, absolute:
+// where the per-checkout state a caller writes to belongs. It is not always
+// <Dir>/.git — in a linked worktree .git is a FILE naming a directory
+// elsewhere (the main repository's .git/worktrees/<name>) — so a caller that
+// writes inside it asks git rather than joining a path.
+//
+// One caveat, for the artifact runner's exclude write (inputs/ in
+// <GitDir>/info/exclude, design artifact-runs.md §4 step 5): git reads that
+// file from the COMMON directory (`git rev-parse --git-common-dir`), which
+// in a worktree is not the directory returned here. The runner is unaffected
+// because only review mode makes a worktree (runner/reviewmode.go) and an
+// artifact run never runs in one; a future caller writing an exclude from
+// inside a worktree needs the common dir instead.
+func (r *Repo) GitDir(ctx context.Context) (string, error) {
+	return r.git(ctx, "rev-parse", "--absolute-git-dir")
+}
+
 // OpenOrClone returns the checkout at dir, cloning remote into it first if
 // dir has none. In the container image the checkout is baked in.
 func OpenOrClone(ctx context.Context, dir, remote string, env []string, strip ...string) (*Repo, error) {
@@ -531,6 +548,29 @@ func (r *Repo) ShowFile(ctx context.Context, rev, path string) ([]byte, error) {
 		return nil, fmt.Errorf("refusing to read %q: the path must be relative and clean, without ..", path)
 	}
 	return r.gitRaw(ctx, "show", "--no-textconv", rev+":"+path)
+}
+
+// TrackedPaths returns the paths the index holds under dir, relative to the
+// repository root (`git ls-files -- dir`), so a caller can ask "did the
+// repository put anything here?" — a question a walk of the working tree
+// cannot answer, because a file in that directory may be untracked or ignored
+// and so not the repository's at all. dir must be relative and clean; a
+// directory the index has nothing under returns no paths and no error.
+func (r *Repo) TrackedPaths(ctx context.Context, dir string) ([]string, error) {
+	if !cleanRelPath(dir) {
+		return nil, fmt.Errorf("refusing to list %q: the path must be relative and clean, without ..", dir)
+	}
+	out, err := r.gitRaw(ctx, "ls-files", "-z", "--", dir)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
 }
 
 // BlobSize returns the size in bytes of the file at path in revision rev

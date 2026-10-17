@@ -681,6 +681,21 @@ func TestSpecRefuses(t *testing.T) {
 		"url on another host":              func(in *Inputs) { in.RepoURL = "https://example.com/acme/sandbox.git" },
 		"url with credentials":             func(in *Inputs) { in.RepoURL = "https://x:y@bitbucket.org/acme/sandbox.git" },
 		"url of another repository":        func(in *Inputs) { in.RepoURL = "https://bitbucket.org/other/repo.git" },
+		// The path is the one git sends, escapes and all: a URL whose path
+		// decodes to this repository but is not spelled as this repository is
+		// a URL the run's own admission refuses, so accepting it here deploys
+		// a job that refuses every run (the review finding on this change).
+		"url with an escaped path":  func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme/sandb%6fx.git" },
+		"url with an escaped owner": func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acm%65/sandbox.git" },
+		// The path's punctuation is one leading and one trailing "/", the same
+		// trim the run's admission makes (gitprov.TrimRepoPath): a second slash
+		// is an empty segment, which the admission's canonicalization refuses —
+		// so accepting it here would write the URL as the job's remote and
+		// every run of that job would stop before any clone (the review finding
+		// on this change).
+		"url with an empty leading segment": func(in *Inputs) { in.RepoURL = "https://bitbucket.org//acme/sandbox.git" },
+		"url with a doubled trailing slash": func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme/sandbox.git//" },
+		"url with an empty inner segment":   func(in *Inputs) { in.RepoURL = "https://bitbucket.org/acme//sandbox.git" },
 		"role of another project": func(in *Inputs) {
 			in.Installation.RoleIDs.JobRunner = "projects/other-proj/roles/" + RoleJobRunner
 		},
@@ -1832,23 +1847,33 @@ func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// D2 (plan Task 2.1 step 3b): the sandbox's git credential is a reserved
+	// name, and the one reserved name the sweep does not take in -- a
+	// Bitbucket repository access token is issued for one repository and
+	// authenticates no other (owner ruling of 2026-10-15,
+	// config.PerRepositorySecret). With no project_secrets entry it has no
+	// project-wide candidate at all, and no other name the sandbox mounts is
+	// one, so the set is empty.
 	if len(before.ProjectSecretCandidates) != 0 {
 		t.Fatalf("ProjectSecretCandidates = %+v, want none with no project_secrets configured", before.ProjectSecretCandidates)
 	}
 	// bitbucket-token is the sandbox's git credential, mounted by every
 	// workflow (SecretMounts's unconditional first entry) -- allow-listing
-	// it project-wide here is the design's own worked example (§6).
+	// it project-wide here is the owner's explicit opt-in and the design's
+	// own worked example (§6), and it is the only thing that gives the name
+	// a project copy.
 	after, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
 	// (a) P2's golden property: the key SET (and every ID) is identical,
 	// unaffected by project_secrets existing at all.
 	if !maps.Equal(before.Secrets, after.Secrets) {
 		t.Fatalf("rs.Secrets changed:\nbefore: %+v\nafter:  %+v", before.Secrets, after.Secrets)
 	}
-	// (b) ProjectSecretCandidates gains EXACTLY the expected new entry.
-	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	// (b) The entry's own list is what decides the candidate, and it names
+	// this repository.
 	if !maps.Equal(after.ProjectSecretCandidates, want) {
 		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
 	}

@@ -599,3 +599,23 @@ func TestRowProjectLayerFieldsKeepTheirJSONNames(t *testing.T) {
 		t.Errorf("no config_sha256 key: %s", data)
 	}
 }
+
+// TestJoinArtifactBytesCountsNoNegativeSize: the record is untrusted text, and
+// a negative byte count is not a size — the row's total counts it as none
+// rather than subtracting it from the artifacts that do have one. Mutation
+// caught: summing a.Bytes directly.
+func TestJoinArtifactBytesCountsNoNegativeSize(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.Artifacts = []runstore.ArtifactFile{
+		{Name: "a.mp4", Bytes: -1 << 20},
+		{Name: "b.mp4", Bytes: 10},
+		{Name: "c.mp4", Bytes: 0},
+	}
+	row := Join(Input{Task: spec, Launch: launch, Exec: exec(backend.StateSucceeded), Record: r}, prices, now)
+	if row.ArtifactCount != 3 {
+		t.Errorf("artifact count = %d, want 3", row.ArtifactCount)
+	}
+	if row.ArtifactBytes != 10 {
+		t.Errorf("artifact bytes = %d, want 10 (a negative count is not a size)", row.ArtifactBytes)
+	}
+}

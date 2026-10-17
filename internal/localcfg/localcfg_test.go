@@ -1050,3 +1050,87 @@ func TestBuildBlockValidated(t *testing.T) {
 		}
 	}
 }
+
+// TestRoutingInTheLocalConfig: the operator's config is the first definition
+// site of the routing switch, so a switch it cannot act on is refused at load
+// — a glob (D1a: an explicit list, never a pattern), a via it does not know,
+// and a route no provider entry claims (D1b: openrouter resolves to a provider
+// or it does not resolve at all). A valid switch loads, and an absent one is
+// direct.
+func TestRoutingInTheLocalConfig(t *testing.T) {
+	if c, err := Parse([]byte(sample)); err != nil || c.Routing != nil {
+		t.Fatalf("an absent switch: c.Routing = %+v, err = %v; want nil and no error", c.Routing, err)
+	}
+	ok := sample + "routing:\n  claude:\n    via: direct\n"
+	c, err := Parse([]byte(ok))
+	if err != nil {
+		t.Fatalf("via: direct: %v", err)
+	}
+	if c.Routing == nil || c.Routing.Claude.ViaValue() != config.RouteDirect || len(c.Routing.Claude.Models) != 0 {
+		t.Fatalf("via: direct: routing = %+v", c.Routing)
+	}
+	// A block with no Claude entry loads and means nothing here — it names no
+	// route, so this loader reads it as it reads an absent block — but it is not
+	// a statement that the switch is off: the surface that would act on it is
+	// `project policy publish`, which refuses to turn an active node route off
+	// unless the operator says so (the review of PR #414, and
+	// TestProjectPolicyPublishRefusesARoutingBlockThatSaysNothing is where that
+	// half lives: this package holds no policy node).
+	for _, tc := range []struct{ name, block string }{
+		{"an empty block", "routing: {}\n"},
+		{"a claude with no value", "routing:\n  claude:\n"},
+	} {
+		c, err := Parse([]byte(sample + tc.block))
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if c.Routing == nil || c.Routing.Claude != nil {
+			t.Errorf("%s: routing = %+v, want a block that names no Claude switch", tc.name, c.Routing)
+		}
+	}
+	for _, tc := range []struct{ name, block, msg string }{
+		{"a glob", "routing:\n  claude:\n    via: openrouter\n    models: [claude-*]\n", "explicit list"},
+		{"an unknown via", "routing:\n  claude:\n    via: somewhere-else\n    models: [claude-sonnet-5-5]\n", "routing.claude.via"},
+		{"an empty list", "routing:\n  claude:\n    via: openrouter\n", "routing.claude.models"},
+		{"an unclaimed route", "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n", "no provider entry claims it"},
+	} {
+		if _, err := Parse([]byte(sample + tc.block)); err == nil || !strings.Contains(err.Error(), tc.msg) {
+			t.Errorf("%s: err = %v, want a refusal naming %q", tc.name, err, tc.msg)
+		}
+	}
+
+	// The positive case, and the reason the refusals above mean anything: a
+	// config that *enables* the switch loads, from the file, and the one
+	// resolver takes the model to the route that claims it. Without this case a
+	// rule that refuses everything would pass, and "openrouter can never be
+	// turned on" would be true of this package by accident (the security review
+	// of this slice asked for exactly this test).
+	claim := "providers:\n" +
+		"  openrouter-claude:\n" +
+		"    kind: anthropic-compat\n" +
+		"    base_url: https://openrouter.ai/api/v1\n" +
+		"    auth: bearer\n" +
+		"    secret: openrouter-claude-key\n" +
+		"    models: [\"anthropic/claude-sonnet-5.5\"]\n" +
+		"    allow_data_to: [\"*\"]\n"
+	routed, err := Parse([]byte(sample + claim + "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n"))
+	if err != nil {
+		t.Fatalf("a config that enables the switch was refused: %v", err)
+	}
+	route, sent, resolved := config.RoutingClaudeFor(routed.Routing.Claude, "claude-sonnet-5-5", routed.Providers)
+	if !resolved || route != "openrouter-claude" || sent != "anthropic/claude-sonnet-5.5" {
+		t.Errorf("RoutingClaudeFor = (%q, %q, %v), want the route entry's name and its own ID", route, sent, resolved)
+	}
+	// The same config with the model left out of the list is direct: the list
+	// is the opt-in, not the route.
+	if route, sent, resolved := config.RoutingClaudeFor(routed.Routing.Claude, "claude-opus-5-5", routed.Providers); !resolved || route != config.RouteDirect || sent != "claude-opus-5-5" {
+		t.Errorf("an unlisted model = (%q, %q, %v), want the direct route", route, sent, resolved)
+	}
+	// And the claim without allow_data_to written is refused at load (D1b):
+	// the same file, minus the line that makes the route open to a repository.
+	bare := strings.Replace(claim, "    allow_data_to: [\"*\"]\n", "", 1)
+	if _, err := Parse([]byte(sample + bare + "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")); err == nil || !strings.Contains(err.Error(), "allow_data_to") {
+		t.Errorf("a claim with no allow_data_to: err = %v, want a refusal naming allow_data_to", err)
+	}
+}

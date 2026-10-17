@@ -497,6 +497,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
 			return nil, err
 		}
+		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
+			return nil, err
+		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
 	} else if rcp == nil && c.Chosen != nil {
@@ -511,6 +514,18 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 		if err := refuseFollowUpReviewMode(inherited, rcp.Name); err != nil {
+			return nil, err
+		}
+		if err := refuseFollowUpArtifactMode(inherited, rcp.Name); err != nil {
+			return nil, err
+		}
+	} else if rcp != nil {
+		// An inherited repository recipe by name: task.Recipe carries no
+		// text for one (taskRecipe, recipes_resolve.go), so there is
+		// nothing to parse here. This checkout's copy is read when there
+		// is one; otherwise the runner refuses the file it reads at this
+		// task's base.
+		if err := refuseFollowUpRepoRecipe(ctx, repo, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -549,13 +564,19 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 
 // carryChosenRecipe is the recipe a follow-up keeps when the runner chose the
 // previous run's: a repository recipe by name (the runner reads it at the
-// base), any other resolved now and embedded. A note says what is kept, and
-// that the text changed since when it did.
+// base), any other resolved now and embedded. A repository recipe is refused
+// for the two modes a follow-up cannot run first (refuseFollowUpRepoRecipe),
+// from this checkout's copy of it; the runner refuses the file it reads at
+// the base when there is none here. A note says what is kept, and that the
+// text changed since when it did.
 func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prChain, warn io.Writer) (*task.Recipe, error) {
 	ch := c.Chosen
 	var rcp *task.Recipe
 	changed := false
 	if ch.Source == string(recipe.SourceRepo) {
+		if err := refuseFollowUpRepoRecipe(ctx, repo, ch.Name); err != nil {
+			return nil, err
+		}
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}
 	} else {
 		msg := func(cause error) error {
@@ -573,6 +594,9 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 			return nil, wrap(err)
 		}
 		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
+			return nil, wrap(err)
+		}
+		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
 			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)

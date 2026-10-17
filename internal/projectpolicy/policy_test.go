@@ -36,9 +36,13 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	// not know (P8): unknown keys at the TOP LEVEL are ignored. Version gates
 	// a newer policy; the budget block is strict
 	// (TestDecodeRefusesABudgetWhoseKeysAllMiss), and so is a providers entry
-	// and routing (TestDecodeRefusesAMisspeltProviderKey,
-	// TestDecodeValidatesRouting) — see the package doc for why the shape of
-	// a known block is not the same case as a key this binary cannot name.
+	// (TestDecodeRefusesAMisspeltProviderKey). `routing` is neither: a member
+	// this Fugaro does not model is ignored beside a written `claude`, the way
+	// an unknown top-level key is, but a block that names no `claude` switch is
+	// refused (validRoutingMembers, TestRoutingCommentsMatchTheCode), and the
+	// switch's own values are checked (TestDecodeRefusesAnUnknownVia) — see the
+	// package doc for why the shape of a known block is not the same case as a
+	// key this binary cannot name.
 	p, found, err := Decode([]byte(`{
 		"version": 1,
 		"budget": {"mode": "observe"},
@@ -97,6 +101,112 @@ func TestDecodeRefusesAMisspeltProviderKey(t *testing.T) {
 				t.Errorf("the refusal does not name the provider it is about: %v", err)
 			}
 		})
+	}
+}
+
+// TestDecodeRefusesAProviderNamedOrSpelledTwice: a providers entry is read
+// into a map — the block keyed by provider name, the entry keyed by member —
+// and encoding/json keeps the last of a repeated key, so a document that names
+// one twice is read as its second half, silently. Both of the members that
+// fail open are here: a second allow_data_to replaces the first (so a node can
+// widen an allow-list by repeating the key), and a second route_fee_pct
+// replaces the fee. The block's own keys are held to it too: a provider named
+// twice is one provider to every reader here, and the entry kept is the whole
+// of what it allows.
+func TestDecodeRefusesAProviderNamedOrSpelledTwice(t *testing.T) {
+	entry := `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]`
+	for _, tc := range []struct{ name, raw string }{
+		{"allow_data_to twice, the second widened", string(providerPolicy(entry + `, "allow_data_to": ["acme/app"], "allow_data_to": ["*"]}`))},
+		{"route_fee_pct twice, the second dropped", string(providerPolicy(entry + `, "route_fee_pct": 3, "route_fee_pct": 0}`))},
+		{"the same member twice spelled in two cases", string(providerPolicy(entry + `, "allow_data_to": ["acme/app"], "ALLOW_DATA_TO": ["*"]}`))},
+		{"the provider named twice", `{"version": 1, "providers": {"openrouter": ` + entry + `, "allow_data_to": ["acme/app"]}, "openrouter": ` + entry + `, "allow_data_to": ["*"]}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(tc.raw))
+			if err == nil || p != nil {
+				t.Fatalf("Decode(%s) = (%v, %v), want a refusal: a repeated key is read as the last of the two, whichever value the document meant", tc.raw, p, err)
+			}
+			if !found {
+				t.Error("the node exists and cannot be used, so found must be true (fail closed)")
+			}
+		})
+	}
+	// The other side: the same document with each key written once decodes,
+	// and it decodes to the narrower list — the refusal above is about the
+	// repeat, not about the values.
+	p, found, err := Decode(providerPolicy(entry + `, "allow_data_to": ["acme/app"], "route_fee_pct": 3}`))
+	if err != nil || !found {
+		t.Fatalf("the entry written once was refused: %v", err)
+	}
+	if got := p.Providers["openrouter"]; got.AllowsData("other/repo") || got.RouteFeePct != 3 {
+		t.Errorf("the entry written once = %+v, want acme/app and a fee of 3", got)
+	}
+}
+
+// TestDecodeRefusesANullRouteFeePct: route_fee_pct is a float64, and a written
+// null decodes into it as 0 — no surcharge at all. The key is there, so the
+// operator (or a tool that serialized an absent value explicitly) meant to set
+// a fee; a misspelling of the same name is refused one key over, and letting
+// the null through would price every request on that route without the
+// surcharge while the node says otherwise. A null require_zdr or price_policy
+// is the same zero value the absent key gives, so neither is refused.
+func TestDecodeRefusesANullRouteFeePct(t *testing.T) {
+	entry := `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]`
+	p, found, err := Decode(providerPolicy(entry + `, "route_fee_pct": null}`))
+	if err == nil || p != nil {
+		t.Fatalf("Decode(%s) = (%v, %v), want a refusal", entry, p, err)
+	}
+	if !found {
+		t.Error("found must be true: the node exists and cannot be used")
+	}
+	if !strings.Contains(err.Error(), "route_fee_pct") {
+		t.Errorf("the refusal does not name the field it is about: %v", err)
+	}
+	// A fee of 0 written as 0 is not the same document and is not refused: the
+	// refusal is for the null, which says nothing about what was meant.
+	if _, _, err := Decode(providerPolicy(entry + `, "route_fee_pct": 0}`)); err != nil {
+		t.Errorf("an explicit 0 was refused: %v", err)
+	}
+	// And the members whose null IS their default keep it.
+	if _, _, err := Decode(providerPolicy(entry + `, "require_zdr": null, "price_policy": null}`)); err != nil {
+		t.Errorf("a null require_zdr or price_policy was refused: %v", err)
+	}
+}
+
+// TestDecodeRefusesADuplicatedTopLevelKey: Decode reads the node's keys out of
+// a map, and encoding/json keeps the last of a repeated one. The hazard is not
+// the value that wins but the block that loses: {"budget": {...}, "budget":
+// null} is a node whose budget is empty, so the run keeps the ceiling its job
+// environment was deployed with while the operator's node appears to carry one
+// — with no diagnostic anywhere, because the node reads as valid. A modelled
+// key spelled in another case is the same silence one step over: nothing reads
+// "Budget", so the block under it is not read either, and the key is not
+// listed in UnknownKeys as a misspelling of this Fugaro's own name is
+// (TestDecodeIgnoresUnknownKeys holds the other half: a key this Fugaro does
+// not model at all is still tolerated).
+func TestDecodeRefusesADuplicatedTopLevelKey(t *testing.T) {
+	for _, tc := range []struct{ name, raw string }{
+		{"budget twice, the second null", `{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 50}, "budget": null}`},
+		{"budget twice, the second narrower", `{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 50}, "budget": {"mode": "observe"}}`},
+		{"providers twice", `{"version": 1, "providers": {}, "providers": null}`},
+		{"a modelled key in another case", `{"version": 1, "Budget": {"mode": "enforce"}}`},
+		{"version twice", `{"version": 1, "version": 1}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(tc.raw))
+			if err == nil || p != nil {
+				t.Fatalf("Decode(%s) = (%v, %v), want a refusal: the second key is read and the first is dropped, whatever it held", tc.raw, p, err)
+			}
+			if !found {
+				t.Error("found must be true: the node exists and cannot be used")
+			}
+		})
+	}
+	// The document with each key written once, in the same order, decodes: the
+	// refusal is the repeat, not the shape.
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 50}}`))
+	if err != nil || !found || p.Budget.PerRunUSD != 50 {
+		t.Fatalf("Decode = (%+v, %v, %v), want the budget it names", p, found, err)
 	}
 }
 
@@ -179,6 +289,37 @@ func TestDecodeRefusesABudgetWhoseKeysAllMiss(t *testing.T) {
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want an error on an existing node", name, raw, p, found, err)
 		}
+	}
+}
+
+// The strict decode above refuses a budget key no field answers to, and passes
+// one that answers to a field in another case: encoding/json matches a member
+// name case-insensitively, so {"mode": "enforce", "MODE": "off"} decodes to
+// Mode "off" with no error at all — the last key the document writes wins —
+// and {"mode": "enforce", "mode": "observe"} is the same document order
+// deciding the same way. The block is enforced, not advisory (validBudget), and
+// internal/config refuses the same spelling in fugaro.yaml, so the names are
+// held to the documented ones here too.
+func TestDecodeRefusesCaseFoldedBudgetMembers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"a case-folded mode beside the real one": `{"version": 1, "budget": {"mode": "enforce", "MODE": "off"}}`,
+		"mode written twice":                     `{"version": 1, "budget": {"mode": "enforce", "mode": "observe"}}`,
+		"a case-folded allowed_models":           `{"version": 1, "budget": {"mode": "enforce", "ALLOWED_MODELS": ["claude-sonnet-5"]}}`,
+		"a case-folded per_run_usd":              `{"version": 1, "budget": {"mode": "enforce", "PER_RUN_USD": 5}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "budget") {
+			t.Errorf("%s: err = %v, want it to name the block", name, err)
+		}
+	}
+	// The documented spelling is read as before, values and all.
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"]}}`))
+	if err != nil || !found || p == nil || p.Budget.Mode != "enforce" || p.Budget.PerRunUSD != 12.5 {
+		t.Fatalf("a correctly spelled budget was refused: (%v, %v, %v)", p, found, err)
 	}
 }
 
@@ -335,8 +476,16 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 		"a case-variant member name":    `{"Kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
 		"a bad data entry":              `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme"]}`,
 		"an absurd route fee":           `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "route_fee_pct": 51}`,
-		"an alias pattern":              `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
-		"a misspelt policy":             `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
+		// A repeated member name: encoding/json keeps the last one it reads, so
+		// the second allow_data_to decided the entry — ["acme/app"] then ["*"]
+		// decoded as ["*"], every repository, with nothing left in the map to
+		// refuse. The name is read off the document as written
+		// (objectMemberNames) so the repetition is visible, exactly as it is in
+		// `budget`, in a model_prices entry and in the routing switch.
+		"a repeated data list": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"], "allow_data_to": ["*"]}`,
+		"a repeated kind":      `{"kind": "anthropic-compat", "kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"an alias pattern":     `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
+		"a misspelt policy":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
 	} {
 		p, found, err := Decode(providerPolicy(entry))
 		if err == nil || p != nil || !found {
@@ -351,6 +500,22 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 	if _, _, err := Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "Allow_Data_To": null}`)); err == nil ||
 		!strings.Contains(err.Error(), "Allow_Data_To") || !strings.Contains(err.Error(), "allow_data_to") {
 		t.Errorf("the case-variant null list = %v, want a refusal naming both the spelling written and the one to write", err)
+	}
+	// The refusal of a repeated member names the member and says which value
+	// was read: the row above is about the hole (["*"] out of a narrower first
+	// write), this one is about the operator being able to find it.
+	if _, _, err := Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"], "allow_data_to": ["*"]}`)); err == nil ||
+		!strings.Contains(err.Error(), "providers.openrouter") || !strings.Contains(err.Error(), `"allow_data_to"`) || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("a repeated allow_data_to = %v, want a refusal naming the entry and the member written twice", err)
+	}
+	// The same walk one level up: a provider defined twice on the block is the
+	// entry the decoder kept, which is the last one written, so the node could
+	// be routed and metered by a definition no reader of the document sees.
+	if _, _, err := Decode([]byte(`{"version": 1, "providers": {
+		"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"]},
+		"openrouter": {"kind": "anthropic-compat", "base_url": "https://evil.example/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["*"]}}}`)); err == nil ||
+		!strings.Contains(err.Error(), "providers names") || !strings.Contains(err.Error(), `"openrouter"`) || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("a provider entry written twice = %v, want a refusal naming the entry written twice", err)
 	}
 	// Two providers may not claim the same model: the run would route to one of
 	// them arbitrarily, and the charge would be whichever one it was.
@@ -615,5 +780,128 @@ func TestVersionErrorCarriesBothVersions(t *testing.T) {
 	}
 	if got := fmt.Sprintf(CLISkew, ve.Found, ve.Understood); !strings.Contains(got, "upgrade Fugaro") || strings.Contains(got, "runner image") {
 		t.Errorf("CLISkew = %q, want the CLI's remedy only", got)
+	}
+}
+
+// TestPolicyCarriesRouting: the switch is delivered by the node — `project
+// policy publish` copies the operator's routing block into config/policy/shared
+// and a run reads it back byte for byte — and the node is held to the same
+// shape rule the operator's own config is: an explicit list of Claude IDs,
+// never a pattern (D1a). An absent block stays absent, which is direct (D1b).
+func TestPolicyCarriesRouting(t *testing.T) {
+	// The node carries the route entry the switch resolves through: one
+	// explicit "anthropic/<id>" per Claude ID, with allow_data_to written
+	// (D1b) — without them the switch names a route nothing claims, which the
+	// decoder refuses below.
+	pol := &Policy{
+		Version: Version,
+		Budget:  Budget{Mode: "enforce", PerRunUSD: 5},
+		Providers: map[string]Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api/v1", Auth: "bearer",
+			Secret: "openrouter-key", Models: []string{"anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"},
+			AllowDataTo: []string{"*"}, PricePolicy: PricePolicyHighest,
+		}}},
+		Routing: &Routing{Claude: &ClaudeRoute{Via: RouteOpenRouter, Models: []string{"claude-sonnet-5-5", "claude-opus-5-5"}}},
+	}
+	// The delivery path: the CLI marshals the policy onto the node, exactly as
+	// project policy publish writes it.
+	raw, err := json.Marshal(pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"claude-sonnet-5-5"`) {
+		t.Fatalf("the node does not carry the IDs: %s", raw)
+	}
+	got, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v)", got, found, err)
+	}
+	if got.Routing == nil || got.Routing.Claude == nil {
+		t.Fatalf("the routing block did not survive the node: %+v", got.Routing)
+	}
+	if got.Routing.Claude.Via != RouteOpenRouter || len(got.Routing.Claude.Models) != 2 || got.Routing.Claude.Models[0] != "claude-sonnet-5-5" {
+		t.Errorf("routing = %+v", got.Routing.Claude)
+	}
+	// A node without one decodes to no block: direct (D1b).
+	if p, _, err := Decode([]byte(`{"version": 1}`)); err != nil || p.Routing != nil {
+		t.Errorf("an absent block = (%+v, %v), want nil and no error", p.Routing, err)
+	}
+	// And the shapes D1a refuses are refused on the node too, with the key
+	// named: a pattern, an empty list under via: openrouter, and a via this
+	// Fugaro cannot act on.
+	routes := `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}`
+	for _, tc := range []struct{ name, routing, want string }{
+		{"a glob", `{"claude": {"via": "openrouter", "models": ["claude-*"]}}`, "explicit list"},
+		{"an empty list", `{"claude": {"via": "openrouter"}}`, "routing.claude.models"},
+		{"an empty via", `{"claude": {"via": ""}}`, "routing.claude.via"},
+	} {
+		raw := []byte(`{"version": 1, "providers": ` + routes + `, "routing": ` + tc.routing + `}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+		} else if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to name %q", tc.name, err, tc.want)
+		}
+	}
+	// D1b is D1b on the node too (the security review of this slice): a node
+	// that routes a Claude ID through a provider which does not claim it, or
+	// which claims it without allow_data_to written, is refused — the node is
+	// the artifact every run reads, and "the switch is there but inert" is not
+	// a state a run reports.
+	for _, tc := range []struct{ name, providers, want string }{
+		{"no provider claims the ID", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["*"]}}`, "no provider entry claims it"},
+		{"the claim has no allow_data_to", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"]}}`, "allow_data_to"},
+		{"no providers block at all", `{}`, "no provider entry claims it"},
+	} {
+		raw := []byte(`{"version": 1, "providers": ` + tc.providers + `, "routing": {"claude": {"via": "openrouter", "models": ["claude-sonnet-5-5"]}}}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+		} else if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to name %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// TestDecodeRefusesFoldEqualMemberNames: encoding/json does not fold a member
+// name with strings.ToLower — it folds it with unicode.SimpleFold (fold.go's
+// foldName, whose contract is bytes.EqualFold), and SimpleFold has orbits
+// ToLower does not reach. U+017F (ſ, LATIN SMALL LETTER LONG S) is the one that
+// costs: ToLower leaves it as ſ, while the decoder reads it as 's', so a block
+// naming allowed_models and allowed_modelſ was two names to a check built on
+// ToLower and one member to the decoder — which keeps the last of the two, so
+// the document's visible allow-list was not the one the run was bounded by.
+//
+// U+212A (K, KELVIN SIGN) is the same fold from the other side and is the
+// regression guard: it is fold-equal to 'k', and a folding built on an orbit
+// minimum must still refuse it.
+//
+// The routing switch is where it matters most: `{"via": "direct", "modelſ":
+// [...]}` reads as a switch with a model list, from a document that spells the
+// member as nothing this Fugaro documents.
+func TestDecodeRefusesFoldEqualMemberNames(t *testing.T) {
+	const longS = "ſ"  // ſ, fold-equal to s
+	const kelvin = "K" // K, fold-equal to k
+	for name, raw := range map[string]string{
+		"the long s in an allow-list member":       `{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"], "allowed_model` + longS + `": ["claude-opus-5-5"]}}`,
+		"the long s alone in an allow-list member": `{"version": 1, "budget": {"mode": "enforce", "allowed_model` + longS + `": ["claude-opus-5-5"]}}`,
+		"the long s in routing.claude.models":      `{"version": 1, "routing": {"claude": {"via": "direct", "model` + longS + `": ["claude-sonnet-5-5"]}}}`,
+		"the long s beside routing.claude.models":  `{"version": 1, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "model` + longS + `": ["claude-opus-5-5"]}}}`,
+		"the kelvin sign in a rate":                `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "web_search_per_1k": 0.01, "web_search_per_1` + kelvin + `": 9}}}`,
+		"the kelvin sign alone in a rate":          `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "web_search_per_1` + kelvin + `": 9}}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "fold") && !strings.Contains(err.Error(), "spells") && !strings.Contains(err.Error(), "unknown field") {
+			t.Errorf("%s: err = %v, want it to say why the name is refused", name, err)
+		}
+	}
+	// The documented spelling is still read, ſ nowhere in it.
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"]}, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"]}}}`))
+	if err != nil || !found || p == nil || len(p.Budget.AllowedModels) != 1 || len(p.Routing.Claude.Models) != 1 {
+		t.Fatalf("a correctly spelled node was refused: (%v, %v, %v)", p, found, err)
 	}
 }

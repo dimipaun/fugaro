@@ -2,14 +2,17 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -41,6 +44,37 @@ const projectProvidersYAML = "providers:\n" +
 	"    price_policy: highest\n"
 
 func newProjectFixture(t *testing.T, extra string) *projectFixture {
+	return newProjectFixtureWith(t, projectProvidersYAML, extra)
+}
+
+// claudeRouteProvidersYAML is the operator's providers block with a route entry
+// that claims one Claude ID — the shape the routing switch resolves through
+// (docs/design/mixed-credentials.md §4: one explicit "anthropic/<id>", never a
+// pattern). The claim is a second provider entry, so the rest of the fixture's
+// providers are unchanged.
+const claudeRouteProvidersYAML = projectProvidersYAML +
+	"  openrouter-claude:\n" +
+	"    kind: anthropic-compat\n" +
+	"    base_url: https://openrouter.ai/api/v1\n" +
+	"    auth: bearer\n" +
+	"    secret: openrouter-claude-key\n" +
+	"    models: [\"anthropic/claude-sonnet-5.5\"]\n" +
+	"    allow_data_to: [\"*\"]\n"
+
+// twoClaudeModelsProvidersYAML is claudeRouteProvidersYAML with the route entry
+// claiming a second Claude ID. A node whose switch names that ID still decodes
+// (validRouting resolves every ID the list names), which is what lets a publish
+// replace a switch that was already there with the one the config writes.
+const twoClaudeModelsProvidersYAML = projectProvidersYAML +
+	"  openrouter-claude:\n" +
+	"    kind: anthropic-compat\n" +
+	"    base_url: https://openrouter.ai/api/v1\n" +
+	"    auth: bearer\n" +
+	"    secret: openrouter-claude-key\n" +
+	"    models: [\"anthropic/claude-sonnet-5.5\", \"anthropic/claude-opus-5.5\"]\n" +
+	"    allow_data_to: [\"*\"]\n"
+
+func newProjectFixtureWith(t *testing.T, providers, extra string) *projectFixture {
 	t.Helper()
 	dir := t.TempDir()
 	db := gcpfake.NewRTDB(t)
@@ -51,7 +85,7 @@ func newProjectFixture(t *testing.T, extra string) *projectFixture {
 		"user: someone@example.com\nmax_parallel: 2\n" +
 		"budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + db.URL + " }\n" +
 		"endpoints: { no_auth: true }\n" +
-		projectProvidersYAML +
+		providers +
 		"repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n" +
 		extra
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
@@ -190,6 +224,47 @@ func TestProjectPolicyPublishRetriesAnETagConflict(t *testing.T) {
 	}
 }
 
+// policyWriteFails makes every write to the budget database fail at the
+// transport: a hard write failure, not the compare-and-set conflict a retry
+// handles. Reads pass through, so the publisher gets as far as its write.
+type policyWriteFails struct{ rt http.RoundTripper }
+
+func (c policyWriteFails) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method != http.MethodGet {
+		return nil, errors.New("connection reset by peer")
+	}
+	return c.rt.RoundTrip(r)
+}
+
+// TestProjectPolicyPublishPrintsNoDiffItDidNotWrite: the diff is a claim about
+// the node, so it goes out after the write that makes it true. On a write that
+// failed the operator reads the failure and "nothing was written", not a full
+// diff of a policy the node does not hold — a diff printed first reads as a
+// change that happened (the review finding on this change; `project repos
+// edit` prints its line after its write for the same reason,
+// TestProjectReposEditRefusesAConcurrentWriter).
+func TestProjectPolicyPublishPrintsNoDiffItDidNotWrite(t *testing.T) {
+	f := newProjectFixture(t, "")
+	budgetTransport = policyWriteFails{rt: http.DefaultTransport}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("a write the database refused was reported as a successful publish")
+	}
+	if !strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("err = %v, want it to say nothing was written", err)
+	}
+	for _, marker := range []string{"not published yet", "allow_repos", "set "} {
+		if strings.Contains(out, marker) {
+			t.Errorf("the failed publish printed %q:\n%s", marker, out)
+		}
+	}
+	if got := f.db.Value(projectpolicy.PathShared()); got != nil {
+		t.Errorf("%s = %v, want the node the failed write left alone (nothing)", projectpolicy.PathShared(), got)
+	}
+}
+
 func TestProjectPolicyPublishDoesNotReseedARemovedRepo(t *testing.T) {
 	f := newProjectFixture(t, "")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
@@ -227,6 +302,27 @@ func TestProjectPolicyPublishRefusesAVersionItCannotWrite(t *testing.T) {
 	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatal("publishing over a newer policy was allowed")
+	}
+	if !strings.Contains(err.Error(), "version") {
+		t.Errorf("the refusal does not name the version skew: %v", err)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+		t.Fatal("the newer node was removed")
+	}
+}
+
+// The delete is refused by the same check, before the branch that would
+// remove it: this command may neither overwrite nor delete a node a newer
+// Fugaro wrote, so the older binary's whole remedy for a node ahead of it is
+// the upgrade (projectpolicy.CLISkew). Pinned because the sentence there says
+// so — a reader who was told to try the delete and found this refusal would
+// have been sent in a circle, which is the fault the older-node direction had.
+func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
+	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	if err == nil {
+		t.Fatal("deleting a policy written by a newer Fugaro was allowed")
 	}
 	if !strings.Contains(err.Error(), "version") {
 		t.Errorf("the refusal does not name the version skew: %v", err)
@@ -446,6 +542,87 @@ func TestProjectPolicyPublishNeverSeedsFromTheBucket(t *testing.T) {
 	}
 }
 
+// TestProjectShowReadsASharedConfigOfANonDefaultImageSource: the shared config
+// is read with an anchor that includes the image_source this machine records,
+// so an installation that took a fork's base pin (ghcr.io/acme rather than the
+// default ghcr.io/dimipaun) still reads the published document. Omitting the
+// field there refused the document, and that refusal is a hard error in every
+// command that seeds the allow-list — `project show`, `project repos ls` and
+// the `project policy publish` that is the only CLI remedy, so there was no
+// path out.
+func TestProjectShowReadsASharedConfigOfANonDefaultImageSource(t *testing.T) {
+	f := newProjectFixtureWith(t, "", "image_source: ghcr.io/acme\n")
+	writeSharedConfigWithSource(t, f, "ghcr.io/acme", "    acme/third:\n        provider: github\n        workflows:\n            - web\n")
+	// The publish writes the allow-list from the same seed, and it is the
+	// only CLI remedy an operator has, so it is the first half of the path.
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("project policy publish refused a shared config published by this machine's own image_source: %v", err)
+	}
+	got := publishedPolicy(t, f).AllowRepos
+	want := []string{"bitbucket/acme/other", "github/acme/app", "github/acme/third"}
+	if len(got) != len(want) {
+		t.Fatalf("allow_repos = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("allow_repos = %v, want %v", got, want)
+		}
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatalf("project show refused it too: %v", err)
+	}
+	var doc struct {
+		Enrolled map[string]string `json:"enrolled"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if doc.Enrolled["github/acme/third"] != "the shared config" {
+		t.Errorf("enrolled = %v, want github/acme/third from the shared config", doc.Enrolled)
+	}
+}
+
+// TestProjectPolicyPublishRefusesASharedRepoItCannotSpell: the strict seed's
+// refusals are the writer's, and they are about the *seed*, not about which
+// config the entry came from. The shared config's list is the other half of
+// the seed, and a repository there that names no provider — or one whose name
+// projectpolicy.Canonical refuses — cannot be spelled as a canonical entry, so
+// the publish dropped it silently: the allow-list it wrote was missing a
+// repository of the shared config, which is exactly the un-enrollment the
+// local config's own refusal exists to prevent. Both loops refuse in the
+// strict posture now; a reader (`project show`, `project repos ls`) still
+// skips such an entry, because it only labels where an entry came from.
+//
+// Mutation (verified, run and restored): drop the strict refusal from the
+// shared-config loop in allowSourcesOf (the shipped behaviour): the publish
+// succeeds and the entry is gone from the allow-list.
+func TestProjectPolicyPublishRefusesASharedRepoItCannotSpell(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		repos string
+		want  string
+	}{
+		{"no provider", "    acme/third:\n        workflows:\n            - web\n", "names no git provider"},
+		{"a name Canonical refuses", "    acme/..:\n        provider: github\n        workflows:\n            - web\n", "acme/.."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			writeSharedConfig(t, f, tc.repos)
+			_, _, err := execute(t, "project", "policy", "publish")
+			if err == nil {
+				t.Fatalf("the publish seeded without the shared config's %s: allow_repos = %v", tc.name, nodeJSON(t, f, projectpolicy.PathShared()))
+			}
+			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "shared config") {
+				t.Errorf("the refusal does not name the shared config entry it cannot spell: %v", err)
+			}
+			if f.db.Value(projectpolicy.PathShared()) != nil {
+				t.Error("a node was written anyway")
+			}
+		})
+	}
+}
+
 // TestProjectPolicyPublishSeedIsOnlyTheOperatorsRepos: the seed is the
 // operator's repos: map plus the shared config's repository list, and nothing
 // else (P4).
@@ -491,7 +668,10 @@ func TestProjectPolicyPublishRefusesWithoutTheRulesMarker(t *testing.T) {
 
 // TestProjectPolicyPublishRefusesOlderRules: the marker exists and is behind
 // this Fugaro's, which is the state an older CLI's init --firebase leaves
-// behind. The refusal is the other one, and names the marker it found.
+// behind. The refusal is the other one, names the marker it found — and is the
+// same sentence doctor prints for the state (rulesMarkerBelowText), because a
+// refusal and a report that word one state differently disagree about where
+// the operator is standing.
 func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion-1)
@@ -499,11 +679,56 @@ func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish behind the deployed rules was allowed")
 	}
-	if !strings.Contains(err.Error(), "older than the marker") || !strings.Contains(err.Error(), "init --firebase") {
-		t.Errorf("the refusal does not say the rules are older: %v", err)
+	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.RulesVersion-1)) || !strings.Contains(err.Error(), "init --firebase") {
+		t.Errorf("the refusal does not say the marker is below the generation a policy is read under: %v", err)
+	} // Not the marker-current state's sentence: "the deployed rules are older
+	// than the marker" is a claim about a document, and nothing here compared
+	// one — the marker itself is the wrong value.
+	if strings.Contains(err.Error(), "older than the marker") {
+		t.Errorf("the refusal for a marker below the generation reuses the other state's sentence: %v", err)
+	}
+	if !strings.Contains(err.Error(), rulesMarkerBelowText(projectpolicy.RulesVersion-1)) {
+		t.Errorf("the refusal is not the sentence doctor prints for this state:\n got %v\nwant %q", err, rulesMarkerBelowText(projectpolicy.RulesVersion-1))
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
 		t.Error("a node was written anyway")
+	}
+}
+
+// TestProjectPolicyPublishRefusesANegativeRulesMarker: the marker is an integer
+// that no deploy writes. requirePolicyRules branched on `gen < RulesVersion`,
+// so a hand-edited -1 was refused with rulesMarkerBelowText — the sentence for
+// an old deployment, which says this installation's rules predate the policy
+// nodes — while projectpolicy.Read reads the same node as the MarkerError it is
+// (a launcher's -1 would otherwise read as "no policy here", taking a published
+// policy out of every run's reach: the fail-open that check exists to close).
+// A refusal that disagrees with the reader about what the node is sends the
+// operator to redeploy rules that are not what is wrong (the review finding on
+// this change).
+func TestProjectPolicyPublishRefusesANegativeRulesMarker(t *testing.T) {
+	for _, gen := range []int{-1, -projectpolicy.RulesVersion, -1000} {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathRulesMarker(), gen)
+		_, _, err := execute(t, "project", "policy", "publish")
+		if err == nil {
+			t.Fatalf("marker %d: a publish under a hand-edited marker was allowed", gen)
+		}
+		// The refusal's text is the MarkerError's own, through userErr — which
+		// renders the error it is given and so drops the chain errors.As would
+		// walk: the node's name and the value it holds are what the test can
+		// read here.
+		want := (&projectpolicy.MarkerError{Value: strconv.Itoa(gen)}).Error()
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("marker %d: err = %v, want the MarkerError projectpolicy.Read refuses this node as (%q)", gen, err, want)
+		}
+		// Not the old-deployment sentence: nothing here compared the rules
+		// document, and a hand edit is not a generation a deploy left behind.
+		if strings.Contains(err.Error(), "below the generation") || strings.Contains(err.Error(), "older than the marker") {
+			t.Errorf("marker %d: the refusal for a hand-edited marker reuses the old-deployment sentences: %v", gen, err)
+		}
+		if f.db.Value(projectpolicy.PathShared()) != nil {
+			t.Error("a node was written anyway")
+		}
 	}
 }
 
@@ -950,6 +1175,82 @@ func TestProjectShowPrintsEnrolledAndRunning(t *testing.T) {
 	}
 }
 
+// TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun: the run
+// registry holds repository names, and the entry side of the pair compared
+// each allow-list entry to them literally. A pattern entry (github/acme/*)
+// never equals a repository name, so it was reported as "on the allow-list and
+// has no run in flight here" while github/acme/app — the repository it admits,
+// and whose run is in flight — was running, which is the one thing this pair
+// of lists exists to say. Admission is the list's own matcher
+// (projectpolicy.AdmitRepo, which the runner and the launcher use), and the
+// question here is that matcher asked of one entry.
+func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "rm", "github/acme/app", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	// The pattern admits github/acme/app, and a run of it is in flight.
+	appSlug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(budget.PathAgent(appSlug, "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
+
+	out, _, err := execute(t, "project", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "github/acme/* is on the allow-list and has no run in flight here") {
+		t.Errorf("project show calls the pattern idle though the repository it admits is running now:\n%s", out)
+	}
+	if !strings.Contains(out, "bitbucket/acme/other is on the allow-list and has no run in flight here") {
+		t.Errorf("project show no longer reports the entry nothing is running:\n%s", out)
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		AllowRepos         []string `json:"allow_repos"`
+		EnrolledNotRunning []string `json:"enrolled_not_running"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if !slices.Contains(doc.AllowRepos, "github/acme/*") {
+		t.Fatalf("allow_repos = %v, want the pattern the test enrolled", doc.AllowRepos)
+	}
+	if len(doc.EnrolledNotRunning) != 1 || doc.EnrolledNotRunning[0] != "bitbucket/acme/other" {
+		t.Errorf("enrolled_not_running = %v, want [bitbucket/acme/other]: the pattern's repository is running now", doc.EnrolledNotRunning)
+	}
+	// A second installation, with nothing running: the same pattern is idle
+	// there, and saying so is right — the matcher answers about the runs there
+	// are.
+	newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+		t.Fatal(err)
+	}
+	js, _, err = execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if !slices.Contains(doc.EnrolledNotRunning, "github/acme/*") {
+		t.Errorf("enrolled_not_running = %v, want the pattern too: nothing is running here", doc.EnrolledNotRunning)
+	}
+}
+
 // TestNotAdmittedNoteNamesARemedyThatWorks: 'fugaro project repos add' takes a
 // canonical name, and a repository the registry knows only as a slug has none —
 // task.Slug is a hash, so it cannot be turned back into one. The note that
@@ -1047,13 +1348,17 @@ func nodeAt(v any, path ...string) (any, bool) {
 	return v, true
 }
 
-// someFuturePolicy is a node carrying a key this Fugaro does not know in
-// routing, which Decode reads tolerantly (its values are checked by
-// validRouting, which refuses a block this Fugaro cannot act on, so an unknown
-// key there cannot fail open). The budget block, model_prices and the inside of
-// a providers entry are strict — an unknown key there is refused rather than
-// ignored, because a misspelt provider field can fail open (a nil allow_data_to
-// means every repository) — so a key of theirs is not the case this is about.
+// someFuturePolicy is a node carrying a key this Fugaro does not know *inside* a
+// block that is otherwise this Fugaro's own: `routing.claude.future_route`. The
+// block is still one this Fugaro acts on — via: auto, a named Claude ID, and a
+// route entry that claims it with allow_data_to written — so Decode reads it and
+// the unknown key inside the switch survives. A routing block whose member this
+// Fugaro cannot name is refused instead (validRoutingMembers): a misspelt
+// `claude` there is the switch itself going missing, not a newer release's extra
+// tightening. The budget block, model_prices and the inside of a providers entry
+// are strict for the same reason — a misspelt provider field can fail open (a
+// nil allow_data_to means every repository) — so a key of theirs is not the case
+// this is about.
 func someFuturePolicy() map[string]any {
 	return map[string]any{
 		"version":     projectpolicy.Version,
@@ -1061,10 +1366,13 @@ func someFuturePolicy() map[string]any {
 		"allow_repos": []string{"github/acme/app"},
 		"providers": map[string]any{"openrouter": map[string]any{
 			"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer",
-			"secret": "openrouter-key", "models": []string{"deepseek/*"},
-			"require_zdr": false, "price_policy": "highest",
+			"secret": "openrouter-key", "models": []string{"deepseek/*", "anthropic/claude-sonnet-5.5"},
+			"allow_data_to": []string{"acme/app"},
+			"require_zdr":   false, "price_policy": "highest",
 		}},
-		"routing": map[string]any{"claude": map[string]any{"via": "auto", "future_route": "x"}},
+		"routing": map[string]any{"claude": map[string]any{
+			"via": "auto", "models": []string{"claude-sonnet-5-5"}, "future_route": "x",
+		}},
 	}
 }
 
@@ -1327,18 +1635,68 @@ func TestProjectReposAddRefusesUnicodeLookalikes(t *testing.T) {
 	}
 }
 
+// TestProjectReposAddRefusesAProviderKindNothingCanMatch is the review finding
+// on projectpolicy.ValidPattern: it held the first allow_repos segment to
+// task.ValidProvider — the shape of a slug, which accepts any lower-case word a
+// slug could be built from — rather than to the kinds a canonical repository can
+// carry (config.Providers, the values a repository's git.provider may be). So
+// `fugaro project repos add githubb/acme/app` published an entry that matches no
+// repository that can exist, which is exactly the silent un-enrollment that
+// function's own doc says it exists to prevent: the operator saw the entry
+// published, and the repository's runs were refused at admission with nothing
+// else to read.
+func TestProjectReposAddRefusesAProviderKindNothingCanMatch(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{"githubb/acme/app", "gitlab/acme/app", "gce/acme/app"} {
+		_, _, err := execute(t, "project", "repos", "add", arg)
+		if err == nil {
+			t.Errorf("%q was accepted; no repository's git.provider can be that kind", arg)
+			continue
+		}
+		// The refusal names the kinds, so the fix is one word rather than a
+		// guess.
+		if !strings.Contains(err.Error(), "github, bitbucket") {
+			t.Errorf("%q was refused without naming the kinds: %v", arg, err)
+		}
+	}
+	if got := publishedPolicy(t, f).AllowRepos; len(got) != 2 {
+		t.Fatalf("allow_repos = %v: a refused argument was written", got)
+	}
+	for _, arg := range []string{"github/acme/app", "bitbucket/acme/app", "*/acme/*"} {
+		if _, _, err := execute(t, "project", "repos", "add", arg); err != nil {
+			t.Errorf("%q is a provider kind and was refused: %v", arg, err)
+		}
+	}
+}
+
 // writeSharedConfig writes the project's shared config into its runs bucket,
 // the way fugaro config publish does, so a seed can read its repository list.
 // It is a full published config because ParseShared validates one against the
 // bucket it was read from.
 func writeSharedConfig(t *testing.T, f *projectFixture, repos string) {
 	t.Helper()
+	writeSharedConfigWithSource(t, f, "", repos)
+}
+
+// writeSharedConfigWithSource is writeSharedConfig for an installation whose
+// local config records a non-default image_source: a publisher there writes
+// the same source into the document it publishes, and ParseShared accepts it
+// only from a reader that records the same one.
+func writeSharedConfigWithSource(t *testing.T, f *projectFixture, source, repos string) {
+	t.Helper()
+	sourceLine := ""
+	if source != "" {
+		sourceLine = "image_source: " + source + "\n"
+	}
 	s := `version: 1
 name: aurora
 gcp_project: proj-1234
 region: us-east5
 runs_bucket: unused-bucket
-registry_host: us-east5-docker.pkg.dev/proj-1234
+` + sourceLine + `registry_host: us-east5-docker.pkg.dev/proj-1234
 base_images:
     base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.3.1
 build:
@@ -1385,15 +1743,36 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
-		// The broader pattern really does keep every repository the removed one
-		// admitted, so the runs are not refused (the review of PR #390).
-		"pattern, a broader pattern": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
+		// A broader pattern is not the bare wildcard and still admits every
+		// repository the removed one did (code review, medium): */acme/*
+		// matches github/acme/app, and canonicalRepoArg accepts the entry, so
+		// claiming the runs stop here would be a stop that does not happen.
+		"pattern, a broader pattern remains": {[]string{"*/acme/*", "github/acme/*"}, "github/acme/*", true, "*/acme/*"},
 		// A covering entry need not be written with bare "*" segments: github/ac*
 		// admits every owner whose name starts with "ac", which is every owner
 		// github/acme/* admitted, so the runs are not refused either. MatchRepo
 		// answers this — and coversRepo did not, which is why the sentence could
 		// claim a stop the removal does not make (the review of PR #402).
 		"pattern, a partial wildcard that covers it": {[]string{"github/ac*/*", "github/acme/*"}, "github/acme/*", true, "github/ac*/*"},
+		"pattern, another provider's remains":        {[]string{"gitlab/acme/*", "github/acme/*"}, "github/acme/*", false, ""},
+		// A removed entry is not a revocation when what remains admits every
+		// repository it did — and here what remains admits the entry itself:
+		// github/acme/*app is a pattern, and github/acme/* admits the string
+		// "*app" as the repository it reads, so every repository the removed
+		// entry admitted is still admitted. MatchRepo had the wildcard and
+		// the literal the wrong way round, so this read "refused from now
+		// on": the operator was told a stop happened that did not.
+		"pattern, a wildcard over a literal wildcard": {[]string{"github/acme/*", "github/acme/*app"}, "github/acme/*app", true, "github/acme/*"},
+		"pattern, the same width narrower":            {[]string{"github/acme/*", "github/*/*"}, "github/*/*", false, ""},
+		"pattern, its own repo entry remains":         {[]string{"github/acme/app", "github/acme/*"}, "github/acme/*", false, ""},
+		// The removed entry carries a "*" in its *name* (its last segment is
+		// "*-web", not "*"), and github/*/* admits every repository that entry
+		// admitted. MatchRepo meets that "*" as a character of the subject
+		// while the pattern's own "*" is the wildcard — the case a matcher
+		// that compared the two positions first got wrong, reading this as
+		// "refused from now on" for a control the removal did not take away
+		// (the review of this change).
+		"pattern with a star in its name, a broader pattern": {[]string{"github/*/*", "github/acme/*-web"}, "github/acme/*-web", true, "github/*/*"},
 		// The other direction: github/a*/app admits github/acme/app, but not
 		// github/acme/anything-else, which the removed pattern did admit — so the
 		// removal does refuse something and must say so.
@@ -1404,6 +1783,14 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		// "github/*/app") is false. It is that github/*/app admits
 		// github/other/app, which github/acme/* does not.
 		"pattern, one that only overlaps it": {[]string{"github/acme/*", "github/*/app"}, "github/*/app", false, ""},
+		// A "*" inside the removed pattern, aligned with the "*" of the entry
+		// that covers it. The entry has to read that "*" as an ordinary
+		// character in the name it is matched against — github/acme/a* admits
+		// every expansion of github/acme/a*b — and the matcher tested the
+		// literal case first, so the pattern's own "*" was consumed as a
+		// literal and lost: this answered false, and the confirmation claimed
+		// a stop the removal does not make.
+		"pattern, a star inside the removed pattern": {[]string{"github/acme/a*", "github/acme/a*b"}, "github/acme/a*b", true, "github/acme/a*"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, by := admittedBy(tc.allow, tc.arg)
@@ -1531,6 +1918,57 @@ func TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns(t *testing.T)
 	}
 }
 
+// TestProjectReposRmTheWildcardSaysWhatIsLeft: `repos rm '*'` refuses the
+// repositories nothing else admits — the command's own help states that rule —
+// so over a list that still holds github/acme/* the confirmation must not claim
+// every run stops. The wildcard is the one entry the "still admits it" sentence
+// does not fit, because admittedBy asks whether a *string* is admitted and no
+// pattern matches the string "*": without the branch that reads the rest of the
+// list, "*" fell through to the concrete sentence.
+//
+// Mutation (verified, run and restored): let the wildcard fall through to
+// removalWarning's last sentence: this test fails, reading "its runs are
+// refused from now on" while github/acme/* is on the list.
+func TestProjectReposRmTheWildcardSaysWhatIsLeft(t *testing.T) {
+	if got := removalWarning([]string{"*"}, "*"); !strings.Contains(got, "refused from now on") || !strings.Contains(got, "only entry") {
+		t.Errorf("removing the only entry = %q, want it to say every run is refused", got)
+	}
+	if got := removalWarning([]string{"*", "github/acme/*"}, "*"); strings.Contains(got, "refused from now on") {
+		t.Errorf("removing the wildcard with a pattern left = %q, want no claim that runs stop", got)
+	} else if !strings.Contains(got, "github/acme/*") {
+		t.Errorf("the confirmation does not name the entry that still admits its own: %q", got)
+	}
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/acme/*", "*"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation claims every run stops though github/acme/* is on the list:\n%s", out)
+	}
+	if !strings.Contains(out, "github/acme/*") {
+		t.Errorf("the confirmation does not name the entry that still admits its own:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "*") {
+		t.Errorf("allow_repos = %v, want the wildcard removed", allow)
+	}
+	// The point of the sentence: a repository the remaining entry covers is
+	// still admitted, which is why the runs are not refused.
+	if !projectpolicy.AdmitRepo(allow, "github/acme/app") {
+		t.Errorf("allow_repos = %v no longer admits github/acme/app, which the confirmation said it keeps", allow)
+	}
+}
+
 // TestProjectReposEditTheWildcard: "*" is an allow-list entry like any other —
 // the design's explicit every-repository choice (§4.3), which MatchRepo reads
 // as admitting anything, which ValidPattern accepts, and which the rules
@@ -1580,8 +2018,20 @@ func TestProjectReposEditTheWildcard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repos rm '*' = %v", err)
 	}
-	if !strings.Contains(out, `removes * from the allow-list`) || !strings.Contains(out, "refused from now on") {
+	// What removing the wildcard does is a set, not one repository's end: the
+	// repositories the rest of the list still admits keep running, so the
+	// sentence is the help text's rule — "refuses every repository the rest of
+	// the list does not admit" — and it names the entries that stay (the review
+	// of PR #414's branch: this said "its runs are refused from now on" over a
+	// list that still admitted both of them).
+	if !strings.Contains(out, `removes * from the allow-list`) || !strings.Contains(out, "refused only if no other entry admits it") {
 		t.Errorf("the confirmation does not say what removing the wildcard does:\n%s", out)
+	}
+	if !strings.Contains(out, "bitbucket/acme/other") || !strings.Contains(out, "github/acme/app") {
+		t.Errorf("the confirmation does not name the entries that still admit their own:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation claims every run stops though concrete entries remain:\n%s", out)
 	}
 	allow = publishedPolicy(t, f).AllowRepos
 	if slices.Contains(allow, "*") {
@@ -1592,6 +2042,112 @@ func TestProjectReposEditTheWildcard(t *testing.T) {
 	}
 	if !projectpolicy.AdmitRepo(allow, "github/acme/app") {
 		t.Error("removing the wildcard also dropped an entry that was on the list: the command must remove one entry and nothing else")
+	}
+}
+
+// TestProjectReposEditANestedRepository: a repository path may nest —
+// task.CanonicalRepo admits "acme/group/app" and projectpolicy.Canonical pins
+// it as valid — so provider/owner/group/name is a repository an allow-list
+// holds, and both commands must read it as one. Reading the argument as
+// exactly three segments refused it ("write it as provider/owner/name"), which
+// with ValidPattern's own cap of three left the wildcard as the only way to
+// allow-list a nested repository — an entry that does admit a repository, so
+// the guard was refusing the operator's own repository rather than a typo (the
+// review finding on this change).
+//
+// Mutation (verified, run and restored): restore canonicalRepoArg's
+// `len(parts) != 3` — add fails with "is not a repository: write it as
+// provider/owner/name" and nothing is written.
+func TestProjectReposEditANestedRepository(t *testing.T) {
+	const nested = "github/acme/team/app"
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "project", "repos", "add", nested)
+	if err != nil {
+		t.Fatalf("repos add %s = %v", nested, err)
+	}
+	if !strings.Contains(out, "allow_repos: ") || !strings.Contains(out, nested) {
+		t.Errorf("the diff does not print the entry it wrote:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if !slices.Contains(allow, nested) {
+		t.Fatalf("the node holds %v, want %s among them", allow, nested)
+	}
+	// The entry is the one the run's admission asks about, and it admits this
+	// repository and not its siblings.
+	if !projectpolicy.AdmitRepo(allow, nested) {
+		t.Errorf("allow_repos = %v does not admit %s, the entry just written", allow, nested)
+	}
+	if projectpolicy.MatchRepo(nested, "github/acme/app") {
+		t.Errorf("the entry %s admits github/acme/app, which is another repository", nested)
+	}
+	// And the node stays readable: Decode applies ValidPattern to every entry
+	// it reads, so an entry this command can write but the decoder refuses
+	// would halt every run of the project. publishedPolicy decodes the node it
+	// reads back, and fails the test if it cannot.
+	allow = publishedPolicy(t, f).AllowRepos
+	if !slices.Contains(allow, nested) {
+		t.Errorf("the node read back holds %v, want %s among them", allow, nested)
+	}
+	// It comes off the same way.
+	typed(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", nested); err != nil {
+		t.Fatalf("repos rm %s = %v", nested, err)
+	}
+	if allow := publishedPolicy(t, f).AllowRepos; slices.Contains(allow, nested) {
+		t.Errorf("the node still holds %s: %v", nested, allow)
+	}
+}
+
+// TestProjectReposEditFoldsTheConfigLookupToo: the bare owner/name spelling
+// takes its provider from this machine's config, and this command folds
+// upper-case letters everywhere else (github/Acme/App is written
+// github/acme/app). The lookup itself was case-sensitive — lc.Repos is keyed by
+// the operator's own spelling — so `repos add Acme/App` was refused where
+// `repos add github/Acme/App` worked, for the same repository (the review
+// finding on this change). Both spellings of both shapes resolve now, and the
+// entry written is the canonical one either way.
+func TestProjectReposEditFoldsTheConfigLookupToo(t *testing.T) {
+	// The config lists this repository with upper-case letters, so the fold has
+	// to work in both directions: the argument folded to the config's spelling
+	// and the config's spelling folded to the argument's.
+	f := newProjectFixture(t, "  Acme/Mixed: { provider: github, workflows: [web] }\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{"Acme/Mixed", "acme/mixed", "ACME/MIXED"} {
+		out, _, err := execute(t, "project", "repos", "add", arg)
+		if err != nil {
+			t.Fatalf("repos add %s = %v: the config lookup is folded like the rest of the argument", arg, err)
+		}
+		allow := publishedPolicy(t, f).AllowRepos
+		if !slices.Contains(allow, "github/acme/mixed") {
+			t.Fatalf("repos add %s wrote %v, want the canonical entry github/acme/mixed", arg, allow)
+		}
+		if arg == "Acme/Mixed" {
+			// The first add is the one that writes: the line names the entry
+			// the operator's spelling resolved to.
+			if want := "github/acme/mixed"; !strings.Contains(out, want) {
+				t.Errorf("the diff for %s does not name %s:\n%s", arg, want, out)
+			}
+		}
+	}
+	// The fully canonical spelling of the same repository is the same entry,
+	// not a second one: whatever the spelling, what is written is canonical.
+	if _, _, err := execute(t, "project", "repos", "add", "GITHUB/Acme/Mixed"); err != nil {
+		t.Fatal(err)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	n := 0
+	for _, e := range allow {
+		if e == "github/acme/mixed" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("allow_repos = %v, want exactly one github/acme/mixed entry", allow)
 	}
 }
 
@@ -1661,32 +2217,27 @@ func TestProjectPolicyPublishDiffNamesProvidersAndRates(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyPublishKeepsAnExistingRoutingBlock: this Fugaro does not
-// write routing (phase 1b does), so a publish that built the node from its own
-// type would silently turn routing off — a quiet loosening of a key the
-// operator cannot see in this binary. The node's block is kept, and the diff
-// says so rather than saying nothing.
-func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
-	f := newProjectFixture(t, "")
-	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
-		t.Fatal(err)
-	}
-	// A routing block, written the way a newer release (phase 1b) would.
-	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
-	node["routing"] = map[string]any{"claude": map[string]any{"via": "openrouter"}}
-	f.db.Set(projectpolicy.PathShared(), node)
-
+// TestProjectPolicyPublishCarriesTheRoutingSwitch: the routing switch belongs
+// to the operator's config (phase 1b, design §6.2), and a publish is where an
+// edit to it takes effect (the plan's item 9). So a publish writes the block
+// from the local config, the diff names the values that changed rather than
+// keeping quiet about them, `policy show` prints them, and a publish whose
+// config has no switch removes the route — printing that too, because a route
+// that disappears silently is a Claude call that stops being sent where the
+// owner put it.
+func TestProjectPolicyPublishCarriesTheRoutingSwitch(t *testing.T) {
+	f := newProjectFixture(t, "routing:\n  claude:\n    via: direct\n")
 	out, _, err := execute(t, "project", "policy", "publish")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := f.db.Value(projectpolicy.PathShared())
-	if v, ok := nodeAt(got, "routing", "claude", "via"); !ok || v != "openrouter" {
-		t.Errorf("the publish dropped or changed the routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	if v, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing", "claude", "via"); !ok || v != "direct" {
+		t.Errorf("the publish did not write the operator's routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
-	// The operator is told it is kept, not left to wonder.
-	if !strings.Contains(out, "routing kept: claude via openrouter") {
-		t.Errorf("the diff does not say the routing block is kept:\n%s", out)
+	// The operator reads the values, not a count: the diff is where an added,
+	// changed or removed route is visible.
+	if !strings.Contains(out, "+ routing.claude.via: direct") {
+		t.Errorf("the diff does not print the routing block:\n%s", out)
 	}
 	// And `policy show` prints it: a node with a routing block must not look
 	// like a node without one.
@@ -1694,8 +2245,250 @@ func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(shown, "routing: claude via openrouter") {
+	if !strings.Contains(shown, "routing: claude via direct") {
 		t.Errorf("policy show does not print the routing block:\n%s", shown)
+	}
+	// `project show` prints the same policy, and the switch is part of the
+	// picture of where runs go.
+	full, _, err := execute(t, "project", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(full, "routing: claude via direct") {
+		t.Errorf("project show does not print the routing block:\n%s", full)
+	}
+
+	// A config with no switch does not erase one: the block the node carries is
+	// kept as it is (here it is inert — via: direct — and the active case is
+	// TestProjectPolicyPublishRefusesToDropARoutingBlock), and the publish
+	// prints no removal of a value it never held.
+	cfg, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without := strings.Replace(string(cfg), "routing:\n  claude:\n    via: direct\n", "", 1)
+	if err := os.WriteFile(f.path, []byte(without), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "routing.claude") {
+		t.Errorf("a publish with no switch in the config printed a routing change:\n%s", out)
+	}
+	if v, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing", "claude", "via"); !ok || v != "direct" {
+		t.Errorf("the publish dropped the node's routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+}
+
+// TestProjectPolicyPublishCarriesAnActiveRoute: the switch's whole point — an
+// operator names Claude IDs and the route that serves them, and a publish
+// delivers exactly that to the node every run reads. The route entry is in the
+// config's providers (one explicit anthropic/<id>, allow_data_to written), so
+// the node is self-consistent: the switch it carries is one the same node's
+// providers claim, which is what the decoder now requires (D1b) and what
+// publishedPolicy proves by decoding the node.
+func TestProjectPolicyPublishCarriesAnActiveRoute(t *testing.T) {
+	f := newProjectFixtureWith(t, claudeRouteProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"+ routing.claude.via: openrouter", "+ routing.claude.models: [claude-sonnet-5-5]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the diff does not print %q:\n%s", want, out)
+		}
+	}
+	pol := publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil || pol.Routing.Claude.ViaValue() != config.RouteOpenRouter {
+		t.Fatalf("the published node carries routing %+v", pol.Routing)
+	}
+	if !pol.Routing.Claude.Names("claude-sonnet-5-5") {
+		t.Errorf("the node's switch does not name the model: %+v", pol.Routing.Claude)
+	}
+}
+
+// TestProjectPolicyPublishRefusesToDropARoutingBlock: the one key a publish
+// will not quietly rewrite. The node carries an active route, the config sets
+// no switch, and the publish is refused rather than publishing a node with the
+// route turned off — a route that goes away is a Claude call that stops being
+// sent where the owner put it, and this is the same quiet loosening
+// `repos add|rm` refuses to make (patchPolicyJSON). The remedy the refusal
+// names is real and is exercised here: writing the switch — inert, via: direct
+// — publishes it, which is how routing is turned off on purpose.
+func TestProjectPolicyPublishRefusesToDropARoutingBlock(t *testing.T) {
+	f := newProjectFixtureWith(t, claudeRouteProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	before := nodeJSON(t, f, projectpolicy.PathShared())
+
+	// The operator's config loses the switch: a publish must not turn the route
+	// off on its own.
+	rewriteRoutingBlock(t, f, "")
+
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the publish went through and turned the route off:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	for _, want := range []string{"routing", "cannot account for", "claude via openrouter", "via: direct"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if now := nodeJSON(t, f, projectpolicy.PathShared()); now != before {
+		t.Errorf("the refused publish changed the node:\n%s", now)
+	}
+
+	// The remedy: write the switch and publish. An inert block says the route
+	// is off on purpose.
+	rewriteRoutingBlock(t, f, "routing:\n  claude:\n    via: direct\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "~ routing.claude.via: openrouter → direct") {
+		t.Errorf("the diff does not print the switch the operator wrote:\n%s", out)
+	}
+	if pol := publishedPolicy(t, f); pol.Routing == nil || pol.Routing.Claude.ViaValue() != config.RouteDirect {
+		t.Errorf("the node still routes: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+}
+
+// rewriteRoutingBlock rewrites the fixture's project config with its routing:
+// block (from its key to the first line that is not indented under it) replaced
+// by block; "" drops it. The block the fixture wrote is the last thing in the
+// file, so "the end" is the end.
+func rewriteRoutingBlock(t *testing.T, f *projectFixture, block string) {
+	t.Helper()
+	cfg, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := []string{}
+	skipping := false
+	for _, line := range strings.Split(string(cfg), "\n") {
+		if line == "routing:" {
+			skipping = true
+			continue
+		}
+		if skipping && (line == "" || strings.HasPrefix(line, " ")) {
+			continue
+		}
+		skipping = false
+		kept = append(kept, line)
+	}
+	body := strings.Join(kept, "\n")
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	if err := os.WriteFile(f.path, []byte(body+block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestProjectPolicyPublishRefusesARoutingBlockThatSaysNothing: `routing: {}` and
+// `routing: {claude:}` both decode to a *non-nil* block with no Claude entry,
+// and neither is the operator saying the switch is off — they wrote a block with
+// nothing in it, not via: direct. A publish that read either as "off" would turn
+// an active route off and only print the removal afterwards, which is the one
+// thing this command refuses to do (the review of PR #414). The refusal names
+// the state, the block it would drop, and the flag that makes the removal
+// deliberate; that flag is then the remedy, and it does remove it.
+func TestProjectPolicyPublishRefusesARoutingBlockThatSaysNothing(t *testing.T) {
+	for _, c := range []struct{ name, routing string }{
+		{"an empty block", "routing: {}\n"},
+		{"a claude with no value", "routing:\n  claude:\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newProjectFixtureWith(t, claudeRouteProvidersYAML,
+				"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+			if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+				t.Fatal(err)
+			}
+			before := nodeJSON(t, f, projectpolicy.PathShared())
+
+			rewriteRoutingBlock(t, f, c.routing)
+			_, _, err := execute(t, "project", "policy", "publish")
+			if err == nil {
+				t.Fatalf("the publish went through and turned the route off:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+			}
+			for _, want := range []string{"names no Claude switch", "claude via openrouter", "--remove-routing"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			if now := nodeJSON(t, f, projectpolicy.PathShared()); now != before {
+				t.Errorf("the refused publish changed the node:\n%s", now)
+			}
+
+			// The remedy the refusal names: the block goes on purpose, and the
+			// diff prints the removal rather than doing it quietly.
+			out, _, err := execute(t, "project", "policy", "publish", "--remove-routing")
+			if err != nil {
+				t.Fatalf("the remedy the refusal names does not work: %v", err)
+			}
+			if !strings.Contains(out, "- routing.claude.via: openrouter") {
+				t.Errorf("the diff does not print the removal:\n%s", out)
+			}
+			if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); ok {
+				t.Errorf("the node still carries a routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+			}
+		})
+	}
+	// --remove-routing beside a config that writes the switch is two
+	// instructions that cannot both be followed, and neither is guessed at.
+	newProjectFixtureWith(t, claudeRouteProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	_, _, err := execute(t, "project", "policy", "publish", "--remove-routing")
+	if err == nil {
+		t.Fatal("--remove-routing published over a config that writes the switch")
+	}
+	for _, want := range []string{"--remove-routing", "claude via openrouter"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
+// TestProjectPolicyPublishRemovesAnInertRoutingBlockWhenAsked: without an active
+// route there is nothing to refuse — the block routes nothing — but dropping it
+// is still a change the operator has to ask for, and the diff says so.
+func TestProjectPolicyPublishRemovesAnInertRoutingBlockWhenAsked(t *testing.T) {
+	f := newProjectFixtureWith(t, claudeRouteProvidersYAML,
+		"routing:\n  claude:\n    via: direct\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); !ok {
+		t.Fatal("the publish did not write the inert block the config carries")
+	}
+	// The config says nothing about Claude now: the inert block is kept, not
+	// refused (nothing is routed by it) and not silently dropped.
+	rewriteRoutingBlock(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "routing.claude") {
+		t.Errorf("the publish rewrote an inert block it did not have to:\n%s", out)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); !ok {
+		t.Fatal("the publish dropped the inert block without being asked")
+	}
+	// Asked for: the block goes, and the diff prints it.
+	out, _, err = execute(t, "project", "policy", "publish", "--remove-routing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "- routing.claude.via: direct") {
+		t.Errorf("the diff does not print the removal:\n%s", out)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); ok {
+		t.Errorf("the node still carries a routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
 }
 
@@ -1718,10 +2511,14 @@ func TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel(t *testin
 		t.Fatal(err)
 	}
 	// A routing block written the way a release that knows more of it would:
-	// one unmodelled key beside a modelled one, and one unmodelled block.
+	// one unmodelled key beside a modelled one, and one unmodelled block. The
+	// modelled via is `direct` because an *active* route the config does not
+	// account for is refused (buildProjectPolicy), not carried: the property
+	// under test here is that the block survives whole, and a node that routes
+	// nothing is the one a publish from a config with no routing may keep.
 	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
 	node["routing"] = map[string]any{
-		"claude": map[string]any{"via": "openrouter", "tier": "gold"},
+		"claude": map[string]any{"via": "direct", "tier": "gold"},
 		"gemini": map[string]any{"via": "vertex"},
 	}
 	f.db.Set(projectpolicy.PathShared(), node)
@@ -1739,6 +2536,164 @@ func TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel(t *testin
 			t.Errorf("the publish dropped %s, a member of the routing block it says it keeps:\n%s",
 				strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
 		}
+	}
+}
+
+// TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting: the switch
+// the operator's config writes is this publish's to write — and the routing
+// block is *also* shared with releases that know members this one does not, so
+// writing one must not take the other with it. Rebuilding `routing` from the
+// decoded switch drops every member this Fugaro cannot name (a `tier` inside
+// claude, a whole `gemini` block beside it), with no refusal and no diff line,
+// on the one document those members exist in (the review of PR #414). So the
+// members the config owns — via, models — are patched into the node's own
+// `claude`, the list the config does not write is removed rather than left
+// stale, everything else is left as the node had it, and the change is in the
+// diff.
+//
+// Mutation (verified, run and restored): in mergeRoutingClaude, return
+// json.Marshal(c) for a member that is there as well (the old "replace the
+// member" behaviour): `routing.claude.tier` and `routing.gemini` are gone and
+// this test fails.
+func TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting(t *testing.T) {
+	f := newProjectFixtureWith(t, twoClaudeModelsProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The node as a release that knows more of the block would have left it: a
+	// member inside claude this Fugaro does not model, a whole block beside it,
+	// and a switch naming the other Claude ID the route claims — so this
+	// publish has a switch to change as well as members to keep.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["routing"] = map[string]any{
+		"claude": map[string]any{"via": "openrouter", "models": []any{"claude-opus-5-5"}, "tier": "gold"},
+		"gemini": map[string]any{"via": "vertex"},
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// What the config writes is what the node now says.
+	pol := publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil {
+		t.Fatalf("the publish wrote no switch: %s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	if got := pol.Routing.Claude.ViaValue(); got != "openrouter" {
+		t.Errorf("routing.claude.via = %q, want openrouter", got)
+	}
+	if got := pol.Routing.Claude.Models; !slices.Equal(got, []string{"claude-sonnet-5-5"}) {
+		t.Errorf("routing.claude.models = %v, want the config's list (the node's stale one replaced)", got)
+	}
+
+	// What this Fugaro does not model is still there, inside claude and beside
+	// it.
+	got := f.db.Value(projectpolicy.PathShared())
+	for _, path := range [][]string{
+		{"routing", "claude", "tier"},
+		{"routing", "gemini", "via"},
+	} {
+		if _, ok := nodeAt(got, path...); !ok {
+			t.Errorf("the publish dropped %s, a member the config does not write:\n%s",
+				strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
+		}
+	}
+	if v, _ := nodeAt(got, "routing", "claude", "tier"); v != "gold" {
+		t.Errorf("routing.claude.tier = %v, want the value the node held", v)
+	}
+
+	// And the diff says so.
+	if want := "~ routing.claude.models: [claude-opus-5-5] → [claude-sonnet-5-5]"; !strings.Contains(out, want) {
+		t.Errorf("the diff does not print the switch change (%q):\n%s", want, out)
+	}
+}
+
+// TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent: a document can carry
+// `"routing": null`, and a null member inside the block. The read path reads
+// both as the absent thing they are — jsonMember returns the four bytes,
+// projectpolicy's IsNull calls that absent, and validRoutingMembers skips a null
+// block without a word — but the write path judged the member by its bytes, so
+// policyNodeBytes refused such a node with "carries a routing block this Fugaro
+// cannot read the way it is written", and mergeRoutingClaude refused the null
+// `claude` inside it the same way. One member read two ways by the two halves of
+// one release (review finding on this change).
+//
+// It is exercised where it stands rather than through the command surface, for
+// the reason TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers gives: RTDB
+// writes a null as a delete, so the service never serves such a document, which
+// is exactly why the half that only *writes* documents must not be the half that
+// gets this wrong. The null is what this reader already allows for a document
+// that arrived by another route (a hand-written node, an import).
+func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
+	quiet := &projectpolicy.Policy{Version: projectpolicy.Version}
+	switchOn := &projectpolicy.Policy{Version: projectpolicy.Version, Routing: &config.Routing{
+		Claude: &projectpolicy.ClaudeRoute{Via: config.RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}},
+	}}
+	for _, tc := range []struct {
+		name, old string
+		pol       *projectpolicy.Policy
+		keep      bool
+	}{
+		{"a null routing member, kept", `{"version": 1, "routing": null}`, quiet, true},
+		{"a null routing member, replaced by the config's switch", `{"version": 1, "routing": null}`, switchOn, false},
+		{"a null claude member, replaced by the config's switch", `{"version": 1, "routing": {"claude": null}}`, switchOn, false},
+	} {
+		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep)
+		if err != nil {
+			t.Errorf("%s: policyNodeBytes = %v, want the node written", tc.name, err)
+			continue
+		}
+		var got map[string]any
+		if err := json.Unmarshal(node, &got); err != nil {
+			t.Errorf("%s: the node is not a document: %v", tc.name, err)
+			continue
+		}
+		routing, ok := nodeAt(got, "routing")
+		if !tc.keep {
+			// The config's switch is what the node now says, over the null it
+			// found.
+			if !ok {
+				t.Errorf("%s: the node carries no routing block: %s", tc.name, node)
+				continue
+			}
+			if v, _ := nodeAt(got, "routing", "claude", "via"); v != string(config.RouteOpenRouter) {
+				t.Errorf("%s: routing.claude.via = %v, want the config's %q (routing %v)",
+					tc.name, v, config.RouteOpenRouter, routing)
+			}
+			continue
+		}
+		// Kept, with nothing to keep: a null member is not a block to carry
+		// over, and the node is the policy the publisher built.
+		if ok && routing != nil {
+			t.Errorf("%s: the node carries routing %v, want none", tc.name, routing)
+		}
+	}
+}
+
+// TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers: the publish path's own gate
+// on the member names it is about to patch into. It is not reachable through the
+// command surface — Decode refuses such a node first (validRoutingMembers calls
+// the same check) — so it is exercised where it stands, and that is the point: a
+// writer must not depend on a reader having run, and a publish that patched an
+// exact `via` beside a `VIA` (jsonMember matches keys exactly) would leave a block
+// whose route encoding/json decides by the order the keys were written in.
+func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
+	pol := &projectpolicy.Policy{Version: projectpolicy.Version}
+	for name, old := range map[string]string{
+		"a case-folded via":    `{"version": 1, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
+		"models twice":         `{"version": 1, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
+		"a case-folded claude": `{"version": 1, "routing": {"CLAUDE": {"via": "direct"}}}`,
+	} {
+		if _, err := policyNodeBytes(pol, []byte(old), true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
+			t.Errorf("%s: policyNodeBytes = %v, want a refusal naming the block", name, err)
+		}
+	}
+	// The other side: a block this Fugaro reads as written is patched as before.
+	if _, err := policyNodeBytes(pol, []byte(`{"version": 1, "routing": {"claude": {"via": "direct"}}}`), true, true); err != nil {
+		t.Errorf("a well-spelled block: policyNodeBytes = %v, want it written", err)
 	}
 }
 
@@ -1863,6 +2818,47 @@ func TestProjectReposRmOfAPatternWithABroaderPatternLeftSaysSo(t *testing.T) {
 	}
 }
 
+// TestProjectReposRmOfAPatternWhoseNameCarriesAStarSaysSo: the same sentence
+// through the command, for the entry whose *name* carries a "*" rather than
+// being one (github/acme/*-web). github/*/* still admits every repository that
+// entry admitted — its third segment is "*-web", which the pattern's "*"
+// matches — so the confirmation must not claim otherwise.
+//
+// Mutation (verified, run and restored): test the two positions for equality
+// before the pattern's "*" in matchSeg (the order this test was written
+// against) — this fails, reading "its runs are refused from now on".
+func TestProjectReposRmOfAPatternWhoseNameCarriesAStarSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/*/*", "github/acme/*-web"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/*-web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/*/* still admits it") {
+		t.Errorf("the confirmation does not name the broader pattern that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/*/* is on the list:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "github/acme/*-web") {
+		t.Errorf("allow_repos = %v, want the entry removed", allow)
+	}
+	for _, r := range []string{"github/acme/app-web", "github/acme/-web", "github/other/-web"} {
+		if !projectpolicy.AdmitRepo(allow, r) {
+			t.Errorf("allow_repos = %v no longer admits %s, which the confirmation said it keeps", allow, r)
+		}
+	}
+}
+
 // TestProjectReposRmOfANameOnlyAPatternAdmitsSaysThePatternKeepsIt: the name
 // is not an entry, so nothing is removed — but a pattern on the list admits
 // it, so its runs keep running, and "nothing to remove" alone reads as if
@@ -1892,6 +2888,53 @@ func TestProjectReposRmOfANameOnlyAPatternAdmitsSaysThePatternKeepsIt(t *testing
 	}
 	if got := publishedPolicy(t, f).AllowRepos; !slices.Equal(got, before) {
 		t.Errorf("allow_repos = %v, want the list unchanged (%v)", got, before)
+	}
+}
+
+// TestProjectReposEditPrintsTheNewListOnlyAfterTheWrite: the edit printed
+// "allow_repos: [before] → [after]" before the ETag-guarded PutIfMatch, so a
+// write that failed — a policy that changed while the command ran, or a
+// credential that may not write the node — was reported to the operator as if
+// the list had been replaced, in the command whose whole output is that one
+// line and "set <node>". The diff line is a claim about the node.
+func TestProjectReposEditPrintsTheNewListOnlyAfterTheWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stdin string
+	}{
+		{"add", []string{"project", "repos", "add", "github/acme/new"}, ""},
+		{"rm", []string{"project", "repos", "rm", "github/acme/app"}, "aurora\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+				t.Fatal(err)
+			}
+			before := publishedPolicy(t, f).AllowRepos
+			// The one write the edit ends on is refused.
+			f.db.DenyNext(1)
+			var out string
+			var err error
+			if tc.stdin != "" {
+				typed(t)
+				out, _, err = executeStdin(t, tc.stdin, tc.args...)
+			} else {
+				out, _, err = execute(t, tc.args...)
+			}
+			if err == nil {
+				t.Fatalf("the refused write was reported as a success:\n%s", out)
+			}
+			if strings.Contains(out, "allow_repos:") {
+				t.Errorf("the edit printed the new allow-list before the write that would have set it:\n%s", out)
+			}
+			if strings.Contains(out, "set "+projectpolicy.PathShared()) {
+				t.Errorf("the edit says it set the node a refused write left untouched:\n%s", out)
+			}
+			if got := publishedPolicy(t, f).AllowRepos; !slices.Equal(got, before) {
+				t.Errorf("allow_repos = %v, want the list unchanged (%v)", got, before)
+			}
+		})
 	}
 }
 

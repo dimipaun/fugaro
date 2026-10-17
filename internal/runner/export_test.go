@@ -222,3 +222,51 @@ func SetPrefetchFetch(t *testing.T, f func(repo *gitops.Repo, ctx context.Contex
 	prefetchFetch = f
 	t.Cleanup(func() { prefetchFetch = prev })
 }
+
+// SanitiseName exposes the artifact name sanitiser (artifact.go's
+// sanitiseName) to the runner_test package: Review Focus 3's refusal table is
+// a table over it.
+func SanitiseName(name string) (string, error) { return sanitiseName(name) }
+
+// ArtifactContentType exposes the recorded content type (artifact.go's
+// artifactContentType) to the runner_test package: the sniff fallback only
+// runs for a name whose extension the mime table does not know, which no
+// fixture artifact is, so the branch needs its own table. The bytes it takes
+// are the head CopyFileHashed hands the staging step.
+func ArtifactContentType(name string, head []byte) string { return artifactContentType(name, head) }
+
+// CopyFileHashed exposes the staging copy (artifact.go's copyFileHashed): the
+// table for ArtifactContentType copies real files through it, so the head a
+// type is sniffed from is the one the staging step really takes — the first
+// contentSniffLen bytes of what was written — rather than bytes a test chose.
+var CopyFileHashed = copyFileHashed
+
+// SetArtifactCheckedSeam runs f in stageArtifacts after every match has been
+// examined and sized against the caps and before the first copy: it is how a
+// test changes a match between the check and the use of it (the window a
+// background process has, and the one the copy's own open and bound close).
+func SetArtifactCheckedSeam(t *testing.T, f func()) {
+	prev := artifactCheckedSeam
+	artifactCheckedSeam = f
+	t.Cleanup(func() { artifactCheckedSeam = prev })
+}
+
+// SetArtifactCopiedSeam runs f in stageArtifacts after one match has been
+// copied into the staging directory and before its recorded content type is
+// taken: the window between the staged file existing and the record describing
+// it, which is where a swap at the staged path lands.
+func SetArtifactCopiedSeam(t *testing.T, f func()) {
+	prev := artifactCopiedSeam
+	artifactCopiedSeam = f
+	t.Cleanup(func() { artifactCopiedSeam = prev })
+}
+
+// SetArtifactStagedSeam runs f in collectArtifacts after the set is staged
+// and hashed and before anything is uploaded, for the rest of t: it is how a
+// test replaces a staged file between the hash and the upload (Review Focus
+// 5).
+func SetArtifactStagedSeam(t *testing.T, f func()) {
+	prev := artifactStagedSeam
+	artifactStagedSeam = f
+	t.Cleanup(func() { artifactStagedSeam = prev })
+}

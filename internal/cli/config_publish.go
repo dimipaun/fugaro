@@ -259,6 +259,10 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		out["commands.lint"] = strconv.Quote(p.Commands.Lint)
 	case "workflows.*.commands.fix":
 		out["commands.fix"] = strconv.Quote(p.Commands.Fix)
+	case "workflows.*.commands.render":
+		out["commands.render"] = strconv.Quote(p.Commands.Render)
+	case "workflows.*.commands.probe":
+		out["commands.probe"] = strconv.Quote(p.Commands.Probe)
 	case "workflows.*.commands.rerun_failed":
 		var cmd, each string
 		if rf := p.Commands.RerunFailed; rf != nil {

@@ -1,0 +1,40 @@
+/* website/src/styles/palette-orange.css — D104's palette B, one of the three candidates.
+ *
+ * The single-accent alternative: orange is the accent and the attention colour both, which
+ * is why `--warn` and `--accent-on-dark` hold the same value here. That is a property of
+ * this palette rather than a mistake — with one accent there is no second hue for a
+ * warning to take — and it is exactly the case the split palette exists to avoid, where
+ * the link colour and the cost figure part company. It is otherwise a complete value set
+ * for the vocabulary `tokens.css` declares: the same ten tokens, with the same roles.
+ *
+ * Its ground is warm rather than blue-black, so the whole palette is the orange family
+ * rather than an orange accent on the violet ground. Every value is an opaque six-digit
+ * hex literal, for the reason `palette-violet.css` states: the contrast check reads these
+ * pairs, and a value it cannot compute is a value it refuses.
+ */
+
+:root {
+  /* The warm ground and the surface a card sits on. */
+  --ground: #0D0B0A;
+  --surface: #1A1614;
+
+  /* Body text and the quieter tone beside it. */
+  --text: #F2EDE8;
+  --text-muted: #B5A79C;
+
+  /* The accent as a fill and as text: the darker orange carries dark text at 4.5:1 and
+   * clears 3:1 against the ground and the surface as a UI colour, and the lighter tone is
+   * the one that reads as text on the dark ground. */
+  --accent: #F97316;
+  --accent-on-dark: #FDBA74;
+
+  /* A warm separator, and the attention tone, which in this palette is the accent's own
+   * on-dark tone (see the header). */
+  --border: #3A2C22;
+  --warn: #FDBA74;
+
+  /* The hero's gradient stops: an orange glow, deep enough that `--text`, `--text-muted`
+   * and `--accent-on-dark` all clear AA on each stop. */
+  --gradient-from: #2A1A0E;
+  --gradient-to: #140D08;
+}
