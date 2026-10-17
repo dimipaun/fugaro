@@ -292,6 +292,22 @@ already written. **61's row and section are not written yet either** — the
 project-centric plan's Task 6.5 writes them when phase 6 ships, with its own
 `TestChecklistHasCheck61`; this paragraph reserves the number and nothing else.
 
+**Check 69 is the website work's, written as 69a–69c**
+(`docs/website/implementation-plan.md`, its Task W2.2 and W2.3, and
+`docs/website/README.md` records the same allocation), in the register's own
+sub-lettering convention for one line of work's several live steps (43a–43f,
+59a/59b, 67a/67b). **69a** (the site is live and honest) and **69b** (nothing
+phones home) are written below by Task W2.2; **69c** (the published ranges are
+real) is Task W2.3's and is written in the level after W2.2's, so it is not in
+this file yet and its absence is not a gap in the numbering. The number was free
+when W2.2 merged: the highest written `## Check N` section here was **58**, and
+59 (as 59a/59b), 60, 61, 62–63, 64–66 and 67–68 are reserved by the console,
+budget-token-channel, project-centric, console-v2, voice and managed-projects
+lines, each recorded above. **The website work holds 69 and up, and the mobile
+work holds 80–89 carved out of that range** (`docs/mobile/README.md`, owner
+allocation of 2026-10-16): neither is derived from a grep of the free numbers,
+and a reserved number is never reused or renumbered.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -450,6 +466,8 @@ probe account carries predefined grants only).
 | 52 | The UNVERIFIED questions phase 3 depends on, written and answered **before any phase 3 code** (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access`; **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names); and **U1**, which is **no longer a probe** — the owner ruled on 2026-10-15 that a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket credentials stay per repository and phase 3's shared jobs are GitHub's, with D5 amended to record the ruling (plan Task 0.5) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and **no Bitbucket credential, project or repository is created, read or written at all** (U1 is answered by ruling, not by a probe), never anything under `edgeappinc`. | A few `gcloud` reads, **three** override executions on the sandbox job (the secret-reference call in (a), the plain-literal comparison in (c), and the length-only run when the container's command is a shell — (b) is a template-level `--update-secrets` update, and the bare `gcloud run jobs execute` carries no override at all, so neither is one of the three), the check's own probe service account `fugaro-chk52-probe` and its two throwaway secrets (`fugaro-probe-in`, inside the condition's prefix, and `fugaro-other-probe`, outside it), and **nothing on the Bitbucket side**. **USER-RUN, NOT RUN.** |
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
+| 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the secondary domain (`secondary_domain`) answers **301** to the canonical origin on every path, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no console download link (`features.console_downloads` is false) and no video player (`features.video` is false) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). Both domain values are read out of `website/data/site.yaml` by the guard block, so nothing is typed from memory. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; a 301 to it from every path tried on the secondary domain; the deployed home page's sha256 equal to the local build's; and the greps for a download link, a player and an unshipped platform printing nothing. **USER-RUN, NOT RUN.** |
+| 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Firebase Analytics behind the consent banner, so `analytics.enabled` is false until W3.2 and today's pass is that no analytics request appears at all) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -3926,3 +3944,115 @@ The loop prints **which commits it reverted and which were already reverted** (`
 **If a step fails, what it lands in.** A failure here is a fact about the substrate or about a default, never a fault of the check, and where the fix belongs is what decides which release carries it. **Patch-safe, so it lands in 0.8.0.x:** a wording or an expectation this check falsifies — a sentence in `docs/artifact-runs.md`, `docs/recipes.md`, `docs/base-image.md` or `SECURITY.md`, a refusal message, the routing skill's own text; a **cap default** the measurement shows is wrong (`outputs.max_bytes`'s 256 MiB, `outputs.max_total_bytes`'s 2 GiB, `outputs.max_files`'s 8, or the three `inputs` caps), because a default is a number and the code that reads it already ships; and the arithmetic when a change only makes it **stricter** than what the substrate allows (the §5.2 memory rule, and `outputs.max_total_bytes ≥ max_bytes` when `max_files` is 1). **Not patch-safe — it needs its own design decision and waits for 0.9.0:** anything about **upload integrity** (a recorded `sha256` that does not match the bytes the bucket holds, an object under `artifacts/` the record does not list, a set uploaded although the probe failed, a `get` that accepts a mismatch) — the fix changes what a run promises, and a promise is not a patch's business; anything that changes **who can read an artifact** or the per-run prefix boundary (D10, D11); a change to `mode: artifact`'s own contract (a new key, a different step order, a probe that runs per artifact); and anything that would make a recipe legal today **illegal**, or the reverse — an installation is running the recipes it already wrote. Either way the FACT goes into this section and into the row, not only into the pull request.
 
 **Paste back:** every `FACT` line above — the job's image reference and the digest it resolves to, **before and after** the build, and the job they belong to, `task.json`'s inputs against `sha256sum`, the `render` record and the counters, both halves of the probe's verdict, the recorded and the object's own content type, the retrieved files' hashes and the upload's wall clock **at both sizes** (step 6's set, and step 6b's near-cap pair with `finalize_reserve_s` beside it), and 7a, 7b and 7c's reason lines — **and never a secret value or the contents of an attached file**. Until this check runs, `docs/design/artifact-runs.md` §12's **U3, U5 and U6** stay open, and **U2's mise half stays open however this check turns out** — only its `image.apt` half is settled here — and that is the honest state of the design's claims rather than a fault list. Never run any step of this check against `belong`; no agent runs any step of it — every command is yours.
+
+## Check 69a: the site is live and honest — the canonical domain, the redirect, and the page a stranger lands on (the site's own Firebase project only, never an installation's; run by you; NOT RUN)
+
+**NOT RUN.** Written by the website plan's Task W2.2 together with Check 69b; the third live check of the same line of work, **69c** (the published ranges are real), is Task W2.3's and lands in the level after this one. Nothing here can run before the site is deployed to its own Firebase project and the domains are attached — the owner's steps, which no agent takes (D92): registering a domain, adding the custom domain to the project and writing the DNS records at the registrar.
+
+What it settles is **D108's fourth gate**: the failures that are invisible in a local preview, and therefore the only ones a hermetic test cannot see. Everything else the website plan gates on **runs hermetically** from the tree — the build that fails on a missing generated file, the link and anchor check over the built HTML, the drift tests (the install text against the repository, the security page against `SECURITY.md`, the changelog's release set against `docs/releases/`, the CLI reference against `NewRootCmd`), the accessibility and origin lints, and the consent tests. These two checks are the only thing in that plan that needs a live site, and this one is the site itself.
+
+**Method.** Two halves, both yours: a terminal for the responses, and a browser for the page a stranger lands on. **Nothing in this check changes anything** — every command below is a read (`curl`, `sed`, `grep`, `sha256sum`), no `fugaro` command runs at all, and no cloud project is touched: the site's own Firebase project (`fugaro-prod`, D91) is not named in any command here, and no installation's project is either. **No agent runs any step of it.** Run it from a checkout of this repository, with the commit the deployed site should be at checked out. The guard reads both domain values out of `website/data/site.yaml` — the one source for them — so no host below is typed from memory.
+
+```bash
+# === Check 69a: setup + guard. Re-run it before each step. ===
+# C is the canonical origin and S the secondary domain, both read from the
+# site's own facts file: this check observes what the tree says, it does not
+# decide it.
+C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
+S=$(sed -n 's/^secondary_domain: *//p' website/data/site.yaml)
+[ -n "$C" ] && [ -n "$S" ] \
+  || { echo "Check 69a stopped: website/data/site.yaml gives canonical_url='$C' and secondary_domain='$S'. Both are needed here: an empty secondary_domain means no second domain is attached and step 2 has nothing to observe, which is a FACT to record rather than a step to invent." >&2; exit 1; }
+echo "canonical: $C   secondary: $S"
+git log -1 --format='the tree is at %h %s'   # the commit the deployed site should be
+```
+
+1. **The canonical origin answers over HTTPS, with a certificate for that host.**
+
+   ```bash
+   curl -sS -o /dev/null -w '%{scheme} %{http_code} %{remote_ip} %{ssl_verify_result} %{url_effective}\n' "$C"
+   curl -sSI "$C" | head -5
+   echo | openssl s_client -connect "${C#https://}:443" -servername "${C#https://}" 2>/dev/null \
+     | openssl x509 -noout -subject -issuer -dates
+   ```
+
+   **FACT:** the scheme, the status code, the resolved IP, `ssl_verify_result` (0 is a verified chain), the response's first lines and the certificate's subject, issuer and validity dates.
+
+2. **The secondary domain sends every path to the canonical one, with a 301.** Four paths: the root, a page the site has, a section of it, and a path it does not have.
+
+   ```bash
+   for p in / /faq /docs/ /no-such-page-69a; do
+     printf '%s -> ' "$S$p"
+     curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' "$S$p"
+   done
+   ```
+
+   **FACT:** those four status/redirect pairs, and what the Firebase console's custom-domain page says the domain's redirect target is.
+
+   **This is the half that waits on the owner, and it is the half the plan got wrong about the mechanism.** The website plan's Task W2.2 step 2 says to write the redirect as a `firebase.json` `redirects` entry. **It cannot be written there, and this check is where that matters:** a Firebase Hosting redirect rule is matched against the request **path**, and firebase-tools' config schema for one admits only `destination`, one of `source`/`glob`/`regex`, and `type` (`schema/firebase-config.json`, `definitions/HostingRedirects`, `additionalProperties: false`) — there is no field that could condition a rule on the request's host. A rule that sent every path to the canonical origin would therefore fire on the canonical origin too: `https://<canonical>/faq` would be answered with a 301 to itself and the browser would report a redirect loop. **The redirect is a property of the attached domain** — the console's own redirect option when the domain is added to the site's Firebase project, or the Hosting API's custom-domain redirect — which is why `firebase.json` carries no `redirects` block and why the site's own test refuses a redirect rule that answers one of the site's paths with the site's own host. Until the domain is attached and that redirect is set, `secondary_domain` in `website/data/site.yaml` names a domain nothing answers on: **this check has not passed**, and that is a real failure of 69a rather than a reason to skip the step.
+
+3. **The deployed HTML is the artifact this commit's build produced.**
+
+   ```bash
+   (cd website && npm ci && npm run build)
+   sha256sum website/dist/index.html          # macOS: shasum -a 256
+   curl -sS -H 'Accept-Encoding: identity' "$C/" | sha256sum
+   curl -sSI "$C/" | grep -iE 'etag|last-modified|content-encoding'
+   ```
+
+   **FACT:** both hashes, the deployed `etag`/`last-modified`/`content-encoding`, and `git log -1 --format=%h`.
+
+4. **The page a stranger lands on names no unshipped feature.** The console is designed and not shipped (`features.console_downloads` is false) and the explainer video does not exist (`features.video` is false), so the deployed home page may carry neither a download link nor a player. Then the browser half: read the page, and read the console section — it says the console is not in this release, and it offers no button.
+
+   ```bash
+   curl -sS "$C/" > /tmp/chk69a-home.html
+   grep -n 'releases/download' /tmp/chk69a-home.html
+   grep -niE '<video|<iframe|youtube|vimeo|poster=' /tmp/chk69a-home.html
+   grep -niE 'download|\.dmg|\.exe|\.msi' /tmp/chk69a-home.html
+   ```
+
+   **FACT:** what each grep printed, and — for every hit — what it is. A hit is not automatically a failure (the word "download" in a sentence about the console's future is not a link), so read each one: the failure is a link to an artifact that does not exist, or a player for a video that does not exist.
+
+5. **Every link the page carries resolves.**
+
+   ```bash
+   curl -sS "$C/" | grep -oE 'href="[^"]+"' | sed 's/href="//;s/"$//' | sort -u
+   ```
+
+   Then, for each same-origin path that prints, `curl -sS -o /dev/null -w '%{http_code} %{url_effective}\n' "$C$path"`. **FACT:** every path and its status. A 404 here is the drift the hermetic link check cannot see: that check walks the links of the build it just made, and this one walks the links the live site serves.
+
+**Passes when:** all five steps hold — `https` with status 200 and `ssl_verify_result` 0 on the canonical origin, and a certificate whose subject names that host; a 301 to the canonical origin from every path tried on the secondary domain; the deployed home page's hash equal to the local build's of the same commit; no download link, no player and no unshipped platform on the page; and every link on it resolving.
+
+**Fails when:** any of those is not what you saw. Where the fix belongs follows from what failed: a missing DNS record, a certificate or an unattached domain is the owner's registrar and hosting step; a page that is not the build's output is a deploy of an older commit (`scripts/deploy-website.sh`, whose `--dry-run` prints the command without running it); a link that 404s, a download button or a player is a site bug, and the hermetic gate that would have caught it belongs in `website/test/`, added by the task that finds it rather than by this one; and a redirect that is not set belongs in the domain's own configuration — never in `firebase.json`, for the reason step 2 records.
+
+**Paste back:** every `FACT` line above — the canonical origin's status, resolved IP and certificate subject, issuer and dates; the secondary domain's four status/redirect pairs and what the console says its redirect target is; both hashes with the deployed `last-modified` and `git log -1`; what each grep printed and what each hit was; and every link followed with its status. **Never paste a token, a key, or anything from the Firebase console that is not the domain's own configuration.** Until this check runs, the site's liveness, its TLS and its redirect are **UNVERIFIED** — a build is not a site — and the row above stays **NOT RUN**.
+
+## Check 69b: nothing phones home — the live page's own network panel (the live site, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by Task W2.2 together with Check 69a. It is the live half of the rule W1.11 enforces at build time over the artifact — `website/test/origins.mjs` compares every script, stylesheet, preload, image, iframe and font origin with `website/data/site.yaml`'s `allowed_hosts` — and it is the half no build can see: a request made at runtime, in a reader's browser, on the deployed site.
+
+**Method.** One browser, one panel, three pages. Open the site's home page with the developer tools' **Network** panel open, **Disable cache** on and a hard reload, then do the same for the FAQ page and the docs hub. **Nothing here changes anything:** no command that writes runs, no cloud project is touched, and **No agent runs any step of it**. The list the check compares against is read out of `website/data/site.yaml`, so it moves with the tree instead of being remembered:
+
+```bash
+sed -n '/^allowed_hosts:/,/^[^ -]/p' website/data/site.yaml
+```
+
+1. **Every request's host, in the panel.** Read the panel's host column (group the requests by domain, or write the list down). **FACT:** the host list per page — or "only the canonical host" when that is all it holds.
+
+2. **The consent gate (D93).** Analytics is Firebase Analytics behind W1.12's consent banner, and `analytics.enabled` is **false** in `website/data/site.yaml` until W3.2 turns it on — so today's pass is that **no request to the analytics origin appears at all**, before or after the banner is accepted. Once W3.2 has turned it on, the same panel must show **no request to that origin before consent**, and **exactly that one origin and no other third party after it**; declining the banner must leave it absent, and the choice must survive a reload (W1.12's own tests cover the gate itself). **FACT:** the requests' origins with the banner's state at each point — before accepting, after accepting, after declining, and after a reload — and, when analytics is on, the one origin's requests and nothing beside it.
+
+3. **The page's own head, read as bytes.** The same three pages, fetched, so the check does not rest on the panel's grouping:
+
+   ```bash
+   for p in / /faq /docs/; do
+     echo "== $p"
+     curl -sS "$C$p" | grep -oE '(src|href)="https?://[^"]+"' | sort -u
+   done
+   ```
+
+   **FACT:** every absolute URL the deployed markup carries, and its host. An origin that is not on the list is a failure here even if the panel did not show it because the browser had it cached.
+
+**Passes when:** the panel (steps 1 and 2) and the markup (step 3) hold no origin outside `allowed_hosts` — no font from another origin, no CDN script, no embed, no tracking pixel — and no request to the analytics origin before consent, with `analytics.enabled` false meaning no such request at all.
+
+**Fails when:** any request or any markup URL names a host that is not on the list, or an analytics request appears before consent (or after the banner is declined). What failing looks like: a font or a script someone added from a CDN for one page; a `preconnect` left in a layout; an analytics loader that runs on load instead of after consent — the last is W1.12's rule as well as this check's, so it is a bug in the loader's tests too. **The fix is never "add the host to `allowed_hosts`"**: that list is what the site's build refuses links to, and the CSP in `firebase.json` (`default-src 'self'`, `script-src 'self'`) is what the browser enforces, so a new origin is a decision about the site's privacy page taken by the task that wants it.
+
+**Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
