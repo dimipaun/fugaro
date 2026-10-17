@@ -1,0 +1,14 @@
+---
+// website/src/pages/index.astro — the site's front page (website plan, Task W1.4).
+//
+// The page is the hero and nothing else: every other thing the front page could say is a
+// section of its own with a section's own facts (W2.x, W3.x), and a placeholder here would
+// be a sentence the product cannot back (F50). What the page reads, it reads through the
+// content pipeline (W1.3) — it holds no fact of its own.
+import Base from '../layouts/Base.astro'
+import Hero from '../components/Hero.astro'
+---
+
+<Base title="Fugaro">
+  <Hero />
+</Base>
