@@ -186,7 +186,7 @@ func TestCoverNotCovered(t *testing.T) {
 		// person's behalf is covered only on the deployer account of this run
 		// (deployerGrant), so the scheduler's account, a stranger's, another
 		// project's deployer and an unnamed account are all refused.
-		"tokenCreator on the scheduler account":                {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("fugaro-scheduler"))}, false},
+		"tokenCreator on the scheduler account":                {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", "projects/proj-1/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com")}, false},
 		"tokenCreator on an unrelated account":                 {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", "projects/proj-1/serviceAccounts/eve@proj-1.iam.gserviceaccount.com")}, false},
 		"tokenCreator on another project's deployer account":   {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("other"))}, false},
 		"tokenCreator on an account named without its project": {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", DeployerAccount("proj-1"))}, false},
