@@ -55,6 +55,8 @@ import {
   skewSentence,
 } from '../../src/shared/version'
 import { githubToken } from '../support/fakeSecrets'
+import { inRangeCliStub } from '../support/cliStub'
+import type { CliStub } from '../support/cliStub'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
 // is two levels below it.
@@ -295,15 +297,22 @@ test.describe('the version skew handshake', () => {
 
   let app: ElectronApplication
   let page: Page
+  let cli: CliStub
 
   test.beforeAll(async () => {
-    app = await electron.launch({ args: [consoleDir] })
+    // The app reads a `fugaro` before it opens a window (plan Task 3.3): without
+    // an in-range one it opens the refusal document, and this spec -- which
+    // draws every skew state into the dashboard document by hand, with the
+    // compatibility it is testing -- would have no dashboard to draw into.
+    cli = inRangeCliStub()
+    app = await electron.launch({ args: [consoleDir], env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })
 
   test.afterAll(async () => {
     await app.close()
+    cli.remove()
   })
 
   /** mount draws one state and fails with the window's own words if the console

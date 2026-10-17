@@ -53,6 +53,8 @@ import { refusalFrom } from '../../src/source/source'
 import type { JSONDoc } from '../../src/source/source'
 import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { githubToken } from '../support/fakeSecrets'
+import { inRangeCliStub } from '../support/cliStub'
+import type { CliStub } from '../support/cliStub'
 import { LIVE_STALE_AFTER_SECONDS } from '../../src/renderer/screens/live'
 import type { FeedHealth } from '../../src/renderer/screens/live'
 import { NO_BINARY_HEADLINE, PICKER_LEAD, refusedState } from '../../src/renderer/screens/degraded'
@@ -70,6 +72,7 @@ const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',
   'renderer/screens/live.js',
@@ -421,16 +424,24 @@ test.describe('the console with nothing to read', () => {
   let app: ElectronApplication
   let page: Page
   let scratch: string
+  let cli: CliStub
 
   test.beforeAll(async () => {
     scratch = mkdtempSync(join(tmpdir(), 'fugaro-degraded-'))
-    app = await electron.launch({ args: [consoleDir] })
+    // The app reads a `fugaro` before it opens a window (plan Task 3.3): without
+    // an in-range one it opens the refusal document, and the dashboard document
+    // this spec mounts into would never be loaded. The spec's own no-binary and
+    // refused screens are drawn into that document with their own states and
+    // their own `appEnv`, so this stub is here for the window only.
+    cli = inRangeCliStub()
+    app = await electron.launch({ args: [consoleDir], env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })
 
   test.afterAll(async () => {
     await app.close()
+    cli.remove()
     rmSync(scratch, { recursive: true, force: true })
   })
 

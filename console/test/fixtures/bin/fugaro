@@ -1,0 +1,33 @@
+#!/bin/sh
+# A stub `fugaro`, for the end-to-end specs that launch the real console
+# (desktop-console plan Task 3.3).
+#
+# The console resolves its `fugaro` the way design section 3.4 rule 4 says: the
+# configured path, then the well-known prefixes, then every absolute entry of
+# the app's own `PATH`. There is no `FUGARO_BIN` and this task does not add one,
+# so the only way a spec can choose which CLI the app reads is to put a binary
+# where that resolution looks -- `test/support/cliStub.ts` copies this file into
+# a scratch directory and points the app's `PATH` (and `HOME`, so `~/.local/bin`
+# is covered too) at it.
+#
+# What it does is one thing: print the line in `version.txt`, which sits beside
+# it and which the spec writes. That is the whole of `fugaro version` on this
+# tree -- one human line, no `--json` (design section 4.3 gap 2) -- and it is
+# what `src/main/spawn.ts`'s `probeVersion` runs at startup.
+#
+# **Any other argv is refused, loudly.** A stub that answered whatever it was
+# asked would hide the thing these specs are about: if the console ever asked
+# the stub for something else -- a read, a write, a different verb -- the spec
+# would rather fail here, with the argv it was handed, than pass on an answer
+# the console should never have been able to obtain. `set -eu` and exit 2 are
+# the shape `probeVersion` already treats as "a binary this console will not
+# run".
+set -eu
+
+if [ "${1:-}" != 'version' ]; then
+  echo "the stub fugaro only answers 'version', and was asked for '${1:-nothing}'" >&2
+  exit 2
+fi
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cat "${here}/version.txt"

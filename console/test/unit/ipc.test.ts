@@ -73,6 +73,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ALLOWED_OPERATION_FLAGS,
+  COMPATIBILITY_UNREADABLE,
   CONSOLE_OPERATIONS,
   CONSOLE_OPERATION_NAMES,
   IPC_CHANNEL_PREFIX,
@@ -89,7 +90,9 @@ import {
   isConsoleSender,
   isConsoleSenderUrl,
   isNeverReachable,
+  readStoredCompatibility,
   registerConsoleHandlers,
+  startupCompatibility,
   validateArguments,
 } from '../../src/main/ipc'
 import type {
@@ -116,6 +119,9 @@ import type {
   ExposedName,
   RendererLike,
 } from '../../src/preload/index'
+import { RENDERER_UNREADABLE, compatibilityFrom } from '../../src/renderer/app'
+import { REDUCED_VIEWS, classifyCliVersion, unreadableCompatibility } from '../../src/shared/version'
+import type { CliCompatibility } from '../../src/shared/version'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 
@@ -643,9 +649,21 @@ describe("the allow-list's read-only invariant", () => {
     expect([...driven].sort()).toEqual([...DESIGN_ARGV].sort())
   })
 
-  it('has exactly one operation spawn nothing at all, and it is the link', () => {
+  it('has exactly two operations spawn nothing at all: the link, and the handshake’s answer', () => {
+    // Task 3.3 added the second one, and the number is the claim: this row is
+    // the console's own startup state, and a third operation with no command
+    // would be a surface that answers something no CLI read produced.
     const withoutCommand = CONSOLE_OPERATIONS.filter((operation) => operation.command === null)
-    expect(withoutCommand.map((operation) => operation.name)).toEqual(['link.openExternal'])
+    expect(withoutCommand.map((operation) => operation.name)).toEqual([
+      'startup.compatibility',
+      'link.openExternal',
+    ])
+    // Both of them, by name, so the test fails naming the row rather than on a
+    // list that a reader has to diff.
+    expect(withoutCommand.map((operation) => operation.method)).toEqual([
+      'getCompatibility',
+      'openExternal',
+    ])
   })
 
   it('drives every CLI command with at most one operation, except logs', () => {
@@ -903,6 +921,7 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'secrets.inventory': { scope: 'repo', repo: 'acme/app' },
   'accounts.inventory': { repo: 'acme/app' },
   'cli.version': {},
+  'startup.compatibility': {},
   'environment.report': {},
   'link.openExternal': { url: 'https://github.com/acme/app/pull/1' },
 }
@@ -1517,31 +1536,120 @@ describe('the spend read’s arguments', () => {
   })
 })
 
-describe('the preload surface the spend controls did not widen', () => {
-  it('exposes the same twelve operations, frozen, with `spend.report` on `runReport`', () => {
-    // Spelled out rather than compared against the table itself: the claim is
-    // that THIS task added no channel, and a test that read the table back
-    // would hold for a table this task had widened.
-    expect(EXPOSED_OPERATIONS).toEqual([
-      ['live.watch', 'subscribeLive'],
-      ['budget.show', 'showBudget'],
-      ['spend.report', 'runReport'],
-      ['runs.list', 'listRuns'],
-      ['run.diagnose', 'diagnoseRun'],
-      ['run.logs', 'readRunLogs'],
-      ['run.logLink', 'runLogLink'],
-      ['secrets.inventory', 'listSecrets'],
-      ['accounts.inventory', 'listAccounts'],
-      ['cli.version', 'cliVersion'],
-      ['environment.report', 'environmentReport'],
-      ['link.openExternal', 'openExternal'],
-    ])
+/**
+ * SHIPPED_SURFACE is the preload surface written out -- name and method, in the
+ * table's order -- and it is the frozen list the plan asks for: it is spelled
+ * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
+ * compared the table with itself would hold for a table that had just gained a
+ * channel. The claim is "these thirteen, and no others".
+ *
+ * Task 2.4 asserted the twelve and said the spend controls widened nothing;
+ * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
+ * the handshake's answer the renderer gates on) and left the other twelve
+ * exactly where they were. Read that as a diff against the previous version of
+ * this list: one row, in one place, and no method renamed.
+ */
+const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
+  ['live.watch', 'subscribeLive'],
+  ['budget.show', 'showBudget'],
+  ['spend.report', 'runReport'],
+  ['runs.list', 'listRuns'],
+  ['run.diagnose', 'diagnoseRun'],
+  ['run.logs', 'readRunLogs'],
+  ['run.logLink', 'runLogLink'],
+  ['secrets.inventory', 'listSecrets'],
+  ['accounts.inventory', 'listAccounts'],
+  ['cli.version', 'cliVersion'],
+  ['startup.compatibility', 'getCompatibility'],
+  ['environment.report', 'environmentReport'],
+  ['link.openExternal', 'openExternal'],
+]
+
+/**
+ * surfaceOffences returns, for a proposed surface, the reasons it is not the
+ * one this console ships. It is a function over a list rather than a loop in
+ * the test for the same reason `dynamicCodeOffences` above is: the test below
+ * hands it the mutations directly, so "adding a channel fails a test" is a fact
+ * this file demonstrates instead of a property a reader has to take on trust.
+ */
+export function surfaceOffences(proposed: readonly (readonly [string, string])[]): readonly string[] {
+  const found: string[] = []
+  const names = proposed.map(([name]) => name)
+  if (new Set(names).size !== names.length) found.push('a name appears twice')
+  if (proposed.length !== SHIPPED_SURFACE.length) {
+    found.push(`${proposed.length} rows, and this console ships ${SHIPPED_SURFACE.length}`)
+  }
+  for (const [name, method] of SHIPPED_SURFACE) {
+    const row = proposed.find(([candidate]) => candidate === name)
+    if (row === undefined) found.push(`${name}: not on the surface at all`)
+    else if (row[1] !== method) found.push(`${name}: on ${row[1]}, not on ${method}`)
+  }
+  for (const [name] of proposed) {
+    if (!SHIPPED_SURFACE.some(([candidate]) => candidate === name)) {
+      found.push(`${name}: a channel this console does not ship`)
+    }
+  }
+  return found
+}
+
+describe('the frozen list of operations the preload exposes', () => {
+  it('is exactly these thirteen, with `spend.report` on `runReport` and the handshake on `getCompatibility`', () => {
+    expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
+    expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
+    // The table and the preload are the same length, which is the runtime half
+    // of the two-way test at the top of this file: an operation added to
+    // `CONSOLE_OPERATIONS` with no row here fails *that* test, and a row here
+    // with no operation fails this one.
     expect(CONSOLE_OPERATION_NAMES).toHaveLength(EXPOSED_OPERATIONS.length)
-    // The bridge the window is handed: the twelve methods and the names, with
+  })
+
+  it('fails, naming the row, when a channel is added, removed or changed', () => {
+    // The mutation controls for the list above. A checker that refused
+    // everything would pass every one of these and be worthless, so the
+    // unmutated surface is asserted clean first.
+    expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
+
+    // A fourteenth channel: what the task added must stay one row, and the next
+    // task that adds a read cannot do it quietly.
+    const fourteenth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(fourteenth).toContain('fleet.report: a channel this console does not ship')
+    expect(fourteenth).toContain('14 rows, and this console ships 13')
+
+    // A write verb, which the allow-list forbids outright: it is refused here
+    // for the same reason, one step earlier than `assertReachableSurface`.
+    expect(surfaceOffences([...SHIPPED_SURFACE, ['runs.cancel', 'cancelRun']])).toContain(
+      'runs.cancel: a channel this console does not ship',
+    )
+
+    // This task's own row, deleted and then renamed: the test the task asks
+    // for, named for the row rather than for the list.
+    const withoutTheNewRow = surfaceOffences(
+      SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
+    )
+    expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
+    expect(withoutTheNewRow).toContain('12 rows, and this console ships 13')
+    expect(
+      surfaceOffences([
+        ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
+        ['startup.compatibility', 'getCompatibilty'],
+      ]),
+    ).toContain('startup.compatibility: on getCompatibilty, not on getCompatibility')
+
+    // And a name listed twice, which the real table refuses as well
+    // (`an operation appears twice`).
+    expect(surfaceOffences([...SHIPPED_SURFACE, ['cli.version', 'cliVersion']])).toContain(
+      'a name appears twice',
+    )
+  })
+
+  it('is frozen, and hands the window a bridge with the thirteen methods and nothing else', () => {
+    // The bridge the window is handed: the thirteen methods and the names, with
     // no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
-    expect(Object.keys(bridge).sort()).toEqual(['operations', 'version', ...EXPOSED_OPERATIONS.map(([, method]) => method)].sort())
+    expect(Object.keys(bridge).sort()).toEqual(
+      ['operations', 'version', ...SHIPPED_SURFACE.map(([, method]) => method)].sort(),
+    )
     expect(Object.isFrozen(bridge)).toBe(true)
   })
 })
@@ -1632,6 +1740,238 @@ describe('the schema as a whole', () => {
     expect(() => validateArguments('nope.not.an.operation' as OperationName, {})).toThrow(
       /not a console operation/,
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The handshake's answer on the wire (desktop-console plan Task 3.3)
+// ---------------------------------------------------------------------------
+//
+// `startup.compatibility` carries a value this console built itself, so the
+// interesting questions are not about a hostile document: they are (a) that the
+// check accepts exactly what the handshake produces, (b) that a *mutated* store
+// -- a mode typo, a view id that is not a withheld view, a `hidden` list that no
+// longer agrees with the mode -- answers the console's own refusal sentence
+// instead of a value the renderer would gate on, and (c) that the check and the
+// renderer's own copy of it (`src/renderer/app.ts`'s `compatibilityFrom`) reach
+// the same verdict on the same value, because two implementations that drifted
+// would be two policies: main answering a compatibility the renderer refuses.
+
+/** theHandshakeRan is one value per band of `classifyCliVersion`, plus the
+ * refusal it builds for a line it cannot read: what the console actually puts
+ * in the store at startup. */
+const theHandshakeRan: readonly CliCompatibility[] = [
+  classifyCliVersion('0.8.1'),
+  classifyCliVersion('0.7.4'),
+  classifyCliVersion('0.9.0'),
+  classifyCliVersion('0.5.9'),
+  classifyCliVersion('dev-abc1234'),
+  classifyCliVersion('fugaro version 0.8.1'),
+  classifyCliVersion(''),
+]
+
+/** REDUCED_HANDSHAKE and SUPPORTED_HANDSHAKE are the two shapes the fields
+ * below are mutated from: a `reduced` answer that withholds all three views,
+ * and an `ok` one that withholds none. Between them they are every pair the
+ * mode/hidden check has to tell apart. */
+const REDUCED_HANDSHAKE = classifyCliVersion('0.9.0')
+const SUPPORTED_HANDSHAKE = classifyCliVersion('0.8.1')
+
+describe("the handshake's answer on the wire", () => {
+  it('accepts every value the handshake itself produces, and answers an equal fresh copy', () => {
+    for (const compatibility of theHandshakeRan) {
+      // Equal, and **not** the same object: the answer is rebuilt from the
+      // checked fields (round 2 of the review -- returning the input let an
+      // unchecked key ride along), and it is equal field for field, so the
+      // rebuild normalises nothing the renderer gates on.
+      const inMain = readStoredCompatibility(compatibility)
+      const inRenderer = compatibilityFrom({ ok: true, data: compatibility })
+      expect(inMain, compatibility.skew).toEqual(compatibility)
+      expect(inMain, compatibility.skew).not.toBe(compatibility)
+      expect(Object.isFrozen(inMain), compatibility.skew).toBe(true)
+      expect(inRenderer, compatibility.skew).toEqual(compatibility)
+      expect(inRenderer, compatibility.skew).not.toBe(compatibility)
+      expect(Object.isFrozen(inRenderer), compatibility.skew).toBe(true)
+    }
+    // The refusal the handshake builds for a read that failed carries its
+    // `because`, and both checks keep it.
+    const unreadable = unreadableCompatibility('the console could not find a fugaro to read')
+    expect(readStoredCompatibility(unreadable)).toEqual(unreadable)
+    expect(compatibilityFrom({ ok: true, data: unreadable })).toEqual(unreadable)
+    // The table is not vacuous: it holds all three modes, so the checks above
+    // are not "everything is `ok`".
+    expect(new Set(theHandshakeRan.map((compatibility) => compatibility.mode))).toEqual(
+      new Set(['ok', 'reduced', 'refused']),
+    )
+    expect(REDUCED_HANDSHAKE.mode).toBe('reduced')
+    expect(REDUCED_HANDSHAKE.hidden).toEqual([...REDUCED_VIEWS])
+    expect(SUPPORTED_HANDSHAKE.mode).toBe('ok')
+    expect(SUPPORTED_HANDSHAKE.hidden).toEqual([])
+  })
+
+  it('refuses a stored value that is not a compatibility, without repeating it', () => {
+    const refusals: readonly (readonly [string, unknown])[] = [
+      ['null', null],
+      ['undefined', undefined],
+      ['a string', 'ok'],
+      ['a number', 7],
+      ['an array', [REDUCED_HANDSHAKE]],
+      ['an empty object', {}],
+      ['a mode this console does not have', { ...REDUCED_HANDSHAKE, mode: 'observer' }],
+      ['a mode that is not a string', { ...REDUCED_HANDSHAKE, mode: 1 }],
+      ['an empty skew', { ...REDUCED_HANDSHAKE, skew: '' }],
+      ['a skew that is not a string', { ...REDUCED_HANDSHAKE, skew: 3 }],
+      ['a console version that is not a string', { ...REDUCED_HANDSHAKE, consoleVersion: 8.5 }],
+      ['a floor that is not a string', { ...REDUCED_HANDSHAKE, floor: null }],
+      ['a cli version that is neither a string nor null', { ...REDUCED_HANDSHAKE, cliVersion: 0.7 }],
+      ['a supported list that is not an array', { ...REDUCED_HANDSHAKE, supported: '0.7' }],
+      ['a supported list with a number in it', { ...REDUCED_HANDSHAKE, supported: ['0.7', 8] }],
+      ['a hidden list that is not an array', { ...REDUCED_HANDSHAKE, hidden: 'spend' }],
+      [
+        'a view id that is not a withheld view',
+        { ...REDUCED_HANDSHAKE, hidden: ['spend', 'treasury'] },
+      ],
+      ['the same view twice', { ...REDUCED_HANDSHAKE, hidden: ['spend', 'spend', 'caps', 'kill'] }],
+      ['an `ok` mode beside a list that withholds a view', { ...REDUCED_HANDSHAKE, mode: 'ok' }],
+      [
+        'a supported mode beside a list that withholds one',
+        { ...SUPPORTED_HANDSHAKE, hidden: [...REDUCED_VIEWS] },
+      ],
+      [
+        'a refused mode beside an empty list',
+        { ...classifyCliVersion('0.5.9'), hidden: [] },
+      ],
+      ['a plain object with an inherited mode', Object.create(REDUCED_HANDSHAKE)],
+      ['a date', new Date(0)],
+      ['a because that is a number', { ...unreadableCompatibility('x'), because: 7 }],
+      ['a because that is an object', { ...unreadableCompatibility('x'), because: { treasury: 1 } }],
+      ['a because that is undefined', { ...unreadableCompatibility('x'), because: undefined }],
+      ['an empty because', { ...unreadableCompatibility('x'), because: '' }],
+      ['an overlong because', unreadableCompatibility(`treasury ${'x'.repeat(300)}`)],
+      ['a because on a value that is not unreadable', { ...REDUCED_HANDSHAKE, because: 'treasury' }],
+      ['an overlong cli version', { ...REDUCED_HANDSHAKE, cliVersion: `0.9.0${'0'.repeat(300)}` }],
+      ['an overlong skew', { ...REDUCED_HANDSHAKE, skew: 'x'.repeat(300) }],
+    ]
+    for (const [why, value] of refusals) {
+      // The renderer's copy refuses the same values, with its own sentence.
+      expect(compatibilityFrom({ ok: true, data: value }).because, why).toBe(RENDERER_UNREADABLE)
+      const refused = readStoredCompatibility(value)
+      expect(refused.mode, why).toBe('refused')
+      expect(refused.skew, why).toBe('unreadable')
+      expect(refused.because, why).toBe(COMPATIBILITY_UNREADABLE)
+      // The value's own words never reach the refusal: the sentence is the
+      // console's constant, and it is what a screen draws.
+      expect(JSON.stringify(refused), why).not.toContain('treasury')
+      expect(refused.hidden, why).toEqual([...REDUCED_VIEWS])
+    }
+  })
+
+  it('drops every key it did not check, so nothing unchecked rides along', () => {
+    // The reviewer's case: a store that carried the raw line beside the
+    // checked fields. The answer is rebuilt, so the key -- and its escape
+    // sequence -- is not on the wire and not in the gate.
+    const carrying = {
+      ...REDUCED_HANDSHAKE,
+      rawStdout: '\u001b[31m0.9.0\u001b[0m <h1>treasury</h1>',
+      get loud(): string {
+        return 'treasury'
+      },
+    }
+    for (const answered of [
+      readStoredCompatibility(carrying),
+      compatibilityFrom({ ok: true, data: carrying }),
+    ]) {
+      expect(answered.mode).toBe('reduced')
+      expect(Object.keys(answered).sort()).toEqual(
+        ['cliVersion', 'consoleVersion', 'floor', 'hidden', 'mode', 'skew', 'supported'],
+      )
+      expect(JSON.stringify(answered)).not.toContain('\u001b')
+      expect(JSON.stringify(answered)).not.toContain('treasury')
+      // The arrays are copies too: mutating the input's afterwards changes
+      // nothing the gate reads.
+      expect(answered.hidden).not.toBe(REDUCED_HANDSHAKE.hidden)
+      expect(answered.supported).not.toBe(REDUCED_HANDSHAKE.supported)
+    }
+  })
+
+  it('holds the renderer’s own check to the same verdict, value for value', () => {
+    const values: readonly unknown[] = [
+      ...theHandshakeRan,
+      null,
+      'ok',
+      [],
+      {},
+      { ...REDUCED_HANDSHAKE, mode: 'observer' },
+      { ...REDUCED_HANDSHAKE, hidden: ['spend', 'treasury'] },
+      { ...REDUCED_HANDSHAKE, mode: 'ok' },
+    ]
+    let refusals = 0
+    for (const value of values) {
+      const inMain = readStoredCompatibility(value)
+      const inRenderer = compatibilityFrom({ ok: true, data: value })
+      const why = JSON.stringify(value) ?? 'undefined'
+      expect(inRenderer.mode, why).toBe(inMain.mode)
+      expect(inRenderer.skew, why).toBe(inMain.skew)
+      if (inMain.because === undefined) {
+        // A value both sides read -- including the handshake's own `refused`
+        // mode, which is a verdict about the CLI and not an unreadable value:
+        // both answer the same fields.
+        expect(inRenderer, why).toEqual(inMain)
+        continue
+      }
+      // A value neither side could read: each refuses with its own sentence,
+      // and neither carries the value. The renderer's copy is not the main
+      // process's message, which is what keeps one mutation from being both
+      // failures.
+      refusals += 1
+      expect(inRenderer.because, why).toBe(RENDERER_UNREADABLE)
+      expect(inMain.because, why).toBe(COMPATIBILITY_UNREADABLE)
+    }
+    // Neither half is vacuous: the table reaches both verdicts, so a checker
+    // that refused everything (or accepted everything) fails here.
+    expect(refusals).toBeGreaterThan(0)
+    expect(refusals).toBeLessThan(values.length)
+  })
+
+  it('answers through the handler, and refuses for a store that has not answered', async () => {
+    const handler = startupCompatibility(() => SUPPORTED_HANDSHAKE)
+    // The handler takes the operation's validated arguments, which for this
+    // operation are none: what it is handed changes nothing.
+    expect(await handler({})).toEqual(SUPPORTED_HANDSHAKE)
+    expect(await handler({ mode: 'ok' })).toEqual(SUPPORTED_HANDSHAKE)
+
+    // A store mutated under the handler answers the console's refusal, not the
+    // mutation -- this is the case the check exists for.
+    const mutated = startupCompatibility(() => ({ ...REDUCED_HANDSHAKE, hidden: ['spend', 'kill'] }))
+    const refused = (await mutated({})) as CliCompatibility
+    expect(refused.mode).toBe('refused')
+    expect(refused.because).toBe(COMPATIBILITY_UNREADABLE)
+
+    // A store that has not answered yet -- startup has not finished -- throws
+    // synchronously, and `registerConsoleHandlers`' `dispatch` catches that
+    // exactly as it catches a rejected promise.
+    const before = startupCompatibility(() => {
+      throw new Error('the handshake has not answered yet')
+    })
+    expect(() => before({})).toThrow(/has not answered yet/)
+
+    // And the whole way out, which is the shape a renderer sees: the reply is a
+    // refusal rather than a rejection, and the answer itself arrives unchanged.
+    const { bridge } = wiredConsole({ 'startup.compatibility': handler })
+    expect(await bridge.getCompatibility()).toEqual({ ok: true, data: SUPPORTED_HANDSHAKE })
+    const failing = wiredConsole({ 'startup.compatibility': before })
+    const reply = await failing.bridge.getCompatibility()
+    expect(reply.ok).toBe(false)
+    expect(reply.ok ? '' : reply.reason).toContain('has not answered yet')
+  })
+
+  it('declares no argument, so a renderer has nothing to name', () => {
+    const row = CONSOLE_OPERATIONS.find((operation) => operation.name === 'startup.compatibility')
+    expect(row).toBeDefined()
+    expect(row?.args).toEqual([])
+    expect(row?.flags).toEqual([])
+    expect(validateArguments('startup.compatibility', { mode: 'ok' }).ok).toBe(false)
+    expect(validateArguments('startup.compatibility', undefined).ok).toBe(true)
   })
 })
 
@@ -1879,7 +2219,7 @@ describe('the registrar', () => {
     )
   })
 
-  it('registers the twelve channels and ignores a handler that is not an operation', () => {
+  it('registers the thirteen channels and ignores a handler that is not an operation', () => {
     // The control for the missing-handler test above: a table that is fine
     // registers, and a stray key in the handler object changes nothing -- the
     // surface is the table, not the object.
