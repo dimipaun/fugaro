@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	stdflag "flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -76,10 +77,14 @@ func writeSecurityPage(root string) (bool, error) {
 	return true, nil
 }
 
-// main regenerates every file this command generates. A failure is named on
-// stderr and exits non-zero, so a regeneration that cannot read its source
-// never looks like a successful no-op that left a stale page in place.
+// main regenerates every file this command generates (the security page and
+// the CLI reference). A failure is named on stderr and exits non-zero, so a
+// regeneration that cannot read its source never looks like a successful
+// no-op that left a stale page in place.
 func main() {
+	out := stdflag.String("out", defaultPath, "write the CLI reference here")
+	stdflag.Parse()
+
 	changed, err := writeSecurityPage(".")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "clidoc:", err)
@@ -91,4 +96,11 @@ func main() {
 	default:
 		fmt.Printf("%s is already current\n", securityPage)
 	}
+
+	n, err := writeCLIReference(*out)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "clidoc:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("wrote %s from the command tree (%d commands)\n", *out, n)
 }

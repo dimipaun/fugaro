@@ -41,6 +41,7 @@ Subcommands:
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro secrets` -- Store and list a repository's secrets in Secret Manager
+- `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
 - `fugaro update-skills` -- Pin the Fugaro plugin in the repository's .claude/settings.json to this release
 - `fugaro upgrade` -- Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
@@ -2026,6 +2027,76 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro stats`
+
+Aggregate one installation's run records into figures a page can publish
+
+Usage: `fugaro stats`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for stats |
+
+Subcommands:
+
+- `fugaro stats runs` -- Publish per-recipe duration and cost percentiles over a window, and nothing else
+
+## `fugaro stats runs`
+
+Publish per-recipe duration and cost percentiles over a window, and nothing else
+
+Aggregate one named installation's own run records into the figures the
+caps-and-costs guide publishes: the minimum, the median and the 90th percentile
+of a run's wall-clock duration and of its total cost, grouped by recipe.
+
+The records are read read-only, over --since's window, from the installation
+--project names -- and result.json alone is read: the task a run was given is
+never read, so no task text can reach the output. Nothing a reader cannot look
+up is printed: the groups are recipe names and the window, every figure is a
+number or a count, and no field carries a repository, run ID, branch, pull
+request, task, person or commit.
+
+--project is required and has no default, the sandbox included: an aggregation is
+about one named installation, and this command never guesses one. There is no
+--all. The command is refused in a coding agent's session: the records are an
+installation's own data, and reading them is the owner's step.
+
+A recipe with fewer than --min-runs runs in the window is not published at all --
+a range from four runs reads as a promise precisely because it is a range -- and
+a run whose recipe this binary does not ship, or whose record carries no finished
+duration or no cost breakdown, or whose result.json cannot be read at all, is
+counted and not grouped: one bad object never makes the figures unproducible.
+
+--json prints {project, since, until, min_runs, recipes[{recipe, runs,
+compute_not_estimated, duration_s{min, median, p90}, cost_usd{min, median, p90}}],
+totals{runs, recipes, runs_below_min_runs, runs_unknown_recipe, runs_not_estimated,
+runs_without_a_figure}, not_a_promise}.
+
+The closing line is the disclaimer the figures travel with: a cap is a ceiling
+rather than an estimate, a range is what one window of one installation's runs did
+rather than a promise, and every figure prints the number of runs behind it.
+
+Usage: `fugaro stats runs`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for runs |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--min-runs` | int | `20` | no | the least runs a recipe may carry a range from (a thinner group is not published) |
+| `--project` | string | "" | yes | the installation whose run records are read (required: this command never guesses one, and the sandbox is named like any other) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--since` | string | `90d` | no | the window: Nd days back from today, or a Go duration (90d) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro update-skills`
 
 Pin the Fugaro plugin in the repository's .claude/settings.json to this release
@@ -2221,6 +2292,15 @@ every finished run (the a key toggles this without relaunching). --json is
 always unfiltered: it carries every finished run and, among them, the ones
 ready for review.
 
+The "Ready for your review" list drops a pull request that is already merged
+or closed. The state is asked of your own gh (when it is installed and
+logged in), by pull request number and repository, never through a shell and
+never with the run's title or any other run text; the answer is cached, and
+anything that goes wrong — no gh, no login, a rate limit, a failure, a
+timeout — leaves the pull request listed as it is today, with one note saying
+so. --no-pr-state turns the lookup off entirely (nothing is executed), and
+--json is unaffected: its ready[] is the runs bucket's own record.
+
 Usage: `fugaro watch`
 
 Flags:
@@ -2237,6 +2317,7 @@ Flags:
 | `--keep` | duration | `6h0m0s` | no | how long a finished run stays shown (with --keep-count, whichever is stricter) |
 | `--keep-count` | int | `15` | no | how many finished runs stay shown (with --keep, whichever is stricter) |
 | `--no-color` | bool | `false` | no | no colour (NO_COLOR and TERM=dumb do the same) |
+| `--no-pr-state` | bool | `false` | no | do not ask gh about the ready PRs: list every one of them, run nothing |
 | `--once` | bool | `false` | no | print one snapshot and exit (with --json or plain text) |
 | `--plain` | bool | `false` | no | print text frames instead of the interactive screen |
 | `--poll` | bool | `false` | no | read by polling instead of streaming (for proxies that buffer) |

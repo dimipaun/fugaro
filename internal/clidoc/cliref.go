@@ -21,7 +21,6 @@
 package main
 
 import (
-	stdflag "flag"
 	"fmt"
 	"os"
 	"sort"
@@ -43,17 +42,15 @@ const (
 	defaultPath = "website/content/cli-reference.md"
 )
 
-func main() {
-	path := stdflag.String("out", defaultPath, "write the CLI reference here")
-	stdflag.Parse()
-
+// writeCLIReference regenerates the CLI reference at path and reports the
+// number of documented commands.
+func writeCLIReference(path string) (int, error) {
 	root := Prepare(cli.NewRootCmd())
 	doc := Generate(root)
-	if err := os.WriteFile(*path, []byte(doc), 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, "clidoc:", err)
-		os.Exit(1)
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		return 0, err
 	}
-	fmt.Fprintf(os.Stderr, "clidoc: wrote %s from the command tree (%d commands)\n", *path, len(documentedCommands(root)))
+	return len(documentedCommands(root)), nil
 }
 
 // Prepare returns root with the commands and flags cobra adds for itself, so
