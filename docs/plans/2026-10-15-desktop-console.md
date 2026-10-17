@@ -389,6 +389,8 @@ The owner copies `docs/pending-workflows/console-tests.yml` to `.github/workflow
 
 **Tests:** `live.test.ts` — the row model from a fixture frame, each flag's boundary at exactly its threshold, the burn window against the constant. `live.spec.ts` — the screen renders the fixture, a killed repository shows its banner, a queued row is present; and a screenshot golden per theme.
 
+**Goldens (owner-run step).** The Task 2.1 PNGs are not committed: pixels differ between macOS and Linux, so they must be recorded on the platform the comparison runs on. `console/playwright.config.ts` sets `updateSnapshots: 'none'`, so a missing baseline fails the golden tests rather than writing one and passing. To record: on that platform, `cd console && npm run build && npx playwright test live.spec.ts --update-snapshots`, then commit `console/test/e2e/__screenshots__/live-light.png` and `live-dark.png` (the test "has a golden for each theme" fails unless exactly those two exist). Until then the only way to run the rest of the file is the explicit `FUGARO_CONSOLE_GOLDENS=skip`, which skips exactly the three golden tests.
+
 **Command:** `npm run test:unit && npm run test:e2e -- live`
 
 **Depends on:** Task 2.0.

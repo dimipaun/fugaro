@@ -328,13 +328,21 @@ describe('the flags', () => {
     expect(deadlineFlag('near')?.because).toContain(`${LIVE_NEAR_DEADLINE_FRACTION * 100}%`)
   })
 
-  it('refuses an enum value the console does not know', () => {
+  it('draws an enum value the console does not know as unknown, never as healthy', () => {
     // `health` and `deadline` are enums the CLI writes from its own tables
     // (`NON_TEXT_STRING_KEYS`), and a value this build has never seen is a
     // document from a newer CLI. Drawing "not silent" for it would be the
-    // console answering a question it cannot read.
-    expect(healthFlag('hibernating')).toBeNull()
-    expect(deadlineFlag('imminent')).toBeNull()
+    // console answering a question it cannot read, so it is a flag of its own,
+    // amber, in the console's words -- and the document's value is not in it.
+    for (const value of ['hibernating', '', 'constructor', '__proto__', 'toString']) {
+      const health = healthFlag(value)
+      expect(health?.name, `health ${JSON.stringify(value)}`).toBe('unknown health')
+      expect(health?.tone).toBe('amber')
+      if (value !== '') expect(health?.because).not.toContain(value)
+      const deadline = deadlineFlag(value)
+      expect(deadline?.name, `deadline ${JSON.stringify(value)}`).toBe('unknown deadline')
+      expect(deadline?.tone).toBe('amber')
+    }
   })
 })
 
@@ -551,6 +559,16 @@ describe('the contradiction', () => {
     expect(contradiction('hibernating', 45)).toBeNull()
   })
 
+  it('does not take an inherited Object.prototype member for a health it knows', () => {
+    // `HEALTH_SEVERITY` is an object literal, so `HEALTH_SEVERITY['constructor']`
+    // is `Object` and not `undefined`: without an own-property check the screen
+    // would draw a contradiction sentence, in the console's own voice, for a
+    // health value the console has never heard of.
+    for (const inherited of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      expect(contradiction(inherited, 45), inherited).toBeNull()
+    }
+  })
+
   it('says nothing about a run whose age the document does not carry', () => {
     // `age_seconds` is `*float64` with no `omitempty` and `schema.ts` reads it
     // on the tolerant axis, so `null` is an accepted document. `watchHealth`
@@ -689,6 +707,65 @@ describe('the burn history', () => {
     // and leaves the four frames from there on.
     expect(history.window(repo.slug, AT_CAP)).toHaveLength(5)
     expect(history.window(repo.slug, '2026-10-15T12:05:05Z')).toHaveLength(4)
+  })
+})
+
+describe('the rows the fixture does not carry', () => {
+  /** withRun is the fixture's lost frame with its one registry run edited. */
+  function edited(change: Partial<RunView>): LiveDocument {
+    const frame = frameAt('2026-10-15T12:01:40Z')
+    return { ...frame, runs: frame.runs.map((run) => ({ ...run, health: 'ok', deadline: 'ok', stuck: false, ...change })) }
+  }
+
+  it('draws a run past 80% of its stage as an amber row, end to end', () => {
+    const tree = renderLive(factory, buildLiveModel(edited({ deadline: 'near' }), new BurnHistory()), 'light')
+    const rows = all(tree, 'live-run').filter((row) => row.getAttribute('data-queued') === 'false')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) expect(row.getAttribute('data-tone')).toBe('amber')
+    const flags = all(tree, 'live-run-flag')
+    expect(flags.map((flag) => flag.textContent)).toContain('near deadline')
+    expect(flags[0]?.getAttribute('data-tone')).toBe('amber')
+    expect(flags[0]?.getAttribute('title')).toContain('80%')
+  })
+
+  it('draws a run over its deadline as an alarm row', () => {
+    const tree = renderLive(factory, buildLiveModel(edited({ deadline: 'over' }), new BurnHistory()), 'light')
+    const row = all(tree, 'live-run').find((one) => one.getAttribute('data-queued') === 'false')
+    expect(row?.getAttribute('data-tone')).toBe('alarm')
+    expect(texts(tree, 'live-run-flag')).toContain('over deadline')
+  })
+
+  it('draws a stuck run with its class, its flag and an alarm tone', () => {
+    const tree = renderLive(factory, buildLiveModel(edited({ stuck: true }), new BurnHistory()), 'light')
+    const row = all(tree, 'live-run').find((one) => one.classes.includes('live-run-stuck'))
+    expect(row?.getAttribute('data-tone')).toBe('alarm')
+    expect(texts(tree, 'live-run-flag')).toContain('stuck')
+  })
+
+  it('keeps an amber deadline under a worse health: the row takes the worst tone', () => {
+    const tree = renderLive(
+      factory,
+      buildLiveModel(edited({ deadline: 'near', health: 'lost' }), new BurnHistory()),
+      'light',
+    )
+    const row = all(tree, 'live-run').find((one) => one.getAttribute('data-queued') === 'false')
+    expect(row?.getAttribute('data-tone')).toBe('alarm')
+    expect(texts(tree, 'live-run-flag')).toEqual(expect.arrayContaining(['lost', 'near deadline']))
+  })
+})
+
+describe('the burn bars of a repository with no history', () => {
+  it('draws a gap, in the gap\'s mark and state and with its reason as the title', () => {
+    // An unparseable `now` gives the window no stamp to end at, so the history
+    // has nothing to draw: the console has not seen a sample, which
+    // availability.ts calls a gap (an em dash), not an unavailable value (n/a).
+    const frame = { ...theLastFrame(), now: 'not a time' }
+    const tree = renderLive(factory, buildLiveModel(frame, new BurnHistory()), 'light')
+    const bars = all(tree, 'live-burn-bar')
+    expect(bars).toHaveLength(1)
+    expect(bars[0]?.getAttribute('data-state')).toBe('gap')
+    expect(bars[0]?.textContent).toBe(GAP_MARK)
+    expect(bars[0]?.getAttribute('title') ?? '').not.toBe('')
   })
 })
 

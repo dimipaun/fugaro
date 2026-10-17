@@ -27,29 +27,23 @@
 //     `require`: the renderer has no `require`, and giving the page one would
 //     be giving a window with `connect-src 'none'` a Node builtin.
 //
-// **The goldens are recorded where the plan says they live**
-// (`test/e2e/__screenshots__/`), which needs no change to the snapshot *path*:
-// `toHaveScreenshot(['..', '__screenshots__', name])` resolves through the
-// default template's `{snapshotDir}/{testFileDir}` and out of the per-spec
-// `-snapshots` directory.
-//
-// What does need saying is the *update* mode, because Playwright's default is
-// not what a reader would assume and it would leave this file red on the first
-// machine that can launch Electron: 1.64.1 resolves `updateSnapshots` to
-// `'default'`, which writes a missing baseline **and fails the test** with a
-// soft error marked `shouldNotRetryTest` (`matchers/expect.js`,
-// `handleMissing`) -- and since this file runs in one worker in order, the dark
-// golden would never be recorded after the light one failed. The console's
-// config sets `updateSnapshots: 'missing'` for exactly this reason; see the
-// comment there. (It cannot be set per file: the matcher reads it off the
-// resolved project config, and `updateSnapshots` is not a `test.use` option in
-// this version.)
+// **The goldens.** `test/e2e/__screenshots__/live-{light,dark}.png` are
+// compared, never written by a run: `playwright.config.ts` sets
+// `updateSnapshots: 'none'`, so a missing baseline FAILS (Playwright's
+// `'missing'` would write one and pass, comparing nothing). They are recorded by
+// an owner, on the platform the comparison runs on (macOS and Linux pixels
+// differ), with `npx playwright test live.spec.ts --update-snapshots`, and the
+// three PNG-writing and PNG-reading tests below are the only ones that need
+// them. Until they are committed those tests fail, on purpose. The one way to
+// run the rest of the file without them is the explicit
+// `FUGARO_CONSOLE_GOLDENS=skip`, which skips exactly the golden tests and says
+// so in the report; nothing skips them silently.
 //
 // Nothing here reaches the network or the CLI: the document is the committed
 // synthetic fixture, read from disk, and every string it holds was already
 // redacted when the fixture was written (Task 1.4).
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { _electron as electron, expect, test } from '@playwright/test'
@@ -63,6 +57,12 @@ import { LIVE_THEMES } from '../../src/renderer/screens/live'
 // is two levels below it.
 const consoleDir = join(__dirname, '..', '..')
 const fixturePath = join(consoleDir, 'test', 'fixtures', 'synthetic.ndjson')
+const goldenDir = join(consoleDir, 'test', 'e2e', '__screenshots__')
+
+/** SKIP_GOLDENS is the one documented way to run this file with no goldens
+ * recorded: `FUGARO_CONSOLE_GOLDENS=skip`. Anything else, including unset, means
+ * the golden tests run and a missing baseline fails them. */
+const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 
 /** The compiled modules the screen is made of, in dependency order. */
 const MODULES: readonly string[] = Object.freeze([
@@ -337,20 +337,25 @@ test.describe('the Live screen', () => {
   })
 
   test('draws the live fixture', async () => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
     await mount(theLastFrame(), 'light')
-    await expect(page).toHaveScreenshot(['..', '__screenshots__', 'live-light.png'])
+    await expect(page).toHaveScreenshot('live-light.png')
   })
 
   test('draws the live fixture in the dark theme', async () => {
     await mount(theLastFrame(), 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
-    await expect(page).toHaveScreenshot(['..', '__screenshots__', 'live-dark.png'])
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await expect(page).toHaveScreenshot('live-dark.png')
   })
 
   test('has a golden for each theme the design names', () => {
-    // A theme with no golden is a theme nobody has looked at. The list is the
-    // screen's own, so a third palette fails here until its PNG is recorded.
-    expect(LIVE_THEMES).toEqual(['light', 'dark'])
+    // A theme with no golden is a theme nobody has looked at. The themes are
+    // the screen's own, and the directory is read, so a third palette -- or a
+    // PNG that was never committed -- fails here.
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    const present = existsSync(goldenDir) ? readdirSync(goldenDir).filter((f) => f.endsWith('.png')).sort() : []
+    expect(present).toEqual(LIVE_THEMES.map((theme) => `live-${theme}.png`).sort())
   })
 })

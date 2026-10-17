@@ -53,4 +53,23 @@ describe('playwright.config.ts', () => {
       'fullyParallel: true spreads one file\'s tests across workers and runs its beforeAll once per worker, so test/e2e/security.spec.ts would launch one Electron per worker and lose the shared app/page instance its tests and its "last test in the file" ordering (the activate test) depend on. Playwright\'s default is false; this config sets it to false explicitly, and a change back to true is a deliberate edit to the spec\'s premises, which has to change that file too.',
     ).toBe(false)
   })
+
+  it('fails on a missing screenshot baseline: updateSnapshots must be "none"', () => {
+    // `'missing'` makes toHaveScreenshot write its own baseline and PASS, so a
+    // golden that was never committed compares nothing and no run can ever be
+    // red for it (the Task 2.1 review's high finding). `'none'` never writes
+    // and fails a missing baseline; recording is an explicit act
+    // (`playwright test --update-snapshots`), not a side effect of a run.
+    expect(
+      config.updateSnapshots,
+      'a missing golden must fail the run: use "none" (recording is `npx playwright test --update-snapshots`, run on the CI platform)',
+    ).toBe('none')
+  })
+
+  it('keeps one golden per theme, named without a platform suffix, in test/e2e/__screenshots__', () => {
+    // The goldens are recorded and compared on one platform, so the file name
+    // carries no `-darwin` / `-linux` suffix that would let a macOS recording
+    // sit beside, and silently never be compared with, the CI's.
+    expect(config.snapshotPathTemplate).toBe('{testDir}/__screenshots__/{arg}{ext}')
+  })
 })

@@ -42,7 +42,6 @@
 // policy and an inline style is what it refuses.
 
 import {
-  GAP_MARK,
   formatReading,
   gap,
   measured,
@@ -150,14 +149,33 @@ export function watchHealth(quietSeconds: number | null): 'ok' | 'silent' | 'los
 }
 
 /** HEALTH_SEVERITY orders the three states so that "this document's flag is
- * worse than its own numbers allow" is a comparison. */
-const HEALTH_SEVERITY: Readonly<Record<string, number>> = Object.freeze({ ok: 0, silent: 1, lost: 2 })
+ * worse than its own numbers allow" is a comparison. It is a `Map`, not an
+ * object literal: the key is the document's own string, and a literal answers
+ * `'constructor'` and `'__proto__'` with an inherited member instead of
+ * `undefined`. */
+const HEALTH_SEVERITY: ReadonlyMap<string, number> = new Map([
+  ['ok', 0],
+  ['silent', 1],
+  ['lost', 2],
+])
+
+const UNKNOWN_HEALTH_FLAG: RunFlag = Object.freeze({
+  name: 'unknown health',
+  tone: 'amber',
+  because: 'the document names a health this console does not know, so it cannot say the run is fine',
+})
+const UNKNOWN_DEADLINE_FLAG: RunFlag = Object.freeze({
+  name: 'unknown deadline',
+  tone: 'amber',
+  because: 'the document names a deadline state this console does not know, so it cannot say the run is on time',
+})
 
 /**
- * healthFlag draws the document's `health` enum. `ok` is no flag at all;
- * anything the console does not recognise is also no flag, and the caller
- * records a refusal instead -- a value from a newer CLI is not an excuse to
- * draw "fine".
+ * healthFlag draws the document's `health` enum. `ok` is no flag at all.
+ * Anything the console does not recognise is an amber `unknown health` flag in
+ * the console's own words (never the document's: the value is not echoed) -- a
+ * value from a newer CLI is not an excuse to draw "fine", and nothing upstream
+ * of this function records a refusal, so the row itself says it.
  */
 export function healthFlag(health: string): RunFlag | null {
   switch (health) {
@@ -173,8 +191,10 @@ export function healthFlag(health: string): RunFlag | null {
         tone: 'alarm',
         because: `watch calls this run lost: no heartbeat for over ${LIVE_LOST_AFTER_SECONDS} s`,
       }
-    default:
+    case 'ok':
       return null
+    default:
+      return UNKNOWN_HEALTH_FLAG
   }
 }
 
@@ -193,8 +213,10 @@ export function deadlineFlag(deadline: string): RunFlag | null {
         tone: 'alarm',
         because: "past the stage's own deadline",
       }
-    default:
+    case 'ok':
       return null
+    default:
+      return UNKNOWN_DEADLINE_FLAG
   }
 }
 
@@ -259,10 +281,10 @@ export function rowTone(flags: readonly RunFlag[]): RunTone {
  * absence of one, and there is nothing to contradict.
  */
 export function contradiction(health: string, ageSeconds: number | null): string | null {
-  const claimed = HEALTH_SEVERITY[health]
+  const claimed = HEALTH_SEVERITY.get(health)
   if (claimed === undefined || claimed === 0) return null
   if (ageSeconds === null || !Number.isFinite(ageSeconds) || ageSeconds < 0) return null
-  const supported = HEALTH_SEVERITY[watchHealth(ageSeconds)]
+  const supported = HEALTH_SEVERITY.get(watchHealth(ageSeconds))
   if (supported === undefined || claimed <= supported) return null
   return `watch calls this run ${health}, but it is only ${String(ageSeconds)} s old, and a run cannot have been quiet for longer than that`
 }
@@ -711,9 +733,13 @@ function spark(factory: ScreenFactory, line: Sparkline): ScreenElement {
   if (line.bars.length === 0) {
     // No sample at all is not an empty chart: it is the console saying it has
     // not seen a document for this repository yet.
+    // availability.ts maps that to a gap (an em dash), so the mark, the state
+    // and the title all come from one gap reading rather than from three
+    // separate choices.
     const empty = cell(element, factory, 'li', 'live-burn-bar', 'live-num')
-    empty.setAttribute('data-state', 'unavailable')
-    literal(empty, GAP_MARK)
+    const none = gap('no document has been seen for this repository yet')
+    putReading(empty, none, 'percent')
+    empty.setAttribute('data-state', none.state)
     return element
   }
   for (const point of line.bars) {
