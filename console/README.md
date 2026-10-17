@@ -1605,9 +1605,9 @@ identity Gatekeeper and the notary record keep.
 
 ### What is deliberately not here
 
-- **A signing workflow.** Task 4.2 stages it under `docs/pending-workflows/`,
-  and that task's file, not this one, names the CI secrets. This section's
-  commands are the owner's local run.
+- **A signing workflow.** Task 4.2 stages it under `docs/pending-workflows/`
+  (the section at the end of this file), and that task's file, not this one,
+  names the CI secrets. This section's commands are the owner's local run.
 - **Automatic updates.** `build.publish` is unset and there is no feed: Task 4.4
   is the auto-update task and it is not part of this MVP. The one consequence
   worth stating: `electron-updater` is still the declared runtime dependency
@@ -1635,3 +1635,132 @@ nobody should trust:
 | a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
 | `electronPlatformName: 'linux'` handed to the hook | "refuses a platform that is not darwin…", and `flipFuses` is never called |
 | any entry added to `build.files`, or `asar` turned off, or a `publish` key added, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
+
+## The signing and notarisation pipeline, staged (Task 4.2)
+
+The workflow that signs, notarises and staples this bundle is **staged, not
+applied**: `docs/pending-workflows/console-release.yml`, copied into
+`.github/workflows/` by the owner as Task 4.5, with the file's row, the one
+command that applies it and its "Not verified" note in
+`docs/pending-workflows/README.md`. What belongs *here* is the part that is
+about this directory: what the workflow has to line up with, what the owner has
+to create before it can run, and what nobody has run yet.
+
+**It is a separate file from `console-tests.yml`, and that separation is the
+security boundary, not tidiness.** The release workflow reads the Apple signing
+certificate and the App Store Connect key; the tests workflow runs on every pull
+request from any branch of this repository and holds no secret at all. One file
+carrying both jobs would put the signing job's definition next to a job any
+branch can run, where the only thing between them is GitHub's rule about
+*forks* — and a branch is not a fork (design §9.4). So the release file's `on:`
+is one event, the push of a strict `vX.Y.Z` tag, and it carries no
+`pull_request`, `pull_request_target`, `workflow_run` or `workflow_dispatch`
+trigger of any kind.
+
+**The six secrets, by name.** These are the names the workflow reads, the names
+the protected environment holds, and the names listed in
+`docs/pending-workflows/README.md`. No value of any of them is in this
+repository, in the workflow, or in any run an agent performs:
+
+| Secret | What it is |
+|---|---|
+| `APPLE_CERTIFICATE` | base64 of the Developer ID Application `.p12`, one line (the G2 Sub-CA certificate) |
+| `APPLE_CERTIFICATE_PASSWORD` | that `.p12`'s password |
+| `APPLE_TEAM_ID` | the team identifier `ZM8Y2LC7JL` — an identifier and not a credential, which is why the workflow can check it against the signature it built |
+| `APPLE_API_KEY` | the App Store Connect API key's `.p8` contents |
+| `APPLE_API_KEY_ID` | the key's id |
+| `APPLE_API_ISSUER` | the issuer uuid |
+
+**The notarisation credential is the App Store Connect API key, not an
+app-specific password.** D4 leaves the choice open; this is the decision, so
+`APPLE_ID` and `APPLE_APP_PASSWORD` are deliberately absent. The workflow keeps
+that triple out of the packaging step's environment on purpose —
+electron-builder notarises by itself the moment it sees it — and runs
+`xcrun notarytool submit --wait` as its own step, with the `.p8` written to a
+`0600` file in the runner's temp directory that the cleanup step removes. A
+submission that is visible as a step is one whose `--wait` can fail the job
+rather than being stapled over.
+
+**The environment is `console-release`, and the owner creates it before the
+copy-in.** Required reviewers on the owner, deployment branches restricted to
+tags. The workflow reads the six secrets through a job-level
+`environment: console-release` and through nothing else; every one arrives as
+`${{ secrets.NAME }}` into the `env:` of the single step that needs it, never
+inlined into a command line and never handed to an action's `with:`. A staging
+file cannot create an environment, which is why Task 4.5 is the copy-in *and*
+the environment.
+
+**It fails closed, and that is the first property to check when reading it.**
+The first step that reads a secret refuses to continue unless all six are
+non-empty, naming the missing one in the failure. A signing job that skipped its
+signing step when a secret was absent would publish an **unsigned** console
+under a signed release's name — worse than publishing nothing.
+
+**Where it agrees with the owner's local commands above, and where it
+deliberately differs.** Both call the same script, `npm run package`, so the
+hardened runtime, the `.dmg` and `.zip` targets, `entitlements.mac.plist` and
+the fuse hook are one configuration and not two; the workflow passes
+electron-builder no flag of its own. Three differences are on purpose:
+
+- **The certificate goes into a keychain the job creates**, never the runner's
+  login keychain: a random password from `openssl rand`, `security
+  create-keychain`, `security import`, `security set-key-partition-list`, and an
+  `if: always()` step that deletes the keychain and the decoded `.p12` whether
+  the build passed or failed.
+- **The signing identity is named explicitly**, through `CSC_NAME` set to the
+  SHA-1 the keychain step found. The SHA-1 of a certificate is public; a runner
+  carrying more than one identity cannot pick another.
+- **The team is checked before the notary is spent.** `codesign -dv` must report
+  the `APPLE_TEAM_ID` the owner's environment holds, so a development
+  certificate or another team's is refused here rather than submitted.
+
+**The verification is recorded, not just performed.** `codesign --verify --deep
+--strict`, `codesign -d --entitlements -`, `spctl --assess --type execute`,
+`xcrun stapler validate` on the app and on the disk image, and `spctl --assess
+--type open` on the disk image, each with its real output, into
+`console-verification.txt` — uploaded to the release beside the `.dmg` and the
+`.zip`, the way the CLI's own release records checksums (design §7.2). Each
+command must succeed; a record that swallowed a failure would be the output of a
+verification that did not pass.
+
+**Nothing about it has run, and this section claims nothing else.** No bundle
+has been packed, signed, notarised or verified by any agent, here or in CI: the
+workflow has never been applied, and this machine is Linux. Check 59a and 59b
+(plan Task 4.3, owner-run) are the first real run, and the workflow's own
+`Not verified` note in `docs/pending-workflows/README.md` says the same.
+
+### What is deliberately not here (Task 4.2)
+
+- **A `workflow_dispatch` trigger**, or any other way to run the signing job by
+  hand. A manual trigger is a second way into a job that reads a private key,
+  and the release train this repository already has — one tag, `release.yml` and
+  `images.yml` and now this — does not need one.
+- **Any action in the signing, notarising, stapling or verifying steps.** They
+  are `run:` calls to `xcrun`, `codesign`, `security` and `openssl`, so there is
+  no third-party code between the private key and the bundle. The two actions
+  the file does use, checkout and setup-node, are pinned to full commits with
+  version comments, as everywhere else here.
+- **An auto-update feed.** `build.publish` is still unset and this workflow
+  uploads to the release and nowhere else: Task 4.4 is the auto-update task and
+  it is not part of this MVP.
+- **A copy under `.github/workflows/`.** No agent creates, edits, renames or
+  deletes anything there — GitHub rejects a push that touches it, so the copy-in
+  is the owner's Task 4.5. While both files exist,
+  `TestConsoleReleaseWorkflowIsStagedAndPinned` asserts they are byte-identical,
+  so an edit to one without the other fails a named test rather than drifting
+  silently.
+
+### The properties are tests, and each one fails under a mutation (Task 4.2)
+
+Every claim above is asserted in
+`internal/cli/docs_desktop_console_test.go`, and the four that matter most were
+re-run by hand against a planted change in the staged file — recorded here the
+way the other tasks record theirs, because a test that has never been seen red
+is a test nobody should trust:
+
+| Mutation | What went red |
+|---|---|
+| `pull_request:` added to the staged file's `on:` | `TestConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, on the trigger block's own text and again on the parsed trigger keys |
+| `uses: actions/checkout@v5` (a tag instead of a full commit) | `TestConsoleReleaseWorkflowIsStagedAndPinned`'s pin scan, which accepts only `consoleUsesLine` and exactly two actions |
+| the `if: always()` cleanup step removed | `TestConsoleReleaseWorkflowIsStagedAndPinned`, on the keychain deletion and on the `.p8` removal no longer being the last step |
+| the fail-closed step's `exit 1` removed | `TestConsoleReleaseWorkflowIsStagedAndPinned`, on the first secret-reading step no longer naming all six and refusing |

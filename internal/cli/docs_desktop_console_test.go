@@ -1961,6 +1961,11 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		if !strings.Contains(line, "secrets.") {
 			continue
 		}
+		// A comment may name the form (`${{ secrets.NAME }}`) without being one:
+		// the header explains the rule, and it must be able to.
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
 		m := secretRef.FindStringSubmatch(line)
 		if m == nil {
 			t.Errorf("%s: %q is a secret reference outside a step's `env:` value: a secret is never inlined into a command line and never handed to an action's `with:`", consoleReleaseWorkflowPath, strings.TrimSpace(line))
@@ -2083,8 +2088,17 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if keychain.Env["APPLE_CERTIFICATE"] == "" || keychain.Env["APPLE_CERTIFICATE_PASSWORD"] == "" {
 		t.Errorf("%s's keychain step does not read the certificate and its password from the environment", consoleReleaseWorkflowPath)
 	}
-	if strings.Contains(keychain.Run, "login.keychain") {
-		t.Errorf("%s's keychain step touches the login keychain: the certificate is imported into one this job creates", consoleReleaseWorkflowPath)
+	if strings.Contains(keychain.Run, "login.keychain") && strings.Contains(keychain.Run, "security import") {
+		// The login keychain may be re-listed (the search list is restored from
+		// it), but the certificate is never imported into it.
+		for _, line := range strings.Split(keychain.Run, "\n") {
+			if strings.Contains(line, "security import") && strings.Contains(line, "login.keychain") {
+				t.Errorf("%s imports the certificate into the login keychain: it is imported into the one this job creates (%q)", consoleReleaseWorkflowPath, strings.TrimSpace(line))
+			}
+		}
+	}
+	if !strings.Contains(keychain.Run, `-k "$KEYCHAIN"`) {
+		t.Errorf("%s's `security import` does not name the keychain this job created: the login keychain is not where a CI signing certificate belongs", consoleReleaseWorkflowPath)
 	}
 	cleanup := -1
 	for i, s := range job.Steps {
@@ -2104,6 +2118,38 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		if !strings.Contains(job.Steps[cleanup].Run, "appstoreconnect.p8") {
 			t.Errorf("%s's cleanup step does not delete the notarisation key file: the API key is written to a temp file with mode 0600 and removed here", consoleReleaseWorkflowPath)
 		}
+	}
+
+	// The Node version is read from console/package.json's `engines.node`, never
+	// written here a second time: test/unit/pinning.test.ts keeps that field an
+	// exact pin, and a copy of it in this file is a pin that can disagree.
+	nodeSteps := 0
+	for _, step := range job.Steps {
+		if !strings.Contains(step.Uses, "actions/setup-node@") {
+			continue
+		}
+		nodeSteps++
+		if step.With["node-version-file"] != "console/package.json" {
+			t.Errorf("%s's setup-node takes node-version-file %q, want console/package.json's engines.node", consoleReleaseWorkflowPath, step.With["node-version-file"])
+		}
+		if _, ok := step.With["node-version"]; ok {
+			t.Errorf("%s's setup-node pins a version of its own instead of reading engines.node", consoleReleaseWorkflowPath)
+		}
+	}
+	if nodeSteps != 1 {
+		t.Errorf("%s has %d setup-node steps, want 1", consoleReleaseWorkflowPath, nodeSteps)
+	}
+
+	// APPLE_TEAM_ID is required by the fail-closed check, so it is *used* rather
+	// than merely demanded: the bundle the packer signed must name the owner's
+	// team, which is the one check that catches the wrong certificate in the
+	// environment before a notarisation submission is spent on it.
+	_, team := stepNamed("The bundle is signed by the owner's team")
+	if team.Env["APPLE_TEAM_ID"] == "" {
+		t.Errorf("%s's team check does not read APPLE_TEAM_ID, so the secret the fail-closed step demands is never used", consoleReleaseWorkflowPath)
+	}
+	if !strings.Contains(team.Run, "TeamIdentifier") || !strings.Contains(team.Run, "exit 1") {
+		t.Errorf("%s's team check does not compare the signature's TeamIdentifier against APPLE_TEAM_ID and refuse a mismatch", consoleReleaseWorkflowPath)
 	}
 
 	// The build is Task 4.1's own scripts, unchanged: `npm ci` from the lockfile
@@ -2270,13 +2316,36 @@ func TestPendingWorkflowsReadmeNamesTheConsoleRows(t *testing.T) {
 
 	// The "Not verified" section, as the plan asks: this workflow has never run,
 	// and the README says so rather than leaving a reader to infer a green
-	// pipeline from a CI section.
-	if !strings.Contains(doc, "Not verified") {
-		t.Error("docs/pending-workflows/README.md has no \"Not verified\" section: neither this workflow nor the signing chain under it has ever run")
+	// pipeline from a CI section. Read from THIS file's section, not from
+	// anywhere in the document -- `images.yml`'s own "Not verified" note is
+	// already there and would satisfy an unscoped grep while saying nothing about
+	// the signing workflow.
+	section := consoleReadmeSection(t, doc, "## `console-release.yml`")
+	for _, want := range []string{"Not verified", "has never run"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("docs/pending-workflows/README.md's `## console-release.yml` section lacks %q: neither this workflow nor the signing chain under it has ever run, and the section has to say so", want)
+		}
 	}
-	if !strings.Contains(doc, "has never run") {
-		t.Error("docs/pending-workflows/README.md's Not verified section does not say the signing workflow has never run")
+	if !strings.Contains(section, "TestConsoleReleaseWorkflowIsStagedAndPinned") {
+		t.Error("docs/pending-workflows/README.md's `## console-release.yml` section does not name the test that pins the file: what is verified is its text, and the section must say by which test")
 	}
+}
+
+// consoleReadmeSection is the text of one `## …` section of a Markdown
+// document: from its heading to the next `## ` heading at the same level, or to
+// the end. The scoping is the point -- a phrase that has to be in one file's row
+// must not be satisfied by the same phrase in another file's.
+func consoleReadmeSection(t *testing.T, doc, heading string) string {
+	t.Helper()
+	start := strings.Index(doc, heading)
+	if start < 0 {
+		t.Fatalf("the document has no %q section", heading)
+	}
+	rest := doc[start+len(heading):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }
 
 // TestConsoleMVPRequiresTheStartupHandshake pins the owner's ruling of

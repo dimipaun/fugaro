@@ -1,8 +1,10 @@
 # Pending workflow changes
 
-**One file is pending: `console-tests.yml`.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier and is no longer staged. The `## images.yml` section below is kept as the record of that change.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Two files are pending: `console-tests.yml` and `console-release.yml`.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier and is no longer staged. The `## images.yml` section below is kept as the record of that change.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
+
+**`console-release.yml`** — the desktop console's signing, notarisation and stapling pipeline, staged by Task 4.2 of the same plan and applied by the owner as Task 4.5, together with the protected GitHub environment its secrets live in. **It is a separate file from the tests workflow on purpose, and the split is a security boundary rather than tidiness**: this job reads the Apple signing certificate and the App Store Connect key, and a branch of this repository can open a pull request, so a job holding that material must never sit in a file that runs on every pull request. Its staged copy is kept after the copy-in too: see `## console-release.yml` below.
 
 The most recent copy that *was* applied (`images.yml` for the 0.7.0 hard cut, commit `838e0b0`) is the reason the file below has no legacy per-kind `base` job; that section's older text was replaced by this one when the file became pending again.
 
@@ -98,6 +100,94 @@ After the copy-in, `console/README.md` gains a line naming the applying commit
 commits had CI and which did not: **Tasks 1.0 to 1.4 merged with no console CI
 at all**, and that gap is a fact about this repository's history rather than
 something the plan claims away.
+
+## `console-release.yml`
+
+The desktop console's signing, notarisation and stapling pipeline, staged by
+Task 4.2 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner
+as Task 4.5. One job keyed exactly `release`, on `macos-latest`, triggered by a
+**`push` of a strict `vX.Y.Z` tag and nothing else** — never a pull request,
+never a `pull_request_target`, never a `workflow_run`, never a
+`workflow_dispatch`. It runs `scripts/release-gate.sh` first, exactly as
+`release.yml` and `images.yml` do, then builds with Task 4.1's own scripts
+(`npm ci --ignore-scripts --no-audit --no-fund` and `npm run package`, which
+carry the hardened runtime and `console/entitlements.mac.plist`), notarises with
+`xcrun notarytool submit --wait`, staples the `.app` and the `.dmg`, verifies
+with `codesign --verify --deep --strict`, `spctl --assess --type execute` and
+`xcrun stapler validate`, and uploads the `.dmg`, the `.zip` and the recorded
+verification output to the release `release.yml` creates for the same tag.
+
+**It reads its secrets through a job-level `environment: console-release`** —
+the protected GitHub environment the owner creates in the same step: required
+reviewers = the owner, deployment branches restricted to tags. A staging file
+cannot create an environment, so the copy-in and the environment have to be done
+together. The environment holds exactly these six, and the workflow names them
+and nothing else:
+
+| Secret | What it is |
+|---|---|
+| `APPLE_CERTIFICATE` | base64 of the Developer ID Application `.p12`, one line (the G2 Sub-CA certificate) |
+| `APPLE_CERTIFICATE_PASSWORD` | that `.p12`'s password |
+| `APPLE_TEAM_ID` | the team identifier (`ZM8Y2LC7JL`); the workflow checks that the signature it built names it |
+| `APPLE_API_KEY` | the App Store Connect API key's `.p8` contents |
+| `APPLE_API_KEY_ID` | the key's id |
+| `APPLE_API_ISSUER` | the issuer uuid |
+
+**The notarisation credential is the App Store Connect API key, not an
+app-specific password.** D4 settles that signing is required and that the
+pipeline is tag-only behind the gate and a protected environment, but it does not
+choose between the API key and an app-specific password; the decision recorded
+here is the API key, so `APPLE_ID` and `APPLE_APP_PASSWORD` are deliberately
+absent, and a row naming either of them is a defect.
+
+**It fails closed.** The first step that reads a secret refuses to continue
+unless all six are non-empty, naming the missing one, so an absent secret stops
+the job rather than silently skipping the signing step — an unsigned console
+published under a signed release's name is the worst outcome this file can
+produce. No value of any secret appears in the file: each is referenced as
+`${{ secrets.NAME }}` in the `env:` of the single step that needs it, and the
+certificate is imported into a keychain the job creates (a random password from
+`openssl rand`, `security create-keychain`, `security import`,
+`security set-key-partition-list`) and deletes in an `if: always()` step, along
+with the notarisation key file, which is written with mode `0600`.
+
+The owner applies it with one command, from the repository root:
+
+```sh
+cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
+git add .github/workflows/console-release.yml
+git commit -m "console: sign and notarise the console on a version tag (plan Task 4.5)"
+```
+
+and, in Settings, Environments, creates `console-release` with the owner as a
+required reviewer and its deployment branches restricted to tags. **Both are
+required before the first tag that ships the console**: a tag push runs the
+workflow exactly as the tagged commit holds it, and the workflow is only as safe
+as the environment its secrets live in.
+
+**Unlike `images.yml`, the staged copy is not deleted after the copy-in.**
+`TestConsoleReleaseWorkflowIsStagedAndPinned` reads the staged file and asserts
+the one under `.github/workflows/` is byte-identical to it, so a hand-edited or
+hand-written workflow there is a red test rather than something nobody reads.
+
+### Not verified
+
+This file has never run, and no signing step under it has ever run either: no
+certificate, no App Store Connect key, no notary submission and no Mac were
+available or permitted in the run that wrote it, and no agent run in this
+repository builds, signs, notarises or verifies a bundle. What *is* verified is
+its text,
+through `TestConsoleReleaseWorkflowIsStagedAndPinned` and
+`TestConsoleReleaseWorkflowHoldsNoPullRequestTrigger` in
+`internal/cli/docs_desktop_console_test.go`: the trigger surface, the environment
+name, the secret names and the form they are referenced in, the fail-closed step,
+the temporary keychain and its deletion, the two action pins, the permissions,
+and byte-identity with the copy under `.github/workflows/` once it exists.
+
+Two things a reader must not take from those tests: the pinned SHAs are read
+against upstream by the person copying the file in (see "Before you copy" below —
+Dependabot does not watch this directory), and the first real run is Check 59a's
+and 59b's (plan Task 4.3), which are owner-run on a Mac.
 
 ## `images.yml`
 
