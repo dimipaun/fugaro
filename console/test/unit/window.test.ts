@@ -1090,7 +1090,14 @@ describe('openWindowFor', () => {
       )
       expect(factory.built, mode).toEqual([window])
       expect(factory.loaded, mode).toEqual([APP_ENTRY_URL])
-      expect(factory.options[0]?.title, mode).toBe(CONSOLE_WINDOW_TITLE)
+      // The title carries the compatibility that was **stored**, not the
+      // console's plain one: a reduced console that comes back after a
+      // dock-icon click still says which console it is. Built through
+      // `createConsoleWindow` (whose compatibility is `null`) this line is the
+      // one that fails -- and it is the only assertion in the file that would.
+      expect(factory.options[0]?.title, mode).toBe(
+        mode === 'ok' ? CONSOLE_WINDOW_TITLE : `${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES.reduced}`,
+      )
     }
   })
 

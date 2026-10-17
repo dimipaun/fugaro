@@ -487,13 +487,21 @@ export async function createRefusalWindow(
  * the function `activate` re-enters: a window closed on macOS comes back as the
  * window the compatibility that was already read calls for, and the handshake is
  * not read again.
+ *
+ * The dashboard door is built through `buildConsoleWindow` with **that same
+ * compatibility**, and not through `createConsoleWindow`, which is the door for
+ * "no handshake has run" (`null`) and carries the console's plain title. The
+ * difference is the reduced mode: its window says which console it is, in the
+ * title, and a window that came back after a dock-icon click must not be the one
+ * place where that sentence goes missing -- the mode did not change just because
+ * the window was closed and reopened.
  */
 export async function openWindowFor(
   deps: ConsoleWindowDeps,
   compatibility: CliCompatibility,
 ): Promise<BrowserWindow> {
   if (compatibility.mode === 'refused') return createRefusalWindow(deps, compatibility)
-  return createConsoleWindow(deps)
+  return buildConsoleWindow(deps, compatibility, APP_ENTRY_URL)
 }
 
 /**

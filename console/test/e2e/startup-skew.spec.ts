@@ -244,8 +244,10 @@ test.describe('the startup handshake, in the real app', () => {
     try {
       expect(app.windows()).toHaveLength(1)
       // The reduced mode is a console, so the dashboard document loads -- and the
-      // window's title says which console this is and what it made of the CLI
-      // (design section 3.4 rule 8). What the *document* draws for a reduced
+      // window's title says which console this is and what it made of the CLI,
+      // which is design section 3.4 rule 8 ("the console knows which CLI it is
+      // driving, and says so in its header") read as far as this tree can carry
+      // it: no renderer draws a header yet, so the header is the title. What the *document* draws for a reduced
       // mode -- the banner, and no withheld view -- is `renderVersionSkew`'s and
       // is asserted in `skew.spec.ts`: nothing under `src/renderer/` is loaded
       // into the app's document yet, and this spec does not pretend otherwise.
