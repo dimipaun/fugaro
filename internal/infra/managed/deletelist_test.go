@@ -397,6 +397,19 @@ func TestAllowDeleteRefusesAnAddressTheApplyingCommandPasses(t *testing.T) {
 	if !slices.Equal(list, deleteListAddresses) {
 		t.Errorf("GuardAllowList() = %v, want the owner's list %v", list, deleteListAddresses)
 	}
+	// The owner's list approves its own addresses whole: nothing they are a
+	// prefix of, nothing under them, nothing differing in case.
+	for _, planned := range []string{
+		"module.svc.google_storage_bucket.data_old",
+		"module.svc.google_storage_bucket.data[\"a\"]",
+		"module.svc2.google_storage_bucket.data",
+		"module.svc.google_storage_bucket.DATA",
+		"google_cloud_run_v2_job.web_old",
+	} {
+		if err := tf.Guard(deletePlan(planned), list); err == nil {
+			t.Errorf("the owner's list %v let %q be deleted", list, planned)
+		}
+	}
 	// And a list it cannot read is no addresses, never an error a caller
 	// could read as proceed.
 	absent, empty := seedDeleteList(t, "")
