@@ -228,8 +228,8 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 
 // M2's regression test (security review of PR #379): the launcher that minted
 // this run's token says so in the execution's environment, and the marker
-// outranks the job's own mode. A mode-off job whose token object was deleted —
-// any run of the same repository can take it — must not read that as "this
+// outranks the job's own mode. A mode-off job whose token object cannot be
+// read — gone, or behind a grant the job account lacks — must not read that as "this
 // project has published no policy" and go on with the environment ceiling while
 // the launcher minted a token precisely because a policy exists.
 func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
@@ -241,8 +241,20 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec, err := b.run(t, implement("feature"))
-		if err == nil || !strings.Contains(err.Error(), "not in the runs bucket") {
+		if err == nil || !strings.Contains(err.Error(), "could not be read") {
 			t.Fatalf("err = %v, want the missing-token refusal", err)
+		}
+		// The take is read-only (D16), so "already taken" is never the
+		// cause; a job account not re-applied since the token moved to
+		// tokens/ is the likely one, and gocloud reports its 403 exactly as
+		// a missing object. The refusal names that cause and its cure.
+		for _, want := range []string{"tokens/", "read grant", "fugaro init --repo", "fugaro run --retry " + runID} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+		if strings.Contains(err.Error(), "already taken") {
+			t.Errorf("the refusal blames a take that no longer deletes: %v", err)
 		}
 		if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 			t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
@@ -358,8 +370,8 @@ func TestRunnerWithTheModeOnAndNoTokenHalts(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, err := b.run(t, implement("feature"))
-	if err == nil || !strings.Contains(err.Error(), "not in the runs bucket") {
-		t.Fatalf("err = %v, want the missing-token refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "fugaro init --repo") || strings.Contains(err.Error(), "already taken") {
+		t.Fatalf("err = %v, want the missing-token refusal naming the tokens/ grant", err)
 	}
 	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 		t.Fatalf("the run proceeded without its budget token: calls = %d, rec = %+v", len(b.agent.calls), rec)

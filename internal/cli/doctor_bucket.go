@@ -54,7 +54,7 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 					Fix:     "rerun fugaro doctor with access to the project, or as an operator"})
 			}
 		}
-		return findingChecks(fs)
+		return append(findingChecks(fs), tokenGrantChecks(infra.JobTokenGrantFindings(p, bucket, lc.GCPProject))...)
 	case isAccessDenied(err):
 		r, terr := svc.Buckets.TestIamPermissions(bucket, []string{"storage.objects.create", "storage.objects.delete"}).Context(ctx).Do()
 		if terr != nil {
@@ -84,6 +84,24 @@ func selfCheck(bucket string, held bool, user string, launchers, operators []str
 		return doctorCheck{ID: "runs-bucket-iam", Severity: "info", Problem: "expected for an operator; otherwise " + fmt.Sprintf(text, bucket),
 			Fix: "if you only launch runs, ask an operator to run fugaro init (0.7.0 or later)"}
 	}
+}
+
+// tokenGrantChecks are JobTokenGrantFindings as doctor checks: the
+// job-token-grant summary, a warning when any job account lacks its tokens/
+// grant, then one job-token-grant-N line per account.
+func tokenGrantChecks(fs []infra.BucketFinding) []doctorCheck {
+	sum := doctorCheck{ID: "job-token-grant", OK: true}
+	if len(fs) > 0 {
+		sum.OK, sum.Severity = false, "warning"
+		sum.Problem = "a repository's job account cannot read its budget token objects under tokens/ (see the job-token-grant-N lines)"
+		sum.Fix = "an operator runs fugaro init --repo in each repository named"
+	}
+	out := []doctorCheck{sum}
+	for i, f := range fs {
+		out = append(out, doctorCheck{ID: fmt.Sprintf("job-token-grant-%d", i+1), Severity: f.Severity,
+			Problem: pluginwire.Printable(f.Problem), Fix: pluginwire.Printable(f.Fix)})
+	}
+	return out
 }
 
 // findingChecks are the findings as doctor checks: one per finding, IDs

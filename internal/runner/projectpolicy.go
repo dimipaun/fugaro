@@ -322,21 +322,31 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// minted one: nothing to read.
 		return nil, nil
 	case errors.Is(err, token.ErrNoToken):
-		// A budget-on run with no token object in the bucket is the shipped
+		// A budget-on run whose token object cannot be read is the shipped
 		// refusal (B1, budget_session.go's startBudgetBackend said the same
 		// before this read existed). So is a job whose environment carries
 		// the launcher's marker (M2): the launcher mints whenever it can see
-		// a policy, whatever the mode, so a marker means this run HAD a token
-		// and it is gone — another run of the repository can delete a queued
-		// run's object. Reading that as "no policy here" would run a mode-off
-		// job of a policy-enforcing project with no session, no cap and no
-		// kill switch. The marker is a fact about this launch, so it is the
-		// one the run trusts.
+		// a policy, whatever the mode, so a marker means this run HAD a token.
+		// Reading its absence as "no policy here" would run a mode-off job of
+		// a policy-enforcing project with no session, no cap and no kill
+		// switch. The marker is a fact about this launch, so it is the one
+		// the run trusts.
+		//
+		// What the absence means changed with the seal (D16): the take is
+		// read-only and no run can delete a queued run's object, so "already
+		// taken" is never the cause. The job account's grant on tokens/ is
+		// conditioned and has no list, so GCS answers a refused read and a
+		// missing object alike with 403, and gocloud reports both as
+		// NotFound (token.ErrNoToken): the run cannot tell them apart. The
+		// likely cause after an upgrade is the grant — a job not re-applied
+		// since the token moved to tokens/ has none — so the refusal names it
+		// and its cure first. It names no object, and no key.
+		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro init --repo for this repository in its checkout"
 		if r.d.Backend.TokenMarked {
-			c.err = errors.New("the run's budget token is not in the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment): it was already taken, or deleted; launch the run again")
+			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s, then fugaro run --retry %s), or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant, r.d.Store.RunID())
 			return nil, c.err
 		}
-		c.err = errors.New("the run's budget token is not in the runs bucket (already taken, or the run was not launched with one): launch the run again")
+		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s, then fugaro run --retry %s); launch the run again", grant, r.d.Store.RunID())
 		return nil, c.err
 	default:
 		c.err = err

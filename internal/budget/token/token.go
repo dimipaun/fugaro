@@ -2,8 +2,9 @@
 //
 // The launcher mints a per-run custom token with IAM Credentials signJwt,
 // signing as a service account that holds no roles (Mint), and leaves it in
-// the runs bucket (PutObject). The runner takes it, which deletes it
-// (TakeObject), and trades it for an ID token and a refresh token
+// the runs bucket (PutObject), sealed under a key it hands only to the one
+// execution. The runner reads and unseals it, never deleting it — its grant on
+// tokens/ is read-only (TakeObject) — and trades it for an ID token and a refresh token
 // (Exchange). The Session keeps the ID token fresh through Secure Token,
 // which keeps the uid and the claims, and hands the live ID token to
 // internal/rtdb.
@@ -57,8 +58,10 @@ var (
 	// ErrRevoked means a refresh was refused permanently (the user was
 	// deleted or disabled, the refresh token is no longer valid).
 	ErrRevoked = errors.New("budget token: identity revoked")
-	// ErrNoToken means the token object is not there (already taken, or
-	// never written).
+	// ErrNoToken means the token object could not be read as there: never
+	// written, removed (a failed launch's cleanup, the lifecycle rule), or —
+	// for a reader whose grant is conditioned and has no list, like a job
+	// account on tokens/ — refused, which GCS answers like a missing object.
 	ErrNoToken = errors.New("budget token: no token object")
 	// ErrObjectExists means PutObject found a token object already there.
 	ErrObjectExists = errors.New("budget token: token object already exists")

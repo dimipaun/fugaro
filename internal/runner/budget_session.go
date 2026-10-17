@@ -40,8 +40,11 @@ const (
 	// is a fact about one launch, so it travels as an execution override
 	// (backend.LaunchSpec.Env) and never through init --repo's deploy-time
 	// environment. It closes a fail-open the security review of PR #379 found:
-	// a run of the same repository can delete a queued run's token object, and
-	// a job whose own mode is off read that as "this project has published no
+	// a run of the same repository could delete a queued run's token object
+	// (before the seal moved it to tokens/, read-only for a job, D16), and a
+	// token object a run cannot read is still possible (a job account without
+	// its tokens/ grant reads it as missing), and a job whose own mode is off
+	// read that as "this project has published no
 	// policy" and ran with no session, no cap and no kill switch — while the
 	// launcher had minted a token precisely because a policy exists. With the
 	// marker set, a missing token is the refusal it is on a budget-on job,
