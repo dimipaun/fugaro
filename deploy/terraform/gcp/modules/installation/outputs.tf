@@ -45,6 +45,9 @@ output "role_ids" {
     job_runner      = google_project_iam_custom_role.job_runner.name
     build_submitter = google_project_iam_custom_role.build_submitter.name
     tag_mover       = google_project_iam_custom_role.tag_mover.name
+    # The whole-project inventory's read role (Task 4.1a): a custom role of
+    # this installation, so it is named here beside the others.
+    cloud_asset_reader = google_project_iam_custom_role.cloud_asset_reader.name
   }
 }
 

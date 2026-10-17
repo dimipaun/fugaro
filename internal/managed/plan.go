@@ -6,14 +6,19 @@
 // refuses a plan that would delete or replace anything the owner's own list
 // does not name; the managed instantiation of tf.Cover refuses a plan outside
 // the resource types, the grants, the roles and the attributes a managed
-// project admits (design D61). The model's review is not part of it: it is
-// advisory, recorded, and can only ever add a refusal (D60).
+// project admits (design D61) — and, for a delete or a replace, it refuses the
+// resource the change removes or creates unless that resource is one the
+// allowlist admits, so an address on the owner's list never admits a resource
+// nothing judged (D72/D74 — design rows, not a task number: the plan carries
+// no task of its own for this rule). The model's review is not part of it: it
+// is advisory, recorded, and can only ever add a refusal (D60).
 package managed
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -71,6 +76,12 @@ type Spec struct {
 	// honoured, whatever the owner's list says (D72/D74, and
 	// infra/managed.GuardAllowList is where that is enforced). An empty list
 	// allows no delete and no replace at all.
+	//
+	// Gate hands the same list to both halves of the gate (tf.Guard and the
+	// cover, which is told it through tf.Deletable), so the two cannot be given
+	// different ones, and it is one half of the decision rather than the whole
+	// of it: the resource is judged whatever its address is on this list
+	// (D72/D74).
 	AllowDelete []string
 	// Imports are the import blocks the root's discovery wrote: an import is
 	// admitted only when its address and ID are exactly one of them
@@ -101,6 +112,42 @@ type Verdict struct {
 	// here for whoever confirms, from the cost list's non-blocking findings. They
 	// never affect OK.
 	Flags []Refusal
+	// Changes counts what the plan the verdict is about changes, for the
+	// question a person is asked before the apply (Request.Ask). It never
+	// affects OK.
+	Changes Changes
+}
+
+// Changes counts a plan's managed resource changes by kind: a replace is one
+// change (delete and create of one address), and an import is counted beside
+// whatever else the change does.
+type Changes struct {
+	Create, Update, Replace, Delete, Import int
+}
+
+// countChanges is the Changes of a plan.
+func countChanges(p *tf.Plan) Changes {
+	var c Changes
+	for _, rc := range p.ResourceChanges {
+		if rc.Mode != "managed" {
+			continue
+		}
+		if rc.Change.Importing != nil {
+			c.Import++
+		}
+		acts := rc.Change.Actions
+		switch {
+		case slices.Contains(acts, "delete") && slices.Contains(acts, "create"):
+			c.Replace++
+		case slices.Contains(acts, "create"):
+			c.Create++
+		case slices.Contains(acts, "delete"):
+			c.Delete++
+		case slices.Contains(acts, "update"):
+			c.Update++
+		}
+	}
+	return c
 }
 
 // costFindings is tf.ManagedCosts; a variable only so a test can supply a
@@ -143,7 +190,7 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 	if err != nil {
 		return Verdict{}, err
 	}
-	var v Verdict
+	v := Verdict{Changes: countChanges(plan)}
 	guardErr := guard(plan, spec.AllowDelete)
 	if guardErr != nil {
 		v.Refusals = append(v.Refusals, refusals(guardGate, guardErr.Error())...)
@@ -188,11 +235,43 @@ func (s Spec) read(ctx context.Context, planPath string) (*tf.Plan, error) {
 // notCovered is the scope-and-attribute gate's own list, and a refusal when
 // there is no cover at all: a managed plan is admitted by the managed cover of
 // the project's own allowlist, or by nothing.
+//
+// The owner's delete list goes to the cover beside the plan (D72/D74,
+// tf.Deletable): the list Gate hands tf.Guard is handed to the cover too, so
+// the two halves of the gate cannot be given different ones — a delete admitted
+// by the list one of them was told and not the other's is exactly the plan this
+// rule exists to refuse. A cover that cannot be told it judges no delete, so
+// nothing but the guard stands between a listed address and an unread resource:
+// unjudgedDeletes refuses that case rather than letting the address alone admit
+// it.
 func (s Spec) notCovered(p *tf.Plan) []string {
 	if s.Cover == nil {
 		return []string{"no cover: a managed plan is admitted by the managed cover of " + s.what() + ", or by nothing"}
 	}
-	return s.Cover.NotCovered(p, s.Imports)
+	if d, ok := s.Cover.(tf.Deletable); ok {
+		return d.WithDeleteList(s.AllowDelete).NotCovered(p, s.Imports)
+	}
+	return append(s.Cover.NotCovered(p, s.Imports), s.unjudgedDeletes(p)...)
+}
+
+// unjudgedDeletes lists every delete or replace of an address on the owner's
+// list, for the cover that cannot be told the list and so cannot judge the
+// resource: the address is the one thing that is not a judgement of it, and a
+// cover that admits every delete would otherwise have a listed one admitted
+// with nothing reading the resource at all. Fail closed, and named: a delete
+// the owner approved still needs the resource it removes to be one a managed
+// plan may carry.
+func (s Spec) unjudgedDeletes(p *tf.Plan) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		if slices.Contains(rc.Change.Actions, "delete") && slices.Contains(s.AllowDelete, rc.Address) {
+			out = append(out, rc.Address+" (a delete or a replace of an address on the owner's delete list, and the cover this gate was handed cannot be told the list, so the resource is not judged: the address alone never admits one)")
+		}
+	}
+	return out
 }
 
 // what names the project in the refusals and errors Gate writes itself.

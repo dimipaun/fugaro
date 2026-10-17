@@ -166,3 +166,83 @@ func hasAction(p *Plan, action string) bool {
 	}
 	return false
 }
+
+// movedDeletePlanJSON is the plan terraform writes for
+// `moved { from = google_storage_bucket.a, to = google_storage_bucket.b }`
+// when b is in neither the state nor the configuration: the change is at b,
+// its object — a's, in before — came from a, and the action is a delete with
+// the reason delete_because_no_move_target. Decoded from JSON rather than
+// built as a struct, so the fields' tags are what the test reads.
+const movedDeletePlanJSON = `{"format_version":"1.2","resource_changes":[{
+  "address":"google_storage_bucket.b","previous_address":"google_storage_bucket.a",
+  "mode":"managed","type":"google_storage_bucket","name":"b",
+  "provider_name":"registry.terraform.io/hashicorp/google",
+  "action_reason":"delete_because_no_move_target",
+  "change":{"actions":["delete"],"before":{"name":"fugaro-m-a"},"after":null,"after_unknown":{}}}]}`
+
+// TestGuardRefusesAMovedDeleteUnderAListedAddress: approving b names what may
+// be removed at b; the plan above removes a's object under b's address, and
+// the guard refuses it although b is listed.
+func TestGuardRefusesAMovedDeleteUnderAListedAddress(t *testing.T) {
+	p, err := parsePlan([]byte(movedDeletePlanJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := p.ResourceChanges[0]
+	if rc.PreviousAddress != "google_storage_bucket.a" || rc.ActionReason != "delete_because_no_move_target" {
+		t.Fatalf("the plan decodes previous_address %q and action_reason %q", rc.PreviousAddress, rc.ActionReason)
+	}
+	err = Guard(p, []string{"google_storage_bucket.b"})
+	if err == nil || !strings.Contains(err.Error(), "moved here from google_storage_bucket.a") {
+		t.Fatalf("err = %v, want the moved delete refused although its address is listed", err)
+	}
+	// Each signal alone refuses it: the previous address without the reason
+	// (a moved replace carries no delete_because_* reason), and the reason
+	// without the previous address.
+	for name, mut := range map[string]func(*ResourceChange){
+		"previous_address alone, a replace": func(rc *ResourceChange) {
+			rc.ActionReason = "replace_because_cannot_update"
+			rc.Change.Actions = []string{"delete", "create"}
+		},
+		"previous_address alone, create first": func(rc *ResourceChange) {
+			rc.ActionReason = ""
+			rc.Change.Actions = []string{"create", "delete"}
+		},
+		"delete_because_no_move_target alone": func(rc *ResourceChange) { rc.PreviousAddress = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			q := &Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{rc}}
+			mut(&q.ResourceChanges[0])
+			if Guard(q, []string{rc.Address}) == nil {
+				t.Errorf("a listed address admitted %+v", q.ResourceChanges[0])
+			}
+		})
+	}
+}
+
+// TestGuardAdmitsTheListedAddressOwnRemovals: what the moved rule must not
+// refuse — a previous_address equal to the address, a deposed object of the
+// listed address, and every delete_because_* reason that removes the
+// address's own object.
+func TestGuardAdmitsTheListedAddressOwnRemovals(t *testing.T) {
+	base := ResourceChange{Address: `google_storage_bucket.b["k"]`, Mode: "managed", Type: "google_storage_bucket",
+		Change: Change{Actions: []string{"delete"}, Before: map[string]any{"name": "x"}}}
+	cases := map[string]func(*ResourceChange){
+		"previous_address is the address": func(rc *ResourceChange) { rc.PreviousAddress = rc.Address },
+		"a deposed object":                func(rc *ResourceChange) { rc.Deposed = "00000001" },
+	}
+	for _, r := range []string{"delete_because_no_resource_config", "delete_because_wrong_repetition",
+		"delete_because_count_index", "delete_because_each_key", "delete_because_no_module"} {
+		cases[r] = func(rc *ResourceChange) { rc.ActionReason = r }
+	}
+	for name, mut := range cases {
+		t.Run(name, func(t *testing.T) {
+			rc := base
+			mut(&rc)
+			p := &Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{rc}}
+			if err := Guard(p, []string{rc.Address}); err != nil {
+				t.Errorf("a listed removal of the address's own object refused: %v", err)
+			}
+		})
+	}
+}

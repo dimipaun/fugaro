@@ -112,7 +112,7 @@ func TestInventoryReadThatFailsFallsBack(t *testing.T) {
 		{"api disabled", errorInfo(403, "SERVICE_DISABLED", ServiceCloudAsset, "Cloud Asset API has not been used in project"), CauseAPIDisabled,
 			[]string{ServiceCloudAsset, "disabled"}},
 		{"role missing", &googleapi.Error{Code: 403, Message: "Permission 'cloudasset.assets.searchAllResources' denied"}, CauseRoleMissing,
-			[]string{RoleCloudAssetViewer}},
+			[]string{RoleCloudAssetReader}},
 		{"over quota", &googleapi.Error{Code: 429, Message: "Quota exceeded for quota metric 'Requests'"}, CauseQuota,
 			[]string{"quota"}},
 		{"anything else", errors.New("connection reset"), CauseUnreadable, []string{"connection reset"}},
@@ -259,6 +259,19 @@ func TestInventoryCloudAssetsListsTheProject(t *testing.T) {
 	var calls []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path+"?pageToken="+r.URL.Query().Get("pageToken"))
+		// The read is SearchAllResources and nothing else, and this server
+		// refuses anything else the way the API refuses a call the caller's
+		// permissions do not cover: the wider predefined role Task 4.1 first
+		// granted carries cloudasset.assets.listResource, and a fake that
+		// answered a ListAssets call would hide a read this inventory must
+		// never make (Task 4.1a).
+		if !strings.HasSuffix(r.URL.Path, ":searchAllResources") {
+			t.Errorf("the whole-project read called %s %s, want SearchAllResources alone", r.Method, r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"error":{"code":403,"status":"PERMISSION_DENIED","message":"Permission 'cloudasset.assets.listResource' denied on resource"}}`)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("pageToken") == "" {
 			fmt.Fprintf(w, `{"results":[{"name":"//storage.googleapis.com/projects/_/buckets/a","assetType":"storage.googleapis.com/Bucket"}],"nextPageToken":"t2"}`)
@@ -340,11 +353,26 @@ func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant := grantBlock(t, string(iam), RoleCloudAssetViewer)
+	grant := grantBlock(t, string(iam), RoleCloudAssetReader)
 	for _, want := range []string{"toset(var.operators)", "each.value"} {
 		if !strings.Contains(grant, want) {
-			t.Errorf("the installation's grant of %s does not name %s:\n%s", RoleCloudAssetViewer, want, grant)
+			t.Errorf("the installation's grant of %s does not name %s:\n%s", RoleCloudAssetReader, want, grant)
 		}
+	}
+
+	// The role the grant is of is the installation's own custom role, created
+	// in the same module with exactly the one permission the read needs
+	// (Task 4.1a, the owner's ruling of 2026-10-17): the wider predefined role
+	// Task 4.1 first granted also carries cloudasset.assets.listResource, which
+	// no call of this read makes.
+	role := roleBlock(t, string(iam), RoleCloudAssetReader)
+	for _, want := range []string{`role_id     = "` + RoleCloudAssetReader + `"`, `permissions = ["cloudasset.assets.searchAllResources"]`} {
+		if !strings.Contains(role, want) {
+			t.Errorf("the installation's %s role does not hold %s:\n%s", RoleCloudAssetReader, want, role)
+		}
+	}
+	if strings.Contains(string(iam), "roles/cloudasset.viewer") {
+		t.Error("the installation module still names the wider predefined Cloud Asset role")
 	}
 
 	// And the gate admits the grant the module makes, which is the coupling
@@ -354,14 +382,26 @@ func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
 	// the read needs would then never exist.
 	op := "user:operator@example.com"
 	plan := &tf.Plan{ResourceChanges: []tf.ResourceChange{{
-		Address: `module.installation.google_project_iam_member.operator_cloudasset_viewer["` + op + `"]`,
+		Address: `module.installation.google_project_iam_member.operator_cloud_asset_reader["` + op + `"]`,
 		Type:    "google_project_iam_member",
 		Change: tf.Change{Actions: []string{"create"},
-			After: map[string]any{"member": op, "role": RoleCloudAssetViewer, "project": gcpProject}},
+			After: map[string]any{"member": op, "role": "projects/" + gcpProject + "/roles/" + RoleCloudAssetReader, "project": gcpProject}},
 	}}}
 	cover := tf.Cover{Projects: []string{gcpProject}, Listed: []string{op}}
 	if why := cover.NotCovered(plan, nil); len(why) != 0 {
 		t.Errorf("the installation's own gate refuses the grant its module makes: %q", why)
+	}
+	// The role the ruling replaced is refused: a plan that grants the wider
+	// predefined Cloud Asset role to the same operator is not covered, so the
+	// narrowing cannot be undone by a plan the gate would admit.
+	wider := &tf.Plan{ResourceChanges: []tf.ResourceChange{{
+		Address: `module.installation.google_project_iam_member.operator_cloud_asset_reader["` + op + `"]`,
+		Type:    "google_project_iam_member",
+		Change: tf.Change{Actions: []string{"create"},
+			After: map[string]any{"member": op, "role": "roles/cloudasset.viewer", "project": gcpProject}},
+	}}}
+	if why := cover.NotCovered(wider, nil); len(why) == 0 {
+		t.Error("the gate admits a grant of the wider predefined Cloud Asset role")
 	}
 
 	// The other half of "the identity that makes the read holds the role":
@@ -378,25 +418,43 @@ func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(deployer), "cloudasset") {
-		t.Errorf("the deployer's roles name a Cloud Asset permission: the account applies as the impersonated deployer (D75), and %s on it is a decision, not a detail — read internal/managed/inventory.go's %s comment before making it", RoleCloudAssetViewer, "RoleCloudAssetViewer")
+		t.Errorf("the deployer's roles name a Cloud Asset permission: the account applies as the impersonated deployer (D75), and %s on it is a decision, not a detail — read internal/managed/inventory.go's %s comment before making it", RoleCloudAssetReader, "RoleCloudAssetReader")
 	}
 	// Second, a plan cannot grant it to an account either: the same
 	// allowlist refuses the role to a service-account member, so no admitted
 	// managed plan can widen the deployer with it.
 	sa := "serviceAccount:fugaro-deployer@" + gcpProject + ".iam.gserviceaccount.com"
 	saPlan := &tf.Plan{ResourceChanges: []tf.ResourceChange{{
-		Address: `google_project_iam_member.deployer_cloudasset_viewer`,
+		Address: `google_project_iam_member.deployer_cloud_asset_reader`,
 		Type:    "google_project_iam_member",
 		Change: tf.Change{Actions: []string{"create"},
-			After: map[string]any{"member": sa, "role": RoleCloudAssetViewer, "project": gcpProject}},
+			After: map[string]any{"member": sa, "role": "projects/" + gcpProject + "/roles/" + RoleCloudAssetReader, "project": gcpProject}},
 	}}}
 	// The account is listed, so the refusal below is the role's own rule and
 	// not "a member nobody listed".
 	cover.Listed = []string{op, sa}
 	if why := cover.NotCovered(saPlan, nil); len(why) != 1 || !strings.Contains(why[0], "a kind of principal the installation's modules do not grant it to") {
-		t.Errorf("the gate's answer to %s on the deployer account %s is %q, want it refused for the principal kind: if it is admitted, the read runs under the deployer and the role-missing fallback above is wrong", RoleCloudAssetViewer, sa, why)
+		t.Errorf("the gate's answer to %s on the deployer account %s is %q, want it refused for the principal kind: if it is admitted, the read runs under the deployer and the role-missing fallback above is wrong", RoleCloudAssetReader, sa, why)
 	}
 }
+
+// roleBlock is the body of the module's google_project_iam_custom_role
+// resource whose role ID is role, read the way grantBlock reads a grant: the
+// blocks are the fixture, and a module that declares no such role fails the
+// test rather than passing it.
+func roleBlock(t *testing.T, module, role string) string {
+	t.Helper()
+	for _, m := range customRoleRE.FindAllStringSubmatch("\n"+module, -1) {
+		if strings.Contains(m[2], `"`+role+`"`) {
+			return m[2]
+		}
+	}
+	t.Fatalf("no google_project_iam_custom_role resource in the installation module declares %s", role)
+	return ""
+}
+
+// customRoleRE is one google_project_iam_custom_role resource block of a module.
+var customRoleRE = regexp.MustCompile(`(?s)\nresource "google_project_iam_custom_role" "([a-z0-9_]+)" \{(.*?)\n\}`)
 
 // grantBlock is the body of the module's *_iam_member resource that grants
 // role, read the way internal/infra/tf's own module walk reads the modules:
@@ -405,7 +463,12 @@ func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
 func grantBlock(t *testing.T, module, role string) string {
 	t.Helper()
 	for _, m := range iamMemberRE.FindAllStringSubmatch("\n"+module, -1) {
-		if strings.Contains(m[2], `"`+role+`"`) {
+		// A predefined role is spelled as the literal "roles/<name>"; one of the
+		// installation's own custom roles as the literal path
+		// "projects/${var.project}/roles/<id>" (Task 1.5 step 5: a computed
+		// project role cannot be told from the deployer's scoped one at plan
+		// time), so both spellings name the role.
+		if strings.Contains(m[2], `"`+role+`"`) || strings.Contains(m[2], `"projects/${var.project}/roles/`+role+`"`) {
 			return m[2]
 		}
 	}
