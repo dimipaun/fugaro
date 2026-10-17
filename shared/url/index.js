@@ -268,10 +268,16 @@ export function validateExternalUrl(candidate, hostAllowList = DEFAULT_HOST_ALLO
   }
   if (IPV4_LITERAL.test(host)) return refuse(URL_REFUSAL.IP_LITERAL);
 
-  // The invariant that makes the authority checks above sufficient: the host
-  // this validator is about to match is the host the raw string names. A string
-  // that disagrees with its own parse is not a string to open.
-  if (parsedHost !== host) return refuse(URL_REFUSAL.NOT_A_URL);
+  // `host` -- the raw string's own authority, lower-cased -- is what the
+  // allow-list is matched against, and it is the host the parser resolved for
+  // every input that reached this line: an earlier version asserted that
+  // equality here and returned NOT_A_URL when it failed, and mutation testing
+  // showed no input could reach it, because each of the checks above reads the
+  // raw string and each of the parser's host transformations (`%`-decoding,
+  // IDNA, IP normalisation, lower-casing, a trailing dot) is either refused
+  // there or leaves both sides equal. The branch was removed rather than kept
+  // as an assertion nobody can exercise; what it expressed is that this line is
+  // the raw host, not the parsed one.
 
   for (const label of host.split('.')) {
     if (label.startsWith('xn--')) return refuse(URL_REFUSAL.PUNYCODE_HOST);
