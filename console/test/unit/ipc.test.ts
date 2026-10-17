@@ -1413,6 +1413,122 @@ describe('the closed sets', () => {
   })
 })
 
+describe('the spend read’s arguments', () => {
+  // Desktop-console plan Task 2.4. The Spend screen's range picker and
+  // breakdown switch are wired to `report --json` through the **existing**
+  // `runReport` operation, so this task adds no operation, no channel and no
+  // flag: it adds three *values* for three fields the table already declares.
+  // What follows is the other half of that claim -- that the three fields are
+  // closed, that a fourth key is refused, and that no value in them can spell
+  // anything on the never-reachable table.
+
+  /** SPEND_KEYS is exactly what `spend.report` declares: the breakdown the
+   * switch draws, the range the picker draws, and `--repo`, which the design's
+   * allow-list admits on this command and which this screen does not send. */
+  const SPEND_KEYS = ['by', 'repo', 'since', 'until']
+
+  it('declares the four keys the screen may send, and drives `report --json` and nothing else', () => {
+    const operation = CONSOLE_OPERATIONS.find((one) => one.name === 'spend.report')
+    expect(operation).toBeDefined()
+    expect(operation?.args.map((spec) => spec.key).sort()).toEqual(SPEND_KEYS)
+    expect(operation?.flags).toEqual(['--json'])
+    expect(operation?.command).toBe('report')
+    expect(operation?.method).toBe('runReport')
+    // The argv main builds for the three fields, in the table's own order: the
+    // renderer supplies values, never argv.
+    expect(
+      argvFor(
+        'spend.report',
+        { by: 'person', since: '12w', until: '2026-10-16' },
+        { target: { project: 'fugaro' }, directory: '/tmp' },
+      ),
+    ).toEqual([
+      'report',
+      '--json',
+      '--by',
+      'person',
+      '--since',
+      '12w',
+      '--until',
+      '2026-10-16',
+      '--project',
+      'fugaro',
+    ])
+  })
+
+  it('accepts the three fields together and refuses a fourth', () => {
+    expect(validateArguments('spend.report', { by: 'person', since: '12w', until: '2026-10-16' })).toEqual({
+      ok: true,
+      args: { by: 'person', since: '12w', until: '2026-10-16' },
+    })
+    const refused: readonly (readonly [string, Record<string, unknown>])[] = [
+      ['--csv, which the design forbids on this command', { by: 'day', csv: true }],
+      ['a path', { by: 'day', path: '/etc/passwd' }],
+      ['a second repository spelling', { by: 'day', repo: ['acme/app'] }],
+      ['a command', { by: 'day', command: 'budget kill' }],
+      ['a channel', { by: 'day', channel: 'fugaro:console/spend.report' }],
+      ['a spawn', { by: 'day', spawn: 'report' }],
+      ['a URL', { by: 'day', url: 'https://example.invalid/' }],
+      ['an unknown breakdown', { by: 'hour' }],
+      ['a window `report` does not parse', { since: '36h' }],
+      ['a day that does not exist', { until: '2026-02-31' }],
+      ['a window where a day belongs', { until: '7d' }],
+    ]
+    for (const [why, payload] of refused) {
+      expect(validateArguments('spend.report', payload).ok, why).toBe(false)
+    }
+  })
+
+  it('cannot reach a row of the never-reachable table through the three fields', () => {
+    // The never-reachable table is re-run unchanged (Task 1.2): the fields are
+    // values, so the thing to re-check is that no value a control can carry
+    // spells a flag the surface must never fix.
+    const flags = NEVER_REACHABLE.filter((row) => row.shape === 'flag')
+    // `--csv` is the one the design names on this command's own line: `report
+    // --json` and never `--csv`, because a second document format is a second
+    // parser.
+    expect(flags.map((row) => row.value)).toContain('--csv')
+    for (const row of flags) {
+      // The row is what it always was...
+      expect(isNeverReachable({ command: 'report', flags: [row.value] })?.value, row.value).toBe(row.value)
+      // ...and no value of the three fields is that flag.
+      for (const payload of [{ by: row.value }, { since: row.value }, { until: row.value }]) {
+        expect(validateArguments('spend.report', payload).ok, `${row.value} as ${Object.keys(payload)[0]}`).toBe(false)
+      }
+    }
+    expect(() => assertReachableSurface(CONSOLE_OPERATIONS)).not.toThrow()
+  })
+})
+
+describe('the preload surface the spend controls did not widen', () => {
+  it('exposes the same twelve operations, frozen, with `spend.report` on `runReport`', () => {
+    // Spelled out rather than compared against the table itself: the claim is
+    // that THIS task added no channel, and a test that read the table back
+    // would hold for a table this task had widened.
+    expect(EXPOSED_OPERATIONS).toEqual([
+      ['live.watch', 'subscribeLive'],
+      ['budget.show', 'showBudget'],
+      ['spend.report', 'runReport'],
+      ['runs.list', 'listRuns'],
+      ['run.diagnose', 'diagnoseRun'],
+      ['run.logs', 'readRunLogs'],
+      ['run.logLink', 'runLogLink'],
+      ['secrets.inventory', 'listSecrets'],
+      ['accounts.inventory', 'listAccounts'],
+      ['cli.version', 'cliVersion'],
+      ['environment.report', 'environmentReport'],
+      ['link.openExternal', 'openExternal'],
+    ])
+    expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
+    expect(CONSOLE_OPERATION_NAMES).toHaveLength(EXPOSED_OPERATIONS.length)
+    // The bridge the window is handed: the twelve methods and the names, with
+    // no `invoke`, no channel and no method of its own.
+    const bridge = createConsoleBridge(fakeRenderer())
+    expect(Object.keys(bridge).sort()).toEqual(['operations', 'version', ...EXPOSED_OPERATIONS.map(([, method]) => method)].sort())
+    expect(Object.isFrozen(bridge)).toBe(true)
+  })
+})
+
 describe('the one URL-shaped argument', () => {
   const cases: readonly (readonly [string, boolean, string])[] = [
     ['https://github.com/acme/app/pull/1', true, 'a GitHub pull request'],

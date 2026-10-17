@@ -60,7 +60,8 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import type { JSONDoc } from '../../src/source/source'
-import { SPEND_THEMES } from '../../src/renderer/screens/spend'
+import { SPEND_DEFAULT_CONTROLS, SPEND_THEMES, personView } from '../../src/renderer/screens/spend'
+import type { SpendControls } from '../../src/renderer/screens/spend'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
 // is two levels below it.
@@ -183,6 +184,43 @@ return { mounted: true, accounts: model.series.map(function (series) { return se
 })()`
 }
 
+/**
+ * drawWired is the expression the window evaluates for the **wired** path (Task
+ * 2.4): the screen's own `readSpend`, with a reader that answers each `--since`
+ * with the document written for it, and the tree the outcome's model draws. It
+ * is what the app does -- one read per control change, through the one
+ * allow-listed operation -- with the source replaced by an object in this file,
+ * so what the window proves is the screen's half: the arguments it builds, the
+ * one read it makes, and what it draws from what came back.
+ */
+function drawWired(controls: SpendControls, documents: Record<string, JSONDoc>, theme: string): string {
+  return `(function () {
+${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
+var spend = load('/renderer/screens/spend.js');
+var factory = domFactory();
+var documents = ${JSON.stringify(documents)};
+var controls = ${JSON.stringify(controls)};
+var asked = [];
+var read = function (args) {
+  asked.push(args);
+  var document = documents[args.since];
+  if (!document) return Promise.reject(new Error('no document for ' + args.since));
+  return Promise.resolve(document);
+};
+return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}).then(function (outcome) {
+  if (!outcome.ok) return { ok: false, reason: outcome.reason, asked: asked };
+  var tree = spend.renderSpend(factory, outcome.model, ${JSON.stringify(theme)}, controls);
+  var previous = document.getElementById('spend-mount');
+  if (previous) previous.remove();
+  var host = document.createElement('div');
+  host.id = 'spend-mount';
+  host.appendChild(tree.node);
+  document.body.appendChild(host);
+  return { ok: true, asked: asked, args: outcome.args, rows: outcome.model.rows.length };
+});
+})()`
+}
+
 /** Screen is the part of the drawn screen a test asserts on, read back out of
  * the live document. */
 interface Screen {
@@ -200,6 +238,11 @@ interface Screen {
   readonly rows: number
   readonly notionalCells: readonly string[]
   readonly anchors: number
+  readonly windows: readonly string[]
+  readonly currentWindows: readonly string[]
+  readonly personsEnabled: string | null
+  readonly personState: string | null
+  readonly points: readonly string[]
   readonly text: string
 }
 
@@ -236,6 +279,17 @@ function screen(page: Page): Promise<Screen> {
       rows: all('.spend-row').length,
       notionalCells: texts('.spend-notional'),
       anchors: all('a').length,
+      // The range picker's windows, which of them is the operator's, and the
+      // person view's own knob -- the three controls this task wires.
+      windows: texts('.spend-window'),
+      currentWindows: all('.spend-window')
+        .filter((window) => window.getAttribute('data-current') === 'true')
+        .map((window) => window.textContent ?? ''),
+      personsEnabled: document.querySelector('.spend-persons')?.getAttribute('data-enabled') ?? null,
+      personState: document.querySelector('.spend-persons-state')?.textContent ?? null,
+      points: all('.spend-account')
+        .find((block) => block.getAttribute('data-account') === 'model')
+        ?.querySelectorAll('.spend-point').length ?? 0,
       text: document.getElementById('spend-mount')?.textContent ?? '',
     }
   })
@@ -478,6 +532,32 @@ test.describe('the Spend screen', () => {
     expect(result.error).toBeUndefined()
   }
 
+  /** mountWired draws the screen through the wired path: the controls, the
+   * documents the reader answers each `--since` with, and what the window's own
+   * read asked for. */
+  async function mountWired(
+    controls: SpendControls,
+    documents: Record<string, JSONDoc>,
+    theme = 'light',
+  ): Promise<{ readonly asked: readonly Record<string, string>[] }> {
+    const result = (await app.evaluate(async ({ BrowserWindow }, source) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      if (window === undefined) return { ok: false, reason: 'the console has no window', asked: [] }
+      return (await window.webContents.executeJavaScript(source, true)) as {
+        ok: boolean
+        reason?: string
+        asked: readonly Record<string, string>[]
+      }
+    }, drawWired(controls, documents, theme))) as {
+      readonly ok: boolean
+      readonly reason?: string
+      readonly asked: readonly Record<string, string>[]
+    }
+    expect(result.reason).toBeUndefined()
+    expect(result.ok).toBe(true)
+    return { asked: result.asked }
+  }
+
   test('renders the three accounts as three separate series', async () => {
     await mount(REPORT, BUDGET, 'light')
     const drawn = await screen(page)
@@ -557,6 +637,70 @@ test.describe('the Spend screen', () => {
     await mount(REPORT, BUDGET, 'light')
     const drawn = await screen(page)
     expect(drawn.anchors).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // The wired controls (Task 2.4).
+  // -------------------------------------------------------------------------
+
+  test('draws the picker’s windows, and redraws the series when the range changes', async () => {
+    // The picker asks for a window; the header draws the range that came back.
+    // The two are different statements, and the series is the document's own:
+    // `report` reads a window of the history, so a day inside the range with no
+    // row is a gap and never a zero.
+    const wide: JSONDoc = { ...REPORT, since: '2026-10-05' }
+    const asked = await mountWired(SPEND_DEFAULT_CONTROLS, { '30d': REPORT, '7d': wide })
+    const before = await screen(page)
+
+    expect(before.windows).toEqual(['7d', '30d', '90d', '12w'])
+    expect(before.currentWindows).toEqual(['30d'])
+    expect(asked.asked).toEqual([{ by: 'day', since: '30d' }])
+    expect(before.points).toBe(4)
+    expect(before.gaps).toEqual(['2026-10-14', '2026-10-14', '2026-10-14'])
+
+    const moved = await mountWired({ ...SPEND_DEFAULT_CONTROLS, since: '7d' }, { '30d': REPORT, '7d': wide })
+    const after = await screen(page)
+
+    // One read, with the new window and nothing else changed.
+    expect(moved.asked).toEqual([{ by: 'day', since: '7d' }])
+    expect(after.currentWindows).toEqual(['7d'])
+    // Eleven days of which the history holds three: eight gaps per chart, and
+    // the widened range is the only thing that changed.
+    expect(after.points).toBe(11)
+    expect(after.gaps.filter((key) => key === '2026-10-05')).toHaveLength(3)
+    expect(after.text).not.toContain('$0.00')
+    expect(after.accounts).toEqual(['model', 'notional', 'compute'])
+  })
+
+  test('keeps the person view off the screen, and off the wire, until the knob is turned on', async () => {
+    // The default golden is taken from this state: the knob is drawn, and it is
+    // off. The document the read answers with carries the person rows -- a
+    // window holding a stale document is the case the withholding is for -- and
+    // none of them is drawn, and no address is anywhere in the text.
+    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '30d': PERSON_REPORT })
+    const hidden = await screen(page)
+
+    expect(off.asked).toEqual([{ by: 'day', since: '30d' }])
+    expect(JSON.stringify(off.asked)).not.toContain('person')
+    expect(hidden.personsEnabled).toBe('false')
+    expect(hidden.personState).toBe('off')
+    expect(hidden.rows).toBe(0)
+    expect(hidden.text).toContain('person breakdown is off')
+    expect(hidden.text).not.toContain('ada')
+
+    // The operator's own switch: the same read with `by person` and nothing
+    // else, and the rows are drawn -- as the console's marker, never the
+    // address.
+    const on = await mountWired(personView(SPEND_DEFAULT_CONTROLS, true), { '30d': PERSON_REPORT })
+    const shown = await screen(page)
+
+    expect(on.asked).toEqual([{ by: 'person', since: '30d' }])
+    expect(shown.personsEnabled).toBe('true')
+    expect(shown.personState).toBe('on')
+    expect(shown.rows).toBe(2)
+    expect(shown.text).toContain('redacted@example.invalid')
+    expect(shown.text).toContain('unknown')
+    expect(shown.text).not.toContain('ada')
   })
 
   test('draws the spend screen', async () => {
