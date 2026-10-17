@@ -320,7 +320,7 @@ type FieldClass =
  * `queued_note`, `outcome`, `detail` go through the pattern classes, which keep
  * the words and take the identity out. What *is* on it is every field whose
  * value is an identifier with no shape a pattern could find: a branch
- * (`acme-merger-codename`), an account (`dimi-work`), a person (`Dimi Paun`),
+ * (`acme-merger-codename`), an account (`zora-work`), a person (`Zora Kell`),
  * an execution name. Those are what `runs ls` rows carry in `watch --json`'s
  * degraded mode (`runview.Row`), and a pattern class can only miss them.
  */
@@ -548,9 +548,9 @@ const BRANCH_RE =
 /**
  * ABS_PATH_RE matches an absolute POSIX path: a run rooted at `/` (or `~/`) with
  * at least two segments. A segment is anything but a delimiter -- whitespace,
- * a quote, a bracket, `<>|;,:*?` -- so a non-ASCII segment (`/Users/dimí/...`)
+ * a quote, a bracket, `<>|;,:*?` -- so a non-ASCII segment (`/Users/zorá/...`)
  * is consumed whole. **A space is part of a segment when more path follows it**:
- * `/Users/Dimi Paun/secret-plan/x` is one path, because `Paun` is followed by
+ * `/Users/Zora Kell/secret-plan/x` is one path, because `Paun` is followed by
  * `/`; a sentence after a path (`/etc/hosts for details`) is not, because no
  * slash follows its words. Two slashes is what keeps a sentence from being
  * eaten: `and/or` is not rooted. A single-segment path (`/opt`) in free text is
@@ -587,7 +587,7 @@ const REPO_TOKEN_RE =
   /(?<![\w./~-])(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+\/)?[A-Za-z0-9][A-Za-z0-9._-]{3,}\/[A-Za-z0-9][A-Za-z0-9._-]{3,}(?![\w/~-])/g
 
 /** GCP_CONTEXT_RE matches a GCP project or bucket *named in a sentence*:
- * `on project edge-devel-dimi`, `projects/123456789012`, `bucket fugaro-runs-x`.
+ * `on project acme-devel-zora`, `projects/123456789012`, `bucket fugaro-runs-x`.
  * A project ID has no shape of its own (6-30 lower-case letters, digits and
  * hyphens), so the word in front of it is the evidence; an ID with neither a
  * hyphen nor a digit (`project settings`) is prose and is left. */
@@ -607,7 +607,7 @@ const IPV6_RE =
  * (`com`, `io`, `local`, `internal`, ...), or when it has three labels or more
  * and its last label is not a file extension. That leaves `redact.ts`,
  * `README.md`, `config.json`, `node.js` and `e.g.` alone, and takes
- * `edge-devel-dimi-default-rtdb.firebaseio.com` and `dimis-macbook-pro.local`
+ * `acme-devel-zora-default-rtdb.firebaseio.com` and `zoras-laptop-pro.local`
  * whole.
  */
 const HOST_RE =
@@ -643,7 +643,7 @@ interface LiteralRule {
 /**
  * literalPatterns turns the installation's literals into patterns that match
  * **in any case, in NFKC, on a boundary**, and adds each host-shaped literal's
- * stem: `Dimis-MacBook-Pro.local` is also `Dimis-MacBook-Pro`, because that is
+ * stem: `Zoras-Laptop-Pro.local` is also `Zoras-Laptop-Pro`, because that is
  * how a shell prompt and half the CLI's messages spell it.
  *
  * A literal that begins with a letter or a digit is matched only where it is not

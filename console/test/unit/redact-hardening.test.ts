@@ -5,6 +5,8 @@
 // named after the class it pins, and each one fails if that class's rule is
 // removed or narrowed back to what it was.
 
+import { createHash } from 'node:crypto'
+
 import { describe, expect, it } from 'vitest'
 
 import { FixtureRefusal, loadFixture, writeFixture } from '../../src/source/fixture'
@@ -40,34 +42,34 @@ function b64(text: string): string {
 
 describe('addresses, in any script', () => {
   it('redacts an address whose local part is not ASCII, in a value', () => {
-    const out = red({ title: 'ping dimí@billmybank.com' })
-    expect(out).not.toContain('billmybank')
+    const out = red({ title: 'ping zorá@widgetco.example' })
+    expect(out).not.toContain('widgetco')
     expect(out).not.toContain('dim')
     expect(out).toContain(ADDRESS_MARKER)
   })
 
   it('redacts an address on an internationalised domain whole, not only its local part', () => {
-    const out = red({ title: 'cc dimi@bíllmybank.com today' })
+    const out = red({ title: 'cc zora@wídgetco.example today' })
     expect(out).toBe(JSON.stringify({ title: `cc ${ADDRESS_MARKER} today` }))
   })
 
   it('redacts an address spelled in compatibility characters (NFKC)', () => {
     // Fullwidth letters and an @ that is only an @ after NFKC.
-    const out = red({ title: 'ask ｄｉｍｉ＠billmybank.com' })
-    expect(out).not.toContain('billmybank')
+    const out = red({ title: 'ask ｚｏｒａ＠widgetco.example' })
+    expect(out).not.toContain('widgetco')
   })
 
   it('refuses a key that is a non-ASCII address', () => {
-    expect(() => red({ 'dimí@billmybank.com': 1 })).toThrow(/is a key that carries an address/)
+    expect(() => red({ 'zorá@widgetco.example': 1 })).toThrow(/is a key that carries an address/)
     expect(() => {
-      assertRedacted({ 'dimi@bíllmybank.com': 1 })
+      assertRedacted({ 'zora@wídgetco.example': 1 })
     }).toThrow(RedactionRefusal)
   })
 
   it('does not take a marker that only ends like one for the marker', () => {
-    // `dimi@example.invalid` is not the marker: it still says `dimi`.
+    // `zora@example.invalid` is not the marker: it still says `zora`.
     expect(() => {
-      assertRedacted({ title: 'from dimi@example.invalid' })
+      assertRedacted({ title: 'from zora@example.invalid' })
     }).toThrow(/still holds an address/)
   })
 })
@@ -88,26 +90,26 @@ describe('branch names, accounts and other shapeless identifiers, by field', () 
   })
 
   it('replaces oauth_account whole, not only the part that happened to be a literal', () => {
-    const out = createRedactor(['dimi']).redactDocument({ oauth_account: 'dimi-work' }) as Record<string, string>
+    const out = createRedactor(['zora']).redactDocument({ oauth_account: 'zora-work' }) as Record<string, string>
     expect(out['oauth_account']).toMatch(PERSON_PSEUDONYM_RE)
     expect(() => {
-      assertRedacted({ oauth_account: 'dimi-work' })
+      assertRedacted({ oauth_account: 'zora-work' })
     }).toThrow(/not this class's marker/)
   })
 
   it('replaces a Cloud Run execution name and a log URL whole', () => {
     const out = createRedactor().redactDocument({
       execution: 'fugaro-run-20261015-abcd',
-      log_url: 'console.cloud.google.com/logs?project=edge-devel-dimi',
+      log_url: 'console.cloud.google.com/logs?project=acme-devel-zora',
     }) as Record<string, string>
     expect(out['execution']).toBe(LITERAL_MARKER)
-    expect(JSON.stringify(out)).not.toContain('edge-devel-dimi')
+    expect(JSON.stringify(out)).not.toContain('acme-devel-zora')
   })
 })
 
 describe('hosts, addresses on the network, and GCP names', () => {
   it('redacts a hostname whole', () => {
-    const out = red({ reason: 'lookup edge-devel-dimi-default-rtdb.firebaseio.com: no such host' })
+    const out = red({ reason: 'lookup acme-devel-zora-default-rtdb.firebaseio.com: no such host' })
     expect(out).toBe(JSON.stringify({ reason: `lookup ${HOST_MARKER}: no such host` }))
   })
 
@@ -117,15 +119,15 @@ describe('hosts, addresses on the network, and GCP names', () => {
   })
 
   it('redacts a GCP project ID, a bucket and a project number named in a sentence', () => {
-    expect(red({ reason: 'permission denied on project edge-devel-dimi' })).toBe(
+    expect(red({ reason: 'permission denied on project acme-devel-zora' })).toBe(
       JSON.stringify({ reason: `permission denied on project ${PROJECT_MARKER}` }),
     )
-    expect(red({ reason: 'bucket fugaro-runs-edge-devel-dimi is gone' })).toBe(
+    expect(red({ reason: 'bucket fugaro-runs-acme-devel-zora is gone' })).toBe(
       JSON.stringify({ reason: `bucket ${BUCKET_MARKER} is gone` }),
     )
     expect(red({ reason: 'see projects/123456789012/secrets' })).not.toContain('123456789012')
-    expect(red({ reason: 'wrote to fugaro-runs-edge-devel-dimi' })).not.toContain('edge-devel-dimi')
-    expect(red({ reason: 'as fugaro-runner@edge-devel-dimi.iam.gserviceaccount.com' })).toBe(
+    expect(red({ reason: 'wrote to fugaro-runs-acme-devel-zora' })).not.toContain('acme-devel-zora')
+    expect(red({ reason: 'as fugaro-runner@acme-devel-zora.iam.gserviceaccount.com' })).toBe(
       JSON.stringify({ reason: `as ${ADDRESS_MARKER}` }),
     )
   })
@@ -137,26 +139,26 @@ describe('hosts, addresses on the network, and GCP names', () => {
 })
 
 describe("the installation's literals, however they are spelled", () => {
-  const literals = ['fugaro', 'Dimis-MacBook-Pro.local', 'dimi']
+  const literals = ['fugaro', 'Zoras-Laptop-Pro.local', 'zora']
 
   it('matches a literal in any case', () => {
-    const out = red({ title: 'FUGARO on dimis-macbook-pro.local by Dimi' }, literals)
+    const out = red({ title: 'FUGARO on zoras-laptop-pro.local by Zora' }, literals)
     expect(out.toLowerCase()).not.toContain('fugaro')
-    expect(out.toLowerCase()).not.toContain('dimi')
-    expect(out.toLowerCase()).not.toContain('macbook')
+    expect(out.toLowerCase()).not.toContain('zora')
+    expect(out.toLowerCase()).not.toContain('laptop')
   })
 
   it("matches a host literal's stem without its .local suffix", () => {
-    const out = red({ title: 'ran on Dimis-MacBook-Pro' }, literals)
+    const out = red({ title: 'ran on Zoras-Laptop-Pro' }, literals)
     expect(out).toBe(JSON.stringify({ title: `ran on ${LITERAL_MARKER}` }))
   })
 
   it('matches a literal spelled in compatibility characters', () => {
-    expect(red({ title: 'by ｄｉｍｉ' }, literals)).toBe(JSON.stringify({ title: `by ${LITERAL_MARKER}` }))
+    expect(red({ title: 'by ｚｏｒａ' }, literals)).toBe(JSON.stringify({ title: `by ${LITERAL_MARKER}` }))
   })
 
   it('refuses a key that carries a literal in another case', () => {
-    expect(() => red({ DIMI: 1 }, literals)).toThrow(/is a key that carries one of the installation's own literals/)
+    expect(() => red({ ZORA: 1 }, literals)).toThrow(/is a key that carries one of the installation's own literals/)
   })
 })
 
@@ -207,19 +209,21 @@ describe('credentials the shape list did not know', () => {
 
 describe('pseudonyms', () => {
   it('are keyed per recording, so a name list cannot rebuild them', () => {
-    // At b65fff5 these were SHA-256 of the name with a public salt: anyone
-    // with a list of candidate names could recompute `r-86d73000` for
-    // `dimipaun`, `r-1b5f5277` for `edgeweb` and `r-c08de518` for `edgeappinc`.
-    const out = red({ repos: [{ repo: 'dimipaun/edgeweb' }, { repo: 'edgeappinc/x' }] })
-    for (const old of ['86d73000', '1b5f5277', 'c08de518']) expect(out).not.toContain(old)
+    // At b65fff5 these were SHA-256 of the name with a public salt
+    // (`fugaro-console-fixture`): anyone with a list of candidate names could
+    // recompute every pseudonym in a fixture. None of those may appear now.
+    const unkeyed = (value: string): string =>
+      createHash('sha256').update(`fugaro-console-fixture\u0000${value}`).digest('hex').slice(0, 8)
+    const out = red({ repos: [{ repo: 'acmeowner/acmeweb' }, { repo: 'acmeinc/x' }] })
+    for (const name of ['acmeowner', 'acmeweb', 'acmeinc', 'x']) expect(out).not.toContain(unkeyed(name))
     // Two recordings of the same repository do not share a pseudonym...
-    const first = createRedactor().redactRepository('dimipaun/edgeweb')
-    const second = createRedactor().redactRepository('dimipaun/edgeweb')
+    const first = createRedactor().redactRepository('acmeowner/acmeweb')
+    const second = createRedactor().redactRepository('acmeowner/acmeweb')
     expect(first).toMatch(REPO_PSEUDONYM_RE)
     expect(first).not.toBe(second)
     // ...and one recording keeps the same repository the same pseudonym.
     const one = createRedactor()
-    expect(one.redactRepository('dimipaun/edgeweb')).toBe(one.redactRepository('dimipaun/edgeweb'))
+    expect(one.redactRepository('acmeowner/acmeweb')).toBe(one.redactRepository('acmeowner/acmeweb'))
   })
 
   it('never put the key in the redactor or in its output', () => {
@@ -233,15 +237,15 @@ describe('pseudonyms', () => {
 describe('people and paths', () => {
   it('applies the person rule to every by-like field', () => {
     const out = createRedactor().redactDocument({
-      halt: { by: 'Dimi Paun' },
-      review: { reviewed_by: 'Dimi Paun', user: 'dimi', actor: 'dimi' },
+      halt: { by: 'Zora Kell' },
+      review: { reviewed_by: 'Zora Kell', user: 'zora', actor: 'zora' },
     }) as { halt: Record<string, string>; review: Record<string, string> }
     expect(out.halt['by']).toMatch(PERSON_PSEUDONYM_RE)
     expect(out.review['reviewed_by']).toMatch(PERSON_PSEUDONYM_RE)
     expect(out.review['user']).toMatch(PERSON_PSEUDONYM_RE)
     expect(out.review['actor']).toMatch(PERSON_PSEUDONYM_RE)
     expect(() => {
-      assertRedacted({ halt: { by: 'Dimi Paun' } })
+      assertRedacted({ halt: { by: 'Zora Kell' } })
     }).toThrow(/halt\.by/)
     // A report's break-down dimension is still a dimension.
     expect(createRedactor().redactDocument({ by: 'person', report: { by: 'model' } })).toEqual({
@@ -251,10 +255,10 @@ describe('people and paths', () => {
   })
 
   it('consumes a path with a space or a non-ASCII character whole', () => {
-    expect(red({ title: 'read /Users/Dimi Paun/secret-plan/x now' })).toBe(
+    expect(red({ title: 'read /Users/Zora Kell/secret-plan/x now' })).toBe(
       JSON.stringify({ title: `read ${PATH_MARKER} now` }),
     )
-    expect(red({ title: 'read /Users/dimí/secret-plan, then stop' })).toBe(
+    expect(red({ title: 'read /Users/zorá/secret-plan, then stop' })).toBe(
       JSON.stringify({ title: `read ${PATH_MARKER}, then stop` }),
     )
   })
@@ -264,11 +268,11 @@ describe('the loader, with no literals in hand', () => {
   const records = (document: Record<string, unknown>): FixtureRecord[] => [{ at: '2026-10-15T12:00:00Z', document }]
 
   it.each([
-    ['a non-ASCII address', { title: 'ping dimí@billmybank.com' }],
+    ['a non-ASCII address', { title: 'ping zorá@widgetco.example' }],
     ['a branch field', { branch: 'acme-merger-codename' }],
-    ['a hostname', { reason: 'lookup dimis-macbook-pro.local' }],
+    ['a hostname', { reason: 'lookup zoras-laptop-pro.local' }],
     ['a token', { message: 'ya29.a0AfH6SMBx7Kq2pLm9TzWv4Yb7Nc3Pd1Hs6Jf0Ga5Q' }],
-    ['a GCP project in a sentence', { reason: 'denied on project edge-devel-dimi' }],
+    ['a GCP project in a sentence', { reason: 'denied on project acme-devel-zora' }],
   ])('refuses a hand-edited fixture carrying %s', (_what, document) => {
     expect(() => loadFixture(writeFixture(records(document), SYNTHETIC_META), 'edited.ndjson')).toThrow(FixtureRefusal)
   })
@@ -277,19 +281,19 @@ describe('the loader, with no literals in hand', () => {
 describe('every input above, redacted twice', () => {
   it('is idempotent and audits clean', () => {
     const hostile = {
-      title: 'ping dimí@billmybank.com on Dimis-MacBook-Pro via 10.42.7.13:443',
-      reason: 'permission denied on project edge-devel-dimi, bucket fugaro-runs-edge-devel-dimi',
+      title: 'ping zorá@widgetco.example on Zoras-Laptop-Pro via 10.42.7.13:443',
+      reason: 'permission denied on project acme-devel-zora, bucket fugaro-runs-acme-devel-zora',
       message: 'access_token=abcdefghijklmnop12345 then ya29.a0AfH6SMBx7Kq2pLm9TzWv4Yb7Nc3Pd1Hs6Jf0Ga5Q',
-      note: 'read /Users/Dimi Paun/secret-plan/x and lookup edge-devel-dimi-default-rtdb.firebaseio.com',
-      runs: [{ branch: 'dm/q4', base_branch: 'release-2027-secret', oauth_account: 'dimi-work', halt: { by: 'Dimi Paun' } }],
+      note: 'read /Users/Zora Kell/secret-plan/x and lookup acme-devel-zora-default-rtdb.firebaseio.com',
+      runs: [{ branch: 'dm/q4', base_branch: 'release-2027-secret', oauth_account: 'zora-work', halt: { by: 'Zora Kell' } }],
       ＦＵＧＡＲＯ: 1,
     }
-    const redactor = createRedactor(['fugaro', 'Dimis-MacBook-Pro.local', 'dimi'])
+    const redactor = createRedactor(['fugaro', 'Zoras-Laptop-Pro.local', 'zora'])
     expect(() => redactor.redactDocument(hostile)).toThrow(/is a key that carries/)
     const { ＦＵＧＡＲＯ: _key, ...rest } = hostile
     const once = redactor.redactDocument({ ...rest, value: 'ＦＵＧＡＲＯ' })
     expect(redactor.redactDocument(once)).toEqual(once)
     expect(redactor.problems(once)).toEqual([])
-    expect(JSON.stringify(once).toLowerCase()).not.toMatch(/dimi|fugaro|billmybank|edge-devel|secret|macbook|10\.42/)
+    expect(JSON.stringify(once).toLowerCase()).not.toMatch(/zora|fugaro|widgetco|acme-devel|secret|laptop|10\.42/)
   })
 })

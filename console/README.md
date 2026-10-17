@@ -761,7 +761,7 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
   repository path; a GCP project or bucket named in a sentence and the runs
   bucket by name; an IPv4 or IPv6 address; a hostname; and the installation's
   own literals, matched case-insensitively with a host literal's stem
-  (`Dimis-MacBook-Pro.local` is also `Dimis-MacBook-Pro`). A document with a key nobody anticipated still cannot carry an
+  (`Zoras-Laptop-Pro.local` is also `Zoras-Laptop-Pro`). A document with a key nobody anticipated still cannot carry an
   address out of the room, and a test per class holds each one — a run title, a
   requester address, a repository name in the field *and* in a sentence, a
   branch name, a POSIX and a Windows path (including the `/usr`, `/etc`,
