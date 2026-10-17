@@ -251,6 +251,24 @@ describe('the replay buffer', () => {
     expect(buffer.export()).toBe(bodyOf(readFileSync(SYNTHETIC_WHERE, 'utf8')))
   })
 
+  it('exports a document nested ten thousand deep instead of crashing, as writeFixture does', () => {
+    // A recursive `JSON.stringify` throws `RangeError` at this depth; the
+    // fixture writer serialises with an explicit stack for exactly this
+    // document (`fixture.test.ts`), and an export that claims to be its body
+    // byte for byte must survive the same input and write the same bytes.
+    const depth = 10_000
+    const deep = JSON.parse(`{"a":${'['.repeat(depth)}${']'.repeat(depth)}}`) as Readonly<Record<string, unknown>>
+    const buffer = new ReplayBuffer()
+    buffer.observe({ ...anArrival(stamp(BASE, 0), 1, 1), document: deep })
+    buffer.observe(anArrival(stamp(BASE, 1), 2, 2))
+    let exported = ''
+    expect(() => {
+      exported = buffer.export()
+    }).not.toThrow()
+    const meta: FixtureMeta = { ...theFixture().header, synthetic: true }
+    expect(exported).toBe(bodyOf(writeFixture(buffer.records(), meta)))
+  })
+
   it('exports a ring that is empty as empty, not as a fixture with no records', () => {
     expect(new ReplayBuffer().export()).toBe('')
   })

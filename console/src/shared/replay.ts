@@ -46,6 +46,8 @@
 // by its stamp rather than dropped; among records sharing a stamp, arrival order
 // is kept.
 
+import { stringifyDeep } from './stringify'
+
 /**
  * ReplayDocument is one document as it arrived, with the console's own stamp.
  * It is `FixtureRecord`'s document arm, declared here rather than imported so
@@ -196,7 +198,14 @@ export class ReplayBuffer {
    * fixture with none.
    */
   export(): string {
-    return this.#records.map((record) => JSON.stringify(record)).join('\n')
+    // The fixture writer's serializer, with its key order (`at`, then the
+    // document or the notice): a recursive `JSON.stringify` throws on a
+    // document nested deep enough, which `writeFixture` does not.
+    return this.#records
+      .map((record) =>
+        stringifyDeep('document' in record ? { at: record.at, document: record.document } : { at: record.at, notice: record.notice }),
+      )
+      .join('\n')
   }
 
   /** #store files a record where its stamp belongs if it is in the window, and
