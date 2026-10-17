@@ -36,12 +36,14 @@
 // (`quiet`, `important`, `all`) are voice V2.2's and the mobile voice screen's
 // (P3.5); the spoken sentence is the summariser's; and the redactor is beside
 // this file rather than inside it, because it is a different kind of thing --
-// a function over text, not over a document.
+// a function over text, not over a document. It is re-exported here so that
+// this directory has one entry point.
 
 import { DigestError, ERROR } from './errors.js';
 import { SEVERITY, mostSevere } from './severity.js';
 
 export { DigestError, ERROR } from './errors.js';
+export { REDACTED, redact, redactFunc, redactForms } from './redact.js';
 export { SEVERITY, SEVERITY_ORDER, moreSevere, mostSevere, severityRank } from './severity.js';
 
 /**
