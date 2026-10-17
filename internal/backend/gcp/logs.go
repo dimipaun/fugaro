@@ -127,6 +127,15 @@ func toLogEntry(e *logging.LogEntry) (backend.LogEntry, error) {
 }
 
 // executionFilter selects one execution's log entries.
+//
+// Both clauses are needed, and neither is redundant once a job is shared
+// (design §4.1, plan task 3.4 step 5): the job clause keeps the read off every
+// other job of the region, and the execution name is what tells the several
+// repositories' runs that one project job serves apart. The job alone would
+// read another repository's run; the execution name alone would read across
+// jobs. What the run's own objects say is checked before this read, never
+// here: the caller follows only the execution its own FUGARO_RUN names
+// (CheckRunExecution).
 func executionFilter(id backend.ExecID) string {
 	return `resource.type="cloud_run_job" AND resource.labels.location=` + strconv.Quote(id.Region) +
 		` AND resource.labels.job_name=` + strconv.Quote(id.Job) +

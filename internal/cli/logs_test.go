@@ -98,7 +98,7 @@ func TestLogsURL(t *testing.T) {
 	const id = "20260927-100000-abcd"
 	const consoleURL = "https://console.cloud.google.com/run/jobs/executions/details/us-east5/web-00001-abcd?project=proj-1234"
 	seedRun(t, f, id, "", "someone@example.com", false)
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
 	ctx := context.Background()
 	b, err := blob.OpenBucket(ctx, f.bucket)
 	if err != nil {

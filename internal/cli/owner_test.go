@@ -20,7 +20,10 @@ func TestForgedRecordExecutionIsRefused(t *testing.T) {
 	f := newCloudFixture(t)
 	other := mustSlug("github", "acme/other")
 	f.run.AddJob(gcp.JobName(other, "web"), "4", "8Gi")
-	victim := f.run.Start(gcp.JobName(other, "web"))
+	// The victim is another repository's run's execution: it reports that
+	// run's own FUGARO_RUN, which is what the refusal is about now that the
+	// job's name says nothing (task 3.4 step 2).
+	victim := startRunExecution(f, gcp.JobName(other, "web"), other, "20260927-120000-eeee")
 	f.run.SetState(victim, backend.StateRunning)
 	f.logging.AddJSONLines(victim, []byte(`{"time":"`+logTime(0)+`","severity":"INFO","message":"other repo's secret log"}`+"\n"))
 

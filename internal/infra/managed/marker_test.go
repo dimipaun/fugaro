@@ -298,9 +298,12 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	// creation fact this task writes, and the delete list Task 1.4 will.
 	root := []string{MarkerObject, "fugaro/allow-delete.json"}
 	for name, expr := range map[string]string{
-		"a job account's grant":   gcp.BucketCondition(testBucket, gcp.JobBucketPrefixes, "web-a1b2c3"),
-		"a build account's grant": gcp.BucketCondition(testBucket, gcp.BuildBucketPrefixes, "web"),
-		"a launcher's grant":      gcp.LauncherBucketCondition(testBucket),
+		"a job account's grant": gcp.BucketCondition(testBucket, gcp.JobBucketPrefixes, "web-a1b2c3"),
+		// A project job's widened grant (phase 3, Task 3.2): no slug, but
+		// still the three prefixes, so never the bucket's root.
+		"a project job account's grant": gcp.ProjectBucketCondition(testBucket, gcp.JobBucketPrefixes),
+		"a build account's grant":       gcp.BucketCondition(testBucket, gcp.BuildBucketPrefixes, "web"),
+		"a launcher's grant":            gcp.LauncherBucketCondition(testBucket),
 	} {
 		prefixes := startsWithPrefixes(expr, testBucket)
 		if len(prefixes) == 0 {
@@ -355,7 +358,7 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	// gcp.BucketCondition, installation/iam.tf's precondition pins the
 	// launcher's): one that stops being used is a diff here, not a silent
 	// narrowing of this assertion.
-	for _, v := range []string{"var.workflow.bucket_condition.expression", "var.repo.build_bucket_condition.expression", "var.launcher_bucket_condition.expression"} {
+	for _, v := range []string{"var.workflow.bucket_condition.expression", "var.repo.build_bucket_condition.expression", "var.launcher_bucket_condition.expression", "var.job.bucket_condition.expression"} {
 		if scan.conditions[v] == 0 {
 			t.Errorf("no write grant on the runs bucket carries %s: the scan accepted a condition variable nothing uses", v)
 		}
@@ -853,6 +856,10 @@ var runAccountGrants = setOf(
 	`google_project_iam_member | "roles/aiplatform.user" | project=var.project | google_service_account.job.member | for_each= | perms=`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.workflow.secret_env)) | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
+	// A project job account's (phase 3, modules/project/sa.tf): the same
+	// shape, its secrets keyed by the profile's mounts; its bucket grant is
+	// the workflow job's key above, under the widened condition.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.job.secret_env)) | perms=`,
 
 	// The build account's (a build's credential): its secrets, its own
 	// registry, the shared ones read-only, builds/ under its condition, actAs
@@ -1582,6 +1589,8 @@ var narrowingConditions = map[string]bool{
 	"var.workflow.bucket_condition.expression":   true,
 	"var.repo.build_bucket_condition.expression": true,
 	"var.launcher_bucket_condition.expression":   true,
+	// gcp.ProjectBucketCondition, set by internal/infra/projectjobs.go.
+	"var.job.bucket_condition.expression": true,
 }
 
 // grantMembers is who a grant is to: the member attribute, or the members of

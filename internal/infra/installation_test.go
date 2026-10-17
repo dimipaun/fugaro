@@ -104,15 +104,21 @@ func TestInstallationVarsMatchModule(t *testing.T) {
 }
 
 // The installation root passes each of its variables to the module
-// unchanged, so a value the tfvars carry is never dropped on the way.
+// unchanged, so a value the tfvars carry is never dropped on the way. A
+// variable the root iterates instead (project_jobs, one module per project
+// job) is handed over entry by entry, which is the same guarantee: the whole
+// map reaches a module, and for_each = var.x is the only other shape a root
+// variable may have.
 func TestInstallationRootPassesEveryVariable(t *testing.T) {
 	b, err := fs.ReadFile(terraform.FS, "gcp/roots/installation/main.tf")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for v := range rootVariables(t) {
-		if !regexp.MustCompile(`(?m)^\s*` + v + `\s*=\s*var\.` + v + `\s*$`).Match(b) {
-			t.Errorf("the installation root doesn't pass var.%s to the module", v)
+		passed := regexp.MustCompile(`(?m)^\s*` + v + `\s*=\s*var\.` + v + `\s*$`).Match(b)
+		iterated := regexp.MustCompile(`(?m)^\s*for_each\s*=\s*var\.` + v + `\s*$`).Match(b)
+		if !passed && !iterated {
+			t.Errorf("the installation root neither passes var.%s to a module nor iterates it", v)
 		}
 	}
 }
