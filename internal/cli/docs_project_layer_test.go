@@ -89,9 +89,10 @@ func TestDocsProjectLayerSaysWhatDoctorReports(t *testing.T) {
 		"**empty `allow_repos`** in a published policy",
 		"**a repository this machine's config names that the allow-list does not admit**",
 		"**deployed rules older than the marker**",
-		"**a rules marker below the generation this Fugaro reads a policy under**",
+		"**a rules marker below the generation that carries the policy nodes**",
+		"**a rules marker below the generation this Fugaro deploys but at or above that one**",
 		"**deployed rules newer than this Fugaro**",
-		"the eight states that need the operator",
+		"the nine states that need the operator",
 		"`model_prices` one line per model",
 	} {
 		if !strings.Contains(doc, want) {

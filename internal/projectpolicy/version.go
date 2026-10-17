@@ -13,17 +13,62 @@ import (
 // closed, §5(3)).
 const Version = 1
 
+// PolicyRulesVersion is the generation of the Realtime Database security rules
+// that introduced the config/policy nodes of §5 and their per-child read
+// grants: the generation an installation must have deployed before this Fugaro
+// reads a published policy at all (Read), before `fugaro project policy
+// publish` writes one (internal/cli's requirePolicyRules) and before a
+// published policy governs anything a run does.
+//
+// It is 1 for the life of the policy model, and it is not RulesVersion.
+// RulesVersion records which *document* the database runs under and goes up
+// with every rules change; this one names the single change that made the
+// policy nodes exist. A later generation adds nodes beside the config/policy
+// ones — the mailbox is generation 2 — rather than making them appear, so an
+// installation whose marker is older than RulesVersion still has the policy
+// nodes and still has the policy it published there.
+//
+// Gating on RulesVersion instead would take every published policy out of every
+// run's reach on the day a later generation shipped, because Read answers "not
+// found" below its gate and all three of that answer's readers take it as "this
+// installation has no policy": the runner keeps the ceiling its job environment
+// was deployed with (internal/runner/projectpolicy.go), the launcher skips the
+// allow-list and release-skew gates (internal/cli's launchPolicyGates), and
+// `fugaro doctor` reads the node as ungoverned. That is what the bump to 2 did
+// to every installation still on generation 1 — a generation that *does* carry
+// the policy nodes and under which a policy could be published, so the premise
+// "no policy can have been published here" was false of it (the review finding
+// on P2.1).
+const PolicyRulesVersion = 1
+
 // RulesVersion is the generation of the Realtime Database security rules that
-// understand this policy: the config/policy nodes of §5 and their per-child
-// read grants. It is recorded on the database as
+// this Fugaro deploys and reads: the config/policy nodes of §5 and their
+// per-child read grants, the mailbox of design m9 §6.4, and everything the
+// template carries. It is recorded on the database as
 // config/limits/policyRules (PathRulesMarker), written by the owner-run rules
 // deploy and only after it succeeds (internal/infra's DB.Plan orders it after
 // the PutRules action), and read by the runner before it reads a policy (task
 // 1.3), which must not decode a policy its deployed rules do not protect.
 //
-// A rules generation that changes the policy nodes bumps this. It is not
-// Version: the policy schema and the rules that guard it move independently.
-const RulesVersion = 1
+// Any generation of the rules document bumps this, not only one that changes
+// the policy nodes: the marker records *which document* the database runs
+// under, and a run that met a document it does not know is not one that may
+// act as though it knew it. Generation 2 is the mailbox (mobile plan task
+// P2.1, design m9 §6.4): the grant that lets the app read the caps, the day
+// counters and the kill switches directly, and the subtree the phone's user
+// and the mailbox's consumer write.
+//
+// An installation still on generation 1 has no mailbox — and it is not a
+// policy-less installation: its rules carry the config/policy nodes
+// (PolicyRulesVersion), so the policy it published is read and enforced and
+// publishing another is still allowed. What is missing there is this binary's
+// own document, which is why doctor reports the difference (policy-rules-skew)
+// and the owner's deploy records generation 2 — not a reason for anything to
+// read below the policy generation and answer "no policy here".
+//
+// It is not Version: the policy schema and the rules that guard it move
+// independently.
+const RulesVersion = 2
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

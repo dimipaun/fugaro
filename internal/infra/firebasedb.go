@@ -167,7 +167,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	// nothing is written and the newer installation's rules, marker and
 	// configuration are left as they are.
 	//
-	// RulesVersion is 1 today, so a marker above it needs a marker written by a
+	// A marker above this binary's RulesVersion needs a marker written by a
 	// *future* release; the boundary is enforced before it can be crossed. The
 	// other direction is not a refusal: a marker *below* this generation (or
 	// absent, generation 0) is an installation whose rules predate these, and

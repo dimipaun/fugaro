@@ -26,8 +26,9 @@ func readDB(t *testing.T) (*gcpfake.RTDB, *rtdb.Client) {
 const readPolicy = `{"version": 1, "budget": {"mode": "observe", "per_run_usd": 5}, "allow_repos": ["github/acme/*"]}`
 
 // The marker is what decides whether this installation can have a policy at
-// all (task 1.3 step 1): absent, or below RulesVersion, the policy nodes are
-// the previous generation's, and a read that is refused there is not an error.
+// all (task 1.3 step 1): absent, or below PolicyRulesVersion, this
+// installation's rules predate the policy nodes, and a read that is refused
+// there is not an error.
 func TestReadWithoutTheMarkerIsLegacy(t *testing.T) {
 	for name, seed := range map[string]func(*gcpfake.RTDB){
 		"no marker and no node": func(*gcpfake.RTDB) {},
@@ -36,8 +37,13 @@ func TestReadWithoutTheMarkerIsLegacy(t *testing.T) {
 			f.Set(PathShared(), json.RawMessage(readPolicy))
 			f.DenyRead(PathShared())
 		},
-		"a marker below this generation": func(f *gcpfake.RTDB) {
-			f.Set(PathRulesMarker(), RulesVersion-1)
+		// Generation 0 is the only generation below PolicyRulesVersion that an
+		// integer can name, and it is the one with no policy nodes: generation
+		// 1, the policy generation, is TestReadKeepsThePolicyOfThePolicyGeneration's
+		// case below, and reading it as legacy took a published policy out of
+		// every run's reach (the review finding on P2.1).
+		"a marker below the policy generation": func(f *gcpfake.RTDB) {
+			f.Set(PathRulesMarker(), PolicyRulesVersion-1)
 			f.Set(PathShared(), json.RawMessage(readPolicy))
 			f.DenyRead(PathShared())
 		},
@@ -48,6 +54,43 @@ func TestReadWithoutTheMarkerIsLegacy(t *testing.T) {
 		if p != nil || found || err != nil {
 			t.Errorf("%s: Read = (%v, %v, %v), want (nil, false, nil): the owner's rules deploy has not happened yet, and nothing may halt on that", name, p, found, err)
 		}
+	}
+}
+
+// A marker at the policy generation — generation 1, while this binary deploys
+// generation 2 — is a deployment that *does* carry the config/policy nodes, and
+// the policy published under it is read. Generation 1 is a real deployment: its
+// rules have the nodes, `fugaro project policy publish` wrote there and
+// `fugaro init --firebase` of that release recorded it. Gating on RulesVersion
+// answered "not found" for it, which every caller of Read takes as "this
+// installation has no policy": the runner kept the ceiling its job environment
+// was deployed with, the launcher skipped the allow-list and release-skew gates
+// (internal/cli's launchPolicyGates) and doctor printed a published policy
+// beside a legacy read — on an installation whose policy was published and
+// governed nothing (the review finding on P2.1).
+//
+// Mutation (verified, run and restored): gate on `gen < RulesVersion` instead
+// of `gen < PolicyRulesVersion` in Read — this test fails, Read answering
+// (nil, false, nil) for the published node.
+func TestReadKeepsThePolicyOfThePolicyGeneration(t *testing.T) {
+	if PolicyRulesVersion >= RulesVersion {
+		t.Fatalf("PolicyRulesVersion = %d and RulesVersion = %d: this test is about a generation below this binary's, and the two have met", PolicyRulesVersion, RulesVersion)
+	}
+	f, db := readDB(t)
+	f.Set(PathRulesMarker(), PolicyRulesVersion)
+	f.Set(PathShared(), json.RawMessage(readPolicy))
+	p, found, err := Read(context.Background(), db)
+	if err != nil || !found || p == nil {
+		t.Fatalf("Read = (%v, %v, %v), want the policy: a marker at the policy generation carries the policy nodes", p, found, err)
+	}
+	if p.Budget.Mode != "observe" || p.Budget.PerRunUSD != 5 {
+		t.Errorf("policy = %+v, want the published one", p)
+	}
+	// And a denial here is still a refusal rather than "no policy": the rules
+	// were changed out from under a published policy.
+	f.DenyRead(PathShared())
+	if p, found, err := Read(context.Background(), db); err == nil || p != nil || found {
+		t.Errorf("a denied read = (%v, %v, %v), want a refusal", p, found, err)
 	}
 }
 
@@ -172,7 +215,7 @@ func TestReadRefusesANonIntegerMarker(t *testing.T) {
 // project-centric installation silently legacy: every run of it would keep the
 // ceiling its job environment was deployed with, with the policy it was meant
 // to be bound by unread, and a launcher could publish one that never governs.
-// No deploy writes a negative generation (RulesVersion is 1 and only goes up),
+// No deploy writes a negative generation (RulesVersion only goes up),
 // so the node is refused as the MarkerError it is, exactly as a value that is
 // not an integer at all is: the caller must halt on a node a person edited,
 // never guess what it meant.
