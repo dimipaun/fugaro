@@ -587,6 +587,28 @@ describe('renderProjects', () => {
     }
   })
 
+  it('draws every person field in the person class, so no address shape leaks its local part', () => {
+    // A requester, an operator who killed a repository, and a Claude account
+    // are people. The `person` class refuses what is not a bare address or a
+    // login; a `label` would draw a quoted local part, or a display name beside
+    // the marker, as it arrived. Built at run time, on a reserved host.
+    const local = ['ana', 'lopez'].join('.')
+    const shapes = [`"${local}"@example.invalid`, `Ana Lopez <${local}@example.invalid>`]
+    for (const who of shapes) {
+      const kill = { ...BUDGET.repos[0].kill, by: who }
+      const budget = { ...BUDGET, repos: [{ ...BUDGET.repos[0], kill }, BUDGET.repos[1]] }
+      const runs = { ...RUNS, runs: [{ ...RUNS.runs[0], requested_by: who }, RUNS.runs[1]] }
+      const accounts = { ...ACCOUNTS, accounts: [who] }
+      const tree = renderProjects(factory, buildProjectsModel(inputs({ budget, runs, accounts })), 'light')
+      for (const className of ['projects-kill-by', 'projects-job-by', 'projects-account']) {
+        const cells = all(tree, className)
+        expect(cells.length, className).toBeGreaterThan(0)
+        for (const leaf of cells) expect(leaf.textContent?.toLowerCase(), `${className} for ${who}`).not.toContain('lopez')
+      }
+      expect(drawn(tree).toLowerCase()).not.toContain('lopez')
+    }
+  })
+
   it('puts the CLI\'s refusal sentence through the sanitizer before a panel draws it', () => {
     // A refused read's reason is the CLI's stderr sentence: text the console
     // did not write, so a credential echoed into it is redacted, not drawn.
@@ -1005,6 +1027,16 @@ describe('renderRun', () => {
     const tree = renderRun(factory, buildRunModel(runInputs({ logs })), 'light')
     expect(one(tree, 'run-log-severity').textContent).toBe(TOKEN_PLACEHOLDER)
     expect(drawnText(tree)).not.toContain(token)
+  })
+
+  it('draws the run\'s requester in the person class, so no address shape leaks its local part', () => {
+    const local = ['ana', 'lopez'].join('.')
+    for (const who of [`"${local}"@example.invalid`, `Ana Lopez <${local}@example.invalid>`]) {
+      const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, requested_by: who } }
+      const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+      expect(one(tree, 'run-requested-by').textContent?.toLowerCase()).not.toContain('lopez')
+      expect(drawnText(tree).toLowerCase()).not.toContain('lopez')
+    }
   })
 
   it('puts the run record\'s status through the sanitizer too', () => {
