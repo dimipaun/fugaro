@@ -768,7 +768,7 @@ func (r *initRun) checkEnv(lc *localcfg.Config) (string, error) {
 	}
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
-		return "", userErr("fugaro init needs terraform (>= 1.7, < 2) on PATH: %v", err)
+		return "", userErr("fugaro init needs terraform (>= 1.9, < 2) on PATH: %v", err)
 	}
 	for _, w := range lc.Warnings() {
 		r.warn(w)
