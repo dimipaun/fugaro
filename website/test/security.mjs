@@ -35,6 +35,10 @@
 //      the target and the label, both. The document's links point into `docs/` with paths
 //      that are meaningful from the repository root; the page does not rewrite them,
 //      because rewriting a security document's links is editing it.
+//   7. **The page's head points at no file the build does not produce** (Global Constraint
+//      9). The one hint the layout composes is the sitemap, and whether the build ships one
+//      is read from the resolved `astro.config.mjs` — imported, not pattern-matched, which
+//      is the same rule `website/test/readme.mjs` applies to the same file.
 //
 // How it reads the page: the built artifact, `website/dist/security/index.html`, written
 // by `npm run build` — which `npm run check` runs before it runs any file here, so the
@@ -234,13 +238,27 @@ test('every anchor the repository sends a reader to is in the built page', () =>
 test('the page renders the document and adds no sentence of its own', () => {
   const document = sourceDocument()
   const rendered = region(builtPage(), 'data-security-document', 'div')
-
-  // Every block of the rendered document is a block of SECURITY.md. The longest blocks
-  // are removed first so that a short block cannot eat into a longer one, and what is
-  // left has to be nothing: a sentence the document does not carry is a security claim
-  // written by whoever edited the page (D99, F41).
-  let left = flatten(textOf(rendered))
+  const renderedText = flatten(textOf(rendered))
   const blocks = [...new Set(documentBlocks(document))].sort((a, b) => b.length - a.length)
+
+  // **The direction that fails a renderer which drops a block**: every block of the
+  // document is in the rendered region. It is the half "renders the document" of this
+  // case's own name, and without it a renderer that rendered four of the document's
+  // paragraphs and no more would pass every check in this file — the page whose whole
+  // point is "rendered, never edited" would omit a security claim rather than invent one,
+  // which is just as false a page (D99, W1.8 step 1).
+  for (const block of blocks) {
+    assert.ok(
+      renderedText.includes(flatten(block)),
+      `the built page does not render the document's own block ${JSON.stringify(block.slice(0, 80))}: the page renders ${SOURCE}, and a renderer that drops a paragraph drops what the document says with it (D99, W1.8 step 1)`,
+    )
+  }
+
+  // And the other direction: every block of the rendered document is a block of
+  // SECURITY.md. The longest blocks are removed first so that a short block cannot eat
+  // into a longer one, and what is left has to be nothing: a sentence the document does
+  // not carry is a security claim written by whoever edited the page (D99, F41).
+  let left = renderedText
   for (const block of blocks) left = left.split(flatten(block)).join('')
 
   assert.equal(
@@ -349,4 +367,30 @@ test('every link the document carries survives the render', () => {
       `the built page does not carry the label ${JSON.stringify(label)} of the document's link to ${target}`,
     )
   }
+})
+
+test('the page points at no file the build does not produce', () => {
+  // The rule is Global Constraint 9 — a page names an artifact that exists — the same rule
+  // `website/test/layout.mjs` holds the layout's probe page to. This is the page a reader
+  // actually gets, so the head is checked on the built artifact.
+  //
+  // The sitemap hint is the one pointer the layout composes, and whether the build ships a
+  // sitemap is read from the **resolved configuration** — imported, not pattern-matched,
+  // which is what `website/test/readme.mjs` does with the same file and for the same
+  // reason: a module is what the build runs, and a comment that names an integration is
+  // not an integration. A check written over the config's text cannot tell those apart,
+  // and the failure it misses is this one: a page pointing at a sitemap that no build
+  // produces, which a reader's browser asks for and the host answers with 404.
+  return import('../astro.config.mjs').then((module) => {
+    const integrations = module.default?.integrations ?? []
+    const sitemap = integrations.some((integration) => String(integration?.name ?? integration).includes('sitemap'))
+
+    assert.equal(
+      /<link[^>]*rel="sitemap"/.test(builtPage()),
+      sitemap,
+      sitemap
+        ? 'astro.config.mjs ships a sitemap integration and the built page carries no sitemap hint, so the sitemap the build produces is one no reader is told about'
+        : "the built page points at a sitemap the build does not produce: astro.config.mjs's integration list carries none, and a hint that 404s is the download-link defect in a smaller size (Global Constraint 9)",
+    )
+  })
 })
