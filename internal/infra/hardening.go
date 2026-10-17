@@ -140,6 +140,7 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 	account := fugaroAccountRE(project)
 	type job struct{ member, saID, slug string }
 	var jobs []job
+	var odd []BucketFinding
 	has := map[string]bool{}
 	for _, bd := range p.Bindings {
 		if bd.Condition == nil || bd.Condition.Description != "" {
@@ -151,9 +152,19 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 			}
 			switch bd.Role {
 			case "roles/storage.objectUser":
+				if !strings.Contains(bd.Condition.Expression, "/objects/runs/") {
+					continue // a build account (builds/): it reads no token
+				}
 				saID, ok := strings.CutPrefix(bd.Condition.Title, "fugaro-")
 				sm := jobRunsSlugRE.FindStringSubmatch(bd.Condition.Expression)
 				if !ok || sm == nil || bd.Condition.Expression != gcp.BucketCondition(bucket, gcp.JobBucketPrefixes, sm[1]) {
+					// Not the shape this fugaro writes, so the slug and the
+					// expected tokens/ grant cannot be derived: said, never
+					// passed over as fine.
+					pm := pluginwire.Printable(m)
+					odd = append(odd, BucketFinding{Severity: "info", Member: pm, Role: bd.Role,
+						Problem: "job account " + pm + ": tokens/ read grant not checked (its runs/ grant on gs://" + bucket + " is not in the shape this fugaro writes)",
+						Fix:     "an operator runs fugaro init --repo (" + sealRelease + " or later) in that repository's checkout, which writes both grants"})
 					continue
 				}
 				jobs = append(jobs, job{m, saID, sm[1]})
@@ -162,7 +173,7 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 			}
 		}
 	}
-	var out []BucketFinding
+	out := odd
 	for _, j := range jobs {
 		if has[j.member+"\x00"+gcp.TokenBucketConditionTitle(j.saID)+"\x00"+gcp.TokenBucketCondition(bucket, j.slug)] {
 			continue

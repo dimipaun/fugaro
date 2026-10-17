@@ -260,3 +260,51 @@ func TestDoctorJobTokenGrant(t *testing.T) {
 		}
 	})
 }
+
+// TestDoctorJobTokenGrantNeverSilentlyGreen: when doctor cannot judge the
+// job accounts' tokens/ grants it says so, rather than dropping the check
+// (a missing line reads as nothing wrong): a bucket policy it may not read
+// (a launcher's usual case) or cannot read (a server error), and a job
+// account whose runs/ grant is not in the exact shape this fugaro writes.
+func TestDoctorJobTokenGrantNeverSilentlyGreen(t *testing.T) {
+	const sa, slug = "fugaro-acme-app-w-1234abcd", "acme-app-0123456789abcdef"
+	unchecked := func(t *testing.T, o doctorOutput, want string) {
+		t.Helper()
+		c, ok := doctorCheckByID(o.Checks, "job-token-grant")
+		if !ok || c.OK || c.Severity == "" || !strings.Contains(c.Problem, want) {
+			t.Fatalf("check = %+v (%v), want an unchecked line saying %q", c, ok, want)
+		}
+	}
+	t.Run("policy read refused", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		r.withRunsBucket(t, g, dbLists)
+		g.RefuseBucketPolicy(dbBucket)
+		unchecked(t, r.runDoctorJSON(t), "cannot read the bucket policy")
+	})
+	t.Run("policy read failed", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		r.withRunsBucket(t, g, dbLists, hardenedPolicy()...)
+		g.FailBucketPolicy(dbBucket)
+		unchecked(t, r.runDoctorJSON(t), "cannot read the bucket policy")
+	})
+	t.Run("a runs/ grant of another shape", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		odd := jobBinding(sa, slug)
+		odd.Condition.Expression = gcp.BucketCondition(dbBucket, []string{"runs", "cache"}, slug)
+		r.withRunsBucket(t, g, dbLists, append(hardenedPolicy(), odd)...)
+		o := r.runDoctorJSON(t)
+		c, ok := doctorCheckByID(o.Checks, "job-token-grant")
+		if !ok || c.OK {
+			t.Fatalf("check = %+v (%v), want not OK", c, ok)
+		}
+		var named bool
+		for _, c := range o.Checks {
+			if strings.HasPrefix(c.ID, "job-token-grant-") && strings.Contains(c.Problem, sa) && strings.Contains(c.Problem, "not checked") {
+				named = true
+			}
+		}
+		if !named {
+			t.Fatalf("no line says the account was not checked: %+v", o.Checks)
+		}
+	})
+}
