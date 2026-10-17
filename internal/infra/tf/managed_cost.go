@@ -70,43 +70,44 @@ const (
 	managedCostMachineType = "machine-type"
 )
 
-// The lines, each stated once and read nowhere else.
-const (
-	// managedCostMaxMinInstances is the number the min-instances entry is
-	// above. Zero is the provider's own default, and a plan that does not
-	// state the attribute is at it rather than above it.
-	managedCostMaxMinInstances = 0
-	// managedCostMachineClass names the class the machine-type entry is above:
-	// GCP's shared-core machine types, the smallest class there is, at a
-	// fraction of a vCPU. The class itself is managedCostSmallMachines.
-	managedCostMachineClass = "shared-core"
-	// managedCostSQLClass names the class the tier entry is above: Cloud SQL's
-	// shared-core tiers, its smallest. The class itself is
-	// managedCostSmallSQLTiers.
-	managedCostSQLClass = "shared-core"
-)
+// The line the one entry whose threshold is a number is above. Zero is the
+// provider's own default, and a plan that does not state the attribute is at
+// the line rather than above it.
+const managedCostMaxMinInstances = 0
 
-// managedCostSmallMachines are the machine types at or below the line the
-// machine-type entry names: the class itself, as an allowlist. A type this
-// file has never heard of — a family GCP adds later, a custom type
-// (n2-custom-8-16384), a typo, a value the plan computes — is above the line
-// rather than below it, which is the fail-closed direction every list in this
-// package takes (Task 1.1's managedTypes reads the same way).
-var managedCostSmallMachines = map[string]bool{
+// managedCostClass is a class of resource sizes one entry's line names: the
+// name a refusal uses, and the values at or below the line. The two are one
+// value rather than a name beside a set, so the class is stated once and the
+// words a refusal gives a reader cannot drift from the comparison behind them.
+//
+// The values are an allowlist, and that is the fail-closed direction every
+// list in this package takes (Task 1.1's managedTypes reads the same way): a
+// value the class has never heard of — a family GCP adds later, a custom type
+// (n2-custom-8-16384), a typo, an empty string, a value of another shape — is
+// above the line rather than below it.
+type managedCostClass struct {
+	name  string
+	small map[string]bool
+}
+
+// managedCostMachineClass is the class the machine-type entry is above: GCP's
+// shared-core machine types, the smallest class there is, at a fraction of a
+// vCPU.
+var managedCostMachineClass = managedCostClass{name: "shared-core", small: map[string]bool{
 	"e2-micro":  true,
 	"e2-small":  true,
 	"e2-medium": true,
 	"f1-micro":  true,
 	"g1-small":  true,
-}
+}}
 
-// managedCostSmallSQLTiers are the Cloud SQL tiers at or below the tier entry's
-// line: Cloud SQL's shared-core tiers. An allowlist for the same reason as
-// managedCostSmallMachines.
-var managedCostSmallSQLTiers = map[string]bool{
+// managedCostSQLClass is the class the tier entry is above: Cloud SQL's
+// shared-core tiers, its smallest. A class of its own, not the machine types':
+// the two catalogues share the name and nothing else.
+var managedCostSQLClass = managedCostClass{name: "shared-core", small: map[string]bool{
 	"db-f1-micro": true,
 	"db-g1-small": true,
-}
+}}
 
 // managedCostGPUFamilies are the machine-type families that are an attached
 // GPU in their own right: a VM of one of these carries accelerators whatever
@@ -441,28 +442,29 @@ func managedCostAboveInstances(v any) string {
 		n, managedCostMaxMinInstances)
 }
 
-// managedCostAboveSQLTier is the tier entry's comparison: the class is an
-// allowlist, so a tier this file does not know is above the line rather than
-// below it, and the tier the provider requires cannot be read as below it by
-// being empty.
+// managedCostAboveSQLTier is the tier entry's comparison: a tier the class does
+// not know is above the line, the tier the provider requires included when the
+// plan states it empty.
 func managedCostAboveSQLTier(v any) string {
-	tier := str(v)
-	if managedCostSmallSQLTiers[tier] {
-		return ""
-	}
-	return fmt.Sprintf("the tier %q, above the %s class (%s)",
-		tier, managedCostSQLClass, strings.Join(slices.Sorted(maps.Keys(managedCostSmallSQLTiers)), ", "))
+	return managedCostClassAbove(managedCostSQLClass, "the tier", str(v))
 }
 
 // managedCostAboveMachineType is the machine-type entry's comparison, read the
 // same way and for the same reason as the tier's.
 func managedCostAboveMachineType(v any) string {
-	machine := str(v)
-	if managedCostSmallMachines[machine] {
+	return managedCostClassAbove(managedCostMachineClass, "the machine type", str(v))
+}
+
+// managedCostClassAbove is the comparison the two class entries share: a value
+// the class names is at or below the line, and anything else is above it. The
+// class's own values are the words the refusal gives a reader, so whoever is
+// shown it can see what the plan was held to.
+func managedCostClassAbove(class managedCostClass, what, value string) string {
+	if class.small[value] {
 		return ""
 	}
-	return fmt.Sprintf("the machine type %q, above the %s class (%s)",
-		machine, managedCostMachineClass, strings.Join(slices.Sorted(maps.Keys(managedCostSmallMachines)), ", "))
+	return fmt.Sprintf("%s %q, above the %s class (%s)", what, value, class.name,
+		strings.Join(slices.Sorted(maps.Keys(class.small)), ", "))
 }
 
 // managedCostAboveGuestAccelerator is the GPU entry's first comparison: a
