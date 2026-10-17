@@ -2023,11 +2023,18 @@ export function sanitizeText(
     // key (`AIza` + 35, exactly 39), a GitLab PAT, a Slack token -- and so does
     // any long high-entropy run, which is the one shape no pattern can find.
     // Every one of those is redacted in a title, a reason and a stage, and the
-    // recorder pseudonymises the same value, so this class was the single place
-    // a credential came out whole: design section 5.1 rule 7 makes this layer
-    // the last line of defence for live (non-fixture) documents. A validating
-    // class draws the value whole or not at all, so this is a refusal and never
-    // a placeholder -- half of a login is not a person.
+    // recorder pseudonymises the same value, so a class that draws its value
+    // whole is where a credential comes out whole: design section 5.1 rule 7
+    // makes this layer the last line of defence for live (non-fixture)
+    // documents. A validating class draws the value whole or not at all, so this
+    // is a refusal and never a placeholder -- half of a login is not a person.
+    // It is not the only such class: the token families are answered for
+    // everywhere by the credential pass above, but the run no pattern can find
+    // is the entropy rule's, and `branch` -- whose grammar is that alphabet
+    // entire -- asks the same question below. It answers with the recorder's
+    // marker where this class refuses, and the reason is in that block: the
+    // recorder has a `<branch>` for every branch value and a pseudonym this
+    // layer cannot mint for a person.
     if (holdsCredential(text)) {
       return refuse(`${field} is shaped like a credential and not like a person, so the console will not draw it`)
     }
@@ -2085,6 +2092,26 @@ export function sanitizeText(
 
   if (textClass === 'branch') {
     if (isMarkerText(text)) return ok(text, flags)
+    // The one validating class whose grammar is the credential alphabet whole:
+    // `WHOLE_BRANCH_RE` allows upper case, lower case and digits, which is what
+    // a token family and a base64 body are made of. The credential pass above
+    // has answered for every shape `TOKEN_SHAPES` knows, but a run no pattern
+    // can find is the entropy rule's, and this class was drawing one whole
+    // (review of Task 4.1: a 20-character mixed-case run, and a 40-character hex
+    // digest git would take as a ref).
+    //
+    // The answer is the recorder's own, and not a refusal -- which is where this
+    // class parts company with `person`. The recorder writes `<branch>` for
+    // *every* value under a branch key, whatever it holds, and this layer
+    // already ships that marker (`BRANCH_PLACEHOLDER` is `BRANCH_MARKER`,
+    // pinned by a test); drawing it is therefore not a redaction the document
+    // does not contain but exactly the one the recorder would have made. The
+    // `person` class has no such answer to fall back on -- the recorder writes a
+    // pseudonym from the document's own table of people, and half a login is not
+    // a person -- so it refuses instead. And the entropy rule is a heuristic:
+    // `feat/ABC-123-add-thing` is a real branch name the rule calls a credential,
+    // and a redacted cell is a better answer to that than a refused document.
+    if (holdsCredential(text)) return ok(BRANCH_PLACEHOLDER, [...flags, 'branch-placeholder'])
     if (text.endsWith('.lock') || text.endsWith('/') || text.startsWith('/')) {
       return refuse(`${field} is not a valid branch`)
     }
