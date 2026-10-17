@@ -111,13 +111,18 @@ func TestDocsBudgetTokenChannelCitationsExist(t *testing.T) {
 		}
 	}
 
-	// The number the outline proposes, read from the register itself: a
-	// `## Check 60` section or a `| 60 |` row in the checklist means another
-	// document has taken it, and this design would be proposing a taken number.
+	// The number the outline proposes is now written, by the seal's own
+	// launcher half: the checklist's Check 60 is this design's, owner-run,
+	// sandbox only, and never the belong installation.
 	checklist := readDoc(t, "docs/gcp-live-checklist.md")
-	for _, taken := range []string{"## Check 60", "| 60 |"} {
-		if strings.Contains(checklist, taken) {
-			t.Errorf("docs/gcp-live-checklist.md carries %q, so Check 60 is no longer free and %s must propose the next number", taken, path)
+	i := strings.Index(checklist, "## Check 60: the sealed budget token")
+	if i < 0 || !strings.Contains(checklist, "| 60 | The sealed budget token") {
+		t.Fatalf("docs/gcp-live-checklist.md does not carry Check 60 for %s (its section and its summary row)", path)
+	}
+	section := checklist[i:]
+	for _, want := range []string{"never `belong`", "run by you", "NOT RUN", "**No agent runs any step of this check**", "P=fugaro-dev", "never a token, a key"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 60 does not say %q", want)
 		}
 	}
 }
