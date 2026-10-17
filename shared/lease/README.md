@@ -31,9 +31,12 @@ releaseLease(state, { holder: 'consumer-a' });        // { ok: true, released, s
 | `Store.Claim(ctx, holder, at) (ok, existing, err)` | `takeLease(state, { holder, at })` → `ok: true` or `ok: false, code: 'already-claimed', existing` |
 | `Store.ReadClaim(ctx)` | `readLease(state)` |
 | `releaseClaim` (deletes only the object its own holder holds) | `releaseLease(state, { holder })` |
-| `takeClaim`'s staleness rule: fresh is `now.Sub(cur.At) < claimTTL` | the same comparison, `at - claim.at < ttl` |
+| `takeClaim`'s staleness rule: fresh is `now.Sub(cur.At) < claimTTL` | the same comparison, `at - claim.at < ttl`, plus one bound: a claim more than `MAX_CLOCK_SKEW` ahead of `at` is expired (below) |
 
-**`at` is a whole number of milliseconds since the epoch.** The wire encoding of a timestamp —
+**`at` is a whole number of milliseconds since the epoch, from 1 to `MAX_TIMESTAMP`**
+(2100-01-01T00:00:00Z, `Date.UTC(2100, 0, 1)`); 0 and -0 are refused. A state's TTL is a whole
+number of milliseconds from 1 to `MAX_TTL` (24 hours). Beyond either bound the value is refused,
+not clamped. The wire encoding of a timestamp —
 RFC3339, the server's own clock — belongs to the message schema (P0.2) and the presence rule
 (P1.4), not here; this module's unit is the one JS arithmetic is exact in.
 
@@ -77,10 +80,10 @@ is refused rather than parsed, because a guessed timestamp is how a lease goes s
 | `unknown-field` | a lease, a state, a take or a release carries a field this module does not define |
 | `missing-field` | one of the fields above is absent |
 | `bad-type` | the value is not a plain object at all (null, an array, a string, a class instance) |
-| `bad-holder` | the holder is not a string, is blank, is padded with whitespace, or carries an invisible or direction-changing character (below) |
+| `bad-holder` | the holder is not a string, is blank, carries any whitespace, an invisible, direction-changing or blank-looking character, a private-use or unassigned code point, or is not in NFC (below) |
 | `oversize` | the holder is longer than `MAX_HOLDER_LENGTH` (256) |
-| `bad-timestamp` | `at` is not a whole, non-negative number of milliseconds |
-| `bad-ttl` | the state's TTL is not a positive whole number of milliseconds (zero included: a TTL of zero makes every claim stale the instant it is taken, which is the same as no lease at all) |
+| `bad-timestamp` | `at` is not a whole number of milliseconds from 1 to `MAX_TIMESTAMP` (0 and -0 included) |
+| `bad-ttl` | the state's TTL is not a whole number of milliseconds from 1 to `MAX_TTL` (zero included: a TTL of zero makes every claim stale the instant it is taken, which is the same as no lease at all) |
 | `unreadable-claim` | the state holds something that is not a lease |
 | `already-claimed` | a lease is held, by anyone, and the TTL has not run out |
 | `not-holder` | a release names a holder other than the one holding the lease |
@@ -94,14 +97,40 @@ the soft hyphen, the BOM) and the two line separators, **Zl** and **Zp**. Two di
 `Printable`, both deliberate: an unpaired surrogate is refused too (**Cs** — `Printable` escapes
 it as RuneError, and a JS string can hold one where a Go string cannot), and `Printable`'s tab is
 not exempt, because it has to print something readable while a holder is an identity with nothing
-to print. A holder that is merely **not ASCII** — an accented or CJK name — is not refused, and a
+to print.
+
+On top of that set, so that **two holders that print the same cannot differ**: every whitespace code
+point (`\p{White_Space}`, which includes all of **Zs** — a holder has no spaces at all), the
+**default-ignorable** code points (variation selectors, the combining grapheme joiner), the
+blank-looking letters **U+2800** (braille pattern blank) and the **Hangul fillers** (U+115F,
+U+1160, U+3164, U+FFA0), **Co** (private use) and **Cn** (unassigned, as of the running engine's
+Unicode version). And a holder must already be in **NFC**: a decomposed `e` + U+0301 prints as the
+precomposed `é`, so a non-NFC holder is **refused rather than normalized** — normalizing would
+quietly make two inputs one identity. A holder that is merely **not ASCII** — an accented or CJK name — is not refused, and a
 test asserts that as the positive control, so the rule cannot quietly become "ASCII only".
 
-**Two fail-closed choices worth naming.**
+**Every input is read once.** A state, a held claim and a request are each copied into a frozen
+snapshot, one read per field, before anything is judged, so a getter or a Proxy cannot answer one
+value to the validation and another to the comparison (a TTL that reads as ten minutes and then as
+`NaN` would otherwise make `x < NaN` false and let a fresh lease be taken over). Tests count the
+reads.
 
-- **A claim timestamped in the future is never stale.** The comparison is the CLI's, so a negative
-  age is not evidence that the holder died — it is two clocks disagreeing, and the failure mode of
-  getting the direction wrong is a second consumer on one message.
+**Fail-closed choices worth naming.**
+
+- **A claim timestamped ahead of the caller — the decision for the owner to review.** A claim up to
+  `MAX_CLOCK_SKEW` (**5 minutes**, exported) ahead of the caller's `at` is fresh, and only until its
+  own timestamp plus the TTL, exactly as the CLI's comparison has it: a small negative age is two
+  clocks disagreeing, not a dead holder. A claim **more** than `MAX_CLOCK_SKEW` ahead is treated as
+  **expired**, and may be taken over. The reason is a denial of service: without a bound, a holder
+  that writes `at: MAX_TIMESTAMP` (or `Number.MAX_SAFE_INTEGER`, before the ceiling existed) blocks
+  every other holder until it chooses to release. **The alternative** is to refuse such a take at
+  `takeLease` (a claimant whose `at` is ahead of the held claim — or of some reference — by more
+  than the tolerance is refused, and the far-future lease is never written). It was not chosen
+  because the module has no clock of its own: at take time there is no "now" to compare a lone
+  claimant against, so a far-future first take cannot be told from an honest one, and the
+  take-over rule is the only place both instants are in hand. The cost of the chosen rule is that a
+  holder whose clock runs more than five minutes fast can lose its lease to a slower-clocked
+  claimant; the owner may prefer the refusal.
 - **An unreadable claim is refused, never taken over.** `takeClaim` treats one as stale and takes it
   over, and it may: its read carries a generation, so its takeover is conditional on the claim not
   having changed since. A state value carries no generation, so an unreadable claim here is an
@@ -113,6 +142,11 @@ test asserts that as the positive control, so the rule cannot quietly become "AS
 ```sh
 cd shared && npm test
 ```
+
+`shared/lease/mutation-proof.sh` disables each guard above in turn (the skew bound and its
+boundary, the timestamp and TTL ceilings, zero, each holder class, NFC, the single-read snapshot,
+and the TTL a release carries on) and asserts that the suite catches every one; run it from a clean
+tree.
 
 `node:test` and `node:assert/strict` only: no dependency, no install, no network, no filesystem, no
 database, and no secret-shaped literal — there is no secret in a lease. The package's CI job does

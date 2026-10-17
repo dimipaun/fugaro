@@ -28,14 +28,14 @@
 //     exists: two consumers acting on one message is the failure
 //     desktop-console-v2's F11 describes for the launch claim.
 //   * the boundaries -- exactly at the TTL the lease is stale and takeable,
-//     one millisecond before it is not, and a claim timestamped in the
-//     FUTURE is not stale. The last one is the fail-closed direction: a
-//     negative age is a clock disagreement, not evidence that the holder
-//     died, and the cost of getting it wrong is a second consumer.
+//     one millisecond before it is not, and a claim timestamped ahead of the
+//     caller is fresh only within MAX_CLOCK_SKEW: a small negative age is a
+//     clock disagreement, but an unbounded one would let a far-future
+//     timestamp hold the lease forever.
 //   * the fail-closed refusals -- unknown field, missing field, wrong type,
-//     blank/padded/control-character/oversize holder, a timestamp that is not
-//     a whole number of milliseconds, a TTL that is not positive, and a held
-//     claim this module cannot read. Each has a code of its own, and the
+//     blank/whitespace/invisible/look-alike/non-NFC/oversize holder, a
+//     timestamp or TTL outside [1, its ceiling], and a held claim this
+//     module cannot read -- each input read exactly once. Each has a code of its own, and the
 //     tests assert the code rather than a message.
 //   * no clock and no randomness of its own: every instant is an argument.
 //     The count is taken rather than the call thrown, so that the runner's
