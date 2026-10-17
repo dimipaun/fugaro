@@ -11,6 +11,8 @@ import (
 	"google.golang.org/api/cloudasset/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The whole-project inventory (Task 4.1, design D59).
@@ -43,14 +45,24 @@ import (
 // resource types nobody has listed yet.
 const ServiceCloudAsset = "cloudasset.googleapis.com"
 
-// RoleCloudAssetViewer is the read role the whole-project read needs: the
-// narrowest role that lists a project's assets, and a read role, so the
-// identity that runs the inventory gains no write from holding it. It is named
-// once, here, so the grant, the gate that admits it and the owner-run check
-// that exercises it (Check 67a) all refer to one string.
+// RoleCloudAssetReader is the read role the whole-project read needs: the
+// installation's own custom role holding exactly cloudasset.assets.searchAllResources,
+// the one permission the read's SearchAllResources call makes, and a read
+// permission, so the identity that runs the inventory gains no write from
+// holding it. It is the same role ID the gate pins (tf.CloudAssetRole, whose
+// permissions tf.RolePermissions holds to that one element), so the role the
+// module creates, the role the gate admits a grant of, the role this read
+// needs, and the owner-run check that exercises it (Check 67a) cannot drift
+// apart.
+//
+// The owner's ruling of 2026-10-17 (Task 4.1a) replaced the predefined
+// roles/cloudasset.viewer this read first named: viewer also carries
+// cloudasset.assets.listResource, which no call here makes — the read is
+// SearchAllResources alone — and more besides, so holding it was a read of a
+// wider kind than the inventory is.
 //
 // The installation module grants it to the operators (iam.tf's
-// operator_cloudasset_viewer): the operator running a managed apply is the
+// operator_cloud_asset_reader): the operator running a managed apply is the
 // identity that makes the read. The module grant and this role's entry in
 // internal/infra/tf's grantRules landed together, because that table is an
 // allowlist — an installation grant of a role the table does not name makes
@@ -58,7 +70,7 @@ const ServiceCloudAsset = "cloudasset.googleapis.com"
 // becomes the impersonated deployer account (D75, Task 1.5), and the grant
 // that account needs of this role is that task's to make beside the roles the
 // account is created with.
-const RoleCloudAssetViewer = "roles/cloudasset.viewer"
+const RoleCloudAssetReader = tf.CloudAssetRole
 
 // inventoryPageSize is how many assets the read asks for per page. The read
 // follows the next-page token, so it is a request-size knob; the bounds on
@@ -184,8 +196,8 @@ const (
 	// fugaro init enables with the installation's other APIs.
 	CauseAPIDisabled Cause = "the Cloud Asset API is disabled in the project"
 	// CauseRoleMissing is the identity running the read without
-	// RoleCloudAssetViewer.
-	CauseRoleMissing Cause = "the identity running the read does not hold " + RoleCloudAssetViewer
+	// RoleCloudAssetReader.
+	CauseRoleMissing Cause = "the identity running the read does not hold " + RoleCloudAssetReader
 	// CauseQuota is the read refused for quota.
 	CauseQuota Cause = "the read is over its quota"
 	// CauseUnreadable is any other failure of the read.
@@ -362,7 +374,7 @@ func (in Inventory) what() string {
 
 // classify says which of the read's failures this is, because the three are
 // three different things for an operator to do: enable the API (fugaro init
-// does), grant RoleCloudAssetViewer, or wait out a quota. It reads the
+// does), grant RoleCloudAssetReader, or wait out a quota. It reads the
 // structured answer, not the message, in the discipline internal/infra's own
 // serviceDisabled keeps (apis.go): a 403 whose details carry an ErrorInfo with
 // reason SERVICE_DISABLED *for this API* is a disabled API, any other 403 is a
@@ -430,7 +442,7 @@ type CloudAssets struct {
 
 // NewCloudAssets connects to the Cloud Asset API. The identity the returned
 // read runs as is the caller's — the one that applies a managed plan — and it
-// needs RoleCloudAssetViewer on the project, which is a read role.
+// needs RoleCloudAssetReader on the project, which is a read role.
 func NewCloudAssets(ctx context.Context, opts ...option.ClientOption) (*CloudAssets, error) {
 	svc, err := cloudasset.NewService(ctx, opts...)
 	if err != nil {

@@ -78,8 +78,8 @@ run "root_passes_inputs" {
     error_message = "the root must pass log_isolation (default on) to the module and output the view"
   }
   assert {
-    condition     = keys(output.role_ids) == ["build_submitter", "job_runner", "launcher", "tag_mover"]
-    error_message = "the root must output every custom role's full name, the tag mover's included"
+    condition     = keys(output.role_ids) == ["build_submitter", "cloud_asset_reader", "job_runner", "launcher", "tag_mover"]
+    error_message = "the root must output every custom role's full name, the tag mover's and the Cloud Asset reader's included"
   }
 }
 
@@ -1382,7 +1382,9 @@ run "TestHistoryEnvHasBucket" {
 # The same-project layout puts these accounts in the project that also holds
 # the budget backend, so the resolved project-level grants and custom roles of
 # the installation module are pinned exactly: people get only the launcher and
-# build-submitter custom roles, the one service account with a project role is
+# build-submitter custom roles and the whole-project inventory's own Cloud Asset
+# read role (fugaroCloudAssetReader, holding cloudasset.assets.searchAllResources
+# alone, Task 4.1a), the one service account with a project role is
 # the history account (its narrow Cloud Run role), and the scheduler account
 # has none. (Mock providers expose a child module's resources only when the
 # module itself is the run's target, hence a module-level run here; the repo
@@ -1467,8 +1469,20 @@ run "same_project_resolved_iam" {
     error_message = "the installation grants people only the fugaroLauncher and fugaroBuildSubmitter custom roles on the project"
   }
   assert {
-    condition     = alltrue([for m in google_project_iam_member.operator_cloudasset_viewer : m.role == "roles/cloudasset.viewer" && !startswith(m.member, "serviceAccount:")])
-    error_message = "the operators hold the whole-project inventory's read role, and no service account holds it through this resource"
+    condition     = alltrue([for m in google_project_iam_member.operator_cloud_asset_reader : m.role == "projects/proj-1234/roles/fugaroCloudAssetReader" && !startswith(m.member, "serviceAccount:")])
+    error_message = "the operators hold the whole-project inventory's read role, this installation's own fugaroCloudAssetReader, and no service account holds it through this resource"
+  }
+  assert {
+    condition     = keys(google_project_iam_member.operator_cloud_asset_reader) == ["user:operator@example.com"]
+    error_message = "the whole-project inventory's read role is granted to the operators, and to nobody else"
+  }
+  assert {
+    condition     = google_project_iam_custom_role.cloud_asset_reader.role_id == "fugaroCloudAssetReader" && google_project_iam_custom_role.cloud_asset_reader.title == "Fugaro Cloud Asset reader"
+    error_message = "the whole-project inventory's read role is this installation's own custom role, not a predefined one"
+  }
+  assert {
+    condition     = google_project_iam_custom_role.cloud_asset_reader.permissions == toset(["cloudasset.assets.searchAllResources"])
+    error_message = "fugaroCloudAssetReader holds exactly cloudasset.assets.searchAllResources, the one permission the read's SearchAllResources call needs, and nothing else"
   }
   assert {
     condition = (google_project_iam_member.history_launcher[0].role == google_project_iam_custom_role.history[0].name &&
@@ -1483,7 +1497,7 @@ run "same_project_resolved_iam" {
   }
   assert {
     condition = alltrue(flatten([
-      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.history[0]] :
+      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.cloud_asset_reader, google_project_iam_custom_role.history[0]] :
       [for p in r.permissions : !can(regex("^(firebase|datastore|identitytoolkit|iam\\.|resourcemanager|serviceusage|apikeys)", p))]],
     ]))
     error_message = "no installation custom role holds a permission on the budget backend, identities or IAM"
