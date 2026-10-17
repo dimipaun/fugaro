@@ -6,14 +6,12 @@ build and its own schedule (D90): nothing under it is importable by the Go modul
 Go module gains no dependency from it. The boundary is a test, not a convention —
 `internal/cli/docs_website_boundary_test.go`.
 
-**What is here today:** the shell and the first of the pages. The pinned toolchain, the
-static Astro configuration, the check that runs the build and every test file, and this
-document. `website/data/` and `website/content/` hold the facts Part 0 generates; the pages
-that render them land in W1.3 (`src/layouts/`) through W1.12, and the first two are the hero
-(`/`) and the architecture diagram (`/how-it-works/`). **Which routes the build produces is
-`ls website/src/pages/`** — the page tasks add to that directory — so that this paragraph
-does not need an edit each time one lands, and so that a reader who wants the list reads the
-list rather than a copy of it that has drifted (Global Constraint 6).
+**What is here today:** the shell. The pinned toolchain, the static Astro configuration,
+the check that runs the build and every test file, and this document. `website/data/` and
+`website/content/` already hold the facts Part 0 generates; the pages that render them land
+in W1.3 (`src/layouts/`) through W1.12. **The build therefore produces no page yet**, which
+is why `npm run build` is green today and why the first page's own test arrives with the
+first page.
 
 ## Toolchain
 
