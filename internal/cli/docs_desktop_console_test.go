@@ -1664,7 +1664,7 @@ func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 // directory's README carries THIS file's row: what it is, that it is staged
 // because no agent may push a workflow here, and the one command that applies
 // it. The name is singular and row-specific on purpose -- Task 4.2 adds a second
-// console row and a second test, `TestPendingWorkflowsReadmeNamesTheConsoleRows`
+// console row and a second test, `TestDocsPendingWorkflowsReadmeNamesTheConsoleRows`
 // (plural), which asserts both -- so no reader has to work out whether two
 // similarly-named tests are the same test.
 func TestPendingWorkflowsReadmeNamesTheConsoleTestsRow(t *testing.T) {
@@ -1737,7 +1737,7 @@ func TestPendingWorkflowsReadmeNamesTheConsoleTestsRow(t *testing.T) {
 // The workflow's *behaviour* cannot run here -- it has never run, and the
 // directory's README says so -- but its text can be pinned, which is what these
 // do. The mutations that matter, and the ones the red step runs first: adding
-// `pull_request:` to the file's `on:` (TestConsoleReleaseWorkflowHoldsNoPull-
+// `pull_request:` to the file's `on:` (TestDocsConsoleReleaseWorkflowHoldsNoPull-
 // RequestTrigger), a planted `uses: actions/checkout@v5` (the pin loop), and a
 // signing step that skips when a secret is absent instead of failing (the
 // fail-closed assertion).
@@ -1852,7 +1852,7 @@ func consoleTriggerBlock(t *testing.T, text string) string {
 	return strings.Join(block, "\n")
 }
 
-// TestConsoleReleaseWorkflowHoldsNoPullRequestTrigger is the named sub-assertion
+// TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger is the named sub-assertion
 // the security finding behind the two-file split turns on, split out so the
 // failure sentence names the bug. The signing job reads the Apple certificate
 // and the App Store Connect key from a protected environment; if it also ran on
@@ -1860,7 +1860,7 @@ func consoleTriggerBlock(t *testing.T, text string) string {
 // signing material would be GitHub's rule about *forks*, which is a rule about
 // forks and not about branches. **The mutation that proves it**: adding
 // `pull_request:` to the file's `on:` makes this red.
-func TestConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
+func TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
 	text, wf, on, _ := readConsoleReleaseWorkflow(t)
 	block := consoleTriggerBlock(t, text)
 
@@ -1897,28 +1897,80 @@ func TestConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
 	}
 }
 
-// TestConsoleReleaseWorkflowIsStagedAndPinned holds the staged signing file to
-// what the plan's Task 4.2 says it is: pinned, tag-only, secret-referencing and
-// never secret-holding, fail-closed, and -- once the owner has copied it in --
-// byte-identical to the file under .github/workflows/.
+// consoleReleaseSigningStep is the name of the one step in the signing job that
+// holds a secret. Everything that needs the certificate or the App Store
+// Connect key happens inside it, after every install and download has run with
+// no secret on the runner (review of Task 4.2, round 2).
+const consoleReleaseSigningStep = "Sign, notarise and staple the console"
+
+// consoleRunLines is a step's `run:` script as trimmed, non-empty lines with
+// shell comments dropped, so an assertion about a command cannot be satisfied
+// by a comment that names it.
+func consoleRunLines(run string) []string {
+	var out []string
+	for _, line := range strings.Split(run, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// consoleLineIndex is the index of the first line of lines equal to want, or
+// containing it when contains is true; -1 when there is none.
+func consoleLineIndex(lines []string, want string, contains bool) int {
+	for i, line := range lines {
+		if line == want || (contains && strings.Contains(line, want)) {
+			return i
+		}
+	}
+	return -1
+}
+
+// consoleReleaseRawSteps is the release job's steps as raw mappings, so a key
+// the typed struct does not model (`continue-on-error`, `timeout-minutes`, a
+// `shell:`) is still visible to the assertions.
+func consoleReleaseRawSteps(t *testing.T, rawJobs map[string]map[string]any) []map[string]any {
+	t.Helper()
+	list, ok := rawJobs["release"]["steps"].([]any)
+	if !ok {
+		t.Fatalf("%s's release job has no step list", consoleReleaseWorkflowPath)
+	}
+	var steps []map[string]any
+	for i, s := range list {
+		m, ok := s.(map[string]any)
+		if !ok {
+			t.Fatalf("%s's release job step %d is not a mapping", consoleReleaseWorkflowPath, i)
+		}
+		steps = append(steps, m)
+	}
+	return steps
+}
+
+// TestDocsConsoleReleaseWorkflowIsStagedAndPinned holds the staged signing file
+// to what the plan's Task 4.2 says it is, as amended by its round-2 review and
+// the owner's "Separate console release" ruling of 2026-10-17: pinned, tag-only,
+// gated on main, no secret on the runner while anything installs, every secret
+// in exactly one step, fail-closed with no way to skip a step, its own
+// `console-vX.Y.Z` release and never the CLI's, and -- once the owner has copied
+// it in -- byte-identical to the file under .github/workflows/.
 //
-// The file's own comment header states every clause below; this test is what
-// keeps the header from being the only place a clause lives, which is how the
-// signing job and the pull-request tests job became one file in an earlier
-// revision of the plan.
-func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
+// It reads the file structurally (yaml.v3, already in go.mod) wherever a
+// substring scan is what would let a mutation through: an `if:` on a step, an
+// `env:` at the wrong level, a secret in the wrong step. Each clause names the
+// mutation it was proved against in console/README.md's Task 4.2 table.
+func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	text, wf, _, rawJobs := readConsoleReleaseWorkflow(t)
 
-	// Every `uses:` is pinned to a full commit SHA with a `# vX.Y.Z` comment.
-	// **Exactly two actions**, deliberately: the signing, notarising, stapling
-	// and verifying steps are `run:` calls to xcrun, codesign, security and the
-	// rest of the macOS runner's own tools, because an action's SHA cannot be
-	// verified in this run's environment and a workflow that holds a private key
-	// is the last place to add one nobody has read. A third action here is a
-	// deliberate edit to this count, with the upstream pin verified by hand.
+	// Every `uses:` is pinned to a full commit SHA with a `# vX.Y.Z` comment, and
+	// there are exactly two (checkout and setup-node): the signing, notarising,
+	// stapling and verifying steps are `run:` calls to the macOS runner's own
+	// tools.
 	uses := 0
 	for _, line := range strings.Split(text, "\n") {
-		if !strings.Contains(line, "uses:") {
+		if !strings.Contains(line, "uses:") || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
 		uses++
@@ -1927,104 +1979,145 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 	}
 	if uses != 2 {
-		t.Errorf("%s pins %d actions, want exactly 2 (checkout and setup-node): every other step is a `run:` with a tool the macOS runner already has, so there is no SHA to verify offline", consoleReleaseWorkflowPath, uses)
+		t.Errorf("%s pins %d actions, want exactly 2 (checkout and setup-node)", consoleReleaseWorkflowPath, uses)
 	}
 
-	// One job, keyed `release` -- the key plan Task 4.2's table names -- on the
-	// platform this artifact ships for, reading its secrets from the protected
-	// environment the owner creates (Task 4.5) and from nowhere else.
+	// One job, keyed `release`, on a pinned macOS runner, reading its secrets
+	// from the protected environment the owner creates (Task 4.5).
 	job, ok := wf.Jobs["release"]
-	if !ok {
+	if !ok || len(wf.Jobs) != 1 {
 		var keys []string
 		for name := range wf.Jobs {
 			keys = append(keys, name)
 		}
 		slices.Sort(keys)
-		t.Fatalf("%s has no `release` job (it has %v): that is the key the plan's two-file table pins", consoleReleaseWorkflowPath, keys)
+		t.Fatalf("%s has jobs %v, want exactly [release]: the signing job is one job, and a second is another door into the same environment", consoleReleaseWorkflowPath, keys)
 	}
-	if len(wf.Jobs) != 1 {
-		var keys []string
-		for name := range wf.Jobs {
-			keys = append(keys, name)
-		}
-		slices.Sort(keys)
-		t.Errorf("%s has jobs %v: the signing job is one job, and a second one is another door into the same environment", consoleReleaseWorkflowPath, keys)
-	}
-	if job.RunsOn != "macos-latest" {
-		t.Errorf("%s's release job runs on %q, want macos-latest: codesign, notarytool and stapler are macOS tools and the artifact is the macOS bundle", consoleReleaseWorkflowPath, job.RunsOn)
+	if job.RunsOn != "macos-15" {
+		t.Errorf("%s's release job runs on %q, want the pinned macos-15: the runner image is the signing toolchain, and macos-latest moves it without a reviewed edit", consoleReleaseWorkflowPath, job.RunsOn)
 	}
 	if job.Environment != "console-release" {
-		t.Errorf("%s's release job takes environment %q, want exactly %q: that name is the protected environment the owner creates, with the owner as required reviewer and deployments restricted to tags (owner, 2026-10-17)", consoleReleaseWorkflowPath, job.Environment, "console-release")
-	}
-	if job.If != "" {
-		t.Errorf("%s's release job carries `if: %s`: a guarded signing job is a release that silently publishes nothing", consoleReleaseWorkflowPath, job.If)
+		t.Errorf("%s's release job takes environment %q, want exactly %q (owner, 2026-10-17)", consoleReleaseWorkflowPath, job.Environment, "console-release")
 	}
 
-	// Permissions: declared, minimal, and no `write-all` anywhere. The job
-	// uploads the release's assets, so it holds `contents: write`; the gate reads
-	// the commit's check-runs, so it holds `checks: read`. Nothing else.
+	// Permissions: declared, minimal, and no `write-all` anywhere.
 	if strings.Contains(text, "write-all") {
-		t.Errorf("%s contains `write-all`: the job that holds the signing key gets the permissions it needs and no others", consoleReleaseWorkflowPath)
+		t.Errorf("%s contains `write-all`", consoleReleaseWorkflowPath)
 	}
 	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
 		t.Errorf("%s's workflow-level permissions = %v, want exactly contents: read", consoleReleaseWorkflowPath, wf.Permissions)
 	}
 	wantJobPerms := map[string]string{"contents": "write", "checks": "read"}
 	if !reflect.DeepEqual(job.Permissions, wantJobPerms) {
-		t.Errorf("%s's release job permissions = %v, want exactly %v: contents: write is the release asset upload, checks: read is the release gate", consoleReleaseWorkflowPath, job.Permissions, wantJobPerms)
-	}
-	if _, ok := rawJobs["release"]["permissions"]; !ok {
-		t.Errorf("%s's release job inherits permissions instead of declaring them", consoleReleaseWorkflowPath)
+		t.Errorf("%s's release job permissions = %v, want exactly %v", consoleReleaseWorkflowPath, job.Permissions, wantJobPerms)
 	}
 
-	// Secrets are reached only as `${{ secrets.NAME }}` in a step's `env:` value:
-	// never inlined into a command line, never in a `with:` of an action, and
-	// never a literal. The set of names is exactly the owner's six.
-	secretRef := regexp.MustCompile(`^\s+([A-Z][A-Z0-9_]*): \$\{\{ secrets\.([A-Z][A-Z0-9_]*) \}\}$`)
-	seen := map[string]int{}
-	for _, line := range strings.Split(text, "\n") {
-		if !strings.Contains(line, "secrets.") {
+	// **Nothing can skip a step or swallow its failure.** No `if:` on the job or
+	// on any step except the cleanup's `always()` (mutation: `if: false` on the
+	// gate or on the signing step), no `continue-on-error` at any level, and no
+	// workflow- or job-level `env:` or `defaults:` (mutation: a job-level `env:`
+	// holding a secret, which every step -- the installs included -- would then
+	// carry).
+	var top map[string]any
+	if err := yaml.Unmarshal([]byte(text), &top); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"env", "defaults"} {
+		if _, ok := top[key]; ok {
+			t.Errorf("%s has a workflow-level `%s:`: every step would inherit it, and secrets live in exactly one step's env", consoleReleaseWorkflowPath, key)
+		}
+		if _, ok := rawJobs["release"][key]; ok {
+			t.Errorf("%s's release job has a job-level `%s:`: every step would inherit it, the installs included", consoleReleaseWorkflowPath, key)
+		}
+	}
+	for _, key := range []string{"if", "continue-on-error"} {
+		if _, ok := rawJobs["release"][key]; ok {
+			t.Errorf("%s's release job carries `%s:`: a guarded or failure-tolerant signing job is a release that silently publishes nothing, or an unsigned one", consoleReleaseWorkflowPath, key)
+		}
+	}
+	rawSteps := consoleReleaseRawSteps(t, rawJobs)
+	if len(rawSteps) != len(job.Steps) {
+		t.Fatalf("%s: %d raw steps, %d typed", consoleReleaseWorkflowPath, len(rawSteps), len(job.Steps))
+	}
+	cleanup := -1
+	for i, raw := range rawSteps {
+		if _, ok := raw["continue-on-error"]; ok {
+			t.Errorf("%s's step %q carries `continue-on-error`: a step of the signing job that may fail is a check that does not hold", consoleReleaseWorkflowPath, job.Steps[i].Name)
+		}
+		cond, has := raw["if"]
+		if !has {
 			continue
 		}
-		// A comment may name the form (`${{ secrets.NAME }}`) without being one:
-		// the header explains the rule, and it must be able to.
+		if cond == "always()" && strings.Contains(job.Steps[i].Run, "security delete-keychain") && cleanup < 0 {
+			cleanup = i
+			continue
+		}
+		t.Errorf("%s's step %q carries `if: %v`: no step of the signing job is conditional except the cleanup's always(), so nothing (the gate, the fail-closed check, the signing) can be skipped", consoleReleaseWorkflowPath, job.Steps[i].Name, cond)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(trimmed, "continue-on-error") {
+			t.Errorf("%s carries %q: nothing in the signing job is allowed to fail quietly", consoleReleaseWorkflowPath, trimmed)
+		}
+	}
+	if cleanup < 0 {
+		t.Fatalf("%s has no `if: always()` step deleting the temporary keychain", consoleReleaseWorkflowPath)
+	}
+	if cleanup != len(job.Steps)-1 {
+		t.Errorf("%s's cleanup is step %d of %d, want the last", consoleReleaseWorkflowPath, cleanup, len(job.Steps))
+	}
+	for _, want := range []string{"appstoreconnect.p8", "console-certificate.p12", "hdiutil detach", "security delete-keychain"} {
+		if !strings.Contains(job.Steps[cleanup].Run, want) {
+			t.Errorf("%s's cleanup step does not use %q", consoleReleaseWorkflowPath, want)
+		}
+	}
+
+	// `|| true` in the cleanup step and nowhere else (the header claims this).
+	for i, step := range job.Steps {
+		if i == cleanup {
+			continue
+		}
+		for _, line := range consoleRunLines(step.Run) {
+			if strings.Contains(line, "|| true") || strings.Contains(line, "|| :") {
+				t.Errorf("%s's step %q swallows a failure (%q): `|| true` is the cleanup step's and nowhere else", consoleReleaseWorkflowPath, step.Name, line)
+			}
+		}
+	}
+
+	// No `${{ }}` expression inside a `run:` -- not `github.ref_name`, not an
+	// input, not a step output: a value reaches a script only through `env:`,
+	// where the shell quotes it, never spliced into the script's text.
+	for _, step := range job.Steps {
+		if strings.Contains(step.Run, "${{") {
+			t.Errorf("%s's step %q inlines a `${{ }}` expression into its script: values reach a `run:` through `env:` only", consoleReleaseWorkflowPath, step.Name)
+		}
+	}
+
+	// No shell tracing anywhere: `set -x`, `set -eux`, `set -o xtrace`, `bash -x`
+	// or a `shell:` that traces would print every expanded secret. (`ditto -x`
+	// is ditto's extract flag, not a trace, which is why this matches the shell
+	// forms rather than any `-x`.)
+	trace := regexp.MustCompile(`\bset\s+-[a-zA-Z]*x|\bset\s+-o\s+xtrace|\bbash\s+(-[a-zA-Z]+\s+)*-[a-zA-Z]*x|\bsh\s+-[a-zA-Z]*x`)
+	for _, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		m := secretRef.FindStringSubmatch(line)
-		if m == nil {
-			t.Errorf("%s: %q is a secret reference outside a step's `env:` value: a secret is never inlined into a command line and never handed to an action's `with:`", consoleReleaseWorkflowPath, strings.TrimSpace(line))
-			continue
+		if trace.MatchString(line) {
+			t.Errorf("%s traces its shell (%q): a traced shell prints every expanded value, the secrets included", consoleReleaseWorkflowPath, strings.TrimSpace(line))
 		}
-		// The binding is the pair, not the reference: `APPLE_CERTIFICATE: ${{
-		// secrets.APPLE_API_KEY }}` would satisfy a scan that only counted the
-		// names, and would hand the keychain step the wrong secret -- which is
-		// the one mistake this file must not make, since the value that lands in
-		// the environment is the one the step uses.
-		if m[1] != m[2] {
-			t.Errorf("%s binds %s to the secret %s: a step's environment variable is the secret it names, or the step reads a value nobody meant to give it", consoleReleaseWorkflowPath, m[1], m[2])
+	}
+	for i, raw := range rawSteps {
+		if _, ok := raw["shell"]; ok {
+			t.Errorf("%s's step %q sets its own `shell:`: the default bash is what the scripts are written for", consoleReleaseWorkflowPath, job.Steps[i].Name)
 		}
-		seen[m[2]]++
-	}
-	var got []string
-	for name := range seen {
-		got = append(got, name)
-	}
-	slices.Sort(got)
-	want := slices.Clone(consoleReleaseSecrets)
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Errorf("%s references secrets %v, want exactly %v (each at least once): the names are the owner's, and D4's notarisation credential is the App Store Connect API key triple, not an app-specific password", consoleReleaseWorkflowPath, got, want)
 	}
 
-	// No secret-shaped literal, and no shell tracing that would print one. The
-	// blob check is the one the tests workflow uses, and the reason it is here is
-	// stronger: this file names six secrets, so a paste of a value would have
-	// somewhere to hide.
-	for _, forbidden := range []string{"-----BEGIN", "set -x"} {
-		if strings.Contains(text, forbidden) {
-			t.Errorf("%s contains %q: no secret is ever printed, and no shell in this file traces its commands", consoleReleaseWorkflowPath, forbidden)
-		}
+	// No secret-shaped literal anywhere, and no PEM block.
+	if strings.Contains(text, "-----BEGIN") {
+		t.Errorf("%s contains a PEM block", consoleReleaseWorkflowPath)
 	}
 	var body []string
 	for _, line := range strings.Split(text, "\n") {
@@ -2037,10 +2130,10 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		if consoleWord.MatchString(blob) {
 			continue
 		}
-		t.Errorf("%s carries %q, which is long enough and shaped like a pasted credential: the signing material is referenced, never written", consoleReleaseWorkflowPath, blob)
+		t.Errorf("%s carries %q, which is shaped like a pasted credential", consoleReleaseWorkflowPath, blob)
 	}
 
-	// Step lookup by name, so every assertion below names the step it means.
+	// Step lookup by name.
 	stepNamed := func(name string) (int, consoleReleaseStep) {
 		t.Helper()
 		for i, s := range job.Steps {
@@ -2052,113 +2145,300 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		return -1, consoleReleaseStep{}
 	}
 
-	// The release gate is the first thing the job runs, exactly as release.yml
-	// and images.yml run it: a console build is not signed for a tag this
-	// repository's own release rules would refuse (plan Task 4.2; D18).
-	firstRun := -1
-	for i, s := range job.Steps {
-		if s.Run != "" {
-			firstRun = i
-			break
-		}
-	}
-	if firstRun < 0 {
-		t.Fatalf("%s's release job runs nothing", consoleReleaseWorkflowPath)
-	}
-	if !strings.Contains(job.Steps[firstRun].Run, "scripts/release-gate.sh") {
-		t.Errorf("%s's first run step is %q, want the release gate: scripts/release-gate.sh must be the first thing the signing job does", consoleReleaseWorkflowPath, job.Steps[firstRun].Name)
-	}
-	if !strings.Contains(job.Steps[firstRun].Run, `scripts/release-gate.sh "$TAG"`) {
-		t.Errorf("%s's release gate step does not run scripts/release-gate.sh with the tag: %q", consoleReleaseWorkflowPath, job.Steps[firstRun].Run)
-	}
-	if job.Steps[firstRun].Env["GH_TOKEN"] == "" {
-		t.Errorf("%s's release gate step has no GH_TOKEN: the gate reads the commit's check-runs through `gh api`", consoleReleaseWorkflowPath)
-	}
-
-	// **Fail closed on a missing secret.** The first step that reads a secret at
-	// all is the one that refuses to continue without every one of them, and it
-	// names the missing NAME in its failure. A signing job that skips when a
-	// secret is absent ships an unsigned build under a signed release's name --
-	// the worst outcome this file can produce, and the one the plan's review
-	// criterion is about.
-	failClosed := -1
-	for i, s := range job.Steps {
-		for _, v := range s.Env {
-			if strings.Contains(v, "secrets.") {
-				failClosed = i
-				break
+	// **Secrets are in exactly one step's `env:`**, each bound to its own name,
+	// and that step is the signing step. Parsed, not grepped: the set of steps
+	// whose env holds a `secrets.` reference must be exactly that one.
+	signIdx, sign := stepNamed(consoleReleaseSigningStep)
+	for i, step := range job.Steps {
+		for name, value := range step.Env {
+			if !strings.Contains(value, "secrets.") {
+				continue
+			}
+			if i != signIdx {
+				t.Errorf("%s's step %q reads %s from a secret: secrets are in exactly one step's env, %q", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
 			}
 		}
-		if failClosed >= 0 {
-			break
+		for name, value := range step.With {
+			if strings.Contains(value, "secrets.") {
+				t.Errorf("%s's step %q hands a secret to an action's `with.%s`", consoleReleaseWorkflowPath, step.Name, name)
+			}
 		}
 	}
-	if failClosed < 0 {
-		t.Fatalf("%s reads no secret at all: it is the signing job", consoleReleaseWorkflowPath)
-	}
-	gate := job.Steps[failClosed]
-	if !strings.Contains(gate.Run, "exit 1") || !strings.Contains(gate.Run, "-z") {
-		t.Errorf("%s's step %q reads a secret but does not refuse when one is empty: the signing job fails closed (plan Task 4.2's review criterion)", consoleReleaseWorkflowPath, gate.Name)
-	}
+	wantSignEnv := map[string]string{}
 	for _, name := range consoleReleaseSecrets {
-		if !strings.Contains(gate.Run, name) {
-			t.Errorf("%s's first secret-reading step does not check %s: every required secret is checked before anything is built", consoleReleaseWorkflowPath, name)
-		}
-		if gate.Env[name] == "" {
-			t.Errorf("%s's first secret-reading step does not read %s from the environment, so it cannot check it", consoleReleaseWorkflowPath, name)
-		}
+		wantSignEnv[name] = "${{ secrets." + name + " }}"
 	}
-
-	// The certificate goes into a temporary keychain created in the job, with a
-	// password generated here, and the keychain is deleted in an `if: always()`
-	// step. Never the login keychain, never a keychain that outlives the run.
-	_, keychain := stepNamed("Import the certificate into a temporary keychain")
-	for _, want := range []string{"openssl rand", "security create-keychain", "security import", "security set-key-partition-list"} {
-		if !strings.Contains(keychain.Run, want) {
-			t.Errorf("%s's keychain step does not run %q: the certificate is imported into a keychain this job creates, unlocks and partitions for codesign", consoleReleaseWorkflowPath, want)
-		}
+	if !reflect.DeepEqual(sign.Env, wantSignEnv) {
+		t.Errorf("%s's signing step env = %v, want exactly the six secrets, each bound to its own name: %v", consoleReleaseWorkflowPath, sign.Env, wantSignEnv)
 	}
-	if keychain.Env["APPLE_CERTIFICATE"] == "" || keychain.Env["APPLE_CERTIFICATE_PASSWORD"] == "" {
-		t.Errorf("%s's keychain step does not read the certificate and its password from the environment", consoleReleaseWorkflowPath)
-	}
-	if strings.Contains(keychain.Run, "login.keychain") && strings.Contains(keychain.Run, "security import") {
-		// The login keychain may be re-listed (the search list is restored from
-		// it), but the certificate is never imported into it.
-		for _, line := range strings.Split(keychain.Run, "\n") {
-			if strings.Contains(line, "security import") && strings.Contains(line, "login.keychain") {
-				t.Errorf("%s imports the certificate into the login keychain: it is imported into the one this job creates (%q)", consoleReleaseWorkflowPath, strings.TrimSpace(line))
-			}
-		}
-	}
-	if !strings.Contains(keychain.Run, `-k "$KEYCHAIN"`) {
-		t.Errorf("%s's `security import` does not name the keychain this job created: the login keychain is not where a CI signing certificate belongs", consoleReleaseWorkflowPath)
-	}
-	cleanup := -1
-	for i, s := range job.Steps {
-		if s.If != "always()" {
+	// And the text agrees: every non-comment line that names `secrets.` is one
+	// of those six env bindings, so a secret cannot hide in a form the parse
+	// above would read as something else.
+	secretRef := regexp.MustCompile(`^\s+([A-Z][A-Z0-9_]*): \$\{\{ secrets\.([A-Z][A-Z0-9_]*) \}\}$`)
+	refs := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "secrets.") || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		if strings.Contains(s.Run, "security delete-keychain") {
-			cleanup = i
+		m := secretRef.FindStringSubmatch(line)
+		if m == nil || m[1] != m[2] {
+			t.Errorf("%s: %q is not a step env binding of a secret to its own name", consoleReleaseWorkflowPath, strings.TrimSpace(line))
+			continue
+		}
+		refs++
+	}
+	if refs != len(consoleReleaseSecrets) {
+		t.Errorf("%s has %d secret references, want exactly %d (one each, in the signing step)", consoleReleaseWorkflowPath, refs, len(consoleReleaseSecrets))
+	}
+
+	// **The order: gate, then every install and download, then the secrets.**
+	// The first run step checks the tagged commit is on main, the second is the
+	// release gate, and every action, the install and the warm-up pack come
+	// before the signing step: no third-party code installs or downloads while a
+	// secret is on the runner.
+	var runSteps []int
+	for i, s := range job.Steps {
+		if s.Run != "" {
+			runSteps = append(runSteps, i)
 		}
 	}
-	if cleanup < 0 {
-		t.Errorf("%s has no `if: always()` step deleting the temporary keychain: the certificate and its key must not outlive the job (plan Task 4.2)", consoleReleaseWorkflowPath)
-	} else {
-		if cleanup != len(job.Steps)-1 {
-			t.Errorf("%s's keychain cleanup is step %d of %d, want the last: it must run after every step that could have used the key", consoleReleaseWorkflowPath, cleanup, len(job.Steps))
+	if len(runSteps) < 2 {
+		t.Fatalf("%s's release job runs almost nothing", consoleReleaseWorkflowPath)
+	}
+	onMain := consoleRunLines(job.Steps[runSteps[0]].Run)
+	ancestry := consoleLineIndex(onMain, `if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then`, false)
+	if consoleLineIndex(onMain, "git fetch --quiet --no-tags origin main", false) < 0 || ancestry < 0 ||
+		ancestry+2 >= len(onMain) || !strings.HasPrefix(onMain[ancestry+1], `echo "::error::`) || onMain[ancestry+2] != "exit 1" {
+		t.Errorf("%s's first run step (%q) does not fetch main and refuse a tagged commit that is not its ancestor: a tag on the wrong commit must stop the job before anything else", consoleReleaseWorkflowPath, job.Steps[runSteps[0]].Name)
+	}
+	gate := job.Steps[runSteps[1]]
+	if !slices.Contains(consoleRunLines(gate.Run), `scripts/release-gate.sh "$TAG"`) || gate.Env["TAG"] != "${{ github.ref_name }}" || gate.Env["GH_TOKEN"] == "" {
+		t.Errorf("%s's second run step (%q) is not the release gate run with the tag and a token", consoleReleaseWorkflowPath, gate.Name)
+	}
+	installIdx, install := stepNamed("Install the pinned toolchain")
+	if install.Run != "npm ci --ignore-scripts --no-audit --no-fund" || install.WorkingDirectory != "console" {
+		t.Errorf("%s's install step is %q in %q, want exactly `npm ci --ignore-scripts --no-audit --no-fund` in console", consoleReleaseWorkflowPath, install.Run, install.WorkingDirectory)
+	}
+	warmIdx, warm := stepNamed("Download Electron and warm the packer's cache, with no secret present")
+	warmLines := consoleRunLines(warm.Run)
+	for _, want := range []string{"node node_modules/electron/install.js", "npm run package -- -c.mac.identity=null", "rm -rf release"} {
+		if !slices.Contains(warmLines, want) {
+			t.Errorf("%s's warm-up step does not run %q: Electron and the packer's downloads happen before any secret exists, and the unsigned output is discarded", consoleReleaseWorkflowPath, want)
 		}
-		if !strings.Contains(job.Steps[cleanup].Run, "appstoreconnect.p8") {
-			t.Errorf("%s's cleanup step does not delete the notarisation key file: the API key is written to a temp file with mode 0600 and removed here", consoleReleaseWorkflowPath)
+	}
+	if warm.WorkingDirectory != "console" {
+		t.Errorf("%s's warm-up step runs in %q, want console", consoleReleaseWorkflowPath, warm.WorkingDirectory)
+	}
+	for i, step := range job.Steps {
+		if step.Uses != "" && i > signIdx {
+			t.Errorf("%s runs the action %q after the signing step: every action runs before a secret exists", consoleReleaseWorkflowPath, step.Uses)
 		}
-		if !strings.Contains(job.Steps[cleanup].Run, "hdiutil detach") {
-			t.Errorf("%s's cleanup step does not detach the mounted disk image: the verification step mounts it, and a failure there must not leave it mounted for the steps after it", consoleReleaseWorkflowPath)
+	}
+	if !(runSteps[1] < installIdx && installIdx < warmIdx && warmIdx < signIdx) {
+		t.Errorf("%s's order is gate %d, install %d, warm-up %d, signing %d: want the gate, then the install, then the downloads, and only then the step holding the secrets", consoleReleaseWorkflowPath, runSteps[1], installIdx, warmIdx, signIdx)
+	}
+
+	// The packer is reached only through Task 4.1's `npm run package` (the
+	// pinned local electron-builder, `--publish never`): never `npx`, never the
+	// binary by name.
+	for _, step := range job.Steps {
+		for _, line := range consoleRunLines(step.Run) {
+			if strings.Contains(line, "npx") || strings.Contains(line, "electron-builder") {
+				t.Errorf("%s's step %q runs %q: the packer is the lockfile's, through `npm run package`", consoleReleaseWorkflowPath, step.Name, line)
+			}
 		}
 	}
 
-	// The Node version is read from console/package.json's `engines.node`, never
-	// written here a second time: test/unit/pinning.test.ts keeps that field an
-	// exact pin, and a copy of it in this file is a pin that can disagree.
+	// **The signing step, line by line.**
+	if sign.WorkingDirectory != "console" || sign.Id != "signed" {
+		t.Errorf("%s's signing step runs in %q with id %q, want console and signed", consoleReleaseWorkflowPath, sign.WorkingDirectory, sign.Id)
+	}
+	lines := consoleRunLines(sign.Run)
+	at := func(want string, contains bool) int {
+		t.Helper()
+		i := consoleLineIndex(lines, want, contains)
+		if i < 0 {
+			t.Errorf("%s's signing step does not run %q", consoleReleaseWorkflowPath, want)
+		}
+		return i
+	}
+
+	// Fail closed, first, naming the missing secret: the loop names all six, an
+	// empty one is recorded, and a non-empty `missing` prints the names and
+	// exits 1. Mutations: `if [ -n "$missing" ]` to `if false`, the `exit 1`
+	// removed, a name dropped from the loop.
+	loop := at("for name in "+strings.Join(consoleReleaseSecrets, " ")+"; do", false)
+	empty := at(`if [ -z "${!name}" ]; then`, false)
+	if empty >= 0 && (empty+1 >= len(lines) || lines[empty+1] != `missing="$missing $name"`) {
+		t.Errorf("%s's fail-closed loop does not record an empty secret's name", consoleReleaseWorkflowPath)
+	}
+	refuse := at(`if [ -n "$missing" ]; then`, false)
+	if refuse >= 0 && (refuse+2 >= len(lines) || !strings.HasPrefix(lines[refuse+1], `echo "::error::missing secret(s):$missing`) || lines[refuse+2] != "exit 1") {
+		t.Errorf("%s's fail-closed check does not print the missing names and exit 1: a signing job that goes on without a secret publishes an unsigned console", consoleReleaseWorkflowPath)
+	}
+	firstUse := at("KEYCHAIN_PASSWORD=\"$(openssl rand -base64 32)\"", false)
+	if loop != 2 || lines[0] != "set -euo pipefail" || lines[1] != `missing=""` || refuse < 0 || firstUse < refuse {
+		t.Errorf("%s's signing step does not start with the fail-closed check (loop at %d, refusal at %d, first use at %d)", consoleReleaseWorkflowPath, loop, refuse, firstUse)
+	}
+
+	// The key material is removed when the step exits, pass or fail.
+	trap := at("trap remove_key_material EXIT", false)
+	if trap < 0 || trap > firstUse {
+		t.Errorf("%s's signing step does not set its exit trap before it creates key material", consoleReleaseWorkflowPath)
+	}
+
+	// The keychain: created here, the key trusted for codesign only, never for
+	// /usr/bin/security (which could then export it without a prompt).
+	at(`security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"`, false)
+	at(`security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign`, false)
+	at(`security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null`, false)
+	if strings.Contains(text, "-T /usr/bin/security") {
+		t.Errorf("%s trusts /usr/bin/security with the signing key: any later command could export it", consoleReleaseWorkflowPath)
+	}
+
+	// The .p12 and the .p8 are created under umask 077, never created readable
+	// and chmod-ed afterwards.
+	writeP12 := at(`(umask 077 && printf '%s' "$APPLE_CERTIFICATE" | tr -d '\n' | openssl base64 -d -A > "$P12")`, false)
+	writeKey := at(`(umask 077 && printf '%s' "$APPLE_API_KEY" > "$KEY")`, false)
+	if strings.Contains(sign.Run, "chmod") {
+		t.Errorf("%s's signing step chmods a file: key material is created private (umask 077), not tightened after", consoleReleaseWorkflowPath)
+	}
+
+	// **No command prints the key material.** Every line that mentions a
+	// variable holding it is one of these, exactly. Mutations: `cat "$KEY"`,
+	// `echo "$APPLE_API_KEY"`, `base64 "$P12"`.
+	sensitive := regexp.MustCompile(`\$\{?(APPLE_CERTIFICATE|APPLE_CERTIFICATE_PASSWORD|APPLE_API_KEY|KEYCHAIN_PASSWORD|P12|KEY)\b`)
+	allowed := []string{
+		`rm -f "$P12" "$KEY"`,
+		lines[max(writeP12, 0)],
+		`security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"`,
+		`security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"`,
+		`security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign`,
+		`security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null`,
+		`rm -f "$P12"`,
+		lines[max(writeKey, 0)],
+		`export APPLE_API_KEY="$KEY"`,
+		`xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait`,
+	}
+	for _, step := range job.Steps {
+		for _, line := range consoleRunLines(step.Run) {
+			if sensitive.MatchString(line) && !slices.Contains(allowed, line) {
+				t.Errorf("%s's step %q runs %q, which touches the key material outside the lines that create, import, hand on and remove it: nothing prints it", consoleReleaseWorkflowPath, step.Name, line)
+			}
+		}
+	}
+
+	// The team, on the certificate, before anything is packed (and so before a
+	// notarisation is spent); the signature's TeamIdentifier again after.
+	teamBefore := at(`*"($APPLE_TEAM_ID)\""*) ;;`, false)
+	pack := at("npm run package", false)
+	if teamBefore < 0 || pack < 0 || teamBefore > pack {
+		t.Errorf("%s's signing step does not check the certificate's team before packing", consoleReleaseWorkflowPath)
+	}
+	teamAfter := at(`if [ "$signed_team" != "$team" ]; then`, false)
+	if teamAfter < 0 || teamAfter+2 >= len(lines) || lines[teamAfter+2] != "exit 1" || teamAfter < pack {
+		t.Errorf("%s's signing step does not refuse a bundle signed by another team after packing", consoleReleaseWorkflowPath)
+	}
+
+	// The packer's environment: the identity by SHA-1 in this keychain, the key
+	// file's path, and nothing of the certificate.
+	unset := at("unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID", false)
+	exportKey := at(`export APPLE_API_KEY="$KEY"`, false)
+	at(`export CSC_NAME="$identity"`, false)
+	at(`export CSC_KEYCHAIN="$KEYCHAIN"`, false)
+	if unset < 0 || exportKey < 0 || unset > pack || exportKey > pack || writeKey > pack {
+		t.Errorf("%s's signing step packs before it has written the key file, handed on its path and unset the certificate", consoleReleaseWorkflowPath)
+	}
+
+	// The universal bundle the packer stapled, by its exact path, validated.
+	at(`APP="release/mac-universal/Fugaro Console.app"`, false)
+	staple := at(`if ! xcrun stapler validate "$APP"; then`, false)
+	if staple < 0 || staple+2 >= len(lines) || lines[staple+2] != "exit 1" {
+		t.Errorf("%s's signing step does not refuse an unstapled bundle", consoleReleaseWorkflowPath)
+	}
+	if strings.Contains(text, "mac-*") || strings.Contains(text, "mac-arm64") {
+		t.Errorf("%s globs or names a thin-arch output directory: the build is universal, release/mac-universal", consoleReleaseWorkflowPath)
+	}
+
+	// The disk image: signed, then submitted and waited for, then stapled.
+	signDMG := at(`codesign --sign "$identity" --keychain "$KEYCHAIN" --timestamp "$DMG"`, false)
+	submit := at(`xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait`, false)
+	stapleDMG := at(`xcrun stapler staple "$DMG"`, false)
+	if !(pack < signDMG && signDMG < submit && submit < stapleDMG) {
+		t.Errorf("%s's signing step does not pack, sign the .dmg, notarise it and staple it, in that order (%d, %d, %d, %d)", consoleReleaseWorkflowPath, pack, signDMG, submit, stapleDMG)
+	}
+
+	// **The record is about the shipped bytes.** The SHA-256 of the .dmg and the
+	// .zip, then the bundle inside each and the disk image itself, every command
+	// through record(), and record() exits 1 on a failure (mutation: its `exit 1`
+	// removed).
+	_, verify := stepNamed("Verify the shipped artifacts, and record it")
+	vlines := consoleRunLines(verify.Run)
+	if verify.Env["DMG"] != "${{ steps.signed.outputs.dmg }}" || verify.Env["ZIP"] != "${{ steps.signed.outputs.zip }}" {
+		t.Errorf("%s's verification step does not read the signed .dmg and .zip: %v", consoleReleaseWorkflowPath, verify.Env)
+	}
+	fn := consoleLineIndex(vlines, "record() {", false)
+	if fn < 0 || fn+6 >= len(vlines) || vlines[fn+2] != `if ! "$@" >> "$RECORD" 2>&1; then` || vlines[fn+5] != "exit 1" || vlines[fn+6] != "fi" {
+		t.Errorf("%s's record() does not exit 1 when a recorded command fails: a record that swallowed a failure is a verification that did not pass", consoleReleaseWorkflowPath)
+	}
+	for _, want := range []string{
+		`(cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")" "$(basename "$ZIP")") > "$SUMS"`,
+		`record cat "$SUMS"`,
+		`record hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"`,
+		`record codesign --verify --deep --strict --verbose=2 "$IN_DMG"`,
+		`record codesign -d --entitlements - "$IN_DMG"`,
+		`record spctl --assess --type execute --verbose=4 "$IN_DMG"`,
+		`record xcrun stapler validate "$IN_DMG"`,
+		`record ditto -x -k "$ZIP" "$UNZIP"`,
+		`record codesign --verify --deep --strict --verbose=2 "$IN_ZIP"`,
+		`record spctl --assess --type execute --verbose=4 "$IN_ZIP"`,
+		`record xcrun stapler validate "$IN_ZIP"`,
+		`record codesign --verify --strict --verbose=2 "$DMG"`,
+		`record xcrun stapler validate "$DMG"`,
+		`record spctl --assess --type open --context context:primary-signature -v "$DMG"`,
+	} {
+		if !slices.Contains(vlines, want) {
+			t.Errorf("%s's verification step does not run %q (design section 7.2: these are the fact the release records)", consoleReleaseWorkflowPath, want)
+		}
+	}
+
+	// **Its own release, console-vX.Y.Z, never the CLI's** (owner, 2026-10-17,
+	// "Separate console release"): created as a draft with every asset, then
+	// published, never the repository's latest, and never clobbered.
+	_, publish := stepNamed("Publish the console's own release")
+	plines := consoleRunLines(publish.Run)
+	for _, want := range []string{
+		`CONSOLE_TAG="console-v$VERSION"`,
+		`VERSION="${TAG#v}"`,
+		`gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \`,
+		`--target "$GITHUB_SHA" \`,
+		`"$DMG" "$APP_ZIP" "$RECORD" "$SUMS"`,
+		`gh release edit "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false`,
+		`*published*)`,
+	} {
+		if !slices.Contains(plines, want) {
+			t.Errorf("%s's publish step does not run %q: the console publishes its own console-vX.Y.Z release, as a draft with every asset and then published", consoleReleaseWorkflowPath, want)
+		}
+	}
+	for _, line := range plines {
+		if strings.Contains(line, "gh release upload") || strings.Contains(line, "--clobber") {
+			t.Errorf("%s's publish step runs %q: the console never adds to an existing release (the CLI's is immutable once published) and never clobbers", consoleReleaseWorkflowPath, line)
+		}
+		if regexp.MustCompile(`gh release \w+ "\$TAG"`).MatchString(line) {
+			t.Errorf("%s's publish step touches the CLI's release (%q): the console's release is console-vX.Y.Z", consoleReleaseWorkflowPath, line)
+		}
+	}
+	for _, refusal := range []string{"is already published", "exists from an earlier attempt", "already exists with no release"} {
+		i := consoleLineIndex(plines, refusal, true)
+		if i < 0 || i+1 >= len(plines) || plines[i+1] != "exit 1" {
+			t.Errorf("%s's publish step does not refuse a re-run when the console release %s", consoleReleaseWorkflowPath, refusal)
+		}
+	}
+	if publish.Env["GH_TOKEN"] == "" || publish.Env["TAG"] != "${{ github.ref_name }}" {
+		t.Errorf("%s's publish step has no GH_TOKEN or no TAG from the ref", consoleReleaseWorkflowPath)
+	}
+
+	// The Node version is console/package.json's engines.node, never a second pin.
 	nodeSteps := 0
 	for _, step := range job.Steps {
 		if !strings.Contains(step.Uses, "actions/setup-node@") {
@@ -2166,212 +2446,44 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 		nodeSteps++
 		if step.With["node-version-file"] != "console/package.json" {
-			t.Errorf("%s's setup-node takes node-version-file %q, want console/package.json's engines.node", consoleReleaseWorkflowPath, step.With["node-version-file"])
+			t.Errorf("%s's setup-node takes node-version-file %q, want console/package.json", consoleReleaseWorkflowPath, step.With["node-version-file"])
 		}
 		if _, ok := step.With["node-version"]; ok {
-			t.Errorf("%s's setup-node pins a version of its own instead of reading engines.node", consoleReleaseWorkflowPath)
+			t.Errorf("%s's setup-node pins a version of its own", consoleReleaseWorkflowPath)
 		}
 	}
 	if nodeSteps != 1 {
 		t.Errorf("%s has %d setup-node steps, want 1", consoleReleaseWorkflowPath, nodeSteps)
 	}
 
-	// APPLE_TEAM_ID is required by the fail-closed check, so it is *used* rather
-	// than merely demanded: the bundle the packer signed must name the owner's
-	// team, which is the one check that catches the wrong certificate in the
-	// environment before a notarisation submission is spent on it.
-	_, team := stepNamed("The bundle is signed by the owner's team")
-	if team.Env["APPLE_TEAM_ID"] == "" {
-		t.Errorf("%s's team check does not read APPLE_TEAM_ID, so the secret the fail-closed step demands is never used", consoleReleaseWorkflowPath)
-	}
-	if !strings.Contains(team.Run, "TeamIdentifier") || !strings.Contains(team.Run, "exit 1") {
-		t.Errorf("%s's team check does not compare the signature's TeamIdentifier against APPLE_TEAM_ID and refuse a mismatch", consoleReleaseWorkflowPath)
-	}
-
-	// The build is Task 4.1's own scripts, unchanged: `npm ci` from the lockfile
-	// and `npm run package`, which is where the hardened runtime and
-	// entitlements.mac.plist live. Nothing here re-signs or re-packs with a
-	// configuration of its own -- an entitlements override in this file would be
-	// a second, unreviewed signing configuration.
-	install, pack := -1, -1
-	for i, s := range job.Steps {
-		switch s.Run {
-		case "npm ci --ignore-scripts --no-audit --no-fund":
-			install = i
-		case "npm run package":
-			pack = i
-		}
-	}
-	if install < 0 {
-		t.Errorf("%s never runs `npm ci --ignore-scripts --no-audit --no-fund`: the console's dependencies are the ones the lockfile pins", consoleReleaseWorkflowPath)
-	}
-	if pack < 0 {
-		t.Errorf("%s never runs exactly `npm run package`: that script is Task 4.1's, and the hardened runtime, the dmg/zip targets and entitlements.mac.plist are its configuration, not this file's", consoleReleaseWorkflowPath)
-	}
-	if install >= 0 && job.Steps[install].WorkingDirectory != "console" {
-		t.Errorf("%s's install step runs in %q, want console", consoleReleaseWorkflowPath, job.Steps[install].WorkingDirectory)
-	}
-	if pack >= 0 && job.Steps[pack].WorkingDirectory != "console" {
-		t.Errorf("%s's package step runs in %q, want console", consoleReleaseWorkflowPath, job.Steps[pack].WorkingDirectory)
-	}
-	for _, step := range job.Steps {
-		if strings.Contains(step.Run, "electron-builder") && !strings.Contains(step.Run, "npm run package") {
-			t.Errorf("%s runs electron-builder directly (%q): the packer's pin, its targets and its signing configuration live in console/package.json's `package` script", consoleReleaseWorkflowPath, strings.TrimSpace(step.Run))
-		}
-	}
-
-	// **Notarise before packing.** The app must be notarised and stapled while
-	// the packer is building it, because the .dmg and the .zip are built from
-	// the app directory afterwards: a job that packed first and notarised
-	// second would publish two artifacts carrying an unstapled bundle (the
-	// review of Task 4.2). So the App Store Connect triple is in the packaging
-	// step's own environment, which is also the owner's documented local flow
-	// (console/README.md, "The owner's commands, exactly").
-	//
-	// The key's *value* still never reaches a command line: the step before the
-	// packaging writes it to a 0600 file and hands on the path, which is what
-	// both electron-builder and notarytool take.
-	if pack >= 0 {
-		packEnv := job.Steps[pack].Env
-		for _, name := range []string{"APPLE_API_KEY_ID", "APPLE_API_ISSUER"} {
-			if packEnv[name] == "" {
-				t.Errorf("%s's packaging step does not read %s: electron-builder notarises and staples the app as it packs it only when the App Store Connect triple is in this step's environment, and the .dmg and the .zip are built from the bundle it leaves behind", consoleReleaseWorkflowPath, name)
-			}
-		}
-		if !strings.Contains(packEnv["APPLE_API_KEY"], "steps.appkey.outputs") {
-			t.Errorf("%s's packaging step takes APPLE_API_KEY as %q, want the path the key-writing step put in its output: electron-builder reads APPLE_API_KEY as the path to the .p8, not as its contents", consoleReleaseWorkflowPath, packEnv["APPLE_API_KEY"])
-		}
-		if packEnv["CSC_NAME"] == "" {
-			t.Errorf("%s's packaging step names no signing identity: CSC_NAME is the SHA-1 the keychain step found, so a runner carrying more than one identity cannot pick another", consoleReleaseWorkflowPath)
-		}
-	}
-
-	// The key file: 0600, in the runner's temp directory, and removed by the
-	// cleanup step. It is written once, before the packaging step, and both the
-	// packer and notarytool read that one file.
-	_, appkey := stepNamed("Write the App Store Connect key to a private file")
-	for _, want := range []string{"chmod 600", "appstoreconnect.p8", "$GITHUB_OUTPUT"} {
-		if !strings.Contains(appkey.Run, want) {
-			t.Errorf("%s's key step does not use %q: the App Store Connect key is written to a 0600 file in the runner's temp directory and its path is handed on, never its value", consoleReleaseWorkflowPath, want)
-		}
-	}
-	if appkey.Env["APPLE_API_KEY"] == "" {
-		t.Errorf("%s's key step does not read APPLE_API_KEY from the environment", consoleReleaseWorkflowPath)
-	}
-	if appkey.Id == "" {
-		t.Errorf("%s's key step has no `id:`, so the packaging step cannot name the path it wrote", consoleReleaseWorkflowPath)
-	}
-
-	// The bundle the packer produced is stapled, and that is checked rather than
-	// assumed: if electron-builder did not notarise it, the artifacts about to be
-	// published carry an unstapled bundle, and this is the last place that can
-	// stop them.
-	_, stapled := stepNamed("The bundle the packer built is notarised and stapled")
-	if !strings.Contains(stapled.Run, "xcrun stapler validate") || !strings.Contains(stapled.Run, "exit 1") {
-		t.Errorf("%s's step %q does not validate the packed bundle's ticket and refuse when it is missing: an unstapled bundle in the shipped artifacts is what the packing order exists to prevent", consoleReleaseWorkflowPath, stapled.Name)
-	}
-
-	// The disk image's own submission, and it waits: `--wait` is what makes a
-	// rejected submission fail the job instead of being stapled over.
-	_, notarise := stepNamed("Notarise the disk image")
-	for _, want := range []string{"xcrun notarytool submit", "--wait", "--key-id", "--issuer", `"$DMG"`} {
-		if !strings.Contains(notarise.Run, want) {
-			t.Errorf("%s's notarisation step does not use %q: the disk image is submitted with the App Store Connect key and the step waits for the verdict", consoleReleaseWorkflowPath, want)
-		}
-	}
-	if notarise.Env["APPLE_API_KEY_ID"] == "" || notarise.Env["APPLE_API_ISSUER"] == "" {
-		t.Errorf("%s's notarisation step does not read the API key id and issuer from the environment", consoleReleaseWorkflowPath)
-	}
-	if !strings.Contains(notarise.Env["KEY"], "steps.appkey.outputs") {
-		t.Errorf("%s's notarisation step takes the key file as %q, want the path the key-writing step put in its output: `--key` takes a file, and the file is the 0600 one the cleanup step removes", consoleReleaseWorkflowPath, notarise.Env["KEY"])
-	}
-
-	// The disk image carries the ticket too, and the .app's is the packer's --
-	// stapling the loose bundle here would be stapling something in neither
-	// shipped artifact.
-	_, staple := stepNamed("Staple the ticket to the disk image")
-	if n := strings.Count(staple.Run, "xcrun stapler staple"); n != 1 {
-		t.Errorf("%s's stapling step runs `xcrun stapler staple` %d times, want 1: the .app is stapled by the packaging step, and this staples the .dmg", consoleReleaseWorkflowPath, n)
-	}
-
-	// **The record is about the shipped artifacts.** The bundle inside the
-	// mounted .dmg and the bundle inside the extracted .zip are what is
-	// verified -- the design's commands, `codesign --verify --deep --strict`,
-	// `spctl --assess --type execute` and `stapler validate`, with their real
-	// output, into a text file the release carries the way the CLI's release
-	// carries checksums.txt (design section 7.2; plan Task 4.2). The loose .app
-	// under console/release/ is in neither artifact, so a record about it would
-	// be a record about something nobody downloads.
-	_, verify := stepNamed("Verify the shipped artifacts, and record it")
-	for _, want := range []string{
-		"hdiutil attach", "-mountpoint", `"$MOUNT/Fugaro Console.app"`, "ditto -x -k",
-		`"$UNZIP/Fugaro Console.app"`, "codesign --verify --deep --strict",
-		"spctl --assess --type execute", "xcrun stapler validate",
-		"console-verification.txt",
-	} {
-		if !strings.Contains(verify.Run, want) {
-			t.Errorf("%s's verification step does not use %q: these commands are the fact the release records, run against the bundle inside the .dmg and the .zip (design section 7.2)", consoleReleaseWorkflowPath, want)
-		}
-	}
-	if strings.Contains(verify.Run, "|| true") {
-		t.Errorf("%s's verification step carries `|| true`: a verification that cannot fail is not a verification", consoleReleaseWorkflowPath)
-	}
-	// The loose bundle the packer left under console/release/ is in neither
-	// artifact a user downloads. Naming it here -- under any variable -- is how
-	// the record goes back to describing something nobody has.
-	for name, value := range verify.Env {
-		if strings.Contains(value, "steps.artifacts.outputs.app") {
-			t.Errorf("%s's verification step reads the loose packed bundle through %s (%q): what ships is the .dmg and the .zip, so the record must be about the bundle inside them", consoleReleaseWorkflowPath, name, value)
-		}
-	}
-
-	// And the record is published with the artifact, on the release the CLI's own
-	// workflow creates for this tag. The two workflows run independently on one
-	// push, so the upload waits for the release rather than assuming it exists.
-	_, publish := stepNamed("Publish the console's artifact and its verification record")
-	for _, want := range []string{"gh release upload", "console-verification.txt", "gh release view"} {
-		if !strings.Contains(publish.Run, want) {
-			t.Errorf("%s's publish step does not use %q: the artifact and the verification record are release assets, and the release is created by release.yml on the same tag", consoleReleaseWorkflowPath, want)
-		}
-	}
-	if publish.Env["GH_TOKEN"] == "" {
-		t.Errorf("%s's publish step has no GH_TOKEN: uploading a release asset needs contents: write and a token", consoleReleaseWorkflowPath)
-	}
-
-	// The checkout is the full history, because the release gate asks whether the
-	// tag's commit is an ancestor of origin/main, and it keeps no credentials.
-	checkout, ok := job.Steps[0], false
-	if job.Steps[0].Uses != "" && strings.Contains(job.Steps[0].Uses, "actions/checkout@") {
-		ok = true
-	}
-	if !ok {
-		t.Errorf("%s's first step is %q, want actions/checkout: the release gate reads the repository", consoleReleaseWorkflowPath, job.Steps[0].Uses)
+	// The checkout: full history (the ancestry check and the gate), no
+	// credentials kept.
+	if !strings.Contains(job.Steps[0].Uses, "actions/checkout@") {
+		t.Errorf("%s's first step is %q, want actions/checkout", consoleReleaseWorkflowPath, job.Steps[0].Uses)
 	} else {
-		if checkout.With["fetch-depth"] != "0" {
-			t.Errorf("%s's checkout has fetch-depth %q, want 0: the release gate runs `git merge-base --is-ancestor` against origin/main, which a shallow clone cannot answer", consoleReleaseWorkflowPath, checkout.With["fetch-depth"])
+		if job.Steps[0].With["fetch-depth"] != "0" {
+			t.Errorf("%s's checkout has fetch-depth %q, want 0", consoleReleaseWorkflowPath, job.Steps[0].With["fetch-depth"])
 		}
-		if checkout.With["persist-credentials"] != "false" {
-			t.Errorf("%s's checkout persists credentials (%q): every other workflow here sets persist-credentials: false", consoleReleaseWorkflowPath, checkout.With["persist-credentials"])
+		if job.Steps[0].With["persist-credentials"] != "false" {
+			t.Errorf("%s's checkout persists credentials", consoleReleaseWorkflowPath)
 		}
 	}
 
-	// And while both files exist, they are the same file. Absence is not
-	// asserted: the owner's copy-in is Task 4.5, and byte-identity holds before
-	// and after it.
+	// And while both files exist, they are the same file.
 	if _, statErr := os.Stat(filepath.Join("..", "..", appliedConsoleReleasePath)); statErr == nil {
 		applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if string(applied) != text {
-			t.Errorf("%s differs from the staged %s: the workflow under .github/workflows/ must be the reviewed staged copy, not an edit of it", appliedConsoleReleasePath, consoleReleaseWorkflowPath)
+			t.Errorf("%s differs from the staged %s", appliedConsoleReleasePath, consoleReleaseWorkflowPath)
 		}
 	} else if !os.IsNotExist(statErr) {
 		t.Fatal(statErr)
 	}
 }
 
-// TestPendingWorkflowsReadmeNamesTheConsoleRows asserts the staging directory's
+// TestDocsPendingWorkflowsReadmeNamesTheConsoleRows asserts the staging directory's
 // README carries BOTH console rows -- this task's signing workflow and Task
 // 1.4's tests workflow -- each saying what the file is, that it is staged because
 // no agent may push a workflow here, and the one command that applies it. Task
@@ -2379,7 +2491,7 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 // row-specific counterpart and keeps passing; the plural name is this one, so a
 // reader never has to work out whether two similarly-named tests are the same
 // test.
-func TestPendingWorkflowsReadmeNamesTheConsoleRows(t *testing.T) {
+func TestDocsPendingWorkflowsReadmeNamesTheConsoleRows(t *testing.T) {
 	doc := readDoc(t, "docs/pending-workflows/README.md")
 
 	// Both rows exist as staged files under their own names.
@@ -2396,7 +2508,9 @@ func TestPendingWorkflowsReadmeNamesTheConsoleRows(t *testing.T) {
 		// What the file is.
 		"notarytool",
 		"stapler",
-		"macos-latest",
+		"macos-15",
+		// Its own release, never the CLI's (owner, 2026-10-17).
+		"console-vX.Y.Z",
 		// Why it is staged here rather than applied.
 		"Fugaro refuses to push a commit that touches `.github/workflows/**`",
 		// The one command that applies it.
@@ -2435,7 +2549,7 @@ func TestPendingWorkflowsReadmeNamesTheConsoleRows(t *testing.T) {
 			t.Errorf("docs/pending-workflows/README.md's `## console-release.yml` section lacks %q: neither this workflow nor the signing chain under it has ever run, and the section has to say so", want)
 		}
 	}
-	if !strings.Contains(section, "TestConsoleReleaseWorkflowIsStagedAndPinned") {
+	if !strings.Contains(section, "TestDocsConsoleReleaseWorkflowIsStagedAndPinned") {
 		t.Error("docs/pending-workflows/README.md's `## console-release.yml` section does not name the test that pins the file: what is verified is its text, and the section must say by which test")
 	}
 }
