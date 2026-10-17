@@ -1068,7 +1068,19 @@ var (
 	// scanned the same way.
 	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
 	// The member expressions an IAM member may use.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|google_service_account\.(job|build|scheduler)\.member|google_service_account\.history\[0\]\.member|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|google_service_account\.(job|build|scheduler|fugaro_deployer)\.member|google_service_account\.history\[0\]\.member|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+
+	// A custom role of this project, spelled as the literal path
+	// "projects/${var.project}/roles/<id>" rather than read from the role
+	// resource's own name attribute. Task 1.5 step 5: the creating apply plans
+	// the deployer's two roles, and a project grant whose role is computed
+	// cannot be told from the scoped one, whose IAM condition is the whole
+	// fence around the account — so the five project grants planned by that
+	// same apply (the deployer's two, the launchers', the build submitters'
+	// and the history account's) name their role literally instead. var.project
+	// is known at plan time, and the ID must be one the modules create
+	// (tf.FugaroRoles), checked below.
+	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.project\}/roles/([A-Za-z0-9_.]+)"$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -1109,6 +1121,12 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 			case role == "":
 				t.Errorf("%s: %s has no role attribute the scan can read", path, blk.name)
 			case strings.HasPrefix(role, `"`):
+				if m := projectRoleLiteralRE.FindStringSubmatch(role); m != nil {
+					if !slices.Contains(tf.FugaroRoles, m[1]) {
+						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create", path, blk.name, role, m[1])
+					}
+					break
+				}
 				m := quotedRoleRE.FindStringSubmatch(role)
 				if m == nil || `"`+m[1]+`"` != role {
 					t.Errorf("%s: %s: role %s is not a plain literal \"roles/...\" (no interpolation, format() or concatenation)", path, blk.name, role)
@@ -1144,8 +1162,12 @@ func checkLiteralRole(t *testing.T, path, where, role, typ string, inFirebase bo
 		return
 	}
 	// serviceAccountUser (actAs, for the operators who deploy a job or a
-	// build) on a service account is the one allowed shape.
-	if role == "roles/iam.serviceAccountUser" && (typ == "google_service_account_iam_member" || typ == "") {
+	// build) on a service account is one allowed shape, and
+	// serviceAccountTokenCreator is the other: D75's impersonation grant,
+	// which lets the owner assume the deployer account and nothing else
+	// (installation/deployer.tf, one grant on that account, for var.operators).
+	// Neither may be granted on the project or on another type.
+	if (role == "roles/iam.serviceAccountUser" || role == "roles/iam.serviceAccountTokenCreator") && (typ == "google_service_account_iam_member" || typ == "") {
 		return
 	}
 	t.Errorf("%s: %s names %s, a role that reaches the budget backend or IAM, outside the Firebase module", path, where, role)
@@ -1209,6 +1231,20 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			if m == nil || !permRE.MatchString(strings.ReplaceAll(m[1], "\n", " ")) {
 				// Comments are stripped; what is left must be quoted strings only.
 				t.Errorf("%s: %s: permissions is not a literal list of quoted permissions (a variable, local or concat is refused)", path, blk.name)
+				continue
+			}
+			// The deployer's two roles (installation/deployer.tf, D75) hold
+			// permissions this ban exists to keep out of Fugaro's own custom
+			// roles: IAM, serviceusage and apikeys permissions, and a
+			// resource-level setIamPolicy. That is the owner's answer of
+			// 2026-10-16, and the bound on them is elsewhere and is exact:
+			// tf.RolePermissions pins both lists permission for permission
+			// (internal/infra/tf/cover_test.go) with a fixture that refuses a
+			// widening, and both are bound to one account, the scoped one only
+			// under the managed-prefix condition. The deployer is not an
+			// installation role: it holds nothing project-wide but creation
+			// and reads.
+			if blk.name == "google_project_iam_custom_role.fugaro_deployer" || blk.name == "google_project_iam_custom_role.fugaro_deployer_scoped" {
 				continue
 			}
 			if blk.name == "google_project_iam_custom_role.token_minter" {
