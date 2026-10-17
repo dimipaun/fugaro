@@ -1829,6 +1829,13 @@ describe('parseLogEntries', () => {
     expect(field.refused).toBe(1)
   })
 
+  it('reads a CRLF line\'s carriage return as its terminator, not as a character past the line cap', () => {
+    const exact = line(base)
+    const read = parseLogEntries([exact, exact].join('\r\n') + '\r\n', { maxLineLength: exact.length })
+    expect(read.refused).toBe(0)
+    expect(read.total).toBe(2)
+  })
+
   it('keeps the newest entries up to the cap, oldest first', () => {
     const lines = Array.from({ length: 12 }, (_, index) => line({ ...base, message: String(index) }))
     const read = parseLogEntries(lines.join('\n'), { maxEntries: 5 })

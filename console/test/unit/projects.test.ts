@@ -915,6 +915,10 @@ describe('buildRunModel', () => {
     expect(model.logs.lines).toHaveLength(RUN_LOG_CAP)
     expect(model.logs.dropped.value).toBe(25)
     expect(model.logs.total.value).toBe(RUN_LOG_CAP + 25)
+    // The window is the **newest** lines, oldest first: a cap that kept the
+    // first two hundred would show the start of a run as if it were its end.
+    expect(model.logs.lines[0]?.message).toBe('line 25')
+    expect(model.logs.lines.at(-1)?.message).toBe(`line ${String(RUN_LOG_CAP + 24)}`)
     // The link to the full transcript is the CLI's own `logs RUN --url` line.
     expect(model.logs.link).toBe('https://console.cloud.google.com/batch/jobs/example-job')
   })
