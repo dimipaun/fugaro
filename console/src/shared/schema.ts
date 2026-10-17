@@ -101,7 +101,13 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   name: 'label',
   batch: 'label',
   execution: 'label',
-  pushed_head: 'label',
+  // `pushed_head` is a commit digest, and it is deliberately **not** here: the
+  // recorder classes it `digest` and keeps a hex value as written
+  // (`src/source/redact.ts:409`, "the high-entropy rule would otherwise take
+  // every one of them"). A digest handed to the free-text rules -- which is
+  // what `label` means in this map -- is drawn as `[redacted-token]`, so the
+  // key is in `NON_TEXT_STRING_KEYS` instead, where `sha256` and
+  // `config_sha256` already are.
   base_branch: 'branch',
   previous_run: 'runId',
   // Provenance inside `runstore.Cost`: `model_source` is `gateway` or
@@ -155,6 +161,9 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // job wrote, and none is drawn.
   'sha256',
   'config_sha256',
+  // `pushed_head` is the commit the push published: a digest, the same kind of
+  // value as `sha256` above, and the one the recorder also keeps as written.
+  'pushed_head',
   'started_at',
   'pr_status_at',
 ])

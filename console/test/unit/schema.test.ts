@@ -732,6 +732,12 @@ describe('every wire string is classified', () => {
     expect(wireTextClass('round')).not.toBe('sentence')
     expect(wireTextClass('mode')).toBeUndefined()
     expect(wireTextClass('rogue_key')).toBeUndefined()
+    // A commit digest is not text. Classed as a label it would have gone
+    // through the free-text rules, and the entropy net draws a 40-character
+    // hex sha as `[redacted-token]` -- which is the recorder's own stated
+    // reason for keeping hex digests as written (`src/source/redact.ts:409`).
+    expect(wireTextClass('pushed_head')).toBeUndefined()
+    expect(NON_TEXT_STRING_KEYS).toContain('pushed_head')
     // The two lists do not overlap, and neither is empty: a key in both would
     // be a key whose class is two answers.
     for (const key of NON_TEXT_STRING_KEYS) expect(wireTextClass(key), key).toBeUndefined()
