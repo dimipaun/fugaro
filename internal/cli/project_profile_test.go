@@ -65,6 +65,9 @@ func TestPublishWritesTheProfilesAndShowPrintsThemWithTheirJobs(t *testing.T) {
 		"profile standard: provider github, cpu 2, memory 4Gi, timeout 6h, secrets deploy-key, allow_repos the project's allow_repos",
 		"profile standard jobs: one job per (profile, provider, account): (standard, github, <account>)",
 		"profile wide: provider github, cpu 4, memory 8Gi, timeout 12h, secrets none, allow_repos github/acme/*",
+		// A secret-bearing profile with no list of its own is selectable by
+		// every enrolled repository (job_profile:), so show says so.
+		"secrets deploy-key, allow_repos the project's allow_repos (warning: every enrolled repository can select this profile and read its secrets; give it its own allow_repos)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("policy show does not print %q:\n%s", want, out)

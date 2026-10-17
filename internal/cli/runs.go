@@ -441,26 +441,25 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	if name == "" || in.Problem != "" {
 		return nil
 	}
-	// The run's service account can write both objects: follow only an
-	// execution of the run's own job.
-	if err := env.checkExecution(name, in.Slug, in.Task); err != nil {
+	// The run's service account can write both objects: follow only the
+	// execution the run's own FUGARO_RUN names, which is what tells two runs
+	// of one shared job apart (checkExecution). The listing's own entry saves
+	// the read; a run whose execution is outside the listing's window is read
+	// back on its own. A read that fails is this run's own row, not the
+	// listing's: one run's execution failing to read must not hide the other
+	// runs' rows, as a corrupt object of one run does not.
+	eid, _ := backend.ParseExecution(name)
+	var hint *backend.Execution
+	if e, ok := execs[eid.Key()]; ok {
+		hint = &e
+	}
+	x, err := env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
+	if err != nil {
 		in.Problem = "not following its execution: " + err.Error()
 		warnf("warning: run %s/%s: %s\n", in.Slug, in.RunID, in.Problem)
 		return nil
 	}
-	eid, _ := backend.ParseExecution(name)
-	if e, ok := execs[eid.Key()]; ok {
-		in.Exec = &e
-		return nil
-	}
-	// Outside the listing's window, or not listed yet: ask for it alone.
-	e, err := env.be.Execution(ctx, name)
-	switch {
-	case err == nil:
-		in.Exec = &e
-	case !errors.Is(err, backend.ErrNotFound):
-		return fmt.Errorf("run %s/%s: %w", in.Slug, in.RunID, err)
-	}
+	in.Exec = x
 	// The record was read before the execution: a runner that wrote its
 	// final record and exited in between would look like one that died
 	// without finalizing. Once the execution has ended (or is gone), read
