@@ -887,3 +887,113 @@ func TestManagedCoverRefusesLocks(t *testing.T) {
 		})
 	}
 }
+
+// Task 1.2: the attributes a managed plan must still satisfy. Cover's own
+// attribute checks (cover.go:713-827) are re-derived for a managed project the
+// way Task 1.1 re-derived the type list: each is re-justified rather than
+// inherited, the two that carry the spec's step 3 are kept, and the ones that
+// only make sense for Fugaro's own embedded modules are dropped with a fixture
+// that now passes, so the dropping is a diff rather than a silence.
+
+// TestManagedCoverProjectScope is the first retained check: the project every
+// resource is in, kept as the WIDER rule Cover.Projects is — a resource is
+// refused when its project is not one of this run's, not merely when it is not
+// the managed project — so a resource in a second project Fugaro owns is
+// refused too (D61's "the project each resource is in", the spec's step 3).
+// The refusal is by address and names the project.
+func TestManagedCoverProjectScope(t *testing.T) {
+	const second = "proj-2"
+	bucket := func(project string) ResourceChange {
+		after := map[string]any{"name": ManagedPrefix + "bucket"}
+		if project != "" {
+			after["project"] = project
+		}
+		return mrc("google_storage_bucket", after)
+	}
+	twoProjects := managedTestCover()
+	twoProjects.Projects = []string{"proj-1", second}
+	for name, tc := range map[string]struct {
+		c  ManagedCover
+		rc ResourceChange
+	}{
+		"the managed project":               {managedTestCover(), bucket("proj-1")},
+		"a second project of this run":      {twoProjects, bucket(second)},
+		"no project, so the provider's own": {managedTestCover(), bucket("")},
+		"a project known only after apply": {managedTestCover(),
+			withUnknown(bucket(""), map[string]any{"project": true})},
+	} {
+		t.Run("admits "+name, func(t *testing.T) {
+			if out := tc.c.NotCovered(managedPlan(tc.rc), nil); len(out) != 0 {
+				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+	rc := bucket(second)
+	out := managedTestCover().NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 || !strings.HasPrefix(out[0], rc.Address+" (") ||
+		!strings.Contains(out[0], "in project "+second+", which is not this run's") {
+		t.Fatalf("a resource in %s gives %q, want one refusal at %s naming the project", second, out, rc.Address)
+	}
+}
+
+// TestManagedCoverRefusesASecondProjectInTerraformsOwnPlan is the same rule on
+// a plan nobody wrote by hand: terraform's own output for a root whose module
+// provider block bills proj-2 and whose resource is in proj-2. The resource is
+// refused by address, and the refusal is the project rule's.
+func TestManagedCoverRefusesASecondProjectInTerraformsOwnPlan(t *testing.T) {
+	const addr = "module.m.google_project_service.s"
+	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_settings_plan.json"), nil)
+	if !refusedWith(out, addr+" (", "in project proj-2, which is not this run's") {
+		t.Fatalf("gives %q, want %s refused for the project it is in", out, addr)
+	}
+}
+
+// TestManagedCoverDropsInitAttributeChecks is the other half of the decision:
+// the attribute checks that only make sense for Fugaro's own embedded modules
+// are dropped, and each fixture below passes because of it. init's cover
+// refuses every one of them (cover_test.go, cover_golden_test.go); a managed
+// plan's resources are the plan's own, and the rules that keep Fugaro's own
+// resources out of reach are Task 1.1's — the name carries the prefix, the
+// runs bucket is refused by name, and the accounts a job or a scheduler runs
+// as must be the managed project's own. The sink's project is dropped with its
+// type (TestManagedCoverRefusesTheDroppedTypes), and the bucket or repository
+// a grant is on with the prefix rule, so neither has a fixture here.
+func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
+	// job is the kept job fixture with the container replaced: its name and its
+	// service account stay what Task 1.1 requires, so the type, the prefix and
+	// the account rule all admit it and only a dropped attribute check could
+	// refuse it.
+	job := func(container map[string]any) ResourceChange {
+		return mrc("google_cloud_run_v2_job", map[string]any{
+			"name": ManagedPrefix + "job",
+			"template": []any{map[string]any{"template": []any{map[string]any{
+				"service_account": managedAccount,
+				"containers":      []any{container},
+			}}}},
+		})
+	}
+	for name, rc := range map[string]ResourceChange{
+		"an image outside this run's registry": job(map[string]any{"image": "docker.io/library/alpine:3"}),
+		"a container command the modules do not set": job(map[string]any{
+			"image": "docker.io/library/alpine:3", "command": []any{"/bin/sh"}, "args": []any{"-c", "true"}}),
+		"a check spec pointing at another registry": job(map[string]any{
+			"image": "docker.io/library/alpine:3",
+			"env":   []any{map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"registry":"attacker.example"}`}}}),
+		"a scheduler calling a job that is not this run's": mrc("google_cloud_scheduler_job", map[string]any{
+			"name": ManagedPrefix + "sweep",
+			"http_target": []any{map[string]any{
+				"uri":         "https://run.googleapis.com/v2/projects/other/locations/us-east5/jobs/fugaro-sweep:run",
+				"oauth_token": []any{map[string]any{"service_account_email": managedAccount}}}}}),
+		"a bucket without public access prevention": mrc("google_storage_bucket", map[string]any{
+			"name": ManagedPrefix + "bucket", "public_access_prevention": "inherited", "uniform_bucket_level_access": false}),
+		"an API key whose targets are not the web key's": mrc("google_apikeys_key", map[string]any{
+			"name":         ManagedPrefix + "key",
+			"restrictions": []any{map[string]any{"api_targets": []any{map[string]any{"service": "compute.googleapis.com"}}}}}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(managedPlan(rc), nil); len(out) != 0 {
+				t.Fatalf("%s gives %q, want it covered: the check is dropped for a managed plan", name, out)
+			}
+		})
+	}
+}
