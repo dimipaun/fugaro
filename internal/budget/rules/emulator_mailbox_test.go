@@ -488,18 +488,24 @@ func TestMailboxReadsAreTheGrantedSet(t *testing.T) {
 // chooses the uid and every claim: a launcher (signJwt, iam.tf's token_minter)
 // or any holder of a key of one of the project's service accounts. So a token
 // minted with uid == mu == alice is, to the rules, alice's phone: it reads
-// alice's outbox and heartbeat and writes her inbox. A token minted with
-// mc == alice is alice's consumer and can fake her heartbeat. The rules
+// alice's outbox and heartbeat, writes her inbox, and acks her outbox
+// messages — the ack is the phone's MAILBOX write, so a minted token can mark
+// as spoken a message the phone never spoke, and the consumer, which reads
+// the ack as "delivered and spoken", stops re-delivering it. A token minted
+// with mc == alice is alice's consumer and can fake her heartbeat. The rules
 // cannot tell these apart from the real ones; no claim they could read would
 // help, because the minter writes that claim too. (Launchers also read every
 // mailbox through roles/firebasedatabase.viewer, which bypasses the rules:
 // mobile reconciliation G13.)
 //
-// What closes it is phase 6, by owner decision: the admin-only device node
-// config/admin/devices/$uid that USER will also require (D166, plan P6.4),
-// and a per-pairing MAC on every inbox message and action record that
-// `fugaro mailbox` verifies before it acts (D169, D171, plan P6.3, P6.7), so
-// a minted inbox write cannot make the consumer act. When P6.4 lands, the
+// What would close it is phase 6, if the owner approves it: the admin-only
+// device node config/admin/devices/$uid that USER will also require (D166,
+// plan P6.4), and a per-pairing MAC on every inbox message and action record
+// that `fugaro mailbox` verifies before it acts (D169, D171, plan P6.3,
+// P6.7), so a minted inbox write cannot make the consumer act. Phase 6 is
+// **proposed, not approved** (the plan says "PROPOSED ... NOT APPROVED"; the
+// decisions its tasks build were answered without approving them), so this is
+// the state the rules are in, not a stage on a schedule. When P6.4 lands, the
 // device-node half of this test must change on purpose (a minted token
 // without the node is refused); the MAC half is the consumer's, not the
 // rules'.
@@ -519,8 +525,11 @@ func TestMailboxResidualMintedTokenPassesUntilPhase6(t *testing.T) {
 		put(outbox(mbAlice, "c1")+"/acked", true))
 
 	// A token minted with mc == alice: it writes alice's heartbeat, so the
-	// heartbeat's integrity is not the rules' to keep until a signed
-	// heartbeat lands in phase 6.
+	// heartbeat's integrity is not the rules' to keep until the signed
+	// heartbeat that phase 6 *proposes* (O7 in
+	// docs/mobile/functional-spec-reconciliation.md: a recommendation, and
+	// phase 6 approves no task) — "proposed", not "lands", because no phase 6
+	// task may start without the owner's explicit go.
 	forgedConsumer := h.as(claims{mc: mbAlice, fp: "-", rb: "mallory@example.invalid"})
 	h.mustAllow(forgedConsumer, "alice's heartbeat from a minted mc token",
 		put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "forged"}))
