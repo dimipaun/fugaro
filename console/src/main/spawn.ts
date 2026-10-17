@@ -1086,7 +1086,22 @@ export function runToCompletion(
       clearDeadline()
       reject(error)
     })
-    child.on('exit', (code, signal) => {
+    // `exit` is recorded but does not settle the read. Node fires it when the
+    // child is reaped, and its stdio streams may still be open at that moment:
+    // a last chunk that arrives afterwards belongs to the value, and a reader
+    // that resolved on `exit` would hand back a torn document -- a screen then
+    // refuses a read that actually succeeded. `close` is the event that says
+    // every byte has been read, which is what this function's name promises and
+    // what `SpawnedChildLike`'s own comment above already states (and what
+    // `tools/record-fixture/index.ts` settles on for exactly this reason).
+    //
+    // The deadline stays the backstop for the other side of the trade: a stream
+    // a stray grandchild holds open past the child's exit is refused with
+    // `SpawnTimeout` rather than resolved with whatever had arrived.
+    child.on('exit', () => {
+      exited = true
+    })
+    child.on('close', (code, signal) => {
       exited = true
       if (settled) return
       settled = true
@@ -1102,9 +1117,21 @@ export class SpawnTimeout extends Error {
   override readonly name = 'SpawnTimeout'
 }
 
+/** boundAppend keeps the last `limit` code units of `current + chunk`: stderr's
+ * tail is where a CLI puts its refusal, and a screen shows the sentence that
+ * comes out of it (`cliSentence`). The cut can land between the two halves of a
+ * surrogate pair, and half a pair is not text -- it is a lone surrogate, which
+ * one drawer renders as a replacement character and another as nothing at all.
+ * A leading *low* surrogate is the proof of such a cut, so it is dropped, the
+ * same step `src/main/ipc.ts`'s `boundReason` takes at the other end of its
+ * string. */
 function boundAppend(current: string, chunk: string, limit: number): string {
   const next = current + chunk
-  return next.length > limit ? next.slice(next.length - limit) : next
+  if (next.length <= limit) return next
+  let from = next.length - limit
+  const first = next.charCodeAt(from)
+  if (first >= 0xdc00 && first <= 0xdfff) from += 1
+  return next.slice(from)
 }
 
 /** VersionProbe is what `resolveBinary` learned about a candidate. */
@@ -1512,7 +1539,12 @@ export function startSidecar(
     started.on('error', (error) => {
       finish({ reason: 'unstartable', code: null, signal: null, sentence: error.message, spawns })
     })
-    started.on('exit', (code, signal) => {
+    // `close`, not `exit`, for the same reason as the one-shot reader above:
+    // the last frame of a `watch` can arrive after the child is reaped, and a
+    // supervisor that decided `lost` on `exit` would both drop that frame and
+    // read an empty stderr into the sentence it gives the screen. `close` is
+    // the point at which there is nothing left to read from this child.
+    started.on('close', (code, signal) => {
       child = null
       const decision = restartDecision({ code, signal, stopped, attempt, backoff: plan.backoff })
       if (!decision.restart) {

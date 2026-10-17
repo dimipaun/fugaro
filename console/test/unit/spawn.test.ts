@@ -197,42 +197,68 @@ function manualTimers(): Timers & { fired(): readonly number[]; fire(): void; pe
   }
 }
 
-/** scriptedChild is a child process whose streams and exit the test drives, for
- * the supervisor tests that must not depend on a real signal's timing. */
+/**
+ * scriptedChild is a child process whose streams, exit and close the test
+ * drives, for the supervisor tests that must not depend on a real signal's
+ * timing.
+ *
+ * The three events are separate on purpose, because Node separates them and the
+ * order is the whole point of settling on `close`:
+ *
+ *   - `exit(code, signal)` is what Node does for an ordinary child -- `exit`
+ *     and then `close`, with nothing in between -- and it is what most tests
+ *     want;
+ *   - `exitWithoutClose` fires `exit` alone, which is the real hazard: it is the
+ *     window in which a last chunk can still arrive, and a reader that settled
+ *     on `exit` has already handed back a torn value;
+ *   - `close` fires `close` alone, to end that window.
+ */
 function scriptedChild(): SpawnedChildLike & {
   emitStdout(text: string | Buffer): void
   emitStderr(text: string | Buffer): void
   exit(code: number | null, signal: string | null): void
+  exitWithoutClose(code: number | null, signal: string | null): void
+  close(code: number | null, signal: string | null): void
   readonly killed: readonly (NodeJS.Signals | undefined)[]
 } {
   const stdoutListeners: ((chunk: Buffer | string) => void)[] = []
   const stderrListeners: ((chunk: Buffer | string) => void)[] = []
   const exitListeners: ((code: number | null, signal: string | null) => void)[] = []
+  const closeListeners: ((code: number | null, signal: string | null) => void)[] = []
   const errorListeners: ((error: Error) => void)[] = []
   const killed: (NodeJS.Signals | undefined)[] = []
-  return {
-    stdout: { on: (_event, listener) => stdoutListeners.push(listener) },
-    stderr: { on: (_event, listener) => stderrListeners.push(listener) },
+  const child = {
+    stdout: { on: (_event: string, listener: (chunk: Buffer | string) => void) => stdoutListeners.push(listener) },
+    stderr: { on: (_event: string, listener: (chunk: Buffer | string) => void) => stderrListeners.push(listener) },
     on(event: 'error' | 'exit' | 'close', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
       if (event === 'error') errorListeners.push(listener as (error: Error) => void)
       else if (event === 'exit') exitListeners.push(listener as (code: number | null, signal: string | null) => void)
+      else closeListeners.push(listener as (code: number | null, signal: string | null) => void)
       return undefined
     },
     kill(signal?: NodeJS.Signals) {
       killed.push(signal)
       return true
     },
-    emitStdout: (text) => {
+    emitStdout: (text: string | Buffer) => {
       for (const listener of stdoutListeners) listener(text)
     },
-    emitStderr: (text) => {
+    emitStderr: (text: string | Buffer) => {
       for (const listener of stderrListeners) listener(text)
     },
-    exit: (code, signal) => {
+    exitWithoutClose: (code: number | null, signal: string | null) => {
       for (const listener of exitListeners) listener(code, signal)
+    },
+    close: (code: number | null, signal: string | null) => {
+      for (const listener of closeListeners) listener(code, signal)
+    },
+    exit: (code: number | null, signal: string | null) => {
+      for (const listener of exitListeners) listener(code, signal)
+      for (const listener of closeListeners) listener(code, signal)
     },
     killed,
   }
+  return child
 }
 
 async function waitFor(predicate: () => boolean, ms = 4000): Promise<void> {
@@ -1092,6 +1118,36 @@ describe('the supervisor', () => {
     ])
   })
 
+  it('reads a child to its close, so a last frame is not dropped and a last sentence is not missed', () => {
+    // The streaming half of the same defect: `watch`'s final frame can arrive
+    // after the child is reaped, and a supervisor that decided on `exit` would
+    // both drop that frame and read an empty stderr into the sentence it gives
+    // the screen. With the supervisor settling on `exit`, `ends` is non-empty
+    // before the `close` below and `frames` has one entry rather than two.
+    const plan = planFor('live.watch', {}, safeContext())
+    const child = scriptedChild()
+    const frames: string[] = []
+    const ends: { reason: string; sentence: string | null }[] = []
+    startSidecar(plan, {
+      onFrame: (frame) => frames.push(JSON.stringify(frame.document)),
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: (end) => ends.push({ reason: end.reason, sentence: end.sentence }),
+    }, { spawner: () => child, timers: manualTimers() })
+
+    child.emitStdout('{"day":"2026-01-01"}\n')
+    child.exitWithoutClose(1, null)
+    expect(ends).toHaveLength(0)
+    child.emitStdout('{"day":"2026-01-02"}\n')
+    child.emitStderr('fugaro: this checkout belongs to project acme; --project says fugaro\n')
+    child.close(1, null)
+
+    expect(frames).toEqual(['{"day":"2026-01-01"}', '{"day":"2026-01-02"}'])
+    expect(ends).toEqual([
+      { reason: 'refused', sentence: 'this checkout belongs to project acme; --project says fugaro' },
+    ])
+  })
+
   it('does not restart after a refusal, and keeps the CLI’s sentence', () => {
     const plan = planFor('live.watch', {}, safeContext())
     const child = scriptedChild()
@@ -1308,6 +1364,59 @@ describe('the one-shot read', () => {
     child.emitStderr('x'.repeat(100))
     child.exit(1, null)
     expect((await read).stderr.length).toBeLessThanOrEqual(8)
+  })
+
+  it('settles on close, so a chunk that arrives after exit is in the value', async () => {
+    // Node fires `exit` when the child is reaped, and its stdio may still have
+    // bytes on the way at that moment: a reader that settled on `exit` would
+    // hand back `{"a":` -- a torn document that the screen then refuses, or a
+    // version line with its last character missing, which the handshake would
+    // read as a skew it is not. This is the mutation the review found untested:
+    // with `runToCompletion` settling on `exit`, the value below is `{"a":`.
+    const child = scriptedChild()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers: manualTimers() })
+    child.emitStdout('{"a":')
+    child.exitWithoutClose(0, null)
+    child.emitStdout('1}')
+    child.close(0, null)
+    await expect(read).resolves.toMatchObject({ code: 0, stdout: '{"a":1}' })
+  })
+
+  it('refuses a read whose streams never close, rather than returning a torn value', async () => {
+    // The other side of settling on `close`: a pipe something else still holds
+    // open past the child's exit is not a value to hand a screen. The deadline
+    // is what answers it, and it answers by refusing -- never by resolving with
+    // the bytes that had arrived.
+    const child = scriptedChild()
+    const timers = manualTimers()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers, timeoutMs: 30_000 })
+    child.emitStdout('{"a":')
+    child.exitWithoutClose(0, null)
+    timers.fire()
+    await expect(read).rejects.toThrow(/did not finish within 30s/)
+  })
+
+  it('keeps a whole character when the stderr bound cuts beside a surrogate pair', async () => {
+    // `boundAppend` keeps the tail, so its cut can land between the two halves
+    // of a pair: half of `🚀` is a lone surrogate, and `cliSentence` copies
+    // that text into a screen's refusal.
+    const child = scriptedChild()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers: manualTimers(), maxStderrBytes: 3 })
+    child.emitStderr('x🚀y')
+    child.exit(1, null)
+    // The cut falls on the pair's first half, which is kept whole: '🚀y'.
+    expect((await read).stderr).toBe('🚀y')
+  })
+
+  it('never leaves a lone surrogate in bounded stderr', async () => {
+    const child = scriptedChild()
+    const read = runToCompletion(plan(), { spawner: scriptedSpawner(child), timers: manualTimers(), maxStderrBytes: 2 })
+    child.emitStderr('x🚀y')
+    child.exit(1, null)
+    const { stderr } = await read
+    // The cut would land on the pair's *second* half, which is dropped: 'y'.
+    expect(stderr).toBe('y')
+    expect(stderr).not.toMatch(/^[\uDC00-\uDFFF]/)
   })
 
   it('decodes a UTF-8 character split across two chunks as one character', async () => {
