@@ -213,6 +213,9 @@ func TestSecretsAndCloudCommandsRefuseHTTP2Debug(t *testing.T) {
 			{"logs", "some-run"},
 			{"diagnose", "some-run"},
 			{"cancel", "some-run"},
+			// The owner's own command, and the one whose credential is the
+			// widest: it writes the delete list at the runs bucket's root.
+			{"allow-delete", "google_cloud_run_v2_job.web"},
 		} {
 			_, errOut, err := executeStdin(t, tokenValue, args...)
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") || strings.Contains(err.Error()+errOut, tokenValue) {

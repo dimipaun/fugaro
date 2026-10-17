@@ -112,6 +112,14 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	if m := agentMarker(os.Getenv); m != "" {
 		return userErr("nothing was written: fugaro allow-delete records the project's own approval of cloud deletes with the operator's credentials, so it is run by a person: %s", initflow.AgentRefusal(m))
 	}
+	// And before the cloud is opened at all: GODEBUG=http2debug makes Go
+	// print HTTP/2 requests with their headers — the OAuth bearer token —
+	// to stderr, and GODEBUG is read before main runs, so it cannot be
+	// unset in time. Every command that opens the cloud refuses instead
+	// (refuseHTTP2Debug), and this one opens the owner's own credentials.
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
+	}
 	_, lc, err := selectProject(ctx, o)
 	if err != nil {
 		return err
@@ -244,6 +252,13 @@ func droppedFrom(current, approved []string) []string {
 // the bucket's root refuses, or the cloud's own answer.
 func allowDeleteWriteErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
+	// The one refusal of this package's own that is about the list rather
+	// than about the bucket: it is over the size the read believes, so the
+	// fix is fewer addresses, and this case comes first so the owner is not
+	// sent to check gcp_project and runs_bucket, which are fine.
+	case errors.Is(err, managed.ErrTooLarge):
+		return userErr("nothing was written for %s: the list is over the size this command reads back, so it would be recorded and then read as no addresses — refusing every delete it looks like it approves. Approve fewer addresses (or shorter ones), in gs://%s/%s: %v",
+			lc.Name, bucket, managed.AllowDeleteObject, err)
 	case errors.Is(err, managed.ErrRefused):
 		return userErr("nothing was written for %s: the delete list goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %v",
 			lc.Name, bucket, managed.AllowDeleteObject, lc.GCPProject, err)

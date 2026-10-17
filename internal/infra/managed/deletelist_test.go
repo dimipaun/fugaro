@@ -263,6 +263,18 @@ func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
 	if !errors.Is(err, ErrRefused) {
 		t.Errorf("WriteDeleteList() = %v, want a refusal of this package's own", err)
 	}
+	// And it is distinguishable within that family: the caller has an owner
+	// to advise, and "the list is too long" sends them to the list while the
+	// other refusals send them to the two settings that name the bucket. A
+	// caller that knows only ErrRefused still sees a refusal (above), and a
+	// refusal about something else is not this one.
+	if !errors.Is(err, ErrTooLarge) {
+		t.Errorf("WriteDeleteList() = %v, want ErrTooLarge inside it", err)
+	}
+	other := DeleteList{Version: AllowDeleteVersion + 1, GCPProject: testProject, Addresses: []string{"a"}}
+	if _, err := other.Bytes(); err == nil || errors.Is(err, ErrTooLarge) {
+		t.Errorf("the version refusal = %v, want a refusal that is not ErrTooLarge", err)
+	}
 	if _, ok := deleteListAt(t, s, bucket); ok {
 		t.Errorf("gs://%s/%s is there: a refused write must write nothing", bucket, AllowDeleteObject)
 	}
