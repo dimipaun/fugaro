@@ -34,7 +34,7 @@ import { CHILD_ENV_KEYS, SHUTDOWN_GRACE_MS } from '../../src/main/spawn'
 import type { ChildSpawner, ReadableLike, SpawnedChildLike, Timers } from '../../src/main/spawn'
 import { FIXTURE_CASES, FIXTURE_DIRECTORY, FixtureRefusal, loadFixture } from '../../src/source/fixture'
 import type { FixtureRecord } from '../../src/source/fixture'
-import { PROJECT_MARKER, RedactionRefusal, createRedactor } from '../../src/source/redact'
+import { MAX_REDACTABLE_LINE_LENGTH, PROJECT_MARKER, RedactionRefusal, createRedactor } from '../../src/source/redact'
 import type { Redactor } from '../../src/source/redact'
 import {
   BELONG_PROJECT,
@@ -721,6 +721,34 @@ describe("the recorder's hardening (security review of b65fff5)", () => {
       expect(refusal(() => opts('--out', OUT, '--project', project)), JSON.stringify(project)).toMatch(/belong/)
     }
     expect(refusal(() => full('--gcp-project', 'belong-gcp-1'))).toMatch(/--gcp-project names belong/)
+  })
+
+  it('folds look-alike letters and trailing dots before the out-of-bounds check', () => {
+    // Cyrillic е and о, a trailing dot (which a resolver drops), and both at once.
+    for (const project of ['bеlong', 'belоng', 'belong.', 'BELONG..', 'bеlong.']) {
+      expect(refusal(() => opts('--out', OUT, '--project', project)), JSON.stringify(project)).toMatch(/names belong/)
+    }
+    expect(refusal(() => opts('--out', OUT, '--project', 'sandbox', '--dir', '/home/operator/src/bеlong./x'))).toMatch(
+      /--dir names belong/,
+    )
+  })
+
+  it("bounds a line by the redactor's cap by default, before the redactor sees it", async () => {
+    const options = full('--duration', '30')
+    const stub = new StubChild()
+    const recording = startRecording({
+      options,
+      plan: planForRecording(options, {}),
+      redactor: redactor(),
+      spawner: (() => stub) as ChildSpawner,
+      timers: new FakeTimers(),
+      clock: () => new Date('2026-10-15T12:00:00Z'),
+    })
+    stub.write(`{"t":"${'a'.repeat(MAX_REDACTABLE_LINE_LENGTH)}"}\n`)
+    stub.exit(0)
+    const result = await recording.finished
+    expect(result.refusal?.message).toMatch(/longer than a feed line/)
+    expect(result.records).toEqual([])
   })
 
   it("refuses an --out outside this repository's console/test/fixtures", () => {

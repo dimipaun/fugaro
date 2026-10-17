@@ -63,12 +63,18 @@ import type { Stats } from 'node:fs'
 import { homedir, hostname, userInfo } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
-import { MAX_FEED_LINE_LENGTH, SHUTDOWN_GRACE_MS, decodeFeedLine, nodeSpawner, planFor } from '../../src/main/spawn'
+import { SHUTDOWN_GRACE_MS, decodeFeedLine, nodeSpawner, planFor } from '../../src/main/spawn'
 import type { ChildSpawner, SpawnPlan, SpawnedChildLike, Timers } from '../../src/main/spawn'
 import type { ValidatedArguments } from '../../src/main/ipc'
 import { FIXTURE_CASES, FIXTURE_DIRECTORY, loadFixture, stampOf, writeFixture } from '../../src/source/fixture'
 import type { FixtureCaseName, FixtureMeta, FixtureRecord } from '../../src/source/fixture'
-import { PROJECT_MARKER, RedactionRefusal, createRedactor } from '../../src/source/redact'
+import {
+  MAX_REDACTABLE_LINE_LENGTH,
+  PROJECT_MARKER,
+  RedactionRefusal,
+  createRedactor,
+  foldConfusables,
+} from '../../src/source/redact'
 import type { Redactor } from '../../src/source/redact'
 import type { JSONDoc } from '../../src/source/source'
 
@@ -297,14 +303,15 @@ function splitFlag(token: string): [string, string | undefined] {
  * the *value as spelled*, case-insensitively, so `--dir ../Belong` is refused
  * too -- the point is to stop a scripted run, not to be a filesystem check. */
 function outOfBounds(flag: string, value: string): void {
-  // Normalised first: NFKC, every whitespace and control character gone, lower
-  // case. `--project " belong"` was a project the CLI would trim and the check
-  // would not.
-  const lowered = value
-    .normalize('NFKC')
-    .replace(/[\s\p{C}]+/gu, '')
+  // Normalised first: NFKC, every whitespace and control character gone,
+  // Cyrillic and Greek look-alikes folded to the Latin letter they are drawn
+  // as, lower case, and a trailing dot dropped from every segment (a resolver
+  // drops it too). `--project " belong"` was a project the CLI would trim and
+  // the check would not; `bеlong` (Cyrillic е) and `belong.` were two more.
+  const lowered = foldConfusables(value.normalize('NFKC').replace(/[\s\p{C}]+/gu, ''))
     .toLowerCase()
     .replace(/\\/g, '/')
+    .replace(/\.+(?=\/|$)/g, '')
   for (const fragment of OUT_OF_BOUNDS) {
     if (
       lowered === fragment ||
@@ -582,7 +589,9 @@ export interface RecordingDeps {
   readonly timers: Timers
   readonly clock: () => Date
   /** `maxLineLength` bounds one line before it reaches the redactor; the
-   * loader's bound (`MAX_FEED_LINE_LENGTH`) by default. */
+   * redactor's bound (`MAX_REDACTABLE_LINE_LENGTH`, far below the live feed's)
+   * by default: a line the redactor would refuse is refused here, before a
+   * single rule has run on it. */
   readonly maxLineLength?: number
 }
 
@@ -595,7 +604,7 @@ export interface RecordingDeps {
  */
 export function startRecording(deps: RecordingDeps): Recording {
   const { options, plan, redactor, spawner, timers, clock } = deps
-  const maxLine = deps.maxLineLength ?? MAX_FEED_LINE_LENGTH
+  const maxLine = deps.maxLineLength ?? MAX_REDACTABLE_LINE_LENGTH
   const [binary, ...argv] = plan.argv
   if (binary === undefined) throw new RecorderRefusal('the plan names no binary')
   const child: SpawnedChildLike = spawner(binary, argv, {
