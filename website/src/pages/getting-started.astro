@@ -1,0 +1,141 @@
+---
+/**
+ * website/src/pages/getting-started.astro — getting started (website plan, Task W1.5).
+ *
+ * Every sentence a reader acts on here is **rendered, not written**: the commands come
+ * from `website/data/install.yaml` (W0.1), whose Go test pins each one to the file its
+ * `source:` names — `README.md`'s `## Getting started` or `docs/release.md`'s
+ * verification block — byte for byte, and the platform list to `README.md`'s
+ * `## Requirements` and to `.goreleaser.yaml`'s `builds[0]`. The site is the fourth copy
+ * of the install instructions to exist in this repository and the one most likely to be
+ * read, so it is the copy that must not be a copy (finding 21, Global Constraint 6).
+ *
+ * Three things this page is written to say, and not to say:
+ *
+ *   - **The plugin path is a first-class step**, not a footnote: `fugaro init`,
+ *     `/fugaro:setup` and `fugaro upgrade --local` are rendered beside the Homebrew cask
+ *     and the archive, because a "Getting started" that omits the plugin describes half
+ *     the install (finding 22). The file's own note says what they do.
+ *   - **The cosign verification is inline**, with the archive: the verification block is
+ *     the release process' own text, and a reader who downloads an archive is one scroll
+ *     from the commands that check it (finding 19).
+ *   - **Windows is untested, and stated as untested** (D94, finding 20): the platform list
+ *     renders the status `install.yaml` carries, and the Windows entry's own note — this
+ *     repository builds no Windows binary, and the Linux archive may work through WSL but
+ *     nobody has verified it — is a note rather than a platform a reader is offered. The
+ *     page carries no support promise the release build does not make.
+ *
+ * Nothing here fetches: the page is built from the files in this repository, and the only
+ * link it prints is the Releases page `install.yaml` names (Global Constraints 4 and 8).
+ */
+import Base from '../layouts/Base.astro'
+import { loadSite } from '../content.ts'
+
+// The whole generated layer, read and validated through the base layout's own call: a
+// missing install.yaml stops the build rather than rendering an empty install block
+// (W1.3's pipeline).
+const site = loadSite()
+const install = site.install
+
+// The reader-facing name of a platform a path names. A path's own `platforms:` list names
+// the **goos** a build produces — `darwin`, `linux` — while the platform list above carries
+// the name a reader reads (`macOS`) for each of them, so the page translates through that
+// list rather than printing an operating system's internal name at a reader. A path that
+// named a goos the file does not describe renders the goos rather than inventing a name for
+// it, so the mismatch is visible rather than papered over.
+const platformNames = new Map(install.platforms.map((platform) => [platform.goos, platform.name]))
+
+// What the repository builds for, and what it merely notes. `status` is the file's own
+// word — `supported` or `untested` — and it is rendered as written (D94).
+const platforms = install.platforms
+
+const nameOf = (id: string): string => platformNames.get(id) ?? id
+---
+
+<Base title="Getting started">
+  <h1>Getting started</h1>
+
+  {/* The paragraph is one line on purpose: a line break between a word and an inline
+      element is whitespace a template drops, and "which<code>README.md</code>" is the kind
+      of defect a build cannot see. */}
+  <p>Every command on this page is rendered from <code>website/data/install.yaml</code>, which <code>internal/cli/docs_website_install_test.go</code> holds to <code>README.md</code>, <code>docs/release.md</code> and <code>.goreleaser.yaml</code>: the commands are the ones this repository prints, the platform list is the one its requirements and its release build describe, and the archive's name is the release configuration's own template. Nothing here is typed into this page.</p>
+
+  <section id="platforms">
+    <h2>Platforms</h2>
+    <p>The operating systems this repository builds for, and the one it does not:</p>
+    <ul>
+      {platforms.map((platform) => (
+        <li data-platform={platform.id} data-status={platform.status}>
+          <strong>{platform.name}</strong> — {platform.status}
+          {platform.note !== '' && <p class="note">{platform.note}</p>}
+        </li>
+      ))}
+    </ul>
+  </section>
+
+  <section id="install">
+    <h2>Install</h2>
+    <p>
+      Each path below is one the repository offers, with the commands its own source prints.
+      Pick the one that suits the machine you are on; the plugin path is a step of the install
+      and not an extra, since the commands that drive a run come with it.
+    </p>
+
+    {install.paths.map((installPath) => (
+      <article data-path={installPath.id}>
+        <h3>{installPath.name}</h3>
+
+        {installPath.note !== '' && <p>{installPath.note}</p>}
+
+        <p class="source">
+          Commands as printed in <code>{installPath.source}</code>{installPath.devOnly && ' — development only'}.
+        </p>
+
+        <p class="platforms">
+          Platforms: {installPath.platforms.map((id) => nameOf(id)).join(', ')}
+        </p>
+
+        {installPath.releasePage !== '' && (
+          <p class="release">
+            <a href={installPath.releasePage} rel="noopener">{installPath.releasePage}</a>
+          </p>
+        )}
+
+        {installPath.commands.map((command) => (
+          <pre><code>{command}</code></pre>
+        ))}
+      </article>
+    ))}
+  </section>
+
+  <style>
+    /* The page's own box, and nothing else: the design is W1.2's, and every space, radius
+       and colour below is a token from `src/styles/tokens.css` — never a value written
+       here, and never a colour literal (D104, D105). Column widths are measured in `ch`
+       rather than px because the measure is a typographic fact, not a device one. */
+    section {
+      margin-block: var(--space-xl);
+      max-width: var(--measure);
+    }
+
+    article {
+      border: var(--border-width) solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-md);
+      margin-block: var(--space-md);
+    }
+
+    pre {
+      background: var(--surface);
+      overflow-x: auto;
+      padding: var(--space-sm);
+      border-radius: var(--radius-sm);
+    }
+
+    .note,
+    .source,
+    .platforms {
+      color: var(--text-muted);
+    }
+  </style>
+</Base>
