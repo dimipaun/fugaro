@@ -433,13 +433,17 @@ func TestManagedCoverRefusesWhatThePlanCarriesBesideResources(t *testing.T) {
 		})
 	}
 	// The positive control: the keys terraform writes for an ordinary plan,
-	// and the action keys present but empty.
+	// each carrying something, and the action keys and an unknown key present
+	// but empty.
 	d := clean()
 	for k, v := range map[string]any{"variables": map[string]any{"p": map[string]any{"value": "x"}},
-		"planned_values": map[string]any{"root_module": map[string]any{}}, "prior_state": map[string]any{},
-		"resource_drift": []any{}, "relevant_attributes": []any{}, "output_changes": map[string]any{},
-		"checks": []any{}, "timestamp": "2026-10-17T00:00:00Z", "applyable": true, "complete": true,
-		"errored": false, "action_invocations": []any{}, "deferred_changes": nil} {
+		"planned_values": map[string]any{"root_module": map[string]any{}},
+		"prior_state":    map[string]any{"format_version": "1.0", "values": map[string]any{"root_module": map[string]any{}}},
+		"resource_drift": []any{bucket}, "relevant_attributes": []any{map[string]any{"resource": "google_storage_bucket.b", "attribute": []any{"name"}}},
+		"output_changes": map[string]any{"o": map[string]any{"actions": []any{"create"}, "after": "x"}},
+		"checks":         []any{map[string]any{"address": map[string]any{"kind": "resource"}, "status": "pass"}},
+		"timestamp":      "2026-10-17T00:00:00Z", "applyable": true, "complete": true,
+		"errored": false, "action_invocations": []any{}, "deferred_changes": nil, "hooks": map[string]any{}} {
 		d[k] = v
 	}
 	root(d)["actions"] = []any{}
