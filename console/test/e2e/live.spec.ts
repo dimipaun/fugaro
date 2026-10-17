@@ -27,12 +27,13 @@
 //     `require`: the renderer has no `require`, and giving the page one would
 //     be giving a window with `connect-src 'none'` a Node builtin.
 //
-// **The goldens.** `test/e2e/__screenshots__/live-{light,dark}.png` are
-// compared, never written by a run: `playwright.config.ts` sets
+// **The goldens.** `test/e2e/__screenshots__/live-{light,dark}-<platform>.png`
+// (one per theme per platform: `darwin` and `linux`, because macOS and Linux
+// pixels differ and CI runs both) are compared, never written by a run: `playwright.config.ts` sets
 // `updateSnapshots: 'none'`, so a missing baseline FAILS (Playwright's
 // `'missing'` would write one and pass, comparing nothing). They are recorded by
-// an owner, on the platform the comparison runs on (macOS and Linux pixels
-// differ), with `npx playwright test live.spec.ts --update-snapshots`, and the
+// an owner, once on each platform the comparison runs on, with
+// `npx playwright test live.spec.ts --update-snapshots`, and the
 // three PNG-writing and PNG-reading tests below are the only ones that need
 // them. Until they are committed those tests fail, on purpose. The one way to
 // run the rest of the file without them is the explicit
@@ -355,7 +356,12 @@ test.describe('the Live screen', () => {
     // the screen's own, and the directory is read, so a third palette -- or a
     // PNG that was never committed -- fails here.
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    // One per theme for THIS platform, and nothing that is not a theme's
+    // recording for one of the two platforms CI runs.
     const present = existsSync(goldenDir) ? readdirSync(goldenDir).filter((f) => f.endsWith('.png')).sort() : []
-    expect(present).toEqual(LIVE_THEMES.map((theme) => `live-${theme}.png`).sort())
+    expect(present.filter((f) => f.endsWith(`-${process.platform}.png`))).toEqual(
+      LIVE_THEMES.map((theme) => `live-${theme}-${process.platform}.png`).sort(),
+    )
+    for (const file of present) expect(file).toMatch(new RegExp(`^live-(${LIVE_THEMES.join('|')})-(darwin|linux)\\.png$`))
   })
 })

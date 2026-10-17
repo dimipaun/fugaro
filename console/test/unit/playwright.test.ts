@@ -66,10 +66,10 @@ describe('playwright.config.ts', () => {
     ).toBe('none')
   })
 
-  it('keeps one golden per theme, named without a platform suffix, in test/e2e/__screenshots__', () => {
-    // The goldens are recorded and compared on one platform, so the file name
-    // carries no `-darwin` / `-linux` suffix that would let a macOS recording
-    // sit beside, and silently never be compared with, the CI's.
-    expect(config.snapshotPathTemplate).toBe('{testDir}/__screenshots__/{arg}{ext}')
+  it('keeps one golden per theme per platform, in test/e2e/__screenshots__', () => {
+    // CI runs the e2e pass on macOS and on Linux under one check name, and the
+    // two draw different pixels: the file name carries the platform, so each
+    // leg compares against its own recording (review round 2 of PR 494).
+    expect(config.snapshotPathTemplate).toBe('{testDir}/__screenshots__/{arg}-{platform}{ext}')
   })
 })

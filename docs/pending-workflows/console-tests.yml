@@ -73,6 +73,21 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # The screenshot goldens (plan Task 2.1-2.3) are not committed yet, and
+    # playwright.config.ts's `updateSnapshots: 'none'` FAILS a missing baseline
+    # by design -- so without this line the check would go red the moment the
+    # file is copied in, on every pull request and every push to main. `skip`
+    # is the specs' one documented opt-out: it skips exactly the golden tests
+    # and says so in the report; every other e2e test still runs. **Owner step,
+    # once the goldens exist**: record them on EACH platform (the file names
+    # carry the platform, `live-light-darwin.png` / `live-light-linux.png`, since
+    # the two legs draw different pixels) with
+    #     cd console && npm run build && npm exec -- playwright test --update-snapshots
+    # on macOS, and the same under `xvfb-run --auto-servernum` on Linux; commit
+    # console/test/e2e/__screenshots__/ (both platforms' files); then delete
+    # this `env:` block here and in .github/workflows/console-tests.yml together.
+    env:
+      FUGARO_CONSOLE_GOLDENS: skip
     permissions:
       contents: read
     defaults:
@@ -103,8 +118,9 @@ jobs:
       # answer and macOS needs nothing. `npm run test:e2e` builds the app first
       # (it runs what package.json's `main` points at, which only `npm run
       # build` writes) and passes with no spec present
-      # (`--pass-with-no-tests`), so this step is green on a tree whose harness
-      # has landed and whose first spec has not.
+      # (`--pass-with-no-tests`). With the specs in the tree and no goldens
+      # recorded, it is green only because of the job's
+      # `FUGARO_CONSOLE_GOLDENS: skip` above.
       - name: the console's end-to-end pass (Linux, under xvfb)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum npm run test:e2e

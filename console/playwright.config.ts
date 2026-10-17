@@ -33,15 +33,18 @@ export default defineConfig({
   // compared, never written by a run. `'none'` writes nothing and FAILS a
   // screenshot whose baseline is missing; `'missing'` would write the baseline
   // and pass, so a golden nobody committed would compare nothing and no run
-  // could ever be red for it. Recording is an explicit act, on the platform the
-  // comparison runs on (pixels differ between macOS and Linux):
+  // could ever be red for it. Recording is an explicit act, once on each
+  // platform the comparison runs on (pixels differ between macOS and Linux):
   //   npx playwright test live.spec.ts --update-snapshots
   // The command-line flag overrides this option for that one run.
   updateSnapshots: 'none',
-  // One PNG per theme, named without the platform and project suffix Playwright
-  // adds by default, so a recording from another platform cannot sit beside the
-  // comparison's own and never be compared.
-  snapshotPathTemplate: '{testDir}/__screenshots__/{arg}{ext}',
+  // One PNG per theme PER PLATFORM (`live-light-darwin.png`,
+  // `live-light-linux.png`): macOS and Linux draw different pixels, and the CI
+  // matrix runs both legs under the one check name `console`, so a single
+  // unsuffixed file could only ever be green on the platform that recorded it
+  // (review round 2 of PR 494). `{platform}` is `process.platform`; no project
+  // name is added, since there is one project.
+  snapshotPathTemplate: '{testDir}/__screenshots__/{arg}-{platform}{ext}',
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'line' : 'list',
