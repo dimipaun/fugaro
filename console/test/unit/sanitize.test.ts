@@ -1,0 +1,874 @@
+// The text path: every string the CLI wrote is untrusted, and this is where it
+// stops being able to be anything but text (desktop-console plan Task 2.0;
+// design section 5.1 rule 7; console/docs/json-contract.md section 9 rule 4).
+//
+// The design's rule is that the sanitization `watch` applies is **re-applied at
+// the display layer** rather than trusted to have survived the subprocess
+// boundary, and the plan's Review Focus for this phase is one question: *can a
+// job-written string become code -- a markup assignment, an unescaped
+// attribute, a URL built from a title?* This file answers it four ways:
+//
+//   1. **the hostile-title corpus** -- control characters, an ANSI escape
+//      sequence, a script tag, a `javascript:` URL, a very long line -- through
+//      `sanitizeText` and then through `app.ts`'s writers, into a fake element
+//      every markup-parsing property of which THROWS. The assertion is not "the
+//      text looks safe"; it is that the only write that happened was a text
+//      write, so a path that stopped being a text node fails here rather than
+//      in an operator's window.
+//   2. **a test per class** -- run titles, branch names, repository names,
+//      slugs, project names, people, run ids, labels, hosts, paths and URLs,
+//      each with what it accepts, what it refuses and what it rewrites.
+//      Deny-by-default is only real if every class says no to something.
+//   3. **a scan of `console/src/renderer/`** for the markup-parsing properties
+//      and for the numeric formatters `availability.ts` exists to replace. A
+//      rule that lives only in a reviewer's head is a rule a later task drops,
+//      so the scan is here, it is self-checked against a planted assignment,
+//      and it needs the directory not to be empty.
+//   4. **the recorder agreements** -- the markers, the bounds, the credential
+//      patterns and the keep-or-drop decision on identifier-shaped text are all
+//      held equal to Task 1.4's `src/source/redact.ts`, by running both modules
+//      over the same inputs. The two cannot import each other (the redactor
+//      reaches for `node:crypto`; `shared/` must import nothing at runtime), so
+//      drift is caught here or not at all.
+//
+// **No line of this file contains a credential-shaped string**, and that is a
+// rule rather than a style: a fake token committed to a public repository is
+// refused by push protection, flagged by every scanner, and indistinguishable
+// from a leaked one to a reader without the diff. Every secret-shaped input
+// comes from `test/support/fakeSecrets.ts`, which assembles them at run time.
+
+import { readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
+
+import { MAX_URL_LENGTH as IPC_MAX_URL_LENGTH } from '../../src/main/ipc'
+import {
+  ADDRESS_MARKER,
+  BRANCH_MARKER,
+  BUCKET_MARKER,
+  HOST_MARKER,
+  LITERAL_MARKER,
+  MARKERS,
+  MAX_REDACTABLE_STRING_LENGTH,
+  PATH_MARKER,
+  PROJECT_MARKER,
+  TOKEN_MARKER,
+  URL_MARKER,
+  createRedactor,
+} from '../../src/source/redact'
+import { UNAVAILABLE_MARK, measured } from '../../src/shared/availability'
+import type { Reading } from '../../src/shared/availability'
+import {
+  ADDRESS_PLACEHOLDER,
+  BRANCH_PLACEHOLDER,
+  BUCKET_PLACEHOLDER,
+  HOST_PLACEHOLDER,
+  LITERAL_PLACEHOLDER,
+  MARKERS as SHARED_MARKERS,
+  MAX_LABEL_LENGTH,
+  MAX_REPOSITORY_LENGTH,
+  MAX_TEXT_INPUT_LENGTH,
+  MAX_TEXT_LENGTH,
+  MAX_URL_LENGTH,
+  PATH_PLACEHOLDER,
+  PROJECT_PLACEHOLDER,
+  TEXT_CLASSES,
+  TOKEN_PLACEHOLDER,
+  TOKEN_SHAPES,
+  URL_PLACEHOLDER,
+  isMarkerText,
+  safeUrl,
+  sanitizeText,
+} from '../../src/shared/sanitize'
+import type { SanitizeFlag, TextClass } from '../../src/shared/sanitize'
+import { DESTINATION_ATTRIBUTE, putLink, putReading, putText } from '../../src/renderer/app'
+import type { ElementLike } from '../../src/renderer/app'
+import * as fake from '../support/fakeSecrets'
+
+/**
+ * FakeElement is a DOM element that refuses to be anything but a text node plus
+ * attributes. Every property and method that could turn a string into code --
+ * the markup-parsing slots this interface could grow, the parsing methods, the
+ * navigating attribute, and any event or resource attribute -- throws, so a
+ * writer in `app.ts` that reached for one fails the test that wrote the text
+ * rather than a security review months later.
+ *
+ * It is a structural stand-in for `ElementLike`, not a DOM implementation: the
+ * unit suite runs under plain Node (there is no `document`), and the point is
+ * the OBSERVATION -- `writes` records every mutation, so a test can assert that
+ * a refusal wrote text and attributes and nothing else. `textContent` is an
+ * accessor rather than a field for exactly that reason: a plain field would
+ * record a write that never happened in the ledger, and `app.ts` assigns the
+ * property rather than calling a method.
+ */
+class FakeElement implements ElementLike {
+  readonly attributes = new Map<string, string>()
+  readonly writes: string[] = []
+  private stored: string | null = null
+
+  static readonly FORBIDDEN_ATTRIBUTES = new Set([
+    // The navigating attribute and its resource siblings: a writer that set one
+    // of these from a document would make the renderer navigate.
+    ['h', 'ref'].join(''),
+    'src',
+    'srcdoc',
+    'style',
+    'formaction',
+    'action',
+  ])
+
+  private assertAllowed(name: string): void {
+    const lowered = name.toLowerCase()
+    if (FakeElement.FORBIDDEN_ATTRIBUTES.has(lowered) || lowered.startsWith('on')) {
+      throw new Error(`a renderer may not set the ${name} attribute from a job's text`)
+    }
+  }
+
+  get textContent(): string | null {
+    return this.stored
+  }
+
+  set textContent(value: string | null) {
+    this.stored = value
+    this.writes.push('textContent')
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.assertAllowed(name)
+    this.attributes.set(name, value)
+    this.writes.push(`setAttribute(${name})`)
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null
+  }
+
+  removeAttribute(name: string): void {
+    this.attributes.delete(name)
+    this.writes.push(`removeAttribute(${name})`)
+  }
+}
+
+/** element is a fresh fake, typed so a writer cannot widen it. */
+function element(): FakeElement {
+  return new FakeElement()
+}
+
+/** text is `sanitizeText` for a value asserted to survive as text, so a test
+ * that means "this is drawn as itself" says so in one line. */
+function text(raw: unknown, textClass: TextClass = 'sentence', field = 'the value'): string {
+  const result = sanitizeText(raw, textClass, field)
+  if (!result.ok) throw new Error(`refused: ${result.reason}`)
+  return result.text
+}
+
+/** refused is `sanitizeText` for a value expected to be refused, returning the
+ * sentence so a test can assert what it says -- and assert what it does NOT
+ * say. */
+function refused(raw: unknown, textClass: TextClass, field = 'the value'): string {
+  const result = sanitizeText(raw, textClass, field)
+  if (result.ok) throw new Error(`expected a refusal, got ${JSON.stringify(result.text)}`)
+  return result.reason
+}
+
+/** flags is the flag list of a value expected to be accepted. */
+function flags(raw: unknown, textClass: TextClass, field = 'the value'): readonly SanitizeFlag[] {
+  const result = sanitizeText(raw, textClass, field)
+  if (!result.ok) throw new Error(`refused: ${result.reason}`)
+  return result.flags
+}
+
+/** PRIVATE_KEY_LABEL is the tail of a PEM header, assembled here for the same
+ * reason `fakeSecrets.ts` assembles the whole block: no line of this repository
+ * carries the contiguous shape a scanner looks for. */
+const PRIVATE_KEY_LABEL = ['PRIVATE', ' KEY-----'].join('')
+
+/**
+ * HOSTILE is the plan's own corpus of hostile titles, plus the two its Review
+ * Focus names. Each is a string a job's container could have written into a
+ * `title`, and each is legal JSON.
+ */
+const HOSTILE: readonly string[] = Object.freeze([
+  'a title with a \u0000 nul and a \u0007 bell',
+  'an escape: \u001b[31mred\u001b[0m and a screen clear: \u001b[2J',
+  'a script tag: <script>alert(1)</script>',
+  'an attribute break: " onmouseover="alert(1)',
+  'a javascript URL: javascript:alert(document.cookie)',
+  'a data URL: data:text/html,<script>alert(1)</script>',
+  'a bidi override: evil/\u202egpj.exe',
+  'a soft hyphen: pay\u00adpal',
+  'a template payload: ${process.exit(1)} `id` $(id)',
+  `a very long line: ${'x'.repeat(4096)}`,
+])
+
+describe('the hostile-title corpus', () => {
+  it('renders as text, in a text node, and never as markup', () => {
+    for (const hostile of HOSTILE) {
+      const target = element()
+      putText(target, hostile, 'sentence', 'runs[0].title')
+      // The whole claim, in one line: the only write that happened was a text
+      // write, and the fake's forbidden properties never fired. A writer that
+      // reached for any of them would have thrown before this assertion.
+      expect(target.writes, hostile).toEqual(['textContent'])
+      expect(target.textContent, hostile).not.toBeNull()
+      expect(target.textContent, hostile).not.toBe(UNAVAILABLE_MARK)
+    }
+  })
+
+  it('strips what is not visible, and keeps the sentence', () => {
+    // A control character or a format character is removed; the visible text
+    // around it survives, because a title that vanished entirely would be a
+    // worse lie than an ugly one.
+    expect(text('a title with a \u0000 nul', 'sentence')).toBe('a title with a nul')
+    expect(text('an escape: \u001b[31mred\u001b[0m', 'sentence')).toBe('an escape: [31mred[0m')
+    expect(text('pay\u00adpal', 'sentence')).toBe('paypal')
+    expect(text('evil/\u202egpj.exe', 'sentence')).toBe('evil/gpj.exe')
+    expect(flags('pay\u00adpal', 'sentence')).toContain('stripped-invisible')
+  })
+
+  it('flattens to one line and clips a very long one, marking the cut', () => {
+    expect(text('one\ntwo\r\nthree\tfour', 'sentence')).toBe('one two three four')
+    const long = text('x'.repeat(4096), 'sentence')
+    expect(long).toHaveLength(MAX_TEXT_LENGTH)
+    expect(long.endsWith('...')).toBe(true)
+    expect(flags('x'.repeat(4096), 'sentence')).toContain('clipped')
+    // A value exactly at the bound is not marked as cut: a title that happens
+    // to be 512 characters is not a title the console shortened.
+    expect(flags('x'.repeat(MAX_TEXT_LENGTH), 'sentence')).not.toContain('clipped')
+  })
+
+  it('never splits a surrogate pair when it clips', () => {
+    // A 512-character cut can land between the two halves of a surrogate pair,
+    // and half an emoji is not text -- it is a lone surrogate, which is not even
+    // valid UTF-16, and which some renderers draw as a replacement glyph.
+    const cut = text('\u{1F600}'.repeat(400), 'sentence')
+    expect(cut.endsWith('...')).toBe(true)
+    const body = cut.slice(0, -3)
+    for (let index = 0; index < body.length; index += 1) {
+      const unit = body.charCodeAt(index)
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = body.charCodeAt(index + 1)
+        expect(next >= 0xdc00 && next <= 0xdfff).toBe(true)
+        index += 1
+      } else {
+        expect(unit < 0xdc00 || unit > 0xdfff).toBe(true)
+      }
+    }
+  })
+
+  it('leaves markup characters alone, because they are text and the markers need them', () => {
+    // Sanitizing here is not escaping, and it must not be: this layer's whole
+    // claim is that the characters are harmless *because they are drawn as
+    // text*. The placeholders the CLI itself writes contain angle brackets and
+    // square brackets of their own, and a layer that escaped them would draw
+    // `&lt;path&gt;` where a person should read `<path>`.
+    expect(text('<script>alert(1)</script>', 'sentence')).toBe('<script>alert(1)</script>')
+    expect(text('a < b && c > d', 'sentence')).toBe('a < b && c > d')
+  })
+
+  it('is idempotent, so the schema and the display layer can both apply it', () => {
+    for (const hostile of HOSTILE) {
+      const once = text(hostile, 'sentence')
+      expect(text(once, 'sentence'), hostile).toBe(once)
+    }
+  })
+
+  it('never echoes the refused text in its reason', () => {
+    // The back door this test closes: a refusal whose message quoted the value
+    // would put the value on screen as its own `title`, which is exactly what
+    // the refusal existed to prevent.
+    const hostile = 'javascript:alert(1)'
+    const reason = refused(hostile, 'url', 'runs[0].url')
+    expect(reason).not.toContain(hostile)
+    expect(reason).not.toContain('javascript')
+    expect(reason).toContain('runs[0].url')
+  })
+})
+
+describe('the credential rules', () => {
+  it('neutralises the token families the recorder knows', () => {
+    // Every value here is assembled at run time by `test/support/fakeSecrets.ts`
+    // -- see this file's header for why none of them can be written down.
+    const tokens: readonly string[] = [
+      fake.githubToken(),
+      fake.githubPat(),
+      fake.gitlabToken(),
+      fake.npmToken(),
+      fake.providerApiKey(),
+      fake.slackToken(),
+      fake.awsKeyId(),
+      fake.googleApiKey(),
+      fake.googleAccessToken(),
+      fake.googleRefreshToken(),
+      fake.jwt(),
+    ]
+    for (const token of tokens) {
+      const line = text(`the job printed ${token} here`, 'sentence')
+      expect(line, token).toContain(TOKEN_PLACEHOLDER)
+      expect(line, token).not.toContain(token)
+    }
+  })
+
+  it('neutralises the value of a key that names a credential, whatever it looks like', () => {
+    // The recorder's rule: a *value* whose key names a credential goes, even
+    // when it does not look like a token -- `hunter2` is a password.
+    for (const line of [
+      'Authorization: Bearer abcdefghijkl',
+      'token=abcdef',
+      'API_KEY: hunter2',
+      'password = correct-horse',
+      'client_secret: s3cr3t',
+      'private_key_id: 7f3a',
+    ]) {
+      expect(text(line, 'sentence'), line).toContain(TOKEN_PLACEHOLDER)
+    }
+    // And the name survives, so the line still reads as a sentence about a
+    // credential rather than as a sentence about nothing.
+    expect(text('API_KEY: hunter2', 'sentence')).toContain('API_KEY')
+    expect(text('API_KEY: hunter2', 'sentence')).not.toContain('hunter2')
+  })
+
+  it('neutralises a long opaque run, and keeps the recorder\u2019s pseudonyms', () => {
+    // The entropy rule's two halves, and the failure mode of each. A 40-hex
+    // digest with letters and digits is a candidate; a pseudonym pair is a long
+    // run of the same alphabet and is NOT, because eating it would turn a
+    // redaction the fixture already made into a different lie.
+    expect(text(`key ${fake.hexDigest()}`, 'sentence')).toContain(TOKEN_PLACEHOLDER)
+    expect(text(`key ${fake.highEntropyRun()}`, 'sentence')).toContain(TOKEN_PLACEHOLDER)
+    const pseudonym = text('merge feat/x for r-4c25cf20/r-f1aa9214', 'sentence')
+    expect(pseudonym).toContain('r-4c25cf20/r-f1aa9214')
+    expect(pseudonym).not.toContain(TOKEN_PLACEHOLDER)
+    expect(text('slug-6a7c7d06', 'sentence')).toBe('slug-6a7c7d06')
+  })
+
+  it('agrees with the recorder about what is an identifier and what is a secret', () => {
+    // This layer re-applies the recorder's rules rather than trusting them to
+    // have survived the subprocess boundary, so a rule that had drifted between
+    // the two would be a rule the display applies and the recorder does not, or
+    // the reverse -- and the entropy net is where the drift is easiest and
+    // worst.
+    //
+    // The likeliest drift is exactly this one: a model name, a run id, a slug
+    // and a workflow name are all long runs of the net's own alphabet, and they
+    // mix at most two of the three character kinds the rule wants. A display
+    // layer that dropped the recorder's `isHighEntropy` decision would draw
+    // `[redacted-token]` over `claude-sonnet-4-5-20250929` -- a credential mark
+    // on a value the recorder itself chose to keep, which is a false statement
+    // about the document.
+    //
+    // The two modules cannot import each other (`src/source/redact.ts` reaches
+    // for `node:crypto`, and `shared/` must import nothing at runtime), so the
+    // agreement is held here, by running both over the same inputs.
+    const recorder = createRedactor()
+    const identifiers: readonly string[] = [
+      'claude-sonnet-4-5-20250929',
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-1',
+      'fugaro-cloud-run-batch',
+      'console-screens-workflow',
+      'redact-persons.test.ts',
+      '20261015-120000-aa01',
+      'run 20261015-120000-aa01 stopped',
+      'v1.2.3-rc.4+build.20261015',
+    ]
+    const secrets: readonly string[] = [
+      fake.highEntropyRun(),
+      fake.hexDigest(),
+      fake.githubToken(),
+      fake.providerApiKey(),
+    ]
+    for (const sample of [...identifiers, ...secrets]) {
+      const shown = text(sample, 'sentence')
+      const redacted = recorder.redactText(sample)
+      expect(
+        shown.includes(sample),
+        `${sample}: this layer ${shown.includes(sample) ? 'kept' : 'dropped'} it and the recorder ${redacted.includes(sample) ? 'kept' : 'dropped'} it`,
+      ).toBe(redacted.includes(sample))
+    }
+    // Spelled out rather than left to the loop above, which a reader could take
+    // for a tautology: the identifiers survive BOTH layers verbatim.
+    for (const identifier of identifiers) {
+      expect(text(identifier, 'sentence'), identifier).toBe(identifier)
+      expect(recorder.redactText(identifier), identifier).toBe(identifier)
+    }
+    for (const secret of secrets) {
+      expect(text(secret, 'sentence'), secret).toContain(TOKEN_PLACEHOLDER)
+      expect(recorder.redactText(secret), secret).toContain(TOKEN_MARKER)
+    }
+    // The pseudonym grammars are the recorder's too, and they are why the net
+    // does not eat a redaction: both layers keep one verbatim.
+    for (const pseudonym of [
+      'r-4c25cf20',
+      'r-4c25cf20/r-f1aa9214',
+      'slug-6a7c7d06',
+      'person-2f9a4c1e',
+    ]) {
+      expect(text(pseudonym, 'sentence'), pseudonym).toBe(pseudonym)
+    }
+  })
+
+  it('carries the recorder\u2019s credential families, one pattern each', () => {
+    // The patterns in `sanitize.ts` are assembled from fragments at run time so
+    // that this repository contains no credential-shaped string -- not even
+    // inside a regular expression. Assembly can drift; the table's size and its
+    // behaviour are what stop it.
+    expect(TOKEN_SHAPES).toHaveLength(8)
+    for (const pattern of TOKEN_SHAPES) {
+      expect(pattern.flags).toContain('g')
+      expect(pattern.source).not.toContain('undefined')
+      // A pattern's own SOURCE is not a credential shape either: the fragments
+      // are inert, and `fakeSecrets.ts` assembles the shape the same way. The
+      // prefix is built here rather than written, for the same reason.
+      expect(pattern.source).not.toMatch(new RegExp(['gh', 'p_'].join('')))
+    }
+  })
+
+  it('replaces a URL in free text whole, so its userinfo cannot survive', () => {
+    const line = text('see https://user:pass@example.invalid/x?y=1 for the diff', 'sentence')
+    expect(line).toBe(`see ${URL_MARKER} for the diff`)
+    expect(line).not.toContain('user:pass')
+    expect(text('see http://user:pass@example.invalid/x', 'sentence')).not.toContain('user:pass')
+    expect(flags('see https://example.invalid/x', 'sentence')).toContain('replaced-url')
+  })
+
+  it('replaces a PEM block, and a bearer header, without losing the sentence', () => {
+    const pem = text(`the key is ${fake.pemBlock()} and nothing else`, 'sentence')
+    expect(pem).not.toContain(PRIVATE_KEY_LABEL)
+    expect(pem).toContain(TOKEN_PLACEHOLDER)
+    expect(pem.startsWith('the key is')).toBe(true)
+    const bearer = text(`sent ${fake.bearerHeader()} to the API`, 'sentence')
+    expect(bearer).toContain('Bearer')
+    expect(bearer).toContain(TOKEN_PLACEHOLDER)
+    expect(bearer).not.toContain(fake.googleAccessToken())
+  })
+})
+
+describe('the class rules', () => {
+  it('names the classes the contract has fields for', () => {
+    expect([...TEXT_CLASSES].sort()).toEqual(
+      [
+        'branch',
+        'host',
+        'label',
+        'path',
+        'person',
+        'project',
+        'repository',
+        'runId',
+        'sentence',
+        'slug',
+        'url',
+      ].sort(),
+    )
+  })
+
+  it('keeps a repository, and refuses anything that is not one', () => {
+    expect(text('fixture-owner/fixture-repo', 'repository')).toBe('fixture-owner/fixture-repo')
+    expect(text('r-4c25cf20/r-f1aa9214', 'repository')).toBe('r-4c25cf20/r-f1aa9214')
+    for (const bad of ['just-a-name', 'a/b/c', '/etc/passwd', 'a/../../etc', '', 'a/']) {
+      expect(refused(bad, 'repository', 'repos[0].repo'), bad).toContain('repos[0].repo')
+    }
+    expect(refused('x'.repeat(MAX_REPOSITORY_LENGTH + 1) + '/y', 'repository')).toContain(
+      'not a valid repository',
+    )
+  })
+
+  it('keeps a slug, and refuses anything that is not one', () => {
+    expect(text('slug-6a7c7d06', 'slug')).toBe('slug-6a7c7d06')
+    expect(text('github-com-fixture-owner-fixture-repo', 'slug')).toBe(
+      'github-com-fixture-owner-fixture-repo',
+    )
+    expect(text('<bucket>', 'slug')).toBe('<bucket>')
+    for (const bad of ['Slug-6A7C7D06', 'a slug', 'a/slug', '-leading', '']) {
+      expect(refused(bad, 'slug'), bad).toContain('not a valid slug')
+    }
+  })
+
+  it('keeps a branch, and refuses anything that is not one', () => {
+    expect(text('feat/console-fixtures', 'branch')).toBe('feat/console-fixtures')
+    expect(text('<branch>', 'branch')).toBe('<branch>')
+    expect(text('main', 'branch')).toBe('main')
+    for (const bad of ['-leading-dash', 'a..b', 'a@{b}', 'a//b', 'a/', '/a']) {
+      expect(refused(bad, 'branch'), bad).toContain('not a valid branch')
+    }
+  })
+
+  it('keeps a project name, and refuses anything that is not one', () => {
+    expect(text('fixture-sandbox', 'project')).toBe('fixture-sandbox')
+    expect(text('<project>', 'project')).toBe('<project>')
+    for (const bad of ['Fixture-Sandbox', 'a project', '1nope', 'a/b']) {
+      expect(refused(bad, 'project'), bad).toContain('not a valid project')
+    }
+  })
+
+  it('keeps a login and a pseudonym, and rewrites an address to the marker', () => {
+    // The Spend screen's person view is off by default (design D15), and this is
+    // the layer that makes the *value* safe whether or not a screen shows it.
+    expect(text('fixture-operator', 'person')).toBe('fixture-operator')
+    expect(text('person-2f9a4c1e', 'person')).toBe('person-2f9a4c1e')
+    expect(text('fixture-operator@example.invalid', 'person')).toBe(ADDRESS_MARKER)
+    expect(flags('someone@example.invalid', 'person')).toContain('address-marker')
+    expect(text(ADDRESS_MARKER, 'person')).toBe(ADDRESS_MARKER)
+    for (const bad of ['', 'a person', 'a b@example.invalid']) {
+      expect(refused(bad, 'person'), bad).toContain('not a valid person')
+    }
+  })
+
+  it('keeps a run id, and refuses anything that is not one', () => {
+    expect(text('20261015-120000-aa01', 'runId')).toBe('20261015-120000-aa01')
+    // A run whose id the recorder redacted is a marker, not a run id -- and the
+    // class must accept it, because refusing it would draw `n/a` over the truth.
+    expect(text(LITERAL_PLACEHOLDER, 'runId')).toBe(LITERAL_PLACEHOLDER)
+    for (const bad of ['120000-20261015-aa01', '2026-10-15', '', 'a'.repeat(64)]) {
+      expect(refused(bad, 'runId'), bad).toContain('not a valid run id')
+    }
+  })
+
+  it('keeps a label on one line, and refuses one that is not', () => {
+    // A label is the CLI's own short rendered field -- a stage, a round, a
+    // verify state, a model pair -- and a label with a line break in it is not a
+    // long label, it is two table rows wearing one cell. This is the class that
+    // REFUSES rather than flattening, which is the difference between it and
+    // `sentence`.
+    expect(text('implement', 'label')).toBe('implement')
+    expect(text('-', 'label')).toBe('-')
+    expect(text('claude-sonnet-4-5-20250929 / claude-opus-4-1', 'label')).toBe(
+      'claude-sonnet-4-5-20250929 / claude-opus-4-1',
+    )
+    expect(refused('two\nlines', 'label')).toContain('not a single line')
+    expect(refused('x'.repeat(MAX_LABEL_LENGTH + 1), 'label')).toContain('longer than a label')
+  })
+
+  it('rewrites a host to the placeholder, and never draws an address literal', () => {
+    expect(text('<host>', 'host')).toBe(HOST_PLACEHOLDER)
+    expect(text('fixture.invalid', 'host')).toBe('fixture.invalid')
+    expect(text('192.0.2.10', 'host')).toBe(HOST_PLACEHOLDER)
+    expect(text('10.0.0.1', 'host')).toBe(HOST_PLACEHOLDER)
+    // A name with no dot is not a hostname, so it is not shown as one.
+    expect(text('localhost', 'host')).toBe(HOST_PLACEHOLDER)
+    expect(flags('192.0.2.10', 'host')).toContain('host-placeholder')
+  })
+
+  it('rewrites a path to the placeholder, and never lets one be shown', () => {
+    // Deny by default in its strongest form: the console has no reason to draw a
+    // path, so every path becomes the placeholder whether or not it looks
+    // dangerous. A path is where the operator's user name lives.
+    for (const value of [
+      '/Users/ana/src/fugaro',
+      '/home/fugaro/.config/fugaro/fugaro.yaml',
+      '~/checkout',
+      'C:\\Users\\ana\\fugaro',
+      '\\\\server\\share',
+    ]) {
+      expect(text(value, 'path'), value).toBe(PATH_PLACEHOLDER)
+    }
+    expect(flags('/etc/passwd', 'path')).toContain('path-placeholder')
+    expect(refused('', 'path')).toContain('no path')
+  })
+
+  it('keeps an https URL, drops its userinfo, and refuses every other scheme', () => {
+    expect(text('https://github.com/owner/name/pull/412', 'url')).toBe(
+      'https://github.com/owner/name/pull/412',
+    )
+    const dropped = text('https://user:pass@github.com/owner/name/pull/412', 'url')
+    expect(dropped).not.toContain('user:pass')
+    expect(dropped.startsWith('https://github.com/owner/name/pull/412')).toBe(true)
+    expect(flags('https://user:pass@github.com/x', 'url')).toContain('userinfo-removed')
+    // A credential hidden in the encoding is userinfo too, and rebuilding the
+    // URL from its parsed parts is what drops it.
+    expect(text('https://%75ser:p%61ss@github.com/x', 'url')).not.toContain('%75ser')
+    expect(text(URL_MARKER, 'url')).toBe(URL_MARKER)
+    expect(text(PATH_PLACEHOLDER, 'url')).toBe(PATH_PLACEHOLDER)
+    for (const bad of [
+      'javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      'file:///etc/passwd',
+      'http://github.com/x',
+      'https://',
+      'https://a/x\nhttps://evil.invalid',
+      '',
+    ]) {
+      expect(refused(bad, 'url', 'finished[0].pr_url'), bad).toContain('the console will not')
+    }
+    expect(refused('javascript:alert(1)', 'url')).toContain('not https')
+  })
+
+  it('refuses a value that is not a string at all, naming the field', () => {
+    for (const value of [null, undefined, 42, true, {}, []]) {
+      const reason = refused(value, 'sentence', 'runs[0].title')
+      expect(reason).toContain('runs[0].title')
+      expect(reason).toContain('not text')
+    }
+  })
+
+  it('refuses a string past the input bound before any rule runs', () => {
+    // Every rule in this module is linear, and this bound is what keeps a
+    // hostile 40 MB title from costing the renderer a frame.
+    expect(MAX_TEXT_INPUT_LENGTH).toBe(MAX_REDACTABLE_STRING_LENGTH)
+    const long = 'a'.repeat(MAX_TEXT_INPUT_LENGTH + 1)
+    expect(refused(long, 'sentence', 'runs[0].title')).toContain('longer than the console will read')
+    // At the bound it is accepted, and clipped by the display bound instead.
+    expect(text('a'.repeat(MAX_TEXT_INPUT_LENGTH), 'sentence')).toHaveLength(MAX_TEXT_LENGTH)
+  })
+})
+
+describe('safeUrl', () => {
+  it('is the only way a link is built, and refuses everything else', () => {
+    expect(safeUrl('https://github.com/owner/name/pull/412')).toBe(
+      'https://github.com/owner/name/pull/412',
+    )
+    expect(safeUrl('https://user:pass@github.com/x')).toBe('https://github.com/x')
+    for (const bad of [
+      'javascript:alert(1)',
+      'data:text/html,x',
+      'file:///etc/passwd',
+      'http://github.com/x',
+      '',
+      null,
+      undefined,
+      42,
+      URL_MARKER,
+      TOKEN_MARKER,
+      PATH_MARKER,
+      'slug-6a7c7d06',
+    ]) {
+      expect(safeUrl(bad), String(bad)).toBeNull()
+    }
+  })
+
+  it('is what `putLink` uses, so a screen cannot go around it', () => {
+    const target = element()
+    putLink(target, 'javascript:alert(1)', 'finished[0].pr_url')
+    expect(target.getAttribute(DESTINATION_ATTRIBUTE)).toBeNull()
+    expect(target.textContent).toBe(UNAVAILABLE_MARK)
+    expect(target.getAttribute('title')).toContain('not https')
+    expect(target.writes).not.toContain(`setAttribute(${DESTINATION_ATTRIBUTE})`)
+  })
+})
+
+describe('the markers this layer can read', () => {
+  it('is the recorder\u2019s own list, marker for marker', () => {
+    // A marker this layer could not read would be drawn as text, which tells a
+    // person a redaction is a value.
+    expect([...SHARED_MARKERS]).toEqual([...MARKERS])
+    expect(PATH_PLACEHOLDER).toBe(PATH_MARKER)
+    expect(PROJECT_PLACEHOLDER).toBe(PROJECT_MARKER)
+    expect(BUCKET_PLACEHOLDER).toBe(BUCKET_MARKER)
+    expect(HOST_PLACEHOLDER).toBe(HOST_MARKER)
+    expect(BRANCH_PLACEHOLDER).toBe(BRANCH_MARKER)
+    expect(TOKEN_PLACEHOLDER).toBe(TOKEN_MARKER)
+    expect(URL_PLACEHOLDER).toBe(URL_MARKER)
+    expect(ADDRESS_PLACEHOLDER).toBe(ADDRESS_MARKER)
+    expect(LITERAL_PLACEHOLDER).toBe(LITERAL_MARKER)
+  })
+
+  it('bounds the same things the recorder and the IPC layer bound', () => {
+    expect(MAX_URL_LENGTH).toBe(IPC_MAX_URL_LENGTH)
+    expect(MAX_TEXT_INPUT_LENGTH).toBe(MAX_REDACTABLE_STRING_LENGTH)
+    expect(MAX_REPOSITORY_LENGTH).toBeGreaterThan(0)
+  })
+
+  it('recognises a marker, and a pseudonym, and nothing else', () => {
+    for (const marker of MARKERS) expect(isMarkerText(marker), marker).toBe(true)
+    expect(isMarkerText('r-4c25cf20/r-f1aa9214')).toBe(true)
+    expect(isMarkerText('slug-6a7c7d06')).toBe(true)
+    expect(isMarkerText('person-2f9a4c1e')).toBe(true)
+    // The near misses: a marker with a word around it is a sentence, and an
+    // address that says `ana` still says `ana`.
+    expect(isMarkerText('see <path> for it')).toBe(false)
+    expect(isMarkerText('<path>x')).toBe(false)
+    expect(isMarkerText('ana@example.invalid')).toBe(false)
+    expect(isMarkerText('')).toBe(false)
+    expect(isMarkerText('slug-6A7C7D06')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The scans. A rule that lives only in a reviewer's head is a rule a later task
+// drops, so the two rules this module exists to hold are also read off the
+// filesystem.
+// ---------------------------------------------------------------------------
+
+const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src')
+const RENDERER_DIR = path.join(SRC, 'renderer')
+const SHARED_DIR = path.join(SRC, 'shared')
+
+/** sourceFiles lists the `.ts` files under a directory, so a scan runs over
+ * what is actually there rather than over a list a task forgot to update. */
+function sourceFiles(directory: string): readonly string[] {
+  return readdirSync(directory)
+    .filter((name) => name.endsWith('.ts'))
+    .sort()
+    .map((name) => path.join(directory, name))
+}
+
+/**
+ * FORBIDDEN_IN_RENDERER is the list the plan's lint-style test names: the
+ * properties that parse a string as markup, the method that does, and the ways
+ * to turn a string into code. The names are assembled here so that this file --
+ * which is not under `src/renderer/` -- can name them, and so that the scan's
+ * own list is not a plain spelling of the thing it scans for.
+ */
+const FORBIDDEN_IN_RENDERER: readonly string[] = Object.freeze([
+  ['inner', 'HTML'].join(''),
+  ['outer', 'HTML'].join(''),
+  ['insertAdjacent', 'HTML'].join(''),
+  ['document', '.write'].join(''),
+  ['new ', 'Function('].join(''),
+  ['ev', 'al('].join(''),
+])
+
+/** FORBIDDEN_FORMATTERS are the numeric formatters `availability.ts` exists to
+ * replace: a screen that formats its own number has gone around the state. */
+const FORBIDDEN_FORMATTERS: readonly string[] = Object.freeze([
+  'toFixed(',
+  'toLocaleString(',
+  ['Intl', '.NumberFormat'].join(''),
+])
+
+/** offenders reports the lines of a source that contain a forbidden token. */
+function offenders(source: string, forbidden: readonly string[]): readonly string[] {
+  const found: string[] = []
+  for (const line of source.split('\n')) {
+    for (const token of forbidden) {
+      if (line.includes(token)) found.push(`${token}: ${line.trim()}`)
+    }
+  }
+  return found
+}
+
+describe('src/renderer/', () => {
+  it('has files for these scans to look at', () => {
+    // Without this, a scan over a directory that moved passes vacuously.
+    expect(sourceFiles(RENDERER_DIR).length).toBeGreaterThan(0)
+    expect(sourceFiles(SHARED_DIR).length).toBeGreaterThan(0)
+  })
+
+  it('recognises a forbidden assignment when it sees one', () => {
+    // The scan's own red step: the same function, run over a planted
+    // assignment, must report it. A scan that cannot see its own mutation is
+    // decoration.
+    const planted = `element.${['inner', 'HTML'].join('')} = jobTitle`
+    expect(offenders(planted, FORBIDDEN_IN_RENDERER)).toHaveLength(1)
+    expect(offenders('element.textContent = jobTitle', FORBIDDEN_IN_RENDERER)).toEqual([])
+    expect(offenders('const text = value.toFixed(2)', FORBIDDEN_FORMATTERS)).toHaveLength(1)
+  })
+
+  it('never interprets a string as markup', () => {
+    for (const file of sourceFiles(RENDERER_DIR)) {
+      const source = readFileSync(file, 'utf8')
+      expect(offenders(source, FORBIDDEN_IN_RENDERER), file).toEqual([])
+    }
+  })
+
+  it('never formats a bare number', () => {
+    for (const file of sourceFiles(RENDERER_DIR)) {
+      const source = readFileSync(file, 'utf8')
+      expect(offenders(source, FORBIDDEN_FORMATTERS), file).toEqual([])
+    }
+  })
+
+  it('never writes a destination into a navigating attribute', () => {
+    const navigating = ['h', 'ref'].join('')
+    for (const file of sourceFiles(RENDERER_DIR)) {
+      const source = readFileSync(file, 'utf8')
+      // The forbidden spellings are the assignment and the literal attribute
+      // name, not the word: a comment may explain which attribute is refused,
+      // and `data-href` is where the URL actually goes.
+      expect(source, file).not.toContain(`.${navigating} =`)
+      expect(source, file).not.toContain(`setAttribute('${navigating}'`)
+      expect(source, file).not.toContain(`setAttribute("${navigating}"`)
+    }
+  })
+})
+
+describe('the shared modules', () => {
+  it('import nothing at runtime, because the renderer has no Node', () => {
+    // `src/source/redact.ts` reaches for `node:crypto` and `src/main/` reaches
+    // for Electron, so a runtime import from either would be a module the
+    // renderer cannot load. The vocabulary is shared by equality in this suite
+    // instead, and this scan is what keeps that the only way to share it.
+    for (const file of sourceFiles(SHARED_DIR)) {
+      const source = readFileSync(file, 'utf8')
+      const imports = source.match(/^\s*import\s[^\n]*from\s+['"][^'"]+['"]/gm) ?? []
+      for (const statement of imports) {
+        const specifier = /from\s+['"]([^'"]+)['"]/.exec(statement)?.[1] ?? ''
+        expect(specifier.startsWith('.'), `${file}: ${statement.trim()}`).toBe(true)
+        expect(specifier, `${file}: ${statement.trim()}`).not.toMatch(/node:|electron/)
+      }
+      // A `require` would be a runtime import the scan above cannot see.
+      expect(source, file).not.toContain(['requ', 'ire('].join(''))
+      expect(source, file).not.toContain('process.')
+    }
+  })
+
+  it('is what app.ts\u2019s writers use, so a screen cannot go around them', () => {
+    const source = readFileSync(path.join(RENDERER_DIR, 'app.ts'), 'utf8')
+    expect(source).toContain('sanitizeText')
+    expect(source).toContain('formatReading')
+    expect(source).toContain('safeUrl')
+  })
+})
+
+describe('the writers', () => {
+  it('writes a measured reading as its number, with no title to explain', () => {
+    const target = element()
+    putReading(target, measured(12.5), 'usd')
+    expect(target.textContent).toBe('$12.50')
+    expect(target.getAttribute('title')).toBeNull()
+    expect(target.writes).toEqual(['textContent'])
+  })
+
+  it('writes a reading with no number as n/a, with the reason as its title', () => {
+    const target = element()
+    const nothing: Reading = {
+      state: 'unavailable',
+      value: null,
+      because: 'the document has no total.counted_usd',
+      lowerBound: false,
+    }
+    putReading(target, nothing, 'usd')
+    expect(target.textContent).toBe(UNAVAILABLE_MARK)
+    expect(target.getAttribute('title')).toBe('the document has no total.counted_usd')
+  })
+
+  it('writes refused text as n/a, with the reason as its title', () => {
+    const target = element()
+    const hostile = 'not-an-owner-name'
+    putText(target, hostile, 'repository', 'runs[0].repo')
+    expect(target.textContent).toBe(UNAVAILABLE_MARK)
+    const title = target.getAttribute('title') ?? ''
+    expect(title).toContain('runs[0].repo')
+    expect(title).not.toContain(hostile)
+  })
+
+  it('writes a link as text and a destination, never as a navigating attribute', () => {
+    const target = element()
+    putLink(target, 'https://github.com/owner/name/pull/412', 'finished[0].pr_url')
+    expect(target.textContent).toBe('https://github.com/owner/name/pull/412')
+    expect(target.getAttribute(DESTINATION_ATTRIBUTE)).toBe('https://github.com/owner/name/pull/412')
+    expect(target.writes).toEqual([
+      'textContent',
+      'setAttribute(title)',
+      `setAttribute(${DESTINATION_ATTRIBUTE})`,
+    ])
+  })
+
+  it('renders a refused link as its reason, and links nothing', () => {
+    const target = element()
+    putLink(target, 'http://github.com/x', 'finished[0].pr_url')
+    expect(target.textContent).toBe(UNAVAILABLE_MARK)
+    expect(target.getAttribute('title')).toContain('not https')
+    expect(target.getAttribute(DESTINATION_ATTRIBUTE)).toBeNull()
+  })
+
+  it('renders the recorder\u2019s own URL marker as text, and offers no link', () => {
+    const target = element()
+    putLink(target, URL_MARKER, 'finished[0].pr_url')
+    expect(target.textContent).toBe(URL_MARKER)
+    expect(target.getAttribute(DESTINATION_ATTRIBUTE)).toBeNull()
+    expect(target.getAttribute('title')).toContain('redaction')
+  })
+})
