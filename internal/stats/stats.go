@@ -47,9 +47,9 @@ type Run struct {
 	// the range, never folded into it.
 	ComputeNotEstimated bool
 	// NoFigure is true for a record no figure can be drawn from: a run that
-	// has not finished, or a record written before the cost breakdown
-	// existed. It is counted and never grouped -- a sample must not read
-	// smaller than it is.
+	// has not finished, a record written before the cost breakdown existed,
+	// or a result.json that cannot be read at all. It is counted and never
+	// grouped -- a sample must not read smaller than it is.
 	NoFigure bool
 }
 
@@ -91,8 +91,9 @@ type Result struct {
 	// RunsUnknownRecipe counts the runs whose recipe the tree does not
 	// ship, so their group key would be a name no reader can look up.
 	RunsUnknownRecipe int
-	// ComputeNotEstimated counts every run whose compute cost was an
-	// estimate, published groups or not.
+	// ComputeNotEstimated counts every run whose compute cost was *not*
+	// estimated, published groups or not: it is the count of runs whose
+	// CostUSD is a lower bound rather than a measurement.
 	ComputeNotEstimated int
 	// RunsWithoutFigure counts the records read that carry no figure.
 	RunsWithoutFigure int
@@ -153,11 +154,11 @@ func Aggregate(runs []Run, minRuns int) Result {
 }
 
 // ShippedName maps a record's recipe name to the name the tree ships today,
-// and reports false for a name it does not ship: a recipe renamed in 0.5.0
-// (recipe.Renamed) keeps its figures under the name the catalog carries now,
-// and a name neither the catalog nor the rename table knows -- a recipe of a
-// project layer's own, or a record whose recipe is empty -- is one a reader
-// cannot look up, so it is never published as a group key.
+// and reports false for a name it does not ship: a catalog name retired in
+// 0.7.0 (recipe.Renamed) keeps its figures under the name the catalog carries
+// now, and a name neither the catalog nor the rename table knows -- a recipe
+// of a project layer's own, or a record whose recipe is empty -- is one a
+// reader cannot look up, so it is never published as a group key.
 func ShippedName(name string) (string, bool) {
 	if to, ok := recipe.Renamed[name]; ok {
 		name = to

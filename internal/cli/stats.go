@@ -125,7 +125,8 @@ func newStatsRunsCmd() *cobra.Command {
 			"A recipe with fewer than --min-runs runs in the window is not published at all --\n" +
 			"a range from four runs reads as a promise precisely because it is a range -- and\n" +
 			"a run whose recipe this binary does not ship, or whose record carries no finished\n" +
-			"duration or no cost breakdown, is counted and not grouped.\n\n" +
+			"duration or no cost breakdown, or whose result.json cannot be read at all, is\n" +
+			"counted and not grouped: one bad object never makes the figures unproducible.\n\n" +
 			"--json prints {project, since, until, min_runs, recipes[{recipe, runs,\n" +
 			"compute_not_estimated, duration_s{min, median, p90}, cost_usd{min, median, p90}}],\n" +
 			"totals{runs, recipes, runs_below_min_runs, runs_unknown_recipe, runs_not_estimated,\n" +
@@ -188,31 +189,51 @@ func runStatsRuns(cmd *cobra.Command, o *statsOptions) error {
 // the bucket lists, exactly as runs ls --since does, and only result.json is
 // read: a run whose task.json or transcript would tell a reader more is read
 // no further.
+//
+// A record that cannot be used is one run's problem, not the window's, exactly
+// as runs ls and budget preview treat it: a run that has not finalized has no
+// record, and a corrupt or oversized one is that run's own (corruptObject).
+// Both are counted as a record with no figure and the figures are still
+// published -- one bad object must not make them unproducible. Any other read
+// failure is a remote failure and fails the whole command.
 func readStatsRuns(ctx context.Context, env *cloudEnv, since time.Time) ([]stats.Run, error) {
 	slugs, err := runstore.ListSlugs(ctx, env.bucket.Bucket)
 	if err != nil {
 		return nil, remote(err)
 	}
-	var runs []stats.Run
+	var refs []statsRef
 	for _, slug := range slugs {
 		ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, since)
 		if err != nil {
 			return nil, remote(err)
 		}
 		for _, id := range ids {
-			rec, err := runstore.Open(env.bucket.Bucket, slug, id).ReadRecord(ctx)
-			switch {
-			case errors.Is(err, runstore.ErrNotFound):
-				// A run that has not finalized has no record and no figure.
-				continue
-			case err != nil:
-				return nil, remote(fmt.Errorf("reading a run record in the runs bucket: %w", err))
-			}
-			runs = append(runs, statsRun(rec))
+			refs = append(refs, statsRef{slug: slug, id: id})
+		}
+	}
+	// One window can hold every run of every repository in the bucket, so the
+	// records are read on the worker pool runs ls and budget preview share.
+	recs := make([]*runstore.Record, len(refs))
+	errs := make([]error, len(refs))
+	parallel(len(refs), func(i int) {
+		recs[i], errs[i] = runstore.Open(env.bucket.Bucket, refs[i].slug, refs[i].id).ReadRecord(ctx)
+	})
+	runs := make([]stats.Run, 0, len(refs))
+	for i, ref := range refs {
+		switch err := errs[i]; {
+		case err == nil:
+			runs = append(runs, statsRun(recs[i]))
+		case errors.Is(err, runstore.ErrNotFound), corruptObject(err):
+			runs = append(runs, stats.Run{NoFigure: true})
+		default:
+			return nil, remote(fmt.Errorf("run %s/%s: %w", ref.slug, ref.id, err))
 		}
 	}
 	return runs, nil
 }
+
+// statsRef is one run to read: the bucket directory it sits in, and its ID.
+type statsRef struct{ slug, id string }
 
 // statsRun is the narrow view of one record: a recipe, a duration, a cost and
 // whether the compute part is an estimate. Nothing that identifies the run,

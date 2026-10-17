@@ -85,7 +85,7 @@ func TestStatsAggregatesByRecipe(t *testing.T) {
 
 // TestStatsDropsRecipesTheTreeDoesNotShip: a group key is a name a reader can
 // look up, so a name internal/recipe's catalog does not carry is dropped and
-// counted rather than published -- and a 0.5.0 rename is grouped under the
+// counted rather than published -- and a name retired in 0.7.0 is grouped under the
 // name the tree ships today.
 func TestStatsDropsRecipesTheTreeDoesNotShip(t *testing.T) {
 	var runs []Run
