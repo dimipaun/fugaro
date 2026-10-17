@@ -5,3 +5,6 @@ playwright-report/
 # The recorder's build output (`tsconfig.record-fixture.json`, Task 1.4): the
 # compiled tool and the src/ it imports, produced by `npm run record-fixture`.
 .record-fixture/
+# The bundler's build output (`tsconfig.bundle-renderer.json`, Task 3.4a): the
+# compiled tool `npm run build` runs after `tsc` to write `dist/bundle/`.
+.bundle-renderer/

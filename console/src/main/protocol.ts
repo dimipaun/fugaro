@@ -74,6 +74,33 @@ export const REFUSAL_ENTRY_PATH = '/refusal.html'
  * the dashboard's -- it is only its document that differs. */
 export const REFUSAL_ENTRY_URL = `${APP_ORIGIN}${REFUSAL_ENTRY_PATH}`
 
+/**
+ * SERVED_FILES is the whole of what the served root holds (desktop-console plan
+ * Task 3.4a, step 4): the two documents and the one script that draws in them.
+ *
+ * The root itself is `dist/bundle/` (`rendererRoot` in `src/main/index.ts`),
+ * and the three files are there because `npm run build` puts them there: `tsc`
+ * compiles `src/renderer/entry.ts` and everything it requires, and
+ * `tools/bundle-renderer/index.ts` writes `console.js` and copies the documents
+ * verbatim. `test/unit/bundle.test.ts` holds this list and that directory equal
+ * in both directions, so a file that appears beside the bundle -- or a name
+ * dropped from this list -- is a failing test rather than a document the
+ * console serves and nothing vouches for.
+ *
+ * It is a list of URL paths rather than of file names because that is how the
+ * handler speaks, and it is deliberately **not** a second filter inside
+ * `resolveBundleRequest`: the root's contents are already decided by the build,
+ * the handler's refusals are pinned by `test/unit/window.test.ts` (a path inside
+ * the root that names no file is a 404, and one that names a file the read fails
+ * on is a 500), and a filter here would turn that 500 into a 404 for every name
+ * it does not list.
+ */
+export const SERVED_FILES: readonly string[] = Object.freeze([
+  '/console.js',
+  '/index.html',
+  '/refusal.html',
+])
+
 /** CSP_HEADER is the response header the CSP travels in (rule 3). */
 export const CSP_HEADER = 'Content-Security-Policy'
 

@@ -608,10 +608,15 @@ describe('the document in the bundle', () => {
     expect(CONTENT_SECURITY_POLICY).not.toContain('*')
   })
 
-  it('is the document the window loads, and it is script-free', () => {
+  it('is the document the window loads, with the one script of Task 3.4a', () => {
     expect(indexHTML).toContain(`<title>${CONSOLE_WINDOW_TITLE}</title>`)
     expect(APP_ENTRY_URL).toBe(`${APP_ORIGIN}/index.html`)
-    expect(indexHTML).not.toContain('<script')
+    // The document was script-free until Task 3.4a, and it is not any more: the
+    // dashboard's renderer is `./console.js`, the bundle this task's build
+    // writes into the served root. What the *refusal* document is owed is
+    // unchanged -- it loads none (asserted below) -- and the element-by-element
+    // version of both claims is `test/unit/csp-document.test.ts`'s.
+    expect(indexHTML).toContain('<script src="./console.js" defer></script>')
     expect(indexHTML).not.toContain('<style')
   })
 })
@@ -1045,14 +1050,18 @@ describe('the refusal document in the bundle', () => {
     // different file with no dashboard in it at all.
     expect(REFUSAL_ENTRY_URL).toBe(`${APP_ORIGIN}/refusal.html`)
     expect(refusalHTML).not.toBe(indexHTML)
-    expect(refusalHTML).not.toContain('<script')
-    expect(refusalHTML).not.toContain('<style')
+    // The markup, and not the whole file: this document's comment says in prose
+    // what Task 3.4a did to `index.html`'s script, and a comment is not an
+    // element. What a refused console runs stays the question, and the answer
+    // stays none.
+    const markup = refusalHTML.replace(/<!--[\s\S]*?-->/g, '')
+    expect(markup).not.toContain('<script')
+    expect(markup).not.toContain('<style')
     // The console's own sentences, and no version, no path and nothing the CLI
     // printed: the document is static, so what it says cannot depend on the
     // binary that was found.
     expect(refusalHTML).toContain(`<title>${CONSOLE_WINDOW_TITLE}</title>`)
     expect(refusalHTML).toContain('will not draw a dashboard')
-    const markup = refusalHTML.replace(/<!--[\s\S]*?-->/g, '')
     expect(markup, 'the markup names no version').not.toMatch(/\d+\.\d+/)
     expect(markup).not.toContain('0.8')
   })

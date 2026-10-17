@@ -35,7 +35,15 @@
     "noEmit": false,
     "outDir": "dist",
     "rootDir": "src",
-    "sourceMap": true
+    "sourceMap": true,
+    // Comments are dropped from what the app runs (Task 3.4a). Two reasons, and
+    // the second is the load-bearing one: the bundle's size is the first, and
+    // the *bundler* is the second -- `tools/bundle-renderer/index.ts` walks the
+    // compiled modules for their `require` calls, and this tree's comments talk
+    // about `require` in prose (the preload's header names `require('electron')`
+    // verbatim, and the entry's names the same call). A scan that could not tell
+    // a comment from a call would refuse a module for its own explanation.
+    "removeComments": true
   },
   "include": ["src/**/*.ts"]
 }

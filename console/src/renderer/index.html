@@ -18,6 +18,23 @@
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
     />
     <title>Fugaro console</title>
+    <!--
+      The one script this document loads, and the whole of what it may load
+      (desktop-console plan Task 3.4a; design section 5.1 rules 1 and 3).
+
+      It is `./console.js` -- this origin, one file, no query -- because there is
+      no bundler dependency in this console and the CSP allows no inline script:
+      `dist/bundle/console.js` is the compiled `src/renderer/entry.ts` and
+      everything it requires, written by `tools/bundle-renderer/index.ts`, and it
+      is the only script the served root holds (`SERVED_FILES` in
+      `src/main/protocol.ts`). `defer` means it runs after the document is
+      parsed, so the entry has a `<main>` to draw into; the entry's first call is
+      `startConsole`, which asks the main process for the handshake's answer and
+      draws nothing before it has one. `test/unit/csp-document.test.ts` pins this
+      element as the document's only script, so a second one -- or an inline
+      one -- is a failing test rather than a loosened CSP.
+    -->
+    <script src="./console.js" defer></script>
   </head>
   <body>
     <!--
