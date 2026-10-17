@@ -77,8 +77,12 @@
 // nothing for design section 4.3's gap 7 to be about. And no picker behaviour:
 // the screen draws the range the document covers and the breakdown it was asked
 // for, which is what `spend.report`'s validated arguments (`by`, `since`,
-// `until`) re-read; wiring a control to a second read belongs to the task that
-// gives a screen its state, not to this one.
+// `until`) re-read. The range picker and the breakdown switch are drawn and
+// **not yet wired**: no task in docs/plans/2026-10-15-desktop-console.md owns
+// the second read or the operator's person-view knob (D15) -- Task 2.2 draws
+// them, Tasks 2.3 and 3.1 do not touch them -- so the `data-current` and
+// `data-enabled` hooks stay as written until a later console PR (to be named in
+// the plan) wires them.
 
 import {
   estimated,
@@ -748,14 +752,12 @@ export function buildSeries(
       byKey.delete(day)
       values.push(plotted(row, account))
     }
-    // A row the range does not cover is still a row the document holds: it is
-    // appended rather than dropped, because the document is the authority about
-    // its own rows and a screen that hid one would be hiding a figure.
-    for (const row of rows) {
-      if (!byKey.has(row.key)) continue
-      byKey.delete(row.key)
-      values.push(plotted(row, account))
-    }
+    // A row the range does not cover is not plotted: on a day axis the
+    // position IS the date, so a row before `since` appended after the last day
+    // would sit right of `until`, and a row placed by its date would stretch
+    // the axis past the range the document says it covers. The row is not
+    // hidden -- it stays in the list below and `buildSpendModel` says how many
+    // the chart left out (`outsideRange`).
   }
 
   const measuredValues: number[] = []
@@ -960,6 +962,10 @@ export function buildSpendModel(
     // days, because a row outside the range is a row, not a gap.
     notes.push('a day in this range with no document is a gap, not a zero: the history keeps a window and days outside it are pruned')
   }
+  const stray = outsideRange(drawn, days)
+  if (stray > 0) {
+    notes.push(`${stray} row(s) outside the range the document covers are listed below and not drawn in the charts: a day axis places a point by its date`)
+  }
   if (dimension === null) {
     notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its seven words it is')
   }
@@ -990,6 +996,17 @@ export function buildSpendModel(
     warnings: arrayAt(report['warnings']).filter((warning): warning is string => typeof warning === 'string'),
     notes,
   }
+}
+
+/** outsideRange counts the rows whose key is not a day of the enumerated range:
+ * the rows `buildSeries` does not plot. With no range there is no axis to be
+ * outside of. A repeated key is one row on the axis and is not counted. */
+function outsideRange(rows: readonly SpendRow[], days: readonly string[] | null): number {
+  if (days === null) return 0
+  const inside = new Set(days)
+  const outside = new Set<string>()
+  for (const row of rows) if (!inside.has(row.key)) outside.add(row.key)
+  return outside.size
 }
 
 /** hasGapDay says whether a day of the enumerated range has no row at all,

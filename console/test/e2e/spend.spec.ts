@@ -30,10 +30,15 @@
 // they are in a subdirectory of the golden directory rather than beside the
 // Live screen's two files for a reason that is not tidiness: `live.spec.ts`
 // holds the directory to exactly its own two PNGs (`readdirSync`... `filter(
-// endsWith('.png'))`, "a theme with no golden is a theme nobody has looked
-// at"), and that file is not this task's to edit. With the spend goldens in
-// their own directory neither screen's listing sees the other's files, and the
-// owner's recording step is one command with nothing else to change.
+// endsWith('.png'))`), and that file is not this task's to edit. The name is
+// passed to `toHaveScreenshot` as an ARRAY (`['spend', 'light.png']`): Playwright
+// sanitizes a STRING name before `snapshotPathTemplate` applies, turning the `/`
+// of `'spend/light.png'` into `-` and writing `__screenshots__/spend-light.png`
+// beside the Live files. The test 'resolves the golden names under the spend
+// directory' asks Playwright itself where each name lands.
+//
+// **No PNG is committed**, as for the Live screen: macOS and Linux pixels
+// differ, so a golden recorded on the wrong platform would compare nothing.
 //
 // They are compared, never written by a run: `playwright.config.ts` sets
 // `updateSnapshots: 'none'`, so a missing baseline FAILS. They are recorded by
@@ -42,8 +47,9 @@
 //
 //   npx playwright test spend.spec.ts --update-snapshots
 //
-// and until they are committed the golden tests fail on purpose. The one way to
-// run the rest of the file without them is the explicit
+// (owner-run, on the comparison's platform; commit `__screenshots__/spend/`
+// afterwards) and until they are committed the golden tests fail on purpose. The
+// one way to run the rest of the file without them is the explicit
 // `FUGARO_CONSOLE_GOLDENS=skip`, which skips exactly the golden tests and says
 // so in the report; nothing skips them silently.
 
@@ -60,6 +66,13 @@ import { SPEND_THEMES } from '../../src/renderer/screens/spend'
 // is two levels below it.
 const consoleDir = join(__dirname, '..', '..')
 const goldenDir = join(consoleDir, 'test', 'e2e', '__screenshots__', 'spend')
+
+/** GOLDEN_NAMES are the names `toHaveScreenshot` is given: arrays, because
+ * Playwright flattens a string's `/` (see the header). */
+const GOLDEN_NAMES = {
+  light: ['spend', 'light.png'],
+  dark: ['spend', 'dark.png'],
+} as const
 
 /** SKIP_GOLDENS is the one documented way to run this file with no goldens
  * recorded: `FUGARO_CONSOLE_GOLDENS=skip`. Anything else, including unset, means
@@ -549,7 +562,7 @@ test.describe('the Spend screen', () => {
   test('draws the spend screen', async () => {
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
     await mount(REPORT, BUDGET, 'light')
-    await expect(page).toHaveScreenshot('spend/light.png')
+    await expect(page).toHaveScreenshot(GOLDEN_NAMES.light)
   })
 
   test('draws the spend screen in the dark theme', async () => {
@@ -557,7 +570,14 @@ test.describe('the Spend screen', () => {
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page).toHaveScreenshot('spend/dark.png')
+    await expect(page).toHaveScreenshot(GOLDEN_NAMES.dark)
+  })
+
+  test('resolves the golden names under the spend directory', ({}, testInfo) => {
+    // Not a golden test: it asks Playwright where a recording would land, so a
+    // name the template flattens is red before anyone records anything.
+    expect(testInfo.snapshotPath(...GOLDEN_NAMES.light)).toBe(join(goldenDir, 'light.png'))
+    expect(testInfo.snapshotPath(...GOLDEN_NAMES.dark)).toBe(join(goldenDir, 'dark.png'))
   })
 
   test('has a golden for each theme the design names', () => {

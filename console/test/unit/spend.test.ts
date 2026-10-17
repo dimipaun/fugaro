@@ -733,6 +733,51 @@ describe('a day the history does not hold', () => {
     expect(billed.points.every((point) => point.reading.state === 'measured')).toBe(true)
   })
 
+  describe('a row dated outside the range', () => {
+    const OUTSIDE_NOTE = 'row(s) outside the range'
+    const before = { ...DAY_ROWS[0], key: '2026-10-01', start: '2026-10-01', end: '2026-10-01' }
+    const after = { ...DAY_ROWS[0], key: '2026-10-20', start: '2026-10-20', end: '2026-10-20' }
+
+    it('is not plotted on the day axis, and the axis stays the range', () => {
+      // Position on a time series is the date: a row before `since` appended
+      // after the last day would sit to the right of `until`.
+      for (const stray of [before, after]) {
+        const model = modelOf({ ...DAY_REPORT, rows: [...DAY_ROWS, stray] })
+        for (const account of ['model', 'notional', 'compute'] as const) {
+          expect(seriesOf(model, account).points.map((point) => point.key)).toEqual([
+            '2026-10-12',
+            '2026-10-13',
+            '2026-10-14',
+            '2026-10-15',
+          ])
+        }
+      }
+    })
+
+    it('is said out loud, with a count and no wire text, and the row stays in the list', () => {
+      const model = modelOf({ ...DAY_REPORT, rows: [before, ...DAY_ROWS, after] })
+      expect(model.notes.some((note) => note.startsWith('2 ') && note.includes(OUTSIDE_NOTE))).toBe(true)
+      expect(model.notes.join(' ')).not.toContain('2026-10-01')
+      expect(model.rows.map((row) => row.key)).toContain('2026-10-01')
+      const quiet = modelOf()
+      expect(quiet.notes.join(' ')).not.toContain(OUTSIDE_NOTE)
+    })
+
+    it('does not pass for a gap: the missing day stays a gap', () => {
+      const model = modelOf({ ...DAY_REPORT, rows: [...DAY_ROWS, before] })
+      expect(pointFor(seriesOf(model, 'model'), '2026-10-14').reading.state).toBe('gap')
+    })
+
+    it('is drawn once for a repeated date: the later row wins, and no extra point appears', () => {
+      const later = { ...DAY_ROWS[0], key: '2026-10-12', start: '2026-10-12', end: '2026-10-12' }
+      const model = modelOf({ ...DAY_REPORT, rows: [...DAY_ROWS, later] })
+      const points = seriesOf(model, 'model').points
+      expect(points.filter((point) => point.key === '2026-10-12')).toHaveLength(1)
+      expect(points).toHaveLength(4)
+      expect(model.notes.join(' ')).not.toContain(OUTSIDE_NOTE)
+    })
+  })
+
   it('is only a gap inside the range the document covers', () => {
     // A range the console cannot enumerate -- `by model`, and any `by` whose
     // `since`/`until` it could not read -- has the document's own rows as its
