@@ -6,9 +6,11 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -184,6 +186,113 @@ func remoteOfAnotherKind(derived, remote string) string {
 	return ""
 }
 
+// remoteOffTheKindsHost is the host (with its port, when it names one) of a
+// remote that names a host other than exactly the derived kind's own
+// (repourl.ProviderHost: github.com, bitbucket.org), and "" for a remote on
+// that host with no port, or one that names no host at all. A remote with no
+// host is a local path or a file URL: the run sends it no credential
+// (gitops.CredentialURL is empty for it), and the end-to-end and runner
+// fixtures clone from one.
+//
+// The comparison is on the hostname as the URL spells it, case-insensitively
+// (DNS is), with nothing else: "github.com." and "www.github.com" are other
+// names, however they resolve, and an explicit port is refused too, since the
+// deployer never writes one (repourl.CloneURL refuses it) and a credential
+// helper keyed on the bare host would not match it anyway. A derived kind
+// with no host of its own is refused for any host (fail closed).
+func remoteOffTheKindsHost(derived, remote string) string {
+	host, port := remoteHost(remote)
+	if host == "" {
+		return ""
+	}
+	if want := repourl.ProviderHost(derived); want != "" && strings.EqualFold(host, want) && port == "" {
+		return ""
+	}
+	if port != "" {
+		return host + ":" + port
+	}
+	return host
+}
+
+// remoteHost is the host and port a remote names: a URL's, or the host of an
+// scp-like remote ("git@github.com:acme/app.git", which has no port). Both are
+// "" for a remote that names no host, such as a local path.
+func remoteHost(remote string) (host, port string) {
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		return u.Hostname(), u.Port()
+	}
+	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
+		if h, _, ok := strings.Cut(rest, ":"); ok {
+			return h, ""
+		}
+	}
+	return "", ""
+}
+
+// remoteOfAnotherRepo names what a remote on the derived kind's own host
+// points at, when that is not the run's repository: the canonical repository
+// the path names, or the path itself when it is not a canonical repository
+// name. "" is no disagreement, and it is the answer for most remotes,
+// including every remote remoteOfAnotherKind already refuses and every remote
+// that names no repository path at all.
+//
+// The kind alone is not enough (a review finding): a provider's host carries
+// every repository of that provider, so "https://github.com/evil/other.git" is
+// github's and is still not this run's. internal/infra's repoURL refuses
+// exactly that when it builds the job ("it must be this repository, not only
+// this provider"); a launcher that edits the job's environment after launch
+// would otherwise hand the run another repository while the run keeps the slug
+// of its own — and the slug is what keys its locks, its cache and its budget
+// session.
+//
+// A path on that host that CanonicalRepo refuses is a refusal too, and that is
+// deliberate (a review finding): "acme/app/../other" and "acme//other" are not
+// repository names, but what the host resolves them to is, and it is another
+// one — the run would clone, cache, lock and account under its own slug while
+// doing that repository's work, which is exactly what this function exists to
+// stop. A path this Fugaro cannot read is a path whose repository the run
+// cannot know, so it is refused rather than admitted ("fail closed"); the
+// returned value is then the raw path, which is what the refusal quotes.
+func remoteOfAnotherRepo(derived, repo, remote string) string {
+	if derived == "" || gitprov.KindForURL(remote) != derived {
+		return ""
+	}
+	path, ok := remoteRepoPath(remote)
+	if !ok {
+		return ""
+	}
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return "" // no canonical form to compare against; the slug check refuses it
+	}
+	got, err := task.CanonicalRepo(path)
+	if err != nil {
+		return path
+	}
+	if got == want {
+		return ""
+	}
+	return got
+}
+
+// remoteRepoPath is the repository path a remote names on its host: the path
+// of a URL ("https://github.com/acme/app.git"), or what follows the colon of
+// an scp-like remote ("git@github.com:acme/app.git"). ok is false for a remote
+// that carries no such path, and for one that is a local path.
+func remoteRepoPath(remote string) (string, bool) {
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		path := strings.Trim(u.Path, "/")
+		return path, path != ""
+	}
+	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
+		if _, path, ok := strings.Cut(rest, ":"); ok {
+			path = strings.Trim(path, "/")
+			return path, path != ""
+		}
+	}
+	return "", false
+}
+
 // remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
 // its host alone, anything else as the URL without its userinfo. Deps.Remote is
 // a launcher's to set and a remote URL may carry a token in its userinfo; the
@@ -204,42 +313,76 @@ func remoteDisplay(remote string) string {
 }
 
 // admissionCheck admits the repository this run was launched for, before any
-// git credential exists and before the clone (plan task 1.5): the run's slug
-// and its repository must agree, and the project's policy, when it has
-// published one, must have the repository on its allow-list. A run with no
-// Cloud Run execution is not checked: the binding exists because a job's
-// identity is what an admission rests on (R2-9).
+// git credential exists and before the clone (plan tasks 1.5 and 3.3): the run
+// is placed in the job it is in, the run's slug and its repository must agree
+// under that job's provider, and the policy must admit the repository — for the
+// project, and on a project job for the profile the job's own name pins. A
+// local invocation is not checked: the binding exists because a job's identity
+// is what an admission rests on (R2-9). A process with no Cloud Run execution
+// that is not local is in the cloud, and it is refused (jobName).
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
 // provider is opened, so no git credential exists yet and nothing has been
 // cloned; and before the lock and the budget session, so a run that is not
-// admitted writes no lease. Its refusals are the run's own: the slug it was
-// given must be the slug of the repository task.json names; the provider kind
-// and the remote — the two environment values a launcher can set that would
-// say otherwise — may disagree with it only by refusing; and, when the project
-// has published a policy, that repository must be on the policy's allow-list.
-// With no policy there is no allow-list, and the absent case is never read as
-// "empty means deny": an installation that has not published a policy admits
-// exactly what it always did.
+// admitted writes no lease. Its refusals are the run's own: the job it is in
+// must be one the policy computes or its own per-repository job; the slug it
+// was given must be the slug of the repository task.json names under that job's
+// provider; the provider kind in the environment — a launcher's to set — may
+// disagree with it only by refusing; and, when the project has published a
+// policy, that repository must be on the policy's allow-list, and on a project
+// job on the profile's own. With no policy there is no allow-list, and the
+// absent case is never read as "empty means deny": an installation that has not
+// published a policy admits exactly what it always did.
+//
+// The order is the plan's and it is the security property: the job identity
+// first, because everything below is keyed by what it says; then the slug; then
+// the environment; then the admission — all of it before openProvider and
+// before the budget session takes a lease.
 func (r *run) admissionCheck(ctx context.Context) error {
-	if r.d.Execution == "" {
-		// No Cloud Run execution: no job identity to bind to, so no binding
-		// (R2-9). fugaro exec --provider fake, a local run and the end-to-end
-		// tests keep the path they have always had.
+	if r.d.Local && r.d.Execution == "" {
+		// A local invocation (`fugaro exec --task-file`, the file-backed fake
+		// provider, the end-to-end tests) has no job identity to bind to, so
+		// no binding (R2-9). The skip needs both halves (review C2, and main's
+		// #453 for the phase-1 shape): Local's zero value means the cloud
+		// (runner.go), and a process no backend claims — a platform this
+		// build does not recognise, or a job whose environment was edited —
+		// carries no execution name either. Reading the missing name alone as
+		// "local" exempted that process from everything below while the git
+		// credential stayed scoped to whatever remote its environment named;
+		// it now reaches jobIdentity, which halts it (jobName).
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
 		return err
 	}
+	// Which job this run is in, and with it the provider (and, on a project
+	// job, the profile and the account) it may act as. jobIdentity halts for a
+	// name the policy neither computes nor recognises as this run's own
+	// per-repository job, so a run that gets past this line has a job it can
+	// place (projectjob.go).
+	if _, _, _, err := r.jobIdentity(ctx); err != nil {
+		return err
+	}
+	job, project := r.projectJob()
 	slug, repo := r.d.Store.Slug(), r.spec.Repo
-	kind, ok := providerForSlug(slug, repo)
-	if !ok {
-		// Zero matches: FUGARO_RUN and the task disagree. Two matches cannot
-		// happen through a launcher (task.Slug separates the kinds), and are
-		// refused the same way rather than resolved to one.
-		return fmt.Errorf("the run was launched for the slug %s, and that is not the slug of the repository this run's task names (%s) under any provider kind (%s): the slug and the task must name one repository. Nothing bound the two together before this check — a per-repository job's bucket condition was what stood in for it — so the run stops before any git credential is requested or anything is cloned",
-			slug, repo, strings.Join(jobProviderKinds, ", "))
+	var kind string
+	if project {
+		// The provider is the one the job's name pins — the profile's, from the
+		// matched candidate — and never a value a launcher wrote (finding 4).
+		// FUGARO_GIT_PROVIDER is not consulted as a source: it is read below
+		// only to let it refuse.
+		kind = job.Provider
+	} else {
+		var ok bool
+		kind, ok = providerForSlug(slug, repo)
+		if !ok {
+			// Zero matches: FUGARO_RUN and the task disagree. Two matches cannot
+			// happen through a launcher (task.Slug separates the kinds), and are
+			// refused the same way rather than resolved to one.
+			return fmt.Errorf("the run was launched for the slug %s, and that is not the slug of the repository this run's task names (%s) under any provider kind (%s): the slug and the task must name one repository. Nothing bound the two together before this check — a per-repository job's bucket condition was what stood in for it — so the run stops before any git credential is requested or anything is cloned",
+				slug, repo, strings.Join(jobProviderKinds, ", "))
+		}
 	}
 	if envKind := r.d.ProviderKind; envKind != "" && envKind != kind {
 		// The flag (or FUGARO_GIT_PROVIDER) is an environment value a launcher
@@ -249,30 +392,80 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		// kind outside jobProviderKinds to except: the file-backed test
 		// provider is not one (internal/cli's providerOptions maps --provider
 		// fake to an empty kind), and a local run has no Cloud Run execution,
-		// so it never reaches this check at all — and it stops here.
+		// so it never reaches this check at all — and it stops here. On a
+		// project job this is also what keeps the variable from being read as a
+		// source at all: it can refuse, and it can change nothing else.
+		if project {
+			return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and this run is in the project job %s, which is the %s job of the profile %q: the provider of a project job is the one its own name pins, and the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
+				envKind, GitProviderEnv, gcp.ProjectJobName(job.Profile, job.Provider, job.Account), kind, job.Profile)
+		}
 		return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and the run's slug %s is the slug of %s under %s: the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 			envKind, GitProviderEnv, slug, repo, kind)
 	}
-	if remote := r.originURL(ctx); remoteOfAnotherKind(kind, remote) != "" {
-		// The remote is where the clone comes from, and it is the job's own
-		// environment (Deps.Remote, RemoteEnv) or the origin of a checkout
-		// already in the work directory — a launcher's to set, both of them.
-		// The launcher refuses a repository URL off the provider's host before
-		// it deploys anything (internal/infra's repoURL, and the build's own
-		// CheckRepoURL), so a run meets this when the job's environment was
-		// edited after launch: a repository of the same owner and name on
-		// another provider's host is another repository, and the run's slug —
-		// which keys its locks, its cache and its budget — would not name it.
-		return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
-			remoteDisplay(remote), remoteOfAnotherKind(kind, remote), slug, repo, kind, RemoteEnv)
+	if !project {
+		// The remote is where the clone comes from, and on a per-repository job
+		// it is the job's own environment (Deps.Remote, RemoteEnv) or the origin
+		// of a checkout already in the work directory — a launcher's to set, both
+		// of them. The launcher refuses a repository URL that is not this
+		// repository before it deploys anything (internal/infra's repoURL, and
+		// the build's own CheckRepoURL), so a run meets these when the job's
+		// environment was edited after launch. The two questions are the kind's
+		// and the repository's: another provider's host is another repository —
+		// the same owner and name is the case worth naming — and so is another
+		// repository on the same provider's host, where the kind alone would
+		// agree. The run's slug keys its locks, its cache and its budget
+		// session, so it names neither.
+		//
+		// A project job never reaches this: its clone URL is computed from
+		// task.json and the policy (cloneURL, design §4.1(1)), so the job's
+		// environment carries nothing to compare — FUGARO_REMOTE stops being
+		// read on a project job (plan task 3.3 step 3), and a value a launcher
+		// wrote there can neither redirect the run nor halt it.
+		remote := r.originURL(ctx)
+		if other := remoteOfAnotherKind(kind, remote); other != "" {
+			return fmt.Errorf("the run would clone from %s, which is %s's, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
+				remoteDisplay(remote), other, slug, repo, kind, RemoteEnv)
+		}
+		if host := remoteOffTheKindsHost(kind, remote); host != "" {
+			// The kind check above knows only the hosts gitprov.KindForURL
+			// recognises; every other host was "no disagreement" (review C3).
+			// The git credential is scoped to the remote's host
+			// (gitops.CredentialURL), so a host that is not exactly the
+			// provider's own would receive the provider's token, and an alias
+			// spelling of it (a trailing dot, www., the ssh-over-443 host)
+			// names a repository the run cannot verify.
+			return fmt.Errorf("the run would clone from %s, whose host %s is not %s's own host %s, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and the provider's credential goes only to the provider's own host, so the run stops before any git credential is requested",
+				remoteDisplay(remote), host, kind, repourl.ProviderHost(kind), slug, repo, kind, RemoteEnv)
+		}
+		if other := remoteOfAnotherRepo(kind, repo, remote); other != "" {
+			// internal/infra's repoURL refuses this at deploy time — "it must be
+			// this repository, not only this provider" — and the run refuses it
+			// here for the same reason: it clones, caches, locks and accounts under
+			// its slug, and another repository's URL under that slug is another
+			// repository's work. other is a canonical repository name, or the path
+			// itself when the path is one CanonicalRepo refuses — the sentence
+			// names what the remote points at either way.
+			return fmt.Errorf("the run would clone from %s, which names %s on %s's host and is not this run's repository %s, and its slug %s is the slug of %s under %s: the remote the run clones from (the job's environment, %s, or the origin of a checkout in the work directory) may only tighten the run's admission, and it must be this repository, not only this provider, so the run stops before any git credential is requested",
+				remoteDisplay(remote), other, kind, repo, slug, repo, kind, RemoteEnv)
+		}
 	}
 	if want, err := task.Slug(kind, repo); err != nil || want != slug {
-		// Implied by the derivation; re-checked so the two values the run
-		// actually uses (the slug under which it reads and writes the bucket,
-		// and the provider kind it opens) are the ones that were compared.
+		// The binding both paths keep (design §12a item 2, plan task 1.5 step 1
+		// and task 3.3 step 2): the slug under which the run reads and writes
+		// the bucket, takes its locks and opens its budget session must be the
+		// slug of the repository its task names under the provider it is about
+		// to open. On a per-repository job it is implied by the derivation
+		// above and re-checked so the values the run actually uses are the ones
+		// that were compared; on a project job it is the whole binding, since
+		// the provider comes from the job's name and nothing else ties the slug
+		// to the repository — the job serves every repository of its profile.
 		got := want
 		if err != nil {
 			got = err.Error()
+		}
+		if project {
+			return fmt.Errorf("the run was launched for the slug %s, and this run is in the project job %s, whose provider is %s: the slug must be the slug task.Slug(%s, %s) the task's repository computes (%s), because it keys the bucket paths, the locks, the cache and the budget session of this run. The run stops before any git credential is requested or any lease exists",
+				slug, gcp.ProjectJobName(job.Profile, job.Provider, job.Account), kind, kind, repo, got)
 		}
 		return fmt.Errorf("the run's slug %s is not the slug task.Slug(%s, %s) computes (%s): the run stops before any git credential is requested", slug, kind, repo, got)
 	}
@@ -280,11 +473,30 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		// No policy published here: the binding is the whole check (Task 1.3
 		// step 1's absent case). Reading this as an empty allow-list would
 		// refuse every run of every installation that has published nothing.
+		// A project job cannot be here — its candidates are the policy's — so
+		// this is the per-repository path's end.
 		return nil
 	}
 	canonical, err := projectpolicy.Canonical(kind, repo)
 	if err != nil {
 		return fmt.Errorf("the repository this run was launched for cannot be named in the project's allow-list: %w", err)
+	}
+	if project {
+		// The profile's admission (plan task 3.3 step 4, design §4.1): the
+		// repository must be admitted for the (profile, provider, account) this
+		// run is actually on, so a repository's own fugaro.yaml cannot widen its
+		// access by selecting a profile whose list is wider. One function words
+		// it (projectpolicy.AdmissionRefusal), and its project-list branch is
+		// the very sentence the launcher's advisory twin prints
+		// (projectpolicy.NotAdmitted), so the two cannot drift apart.
+		refusal, err := p.AdmissionRefusal(job.Profile, canonical)
+		if err != nil {
+			return fmt.Errorf("this run is in the project job %s: %w", gcp.ProjectJobName(job.Profile, job.Provider, job.Account), err)
+		}
+		if refusal != "" {
+			return fmt.Errorf("%s. The run stops before any lease exists", refusal)
+		}
+		return nil
 	}
 	if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
 		// The refusal itself is projectpolicy's, so the launcher's advisory

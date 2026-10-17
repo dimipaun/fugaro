@@ -72,3 +72,8 @@ output "history_job" {
   description = "The history job's name, or null while it isn't deployed."
   value       = local.deploy_history ? google_cloud_run_v2_job.history[0].name : null
 }
+
+output "project_secrets" {
+  description = "The project-wide secret containers by logical name (their secret IDs), so a consumer waits for the container: the project job module grants each job the ones its profile mounts."
+  value       = { for name, s in google_secret_manager_secret.project : name => s.secret_id }
+}

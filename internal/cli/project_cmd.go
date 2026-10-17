@@ -425,6 +425,15 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 // (patchPolicyJSON). A publish cannot choose a route; it can only refuse to
 // lose the one the node already carries, and printPolicyDiff says it is kept.
 // A node that never had routing stays without one, which is direct (D1b).
+//
+// The clone_urls block is kept for the same reason and in the same way: this
+// Fugaro reads it (the runner computes a project job's clone URL from it, plan
+// task 3.3 step 3, design §4.1(1)) but no command of this release writes one, so
+// a publish that built the node without it would drop an entry an operator put
+// there — and a dropped entry is a repository that starts cloning from its
+// provider's usual host instead of the mirror the project chose. There is no
+// writer here, so "kept" is all this publisher can promise; printPolicyDiff
+// says so.
 func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy) (*projectpolicy.Policy, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
@@ -473,6 +482,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	}
 	if old != nil {
 		pol.Routing = old.Routing
+		pol.CloneURLs = old.CloneURLs
 	}
 	return pol, nil
 }
@@ -593,21 +603,26 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists bool) ([]b
 	if !exists {
 		return node, nil
 	}
-	routing, ok, err := jsonMember(oldRaw, "routing")
-	if err != nil {
-		// The node decoded as a policy a moment ago (publishedPolicyOf), so a
-		// member of it cannot be unreadable; refuse rather than write a node
-		// that silently lost the block.
-		return nil, userErr("%s cannot be read back as a document, so its routing block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
+	// Both members are carried over byte for byte, and for the same reason:
+	// this binary does not write them, so a key inside one that it does not
+	// model (a routing key of a newer phase, a clone_urls field of a newer
+	// release) would be dropped by a re-encode of the decoded value.
+	for _, key := range []string{"routing", "clone_urls"} {
+		member, ok, err := jsonMember(oldRaw, key)
+		if err != nil {
+			// The node decoded as a policy a moment ago (publishedPolicyOf), so
+			// a member of it cannot be unreadable; refuse rather than write a
+			// node that silently lost the block.
+			return nil, userErr("%s cannot be read back as a document, so its %s block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), key, err)
+		}
+		if !ok {
+			continue
+		}
+		if node, err = patchPolicyJSON(node, key, member); err != nil {
+			return nil, userErr("building the policy: %v", err)
+		}
 	}
-	if !ok {
-		return node, nil
-	}
-	patched, err := patchPolicyJSON(node, "routing", routing)
-	if err != nil {
-		return nil, userErr("building the policy: %v", err)
-	}
-	return patched, nil
+	return node, nil
 }
 
 // jsonMember is the raw bytes of one member of a JSON object, and whether the
@@ -778,6 +793,14 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// whether this publish just turned it off.
 	if new.Routing != nil {
 		fmt.Fprintf(out, "  routing kept: %s\n", routingText(new.Routing))
+	}
+	// The clone URLs a project job clones from (plan task 3.3 step 3): kept,
+	// because no command of this release writes one, and worth a line because a
+	// dropped entry changes where a repository's runs clone from. The URL is
+	// credential-free by the node's own validation (repourl.CloneURL), so
+	// printing it is not printing a secret.
+	for _, canonical := range slices.Sorted(maps.Keys(new.CloneURLs)) {
+		fmt.Fprintf(out, "  clone_urls %s kept: %s\n", canonical, new.CloneURLs[canonical])
 	}
 	for _, r := range new.AllowRepos {
 		if src, ok := sources[r]; ok {
@@ -1392,6 +1415,16 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	if p.Routing != nil {
 		fmt.Fprintf(out, "  routing: %s\n", routingText(p.Routing))
 	}
+	// One line per clone URL, under the canonical repository name the runner
+	// looks up (plan task 3.3 step 3). Like routing: this Fugaro reads the
+	// block and writes none, so an operator has to be able to see what the
+	// node carries — a node with an entry must not read like one without, and
+	// the entry is where that repository's runs clone from. The URL is
+	// credential-free by the node's own validation (repourl.CloneURL), so
+	// printing it is not printing a secret.
+	for _, canonical := range slices.Sorted(maps.Keys(p.CloneURLs)) {
+		fmt.Fprintf(out, "  clone_urls: %s → %s\n", canonical, p.CloneURLs[canonical])
+	}
 }
 
 // routingText is the policy's routing block as one line, for a command that
@@ -1608,6 +1641,16 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 // node's allow_repos and nothing else: the rest of the published policy is
 // written back as it was read, under the ETag the read returned, so a
 // concurrent publisher is refused rather than overwritten.
+//
+// It is a writer, so it takes every refusal `policy publish` takes before it
+// writes anything: the shared config and a database that is not this
+// project's (openProjectBudget, whose comment above says why), and the
+// deployed rules marker (requirePolicyRules) — a policy written to a
+// deployment whose marker is absent or older than this Fugaro is one the runs
+// it bounds cannot read, and an edit to the allow-list is a publish of the
+// list. Without that last gate `repos add`/`repos rm` were the one way to
+// write the shared node the runner reads on a deployment `policy publish`
+// would refuse to touch.
 func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string, remove bool) error {
 	ctx := cmd.Context()
 	// openProjectBudget, not openBudget: this writes the published policy node,
@@ -1617,6 +1660,11 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	// must be this project's.
 	lc, db, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
+		return err
+	}
+	// The same read `policy publish` makes first, and for the same reason: the
+	// marker says the deployed rules are new enough to read what is written.
+	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()

@@ -154,3 +154,30 @@ variable "project_secrets" {
   default  = {}
   nullable = false
 }
+
+variable "project_jobs" {
+  description = "The shared project jobs (design project-centric §4.1), by Cloud Run job name: one entry per (profile, provider, account), each the module's own object type. fugaro init writes it from the local config's profiles; empty for an installation that names none, which creates no project job at all."
+  type = map(object({
+    profile  = string
+    provider = string
+    account  = string
+    job      = string
+    service_account = object({
+      account_id   = string
+      display_name = string
+    })
+    image          = string
+    cpu            = string
+    memory         = string
+    task_timeout_s = number
+    env            = map(string)
+    secret_env     = map(string)
+    bucket_condition = object({
+      title      = string
+      expression = string
+    })
+    vertex = bool
+  }))
+  default  = {}
+  nullable = false
+}

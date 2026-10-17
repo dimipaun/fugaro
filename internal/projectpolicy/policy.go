@@ -89,6 +89,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/repourl"
 )
 
 // Policy is the shared, readable node, decoded as JSON.
@@ -122,6 +123,24 @@ type Policy struct {
 	// safe — a block that is present must define the default.
 	Profiles map[string]Profile `json:"profiles,omitempty"`
 
+	// CloneURLs are the project's clone URLs, keyed by canonical repository
+	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
+	// the runner's slug already use). A repository that is not listed here
+	// clones from its provider's usual host, which is what every repository
+	// does today; an entry exists for a repository reached another way (a
+	// mirror, a proxy, an owner's own host).
+	//
+	// It is data, not an environment value, because on a project job the clone
+	// URL cannot be one: FUGARO_REMOTE is launcher-writable and a shared job
+	// sets none, so the runner computes the URL from task.json's repository,
+	// the provider the job's name pins and this block (plan task 3.3 step 3,
+	// design §4.1(1)). The URL is validated on the node against the same rules
+	// the deployer applies (repourl.CloneURL), so an entry can never point a
+	// run at another repository or another provider's host. The member names
+	// are escaped for RTDB — a canonical name carries slashes — which is
+	// CloneURLs' own business and not a reader's.
+	CloneURLs CloneURLs `json:"clone_urls,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -139,7 +158,7 @@ type Policy struct {
 var knownTopLevelKeys = map[string]bool{
 	"version": true, "budget": true, "allow_repos": true,
 	"providers": true, "model_prices": true, "routing": true,
-	"profiles": true,
+	"profiles": true, "clone_urls": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -369,7 +388,61 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 	}
+	if craw, ok := doc["clone_urls"]; ok && !isNull(craw) {
+		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: clone_urls: %w", err)
+		}
+		if err := validCloneURLs(p.CloneURLs); err != nil {
+			return nil, true, err
+		}
+	}
 	return &p, true, nil
+}
+
+// validCloneURLs checks the clone_urls block, entry by entry: each key a
+// canonical repository name, and each value an https URL without credentials
+// that names exactly that repository on that repository's own provider's host
+// — the rules the deployer applies to a repository URL (repourl.CloneURL, the
+// one function internal/infra's repoURL and the runner share).
+//
+// Both halves are the security property. A key that is not canonical names no
+// repository the runner can look up, so the entry would silently never be
+// used; a value naming another repository, or another provider's host, would
+// point a run at a repository other than the one its slug, its locks, its
+// cache and its budget session name — the very thing the run's own remote
+// checks refuse when a launcher sets FUGARO_REMOTE, and the reason the node
+// is checked here rather than trusted.
+func validCloneURLs(urls CloneURLs) error {
+	for _, key := range sortedStringKeys(urls) {
+		at := fmt.Sprintf("projectpolicy: clone_urls[%s]", key)
+		provider, repo, ok := strings.Cut(key, "/")
+		if !ok || provider == "" || repo == "" {
+			return fmt.Errorf("%s: a clone_urls key is a canonical repository name, like github/owner/name", at)
+		}
+		if c, err := Canonical(provider, repo); err != nil || c != key {
+			return fmt.Errorf("%s: a clone_urls key is a canonical repository name, like github/owner/name", at)
+		}
+		if _, err := repourl.CloneURL(provider, repo, urls[key]); err != nil {
+			return fmt.Errorf("%s: %w", at, err)
+		}
+	}
+	return nil
+}
+
+// CloneURL is the clone URL the project gives a canonical repository, and ""
+// when the policy names none — the provider's usual host, which is what the
+// runner's own helper then builds. It is a plain lookup and not a decision:
+// whether a repository may run at all is Admits'.
+func (p *Policy) CloneURL(canonical string) string { return p.CloneURLs[canonical] }
+
+// sortedStringKeys is a stable order for error messages, like sortedKeys.
+func sortedStringKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // decodeProfileBlock reads the profiles block off the node, refusing a key inside

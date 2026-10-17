@@ -127,7 +127,7 @@ func TestModelPricesCatalogJSONOfAnEmptyBlock(t *testing.T) {
 // administrator who writes a slash-free ID by hand is not made to escape it.
 func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 	const id = "claude-sonnet-4-5-20250929@20250929" // a model ID with no "." or "/" in it
-	p, found, err := Decode([]byte(`{"version": 1, "model_prices": {"` + id + `": {"input_per_m": 1, "output_per_m": 2}}}`))
+	p, found, err := Decode([]byte(`{"version": 2, "model_prices": {"` + id + `": {"input_per_m": 1, "output_per_m": 2}}}`))
 	if err != nil || !found {
 		t.Fatalf("a hand-written node was refused: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 	}
 	// An escaped key is read as what it escapes, and the two spellings of the
 	// same model ID land on the same entry rather than on two.
-	escaped, _, err := Decode([]byte(`{"version": 1, "model_prices": {"` + escKey("deepseek/deepseek-v4.1-flash") + `": {"input_per_m": 1, "output_per_m": 2}}}`))
+	escaped, _, err := Decode([]byte(`{"version": 2, "model_prices": {"` + escKey("deepseek/deepseek-v4.1-flash") + `": {"input_per_m": 1, "output_per_m": 2}}}`))
 	if err != nil {
 		t.Fatalf("an escaped hand-written key was refused: %v", err)
 	}
@@ -144,10 +144,10 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 		t.Errorf("Prices = %v, want the escaped key read back as the model ID", escaped.Prices)
 	}
 	// A bad escape is an error, not a silently different model ID.
-	if _, _, err := Decode([]byte(`{"version": 1, "model_prices": {"a%2": {"input_per_m": 1, "output_per_m": 2}}}`)); err == nil {
+	if _, _, err := Decode([]byte(`{"version": 2, "model_prices": {"a%2": {"input_per_m": 1, "output_per_m": 2}}}`)); err == nil {
 		t.Error("a truncated escape was accepted")
 	}
-	if _, _, err := Decode([]byte(`{"version": 1, "model_prices": {"a%zz": {"input_per_m": 1, "output_per_m": 2}}}`)); err == nil {
+	if _, _, err := Decode([]byte(`{"version": 2, "model_prices": {"a%zz": {"input_per_m": 1, "output_per_m": 2}}}`)); err == nil {
 		t.Error("a bad escape was accepted")
 	}
 }

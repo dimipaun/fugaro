@@ -15,6 +15,7 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/cache"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -238,11 +239,19 @@ func TestLockMarkerFailureDoesNotFailTheRun(t *testing.T) {
 	}
 }
 
-const (
-	exec1 = "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-app/executions/fugaro-acme-app-app-aaaaa"
-	exec2 = "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-app/executions/fugaro-acme-app-app-bbbbb"
+// The executions these tests are about, named from the fixture's own job: the
+// job a per-repository run of acme/app's workflow "app" is deployed as
+// (gcp.JobName of the fixture's slug and the workflow's variant). They were
+// hand-written names until the runner learned to place the job its execution
+// reports (plan task 3.3): a name that is neither a project job the policy
+// computes nor this run's own is a halt, so a fixture that spelled one by hand
+// would stop every test that boots a run through it.
+var (
+	execJob1 = gcp.JobName(repoSlug, gcp.WorkflowVariant("app", ""))
+	exec1    = "projects/proj-1234/locations/us-east5/jobs/" + execJob1 + "/executions/" + execJob1 + "-aaaaa"
+	exec2    = "projects/proj-1234/locations/us-east5/jobs/" + execJob1 + "/executions/" + execJob1 + "-bbbbb"
 	// exec1 as the API may spell it, with the project number.
-	exec1ByNumber = "projects/123456789/locations/us-east5/jobs/fugaro-acme-app-app/executions/fugaro-acme-app-app-aaaaa"
+	exec1ByNumber = "projects/123456789/locations/us-east5/jobs/" + execJob1 + "/executions/" + execJob1 + "-aaaaa"
 )
 
 func TestDuplicateExecutionWritesNothing(t *testing.T) {
