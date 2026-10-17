@@ -265,18 +265,64 @@ func TestComputeStageNeverTakesYes(t *testing.T) {
 	}
 }
 
-// A plan that would delete something is refused unless --allow-delete names
-// it: the stage never deletes what it did not create.
-func TestComputeStageGuardsDeletes(t *testing.T) {
+// A run that cannot ask does not even enter the stage: no terminal and --yes
+// leaves the compute stage where it stands, and NOTHING of the compute root
+// runs -- not its tfvars, not its init, not its plan.
+//
+// This is what the stage's noYes slot in initflow's order buys, and it is not
+// the same guarantee as the stage's own typed prompt: askTyped refuses a --yes
+// run too, but only once Apply is under way, which is after plan() has written
+// the root's tfvars and planned it. Losing noYes would not apply anything --
+// the prompt still stops that -- so nothing else here would fail, which is why
+// this test exists.
+func TestComputeStageIsLeftUnenteredWithoutATerminal(t *testing.T) {
 	r := computeRig(t)
-	r.setPlan(t, change("module.compute.google_compute_router_nat.this", "delete", "create"))
-	fakeTerminal(t)
-	_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--provision-batch")
-	if err == nil || !strings.Contains(err.Error(), "--allow-delete") {
-		t.Fatalf("err = %v, want the guard's refusal", err)
+	out, _, err := executeStdin(t, "", "init", "--yes", "--provision-batch")
+	if err == nil || !strings.Contains(err.Error(), "left for you") {
+		t.Fatalf("err = %v, want the step left for the owner\n%s", err, out)
 	}
-	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
-		t.Fatal("a plan that deletes was applied")
+	if calls := computeCalls(t, r); len(calls) != 0 {
+		t.Fatalf("a run that cannot confirm reached the compute root: %q\n%s", calls, out)
+	}
+	if len(r.sched.Runs()) != 0 {
+		t.Error("the preload rebuild was started by a run that applied nothing")
+	}
+}
+
+// A plan that would delete something is refused unless --allow-delete names
+// it: the stage never deletes what it did not create. Both guards are held to
+// this — the one in Plan (the plan view) and the one in Apply (a real run) —
+// because they are separate calls and a mutation that drops either one leaves
+// the other's path untested.
+//
+// The delete is put in the COMPUTE root's plan ALONE (setPlanAt). Scripting it
+// for every root, as this test first did, is answered by the installation
+// stage's own guard before the compute stage ever plans: the test then passes
+// for a reason it does not name, and deleting guard(...) from both of the
+// compute stage's methods leaves it green (a review's mutation).
+func TestComputeStageGuardsDeletes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"the plan view", []string{"init", "--yes", "--plan-only", "--provision-batch"}},
+		{"the apply", []string{"init", "--yes", "--provision-batch"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := computeRig(t)
+			// The installation plans cleanly, so the run reaches the compute
+			// stage: the refusal below can only be that stage's.
+			r.setPlanAt(t, "installation")
+			r.setPlanAt(t, "compute", change("module.compute.google_compute_router_nat.this", "delete", "create"))
+			fakeTerminal(t)
+			out, _, err := executeStdin(t, initProjectName+"\n", tc.args...)
+			if err == nil || !strings.Contains(err.Error(), "--allow-delete") {
+				t.Fatalf("err = %v, want the compute stage's guard refusal:\n%s", err, out)
+			}
+			if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
+				t.Fatalf("a plan that deletes was applied: %q", calls)
+			}
+		})
 	}
 }
 

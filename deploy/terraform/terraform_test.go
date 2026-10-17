@@ -2006,6 +2006,17 @@ func TestComputeRunVMsTakeNoIngress(t *testing.T) {
 			if !strings.Contains(blk.body, "deny {") || !strings.Contains(blk.body, `protocol = "all"`) {
 				t.Errorf("%s: %s must deny every protocol, not just ssh", path, blk.name)
 			}
+			// Every source, not the network's internal range: a deny wins
+			// over an allow of a higher priority number, and this rule is
+			// what stops a project-level allow (default-allow-ssh, or one a
+			// launcher added) reaching a run's VM. Narrowing the source
+			// ranges to 10.128.0.0/9 is the fallback the module's comment
+			// reserves for 57b-1's answer, and it is a change of the §3.2
+			// control: it must be made here, in the open, and in the tftest's
+			// TestTheRunVMsTakeNoIngress with it.
+			if !hasAttr(blk.body, "source_ranges", `["0.0.0.0/0"]`) {
+				t.Errorf("%s: %s must deny ingress from every source, not from a range of them", path, blk.name)
+			}
 			// A lower number wins, and default-allow-internal is 65534.
 			m := regexp.MustCompile(`(?m)^\s*priority\s*=\s*([0-9]+)\s*$`).FindStringSubmatch(blk.body)
 			if m == nil {
@@ -2270,7 +2281,16 @@ case "$args" in
       exit 0;;
   *"images delete "*) exit 0;;
   *"images list "*)
+      # The ownership filter is the SERVER's: gcloud applies --filter, so an
+      # image without fugaro=managed is simply not in the answer to a filtered
+      # list. The fake applies it too, out of IMAGE_LIST_UNMANAGED -- what a
+      # list WITHOUT that filter would hand back -- so a script that stopped
+      # asking for managed-only is given foreign images, and sweeps them.
       printf '%s\n' "$IMAGE_LIST"
+      case "$args" in
+        *labels.fugaro=managed*) ;;
+        *) printf '%s\n' "$IMAGE_LIST_UNMANAGED";;
+      esac
       [ -f "$CREATED" ] && cat "$CREATED"
       exit 0;;
 esac
@@ -2299,9 +2319,33 @@ func gcloudCalls(t *testing.T, calls []string, sub string) [][]string {
 // is the age this test means.
 func preloadRow(t *testing.T, release string, age time.Duration) string {
 	t.Helper()
+	return preloadRowOwned(t, "managed", release, age)
+}
+
+// preloadRowOwned is preloadRow with the ownership label spelled out, for the
+// rows that are NOT this module's: an image someone else built, or one from
+// before the label existed.
+func preloadRowOwned(t *testing.T, owner, release string, age time.Duration) string {
+	t.Helper()
 	now := time.Now().UTC()
-	return fmt.Sprintf("%s-%s,managed,%s,%s", "fugaro-preload-a0b6aca0",
-		now.Add(-age).Format("20060102T150405"), release, now.Add(-age).Format(time.RFC3339))
+	return fmt.Sprintf("%s-%s,%s,%s,%s", "fugaro-preload-a0b6aca0",
+		now.Add(-age).Format("20060102T150405"), owner, release, now.Add(-age).Format(time.RFC3339))
+}
+
+// imageListCall is the one `gcloud compute images list` the sweep makes, as
+// the shell logged it (gcloud's own field splitting is not the script's).
+func imageListCall(t *testing.T, calls []string) string {
+	t.Helper()
+	var got []string
+	for _, c := range calls {
+		if strings.Contains(c, "compute images list") {
+			got = append(got, c)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("the sweep listed images %d times, want once:\n%s", len(got), strings.Join(calls, "\n"))
+	}
+	return got[0]
 }
 
 // The preload's family holds generations, and what the scheduled rebuild does
@@ -2434,6 +2478,65 @@ func TestComputePreloadShellDecidesAndReplaces(t *testing.T) {
 		}
 		if !strings.Contains(out, "the build exited") {
 			t.Errorf("the trap did not run for the builder VM it was told is still up:\n%s", out)
+		}
+	})
+
+	// The two ways an image under this installation's own name prefix could
+	// still not be the build's to touch. Both are the same rule -- delete only
+	// what you created -- and neither is covered by the counts above: an
+	// unmanaged image is refused before anything is built, and an unmanaged
+	// image is never handed to the sweep to begin with.
+	t.Run("the family's newest generation is refused when it is not fugaro=managed", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			// The family's newest, built by someone else -- no ownership
+			// label -- and old enough that a build which never read the label
+			// would replace it.
+			"IMAGE_ROW":  preloadRowOwned(t, "not-fugaro", "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST": "",
+			"MARKER":     "fugaro-preload-built",
+		})
+		if err == nil {
+			t.Fatalf("preload.sh exited 0 with a foreign image as the family's newest generation:\n%s", out)
+		}
+		if !strings.Contains(out, "refusing to touch it") {
+			t.Errorf("the refusal was not reported:\n%s", out)
+		}
+		if n := len(gcloudCalls(t, calls, "instances create")) + len(gcloudCalls(t, calls, "images create")); n != 0 {
+			t.Errorf("a build ran beside an image that is not this module's (%d create call(s)):\n%s", n, strings.Join(calls, "\n"))
+		}
+		if n := len(gcloudCalls(t, calls, "images delete")); n != 0 {
+			t.Errorf("an image that is not this module's was deleted (%d delete call(s)):\n%s", n, strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("an image under the prefix that is not fugaro=managed is never swept", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":  preloadRow(t, baseRelease, 48*time.Hour),
+			"IMAGE_LIST": "",
+			// What a list WITHOUT the ownership filter would return: an image
+			// under this installation's prefix that this module did not make.
+			// It is the sweep's worst case, because the name prefix alone
+			// matches it and the sweep deletes everything it is handed that is
+			// neither this build's generation nor the newest of the family.
+			"IMAGE_LIST_UNMANAGED": "fugaro-preload-operator-20200101T030000,fugaro-preload-operator\n",
+			"MARKER":               "fugaro-preload-built",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v:\n%s", err, out)
+		}
+		list := imageListCall(t, calls)
+		for _, want := range []string{"--filter=labels.fugaro=managed", "name~^fugaro-preload-"} {
+			if !strings.Contains(list, want) {
+				t.Errorf("the sweep listed images with %q, which does not ask for %s: the answer to an unfiltered list is every image under the prefix, and the sweep deletes what it is handed:\n%s", list, want, list)
+			}
+		}
+		for _, d := range gcloudCalls(t, calls, "images delete") {
+			if strings.Contains(strings.Join(d, " "), "fugaro-preload-operator-") {
+				t.Errorf("the sweep deleted an image this module did not create: %s", strings.Join(d, " "))
+			}
+		}
+		if len(gcloudCalls(t, calls, "images delete")) != 0 {
+			t.Errorf("a current generation's sweep deleted something:\n%s", strings.Join(calls, "\n"))
 		}
 	})
 }

@@ -363,6 +363,10 @@ run "TestTheRunVMsTakeNoIngress" {
     ])
     error_message = "the rule is targeted by the run accounts themselves: a network tag would have to be written by the launcher (Task 7), and a rule that silently matches nothing is worse than no rule"
   }
+  assert {
+    condition     = google_compute_firewall.run_deny_ingress.source_ranges == toset(["0.0.0.0/0"])
+    error_message = "the rule denies ingress from EVERY source. A narrower source range is not tuning: it stops the deny overriding the project's other allow rules (a default-allow-ssh or a project-level allow a launcher added), which is the whole of what makes a run's VM unreachable, so narrowing it to 10.128.0.0/9 is the §3.2 decision the module's comment reserves for 57b-1 -- and it is made by editing this assertion, deliberately"
+  }
 }
 
 # The two APIs, and NOT containerfilesystem: it is the prerequisite of image
