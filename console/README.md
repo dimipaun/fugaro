@@ -1673,13 +1673,26 @@ repository, in the workflow, or in any run an agent performs:
 
 **The notarisation credential is the App Store Connect API key, not an
 app-specific password.** D4 leaves the choice open; this is the decision, so
-`APPLE_ID` and `APPLE_APP_PASSWORD` are deliberately absent. The workflow keeps
-that triple out of the packaging step's environment on purpose —
-electron-builder notarises by itself the moment it sees it — and runs
-`xcrun notarytool submit --wait` as its own step, with the `.p8` written to a
-`0600` file in the runner's temp directory that the cleanup step removes. A
-submission that is visible as a step is one whose `--wait` can fail the job
-rather than being stapled over.
+`APPLE_ID` and `APPLE_APP_PASSWORD` are deliberately absent. The workflow
+writes the `.p8` to a `0600` file in the runner's temp directory — the cleanup
+step removes it — and hands on its *path*, which is what both readers take:
+`APPLE_API_KEY` is a file to electron-builder and `--key` is a file to
+notarytool. The key's value never reaches a command line.
+
+**The order is the load-bearing part: the bundle is notarised and stapled
+*before* the `.dmg` and the `.zip` are built, and what is verified is the bundle
+inside them.** `npm run package` is one command that does both, and
+electron-builder notarises and staples the `.app` while packing it — before it
+builds the targets — when the App Store Connect triple is in the step's
+environment. That is the owner's own flow above, and it is why the triple is in
+the *packaging* step's environment here too: notarising after packing, which an
+earlier revision of the staged file did, ships two artifacts carrying an
+unstapled bundle, and a verification record about the loose `.app` under
+`console/release/` describes something in neither of them (the review of Task
+4.2 caught both). The workflow then notarises the `.dmg` as well — the disk
+image is its own artifact and Gatekeeper assesses it when the download is
+opened — staples it, and validates the packed bundle's ticket before any of
+that, so a packer that did *not* staple stops the job instead of publishing.
 
 **The environment is `console-release`, and the owner creates it before the
 copy-in.** Required reviewers on the owner, deployment branches restricted to
@@ -1714,12 +1727,15 @@ electron-builder no flag of its own. Three differences are on purpose:
   the `APPLE_TEAM_ID` the owner's environment holds, so a development
   certificate or another team's is refused here rather than submitted.
 
-**The verification is recorded, not just performed.** `codesign --verify --deep
---strict`, `codesign -d --entitlements -`, `spctl --assess --type execute`,
-`xcrun stapler validate` on the app and on the disk image, and `spctl --assess
---type open` on the disk image, each with its real output, into
-`console-verification.txt` — uploaded to the release beside the `.dmg` and the
-`.zip`, the way the CLI's own release records checksums (design §7.2). Each
+**The verification is recorded, not just performed, and it is about the
+shipped artifacts.** The `.dmg` is mounted read-only and the bundle inside it is
+what `codesign --verify --deep --strict`, `codesign -d --entitlements -`,
+`spctl --assess --type execute` and `xcrun stapler validate` run against; the
+`.zip` is extracted and its bundle gets the same treatment; the disk image's own
+ticket and Gatekeeper assessment (`xcrun stapler validate`, `spctl --assess
+--type open`) close the record. All of it, with the commands' real output, goes
+into `console-verification.txt` — uploaded to the release beside the `.dmg` and
+the `.zip`, the way the CLI's own release records checksums (design §7.2). Each
 command must succeed; a record that swallowed a failure would be the output of a
 verification that did not pass.
 
@@ -1764,3 +1780,7 @@ is a test nobody should trust:
 | `uses: actions/checkout@v5` (a tag instead of a full commit) | `TestConsoleReleaseWorkflowIsStagedAndPinned`'s pin scan, which accepts only `consoleUsesLine` and exactly two actions |
 | the `if: always()` cleanup step removed | `TestConsoleReleaseWorkflowIsStagedAndPinned`, on the keychain deletion and on the `.p8` removal no longer being the last step |
 | the fail-closed step's `exit 1` removed | `TestConsoleReleaseWorkflowIsStagedAndPinned`, on the first secret-reading step no longer naming all six and refusing |
+| `APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE }}` (the reference right, the binding swapped) | `TestConsoleReleaseWorkflowIsStagedAndPinned`, on the binding, and again on the name set: the scan used to count the names and never compare them to the variables they were bound to |
+| the App Store Connect triple moved out of the packaging step's environment (pack first, notarise after) | `TestConsoleReleaseWorkflowIsStagedAndPinned`, on the packaging step no longer reading the triple and on `APPLE_API_KEY` no longer being the path the key step wrote |
+| the verification step pointed back at the loose packed bundle | `TestConsoleReleaseWorkflowIsStagedAndPinned`, on the step no longer verifying `"$MOUNT/Fugaro Console.app"` and on reading `steps.artifacts.outputs.app` |
+| the step validating the packed bundle's staple removed | `TestConsoleReleaseWorkflowIsStagedAndPinned`, on there being no such step |

@@ -47,6 +47,20 @@
 #   - `scripts/release-gate.sh` runs first, exactly as release.yml and images.yml
 #     run it: a console build is not signed for a tag this repository's own
 #     release rules would refuse (D18).
+#   - **The order is: build the bundle, notarise it, staple it, and only then
+#     pack the .dmg and the .zip -- and what is verified is the bundle inside
+#     the shipped artifacts.** The App Store Connect triple is therefore in the
+#     *packaging* step's environment, exactly as the owner's documented local
+#     flow has it (console/README.md, "The owner's commands, exactly"):
+#     electron-builder notarises and staples the .app while packing it and
+#     *before* it builds the targets, so both artifacts are made from the
+#     stapled bundle. This file does notarise the .dmg as well, because the
+#     disk image is its own artifact and Gatekeeper assesses it on open; and it
+#     verifies the bundle *inside* the mounted .dmg and the extracted .zip
+#     rather than the loose one the packer left on the runner, which is in
+#     neither artifact a user downloads. (An earlier revision of this file
+#     packed first and notarised afterwards, which shipped two artifacts
+#     carrying an unstapled bundle; the review of Task 4.2 caught it.)
 #   - The signing, notarising, stapling and verifying steps are `run:` calls to
 #     xcrun, codesign, security and the macOS runner's own tools, **not actions**:
 #     an action's SHA cannot be verified in the environment this file was written
@@ -189,6 +203,24 @@ jobs:
           cache: npm
           cache-dependency-path: console/package-lock.json
 
+      # The App Store Connect key, written where the packer and notarytool read
+      # it: mode 0600, in the runner's temp directory, removed by the cleanup
+      # step at the bottom of this job. **The key's value never reaches a
+      # command line**: what is passed on is the *path*, through an output, and
+      # a path is not a secret. APPLE_API_KEY is a file to both readers --
+      # electron-builder reads it as the path to the .p8, not as its contents.
+      - name: Write the App Store Connect key to a private file
+        id: appkey
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -eu
+          KEY="$RUNNER_TEMP/appstoreconnect.p8"
+          printf '%s' "$APPLE_API_KEY" > "$KEY"
+          chmod 600 "$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "the notarisation key is in $KEY, mode 0600"
+
       # Task 4.1's own scripts, unchanged. The install is `npm ci` from the
       # committed lockfile with lifecycle scripts off, and `npm run package` is
       # what builds, flips the fuses, signs with the hardened runtime and
@@ -196,21 +228,30 @@ jobs:
       # re-signs or re-packs with a configuration of its own: an entitlements or
       # hardened-runtime flag in this file would be a second, unreviewed signing
       # configuration.
-      #
-      # The signing identity is named explicitly, by the SHA-1 the keychain step
-      # found, so a runner carrying more than one identity cannot pick another.
-      # The App Store Connect key is deliberately NOT in this step's environment:
-      # electron-builder notarises by itself when it sees that triple, and this
-      # file notarises explicitly below, where the submission is visible and
-      # `--wait` is what fails the job.
       - name: Install the pinned toolchain
         working-directory: console
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Build, sign and pack the console
+      # **Notarise before packing, not after.** The App Store Connect triple is
+      # in this step's environment on purpose: electron-builder notarises and
+      # staples the .app while it packs it and *before* it builds the targets,
+      # so the .dmg and the .zip are both made from the stapled bundle. That is
+      # the owner's documented local flow too (console/README.md, "The owner's
+      # commands, exactly"), and it is the whole reason this step, and not a
+      # later one, holds the key. Notarising after packing would ship two
+      # artifacts carrying an unstapled bundle.
+      #
+      # The signing identity is named explicitly, by the SHA-1 the keychain step
+      # found, so a runner carrying more than one identity cannot pick another.
+      # A rejection from the notary service fails this step: electron-builder
+      # waits for the verdict and throws on anything but Accepted.
+      - name: Build, sign, notarise, staple and pack the console
         working-directory: console
         env:
           CSC_NAME: ${{ steps.keychain.outputs.identity }}
+          APPLE_API_KEY: ${{ steps.appkey.outputs.key }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: npm run package
 
       - name: Locate the packed artifacts
@@ -252,35 +293,46 @@ jobs:
           fi
           echo "the bundle is signed by the owner's team"
 
-      # One submission, and it waits: `--wait` is what turns a rejected
-      # notarisation into a failed job instead of a stapled-over error. The key
-      # is written into the runner's temp directory with mode 0600 and removed by
-      # the cleanup step at the bottom of this job.
-      #
-      # The .dmg is what is submitted. The notary service notarises what is
-      # inside it -- the same app bundle the .zip carries -- and the ticket it
-      # issues is per app bundle, which is why stapling the .app below works and
-      # why the .zip needs no submission of its own.
-      - name: Notarise the disk image
-        env:
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          DMG: ${{ steps.artifacts.outputs.dmg }}
-        run: |
-          set -eu
-          KEY="$RUNNER_TEMP/appstoreconnect.p8"
-          printf '%s' "$APPLE_API_KEY" > "$KEY"
-          chmod 600 "$KEY"
-          xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
-
-      - name: Staple the ticket to the app and to the disk image
+      # The bundle the packaging step shipped carries its ticket, and this is
+      # where that stops being an assumption about electron-builder's internals.
+      # It has to hold *before* the artifacts are built for the artifacts to be
+      # right, so if it does not hold the job stops here rather than publishing
+      # a disk image and an archive whose bundle Gatekeeper would have to ask
+      # the notary service about, online, at every launch.
+      - name: The bundle the packer built is notarised and stapled
         env:
           APP: ${{ steps.artifacts.outputs.app }}
+        run: |
+          set -eu
+          if ! xcrun stapler validate "$APP"; then
+            echo "::error::$APP carries no stapled ticket: the packaging step is expected to notarise and staple the app before it builds the .dmg and the .zip (the App Store Connect triple is in its environment, as console/README.md documents for the owner's local run). Refusing to publish artifacts that would carry this bundle unstapled"
+            exit 1
+          fi
+
+      # The disk image's own submission, and it waits: `--wait` is what turns a
+      # rejected notarisation into a failed job instead of a stapled-over error.
+      # The key is the file the step above wrote, mode 0600, removed by the
+      # cleanup step at the bottom of this job.
+      #
+      # The .app is not submitted here: the packaging step notarised it. The
+      # .dmg is submitted because it is its own artifact -- a disk image
+      # Gatekeeper assesses when a download is opened -- and the notary service
+      # accepts a submission of a bundle it has already seen.
+      - name: Notarise the disk image
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          KEY: ${{ steps.appkey.outputs.key }}
           DMG: ${{ steps.artifacts.outputs.dmg }}
         run: |
           set -eu
-          xcrun stapler staple "$APP"
+          xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+
+      - name: Staple the ticket to the disk image
+        env:
+          DMG: ${{ steps.artifacts.outputs.dmg }}
+        run: |
+          set -eu
           xcrun stapler staple "$DMG"
 
       # The fact the release records, exactly as the CLI's release records its
@@ -288,15 +340,22 @@ jobs:
       # file that is uploaded with the artifact (design section 7.2). Each one
       # must succeed -- a record that swallowed a failure would be the output of a
       # verification that did not pass, which is the opposite of what it is for.
-      - name: Verify the signature, Gatekeeper and the ticket, and record it
+      #
+      # **What is verified is what is shipped**: the bundle inside the mounted
+      # .dmg, and the bundle inside the extracted .zip. The loose .app the
+      # packer left under console/release/ is in neither artifact, so a record
+      # about it would be a record about something nobody downloads -- and it is
+      # the artifact's bundle whose staple the packing order above exists to
+      # guarantee.
+      - name: Verify the shipped artifacts, and record it
         env:
-          APP: ${{ steps.artifacts.outputs.app }}
           DMG: ${{ steps.artifacts.outputs.dmg }}
+          ZIP: ${{ steps.artifacts.outputs.zip }}
         run: |
           set -eu
           RECORD="$RUNNER_TEMP/console-verification.txt"
           : > "$RECORD"
-          printf '# Fugaro Console %s: signature, Gatekeeper and notarisation\n' "$GITHUB_REF_NAME" >> "$RECORD"
+          printf '# Fugaro Console %s: signature, Gatekeeper and notarisation, as shipped\n' "$GITHUB_REF_NAME" >> "$RECORD"
           record() {
             printf '\n$ %s\n' "$*" >> "$RECORD"
             if ! "$@" >> "$RECORD" 2>&1; then
@@ -305,12 +364,28 @@ jobs:
               exit 1
             fi
           }
-          record codesign --verify --deep --strict --verbose=2 "$APP"
-          record codesign -d --entitlements - "$APP"
-          record spctl --assess --type execute --verbose=4 "$APP"
-          record xcrun stapler validate "$APP"
+          # The .dmg, mounted read-only, and the bundle inside it.
+          MOUNT="$RUNNER_TEMP/dmg-mount"
+          mkdir -p "$MOUNT"
+          record hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+          IN_DMG="$MOUNT/Fugaro Console.app"
+          record codesign --verify --deep --strict --verbose=2 "$IN_DMG"
+          record codesign -d --entitlements - "$IN_DMG"
+          record spctl --assess --type execute --verbose=4 "$IN_DMG"
+          record xcrun stapler validate "$IN_DMG"
+          # The .zip, extracted, and the bundle inside it.
+          UNZIP="$RUNNER_TEMP/unzipped"
+          mkdir -p "$UNZIP"
+          record ditto -x -k "$ZIP" "$UNZIP"
+          IN_ZIP="$UNZIP/Fugaro Console.app"
+          record codesign --verify --deep --strict --verbose=2 "$IN_ZIP"
+          record spctl --assess --type execute --verbose=4 "$IN_ZIP"
+          record xcrun stapler validate "$IN_ZIP"
+          # And the disk image itself, which is what Gatekeeper assesses when
+          # the download is opened.
           record xcrun stapler validate "$DMG"
           record spctl --assess --type open --context context:primary-signature -v "$DMG"
+          record hdiutil detach "$MOUNT"
           cat "$RECORD"
 
       # The artifact and the record, on the release release.yml creates for this
@@ -352,6 +427,9 @@ jobs:
         if: always()
         run: |
           set -eu
+          # The verification step detaches the disk image it mounted; this is
+          # for the case where it failed before it got there.
+          hdiutil detach "$RUNNER_TEMP/dmg-mount" || true
           security list-keychains -d user -s login.keychain-db || true
           security default-keychain -s login.keychain-db || true
           security delete-keychain "$RUNNER_TEMP/console-signing.keychain-db" || true

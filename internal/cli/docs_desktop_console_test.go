@@ -1971,6 +1971,14 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s: %q is a secret reference outside a step's `env:` value: a secret is never inlined into a command line and never handed to an action's `with:`", consoleReleaseWorkflowPath, strings.TrimSpace(line))
 			continue
 		}
+		// The binding is the pair, not the reference: `APPLE_CERTIFICATE: ${{
+		// secrets.APPLE_API_KEY }}` would satisfy a scan that only counted the
+		// names, and would hand the keychain step the wrong secret -- which is
+		// the one mistake this file must not make, since the value that lands in
+		// the environment is the one the step uses.
+		if m[1] != m[2] {
+			t.Errorf("%s binds %s to the secret %s: a step's environment variable is the secret it names, or the step reads a value nobody meant to give it", consoleReleaseWorkflowPath, m[1], m[2])
+		}
 		seen[m[2]]++
 	}
 	var got []string
@@ -2118,6 +2126,9 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		if !strings.Contains(job.Steps[cleanup].Run, "appstoreconnect.p8") {
 			t.Errorf("%s's cleanup step does not delete the notarisation key file: the API key is written to a temp file with mode 0600 and removed here", consoleReleaseWorkflowPath)
 		}
+		if !strings.Contains(job.Steps[cleanup].Run, "hdiutil detach") {
+			t.Errorf("%s's cleanup step does not detach the mounted disk image: the verification step mounts it, and a failure there must not leave it mounted for the steps after it", consoleReleaseWorkflowPath)
+		}
 	}
 
 	// The Node version is read from console/package.json's `engines.node`, never
@@ -2184,36 +2195,109 @@ func TestConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 	}
 
-	// Notarisation is notarytool with the API key in a 0600 temp file, and it
-	// waits: `--wait` is what makes a rejected submission fail the job instead of
-	// being stapled over.
-	_, notarise := stepNamed("Notarise the disk image")
-	for _, want := range []string{"chmod 600", "xcrun notarytool submit", "--wait", "--key-id", "--issuer"} {
-		if !strings.Contains(notarise.Run, want) {
-			t.Errorf("%s's notarisation step does not use %q: the submission is the App Store Connect API key, written 0600, and it waits for the verdict", consoleReleaseWorkflowPath, want)
+	// **Notarise before packing.** The app must be notarised and stapled while
+	// the packer is building it, because the .dmg and the .zip are built from
+	// the app directory afterwards: a job that packed first and notarised
+	// second would publish two artifacts carrying an unstapled bundle (the
+	// review of Task 4.2). So the App Store Connect triple is in the packaging
+	// step's own environment, which is also the owner's documented local flow
+	// (console/README.md, "The owner's commands, exactly").
+	//
+	// The key's *value* still never reaches a command line: the step before the
+	// packaging writes it to a 0600 file and hands on the path, which is what
+	// both electron-builder and notarytool take.
+	if pack >= 0 {
+		packEnv := job.Steps[pack].Env
+		for _, name := range []string{"APPLE_API_KEY_ID", "APPLE_API_ISSUER"} {
+			if packEnv[name] == "" {
+				t.Errorf("%s's packaging step does not read %s: electron-builder notarises and staples the app as it packs it only when the App Store Connect triple is in this step's environment, and the .dmg and the .zip are built from the bundle it leaves behind", consoleReleaseWorkflowPath, name)
+			}
+		}
+		if !strings.Contains(packEnv["APPLE_API_KEY"], "steps.appkey.outputs") {
+			t.Errorf("%s's packaging step takes APPLE_API_KEY as %q, want the path the key-writing step put in its output: electron-builder reads APPLE_API_KEY as the path to the .p8, not as its contents", consoleReleaseWorkflowPath, packEnv["APPLE_API_KEY"])
+		}
+		if packEnv["CSC_NAME"] == "" {
+			t.Errorf("%s's packaging step names no signing identity: CSC_NAME is the SHA-1 the keychain step found, so a runner carrying more than one identity cannot pick another", consoleReleaseWorkflowPath)
 		}
 	}
-	if notarise.Env["APPLE_API_KEY"] == "" || notarise.Env["APPLE_API_KEY_ID"] == "" || notarise.Env["APPLE_API_ISSUER"] == "" {
-		t.Errorf("%s's notarisation step does not read the API key triple from the environment", consoleReleaseWorkflowPath)
+
+	// The key file: 0600, in the runner's temp directory, and removed by the
+	// cleanup step. It is written once, before the packaging step, and both the
+	// packer and notarytool read that one file.
+	_, appkey := stepNamed("Write the App Store Connect key to a private file")
+	for _, want := range []string{"chmod 600", "appstoreconnect.p8", "$GITHUB_OUTPUT"} {
+		if !strings.Contains(appkey.Run, want) {
+			t.Errorf("%s's key step does not use %q: the App Store Connect key is written to a 0600 file in the runner's temp directory and its path is handed on, never its value", consoleReleaseWorkflowPath, want)
+		}
+	}
+	if appkey.Env["APPLE_API_KEY"] == "" {
+		t.Errorf("%s's key step does not read APPLE_API_KEY from the environment", consoleReleaseWorkflowPath)
+	}
+	if appkey.Id == "" {
+		t.Errorf("%s's key step has no `id:`, so the packaging step cannot name the path it wrote", consoleReleaseWorkflowPath)
 	}
 
-	// Both the app and the disk image are stapled, and all three verification
-	// commands the design names are run -- `codesign --verify --deep --strict`,
-	// `spctl --assess --type execute` and `stapler validate` -- with their output
-	// recorded into a text file that the release carries, the way the CLI's
-	// release carries checksums.txt (design section 7.2; plan Task 4.2).
-	_, staple := stepNamed("Staple the ticket to the app and to the disk image")
-	if n := strings.Count(staple.Run, "xcrun stapler staple"); n != 2 {
-		t.Errorf("%s's stapling step runs `xcrun stapler staple` %d times, want 2: the .app and the .dmg both carry the ticket", consoleReleaseWorkflowPath, n)
+	// The bundle the packer produced is stapled, and that is checked rather than
+	// assumed: if electron-builder did not notarise it, the artifacts about to be
+	// published carry an unstapled bundle, and this is the last place that can
+	// stop them.
+	_, stapled := stepNamed("The bundle the packer built is notarised and stapled")
+	if !strings.Contains(stapled.Run, "xcrun stapler validate") || !strings.Contains(stapled.Run, "exit 1") {
+		t.Errorf("%s's step %q does not validate the packed bundle's ticket and refuse when it is missing: an unstapled bundle in the shipped artifacts is what the packing order exists to prevent", consoleReleaseWorkflowPath, stapled.Name)
 	}
-	_, verify := stepNamed("Verify the signature, Gatekeeper and the ticket, and record it")
-	for _, want := range []string{"codesign --verify --deep --strict", "spctl --assess --type execute", "xcrun stapler validate", "console-verification.txt"} {
+
+	// The disk image's own submission, and it waits: `--wait` is what makes a
+	// rejected submission fail the job instead of being stapled over.
+	_, notarise := stepNamed("Notarise the disk image")
+	for _, want := range []string{"xcrun notarytool submit", "--wait", "--key-id", "--issuer", `"$DMG"`} {
+		if !strings.Contains(notarise.Run, want) {
+			t.Errorf("%s's notarisation step does not use %q: the disk image is submitted with the App Store Connect key and the step waits for the verdict", consoleReleaseWorkflowPath, want)
+		}
+	}
+	if notarise.Env["APPLE_API_KEY_ID"] == "" || notarise.Env["APPLE_API_ISSUER"] == "" {
+		t.Errorf("%s's notarisation step does not read the API key id and issuer from the environment", consoleReleaseWorkflowPath)
+	}
+	if !strings.Contains(notarise.Env["KEY"], "steps.appkey.outputs") {
+		t.Errorf("%s's notarisation step takes the key file as %q, want the path the key-writing step put in its output: `--key` takes a file, and the file is the 0600 one the cleanup step removes", consoleReleaseWorkflowPath, notarise.Env["KEY"])
+	}
+
+	// The disk image carries the ticket too, and the .app's is the packer's --
+	// stapling the loose bundle here would be stapling something in neither
+	// shipped artifact.
+	_, staple := stepNamed("Staple the ticket to the disk image")
+	if n := strings.Count(staple.Run, "xcrun stapler staple"); n != 1 {
+		t.Errorf("%s's stapling step runs `xcrun stapler staple` %d times, want 1: the .app is stapled by the packaging step, and this staples the .dmg", consoleReleaseWorkflowPath, n)
+	}
+
+	// **The record is about the shipped artifacts.** The bundle inside the
+	// mounted .dmg and the bundle inside the extracted .zip are what is
+	// verified -- the design's commands, `codesign --verify --deep --strict`,
+	// `spctl --assess --type execute` and `stapler validate`, with their real
+	// output, into a text file the release carries the way the CLI's release
+	// carries checksums.txt (design section 7.2; plan Task 4.2). The loose .app
+	// under console/release/ is in neither artifact, so a record about it would
+	// be a record about something nobody downloads.
+	_, verify := stepNamed("Verify the shipped artifacts, and record it")
+	for _, want := range []string{
+		"hdiutil attach", "-mountpoint", `"$MOUNT/Fugaro Console.app"`, "ditto -x -k",
+		`"$UNZIP/Fugaro Console.app"`, "codesign --verify --deep --strict",
+		"spctl --assess --type execute", "xcrun stapler validate",
+		"console-verification.txt",
+	} {
 		if !strings.Contains(verify.Run, want) {
-			t.Errorf("%s's verification step does not run %q: these commands are the fact the release records (design section 7.2)", consoleReleaseWorkflowPath, want)
+			t.Errorf("%s's verification step does not use %q: these commands are the fact the release records, run against the bundle inside the .dmg and the .zip (design section 7.2)", consoleReleaseWorkflowPath, want)
 		}
 	}
 	if strings.Contains(verify.Run, "|| true") {
 		t.Errorf("%s's verification step carries `|| true`: a verification that cannot fail is not a verification", consoleReleaseWorkflowPath)
+	}
+	// The loose bundle the packer left under console/release/ is in neither
+	// artifact a user downloads. Naming it here -- under any variable -- is how
+	// the record goes back to describing something nobody has.
+	for name, value := range verify.Env {
+		if strings.Contains(value, "steps.artifacts.outputs.app") {
+			t.Errorf("%s's verification step reads the loose packed bundle through %s (%q): what ships is the .dmg and the .zip, so the record must be about the bundle inside them", consoleReleaseWorkflowPath, name, value)
+		}
 	}
 
 	// And the record is published with the artifact, on the release the CLI's own

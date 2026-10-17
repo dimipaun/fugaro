@@ -111,11 +111,24 @@ never a `pull_request_target`, never a `workflow_run`, never a
 `workflow_dispatch`. It runs `scripts/release-gate.sh` first, exactly as
 `release.yml` and `images.yml` do, then builds with Task 4.1's own scripts
 (`npm ci --ignore-scripts --no-audit --no-fund` and `npm run package`, which
-carry the hardened runtime and `console/entitlements.mac.plist`), notarises with
-`xcrun notarytool submit --wait`, staples the `.app` and the `.dmg`, verifies
-with `codesign --verify --deep --strict`, `spctl --assess --type execute` and
-`xcrun stapler validate`, and uploads the `.dmg`, the `.zip` and the recorded
-verification output to the release `release.yml` creates for the same tag.
+carry the hardened runtime and `console/entitlements.mac.plist`), notarises and
+staples the `.app` through that packaging step — electron-builder does it as it
+packs, **before** it builds the `.dmg` and the `.zip`, so both artifacts are
+made from the stapled bundle — then notarises the disk image with
+`xcrun notarytool submit --wait` and staples it, verifies the bundle *inside*
+the mounted `.dmg` and the extracted `.zip` with `codesign --verify --deep
+--strict`, `spctl --assess --type execute` and `xcrun stapler validate`, and
+uploads the `.dmg`, the `.zip` and the recorded verification output to the
+release `release.yml` creates for the same tag.
+
+**The order is the part a reader should check first, after the trigger.** The
+packaging step is the one holding the App Store Connect triple, exactly as the
+owner's documented local flow does, and it is the only order in which the
+artifacts contain a stapled bundle: packing first and notarising afterwards
+ships a `.dmg` and a `.zip` whose app Gatekeeper has to ask the notary service
+about, online, at every launch. The workflow validates the packed bundle's
+ticket before it publishes anything, so a packer that did not staple stops the
+job instead.
 
 **It reads its secrets through a job-level `environment: console-release`** —
 the protected GitHub environment the owner creates in the same step: required
@@ -145,11 +158,14 @@ unless all six are non-empty, naming the missing one, so an absent secret stops
 the job rather than silently skipping the signing step — an unsigned console
 published under a signed release's name is the worst outcome this file can
 produce. No value of any secret appears in the file: each is referenced as
-`${{ secrets.NAME }}` in the `env:` of the single step that needs it, and the
-certificate is imported into a keychain the job creates (a random password from
-`openssl rand`, `security create-keychain`, `security import`,
-`security set-key-partition-list`) and deletes in an `if: always()` step, along
-with the notarisation key file, which is written with mode `0600`.
+`${{ secrets.NAME }}` in the `env:` of the single step that needs it — bound to
+a variable of the same name, which is what `TestConsoleReleaseWorkflowIsStagedAndPinned`
+compares — and the certificate is imported into a keychain the job creates (a
+random password from `openssl rand`, `security create-keychain`,
+`security import`, `security set-key-partition-list`) and deletes in an
+`if: always()` step, along with the notarisation key file, which is written with
+mode `0600` and handed on as a *path* (`APPLE_API_KEY` is a file to
+electron-builder, `--key` is a file to notarytool), never as a value.
 
 The owner applies it with one command, from the repository root:
 
@@ -180,9 +196,13 @@ its text,
 through `TestConsoleReleaseWorkflowIsStagedAndPinned` and
 `TestConsoleReleaseWorkflowHoldsNoPullRequestTrigger` in
 `internal/cli/docs_desktop_console_test.go`: the trigger surface, the environment
-name, the secret names and the form they are referenced in, the fail-closed step,
-the temporary keychain and its deletion, the two action pins, the permissions,
-and byte-identity with the copy under `.github/workflows/` once it exists.
+name, the secret names and the variables they are bound to, the fail-closed step,
+the temporary keychain and its deletion, the App Store Connect triple being in
+the packaging step's environment and the key file it names, the step that
+validates the packed bundle's staple, the notarytool submission of the disk
+image, the verification being about the bundle inside the `.dmg` and the `.zip`,
+the two action pins, the permissions, and byte-identity with the copy under
+`.github/workflows/` once it exists.
 
 Two things a reader must not take from those tests: the pinned SHAs are read
 against upstream by the person copying the file in (see "Before you copy" below —
