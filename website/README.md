@@ -6,28 +6,21 @@ build and its own schedule (D90): nothing under it is importable by the Go modul
 Go module gains no dependency from it. The boundary is a test, not a convention —
 `internal/cli/docs_website_boundary_test.go`.
 
-**What is here today:** the shell, and its first pages. The pinned toolchain, the static
-Astro configuration, the check that runs the build and every test file, and this document;
-the base layout and the fail-loud content pipeline (`src/layouts/Base.astro`,
-`src/content.ts`, W1.3), which every page renders through; and the console page
-(`src/pages/console.astro`, W1.6), which reads the console's own facts and, while the
-console is unreleased, renders no download link at all. `website/data/` and
-`website/content/` already hold the facts Part 0 generates; the remaining pages land in
-W1.4, W1.5 and W1.7–W1.12, each with its own test file in `test/`, each rendering the facts
-its file holds and writing no copy of its own.
+**What is here today:** the shell. The pinned toolchain, the static Astro configuration,
+the check that runs the build and every test file, and this document. `website/data/` and
+`website/content/` already hold the facts Part 0 generates; the pages that render them land
+in W1.3 (`src/layouts/`) through W1.12. **The build therefore produces no page yet**, which
+is why `npm run build` is green today and why the first page's own test arrives with the
+first page.
 
 ## Toolchain
 
-**Node 22 LTS or newer**, pinned in `package.json`'s `engines`: `>=22.22.0 <25`. The floor
-is Astro's own requirement rather than a preference. The ceiling is one major above the
-newest line this site is checked on, because a range that stops at the patch line a
-lockfile happened to be written with would refuse the very Node this repository builds and
-checks the site with: the Node here is the base image's, `HARNESS_NODE_VERSION` in
-`images/base/Dockerfile`, currently **24.21.0**, and it is not on a developer's `PATH` but
-it is what `npm ci` and `npm run check` run on in a Fugaro run. The lockfile itself was
-written with **Node 22.23.3** (npm 10.9.9), which the same range admits. The engines range
-and this paragraph carry the same value on purpose: a reader who installs what this section
-names has a toolchain this site is checked with, on either line.
+**Node 22 LTS**, pinned in `package.json`'s `engines`: `>=22.22.0 <23`. The floor is
+Astro's own requirement rather than a preference, and the ceiling is the major line this
+site is built and checked on — the engines range is the supported toolchain. What was
+verified is narrower: `npm run check` passed on **Node 26.x** (the version the author of
+this change runs, installed with `--engine-strict=false`), and the engines floor is the one
+Astro states. The lockfile was not regenerated on Node 22 here, and no check was run on it.
 
 The dependency tree is pinned exactly: `package.json` names `astro` at one version, and
 `package-lock.json` is **committed**, so `npm ci` installs the tree this site was checked
@@ -46,15 +39,14 @@ npm run check # the site's gate: the build, then every test/*.mjs
 **The build needs no network.** `npm ci` fetches the pinned tree once; after that nothing
 here fetches anything: there is no integration, no remote font, no remote image, and the
 build script sets `ASTRO_TELEMETRY_DISABLED=1` so that Astro's own anonymous usage report
-is off too. `npm run check` is the same command a developer runs and it is hermetic: it
-reads this repository, builds, and asserts over the artifact — no cloud, no credential, no
-deployed site. **Nothing runs it automatically yet:** `.github/workflows/ci.yml` has no
-website job, and the deploy workflow that will run it is still staged under
-`docs/pending-workflows/` (W2.1 moves it into place; a Fugaro run may not change
-`.github/workflows/`). Until then `npm run check` is a gate someone runs — this directory's
-own gate in the meantime is that whoever changes a file here runs it. The live checks (the
-real domain, DNS, TLS and the deployed HTML) are the owner's, numbered 69a–69c in
-`docs/gcp-live-checklist.md`.
+is off too. `npm run check` is the same command a developer runs and the one W2.1 stages
+the deploy workflow to run (that workflow is W2.1's: it is not written yet, it will be staged under
+`docs/pending-workflows/` for the owner to copy, and no Fugaro run may write it into
+`.github/workflows/`), and it is hermetic: it reads this
+repository, builds, and asserts over the artifact — no cloud, no credential, no deployed
+site. The live checks — the real domain, DNS, TLS and the deployed HTML — are the owner's,
+and W2.2 and W2.3 write them as **checks 69a–69c** in `docs/gcp-live-checklist.md`, whose
+highest written section is 58 today.
 
 ## Nothing loads from a third party
 
@@ -73,17 +65,34 @@ The site's other gate is the Go side, which holds every fact to the file it is d
 from:
 
 ```sh
-GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1
+GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc -run 'Docs|Lint|Website|CliRef' -count=1
 ```
+
+**The `Website|CliRef` half is not decoration.** The plan's baseline for this suite is
+`-run 'Docs|Lint'`, and that pattern selects **none** of the site's own pins: of the 53
+tests it selects in `internal/cli`, none is named `TestWebsite*` or `TestCliRef*`, so a
+run of it alone is green with every fact the site renders unexecuted. `Website` selects the
+boundary test, the install pins and the security page; `CliRef` selects the reference's
+pins, in `internal/cli` and in `internal/clidoc` where the generator's own tests live. The
+names are the ones the docs-only guard in `ci.yml` already uses for the same tests.
+`website/test/readme.mjs` holds this command to that: every test function the site's Go
+test files declare has to be selected by the pattern this section prints.
 
 ## What is generated, and what must not be edited
 
-Every **generated** file under `content/` says so on its first line, and is regenerated by
-a command run **from the repository root** — never edited by hand. `website/test/readme.mjs`
-asserts that this table and those files agree, so a file whose header changes its command
-fails the site's check until this document says the same thing. One file under `content/`
-is not generated at all — `content/downloads.json` — and it is the one below that a task
-edits by hand.
+Everything under `content/` is **generated, and none of it is edited by hand**, but the
+directory holds two kinds of file and they say so in two ways:
+
+- a **document** (`content/*.md`) carries a header on its first line naming the command
+  that writes it, and is regenerated by a command run **from the repository root**;
+- a **machine output** (`content/costs.json`) is the aggregation's `--json` verbatim, so it
+  has no header to carry and no format to add one to — what makes it the aggregation's
+  output is its shape, and it is absent until the owner runs the command.
+
+`website/test/readme.mjs` asserts that this table and those files agree: a file whose
+header names a different command, a `content/` file this table does not name, a document
+without its header, or a JSON file that is not the aggregation's output all fail the site's
+check until this document says the same thing.
 
 | File | Source | Regenerate with |
 |---|---|---|
@@ -91,7 +100,7 @@ edits by hand.
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
 
-Four things about that table are worth stating rather than leaving to it:
+Three things about those commands are worth stating rather than leaving to the table:
 
 - **One generator, two files.** `go run ./internal/clidoc` writes both generated documents
   from their sources; it compiles into the build cache and writes nothing into the tree
@@ -102,15 +111,6 @@ Four things about that table are worth stating rather than leaving to it:
   repository, a run id, a branch, a task, a person or a commit (D96, D97). Until the owner
   runs it, the file is absent and the caps-and-costs page renders its "not enough runs yet"
   state: an empty figure is honest, an invented one is not.
-- **`content/downloads.json` is hand-written, and it is the one file here that is.** It
-  holds the console page's facts (W1.6). It carries **no download URL while the console is
-  unreleased**, and the console has not shipped: `docs/releases/v0.8.0.md` lists it under
-  *"Not in this release"*, and `console/` holds documents and no code. The day its own
-  artifact ships, **W3.1 flips two values in one commit** — this file's `available` and
-  `site.yaml`'s `features.console_downloads` — because the two are one fact in two files
-  and the build refuses them disagreeing rather than rendering a half-flip. The download
-  URLs themselves arrive in the same commit, and `website/test/console.mjs` builds the page
-  both ways to prove the flip is a data change and not a code change.
 - **`website/data/*.yaml` is hand-written, and pinned by tests rather than regenerated.**
   `install.yaml` is held to `README.md`, `docs/release.md` and `.goreleaser.yaml` by
   `internal/cli/docs_website_install_test.go`, and `site.yaml` to `go.mod`, the
@@ -133,9 +133,8 @@ because a shallow checkout has no tags and the newest entry a reader sees has no
 `data/` and `content/` hold the facts, `src/` renders them, and no page writes a command,
 a number or a claim of its own. The install block comes from `install.yaml`, the security
 page from `content/security.md`, the CLI reference from `content/cli-reference.md`, the
-costs from `content/costs.json`, the changelog from `docs/releases/`, the console's facts
-from `content/downloads.json`, and the site-wide URL and the feature flags from `site.yaml`
-— each one rendered, each one held to its source by
+costs from `content/costs.json`, the changelog from `docs/releases/`, and the site-wide URL
+and the feature flags from `site.yaml` — each one rendered, each one held to its source by
 a test, in this repository, in the commit that changes it. A page that paraphrases a
 document is the copy that drifts first, which is the failure this whole arrangement exists
 to prevent (F37, Global Constraint 6).
@@ -146,7 +145,7 @@ to prevent (F37, Global Constraint 6).
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
-  content/                         # generated, do not edit — plus downloads.json, hand-written
+  content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ at build time
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
   test/*.mjs                       # every one of them runs under `npm run check`
@@ -156,6 +155,9 @@ website/
 `node_modules/`, `dist/` and `.astro/` are not committed: the first is what `npm ci`
 installs from the committed lockfile, and the last two are build output.
 
-The site is deployed by an **owner-run step** from a workflow staged under
-`docs/pending-workflows/` — never by a Fugaro run, which may not change
-`.github/workflows/` — to the Firebase project created for the website only (D91, D109).
+The deploy comes later and it is **not a Fugaro run's to write**: W2.1 stages a workflow
+under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to deploy
+to the Firebase project created for the website only (D91, D109) — a run may not change
+`.github/workflows/`. `docs/pending-workflows/` holds other pending workflows today (`ci.yml`),
+but no deploy workflow and no `firebase.json` exists yet: they are W2.1's, and this document describes them in advance
+rather than claiming them.
