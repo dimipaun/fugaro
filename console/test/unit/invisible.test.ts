@@ -6,11 +6,13 @@
 // The set a reader must treat as invisible is every format character (Cf),
 // every control but tab, line feed and carriage return (Cc), the line and
 // paragraph separators (Zl, Zp), every default-ignorable code point (variation
-// selectors, tag characters, fillers), every bidi control, the interlinear
-// annotation characters U+FFF9..U+FFFB and the Mongolian vowel separator. A
-// character in that set that one layer strips and another keeps is a place a
-// credential can be split so that the recorder writes it into a committed
-// fixture while the screen joins it back together -- which is what U+FFF9 did.
+// selectors, tag characters, fillers), every bidi control, every private-use
+// code point (Co) -- the console's own sentinel hold is built from two of them,
+// and nothing draws any of them -- the interlinear annotation characters
+// U+FFF9..U+FFFB and the Mongolian vowel separator. A character in that set that
+// one layer strips and another keeps is a place a credential can be split so
+// that the recorder writes it into a committed fixture while the screen joins it
+// back together -- which is what U+FFF9 did.
 
 import { describe, expect, it } from 'vitest'
 
@@ -22,17 +24,35 @@ import * as fake from '../support/fakeSecrets'
 /** EXPECTED is the property, written from the categories rather than from any
  * layer's own definition, so a layer that narrows its set fails here. */
 const EXPECTED =
-  /[\p{Cf}\p{Cc}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u{fff9}-\u{fffb}\u{180e}\u{e0000}-\u{e007f}\u{fe00}-\u{fe0f}\u{e0100}-\u{e01ef}]/u
+  /[\p{Cf}\p{Co}\p{Cc}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u{fff9}-\u{fffb}\u{180e}\u{e0000}-\u{e007f}\u{fe00}-\u{fe0f}\u{e0100}-\u{e01ef}]/u
 
 /** KEPT are the three controls every layer handles as line structure, not as
  * invisible characters. */
 const KEPT = new Set([0x09, 0x0a, 0x0d])
+
+/** PRIVATE_USE matches the private-use code points, the one family the walk
+ * samples rather than enumerates: it is six thousand BMP code points plus two
+ * whole planes, uniform by construction and each one the same test, and every
+ * point the walk keeps is run through four layers. A stride keeps the property
+ * -- no layer strips one of them and keeps another -- while the suite stays
+ * seconds rather than minutes. Every other family is walked whole. */
+const PRIVATE_USE = /\p{Co}/u
+const PRIVATE_USE_STRIDE = 613
+
+/** ALWAYS_WALKED are the private-use code points the walk keeps whatever the
+ * stride: the two the console's own sentinel hold is built from (`sanitize.ts`),
+ * and the first and last of the family in the BMP and in a supplementary
+ * plane. */
+const ALWAYS_WALKED = new Set([0xe000, 0xe001, 0xf8ff, 0xf0000, 0x10fffd])
 
 function invisibleCodePoints(): number[] {
   const found: number[] = []
   for (let point = 0; point <= 0x10ffff; point += 1) {
     if (point >= 0xd800 && point <= 0xdfff) continue
     if (KEPT.has(point)) continue
+    if (PRIVATE_USE.test(String.fromCodePoint(point))) {
+      if (!ALWAYS_WALKED.has(point) && point % PRIVATE_USE_STRIDE !== 0) continue
+    }
     if (EXPECTED.test(String.fromCodePoint(point))) found.push(point)
   }
   return found
@@ -46,7 +66,7 @@ function name(point: number): string {
 
 describe('one set of invisible characters across the recorder, the display and the IPC layer', () => {
   it('walks a set that carries every family the set exists for', () => {
-    for (const point of [0x00ad, 0x061c, 0x180e, 0x200b, 0x202e, 0x2028, 0x2029, 0x2066, 0xfe0f, 0xfeff, 0xfff9, 0xfffa, 0xfffb, 0xe0041, 0xe0100, 0x0001, 0x0085]) {
+    for (const point of [0x00ad, 0x061c, 0x180e, 0x200b, 0x202e, 0x2028, 0x2029, 0x2066, 0xfe0f, 0xfeff, 0xfff9, 0xfffa, 0xfffb, 0xe0041, 0xe0100, 0x0001, 0x0085, 0xe000, 0xe001, 0xf8ff, 0xf0000, 0x10fffd]) {
       expect(POINTS, name(point)).toContain(point)
     }
   })

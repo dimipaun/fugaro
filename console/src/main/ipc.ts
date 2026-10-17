@@ -954,7 +954,7 @@ function hiddenCharacterReason(value: string): string | null {
 }
 
 /** isFormatCharacter is the shared set of invisible characters
- * (`INVISIBLE_CLASS` in `src/shared/sanitize.ts`: every `Cf`, every
+ * (`INVISIBLE_CLASS` in `src/shared/sanitize.ts`: every `Cf`, every `Co`, every
  * default-ignorable code point, every bidi control) plus the line and paragraph
  * separators: the characters that change how a string is read without being
  * read. It is the same definition the recorder and the display layer strip, so

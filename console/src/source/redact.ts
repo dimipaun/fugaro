@@ -175,12 +175,13 @@ function tooLong(what: string, bound: number): string {
 /**
  * INVISIBLE_RE is what `prepare` strips before any rule runs: the shared set of
  * invisible characters (`src/shared/sanitize.ts`: every format character,
- * default-ignorable code point, bidi control and C0/C1 control but tab, line
- * feed and carriage return) plus the line and paragraph separators, which the
- * display layer removes as well. None of them is visible, so none of them may
- * split an address or a literal into pieces no rule recognises. It is imported,
- * not copied: a copy here once lacked U+FFF9..U+FFFB, and a key split by one was
- * written into a fixture verbatim while the screen joined it back.
+ * default-ignorable code point, bidi control, private-use code point and C0/C1
+ * control but tab, line feed and carriage return) plus the line and paragraph
+ * separators, which the display layer removes as well. None of them is visible,
+ * so none of them may split an address or a literal into pieces no rule
+ * recognises. It is imported, not copied: a copy here once lacked
+ * U+FFF9..U+FFFB, and a key split by one was written into a fixture verbatim
+ * while the screen joined it back.
  */
 const INVISIBLE_RE = invisibleOrSeparatorRe()
 

@@ -260,12 +260,26 @@ function refuse(reason: string): Sanitized {
  * the BOM, the bidi embeddings, overrides and isolates, the interlinear
  * annotation characters, the tag characters, the prepended concatenation
  * marks), every other default-ignorable code point (variation selectors,
- * fillers, the Mongolian free variation selectors), every bidi control, and
- * every C0/C1 control but tab, line feed and carriage return, which every
- * layer handles as line structure. U+FFF9..U+FFFB and U+180E are `Cf` already;
- * they are named so a reader of this line finds them.
+ * fillers, the Mongolian free variation selectors), every bidi control, every
+ * private-use code point (`Co`), and every C0/C1 control but tab, line feed and
+ * carriage return, which every layer handles as line structure. U+FFF9..U+FFFB
+ * and U+180E are `Cf` already; they are named so a reader of this line finds
+ * them.
+ *
+ * **`\p{Co}` is named for two reasons, and the second is the console's own.**
+ * A private-use code point is undrawable -- no font has one, so a terminal, a
+ * screen and a diff show nothing where it sits -- and that makes it a splitter
+ * like the format characters: a credential with one in the middle is joined by
+ * the prepared form (so it is redacted) and whole in the form as written, and a
+ * layer that read one and not the other would draw what the other had redacted.
+ * And U+E000/U+E001, the two the sentinel hold below is built from, are private
+ * use: a value carrying them is a value interacting with that hold, which is why
+ * `SENTINEL_RE` existed before this class named them (review round 5 of PR 478).
+ * The two lines agree now: the hold's code points are stripped by the same rule
+ * every layer applies, and a value cannot carry one into the hold by reading a
+ * narrower class than the recorder does.
  */
-export const INVISIBLE_CLASS = String.raw`[\p{Cf}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u{fff9}-\u{fffb}\u{180e}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]`
+export const INVISIBLE_CLASS = String.raw`[\p{Cf}\p{Co}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u{fff9}-\u{fffb}\u{180e}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]`
 
 /** SEPARATOR_CLASS is the line and paragraph separators (`Zl`, `Zp`): not
  * invisible, but a line break no rule expects inside a value, so the display
@@ -831,9 +845,10 @@ function isAddressMarker(value: string): boolean {
 }
 
 // The sentinels hold a pseudonym aside while the rest of the pass runs. They are
-// private-use code points, which no *screen* has a use for, and which the
-// invisible-character strip above never removes -- so a pseudonym cannot be
-// eaten by the net.
+// private-use code points, which no *screen* has a use for, and which
+// `INVISIBLE_CLASS` removes with every other private-use code point -- so a
+// pseudonym cannot be eaten by the net, and a value that reaches the hold cannot
+// carry one of its own: the strip above has already taken them out.
 //
 // Review round 5 of PR 478 corrected the claim that used to stand here. It said
 // the text "cannot contain" the sentinel, and that is false: a private-use code
