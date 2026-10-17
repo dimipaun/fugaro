@@ -4,9 +4,11 @@
 // This module is not part of the running application. It is a **packaging hook**
 // -- electron-builder calls its `afterPack` export once per platform build, after
 // the app bundle has been assembled and before it is signed -- and the app never
-// requires it (`src/main/index.ts` imports nothing from here, so the compiled
-// `dist/main/fuses.js` sits in the asar as the record of how the binary around it
-// was built). `package.json`'s `build.afterPack` names the compiled path.
+// requires it (`src/main/index.ts` imports nothing from here). The packer loads
+// the compiled `dist/main/fuses.js` from the project directory, not from the
+// asar, so `build.files` excludes it from the bundle: it needs a devDependency
+// the shipped app does not carry. `package.json`'s `build.afterPack` names the
+// compiled path.
 //
 // **A fuse is not a setting.** The three the console disables are the three ways
 // an Electron binary is not an Electron application:
@@ -177,6 +179,54 @@ export const LEFT_ALONE_FUSES: readonly LeftAloneFuse[] = [
   },
 ]
 
+/** BeyondPinFuse is a fuse the pinned *Electron binary* carries that the pinned
+ * `@electron/fuses` has no name for: its wire is longer than the package's enum.
+ * Such a fuse cannot be set through `flipFuses` at all (the package's wire
+ * builder emits one entry per enum member and leaves every later byte as it
+ * found it), so the only decision available is "leave it at the binary's
+ * default" -- and that decision is written down here, with the default the
+ * hook then verifies, rather than left as a byte nobody looked at. */
+export interface BeyondPinFuse {
+  /** name is Electron's own name for the fuse (its `fuses.json5`). */
+  readonly name: string
+  /** index is its position on the fuse wire. */
+  readonly index: number
+  /** upstreamDefault is the state the pinned Electron ships it in, which the
+   * hook requires it still holds after the flip. */
+  readonly upstreamDefault: boolean
+  readonly why: string
+}
+
+/**
+ * BEYOND_PIN_FUSES is every fuse on the pinned Electron 44.7.2 wire past the
+ * eight `@electron/fuses` 2.0.0 knows. There is one.
+ *
+ * `WasmTrapHandlers` (index 8, enabled by default) lets V8 use guard pages and a
+ * signal handler for WebAssembly out-of-bounds checks instead of explicit
+ * bounds checks. It is left enabled, and it is harmless here for three reasons:
+ * it loads no code and reads no environment variable or command-line flag (so
+ * it is not one of the "an Electron binary is not an Electron application"
+ * holes rule 4 closes); the console runs no WebAssembly of its own; and turning
+ * it off trades a performance path for explicit checks without closing any
+ * avenue an attacker has. Setting it would also need a newer `@electron/fuses`
+ * than the pin. `fuses.test.ts` reads the real binary's wire length when the
+ * Electron distribution is installed, so a tenth fuse arrives as a red test.
+ */
+export const BEYOND_PIN_FUSES: readonly BeyondPinFuse[] = [
+  {
+    name: 'WasmTrapHandlers',
+    index: 8,
+    upstreamDefault: true,
+    why: 'a WebAssembly bounds-check strategy: it loads no code and reads no environment, and the console runs no WebAssembly.',
+  },
+]
+
+/** ACCOUNTED_FUSE_COUNT is how many fuses this file has decided about, and so
+ * how long the pinned binary's fuse wire must be: the hook refuses a binary
+ * whose wire is longer (a fuse nobody decided about) or shorter. */
+export const ACCOUNTED_FUSE_COUNT =
+  FLIPPED_FUSES.length + LEFT_ALONE_FUSES.length + BEYOND_PIN_FUSES.length
+
 /**
  * fuseConfig is the configuration the packer passes, built from
  * `FLIPPED_FUSES` so the list above and what is written into the binary cannot
@@ -197,9 +247,9 @@ export function fuseConfig(): FuseConfig {
 
 /**
  * AfterPackContext is the part of electron-builder's `AfterPackContext` this
- * hook reads, written out structurally rather than imported: the packer is
- * deliberately not a dependency of this package (see console/README.md), so its
- * types are not available to `tsc` here. The shape is the packer's own --
+ * hook reads, written out structurally rather than imported: the packer is a
+ * devDependency, but its types live in app-builder-lib (a transitive package
+ * this one does not declare), and the hook reads three fields. The shape is the packer's own --
  * `electronPlatformName`, `appOutDir` and `packager.appInfo.productFilename`.
  */
 export interface AfterPackContext {
@@ -258,6 +308,12 @@ function wireState(state: FuseState | undefined): string {
  * packed binary and then reads the wire back, failing if any of them is not what
  * this build asked for.
  *
+ * The build is universal (`--universal`), and electron-builder 26 calls this
+ * hook three times for it: once per architecture on each thin app, and once on
+ * the merged app before signing. Each thin binary is therefore flipped and read
+ * back on its own, and the merged binary is flipped again (`flipFuses` writes
+ * every slice of a fat binary) and read back before the packer signs it.
+ *
  * A platform that is not darwin is a hard failure rather than a skip. The
  * console is a macOS application (design D4, and this MVP ships no other
  * platform): a build here would produce no `Contents/MacOS` binary to flip, and
@@ -290,6 +346,29 @@ export async function afterPack(
         `the ${fuse.name} fuse is ${wireState(actual)} in ${executable}, ` +
           `and this build requires it ${fuse.value ? 'enabled' : 'disabled'} -- the flip did ` +
           'not take, so the binary must not be signed as it stands',
+      )
+    }
+  }
+  // The wire's length is the binary's own count of its fuses. A wire longer
+  // than this file accounts for carries a fuse nobody decided about (an
+  // Electron bump), and the build stops here rather than signing it.
+  const wireLength = Object.keys(wire).filter((key) => key !== 'version').length
+  if (wireLength !== ACCOUNTED_FUSE_COUNT) {
+    throw new Error(
+      `the fuse wire in ${executable} holds ${wireLength} fuses and src/main/fuses.ts decides ` +
+        `about ${ACCOUNTED_FUSE_COUNT}: every fuse the binary carries must be flipped, left alone ` +
+        'or listed beyond the pin, with its reason, before the binary is signed',
+    )
+  }
+  const byIndex = wire as unknown as Record<number, FuseState | undefined>
+  for (const fuse of BEYOND_PIN_FUSES) {
+    const expected = fuse.upstreamDefault ? FuseState.ENABLE : FuseState.DISABLE
+    const actual = byIndex[fuse.index]
+    if (actual !== expected) {
+      throw new Error(
+        `the ${fuse.name} fuse is ${wireState(actual)} in ${executable}, and this build leaves it ` +
+          `at Electron's default (${fuse.upstreamDefault ? 'enabled' : 'disabled'}): the binary is ` +
+          'not the one this file was written against',
       )
     }
   }

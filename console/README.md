@@ -83,8 +83,8 @@ from its own download host rather than from npm, so the pin, the download and
 the checksum get the hand-bumped, documented treatment the repository already
 gives the Trivy digest and the Dockerfile frontend digest (design section 5.2).
 
-The rest of the pinned set, all exact. One of them is a runtime dependency and
-the rest are build and test tooling:
+The rest of the pinned set, all exact, all build and test tooling (there is no
+runtime dependency today; see below):
 
 | Package | Version | Where | Why it is here |
 |---|---|---|---|
@@ -93,14 +93,16 @@ the rest are build and test tooling:
 | `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
 | `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
 | `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
-| `electron-updater` | `6.8.9` | `dependencies` | the auto-update client (Task 4.4) — the one runtime dependency, pinned here because the plan puts its pin in this task: "the component that downloads and installs code" |
+| `@electron/fuses` | `2.0.0` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
+| `electron-builder` | `26.17.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
 
-`electron-updater` is the only entry in `dependencies`, and that is a decision
-rather than a symptom: the renderer bundles no framework runtime and no charting
-library (design D9), so nothing the renderer needs is a runtime dependency, and
-the pinning test asserts the `dependencies` set is exactly the one name above.
-`6.8.9` is the version npm's `latest` tag resolves to; `6.8.10` is published
-under a `v26` tag and is deliberately not taken here.
+`dependencies` is empty, and that is a decision rather than a symptom: the
+renderer bundles no framework runtime and no charting library (design D9), and
+everything a `dependencies` entry names is packed into the shipped asar. Task 1.0
+pinned `electron-updater` there for Task 4.4's auto-update; Task 4.1's review
+found it shipped in the bundle with nothing importing it, so it was removed, and
+Task 4.4 adds it back, exactly pinned, with the code that uses it. The pinning
+test asserts the `dependencies` set is exactly empty until then.
 
 **The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
 It is the version every command in this task was run on, and it is a member of
@@ -1444,6 +1446,7 @@ because "left at its upstream default" is a decision and not an oversight:
 | `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
 | `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
 | `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
+| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Beyond the pin: Electron 44.7.2's wire holds **nine** fuses and `@electron/fuses` 2.0.0 names eight, so this one cannot be set through the pinned package at all. It is V8's WebAssembly bounds-check strategy: it loads no code, reads no environment variable or flag, and the console runs no WebAssembly. `BEYOND_PIN_FUSES` in `fuses.ts` records it with its default, and the hook verifies the default. |
 
 Three properties of the hook are worth stating here, because they are what make
 the six a fact rather than an intention:
@@ -1459,6 +1462,14 @@ the six a fact rather than an intention:
 - **It refuses a platform that is not darwin** instead of skipping. A build on
   any other platform would produce no `Contents/MacOS` bundle to flip, and a
   silently skipped hook is the one outcome that ships the fuses unset.
+- **It refuses a wire it has not accounted for.** After the flips, the hook
+  compares the wire's length with the fuses `fuses.ts` decides about (six
+  flipped, two left alone, one beyond the pin: nine) and stops the build if they
+  differ, so an Electron bump that adds a fuse cannot reach the signer
+  unexamined. `fuses.test.ts` also reads the real binary's wire when
+  `node_modules/electron/dist` is installed, and on macOS runs the real hook over
+  a copy of it in a temporary directory; without the binary those two tests skip
+  and say why.
 - **It is the only flipper.** `build.electronFuses` is deliberately unset, so
   electron-builder's own fuse support cannot run a second, untested
   configuration over the same binary.
@@ -1474,57 +1485,99 @@ consequence for the owner is the next section's first line.
 
 Run from `console/` on the Mac that holds the Developer ID certificate. The
 variables are **names only** — no value of any of them appears in this
-repository, and `package.json` names no signing identity at all.
+repository, and `package.json` names no signing identity at all. The order is
+the point: everything that installs or downloads runs **first**, in a shell with
+no secret in it, and the signing material is exported only in the subshell that
+packages.
 
 ```sh
-# The signing material, exported into this shell. electron-builder reads the
-# same names: CSC_LINK (the .p12, base64 or a path) with CSC_KEY_PASSWORD, or
-# CSC_NAME with the identity already in the login keychain.
-export CSC_LINK="${CSC_LINK:?the exported Developer ID Application certificate}"
-export CSC_KEY_PASSWORD="${CSC_KEY_PASSWORD:?the certificate's password}"
+# 1. Install, with no secret in the environment. Lifecycle scripts stay off:
+#    every package, the packer included, comes from package-lock.json (exact
+#    version, integrity hash, registry host -- lockfile.test.ts).
+npm ci --ignore-scripts --no-audit --no-fund
 
-# Notarisation activates by itself when one of the three triples below is in the
-# environment (electron-builder 26 has no "turn it on" flag, only a disable
-# switch). The App Store Connect API key is the one electron-builder recommends:
-export APPLE_API_KEY="${APPLE_API_KEY:?the App Store Connect API key file}"
-export APPLE_API_KEY_ID="${APPLE_API_KEY_ID:?the key's id}"
-export APPLE_API_ISSUER="${APPLE_API_ISSUER:?the issuer uuid}"
-# (the alternatives are APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID,
-#  or APPLE_KEYCHAIN + APPLE_KEYCHAIN_PROFILE — one triple, not three)
+# 2. The one install step the tree needs, run explicitly: Electron's own
+#    download of its distribution, verified against the checksums.json in the
+#    pinned package. Packaging does not use it (see below); the tests do,
+#    including the real-binary fuse test.
+node node_modules/electron/install.js
+npm run test:unit
 
-npm ci
-npm run package          # npm run build && npx --yes electron-builder@26.0.12 --mac
+# 3. Package, in a subshell that holds the signing material and nothing else
+#    runs in. electron-builder reads these names: CSC_LINK (the .p12, base64 or
+#    a path) with CSC_KEY_PASSWORD, or CSC_NAME with the identity already in the
+#    login keychain. Notarisation activates by itself when one of the credential
+#    triples is present (electron-builder 26 has no "turn it on" flag, only a
+#    disable switch); the App Store Connect API key is the recommended one --
+#    the alternatives are APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID,
+#    or APPLE_KEYCHAIN + APPLE_KEYCHAIN_PROFILE: one triple, not three.
+(
+  export CSC_LINK="${CSC_LINK:?the exported Developer ID Application certificate}"
+  export CSC_KEY_PASSWORD="${CSC_KEY_PASSWORD:?the certificate's password}"
+  export APPLE_API_KEY="${APPLE_API_KEY:?the App Store Connect API key file}"
+  export APPLE_API_KEY_ID="${APPLE_API_KEY_ID:?the key's id}"
+  export APPLE_API_ISSUER="${APPLE_API_ISSUER:?the issuer uuid}"
+  npm run package   # npm run build && electron-builder --mac --universal --publish never
+)
 ```
 
-`npm run package` produces `release/*.dmg`, `release/*.zip` and the unpacked
-`release/mac-<arch>/Fugaro Console.app`, signed with the hardened runtime and
-this directory's entitlements, notarised, and stapled. The arch is the host's by
-default; `--x64` or `--universal` is electron-builder's own flag and nothing
-here depends on it. **The certificate has to be exported before that command**:
-the fuses are flipped before the packer signs, and an arm64 bundle left with the
-ad-hoc signature the fuse flip invalidated will not launch. A build with no
-signing material at all is a build with no signature and no notarisation —
-`spctl` will refuse it, which is the correct outcome and not a failure of this
-configuration.
+**The build is universal (arm64 + x64)**, by `--universal` in the script, so one
+DMG and one zip run on every Mac this release supports. electron-builder packs
+each architecture from the official Electron archive for that architecture,
+verifies both archives against the two hashes in `build.electronDownload` (which
+`fuses.test.ts` requires to equal the pinned `electron` package's own
+`checksums.json`, so they move with the Electron pin and nowhere else), and
+merges the two apps with `@electron/universal`. The archives are downloaded at
+pack time, once, into electron-builder's cache, and a mismatched hash stops the
+build (mutation-checked: a zeroed x64 hash fails with "Generated checksum …
+did not match expected checksum"). The `afterPack` hook runs on each thin app
+and again on the merged one, before signing. An unsigned universal pack of this
+configuration was run locally (`-c.mac.identity=null`, no credentials in the
+environment): it produced the artifacts below, the asar held exactly the files
+`build.files` names, the merged app's fuse wire read
+`0,0,0,0,1,1,0,0,1` for indices 0 to 8 (six flipped, the cookie and snapshot
+fuses at Electron's defaults, `WasmTrapHandlers` on), `Info.plist` carried the
+merged asar's integrity hash, and `Contents/Resources` held no `app-update.yml`.
+
+`npm run package` therefore produces:
+
+- `release/mac-universal/Fugaro Console.app` — signed with the hardened runtime
+  and this directory's entitlements, **notarised and stapled by electron-builder**
+  (it submits the `.app` through `@electron/notarize` and staples the ticket to
+  the `.app`);
+- `release/Fugaro Console-<version>-universal.dmg` and
+  `release/Fugaro Console-<version>-universal-mac.zip` — built from that stapled
+  app. **electron-builder 26 neither signs (`dmg.sign` defaults to false), nor
+  notarises, nor staples the DMG itself.** Notarising and stapling the DMG is
+  Task 4.2's workflow step: `xcrun notarytool submit` the DMG `--wait`, then
+  `xcrun stapler staple` it.
+
+**The certificate has to be in the packaging shell**: the fuses are flipped
+before the packer signs, and a bundle left with the ad-hoc signature the fuse
+flip invalidated will not launch on arm64. A build with no signing material is a
+build with no signature and no notarisation — `spctl` refuses it, which is the
+correct outcome and not a failure of this configuration.
 
 Then, on the artifact (these are also the FACT lines Check 59a is written
 around, and the checks Task 4.5 re-runs after installing):
 
 ```sh
-APP="release/mac-arm64/Fugaro Console.app"
+APP="release/mac-universal/Fugaro Console.app"
 codesign --verify --deep --strict --verbose=2 "$APP"
 codesign -d --entitlements - "$APP"          # must print allow-jit and nothing else
 xcrun stapler validate "$APP"
 spctl --assess --type execute --verbose=4 "$APP"
-xcrun stapler validate release/*.dmg
-spctl --assess --type open --context context:primary-signature -v release/*.dmg
+lipo -archs "$APP/Contents/MacOS/Fugaro Console"   # x86_64 arm64
+# The DMG checks hold only after Task 4.2's notarise-and-staple step on the DMG:
+#   xcrun stapler validate release/*.dmg
+#   spctl --assess --type open --context context:primary-signature -v release/*.dmg
 ```
 
 Two things this section is *not*: it is not Task 4.2's workflow (the staged
 `docs/pending-workflows/console-release.yml` names its own secrets and runs the
 same steps in CI, and it is the owner who copies it in), and it is not a claim
-that any of it has run — no agent has built, signed or verified a bundle in this
-repository.
+that a *signed* build has run — no agent has signed or notarised a bundle in
+this repository; the unsigned pack above is the most that ran.
 
 ### The hook's import: what was run rather than assumed
 
@@ -1557,22 +1610,33 @@ and calling the hook for a darwin context reaches the real `flipFuses` rather
 than a stub: it failed inside the Electron framework lookup for a path that has
 no bundle, which is what a real flip attempt against a non-bundle path does.
 
-### Why electron-builder is not a devDependency
+### The packer is a pinned devDependency, and nothing it installs runs
 
-The packer is pinned in the `package` script (`npx --yes electron-builder@26.0.12`)
-rather than installed, and the reason is a guard this repository already has:
-electron-builder's tree carries a **git-sourced** `@electron/node-gyp`, and
-`test/unit/lockfile.test.ts` refuses any lock entry that is not resolved from
-the registry with an integrity hash — the rule that exists so the console's tree
-is reproducible from `package-lock.json` alone. Installing the packer would have
-to weaken that rule for every package in the tree, so the pin lives where the
-command is and the version is exact there instead.
+`electron-builder` `26.17.0` is in `devDependencies`, recorded in
+`package-lock.json` with its whole tree (exact versions, integrity hashes, every
+entry from `https://registry.npmjs.org/`), and `npm run package` runs its local
+binary — never `npx`, which resolves a tree outside the lockfile and runs its
+install scripts in the shell the signing secrets are exported into. An earlier
+revision did exactly that (`npx --yes electron-builder@26.0.12`), because the
+26.0 line's tree carried a git-sourced `@electron/node-gyp` that
+`lockfile.test.ts` refuses; from the 26.1 line the packer depends on `@electron/rebuild`
+4, whose `node-gyp` comes from the registry, so the 26.17.0 tree passes the
+lockfile test with no exception and none was added. Three settings keep the
+packer from reaching outside what is pinned:
 
-**The cost, said plainly**: `npm run package` fetches electron-builder on first
-use, so that one command needs the network and the tree it downloads is not
-locked by this file. The alternative — a floated packer — is worse, and the fix,
-if the owner wants it, is a lockfile rule that admits git dependencies by
-explicit allow-list. That is a decision for a task that owns the lockfile test.
+- `npmRebuild: false` — the console has no native module, and a rebuild runs
+  `node-gyp` and install scripts;
+- `electronDownload.checksums` — the two Electron archives a universal build
+  downloads are verified against hashes in this file, equal to the pinned
+  `electron` package's `checksums.json`;
+- the toolsets the packer fetches for the DMG and the zip (`dmgbuild`, `7zip`)
+  are verified against SHA-256 hashes hard-coded in the locked `dmg-builder` and
+  `app-builder-lib` packages.
+
+**Publishing is off from both sides.** `build.publish` is `null`, not merely
+absent — absent, electron-builder infers a GitHub provider whenever `GH_TOKEN` or
+`GITHUB_TOKEN` is in the environment, writes `app-update.yml` into the bundle and
+uploads on a CI tag — and the script passes `--publish never`.
 
 ### The seam Task 1.1 left, settled
 
@@ -1583,12 +1647,21 @@ console needs `src/renderer` on disk". Task 4.1 settles it by naming the file
 rather than moving it: `build.files` is
 
 ```json
-["dist/**", "src/renderer/**/*.html", "!**/*.map"]
+["dist/main/**/*.js", "!dist/main/fuses.js", "dist/preload/**/*.js",
+ "dist/shared/**/*.js", "dist/source/**/*.js", "!dist/source/fixture.js",
+ "src/renderer/index.html"]
 ```
 
-— the compiled main process and preload, the document the window actually loads,
-and nothing else. No source map ships (the build emits one for every file, and a
-map in the asar is a second copy of the sources with a pointer to it). The
+— the compiled main process, preload, shared and source modules, the document
+the window actually loads, and nothing else. Two compiled files are excluded by
+name because the app never loads them: `dist/main/fuses.js` is the packing hook
+(the packer loads it from the project directory, and it needs a devDependency)
+and `dist/source/fixture.js` is the fixture loader the tests and the recorder
+use. No source map ships (every include names `.js` or one `.html` file, and a
+map in the asar is a second copy of the sources with a pointer to it).
+`fuses.test.ts` walks the import closure of `src/main/index.ts` and
+`src/preload/index.ts` and asserts every module in it is shipped and the two
+excluded files are not. The
 renderer's *scripts* are compiled into `dist/renderer/` and are not served from
 there: no task serves a script to the document yet (the e2e specs draw their
 screens through `executeJavaScript`), and whichever task does it has to put the
@@ -1610,16 +1683,15 @@ identity Gatekeeper and the notary record keep.
 - **A signing workflow.** Task 4.2 stages it under `docs/pending-workflows/`,
   and that task's file, not this one, names the CI secrets. This section's
   commands are the owner's local run.
-- **Automatic updates.** `build.publish` is unset and there is no feed: Task 4.4
-  is the auto-update task and it is not part of this MVP. The one consequence
-  worth stating: `electron-updater` is still the declared runtime dependency
-  (Task 1.0's pin), it is shipped in the asar, and nothing imports it yet.
+- **Automatic updates.** `build.publish` is `null`, the script passes
+  `--publish never`, there is no feed, and `electron-updater` is not a
+  dependency: Task 4.4 is the auto-update task and brings all of that with it.
 - **An icon.** There is no `build/icon.icns`, so the bundle carries Electron's
   default icon. It is a packaging wart, not a security property, and it needs an
   asset file that no task has produced.
-- **Any executed build.** No bundle has been packed, signed or notarised here:
-  the packer is not installed and this machine is Linux. That is Check 59a's
-  job, and design §12 item 4 stays open until it has run.
+- **Any signed build.** No bundle has been signed or notarised here; one
+  unsigned universal pack was run (above). The signed build is Check 59a's job,
+  and design §12 item 4 stays open until it has run.
 
 ### The properties are tests, and each one fails under a mutation
 
@@ -1636,4 +1708,10 @@ nobody should trust:
 | a value the plist parser does not understand (`<integer>`, a nested dict, a root array) | the parser fixtures: each throws rather than reporting an empty set |
 | a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
 | `electronPlatformName: 'linux'` handed to the hook | "refuses a platform that is not darwin…", and `flipFuses` is never called |
-| any entry added to `build.files`, or `asar` turned off, or a `publish` key added, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
+| any entry added to `build.files`, or `asar` turned off, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
+| `asarUnpack: ["**/*"]`, `extraResources`, `extraFiles` or a `mas` block added to `build`; `extraResources` added to `build.mac` | "has exactly the build keys this task decided…" / "has exactly the mac keys this task decided" |
+| `publish` deleted (absent rather than `null`) | "publishes nowhere: publish is null, not merely absent" and the exact-keys test |
+| the `package` script back to `npx --yes electron-builder@26.0.12 …`, or `--publish always` | "packages with the pinned local electron-builder, universal, and never publishing" |
+| `dist/renderer/**/*.js` added to `build.files`, or `!dist/source/fixture.js` removed | the exact-list test and "ships every module the main process and the preload load, and neither excluded file" |
+| a zeroed Electron x64 hash in `electronDownload`; `npmRebuild: true` | the checksum test (and, at pack time, electron-builder's own "did not match expected checksum"); the rebuild test |
+| `BEYOND_PIN_FUSES` emptied (WasmTrapHandlers undecided) | five tests, including both real-binary tests: the wire holds 9 fuses and the file accounts for 8 |

@@ -22,8 +22,9 @@
 //      passes, the binary it names, its refusal on a platform that is not
 //      darwin, and the check that reads the wire back afterwards;
 //   3. **the rest of the build configuration** -- asar on, the files allow-list,
-//      no publish configuration at all, and the names Check 59a's launch line
-//      depends on.
+//      `publish: null` and `--publish never`, the exact set of keys the build
+//      object may have, the pinned packer the `package` script runs, and the
+//      names Check 59a's launch line depends on.
 //
 // **Why the wire is read back.** `flipFuses` reports how many fuses it changed,
 // not what the binary now holds, so a table entry carrying the index of the fuse
@@ -35,12 +36,18 @@
 // pinned package refuses that itself, which the last test in the pinned-package
 // block asserts.)
 //
-// **What is deliberately not here.** No packaged macOS binary is inspected: the
-// unit suite runs on Linux, where there is none, so it reads the configuration
-// the packer will pass. The signature those fuses sit inside is verified on a
-// Mac, by the owner, in Check 59a.
+// **And, where it is installed, the real binary.** When
+// `node_modules/electron/dist` is present (it is not after `npm ci
+// --ignore-scripts` until `node node_modules/electron/install.js` has run), the
+// last block reads the pinned Electron's own fuse wire and, on macOS, runs the
+// real hook over a copy of the distribution in a temporary directory: every
+// flipped fuse, every untouched one, and the wire's length against the count
+// `src/main/fuses.ts` accounts for. Without the binary it skips, and says why.
+// The signature those fuses sit inside is verified on a Mac, by the owner, in
+// Check 59a.
 
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,6 +56,8 @@ import { FuseState, FuseV1Options, FuseVersion } from '@electron/fuses'
 import { describe, expect, it } from 'vitest'
 
 import {
+  ACCOUNTED_FUSE_COUNT,
+  BEYOND_PIN_FUSES,
   FLIPPED_FUSES,
   LEFT_ALONE_FUSES,
   afterPack,
@@ -60,8 +69,18 @@ import {
 
 const PACKAGE_JSON = fileURLToPath(new URL('../../package.json', import.meta.url))
 const BUILD_CONFIG = fileURLToPath(new URL('../../tsconfig.build.json', import.meta.url))
+const LOCKFILE = fileURLToPath(new URL('../../package-lock.json', import.meta.url))
+const CONSOLE_DIR = fileURLToPath(new URL('../../', import.meta.url))
+const ELECTRON_PACKAGE = fileURLToPath(new URL('../../node_modules/electron/', import.meta.url))
 
-const build = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')).build as {
+const manifest = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')) as {
+  readonly scripts: Record<string, string>
+  readonly devDependencies: Record<string, string>
+  readonly dependencies?: Record<string, string>
+  readonly build: Record<string, unknown>
+}
+
+const build = manifest.build as {
   readonly appId: string
   readonly productName: string
   readonly asar?: unknown
@@ -70,6 +89,9 @@ const build = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')).build as {
   readonly directories?: { readonly output?: string }
   readonly electronFuses?: unknown
   readonly publish?: unknown
+  readonly npmRebuild?: unknown
+  readonly electronDownload?: { readonly checksums?: Record<string, string> }
+  readonly mac?: Record<string, unknown>
 }
 
 /** flips is the configuration's value per fuse, keyed by the enum, with the
@@ -95,10 +117,21 @@ function fakeFuses(wire?: Partial<Record<FuseV1Options, FuseState>>): FuseTools 
     },
     async getCurrentFuseWire(path: string) {
       const flipped: Record<number, FuseState> = {}
+      // The untouched fuses at the states the pinned Electron 44.7.2 ships them
+      // in (read off the real binary: cookie encryption and the browser-process
+      // snapshot off, WasmTrapHandlers on), so the fake wire is as long as the
+      // real one.
+      const untouched: Record<number, FuseState> = {
+        [FuseV1Options.EnableCookieEncryption]: FuseState.DISABLE,
+        [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: FuseState.DISABLE,
+      }
+      for (const fuse of BEYOND_PIN_FUSES) {
+        untouched[fuse.index] = fuse.upstreamDefault ? FuseState.ENABLE : FuseState.DISABLE
+      }
       for (const [option, value] of flips) {
         flipped[option] = value ? FuseState.ENABLE : FuseState.DISABLE
       }
-      return { version: FuseVersion.V1, ...flipped, ...wire }
+      return { version: FuseVersion.V1, ...untouched, ...flipped, ...wire }
     },
   } as FuseTools & { readonly calls: { readonly path: string; readonly config: unknown }[] }
 }
@@ -109,7 +142,7 @@ function fakeFuses(wire?: Partial<Record<FuseV1Options, FuseState>>): FuseTools 
  * the whole of the context this hook reads. */
 const CONTEXT: AfterPackContext = {
   electronPlatformName: 'darwin',
-  appOutDir: '/tmp/out/mac-arm64',
+  appOutDir: '/tmp/out/mac-universal',
   packager: { appInfo: { productFilename: 'Fugaro Console' } },
 }
 
@@ -173,6 +206,17 @@ describe('the two fuses left at their upstream default', () => {
       ...LEFT_ALONE_FUSES.map((entry) => entry.option),
     ])
     expect(known.filter((option) => !decided.has(option))).toEqual([])
+  })
+
+  it('decides about the fuse the pinned Electron carries beyond the package: WasmTrapHandlers', () => {
+    // Electron 44.7.2's wire holds nine fuses and the package knows eight. The
+    // ninth is left at the binary's default, with its reason, and the hook
+    // verifies the default is still what the binary holds.
+    expect(BEYOND_PIN_FUSES.map((fuse) => [fuse.name, fuse.index, fuse.upstreamDefault])).toEqual([
+      ['WasmTrapHandlers', 8, true],
+    ])
+    for (const fuse of BEYOND_PIN_FUSES) expect(fuse.why.trim().length).toBeGreaterThan(20)
+    expect(ACCOUNTED_FUSE_COUNT).toBe(9)
   })
 })
 
@@ -281,6 +325,18 @@ describe('the afterPack hook', () => {
     await expect(afterPack(CONTEXT, fakeFuses())).resolves.toBeUndefined()
   })
 
+  it('refuses a binary whose wire carries a fuse nobody decided about', async () => {
+    // An Electron bump that adds a tenth fuse: the flips all took, and the
+    // hook still stops the build before the packer signs it.
+    const fuses = fakeFuses({ 9: FuseState.ENABLE } as Partial<Record<FuseV1Options, FuseState>>)
+    await expect(afterPack(CONTEXT, fuses)).rejects.toThrow(/holds 10 fuses .* about 9/)
+  })
+
+  it('refuses a binary whose WasmTrapHandlers fuse is not at the default this file records', async () => {
+    const fuses = fakeFuses({ 8: FuseState.DISABLE } as Partial<Record<FuseV1Options, FuseState>>)
+    await expect(afterPack(CONTEXT, fuses)).rejects.toThrow(/WasmTrapHandlers/)
+  })
+
   it('does not report success for a bundle whose executable carries no fuse wire', async () => {
     // The hook with its real toolbox (the default argument), pointed at a bundle
     // layout whose files are not an Electron binary. This is the shape of a pack
@@ -333,23 +389,178 @@ describe('the packaging configuration the fuses belong to', () => {
     // The served root is `src/renderer` (see `rendererRoot` in
     // src/main/index.ts) -- `tsc` emits JavaScript into dist/ and copies
     // nothing, so the document has to be listed here by hand or a packaged
-    // console opens a window with no page in it. This is the seam
-    // tsconfig.build.json's comment hands to Task 4.1, settled by naming the
-    // file rather than by moving it.
-    expect(build.files).toEqual(['dist/**', 'src/renderer/**/*.html', '!**/*.map'])
+    // console opens a window with no page in it. Only `.js` is shipped, so no
+    // source map is; `dist/renderer` is served by nothing yet, so it is not
+    // shipped; and the two compiled files the app never loads -- the packing
+    // hook (it needs a devDependency) and the fixture loader (tests and the
+    // recorder) -- are excluded by name.
+    expect(build.files).toEqual([
+      'dist/main/**/*.js',
+      '!dist/main/fuses.js',
+      'dist/preload/**/*.js',
+      'dist/shared/**/*.js',
+      'dist/source/**/*.js',
+      '!dist/source/fixture.js',
+      'src/renderer/index.html',
+    ])
+  })
+
+  it('ships every module the main process and the preload load, and neither excluded file', () => {
+    // The import closure, read from the sources, is the set of compiled files
+    // the app requires at runtime; each must be shipped by the list above. The
+    // matcher understands exactly the two shapes the list uses (a
+    // `dir/sub/**/*.js` include and an exact path, either one negated), and
+    // every pattern is asserted to be one of them, so a wider glob cannot slip
+    // past it.
+    const patterns = build.files ?? []
+    for (const pattern of patterns) {
+      expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
+        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z]+\.(?:js|html))$/,
+      )
+    }
+    const ships = (file: string): boolean => {
+      let shipped = false
+      for (const pattern of patterns) {
+        const negated = pattern.startsWith('!')
+        const body = negated ? pattern.slice(1) : pattern
+        const matches = body.endsWith('/**/*.js')
+          ? file.startsWith(body.slice(0, -'**/*.js'.length)) && file.endsWith('.js')
+          : file === body
+        if (matches) shipped = !negated
+      }
+      return shipped
+    }
+    const closure = new Set<string>()
+    const visit = (source: string): void => {
+      if (closure.has(source)) return
+      closure.add(source)
+      const text = readFileSync(join(CONSOLE_DIR, source), 'utf8')
+      for (const match of text.matchAll(/^(import|export)\s([^'"]*?)from\s+'(\.[^']+)'|^import\s+'(\.[^']+)'/gm)) {
+        if (/^type\s/.test(match[2] ?? '')) continue
+        const specifier = match[3] ?? match[4] ?? ''
+        visit(`${join(dirname(source), specifier).replace(/\.js$/, '')}.ts`)
+      }
+    }
+    visit('src/main/index.ts')
+    visit('src/preload/index.ts')
+    expect(closure.size, 'the closure walk found nothing: the regex no longer reads the imports').toBeGreaterThan(2)
+    const missing = [...closure]
+      .map((source) => source.replace(/^src\//, 'dist/').replace(/\.ts$/, '.js'))
+      .filter((file) => !ships(file))
+    expect(missing, `loaded at runtime but not shipped: ${missing.join(', ')}`).toEqual([])
+    expect(ships('src/renderer/index.html')).toBe(true)
+    for (const dead of [
+      'dist/main/fuses.js',
+      'dist/source/fixture.js',
+      'dist/renderer/app.js',
+      'dist/main/index.js.map',
+    ]) {
+      expect(ships(dead), `${dead} must not ship`).toBe(false)
+    }
   })
 
   it('ships no source map', () => {
     // The build emits them (tsconfig.build.json sets sourceMap), and a map in
-    // the asar is a full copy of the sources with a pointer to it.
-    expect(build.files).toContain('!**/*.map')
+    // the asar is a full copy of the sources with a pointer to it. Every
+    // include in the list ends in `.js` or names one `.html` file, so no map
+    // matches.
+    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html)$/)
   })
 
-  it('has no publish configuration and no updater feed: this release has no auto-update', () => {
-    // Task 4.4 is the auto-update task and it is not part of this MVP. A
-    // `publish` key here would make every `npm run package` upload somewhere,
-    // and the feed is what Task 4.4 decides about.
-    expect(build.publish).toBeUndefined()
+  it('publishes nowhere: publish is null, not merely absent', () => {
+    // Leaving `publish` out is not the same as no publishing: with GH_TOKEN or
+    // GITHUB_TOKEN in the environment electron-builder infers a GitHub
+    // provider, writes app-update.yml into the bundle and uploads on a CI tag.
+    // `null` turns the inference off; the `--publish never` asserted on the
+    // script below turns the upload off from the other side. Task 4.4 is the
+    // auto-update task, and the feed is its decision.
+    expect(Object.hasOwn(build, 'publish')).toBe(true)
+    expect(build.publish).toBeNull()
+  })
+
+  it('has exactly the build keys this task decided, and none of the ways to widen the bundle', () => {
+    // A pinned key set, so `asarUnpack`, `extraResources`, `extraFiles`, a
+    // top-level `mas` block or anything else that changes what ships or how is
+    // a red test here rather than a quiet line in package.json. The doors are
+    // also named, so the failure says which one was opened.
+    expect(Object.keys(build).toSorted()).toEqual(
+      [
+        'afterPack',
+        'appId',
+        'asar',
+        'directories',
+        'electronDownload',
+        'files',
+        'mac',
+        'npmRebuild',
+        'productName',
+        'publish',
+      ].toSorted(),
+    )
+    for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'mas', 'dmg', 'electronDist']) {
+      expect(build, `build.${widening} must be absent`).not.toHaveProperty(widening)
+    }
+    expect(Object.keys(build.directories ?? {})).toEqual(['output'])
+  })
+
+  it('has exactly the mac keys this task decided', () => {
+    expect(Object.keys(build.mac ?? {}).toSorted()).toEqual(
+      ['entitlements', 'entitlementsInherit', 'hardenedRuntime', 'target'].toSorted(),
+    )
+    for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'binaries', 'identity']) {
+      expect(build.mac, `build.mac.${widening} must be absent`).not.toHaveProperty(widening)
+    }
+  })
+
+  it('rebuilds no native module: the console has none, and a rebuild runs install scripts', () => {
+    expect(build.npmRebuild).toBe(false)
+  })
+
+  it('verifies both Electron archives against the pinned Electron’s own checksums', () => {
+    // A universal build downloads the darwin arm64 and x64 Electron archives
+    // at pack time. Without inline checksums electron-builder verifies them
+    // against a SHASUMS256.txt fetched from the same release host; with these,
+    // against hashes in this repository, which must equal the ones the
+    // lockfile-pinned `electron` package carries in its `checksums.json`
+    // (present after `npm ci --ignore-scripts`: it is in the tarball).
+    const version = manifest.devDependencies.electron
+    const checksums = build.electronDownload?.checksums ?? {}
+    expect(Object.keys(build.electronDownload ?? {})).toEqual(['checksums'])
+    expect(Object.keys(checksums).toSorted()).toEqual(
+      [`electron-v${version}-darwin-arm64.zip`, `electron-v${version}-darwin-x64.zip`].toSorted(),
+    )
+    for (const hash of Object.values(checksums)) expect(hash).toMatch(/^[0-9a-f]{64}$/)
+    const upstream = JSON.parse(readFileSync(join(ELECTRON_PACKAGE, 'checksums.json'), 'utf8')) as Record<
+      string,
+      string
+    >
+    for (const [file, hash] of Object.entries(checksums)) expect(hash, file).toBe(upstream[file])
+  })
+
+  it('packages with the pinned local electron-builder, universal, and never publishing', () => {
+    // The packer is a devDependency recorded in the lockfile (exact version,
+    // integrity hash, registry host -- lockfile.test.ts covers the whole tree),
+    // and the script runs its local binary. `npx` would resolve a tree outside
+    // the lockfile, with install scripts, in the shell the signing secrets are
+    // exported into.
+    const script = manifest.scripts.package ?? ''
+    expect(script).toBe('npm run build && electron-builder --mac --universal --publish never')
+    expect(script).not.toMatch(/\bnpx\b/)
+    expect(script).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
+    expect(script).not.toMatch(/electron-builder@/)
+    const pin = manifest.devDependencies['electron-builder']
+    expect(pin).toBe('26.17.0')
+    expect(manifest.dependencies ?? {}).not.toHaveProperty('electron-builder')
+    const lock = JSON.parse(readFileSync(LOCKFILE, 'utf8')) as {
+      packages: Record<string, { version?: string; resolved?: string; integrity?: string; dev?: boolean }>
+    }
+    const entry = lock.packages['node_modules/electron-builder']
+    expect(entry?.version).toBe(pin)
+    expect(entry?.resolved).toBe(
+      `https://registry.npmjs.org/electron-builder/-/electron-builder-${pin}.tgz`,
+    )
+    expect(entry?.integrity).toMatch(/^sha512-/)
+    expect(entry?.dev).toBe(true)
   })
 
   it('runs this hook, compiled to the file the build emits', () => {
@@ -382,4 +593,69 @@ describe('the packaging configuration the fuses belong to', () => {
     // notary record: changing it later is a different application.
     expect(build.appId).toBe('io.github.dimipaun.fugaro-console')
   })
+})
+
+// The real binary, when it is installed. `npm ci --ignore-scripts` installs the
+// `electron` package without its distribution; `node
+// node_modules/electron/install.js` (the README's owner step, run before any
+// secret is exported) downloads it, verified against the package's own
+// `checksums.json`. Where it is absent this block skips, and the skip names the
+// command; where it is present -- a developer's Mac, or a CI runner that ran the
+// download -- it runs.
+const electronPathFile = join(ELECTRON_PACKAGE, 'path.txt')
+const electronBinary = existsSync(electronPathFile)
+  ? join(ELECTRON_PACKAGE, 'dist', readFileSync(electronPathFile, 'utf8').trim())
+  : ''
+const realBinaryAbsent = electronBinary === '' || !existsSync(electronBinary)
+const SKIP_REASON =
+  'skipped: node_modules/electron/dist is absent (npm ci --ignore-scripts does not download it; run `node node_modules/electron/install.js`)'
+
+describe.skipIf(realBinaryAbsent)(`the pinned Electron binary itself${realBinaryAbsent ? ` (${SKIP_REASON})` : ''}`, () => {
+  it('carries exactly as many fuses as src/main/fuses.ts accounts for', async () => {
+    const { getCurrentFuseWire } = await import('@electron/fuses')
+    const wire = await getCurrentFuseWire(electronBinary)
+    expect(Object.keys(wire).filter((key) => key !== 'version')).toHaveLength(ACCOUNTED_FUSE_COUNT)
+  })
+
+  it.skipIf(process.platform !== 'darwin')(
+    'takes the real hook on a copy: six flips, every other fuse untouched (macOS only)',
+    async () => {
+      const { getCurrentFuseWire } = await import('@electron/fuses')
+      const app = electronBinary.slice(0, electronBinary.indexOf('.app') + '.app'.length)
+      const productFilename = app.slice(app.lastIndexOf('/') + 1, -'.app'.length)
+      const before = (await getCurrentFuseWire(electronBinary)) as unknown as Record<string, unknown>
+      const appOutDir = mkdtempSync(join(tmpdir(), 'fuses-real-'))
+      try {
+        // A clone where the filesystem offers one (APFS), a copy otherwise:
+        // the hook writes into the framework binary, never into node_modules.
+        try {
+          execFileSync('cp', ['-Rc', app, appOutDir])
+        } catch {
+          execFileSync('cp', ['-R', app, appOutDir])
+        }
+        const context: AfterPackContext = {
+          electronPlatformName: 'darwin',
+          appOutDir,
+          packager: { appInfo: { productFilename } },
+        }
+        await afterPack(context)
+        const after = (await getCurrentFuseWire(macExecutable(context))) as unknown as Record<string, unknown>
+        const indices = Object.keys(after).filter((key) => key !== 'version')
+        expect(indices).toHaveLength(ACCOUNTED_FUSE_COUNT)
+        for (const fuse of FLIPPED_FUSES) {
+          expect(after[String(fuse.option)], fuse.name).toBe(fuse.value ? FuseState.ENABLE : FuseState.DISABLE)
+        }
+        const untouched = [
+          ...LEFT_ALONE_FUSES.map((fuse) => [fuse.name, fuse.option] as const),
+          ...BEYOND_PIN_FUSES.map((fuse) => [fuse.name, fuse.index] as const),
+        ]
+        for (const [name, index] of untouched) expect(after[String(index)], name).toBe(before[String(index)])
+        // and the installed distribution itself was not written to
+        expect(await getCurrentFuseWire(electronBinary)).toEqual(before)
+      } finally {
+        rmSync(appOutDir, { recursive: true, force: true })
+      }
+    },
+    120_000,
+  )
 })
