@@ -797,6 +797,7 @@ describe('the class rules', () => {
       ['an assignment in the fragment', `${base}#access_token=abcdef`],
       ['a percent-encoded token in the query', `${base}?x=${encoded}`],
       ['a high-entropy run in the fragment', `${base}#${fake.highEntropyRun()}`],
+      ['a high-entropy run in the query', `${base}?state=${fake.highEntropyRun()}`],
       ['a token as a path segment', `https://github.com/o/r/pull/${token}`],
       ['a percent-encoded token as a path segment', `https://github.com/o/r/${encoded}`],
     ] as const) {
@@ -816,6 +817,127 @@ describe('the class rules', () => {
       `${base}#issuecomment-1234567`,
       `${base}/files?tab=files`,
       `https://github.com/o/r/commit/${fake.hexDigest()}`,
+    ]) {
+      expect(text(url, 'url'), url).toBe(url)
+    }
+  })
+
+  /** refusedLink asserts the whole refusal: the class, `safeUrl`, and the cell
+   * `putLink` draws, which must carry neither the link nor the secret. */
+  function refusedLink(url: string, secret: string, what: string): void {
+    const reason = refused(url, 'url', 'finished[0].pr_url')
+    expect(reason, what).toContain('finished[0].pr_url')
+    expect(reason, what).not.toContain(secret)
+    expect(safeUrl(url), what).toBeNull()
+    const target = element()
+    putLink(target, url, 'finished[0].pr_url')
+    expect(target.getAttribute(DESTINATION_ATTRIBUTE), what).toBeNull()
+    expect(target.textContent ?? '', what).not.toContain(secret)
+    expect(target.getAttribute('title') ?? '', what).not.toContain(secret)
+  }
+
+  it('refuses a URL whose host carries a credential or a random-looking label', () => {
+    // Review round 4 of PR 478: the host was never read, so a token written as
+    // a subdomain was accepted and drawn as the link's text. Every value is
+    // assembled at run time (see this file's header).
+    const token = fake.inert('gh', 'p_', 'abcdefgh1234')
+    const mixed = fake.highEntropyRun()
+    const lower = mixed.toLowerCase()
+    // A label whose case mix is all of its entropy: high as written, low once
+    // the parser folds it, so only the host as written shows it.
+    const caseOnly = ['abcdef', '1', 'abcdef', '2']
+      .map((part) => [...part].map((letter) => letter + letter.toUpperCase()).join(''))
+      .join('')
+    // A Slack-style token is only a token at the start of its run, so as an
+    // `xn--` label it is invisible until the label is punycode-decoded.
+    const slack = fake.slackToken()
+    const encoded = new URL(`https://${slack}é.example.com/`).hostname
+    expect(encoded.startsWith('xn--')).toBe(true)
+    for (const [what, url, secret] of [
+      ['a forge token as a subdomain', `https://${token}.evil.example.com/x`, token],
+      ['a mixed-case high-entropy label', `https://${mixed}.example.com/x`, mixed],
+      ['a lower-case random-looking label', `https://${lower}.example.com/x`, lower],
+      ['a label whose entropy is its case', `https://${caseOnly}.example.com/x`, caseOnly],
+      ['the same, behind backslashes the parser reads as slashes', `https:\\\\${caseOnly}.example.com/x`, caseOnly],
+      // The family patterns are case-sensitive and a host is not: written in
+      // capitals the token is only a token once the parser has folded it.
+      ['a token written in capitals', `https://${token.toUpperCase()}.evil.example.com/x`, 'ABCDEFGH1234'],
+      ['a high-entropy label behind userinfo and a port', `https://u@${mixed}.example.com:8443/x`, mixed],
+      ['a token behind a percent-encoded host', `https://${token.replace('p', '%70')}.example.com/x`, 'abcdefgh1234'],
+      ['a token split across a dot', `https://${fake.googleAccessToken()}.example.com/x`, 'iiiiiiii'],
+      ['a token only the punycode-decoded label shows', `https://${encoded}/x`, encoded],
+      ['a forge token as a subdomain, no slashes', `https:${token}.evil.example.com/x`, token],
+    ] as const) {
+      refusedLink(url, secret, what)
+    }
+    // Userinfo is dropped, not read: a password in it never reaches the screen,
+    // so it is no reason to refuse the link.
+    expect(text(`https://u:${mixed}@github.com/x`, 'url')).toBe('https://github.com/x')
+    expect(text(`https://${mixed}@github.com/x`, 'url')).toBe('https://github.com/x')
+    // The hosts a link ordinarily has are kept exactly as they came.
+    for (const url of [
+      'https://github.com/owner/name/pull/412',
+      'https://bitbucket.org/owner/name/pull-requests/7',
+      'https://console.cloud.google.com/run/detail/us-east5/service/logs?project=fixture-project',
+      'https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1',
+      'https://internationalbusinessmachinescorporation.example.com/x',
+      'https://edgeweb-abc123xyz-ue.a.run.app/status',
+      'https://my-company-production-environment.example.com/x',
+      // A port is not part of the host: `secret:8443` is not an assignment.
+      'https://secret:8443/x',
+    ]) {
+      expect(text(url, 'url'), url).toBe(url)
+    }
+  })
+
+  it('refuses a high-entropy query or fragment value that follows a dot', () => {
+    // Review round 4 of PR 478: the entropy net never starts a run right after
+    // a dot, so `v1.<random>` hid the random half.
+    const run = fake.highEntropyRun()
+    for (const [what, url] of [
+      ['a query value after a dot', `https://x.com/?id=v1.${run}`],
+      ['a fragment value after a dot', `https://x.com/#v1.${run}`],
+      ['a value between dots', `https://x.com/?id=a.${run}.b`],
+    ] as const) {
+      refusedLink(url, run, what)
+    }
+    for (const url of [
+      'https://github.com/o/r/releases?tag=v1.2.3',
+      'https://github.com/o/r/blob/main/x?file=file.name.ext',
+      'https://github.com/o/r/pull/1#claude-sonnet-4-5-20250929.json',
+      'https://github.com/o/r/pull/1?ref=release.2026-10-17.candidate',
+    ]) {
+      expect(text(url, 'url'), url).toBe(url)
+    }
+  })
+
+  it('refuses the well-known webhook URLs, whose secret is a path segment', () => {
+    // Review round 4 of PR 478: a path segment is left out of the entropy net on
+    // purpose (a commit link's digest is one), so a webhook whose secret lives
+    // in its path is refused by its shape instead.
+    const id = '123456789012345678'
+    const secret = fake.inert('Ab', 'cD', 'ef', 'GH', 'ij', 'KL', 'mn', 'OP')
+    for (const [what, url] of [
+      ['Slack', `https://hooks.slack.com/services/T0000/B0000/${secret}`],
+      ['Slack, upper case and a trailing dot', `https://HOOKS.slack.com./services/T0000/B0000/${secret}`],
+      ['Slack, a percent-encoded path', `https://hooks.slack.com/%73ervices/T0000/B0000/${secret}`],
+      ['Slack workflows', `https://hooks.slack.com/workflows/T0000/A0000/1/${secret}`],
+      ['Discord', `https://discord.com/api/webhooks/${id}/${secret}`],
+      ['Discord, versioned', `https://discord.com/api/v10/webhooks/${id}/${secret}`],
+      ['Discord, the old host', `https://discordapp.com/api/webhooks/${id}/${secret}`],
+      ['Discord, canary', `https://canary.discord.com/api/webhooks/${id}/${secret}`],
+      ['Microsoft Teams', `https://acme.webhook.office.com/webhookb2/${id}/IncomingWebhook/${secret}`],
+      ['Zapier', `https://hooks.zapier.com/hooks/catch/123/${secret}/`],
+      ['IFTTT', `https://maker.ifttt.com/trigger/event/with/key/${secret}`],
+      ['Telegram', `https://api.telegram.org/bot${id}:${secret}/sendMessage`],
+    ] as const) {
+      refusedLink(url, secret, what)
+    }
+    // The same hosts' other pages are links like any other.
+    for (const url of [
+      'https://discord.com/channels/1/2',
+      'https://slack.com/app_redirect?channel=general',
+      'https://github.com/o/r/settings/hooks/123',
     ]) {
       expect(text(url, 'url'), url).toBe(url)
     }

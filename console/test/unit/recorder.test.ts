@@ -648,6 +648,90 @@ describe('a recording in progress', () => {
     expect(timers.scheduled).toEqual([])
   })
 
+  it('keeps reading after the SIGKILL until the pipes close', async () => {
+    // Review round 4 of PR 478: the SIGKILL is not the end of the output. Node
+    // reports the exit, and the chunks still in the pipe arrive before `close`;
+    // a recording that settled at the signal would drop them.
+    const stub = new StubChild()
+    stub.kill = (signal: NodeJS.Signals = 'SIGTERM'): boolean => {
+      stub.signals.push(signal)
+      if (signal === 'SIGKILL') stub.exitOnly(null)
+      return true
+    }
+    const { timers, recording } = started(full('--duration', '30'), new FakeTimers(), stub)
+    let settled = false
+    void recording.finished.then(() => {
+      settled = true
+    })
+    stub.write('{"day":"2026-10-15"}\n')
+    timers.advanceTo(30_000 + SHUTDOWN_GRACE_MS)
+    expect(stub.signals).toEqual(['SIGTERM', 'SIGKILL'])
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    stub.write('{"day":"2026-10-16"}\n')
+    stub.write('{"day":"2026-10-17"}')
+    stub.close(null)
+    const result = await recording.finished
+    expect(result.refusal).toBeNull()
+    expect(result.records).toHaveLength(3)
+    expect(timers.scheduled).toEqual([])
+  })
+
+  it('waits for the pipes of a child that can no longer be signalled', async () => {
+    // A child that cannot be signalled has already exited, but its last chunks
+    // can still be in the pipe: the recording waits for `close` (or one grace
+    // period), it does not settle at once.
+    const stub = new StubChild()
+    stub.kill = (signal: NodeJS.Signals = 'SIGTERM'): boolean => {
+      stub.signals.push(signal)
+      return false
+    }
+    const { timers, recording } = started(full('--duration', '30'), new FakeTimers(), stub)
+    let settled = false
+    void recording.finished.then(() => {
+      settled = true
+    })
+    stub.write('{"day":"2026-10-15"}\n')
+    recording.stop()
+    expect(stub.signals).toEqual(['SIGTERM'])
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    stub.write('{"day":"2026-10-16"}\n')
+    stub.close(0)
+    const result = await recording.finished
+    expect(result.records).toHaveLength(2)
+    expect(timers.scheduled).toEqual([])
+  })
+
+  it('records nothing that arrives after a refusal', async () => {
+    // The refusal guard on stdout: once a frame is refused nothing is written,
+    // so nothing more is read either -- not even a document that would redact.
+    let documents = 0
+    const base = redactor()
+    const broken: Redactor = {
+      ...base,
+      redactDocument: (document) => {
+        documents += 1
+        return base.redactDocument(document)
+      },
+      redactText: () => {
+        throw new RedactionRefusal('the audit would not vouch for this sentence')
+      },
+    }
+    const { stub, timers, recording } = started(undefined, undefined, undefined, broken)
+    stub.write('{"day":"2026-10-15"}\n')
+    stub.write('a sentence the redactor refuses\n')
+    expect(stub.signals).toEqual(['SIGTERM'])
+    // The child ignores the SIGTERM and keeps writing.
+    stub.write('{"day":"2026-10-16"}\n')
+    stub.write('{"day":"2026-10-17"}\n')
+    expect(documents).toBe(1)
+    timers.advanceTo(SHUTDOWN_GRACE_MS)
+    const result = await recording.finished
+    expect(result.refusal).toBeInstanceOf(RedactionRefusal)
+    expect(result.records).toHaveLength(1)
+  })
+
   it('keeps a final frame the child wrote without a newline, and still drops a torn one', async () => {
     // Review round 2 of PR 478: a CLI whose last document had no terminating
     // newline lost it, and when it was the only one the whole recording was

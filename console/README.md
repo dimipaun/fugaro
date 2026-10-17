@@ -1123,7 +1123,8 @@ never less — so drift on either side fails a test rather than a screen. The
 validating classes are not held to that equality, because they decide
 differently on purpose: the recorder replaces **every** `url` field with
 `[redacted-url]`, while the `url` class keeps a clean `https` link (and refuses
-one whose path, query or fragment carries anything the credential rules match);
+one whose host, path, query or fragment carries anything the credential rules
+match, or whose host has a random-looking label);
 the recorder writes a keyed pseudonym where this layer, with no key, accepts the
 recorder's pseudonym or validates the value's shape.
 
@@ -1143,7 +1144,16 @@ truncated.
 | `runId` | the run-id grammar, or a marker | refused |
 | `host` | a machine name: every value, hostname, IP address or anything else, is drawn as `<host>` (a recorder marker is kept) | — |
 | `path` | a filesystem path | redacted to `<path>` |
-| `url` | `https`, a non-empty host, no whitespace, and no credential in a path segment, the query or the fragment (each read as written and percent-decoded: the token families, a credential-named assignment such as `access_token=…`, and — in the query and fragment — the high-entropy rule); userinfo is dropped | refused — including `http:`, `javascript:` and a URL carrying a credential |
+| `url` | `https`, a non-empty host, no whitespace, no credential in the host, a path segment, the query or the fragment (each read as written and percent-decoded: the token families, a credential-named assignment such as `access_token=…`, and — in the host, the query and the fragment — the high-entropy rule, which there also reads a run that follows a dot), no random-looking host label (the host is read as written and as parsed, whole and label by label, each `xn--` label also punycode-decoded; a run of 20+ letters and digits with both, at 3.5+ bits per character, is refused even case-folded), and not a well-known webhook URL (Slack `hooks.slack.com/services/…`, Discord `…/api/webhooks/…`, Microsoft Teams, Zapier, IFTTT, Telegram); userinfo is dropped | refused — including `http:`, `javascript:` and a URL carrying a credential |
+
+**The trade-off in the path, said out loud.** A path segment is not held to the
+high-entropy rule, because a commit link's 40-hex digest is a path segment and
+refusing it would refuse the forge's own URLs. So a secret that lives in a URL's
+path is caught only by a token family or by the webhook table: a service that is
+not on the table and keeps a shapeless secret in its path is drawn as it came.
+The table is the well-known shapes, matched on the parsed host (case-folded,
+trailing dot dropped) and the percent-decoded path, and a listed host's other
+pages (`discord.com/channels/…`) are kept.
 
 Every refusal is a **sentence about the class** ("it is not https") that names
 the field and never the value: a refusal that echoed its input would put the

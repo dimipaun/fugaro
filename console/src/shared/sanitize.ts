@@ -910,17 +910,18 @@ function clipped(text: string): { readonly text: string; readonly flags: readonl
  * token families, a bearer header, a PEM block, a base64-wrapped candidate, and
  * an assignment such as `access_token=...`, which loses its value whatever it
  * looks like). `entropy` adds the high-entropy net, for the query and the
- * fragment: a path segment is left out of it on purpose, because a commit link's
- * 40-hex digest is a path segment, and refusing every commit link would be a
- * refusal of the forge's own URLs.
+ * fragment (and `hostCarriesCredential` adds it for the host): a path segment
+ * is left out of it on purpose, because a commit link's 40-hex digest is a path
+ * segment, and refusing every commit link would be a refusal of the forge's own
+ * URLs. The webhooks that keep their secret in the path are `WEBHOOK_URLS`.
  */
 function carriesCredential(piece: string, entropy: boolean): boolean {
   if (piece === '') return false
   for (const form of new Set([prepare(piece), prepare(percentDecode(piece))])) {
     if (credentialPass(form, true) !== form) return true
     if (entropy) {
-      ENTROPY_RE.lastIndex = 0
-      for (const match of form.matchAll(ENTROPY_RE)) {
+      URL_ENTROPY_RE.lastIndex = 0
+      for (const match of form.matchAll(URL_ENTROPY_RE)) {
         if (isHighEntropy(match[0])) return true
       }
     }
@@ -928,8 +929,168 @@ function carriesCredential(piece: string, entropy: boolean): boolean {
   return false
 }
 
-/** applyUrl is the URL class: `https` only, a non-empty host, no userinfo, and
- * nothing credential-shaped in its path, query or fragment. It is the only way
+/**
+ * URL_ENTROPY_RE is `ENTROPY_RE` with a dot as a separator on *both* sides. The
+ * free-text net will not start a run right after a dot (it is the recorder's
+ * pattern, and the recorder-agreement test holds it there), which in a URL let
+ * `?id=v1.<random>` hide its random half. In a query, a fragment or a host a dot
+ * only ever separates, so each piece between dots is read on its own: `v1.2.3`
+ * and `file.name.ext` are short pieces and stay, and a long piece is still held
+ * to `isHighEntropy`'s guard.
+ */
+const URL_ENTROPY_RE = /(?<![\p{L}\p{N}_+/=-])[A-Za-z0-9_+/=-]{20,}(?![\p{L}\p{N}_+/=-])/gu
+
+/** HOST_DOT_RE is every character the URL parser reads as a label separator. */
+const HOST_DOT_RE = /[.。．｡]/
+
+/** HOST_RUN_RE is a run of a host label between hyphens and underscores. */
+const HOST_RUN_RE = /[A-Za-z0-9]{20,}/g
+
+/**
+ * looksRandom is the host's own entropy rule, for the run `isHighEntropy` cannot
+ * judge: a host is case-folded, so a token written into one loses the case mix
+ * that guard asks for. A run of 20 or more letters and digits that has both, at
+ * 3.5 bits per character or more, is a key, not a name -- a dictionary-like
+ * label (`internationalbusinessmachines`) has no digits, and the labels a cloud
+ * writes (`us-east-1`, `edgeweb-abc123xyz-ue`) are short runs between hyphens.
+ */
+function looksRandom(label: string): boolean {
+  for (const [run] of label.matchAll(HOST_RUN_RE)) {
+    const body = run.toLowerCase()
+    if (!/[a-z]/.test(body) || !/\d/.test(body)) continue
+    const counts = new Map<string, number>()
+    for (const character of body) counts.set(character, (counts.get(character) ?? 0) + 1)
+    let entropy = 0
+    for (const count of counts.values()) {
+      const p = count / body.length
+      entropy -= p * Math.log2(p)
+    }
+    if (entropy >= 3.5) return true
+  }
+  return false
+}
+
+/**
+ * punycodeDecode is RFC 3492's decoder, for the part of an `xn--` label after
+ * its prefix; `null` for a label that does not decode. The URL parser writes a
+ * non-ASCII host in this form, and a token at the start of such a label is
+ * preceded by `xn--` -- a hyphen, which is exactly what a family pattern's
+ * left edge refuses -- so the host rule reads the decoded label as well.
+ */
+function punycodeDecode(input: string): string | null {
+  const base = 36
+  const output: number[] = []
+  const delimiter = input.lastIndexOf('-')
+  for (let i = 0; i < Math.max(delimiter, 0); i += 1) {
+    const code = input.charCodeAt(i)
+    if (code >= 0x80) return null
+    output.push(code)
+  }
+  let n = 128
+  let bias = 72
+  let i = 0
+  for (let index = delimiter > 0 ? delimiter + 1 : 0; index < input.length; ) {
+    const oldi = i
+    for (let w = 1, k = base; ; k += base) {
+      if (index >= input.length) return null
+      const code = input.charCodeAt(index)
+      index += 1
+      const digit = code - 48 < 10 ? code - 22 : code - 65 < 26 ? code - 65 : code - 97 < 26 ? code - 97 : base
+      if (digit >= base) return null
+      i += digit * w
+      const t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias
+      if (digit < t) break
+      w *= base - t
+      if (i > 0x7fffffff) return null
+    }
+    const length = output.length + 1
+    let delta = i - oldi
+    delta = oldi === 0 ? Math.floor(delta / 700) : delta >> 1
+    delta += Math.floor(delta / length)
+    let k = 0
+    for (; delta > 455; k += base) delta = Math.floor(delta / 35)
+    bias = Math.floor(k + (36 * delta) / (delta + 38))
+    n += Math.floor(i / length)
+    i %= length
+    if (n > 0x10ffff) return null
+    output.splice(i, 0, n)
+    i += 1
+  }
+  return String.fromCodePoint(...output)
+}
+
+/**
+ * rawHost is the host as the text spells it, not as the parser rewrote it: the
+ * parser folds case, and the case mix is what `isHighEntropy` reads. The scheme
+ * is dropped with any run of slashes or backslashes after it (the parser
+ * accepts `https:host` and `https:\\host`), then everything from the first
+ * slash, backslash, `?` or `#`, then the userinfo and the port.
+ */
+function rawHost(text: string): string {
+  const authority = text.replace(/^https:[/\\]*/i, '').split(/[/\\?#]/, 1)[0] ?? ''
+  const host = authority.slice(authority.lastIndexOf('@') + 1)
+  return host.startsWith('[') ? host : host.replace(/:[^:]*$/, '')
+}
+
+/**
+ * hostCarriesCredential answers whether a URL's host holds a credential or a
+ * random-looking label. It reads the host as written (case kept, which is what
+ * the entropy guard reads) and as parsed (percent-decoded and case-folded) --
+ * whole, so a token with a dot in it is still one token, and label by label,
+ * each `xn--` label also punycode-decoded -- and runs on every form the
+ * credential pass (which percent-decodes a form itself), the entropy net and
+ * `looksRandom`.
+ */
+function hostCarriesCredential(text: string, hostname: string): boolean {
+  const written = rawHost(text)
+  const forms = new Set<string>()
+  for (const host of [written, hostname]) {
+    forms.add(host)
+    for (const label of host.split(HOST_DOT_RE)) {
+      forms.add(label)
+      if (/^xn--/i.test(label)) {
+        const decoded = punycodeDecode(label.slice(4))
+        if (decoded !== null) forms.add(decoded)
+      }
+    }
+  }
+  for (const form of forms) {
+    if (carriesCredential(form, true)) return true
+    if (looksRandom(prepare(form))) return true
+  }
+  return false
+}
+
+/**
+ * WEBHOOK_URLS are the well-known webhook shapes whose secret is a **path
+ * segment**: Slack, Discord, Microsoft Teams, Zapier, IFTTT and Telegram. A path
+ * segment is left out of the entropy net on purpose -- a commit link's digest is
+ * one -- so these are refused by host and path instead. The trade-off, said out
+ * loud: a service not on this list that keeps its secret in the path is drawn
+ * (unless the segment matches a token family), and a page of a listed host that
+ * is not a webhook is kept.
+ */
+const WEBHOOK_URLS: readonly { readonly host: RegExp; readonly path: RegExp }[] = Object.freeze([
+  { host: /^hooks\.slack\.com$/, path: /^\/(?:services|workflows|triggers)\//i },
+  { host: /^(?:(?:ptb|canary)\.)?discord(?:app)?\.com$/, path: /^\/api\/(?:v\d+\/)?webhooks\//i },
+  { host: /(?:^|\.)webhook\.office\.com$/, path: /^\/webhookb2\//i },
+  { host: /^outlook\.office(?:365)?\.com$/, path: /^\/webhook\//i },
+  { host: /^hooks\.zapier\.com$/, path: /^\/hooks\//i },
+  { host: /^maker\.ifttt\.com$/, path: /\/with\/key\//i },
+  { host: /^api\.telegram\.org$/, path: /^\/(?:file\/)?bot/i },
+])
+
+/** isWebhook answers whether a parsed URL is one of `WEBHOOK_URLS`. */
+function isWebhook(parsed: URL): boolean {
+  const host = parsed.hostname.replace(/\.$/, '')
+  const path = percentDecode(parsed.pathname)
+  return WEBHOOK_URLS.some((hook) => hook.host.test(host) && hook.path.test(path))
+}
+
+/** applyUrl is the URL class: `https` only, a non-empty host, no userinfo,
+ * nothing credential-shaped or random-looking in its host, nothing
+ * credential-shaped in its path, query or fragment, and none of the well-known
+ * webhook URLs (`WEBHOOK_URLS`), whose secret is a path segment. It is the only way
  * this layer produces a URL, and `safeUrl` below is the same function with a
  * `null` instead of a refusal, so a screen has one door and not two. */
 function applyUrl(text: string, field: string): Sanitized {
@@ -961,13 +1122,16 @@ function applyUrl(text: string, field: string): Sanitized {
   if (parsed.hostname === '') {
     return refuse(`${field} is not a valid url, so the console will not draw it`)
   }
-  // A credential in the query, the fragment or a path segment is refused, not
-  // rewritten: the URL is drawn as text, put in a title and offered as a link,
-  // and a link with its key cut out is a different link. The recorder replaces
-  // a url field whole; this class keeps a clean one and refuses the rest.
+  // A credential in the host, the query, the fragment or a path segment is
+  // refused, not rewritten: the URL is drawn as text, put in a title and offered
+  // as a link, and a link with its key cut out is a different link. The
+  // recorder replaces a url field whole; this class keeps a clean one and
+  // refuses the rest.
   const query = parsed.search.replace(/^\?/, '')
   const fragment = parsed.hash.replace(/^#/, '')
   if (
+    hostCarriesCredential(text, parsed.hostname) ||
+    isWebhook(parsed) ||
     carriesCredential(query, true) ||
     carriesCredential(fragment, true) ||
     parsed.pathname.split('/').some((segment) => carriesCredential(segment, false))
