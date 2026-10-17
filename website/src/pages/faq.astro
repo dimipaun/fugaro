@@ -348,17 +348,49 @@ const faq = loadFaq()
  * The branch the answers' source links point at: the branch the repository's CI pushes to,
  * read from `ci.yml` rather than typed here. A link to a file at a branch that no longer
  * exists is a broken link, and the branch a repository builds on is the one fact about it
- * this site can read from the tree (website/test/faq-community.mjs holds the page and the
- * workflow together).
+ * this site can read from the tree.
+ *
+ * The `branches:` line is read **inside `on:`'s `push:` trigger**, not from anywhere in the
+ * file: `ci.yml` carries other `branches:`-shaped lines (its jobs' matrices and its own
+ * comments), and an unscoped match would take whichever came first — a fact about a job
+ * rather than the fact about the workflow. `website/test/faq-community.mjs` builds the page
+ * against a copy of `ci.yml` whose push trigger names another branch and requires the links
+ * to follow it, which is what holds this reader and that file together.
  */
 function baseBranch(): string {
   const file = '.github/workflows/ci.yml'
-  const m = /^\s+branches:\s*\[([^\]]+)\]/m.exec(readFileSync(path.join(REPO_ROOT, file), 'utf8'))
-  if (!m) {
-    throw new Error(`${file} names no \`branches: [...]\` under its push trigger, and the site links the repository's files at the branch its CI builds on (W1.10).`)
+  const lines = readFileSync(path.join(REPO_ROOT, file), 'utf8').split('\n')
+
+  const start = lines.findIndex((line) => line.trimEnd() === 'on:')
+  if (start === -1) {
+    throw new Error(`${file} has no top-level \`on:\` block, and the site links the repository's files at the branch its CI builds on (W1.10).`)
   }
-  const branch = m[1].split(',')[0].trim()
-  if (branch === '') throw new Error(`${file}'s push trigger names an empty branch (W1.10).`)
+  // The block's body: the indented lines under `on:`, comments and blanks skipped, up to the
+  // next top-level key. A comment is not a trigger — ci.yml explains its triggers in comments.
+  const body: { indent: number; text: string }[] = []
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    if (!/^\s/.test(line)) break
+    body.push({ indent: line.length - line.trimStart().length, text: trimmed })
+  }
+  const triggerIndent = body.length > 0 ? Math.min(...body.map((line) => line.indent)) : 0
+  const pushAt = body.findIndex((line) => line.indent === triggerIndent && line.text.startsWith('push:'))
+
+  let branch = ''
+  if (pushAt >= 0) {
+    for (let i = pushAt + 1; i < body.length && body[i].indent > triggerIndent; i++) {
+      const m = /^branches:\s*\[([^\]]*)\]\s*$/.exec(body[i].text)
+      if (m) {
+        branch = m[1].split(',')[0].trim()
+        break
+      }
+    }
+  }
+  if (branch === '') {
+    throw new Error(`${file}'s \`push:\` trigger names no \`branches: [...]\`, and the site links the repository's files at the branch its CI builds on (W1.10).`)
+  }
   return branch
 }
 

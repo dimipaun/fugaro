@@ -6,12 +6,13 @@ build and its own schedule (D90): nothing under it is importable by the Go modul
 Go module gains no dependency from it. The boundary is a test, not a convention —
 `internal/cli/docs_website_boundary_test.go`.
 
-**What is here today:** the shell. The pinned toolchain, the static Astro configuration,
-the check that runs the build and every test file, and this document. `website/data/` and
-`website/content/` already hold the facts Part 0 generates; the pages that render them land
-in W1.3 (`src/layouts/`) through W1.12. **The build therefore produces no page yet**, which
-is why `npm run build` is green today and why the first page's own test arrives with the
-first page.
+**What is here today:** the shell, and its first two pages. The pinned toolchain, the static
+Astro configuration, the check that runs the build and every test file, this document, the
+base layout (`src/layouts/`), and the FAQ and community pages (`src/pages/faq.astro`,
+`src/pages/community.astro`) — so `dist/` now holds `/faq/` and `/community/`, and the rest
+of Part 1's pages land in W1.4 through W1.12. `website/data/` and `website/content/` hold the
+facts Part 0 generates, plus the FAQ's own `data/faq.yaml`; each page's test arrives with the
+page, in this directory.
 
 ## Toolchain
 
@@ -123,12 +124,21 @@ to prevent (F37, Global Constraint 6).
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
+  data/faq.yaml                    # the FAQ's answers, their sources and the comparison rows
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ at build time
-  src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
+  src/layouts/Base.astro           # the layout every page renders inside (W1.3)
+  src/pages/faq.astro, community.astro   # the pages W1.10 wrote
+  src/components/, src/styles/     # the rest of W1.2-W1.12
   test/*.mjs                       # every one of them runs under `npm run check`
-  dist/                            # the build output, not committed
+  dist/                            # the build output, not committed; holds /faq/ and /community/ today
 ```
+
+`data/faq.yaml` is the one data file here that a page owns rather than Part 0's generators:
+`faq.astro` renders it, refuses an answer whose `source` is not a file in this repository,
+and refuses a comparison row without a `source` and a `date` (D103, F51–F52).
+`community.astro` holds no such file and needs none: it links the repository's own documents
+and describes CI from `.github/workflows/ci.yml`'s `on:` block instead.
 
 `node_modules/`, `dist/` and `.astro/` are not committed: the first is what `npm ci`
 installs from the committed lockfile, and the last two are build output.

@@ -1,7 +1,7 @@
 // website/test/faq-community.mjs — the FAQ and the community page (website plan, W1.10).
 //
 // The two pages this file checks are the site's document pages, and the rules they answer to
-// are about what a page may *say*. Four of them are checked here, and each one reads its
+// are about what a page may *say*. Five of them are checked here, and each one reads its
 // source rather than the page's own copy of it (Review Focus: "the test must read the
 // source, not the generator's own output"):
 //
@@ -18,11 +18,20 @@
 //      (F46, D101). The section is rendered from the workflow's own `on:` block, and the case
 //      that proves it edits `ci.yml` in a temp copy and requires the page to follow — because
 //      the failure this rule exists to prevent is a page that repeats `CONTRIBUTING.md`'s
-//      stale claim (finding 11) after the workflow has moved on.
+//      stale claim (finding 11) after the workflow has moved on. The same file decides the
+//      branch both pages' links point at, and the cases that move the push trigger build the
+//      page again: a source link at a branch the project stopped building on is a link into
+//      nothing, and the branch is read from the workflow rather than typed into the page.
 //   4. **Neither page restates a document** (F47, Global Constraint 6). The FAQ and the
 //      community page link `CONTRIBUTING.md`, `SECURITY.md` and `README.md`; they do not carry
 //      their sentences, and the last case below asserts that mechanically: no sentence of
-//      eight words or more from any of the three appears in either built page.
+//      eight words or more from any of the three appears in either built page. Both sides of
+//      that comparison are normalized the same way, so the markdown punctuation a document
+//      writes (backticks, hyphens, headings) cannot hide a sentence from the check.
+//   5. **No link runs into the word after it.** Astro drops the whitespace between a closing
+//      tag and the next line's text, so a sentence written as a link followed by a newline
+//      builds as `LICENSEis the whole of it`: the page reads wrong while every fact on it is
+//      still true, which is why this one is checked over the built HTML of both pages.
 //
 // How it reads a page: `npm run check` builds the site before it runs anything here, so the
 // real pages are read from `website/dist/` — the artifact a reader gets, not a rendering of
@@ -145,6 +154,23 @@ function pageText(html) {
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/**
+ * Text in the form the restatement comparison needs: lowercased, whitespace collapsed, and
+ * the punctuation markdown uses for emphasis, code, headings and quoting turned into a space.
+ * A document writes hyphenated names, backticked words and `#`-style headings that a page
+ * renders without those characters, so normalizing one side only would leave those sentences
+ * unmatchable — invisible to a check that claims to test them. Both sides of every comparison
+ * go through this function, which is what makes the two the same text when the two are the
+ * same sentence.
+ */
+function flatten(text) {
+  return text
+    .replace(/[*_`#>|-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
 }
 
 /** One element of the page, as written in the build output. */
@@ -426,6 +452,22 @@ test("the community page links the repository's own community files, and each on
   )
 })
 
+test('no link on either page runs into the word that follows it', () => {
+  // Astro drops the whitespace between a closing tag and the text on the next line, so a
+  // sentence written as `<a>LICENSE</a>` followed by a newline and `is the whole of it` is
+  // built as "LICENSEis the whole of it" — the page reads wrong and no fact-check notices,
+  // because every fact on it is still there. The punctuation a sentence may legitimately run
+  // into (`</a>.`, `</a>,`, `</a>)`) is not a word, so the rule is a letter or digit.
+  for (const page of ['faq', 'community']) {
+    const glued = /<\/a>[A-Za-z0-9][^<]{0,40}/.exec(builtPage(page))
+    assert.equal(
+      glued,
+      null,
+      `website/src/pages/${page}.astro renders a link that runs into the word after it: ${JSON.stringify(glued && glued[0])} — write the space after the link as \`{' '}\``,
+    )
+  }
+})
+
 test('the licence is named, and it is the identifier LICENSE carries', () => {
   const page = builtPage('community')
   const first = readFileSync(path.join(REPO, 'LICENSE'), 'utf8').split('\n', 1)[0].trim()
@@ -444,6 +486,7 @@ test('the licence is named, and it is the identifier LICENSE carries', () => {
 // ---- neither page restates a document -----------------------------------------------------
 
 test('the FAQ names a source for every answer, and every source exists', () => {
+  const ci = ciTriggers()
   const page = builtPage('faq')
   const repository = /^repository:\s*(\S+)$/m.exec(readFileSync(path.join(REPO, 'website/data/site.yaml'), 'utf8'))[1]
   const prefix = `${repository}/blob/`
@@ -452,11 +495,36 @@ test('the FAQ names a source for every answer, and every source exists', () => {
   assert.ok(answers.length >= 5, `the FAQ renders ${answers.length} questions: it answers what the repository can prove, and that is more than a handful of them (W1.10 step 1)`)
 
   for (const [article, id] of answers) {
-    const sources = [...article.matchAll(new RegExp(`href="${escaped(prefix)}[^/"]+/([^"#]+)"`, 'g'))].map((m) => m[1])
+    const sources = [...article.matchAll(new RegExp(`href="${escaped(prefix)}([^/"]+)/([^"#]+)"`, 'g'))]
     assert.ok(sources.length > 0, `the FAQ's "${id}" names no source: every answer is traceable to a file in this repository or it is not written (D102, Global Constraint 6)`)
-    for (const source of sources) {
+    for (const [, branch, source] of sources) {
+      // The branch is read from ci.yml by the page, and it is the branch CI pushes to: a
+      // source link at a branch the project stopped building on is a link into nothing.
+      assert.equal(branch, ci.branches[0], `the FAQ's "${id}" links ${source} at branch ${branch}, and ${CI_FILE} pushes to ${ci.branches[0]}`)
       assert.ok(existsSync(path.join(REPO, source)), `the FAQ's "${id}" names ${source} as its source, and this repository does not have that file`)
     }
+  }
+})
+
+test('the FAQ follows ci.yml when the branch it pushes to changes', async (t) => {
+  // The FAQ reads its branch from the workflow file rather than typing it, and this is the
+  // case that holds the two together: move the push trigger to another branch in a copy and
+  // every source link has to point at that branch instead. A page that carried `main` as a
+  // string would keep pointing at it, which is the drift the reader exists to prevent.
+  const built = buildWith(
+    t,
+    (copy) => rewrite(path.join(copy.root, CI_FILE), (text) => text.replace(/^(\s+branches:\s*\[)main(\])/m, '$1trunk$2')),
+    'faq',
+  )
+
+  assert.equal(built.status, 0, `the build failed with another branch in ci.yml's push trigger:\n${built.output}`)
+  const ci = ciTriggers(path.join(built.copy.root, CI_FILE))
+  assert.equal(ci.branches[0], 'trunk', 'the fixture did not move the push trigger, so the case below would prove nothing')
+
+  const links = [...built.page.matchAll(/href="[^"]*\/blob\/([^/"]+)\//g)].map((m) => m[1])
+  assert.ok(links.length > 0, 'the FAQ renders no source link at all, so this case would prove nothing')
+  for (const branch of links) {
+    assert.equal(branch, 'trunk', `ci.yml pushes to trunk and the FAQ still links its sources at ${branch}`)
   }
 })
 
@@ -474,14 +542,20 @@ test('the FAQ links the security page and the caps guide rather than summarizing
 
 test('neither page restates README.md, CONTRIBUTING.md or SECURITY.md', () => {
   const pages = [
-    { name: 'website/src/pages/faq.astro', text: pageText(builtPage('faq')).toLowerCase() },
-    { name: 'website/src/pages/community.astro', text: pageText(builtPage('community')).toLowerCase() },
+    { name: 'website/src/pages/faq.astro', text: flatten(pageText(builtPage('faq'))) },
+    { name: 'website/src/pages/community.astro', text: flatten(pageText(builtPage('community'))) },
   ]
 
   // Every sentence of eight words or more a document carries, markdown stripped and
   // whitespace collapsed: a page that carried one of them would be the second copy of the
   // document — the copy that drifts first (F37, F47, Global Constraint 6). Eight words is
   // where "the same sentence" starts: shorter runs are phrases any two texts share.
+  //
+  // Both sides go through `flatten`, which is the point: a document writes `$HOME`-style
+  // hyphens and backticks that the page renders without them, so normalizing only the
+  // document side would hide every sentence carrying one of those characters from this
+  // check — a check that cannot see 57% of the sentences it claims to test is a check that
+  // passes for the wrong reason.
   for (const file of ['README.md', 'CONTRIBUTING.md', 'SECURITY.md']) {
     const sentences = sentencesOf(readFileSync(path.join(REPO, file), 'utf8'))
     assert.ok(sentences.length > 5, `${file} yields ${sentences.length} sentences of eight words or more, which is too few for this check to mean anything`)
@@ -497,7 +571,11 @@ test('neither page restates README.md, CONTRIBUTING.md or SECURITY.md', () => {
   }
 })
 
-/** The sentences of a markdown document, as the page would have to carry them to restate it. */
+/**
+ * The sentences of a markdown document, as the page would have to carry them to restate it.
+ * Each sentence goes through `flatten` so that it is compared to the page's text the way the
+ * page comparison flattens it too.
+ */
 function sentencesOf(markdown) {
   return markdown
     .replace(/```[\s\S]*?```/g, '\n\n')
@@ -505,6 +583,6 @@ function sentencesOf(markdown) {
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^#{1,6}\s.*$/gm, '')
     .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.replace(/[*_`#>|-]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase())
+    .map(flatten)
     .filter((sentence) => sentence.split(' ').length >= 8)
 }

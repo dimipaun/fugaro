@@ -282,8 +282,13 @@ const pullRequestsSentence = ci.pullRequest
   <section id="licence">
     <h2>Licence</h2>
     <p>
-      Fugaro is released under the {licence} licence: <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>
-      is the whole of it, and it is the only text that governs what you may do with the code.
+      Fugaro is released under the {licence} licence:{' '}
+      {/* The space after the link is explicit (`{' '}`): Astro drops the whitespace between a
+          closing tag and the text on the next line, and the built page would read
+          "LICENSEis the whole of it". website/test/faq-community.mjs refuses a link that runs
+          into the word after it, on both pages. */}
+      <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>{' '}is the whole of it, and it
+      is the only text that governs what you may do with the code.
     </p>
   </section>
 </Base>
