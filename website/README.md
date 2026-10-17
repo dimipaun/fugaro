@@ -45,8 +45,9 @@ the deploy workflow to run (that workflow is W2.1's: it is not written yet, it w
 `.github/workflows/`), and it is hermetic: it reads this
 repository, builds, and asserts over the artifact — no cloud, no credential, no deployed
 site. The live checks — the real domain, DNS, TLS and the deployed HTML — are the owner's,
-and W2.2 and W2.3 write them as **checks 69a–69c** in `docs/gcp-live-checklist.md`, whose
-highest written section is 58 today.
+and W2.2 and W2.3 write them as **checks 69a–69c** in `docs/gcp-live-checklist.md`: 69a (the
+site is live and honest) and 69b (nothing phones home) are written by W2.2, and 69c (the
+published ranges are real) is W2.3's, in the level after it.
 
 ## Nothing loads from a third party
 
@@ -180,9 +181,41 @@ home-screen icons, the manifest's colours (the palette's `--ground`), the header
 (`script-src 'self'`, inline styles allowed because Astro inlines small stylesheets),
 `nosniff`, a referrer policy, a one-year immutable cache for the hashed `/_astro/` files,
 a day for icons and fonts, and five minutes for HTML. It names no project and there is no
-`.firebaserc`. It landed ahead of W2.1 with the owner's deploy script; W2.1 and W2.2 extend it
-(the staged workflow, the redirect block), and W1.12 or W3.2 must widen the CSP when the
-consented analytics script is switched on, because the policy blocks it today.
+`.firebaserc`. It landed ahead of W2.1 with the owner's deploy script; W2.1 extends it (the
+staged workflow), and W1.12 or W3.2 must widen the CSP when the consented analytics script
+is switched on, because the policy blocks it today. **It carries no `redirects` block, and
+that is deliberate** — see the next section.
+
+### The canonical domain, and why the redirect is not in `firebase.json`
+
+`data/site.yaml`'s `canonical_url` is the one origin the canonical `<link>`, the sitemap, the
+OpenGraph tag and every absolute link on the site are built from, and it is the real domain
+the owner registered and connected Firebase Hosting to (owner ruling 2026-10-17; the site's
+own project is `fugaro-prod`, D91). `secondary_domain` names the second domain the owner
+acquired, and it **redirects to the canonical one**: the direction is the whole point of it,
+so the site links nothing on it and it is not on `allowed_hosts`. Both are named in
+`data/site.yaml` and nowhere else under `website/` —
+`TestWebsiteCanonicalURLAppearsOnlyInSiteYaml` in
+`internal/cli/docs_website_boundary_test.go` holds that, which is why this page does not
+print either domain.
+
+**The redirect is a property of the attached domain and not a `firebase.json` rule, and that
+is a fact about Firebase Hosting rather than a preference.** A Hosting redirect rule is
+matched against the request **path**, and firebase-tools' config schema for one admits only
+`destination`, one of `source`/`glob`/`regex`, and `type` (`schema/firebase-config.json`,
+`definitions/HostingRedirects`, `additionalProperties: false`): there is no field that could
+condition a rule on the request's host. A rule that sent every path to the canonical origin
+would therefore fire on the canonical origin too, answering a request with a redirect to
+itself — a loop. So the redirect is set where the domain is attached: the Firebase console's
+own redirect option when the second domain is added to the site's project, or the Hosting
+API's custom-domain redirect. **Registering a domain, attaching it and writing its DNS
+records are the owner's steps** — no agent registers a domain, touches DNS or changes the
+project — and until the domain is attached and that redirect is set, `secondary_domain` names
+a domain nothing answers on: the site is simply live on the canonical URL, and nothing in
+this repository changes that. The Go test above also refuses a `firebase.json` redirect that
+answers one of the site's own paths with the site's own host, so the looping rule cannot be
+added later by a task that assumes the domain step was already done, and check 69a in
+`docs/gcp-live-checklist.md` is where the live result is recorded.
 
 `scripts/deploy-website.sh` deploys from the owner's machine with the Firebase CLI, using
 whatever `firebase login` the owner already did — it never reads, prints or takes a token
