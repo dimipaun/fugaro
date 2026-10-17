@@ -687,11 +687,21 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
  * list. Keys accepted and not read (`project_layer`, `config_sha256`,
- * `image_age_s`, `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`,
- * `draft_fallback`, `pr_status_at`, `stale_draft`, `execution`, `batch`,
- * `halt`, `previous_run`, `base_branch`) are the ones this screen has no use
- * for yet; they are listed so that a document carrying them is read rather
- * than thrown away.
+ * `image_age_s`, `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`,
+ * `pr`, `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`,
+ * `stale_draft`, `execution`, `batch`, `halt`, `previous_run`, `base_branch`)
+ * are the ones this screen has no use for yet; they are listed so that a
+ * document carrying them is read rather than thrown away.
+ *
+ * **`artifact_count` and `artifact_bytes` were missing, and a review found it.**
+ * They sit between `outcome` and `task_pr` in the struct, so every
+ * `runs ls --json` row for a run that delivered artifacts carried two keys this
+ * list did not have and `closed()` refused the whole document as
+ * `runs[0].artifact_count`. The pinning test could not catch it because the
+ * expected list in that test was a second hand-written copy of this one: the
+ * two agreed with each other and both were wrong. That test now reads the struct
+ * (`internal/runview/runview.go`) and derives both lists from its tags, so the
+ * next omission fails there.
  */
 export const RECORD_KEYS = [
   'run',
@@ -718,6 +728,8 @@ export const RECORD_KEYS = [
   'settled',
   'branch',
   'outcome',
+  'artifact_count',
+  'artifact_bytes',
   'task_pr',
   'record_pr',
   'pr',
