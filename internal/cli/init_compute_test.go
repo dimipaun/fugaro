@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -161,6 +162,13 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 	}
 	if !strings.Contains(out, "provisions the Batch compute backend") {
 		t.Errorf("the confirmation did not say what it provisions:\n%s", out)
+	}
+	// The parenthetical is the plan's own counts sentence and nothing after
+	// it. counts.String() already ends in "updates", so a literal suffix left
+	// in the format string renders "…(0 imports, 14 creates, 0 updates to
+	// create)" on the one screen that authorizes billable resources.
+	if !regexp.MustCompile(`scheduled Cloud Build \(\d+ imports, \d+ creates, \d+ updates(, \d+ deletes, \d+ replaces)?\)`).MatchString(out) {
+		t.Errorf("the confirmation's counts are not the plan's own sentence:\n%s", out)
 	}
 	if !strings.Contains(out, infra.PreloadedImage(computePin)) {
 		t.Errorf("the preloaded image's name was not reported:\n%s", out)

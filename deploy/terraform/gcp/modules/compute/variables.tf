@@ -126,6 +126,18 @@ variable "launchers" {
 variable "operators" {
   description = "The installation's operators: the members who apply this root. They get actAs on the preload account and nothing else here — creating the rebuild's Scheduler job, whose OAuth token is minted from that account, needs it, and the same grant the installation module makes on its scheduler account."
   type        = set(string)
+
+  # The same shape the installation module validates its own operators against,
+  # because the list is the installation's and reaches here unchanged (init
+  # --provision-batch writes it from the spec). Each value becomes a
+  # project-level IAM member on the preload account (iam.tf's
+  # preload_operator), so a malformed one is not a no-op: without this it is
+  # accepted at plan time and fails at apply, as an API error naming the member
+  # rather than the variable.
+  validation {
+    condition     = alltrue([for m in var.operators : can(regex("^(user|group|serviceAccount|domain):[^ ]+$", m))])
+    error_message = "operators must be IAM members: user:, group:, serviceAccount: or domain: followed by the address (the same shape the installation module takes)."
+  }
 }
 
 variable "run_accounts" {

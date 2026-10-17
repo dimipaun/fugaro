@@ -563,6 +563,25 @@ run "a_domain_launcher_is_refused" {
   expect_failures = [var.launchers]
 }
 
+# operators is the other member-carrying variable, and it carries the same
+# shape rule the installation module validates its own list against: each value
+# becomes a project-level IAM member on the preload account (iam.tf's
+# preload_operator), so a bare address with no user:/group: prefix is refused
+# here rather than accepted and rejected by the IAM API at apply.
+run "a_malformed_operator_is_refused" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    operators = ["someone@example.com"]
+  }
+
+  expect_failures = [var.operators]
+}
+
 # A group is people with a membership list someone manages, and it is what the
 # installation module already grants the runs bucket's objectUser to, so it is
 # accepted here: refusing it would make a supported installation's launchers

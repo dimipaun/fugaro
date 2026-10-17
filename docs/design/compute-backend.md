@@ -3912,7 +3912,7 @@ senior reviewer before merge, not just the normal one.
    `TestCIWorkflowTestsEveryTerraformRoot` reads the staged copy the same way
    it reads `images.yml`'s — until the copy lands, CI checks the root's files
    through `terraform fmt`, `tflint`, `scan.sh` and the Go-side pins, but does
-   not run its `validate` or its sixteen mock-provider runs.** Image
+   not run its `validate` or its seventeen mock-provider runs.** Image
    streaming is **not** enabled (C4: the preloaded boot image is the
    fast-start path, and a Docker run's `options` needs streaming off), so
    `containerfilesystem` is not among the APIs it enables. The preload

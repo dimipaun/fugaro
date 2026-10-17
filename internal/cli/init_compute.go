@@ -121,7 +121,7 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 
 	// The confirmation, typed at a real terminal: --yes never covers this
 	// stage, and a run that cannot ask leaves it for the owner.
-	what := fmt.Sprintf("provisions the Batch compute backend in GCP project %s: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (%s to create)", e.lc.GCPProject, counts.String())
+	what := fmt.Sprintf("provisions the Batch compute backend in GCP project %s: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (%s)", e.lc.GCPProject, counts.String())
 	confirmed, reachable, err := r.askTyped(what)
 	if err != nil {
 		return initflow.Outcome{}, err
