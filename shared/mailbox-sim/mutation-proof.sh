@@ -288,14 +288,14 @@ run "a generator refuses a seed it could not replay" \
   "  return Object.freeze({ ok: true, ...rngOf(seed) });"
 
 # 10. The configuration, the actors, and the harness's own refusals.
-run "the prompt TTL is required" \
-  "  if (values.promptTtlMs === undefined) return refuse(REFUSAL.MISSING_FIELD, 'promptTtlMs');" ""
-run "the lease TTL is a TTL" \
-  "  if (leaseTtl !== undefined && (!Number.isSafeInteger(leaseTtl) || leaseTtl < 1)) {" \
-  "  if (false) {"
-run "the start time is a time" \
-  "  if (!Number.isSafeInteger(startMs) || startMs < 1 || startMs > MAX_TIMESTAMP) {" \
-  "  if (!Number.isSafeInteger(startMs)) {"
+#
+# There is deliberately no mutation for the prompt TTL, the start time or the
+# lease TTL. This harness hands all three to the modules that own them, and the
+# refusals a caller sees are the modules' own codes ('missing-field' from
+# `initialState`, 'invalid-now' from `initialState`, 'bad-ttl' from
+# `readLease`): a guard here would be re-implementing a rule the simulator
+# exists to compose, so there is no harness guard to mutate. The tests assert
+# those codes, which is what keeps the delegation honest rather than incidental.
 run "the injected clock is a clock" \
   "  if (clock === null || typeof clock !== 'object' || typeof clock.now !== 'function') {" \
   "  if (false) {"

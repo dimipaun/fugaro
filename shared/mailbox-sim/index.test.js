@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 
 import { isMessage } from '../mailbox-schema/index.js';
 import { KIND } from '../mailbox/index.js';
-import { MAX_CLOCK_SKEW, emptyLeaseState, takeLease } from '../lease/index.js';
+import { CLAIM_TTL, MAX_CLOCK_SKEW, emptyLeaseState, takeLease } from '../lease/index.js';
 import {
   DEFAULT_START_MS,
   FAULT,
@@ -373,6 +373,37 @@ test('a skew inside the tolerance is absorbed; one millisecond beyond it the mai
   assert.equal(refused.store.outbox.length, 0);
 });
 
+test('a consumer whose plan is ready but whose lease is gone acts on nothing', () => {
+  // The takeover is arranged between one consumer's delivery and its turn to
+  // act, so it is holding a plan of its own when it loses the lease. The
+  // compare-and-swap does not save it here: its snapshot is still the current
+  // generation, so the lease is the only thing between it and a second action
+  // on a message it has already acted on.
+  const run = simulator();
+  const first = run.consumer('consumer-1');
+  const second = run.consumer('consumer-2');
+  run.phone.writeInbox({ id: 'm1', text: 'hello' });
+  run.drain();
+
+  first.deliverPlan();
+  first.deliverCommit(); // consumer-1 takes the lease and delivers
+  // The claim goes stale: the clock moves past the lease's whole TTL, which is
+  // how a takeover happens between two consumers that agree on the time.
+  run.advance(CLAIM_TTL + MINUTE);
+  second.deliverPlan();
+  second.deliverCommit(); // consumer-2 takes it over and commits
+  first.actPlan(); // its own plan, and no longer its own lease
+  first.actCommit();
+
+  const report = run.report();
+  assert.equal(report.actings.length, 0, failure(report));
+  assert.deepEqual(
+    report.store.mailbox.seen.map((entry) => entry.status),
+    ['accepted'],
+  );
+  assert.equal(report.store.outbox.length, 0);
+});
+
 test('a consumer that takes the lease over does not act on what was already acted on', () => {
   // consumer-1's clock lags the phone's by the whole tolerance and
   // consumer-2's leads it, so consumer-1's claim is already stale when
@@ -503,6 +534,10 @@ test('a dropped write is recovered by a retry that is the same message, its at i
   });
   run.consumer('consumer-1');
   run.phone.writeInbox({ id: 'm1', text: 'hello' });
+  // The clock moves before the retry, so a retry that stamped a fresh `at`
+  // would be a *different* message and the mailbox would refuse it as a
+  // conflict: the same `at` is what the duty is about, not the same text.
+  run.advance(SECOND);
   run.tick();
   const report = run.report();
   assert.equal(report.faults.length, 1);
@@ -571,7 +606,10 @@ test('the simulator refuses a configuration the modules refuse, with their own c
   assert.equal(createSimulator({ promptTtlMs: 31 * 24 * HOUR }).code, 'invalid-prompt-ttl');
   assert.equal(createSimulator({ promptTtlMs: PROMPT_TTL, windowMs: 10 }).code, 'invalid-window');
   assert.equal(createSimulator({ promptTtlMs: PROMPT_TTL, maxSeen: 0 }).code, 'invalid-max-seen');
-  assert.equal(createSimulator({ promptTtlMs: PROMPT_TTL, startMs: 0 }).code, REFUSAL.BAD_NOW);
+  // The prompt TTL, the start time and the lease TTL are the modules' rules,
+  // and their refusals are the modules' codes: this harness composes them
+  // rather than restating them.
+  assert.equal(createSimulator({ promptTtlMs: PROMPT_TTL, startMs: 0 }).code, 'invalid-now');
   assert.equal(createSimulator({ promptTtlMs: PROMPT_TTL, clock: {} }).code, REFUSAL.NO_CLOCK);
   assert.equal(createSimulator({ promptTtlMs: PROMPT_TTL, leaseTtl: 25 * HOUR }).code, 'bad-ttl');
   assert.equal(createSimulator({ promptTtlMs: PROMPT_TTL, leaseTtl: 0 }).code, 'bad-ttl');

@@ -76,14 +76,7 @@
 // `shared/README.md` is the package's contract, and
 // `../../docs/mobile/implementation-plan.md`'s P1.5 is this file's task.
 
-import {
-  LEASE_CODES,
-  MAX_CLOCK_SKEW,
-  MAX_TIMESTAMP,
-  emptyLeaseState,
-  readLease,
-  takeLease,
-} from '../lease/index.js';
+import { LEASE_CODES, MAX_CLOCK_SKEW, emptyLeaseState, readLease, takeLease } from '../lease/index.js';
 import { validateMessage } from '../mailbox-schema/index.js';
 import {
   EVENT,
@@ -171,8 +164,6 @@ export const REFUSAL = Object.freeze({
   BAD_FAULT: 'bad-fault',
   MIXED_SCHEDULE: 'mixed-schedule',
   BAD_SCHEDULE_TEXT: 'bad-schedule-text',
-  BAD_NOW: 'bad-now',
-  BAD_TTL: 'bad-ttl',
   BAD_MILLISECONDS: 'bad-milliseconds',
   CAS_CONFLICT: 'cas-conflict',
   UNKNOWN_ACTOR: 'unknown-actor',
@@ -1301,15 +1292,14 @@ function readConfig(options) {
   ], 'options');
   if (!read.ok) return read;
   const values = read.values;
+  // `startMs`, `promptTtlMs` and `leaseTtl` are handed to the modules that own
+  // them without a second opinion here: `initialState` refuses a missing or
+  // out-of-range prompt TTL and an impossible `now`, and `readLease` refuses a
+  // TTL the lease would not hold — each with its own code. A guard of this
+  // harness's own would be re-implementing a rule it exists to compose, and
+  // would answer with the harness's code instead of the module's.
   const startMs = values.startMs === undefined ? DEFAULT_START_MS : values.startMs;
-  if (!Number.isSafeInteger(startMs) || startMs < 1 || startMs > MAX_TIMESTAMP) {
-    return refuse(REFUSAL.BAD_NOW, 'startMs');
-  }
-  if (values.promptTtlMs === undefined) return refuse(REFUSAL.MISSING_FIELD, 'promptTtlMs');
-  const leaseTtl = values.leaseTtl === undefined ? undefined : values.leaseTtl;
-  if (leaseTtl !== undefined && (!Number.isSafeInteger(leaseTtl) || leaseTtl < 1)) {
-    return refuse(REFUSAL.BAD_TTL, 'leaseTtl');
-  }
+  const leaseTtl = values.leaseTtl;
   return {
     ok: true,
     values: Object.freeze({
