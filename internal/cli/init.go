@@ -1273,23 +1273,41 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 //
 // In a managed project that sentence is false and dangerous, and so is every
 // hint: the addresses a managed project may delete or replace come from the
-// owner-written list a managed apply reads, an address named on the command
-// line of an applying command approves nothing (D74), and a refusal that named
-// a flag would be an instruction the session it refuses would follow — an agent
-// reads this text. So the sentence is the managed one (managedmode.DeleteAdvice
-// names the owner's object and the owner-run fugaro allow-delete, and no flag)
-// and DeleteHints is not called at all: its whole purpose is to say which flags
-// to re-pass, and in a managed project there are none to re-pass. The refusal
-// is replaced, never joined by a second one beside it.
+// owner-written list, an address named on the command line of an applying
+// command approves nothing (D74), and a refusal that named a flag would be an
+// instruction the session it refuses would follow — an agent reads this text.
+// So the sentence is the managed one (managedmode.DeleteAdvice names the
+// owner's object and the owner-run fugaro allow-delete, and no flag) and
+// DeleteHints is not called at all: its whole purpose is to say which flags to
+// re-pass, and in a managed project there are none to re-pass. The refusal is
+// replaced, never joined by a second one beside it.
 //
-// A project job's delete is refused first and whatever allowDelete names: its
-// retirement is not supported yet (infra.RefuseProjectJobDeletes).
-func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, allowDelete []string) error {
+// The sentence is only true of a run that reads the owner's list and refuses
+// the command line's addresses, and that is what managedAllowList does — the
+// advice and the behaviour are one change, because a refusal whose prescribed
+// action does not admit the next plan is an instruction to loop. allowDelete
+// is the list today's call site has always handed tf.Guard (for the
+// installation root: --allow-delete plus the hardening addresses init derives
+// itself; for --forget: the log isolation's own deletes), and named is the
+// part of it that came from this run's own command line.
+func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, allowDelete, named []string) error {
 	if err := infra.RefuseProjectJobDeletes(plan); err != nil {
 		return userErr("%v", err)
 	}
 	if r.managedProject(ctx, c) {
-		if err := tf.GuardWith(plan, allowDelete, managedmode.DeleteAdvice(r.gcpProject)); err != nil {
+		owner, err := r.managedAllowList(ctx, c, named)
+		if err != nil {
+			return err
+		}
+		// What init derives itself stays, and it is not an approval from a
+		// command line: the hardening addresses are the launcher grants this
+		// run is replacing, and --forget's are the log isolation's own
+		// deletes — both are read off the plan and the config by the run, and
+		// the apply they are part of is one no coding agent's session can
+		// confirm. An address the run was given is refused above before this
+		// list is built, so nothing from the command line reaches the guard.
+		list := append(slices.Clone(allowDelete), owner...)
+		if err := tf.GuardWith(plan, list, managedmode.DeleteAdvice(r.gcpProject)); err != nil {
 			return userErr("%s", err.Error())
 		}
 		return nil
@@ -1303,6 +1321,47 @@ func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, al
 		msg += "\nhint: " + h
 	}
 	return userErr("%s", msg)
+}
+
+// managedAllowList is the owner's own list, read for the plan this run is
+// about to guard, with the run's own command-line addresses refused by the
+// same call (infra/managed.GuardAllowList, which is that rule's one
+// implementation: it refuses the source before it reads anything, so an
+// address the owner approved is refused too when the run passed it).
+//
+// Before this, init fed its --allow-delete to the guard in a managed project
+// and never read the owner's list at all, so the managed sentence was false
+// twice over: the flag was honoured, and the list it named had no effect —
+// following the advice looped. The read is the managed apply's own: the
+// project's default runs bucket, proved against the project's number
+// (infra.ProjectNumber) and the managed label before anything in it is
+// believed, and it is only reached in a managed project (managedProject is the
+// read that decided that, and it is false when there are no clients).
+//
+// The list it returns is the owner's approval and nothing else; a list that is
+// absent or empty returns no addresses and no error, which is the fail-closed
+// answer (it approves no delete), and the guard then refuses as it does for
+// any other address the owner did not approve.
+func (r *initRun) managedAllowList(ctx context.Context, c *infra.Clients, named []string) ([]string, error) {
+	bucket := "fugaro-runs-" + r.gcpProject
+	number, err := infra.ProjectNumber(ctx, c, r.gcpProject)
+	if err != nil {
+		return nil, remote(err)
+	}
+	list, err := managed.GuardAllowList(ctx, c.Storage, bucket, r.gcpProject, number, named)
+	switch {
+	case len(named) > 0 && err != nil:
+		// GuardAllowList refuses the command line's addresses before it reads
+		// the object, so this is that refusal: the user's to act on (exit 1),
+		// and its words are the managed message's — the owner's list and the
+		// owner-run command, no flag.
+		return nil, userErr("nothing was applied: %v", err)
+	case errors.Is(err, managed.ErrRefused):
+		return nil, userErr("nothing was applied: the delete list of %s could not be read, and an unreadable list approves nothing: %v", r.projectName, err)
+	case err != nil:
+		return nil, remote(fmt.Errorf("reading gs://%s/%s for %s: %w", bucket, managed.AllowDeleteObject, r.projectName, err))
+	}
+	return list, nil
 }
 
 // managedProject is whether the project this run installs into is managed: the
@@ -1473,7 +1532,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
 		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
-		if err := r.guard(ctx, c, plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
+		if err := r.guard(ctx, c, plan, append(slices.Clone(r.o.allowDelete), hardening...), r.o.allowDelete); err != nil {
 			return outs, false, err
 		}
 		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
@@ -1976,7 +2035,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		if err := infra.CheckForgetPlan(plan); err != nil {
 			return initErr(err)
 		}
-		if err := r.guard(ctx, c, plan, infra.ForgetAllowDelete(plan)); err != nil {
+		if err := r.guard(ctx, c, plan, infra.ForgetAllowDelete(plan), nil); err != nil {
 			return err
 		}
 		counts := infra.CountPlan(plan)
@@ -2740,7 +2799,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
-	if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+	if err := r.guard(ctx, c, plan, r.o.allowDelete, r.o.allowDelete); err != nil {
 		return infra.RepoSpec{}, nil, err
 	}
 	counts := infra.CountPlan(plan)

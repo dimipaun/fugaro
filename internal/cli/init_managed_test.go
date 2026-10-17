@@ -499,6 +499,64 @@ func TestManagedInitRefusalNamesTheOwnersListAndNoFlag(t *testing.T) {
 	if len(r2.ran(t, "apply")) != 0 {
 		t.Fatal("a plan the guard refused was applied")
 	}
+
+	// (c) The action the refusal prescribes admits the next plan, which is the
+	// half a wording test cannot hold: the owner records the address in their
+	// own object, and the same run with the same plan is admitted and applied.
+	// Without this, the sentence names a list that has no effect and the reader
+	// it refuses loops.
+	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
+	r3 := newInitRig(t)
+	r3.managedRuns(t, initProjectName, initProject)
+	r3.allowDeleteList(t, initProject, address)
+	r3.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	out3, _, err := executeStdin(t, "", "init", "--yes")
+	if err != nil {
+		t.Fatalf("the run the owner's list admits was refused: %v\n%s", err, out3)
+	}
+	if len(r3.ran(t, "apply")) != 1 {
+		t.Fatalf("the owner's list admits the address and the plan was not applied:\n%s", out3)
+	}
+
+	// (d) The run's own addresses are refused as a source, in a managed project,
+	// and refused even when the owner's list names them (D74: what is refused is
+	// the source, not the value). The refusal names the address and the owner's
+	// object, carries no flag, and nothing is applied.
+	r4 := newInitRig(t)
+	r4.managedRuns(t, initProjectName, initProject)
+	r4.allowDeleteList(t, initProject, address)
+	r4.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	out4, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", address)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out4)
+	}
+	for _, want := range []string{address, "gs://" + initRunsBucket + "/fugaro/allow-delete.json", "fugaro allow-delete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal of the run's own address does not name %q:\n%s", want, err)
+		}
+	}
+	noFlagName(t, err.Error())
+	if len(r4.ran(t, "apply")) != 0 {
+		t.Fatal("an address the run passed on its command line was applied")
+	}
+}
+
+// allowDeleteList writes the owner's own object for a managed project: the
+// addresses the owner approved, in the shape fugaro allow-delete writes
+// (fugaro/allow-delete.json at the root of the project's runs bucket). It is
+// written here and not through WriteDeleteList because this rig has no
+// operator credential to write with, and what these tests are about is what a
+// run READS, not what the owner's command writes (internal/infra/managed's own
+// tests hold the writer).
+func (r *initRig) allowDeleteList(t *testing.T, gcp string, addresses ...string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"version": 1, "gcp_project": gcp, "addresses": addresses})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.AllowDeleteObject, body, nil); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // noFlagName fails when s names a command-line flag (Task 3.2's negative test:

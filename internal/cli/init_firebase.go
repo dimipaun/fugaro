@@ -98,7 +98,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		return false, false, remote(err)
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
-	if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+	if err := r.guard(ctx, c, plan, r.o.allowDelete, r.o.allowDelete); err != nil {
 		return false, false, err
 	}
 	counts := infra.CountPlan(plan)
