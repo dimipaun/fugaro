@@ -11,22 +11,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// fakeGH writes an executable gh into a temp dir, first on PATH, whose body is
-// script (run after the argv log line). It returns the file every invocation
-// appends its argv to, so a test can assert both what was run and that nothing
-// was run at all.
+// fakeGH puts a fake gh first on PATH whose body is script (run after the
+// argv log line). It returns the file every invocation appends its argv to, so
+// a test can assert both what was run and that nothing was run at all. It
+// writes no executable of its own: see testutil.FakeCommand for why.
 func fakeGH(t *testing.T, script string) string {
 	t.Helper()
-	dir := t.TempDir()
-	calls := filepath.Join(dir, "calls")
-	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + calls + "\n" + script
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return calls
+	return testutil.FakeCommand(t, "gh", script)
 }
 
 // ghCalls is the argv of every fake gh invocation, in order.
@@ -428,16 +423,10 @@ func TestPRStateRetriesAFailureSlowly(t *testing.T) {
 // not a failure that happened once and was fixed a minute later.
 func TestPRStateNoteClearsWhenGHAgreesAgain(t *testing.T) {
 	dir := t.TempDir()
-	calls := filepath.Join(dir, "calls")
-	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + calls + "\n" +
-		"if [ -f " + dir + "/broken ]; then echo 'gh: could not resolve' >&2; exit 1; fi\necho OPEN\n"
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	fakeGH(t, "if [ -f "+dir+"/broken ]; then echo 'gh: could not resolve' >&2; exit 1; fi\necho OPEN\n")
 	if err := os.WriteFile(filepath.Join(dir, "broken"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	now := time.Unix(1_700_000_000, 0)
 	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, Retry: time.Minute})
@@ -478,7 +467,6 @@ func TestPRStateDisabled(t *testing.T) {
 // Many rows resolve, and never more than Concurrency gh processes at a time.
 func TestPRStateBoundsConcurrency(t *testing.T) {
 	dir := t.TempDir()
-	calls := filepath.Join(dir, "calls")
 	live := filepath.Join(dir, "live")
 	peak := filepath.Join(dir, "peak")
 	// The script counts how many copies of itself are running at once, the
@@ -489,17 +477,12 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	with := func(body string) string {
 		return "while ! mkdir " + lock + " 2>/dev/null; do sleep 0.01; done\n" + body + "\nrmdir " + lock + "\n"
 	}
-	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$*\" >> " + calls + "\n" +
+	calls := fakeGH(t,
 		with("n=$(cat "+live+" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "+live+"\n"+
-			"p=$(cat "+peak+" 2>/dev/null || echo 0); [ \"$n\" -gt \"$p\" ] && echo $n > "+peak) +
-		"sleep 0.2\n" +
-		with("n=$(cat "+live+" 2>/dev/null || echo 0); echo $((n-1)) > "+live) +
-		"echo OPEN\n"
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			"p=$(cat "+peak+" 2>/dev/null || echo 0); [ \"$n\" -gt \"$p\" ] && echo $n > "+peak)+
+			"sleep 0.2\n"+
+			with("n=$(cat "+live+" 2>/dev/null || echo 0); echo $((n-1)) > "+live)+
+			"echo OPEN\n")
 
 	p := NewPRState(PRStateOptions{Concurrency: 2})
 	var rows []ReadyRow
