@@ -198,11 +198,15 @@ func firstLineDifference(got, want string) string {
 
 // clipSecurityLine shortens a line for a failure message: SECURITY.md's
 // paragraphs are long, and the message that names the difference should not
-// be buried under one of them.
+// be buried under one of them. The cut is made on runes, not bytes, because
+// the document is full of multi-byte punctuation (its em dashes): a byte cut
+// can land inside a rune and put invalid UTF-8 into the failure message of
+// the test a reader is reading precisely because something drifted.
 func clipSecurityLine(s string) string {
 	const limit = 240
-	if len(s) <= limit {
+	runes := []rune(s)
+	if len(runes) <= limit {
 		return s
 	}
-	return s[:limit] + "..."
+	return string(runes[:limit]) + "..."
 }
