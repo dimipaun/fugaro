@@ -1,6 +1,6 @@
 # The Fugaro website: implementation plan
 
-Status: **plan only; nothing is implemented.** Owner: **@Dimi**. Date: **2026-10-16**. This plan executes [reconciliation.md](reconciliation.md), whose findings it cites by number (`F<n>`); the owner's own text is [spec.md](spec.md). Directory index: [README.md](README.md).
+Status: **wave 1 started, 2026-10-17.** Owner: **@Dimi**. Date: **2026-10-16**. This plan executes [reconciliation.md](reconciliation.md), whose findings it cites by number (`F<n>`); the owner's own text is [spec.md](spec.md). Directory index: [README.md](README.md). **The owner answered all twenty rows of the reconciliation's §4 and gave the go for wave 1 on 2026-10-17** (§7.1's rule, §13, §15), so W0.1 is in flight and every other wave is still waiting on the decisions §7.1 lists for it.
 
 Related: [docs/plans/2026-10-16-managed-projects.md](../plans/2026-10-16-managed-projects.md) (the shape this plan follows, and the sibling that holds D55–D78 and checks 67–68), [docs/design/desktop-console.md](../design/desktop-console.md) (D2, D4, D10, D11 — read, not reopened), [docs/release.md](../release.md), [docs/pending-workflows/README.md](../pending-workflows/README.md), [docs/gcp-live-checklist.md](../gcp-live-checklist.md), [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
@@ -157,11 +157,11 @@ Each group is one pull request, each independently mergeable, each with its own 
 
 **Nine agent tasks on the chain (L0–L8), and the owner-run points beside and after it** (the live checks 69a/69b and 69c, the console's first release, D93's answer and the video). W2.4 is not on the chain: it shares L8 with W2.3 and ends there. **Everything else is a side branch and can land in any order**: W0.3 (the aggregation) is the largest single piece of work in the plan and is on no path to the site at all — it blocks only W2.3, the published figures, which is the one page that can wait. W0.4, W0.5 and W0.6 are three independent generators, and a reader benefits from each the day it merges. W1.5 through W1.10 are six independent pages behind one shell.
 
-**What the parallelism buys, stated honestly.** The plan's wall-clock is not the sum of its tasks: L0 is five agents, L4 is seven, and the only true serialization is the shell (W1.1 → W1.3) and the gates (W1.11, W2.1). The reason to cut it this way is not speed but **independence**: every level's PR is mergeable alone, and what the owner's unanswered decisions block is bounded and known — §7.1 states it row by row.
+**What the parallelism buys, stated honestly.** The plan's wall-clock is not the sum of its tasks: L0 is five agents, L4 is seven, and the only true serialization is the shell (W1.1 → W1.3) and the gates (W1.11, W2.1). The reason to cut it this way is not speed but **independence**: every level's PR is mergeable alone, and what each wave's decisions block is bounded and known — §7.1 states it row by row.
 
 ### 7.1 What can start, and under which answers
 
-**One rule, and §3, §13, §15, the README and the reconciliation point here rather than restating it.** The owner's direction on this work (2026-10-16) is to **start as soon as we can**; that is a direction and not an approval — no row in the reconciliation's §4 is answered. So:
+**One rule, and §3, §13, §15, the README and the reconciliation point here rather than restating it.** The owner's direction on this work (2026-10-16) was to **start as soon as we can**; on **2026-10-17 the owner answered the reconciliation's §4 and gave the go for wave 1**, so wave 1 is in flight and no other wave is. So:
 
 > **A wave may start as soon as the owner has answered the decisions that wave depends on, listed below, and given a go for that wave. The other waves wait on their own listed decisions. Nothing else blocks** — no other row of §4 and no other item of §15.
 
@@ -619,9 +619,9 @@ The waves, and the decisions each one depends on:
 
 ## 13. Decisions this plan defers to the owner
 
-**All twenty rows of the reconciliation's §4 are unanswered, and seven of them are the owner's alone.** Which wave waits on which of them is §7.1's rule; this table says what each one governs:
+**The owner answered all twenty rows of the reconciliation's §4 on 2026-10-17, and gave the go for wave 1 in the same session.** Which wave waits on which of them is §7.1's rule; this table says what each one governs, and its last column is what the row would have cost unanswered rather than the state of the tree — every row now carries an answer:
 
-| Decision | Governs | If unanswered |
+| Decision | Governs | If it had gone unanswered |
 |---|---|---|
 | **D90** where the site lives | **Every path under `website/`**: wave 1 except W0.3, and Parts 1–3 | Only W0.3 can start (once D96 is answered); nothing that writes under `website/` starts. |
 | **D91** hosting | W2.1, W2.2 | Part 1 lands and builds; nothing deploys. |
@@ -631,7 +631,7 @@ The waves, and the decisions each one depends on:
 | **D102** the tagline | W1.4's tagline, which starts on the default | The hero renders the line under `README.md`'s `# Fugaro` title, which is the tagline already. |
 | **D104** the palette | W1.2's palette in force, which starts on the default | The split palette (violet structure, orange cost) is the default; the owner's answer is a one-line change. |
 
-**Everything else in §4 is a finding with a stated resolution** (D94, D95, D97–D101, D103, D105–D109), and this plan implements the recommendation unless the owner overrides it. **What can start, and under which of these answers, is §7.1's one rule** — a wave starts once the owner has answered the decisions that wave depends on and given a go for it; wave 1 (W0.1, W0.2, W0.4, W0.5, W0.6) needs D90 for its output path, W0.3 needs D96, Part 1 needs nothing beyond D90, Part 2 needs D91, D92 and the register's 69 (W2.3 also D96), and Part 3 waits on the owner's own events. Nothing else blocks.
+**Everything else in §4 is a finding with a stated resolution** (D94, D95, D97–D101, D103, D105–D109), and this plan implements the recommendation unless the owner overrides it — and the owner overrode two of them on 2026-10-17: **D91** (Firebase Hosting, in a Firebase project created for the site alone and never an installation's) and **D93** (Firebase Analytics, behind a consent banner), each recorded with its consequences in §4. **What can start, and under which of these answers, is §7.1's one rule** — a wave starts once the owner has answered the decisions that wave depends on and given a go for it, **and wave 1 has that go (2026-10-17), so it is in flight**; wave 1 (W0.1, W0.2, W0.4, W0.5, W0.6) needs D90 for its output path, W0.3 needs D96, Part 1 needs nothing beyond D90, Part 2 needs D91, D92 and the register's 69 (W2.3 also D96), and Part 3 waits on the owner's own events. Nothing else blocks.
 
 ## 14. Open items, listed rather than fixed
 
@@ -648,7 +648,7 @@ The waves, and the decisions each one depends on:
 
 ## 15. OWNER APPROVAL GATE
 
-**The gate is §7.1's rule, per wave, and nothing more:** a wave starts once the owner has answered the decisions §7.1 lists for **that wave** and given a go for that wave; the other waves wait on their own listed decisions. The owner's direction (2026-10-16) was to **start as soon as we can**; that is a direction and not an approval of any row, and a go is not an answer to one. The items below are what a go is given on; **none of them is a start condition unless §7.1 lists it**.
+**The gate is §7.1's rule, per wave, and nothing more:** a wave starts once the owner has answered the decisions §7.1 lists for **that wave** and given a go for that wave; the other waves wait on their own listed decisions. The owner's direction (2026-10-16) was to **start as soon as we can**, and on **2026-10-17 the owner answered the reconciliation's §4 and gave the go for wave 1** — so wave 1 is in flight (W0.1 first) and every other wave is still waiting. The items below are what a go is given on; **none of them is a start condition unless §7.1 lists it**.
 
 1. **Answer, wave by wave, the rows §7.1 lists** — **D90** for wave 1, **D96** for W0.3 and W2.3, **D91** and **D92** for Part 2 — and in time the rest of §4, including the other OWNER-ONLY rows (**D93** analytics, **D102** the tagline, **D104** the palette), which start on their defaults and change one line when answered. A row that no wave lists blocks nothing; the plan implements its recommendation until the owner overrides it.
 2. **The order**, which puts the generated facts and their drift tests (Part 0) and the aggregation command (W0.3) **before any site code**, and which is the recommendation rather than the only possibility.

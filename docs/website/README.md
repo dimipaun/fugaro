@@ -1,8 +1,8 @@
 # The Fugaro website
 
-**Status: plan only; nothing is implemented.** Owner: **@Dimi**. Date: **2026-10-16**.
+**Status: wave 1 started, 2026-10-17.** Owner: **@Dimi**. Date: **2026-10-16**.
 
-This directory is the documentation of a **second artifact**: a public site for Fugaro. It is a directory rather than a pair of files under `docs/design/` and `docs/plans/` because the site is not a feature of the Go program — it is its own build, in its own language, deployed on its own schedule, which is what `console/` is (reconciliation F2). **No site code exists**: there is no `website/` directory, no hosting configuration, no domain and no web asset of any kind in this repository today (F1).
+This directory is the documentation of a **second artifact**: a public site for Fugaro. It is a directory rather than a pair of files under `docs/design/` and `docs/plans/` because the site is not a feature of the Go program — it is its own build, in its own language, deployed on its own schedule, which is what `console/` is (reconciliation F2). **Wave 1 of the plan has started**: `website/data/install.yaml` — the one install source, carrying the reader-facing platform list — and the Go test that pins it to `README.md`, `docs/release.md` and `.goreleaser.yaml` (`internal/cli/docs_website_install_test.go`, W0.1) are in the tree today. There is still **no site code, no hosting configuration, no domain and no web asset** of any kind in this repository (F1).
 
 ## The four documents, in reading order
 
@@ -19,17 +19,19 @@ The spec is a good brief for a marketing site and the repository can back most o
 
 Three corrections the reconciliation makes, in one line each:
 
-- **Firebase Hosting is out**, not because Firebase is bad but because **the repository's Firebase project is an installation's** — *"one Firebase project serves one installation"*, stated in three documents, and in project-centric mode every installation including a customer's has one. A public site there would be deployed into somebody's installation, with a credential against it (F13).
+- **Firebase Hosting is out** as the spec first put it, not because Firebase is bad but because **the repository's Firebase project is an installation's** — *"one Firebase project serves one installation"*, stated in three documents, and in project-centric mode every installation including a customer's has one. A public site there would be deployed into somebody's installation, with a credential against it (F13). **D91's answer keeps that rule and settles the finding around it**: the site is hosted on Firebase Hosting, in a **Firebase project created for the site alone** — never an installation's — with its own credential held as a GitHub Actions repository secret (D91, F14).
 - **The caps-and-costs guide's numbers are data about the owner's own installations**, one of which holds repositories no agent may touch. They come from an owner-run, read-only aggregation over one named installation that emits percentiles and **no repository name, run ID, branch, task text or person**, from a sample of at least N runs, with a "not a promise" line (D96–D97, W0.3).
 - **Everything the site would say that the product cannot back today is held back**: no console download link (the console is designed and unshipped), no "~2 h" sentence (nothing measures task duration — the tree records deadlines, not durations), no Windows support claim (no Windows build exists), and no competitor comparison without a source and a date.
 
-## What the owner has to answer
+## What the owner has answered
 
-Twenty rows, **D90–D109**, in the reconciliation's §4, each with this document's recommendation, the cost of the alternative, and an **empty Owner's answer column**. Seven are the owner's alone — **D90** where the site lives, **D91** hosting, **D92** domain and redirects, **D93** analytics, **D96** the aggregation's data policy, **D102** the tagline, **D104** the palette — and **D90 decides every path in the plan**. The plan's §7.1 states the one rule for what can start: **a wave starts as soon as the owner has answered the decisions that wave depends on and given a go for it; the other waves wait on their own; nothing else blocks** — the first wave needs D90, W0.3 needs D96, Part 2 needs D91, D92 and the register's 69 — and §15 is that rule as the gate that turns the owner's *"start as soon as we can"* into a go, one wave at a time.
+Twenty rows, **D90–D109**, in the reconciliation's §4, each with this document's recommendation, the cost of the alternative, and the **Owner's answer** — and **the owner answered all twenty on 2026-10-17**: six of the seven OWNER-ONLY rows in his own words — **D90** where the site lives, **D91** hosting, **D93** analytics, **D96** the aggregation's data policy, **D102** the tagline, **D104** the palette — and **D92** (domain and redirects) with the other thirteen as recommended. **In the same session the owner gave the go for wave 1**, which is the plan's §7.1 rule satisfied for that wave: **a wave starts as soon as the owner has answered the decisions that wave depends on and given a go for it; the other waves wait on their own; nothing else blocks.** Wave 1 is W0.1–W0.6 — **W0.1 has landed** and W0.3's row (**D96**) is answered, so it may start — Part 2 still needs the register's 69 beside D91 and D92, and Part 3 waits on the owner's own events (the console's first release and the video; D93 is answered). §15 is §7.1's rule as the gate that turned the owner's *"start as soon as we can"* into a go, one wave at a time.
 
 The plan takes **check 69 and up** (written as 69a–69c) for the site's live checks; the highest written section in [docs/gcp-live-checklist.md](../gcp-live-checklist.md) on `main` is 58, and 59–68 are reserved by the console, budget-token-channel, project-centric, console-v2, voice and managed-projects lines. **A reserved number is never reused or renumbered**; if 69 is taken before the plan's Part 2 lands, the owner reallocates and the plan follows.
 
-## Where the work happens, once it is approved
+## Where the work happens
+
+Wave 1 has started (W0.1 landed, 2026-10-17); each part below is the plan's own grouping, and each task's status is in [implementation-plan.md](implementation-plan.md).
 
 | Part | What it ships | Paths |
 |---|---|---|
