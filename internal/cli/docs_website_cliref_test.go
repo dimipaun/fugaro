@@ -115,12 +115,13 @@ func cliRefFlagNames(c *cobra.Command) (visible, hidden []string) {
 }
 
 // cliRefFlagRows returns the flag names the given section documents, read off
-// the flag table's first column.
+// the flag table's first column and stripped of the dashes a reader types: the
+// names are compared with pflag's own, which carry none.
 func cliRefFlagRows(lines []string) []string {
 	var out []string
 	for _, line := range lines {
 		if m := cliRefFlagRowRE.FindStringSubmatch(line); m != nil {
-			out = append(out, m[1])
+			out = append(out, strings.TrimLeft(m[1], "-"))
 		}
 	}
 	return out
