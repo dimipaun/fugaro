@@ -644,13 +644,58 @@ function pick(row: SpendRow, account: SpendAccount): Reading {
   }
 }
 
-/** pointAt is one point: the reading, whether the row it came from is partial,
- * and its height as a share of the axis top. */
-function pointAt(at: string, key: string, reading: Reading, peak: number, partial: boolean): SpendPoint {
+/** Plotted is one value on the axis before the axis has a top: the account's
+ * reading at a point, and the two flags of the row it came from. */
+interface Plotted {
+  readonly at: string
+  readonly key: string
+  readonly reading: Reading
+  readonly partial: boolean
+}
+
+/** plotted is one row's value in one account. */
+function plotted(row: SpendRow, account: SpendAccount): Plotted {
+  return {
+    at: row.start ?? row.key,
+    key: row.key,
+    reading: pick(row, account),
+    partial: row.partial,
+  }
+}
+
+/**
+ * NO_DOCUMENT_DAY is the console's sentence about a gap in a day series. It
+ * names no figure, because the fact it states is the console's: it has no
+ * document for this day -- the day is outside the window `report` read, or it
+ * was never written -- which is a different thing from a day that spent
+ * nothing. The second sentence is the short form the height carries.
+ */
+const NO_DOCUMENT_DAY =
+  'the history holds no document for this day: it is outside the retained window, or it was never written'
+const NO_DOCUMENT_DAY_SHORT = 'the history holds no document for this day'
+
+/** dayGap is the point for a day inside the range that the history does not
+ * hold: a **gap** in both senses the screen draws -- the em dash where a figure
+ * would be, and the break in the line. */
+function dayGap(day: string): SpendPoint {
+  const reading = gap(NO_DOCUMENT_DAY)
+  return {
+    at: day,
+    key: day,
+    reading,
+    height: gap(NO_DOCUMENT_DAY_SHORT),
+    partial: false,
+    hollow: false,
+  }
+}
+
+/** pointAt is one value once the axis has a top: the reading, whether the row
+ * it came from is partial, and its height as a share of the series' own peak. */
+function pointAt(value: Plotted, peak: number): SpendPoint {
+  const { at, key, reading, partial } = value
   if (reading.value === null) {
-    // A point that is not plottable is a **gap**: it is drawn as the mark, it
-    // breaks the series, and it is never given a height. The reason travels
-    // with it, so the tooltip says which of the two facts it is.
+    // A point that is not plottable is a gap: the mark, no height, and the
+    // reason travels with it so the tooltip says which fact it is.
     return { at, key, reading, height: gap(reading.because), partial, hollow: partial }
   }
   const share = peak === 0 ? 0 : (reading.value / peak) * 100
@@ -674,28 +719,20 @@ export function buildSeries(
   account: SpendAccount,
   days: readonly string[] | null,
 ): SpendSeries {
-  const byKey = new Map<string, SpendRow>()
-  for (const row of rows) byKey.set(row.key, row)
-
-  const points: SpendPoint[] = []
-  if (days !== null) {
+  const values: Plotted[] = []
+  if (days === null) {
+    for (const row of rows) values.push(plotted(row, account))
+  } else {
+    const byKey = new Map<string, SpendRow>()
+    for (const row of rows) byKey.set(row.key, row)
     for (const day of days) {
       const row = byKey.get(day)
       if (row === undefined) {
-        points.push({
-          at: day,
-          key: day,
-          // A gap's sentence names no figure: the console is saying it has no
-          // document for this day, not that the day spent nothing.
-          reading: gap('the history holds no document for this day: it is outside the retained window, or it was never written'),
-          height: gap('the history holds no document for this day'),
-          partial: false,
-          hollow: false,
-        })
+        values.push({ at: day, key: day, reading: gap(NO_DOCUMENT_DAY), partial: false })
         continue
       }
       byKey.delete(day)
-      points.push(pointAt(row.start ?? row.key, row.key, pick(row, account), 0, row.partial))
+      values.push(plotted(row, account))
     }
     // A row the range does not cover is still a row the document holds: it is
     // appended rather than dropped, because the document is the authority about
@@ -703,30 +740,28 @@ export function buildSeries(
     for (const row of rows) {
       if (!byKey.has(row.key)) continue
       byKey.delete(row.key)
-      points.push(pointAt(row.start ?? row.key, row.key, pick(row, account), 0, row.partial))
+      values.push(plotted(row, account))
     }
-  } else {
-    for (const row of rows) points.push(pointAt(row.start ?? row.key, row.key, pick(row, account), 0, row.partial))
   }
 
-  const values: number[] = []
-  for (const point of points) {
-    if (plottable(point.reading) && point.reading.value !== null) values.push(point.reading.value)
+  const measuredValues: number[] = []
+  for (const value of values) {
+    if (plottable(value.reading) && value.reading.value !== null) measuredValues.push(value.reading.value)
   }
-  const peakValue = values.length === 0 ? 0 : Math.max(...values)
-  const scaled = points.map((point) => pointAt(point.at, point.key, point.reading, peakValue, point.partial))
+  const peakValue = measuredValues.length === 0 ? 0 : Math.max(...measuredValues)
+  const points = values.map((value) => pointAt(value, peakValue))
   const peak =
-    values.length === 0
+    measuredValues.length === 0
       ? unavailable('this account has no value in the range the document covers')
       : withAccountState(peakValue, account)
-  const samples: Sample[] = scaled.map((point) => ({ at: point.at, reading: point.reading }))
+  const samples: Sample[] = points.map((point) => ({ at: point.at, reading: point.reading }))
   return {
     account,
     title: ACCOUNT_TITLES[account],
-    points: scaled,
+    points,
     segments: seriesSegments(samples).length,
     peak,
-    empty: scaled.length === 0 ? 'the document holds no row for this account' : null,
+    empty: points.length === 0 ? 'the document holds no row for this account' : null,
   }
 }
 
@@ -900,13 +935,15 @@ export function buildSpendModel(
   if (withheld) notes.push(PERSON_OFF_NOTE)
   if (!rowsReadable) {
     notes.push('the document carries no rows array, so this screen has no figures to draw')
-  } else if (dimension === 'day' && days !== null && drawn.length < days.length) {
+  } else if (hasGapDay(drawn, days)) {
     // The legend for the gap points: a reader who sees a broken line is owed
-    // the sentence that says what a missing day means.
+    // the sentence that says what a missing day means. It is drawn when a day
+    // the range covers has no row -- not merely when there are fewer rows than
+    // days, because a row outside the range is a row, not a gap.
     notes.push('a day in this range with no document is a gap, not a zero: the history keeps a window and days outside it are pruned')
   }
   if (dimension === null) {
-    notes.push('the document groups by a breakdown this console does not know, so the switch below names none of its own')
+    notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its seven words it is')
   }
 
   return {
@@ -935,6 +972,17 @@ export function buildSpendModel(
     warnings: arrayAt(report['warnings']).filter((warning): warning is string => typeof warning === 'string'),
     notes,
   }
+}
+
+/** hasGapDay says whether a day of the enumerated range has no row at all,
+ * which is the fact the gap legend is about. `days` is `null` unless the
+ * document groups by day and the range could be enumerated, and with no range
+ * there is no day the console knows is missing. */
+function hasGapDay(rows: readonly SpendRow[], days: readonly string[] | null): boolean {
+  if (days === null) return false
+  const held = new Set<string>()
+  for (const row of rows) held.add(row.key)
+  return days.some((day) => !held.has(day))
 }
 
 /** withheldSeries is one account's chart when the person rows are withheld:

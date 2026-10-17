@@ -696,6 +696,25 @@ describe('a day the history does not hold', () => {
     ).toEqual(['2026-10-14', '2026-10-14', '2026-10-14'])
   })
 
+  it('says nothing about gaps when every day of the range has a row', () => {
+    // The other side of the boundary: a range whose days are all in the history
+    // is one unbroken line and no legend. A console that drew the legend
+    // whenever the rows were fewer than the days -- rather than whenever a day
+    // was actually missing -- would explain a gap it did not draw.
+    const fourth = { ...DAY_ROWS[0], key: '2026-10-14', start: '2026-10-14', end: '2026-10-14' }
+    const model = buildSpendModel({ ...DAY_REPORT, rows: [...DAY_ROWS, fourth] }, BUDGET)
+    expect(model.notes).toEqual([])
+    const billed = seriesOf(model, 'model')
+    expect(billed.points.map((point) => point.key)).toEqual([
+      '2026-10-12',
+      '2026-10-13',
+      '2026-10-14',
+      '2026-10-15',
+    ])
+    expect(billed.segments).toBe(1)
+    expect(billed.points.every((point) => point.reading.state === 'measured')).toBe(true)
+  })
+
   it('is only a gap inside the range the document covers', () => {
     // A range the console cannot enumerate -- `by model`, and any `by` whose
     // `since`/`until` it could not read -- has the document's own rows as its
