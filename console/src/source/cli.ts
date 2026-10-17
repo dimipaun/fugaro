@@ -520,25 +520,66 @@ interface ResolvedSource {
 }
 
 /**
- * parseStdout reads a one-shot read's stdout. A document that a human sentence
- * accompanies is still a document -- the CLI writes its degraded-mode notices to
- * stdout on the same stream -- so the lines are decoded one by one and **the last
- * JSON object wins**, with every line that was not one kept as a notice. A read
- * whose stdout holds no JSON object at all answers `document: null`, which the
- * caller turns into a refusal rather than an empty screen.
+ * parseStdout reads a one-shot read's stdout. Every one-shot command in the
+ * console's set prints ONE document indented over several lines
+ * (`console/docs/json-contract.md` section 9.2: a line parser is right only for
+ * `watch` and `logs`), so the document is read whole: it opens with a `{` at
+ * the start of a line and closes with a `}` alone at the start of a line --
+ * the shape `json.MarshalIndent` and `SetIndent` write, where every nested line
+ * is indented -- or it is one compact line. A nested `{}` is indented and is
+ * never taken for the document. A line outside the document that is not blank
+ * is kept as a notice (the CLI's degraded-mode sentences share the stream).
+ *
+ * A read whose stdout holds no document, a torn one, or more than one answers
+ * `document: null`, which the caller turns into a refusal rather than an empty
+ * screen or a guess at which document was meant.
  */
 export function parseStdout(
   stdout: string,
   receivedAt = '',
 ): { readonly document: JSONObject | null; readonly notices: readonly Notice[] } {
   const notices: Notice[] = []
-  let document: JSONObject | null = null
-  for (const line of stdout.split('\n')) {
-    const decoded = decodeFeedLine(line)
-    if (decoded.kind === 'document') document = decoded.document
-    else if (decoded.kind === 'notice') notices.push({ text: decoded.text, receivedAt })
+  const documents: JSONObject[] = []
+  let torn = false
+  const lines = stdout.split('\n').map((line) => line.replace(/\r$/, ''))
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] as string
+    if (line.trim() === '') continue
+    if (!line.startsWith('{')) {
+      notices.push({ text: line, receivedAt })
+      continue
+    }
+    const compact = decodeFeedLine(line)
+    if (compact.kind === 'document') {
+      documents.push(compact.document)
+      continue
+    }
+    // An indented document: read to the `}` that closes it at column 0.
+    let end = i + 1
+    while (end < lines.length && lines[end] !== '}') end += 1
+    if (end >= lines.length) {
+      torn = true
+      break
+    }
+    const decoded = decodeDocument(lines.slice(i, end + 1).join('\n'))
+    if (decoded === null) torn = true
+    else documents.push(decoded)
+    i = end
   }
+  const document = !torn && documents.length === 1 ? (documents[0] as JSONObject) : null
   return { document, notices }
+}
+
+/** decodeDocument is one JSON object, or null for anything else. */
+function decodeDocument(text: string): JSONObject | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  return parsed as JSONObject
 }
 
 /**
@@ -566,7 +607,8 @@ export interface LogEntries {
 /**
  * parseLogEntries reads `logs RUN --json`'s stdout: one compact `logLine`
  * object per line (contract section 6.2), so **every** line is an entry -- not
- * the last one, which is the rule for the indented documents (`parseStdout`).
+ * one document read whole, which is the rule for the indented documents
+ * (`parseStdout`).
  *
  * Each line is held to the entry's shape before it is kept: a line past the
  * feed's line cap is refused without being parsed, a torn or non-object line is
