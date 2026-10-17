@@ -4,7 +4,7 @@ Mobile plan, Task **P0.3** (**SECURITY-SENSITIVE**), decision **D124**. One
 validator, written once, for every link either artifact may open.
 
 **Status: implemented, with an empty allow-list.** `index.js` and
-`index.test.js`; `npm test` from `shared/` runs 39 tests and they pass. The
+`index.test.js`; `npm test` from `shared/` runs 42 tests and they pass. The
 module is complete and the list it checks against is **not** — see below.
 
 ## The rule
