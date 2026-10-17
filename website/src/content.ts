@@ -1,0 +1,1006 @@
+// website/src/content.ts — the site's content pipeline (website plan, Task W1.3).
+//
+// One module reads every fact the site renders, and one rule decides what happens when
+// one of them is not there: **the build fails, loudly, naming the file**. A page that
+// renders an empty install block, or an ungenerated security page, is the defect this
+// module exists to remove — an `undefined` that reaches a template is a page that ships
+// with a hole in it, and nothing in the artifact says so.
+//
+// Where the facts come from, and why they are read here rather than typed into a page
+// (Global Constraint 6, the README's "A page renders a fact; it never restates one"):
+//
+//   - website/data/site.yaml      the site's own facts — the canonical URL, the
+//                                 repository, the feature flags, D97's minimum sample.
+//                                 Hand-written, and pinned to the repository by the Go
+//                                 boundary test (internal/cli/docs_website_boundary_test.go).
+//   - website/data/install.yaml   the install facts (W0.1), pinned to README.md,
+//                                 docs/release.md and .goreleaser.yaml by
+//                                 internal/cli/docs_website_install_test.go.
+//   - website/content/*.md        generated documents (W0.4's CLI reference, W0.5's
+//                                 security page), each saying on its first line that it
+//                                 is generated and by what.
+//   - website/content/costs.json  W0.3's aggregation output, published deliberately and
+//                                 **absent until the owner runs it**: an empty figure is
+//                                 honest, an invented one is not (D96, D97).
+//   - README.md                   the tagline, which is the line under its `# Fugaro`
+//                                 title and is read here rather than copied into a
+//                                 component, so the site and the README cannot drift
+//                                 (F48, D102).
+//
+// Three properties this module is written to hold:
+//
+//   * **Loud.** A missing file, an empty file, a file whose generated header is gone, a
+//     YAML document the reader does not understand and a costs file that publishes a
+//     group below D97's minimum all throw, and every message names the file. There is no
+//     fallback value anywhere below: a default is how a build renders nothing and says
+//     nothing.
+//   * **Network-free.** Nothing here fetches, resolves a host or reads a clock: the site
+//     is built from the files in this repository (Global Constraint 4).
+//   * **Dependency-free.** The standard library and a deliberately small YAML reader —
+//     no npm package is added for the site's benefit (Global Constraint 5), and the
+//     reader refuses what it does not understand rather than guessing at it, so a data
+//     file that grows a construct this reader has not been taught fails the build with
+//     its own line number instead of parsing into something wrong.
+//
+// It is called from website/src/layouts/Base.astro, which every page of the site renders
+// through — so the whole generated layer is checked on every build that renders a page.
+// The site's first page is W1.4's, so today that check is exercised by
+// website/test/layout.mjs, which builds the layout with a page of its own in a temp copy.
+
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { spawnSync } from 'node:child_process'
+
+/**
+ * The site's own directory: `website/`.
+ *
+ * Found rather than assumed, because this module is read from two different places and
+ * neither of them is a stable one to count from. Run directly (`node --test`, a script),
+ * it is `website/src/content.ts`. Bundled into a build, it is a chunk under
+ * `website/dist/.prerender/chunks/` — Astro compiles the layout's frontmatter into the
+ * output tree, so `import.meta.url` points into `dist/` and a path built from it is a path
+ * into the artifact. Both are inside the site, so walking up to the directory that carries
+ * `astro.config.mjs` finds the site in either case; `process.cwd()` — which is the site
+ * directory for `npm run build`, and for the test harness that builds a copy — is the
+ * fallback for a build that starts somewhere else entirely.
+ */
+function findSiteRoot(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url))
+  for (let depth = 0; depth < 8; depth++) {
+    if (existsSync(path.join(dir, 'astro.config.mjs'))) return dir
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  const cwd = process.cwd()
+  if (existsSync(path.join(cwd, 'astro.config.mjs'))) return cwd
+  throw new Error(
+    `cannot find the site's root: no directory from ${fileURLToPath(import.meta.url)} up to the filesystem root, and not the working directory ${cwd}, carries astro.config.mjs. The site's facts are read from files beside that config, so a build that cannot find it cannot read them (W1.3 step 2).`,
+  )
+}
+
+export const SITE_ROOT = findSiteRoot()
+/** The repository the site is built from: the site directory's parent. */
+export const REPO_ROOT = path.dirname(SITE_ROOT)
+
+const DATA_DIR = path.join(SITE_ROOT, 'data')
+const CONTENT_DIR = path.join(SITE_ROOT, 'content')
+const PUBLIC_DIR = path.join(SITE_ROOT, 'public')
+
+/**
+ * The generated documents the site cannot render without: the CLI reference (W0.4) and
+ * the security page's source (W0.5). Both are produced by `go run ./internal/clidoc` from
+ * sources in this repository, and both are required here — a page that renders one of
+ * them renders the generated file or the build stops.
+ *
+ * `content/costs.json` is deliberately **not** in this list: it is W0.3's aggregation
+ * output, the owner runs the command that writes it, and until then the caps-and-costs
+ * page renders its "not enough runs yet" state, which is the honest state on day one
+ * (W1.5, D96).
+ */
+const REQUIRED_DOCUMENTS = ['cli-reference.md', 'security.md']
+
+// The first line of every generated file, and the optional line under it naming the file
+// it was generated from: `<!-- generated by go run ./internal/clidoc; do not edit -->`.
+// The command is read out of the file rather than typed here, so the site's README and
+// this module are held to the same string the file itself carries (website/test/readme.mjs).
+const GENERATED_HEADER = /^<!--\s*generated by\s+(.+?);\s*do not edit\s*-->$/
+const SOURCE_HEADER = /^<!--\s*source:\s*(.+?)\s*-->$/
+
+/** Where a file lives, relative to the repository root: what every message below names. */
+function repoRelative(file: string): string {
+  return path.relative(REPO_ROOT, file)
+}
+
+/**
+ * The bytes of a file the site renders, or a build error naming it. A file that is
+ * missing and a file that is empty are the same failure here on purpose: an empty
+ * generated document renders an empty page, which is the silent hole this pipeline
+ * exists to prevent.
+ */
+function readBytes(file: string, what: string): string {
+  if (!existsSync(file)) {
+    throw new Error(
+      `${repoRelative(file)} is missing: ${what}. The site's build fails rather than rendering an empty block (W1.3 step 2), and the file this build reads is the one named here.`,
+    )
+  }
+  const text = readFileSync(file, 'utf8')
+  if (text.trim() === '') {
+    throw new Error(
+      `${repoRelative(file)} is empty: ${what}. An empty file is an empty page, and the build fails rather than rendering one (W1.3 step 2).`,
+    )
+  }
+  return text
+}
+
+// ---------------------------------------------------------------------------------------
+// A small YAML reader, for the subset the site's data files use.
+//
+// The site's facts are YAML because a fact file a person edits should be readable and
+// commentable; they are read by this reader because the site ships no npm dependency for
+// its own benefit (Global Constraint 5) and because a data file is small, hand-written and
+// versioned. The subset is the one website/data/*.yaml actually uses — nested maps,
+// sequences of scalars and of maps, flow sequences, quoted scalars, block scalars (`|`,
+// `|-`, `>`, `>-`) and comments — and everything outside it is an error with a line
+// number, never a guess. A fact file that grows a construct this reader has not been
+// taught fails the build loudly, which is the same rule as a missing file.
+// ---------------------------------------------------------------------------------------
+
+type Scalar = string | number | boolean | null
+type Value = Scalar | Value[] | { [key: string]: Value }
+
+interface Line {
+  /** The line's number in the file, for the messages below. */
+  number: number
+  /** How far the line is indented, in spaces. */
+  indent: number
+  /** The line with its surrounding whitespace removed. */
+  text: string
+  /** The line as written, indentation included: block scalars keep their own layout. */
+  raw: string
+  /** A blank line, or a comment: a line no document element starts on. */
+  blank: boolean
+}
+
+function splitLines(raw: string): Line[] {
+  return raw.split('\n').map((line, index) => {
+    const text = line.trim()
+    return {
+      number: index + 1,
+      indent: line.length - line.trimStart().length,
+      text,
+      raw: line,
+      blank: text === '' || text.startsWith('#'),
+    }
+  })
+}
+
+// A mapping line: `key: value`, where the colon is followed by whitespace or ends the
+// line. The second half of that rule is what keeps `https://fugaro.example` a scalar and
+// `canonical_url: https://fugaro.example` a key.
+const MAPPING_LINE = /^([^:#\s][^:#]*):(\s.*|)$/
+
+// A block scalar's indicator: `|` or `>` with an optional chomping sign.
+const BLOCK_SCALAR = /^[|>][-+]?$/
+
+/**
+ * A value line with its trailing `#` comment removed.
+ *
+ * The data files are YAML, and in YAML `- brew install dimipaun/tap/fugaro   # the cask`
+ * is a command and a comment, not a command with a comment glued to the end of it. This
+ * reader reads it the same way rather than adopting the comment into the fact: a fact that
+ * silently carries somebody's note is a fact the site renders wrongly, and it is the same
+ * class of defect as a missing file — except that nothing fails.
+ *
+ * Two of YAML's own rules are kept, and both matter here: a `#` starts a comment only at
+ * the start of the text or after whitespace, so a URL's fragment (`…#anchor`) is not one,
+ * and a `#` inside a quoted scalar is not one either, so a value may contain the character
+ * by quoting it. Block scalars never come through here: their lines are content, and
+ * install.yaml's verification commands carry a `# macOS` and a `# Linux` that are part of
+ * the command a reader copies.
+ */
+function stripComment(text: string): string {
+  // YAML's rule: a quote is a quote only where it OPENS a scalar. In a plain scalar an
+  // apostrophe is text (`the cask's page`), so it protects nothing. A flow sequence opens
+  // a scalar after its `[` and after each `,`, so a quote there opens one too.
+  const flow = text.startsWith('[')
+  let quote = ''
+  let opens = true
+  for (let at = 0; at < text.length; at++) {
+    const ch = text[at]
+    if (quote !== '') {
+      if (quote === '"' && ch === '\\') at++
+      else if (ch === quote && quote === "'" && text[at + 1] === "'") at++
+      else if (ch === quote) {
+        quote = ''
+        opens = false
+      }
+      continue
+    }
+    if ((ch === '"' || ch === "'") && opens) {
+      quote = ch
+      continue
+    }
+    if (ch === '#' && (at === 0 || /\s/.test(text[at - 1]))) return text.slice(0, at).trimEnd()
+    // Whether the next character may open a quoted scalar: at the start, and in a flow
+    // sequence after `[` or `,` (spaces between do not change it).
+    if (!/\s/.test(ch)) opens = flow && (ch === '[' || ch === ',')
+  }
+  return text
+}
+
+function parseYAML(raw: string, file: string): Value {
+  const lines = splitLines(raw)
+  let i = 0
+
+  const fail = (message: string, at?: Line): never => {
+    const where = at ? `:${at.number}` : ''
+    throw new Error(
+      `${file}${where}: ${message}. The site's own YAML reader understands the subset the site's data files use — nested maps, sequences of scalars and of maps, flow sequences, quoted scalars, block scalars (| and >) and comments — and refuses anything else rather than guessing at it (W1.3 step 2).`,
+    )
+  }
+
+  const skip = (): void => {
+    while (i < lines.length && lines[i].blank) i++
+  }
+
+  const scalar = (text: string, at: Line): Scalar => {
+    text = stripComment(text).trim()
+    // Quoted scalars first: quoting is how a value carries a `#` or a `: ` that would
+    // otherwise be a comment or a nested mapping. Everything below this is a plain scalar.
+    if (text.startsWith('"') || text.startsWith("'")) {
+      if (text.length < 2 || !text.endsWith(text[0])) {
+        fail(`the quoted scalar ${JSON.stringify(text)} does not close on this line`, at)
+      }
+      const inner = text.slice(1, -1)
+      return text[0] === '"' ? inner.replace(/\\(["\\])/g, '$1') : inner.replaceAll("''", "'")
+    }
+    if (text.startsWith('[')) {
+      if (!text.endsWith(']')) fail(`the flow sequence ${JSON.stringify(text)} does not close on this line`, at)
+      const inner = text.slice(1, -1).trim()
+      return inner === '' ? [] : inner.split(',').map((part) => scalar(part.trim(), at))
+    }
+    // The constructs this reader has not been taught, refused by name rather than read as
+    // the string they look like: an alias, an anchor and a tag are YAML's own references
+    // and this reader resolves none of them, and a flow mapping is a shape it does not
+    // parse. Each of them, taken for text, is a fact that renders as `*defaults` or
+    // `{a: 1}` on a page — which is why the contract is "refuse", not "guess".
+    if (/^[*&!{}]/.test(text)) {
+      fail(`the value ${JSON.stringify(text)} is a YAML alias, anchor, tag or flow mapping, and this reader reads none of them`, at)
+    }
+    // A plain scalar cannot carry a nested mapping: `key: a: b` is a YAML error, and this
+    // reader refuses it rather than reading the value as the string "a: b".
+    if (/:\s/.test(text)) {
+      fail(`the value ${JSON.stringify(text)} carries ": ", which makes it a mapping rather than a value; quote it if it is meant as text`, at)
+    }
+    if (text === 'true') return true
+    if (text === 'false') return false
+    if (text === 'null' || text === '~') return null
+    if (/^-?\d+$/.test(text)) return Number(text)
+    if (/^-?\d+\.\d+$/.test(text)) return Number(text)
+    return text
+  }
+
+  // A block scalar: the lines under it that are indented further than its own line,
+  // verbatim (`|`) or folded into paragraphs (`>`), with `-` stripping the final newline.
+  // Blank lines inside the block are the block's, and a `#` inside one is content rather
+  // than a comment: install.yaml's verification commands carry both.
+  //
+  // The caller has already stepped past the line that carried the indicator — that is the
+  // convention everywhere below — so the body starts at the current line.
+  const blockScalar = (indicator: string, parentIndent: number): string => {
+    const folded = indicator.startsWith('>')
+    const strip = indicator.endsWith('-')
+    const kept: string[] = []
+    let bodyIndent = -1
+    while (i < lines.length) {
+      const line = lines[i]
+      if (line.raw.trim() === '') {
+        kept.push('')
+        i++
+        continue
+      }
+      if (line.indent <= parentIndent) break
+      if (bodyIndent === -1) bodyIndent = line.indent
+      kept.push(line.raw.slice(bodyIndent))
+      i++
+    }
+    while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop()
+    const text = folded
+      ? kept
+          .join('\n')
+          .split(/\n\s*\n/)
+          .map((paragraph) =>
+            paragraph
+              .split('\n')
+              .map((line) => line.trim())
+              .filter((line) => line !== '')
+              .join(' '),
+          )
+          .join('\n')
+      : kept.join('\n')
+    return strip ? text : `${text}\n`
+  }
+
+  // The value on the right of a `key:` line: a scalar on the line itself, a block scalar,
+  // or a nested block on the lines below it.
+  const readValue = (rest: string, at: Line, parentIndent: number): Value => {
+    // The comment goes before the shape is decided: `key: |- # a literal block` is a block
+    // scalar with a comment on it, and `key: # only a comment` is a key with no value.
+    rest = stripComment(rest).trim()
+    if (rest === '') {
+      skip()
+      const next = lines[i]
+      if (next && next.indent > parentIndent) return block()
+      return fail(`"${at.text}" has no value`, at)
+    }
+    if (BLOCK_SCALAR.test(rest)) return blockScalar(rest, parentIndent)
+    return scalar(rest, at)
+  }
+
+  const mapping = (indent: number, seed?: { key: string; rest: string; at: Line }): { [key: string]: Value } => {
+    const map: { [key: string]: Value } = {}
+    const put = (key: string, rest: string, at: Line): void => {
+      if (key in map) fail(`the key "${key}" is written twice`, at)
+      map[key] = readValue(rest, at, indent)
+    }
+    if (seed) put(seed.key, seed.rest, seed.at)
+    while (true) {
+      skip()
+      const line = lines[i]
+      if (!line || line.indent < indent) break
+      if (line.indent > indent) fail('this line is indented further than the key above it', line)
+      if (line.text === '-' || line.text.startsWith('- ')) {
+        fail('a sequence item where a "key: value" line was expected', line)
+      }
+      const m = MAPPING_LINE.exec(line.text)
+      if (!m) fail(`cannot read ${JSON.stringify(line.text)} as a "key: value" line`, line)
+      const key = m[1].trim()
+      const rest = m[2].trim()
+      i++
+      put(key, rest, line) // readValue, which strips the value's comment before it shapes it
+    }
+    return map
+  }
+
+  const sequence = (indent: number): Value[] => {
+    const out: Value[] = []
+    while (true) {
+      skip()
+      const line = lines[i]
+      if (!line || line.indent < indent) break
+      if (line.indent > indent) fail('this line is indented further than the sequence item above it', line)
+      if (!(line.text === '-' || line.text.startsWith('- '))) break
+      const rest = line.text === '-' ? '' : line.text.slice(2).trim()
+      if (BLOCK_SCALAR.test(rest)) {
+        i++
+        out.push(blockScalar(rest, indent))
+        continue
+      }
+      // An item that opens a map on its own line: `- id: homebrew`, with the item's
+      // remaining keys on the lines below, indented past the dash.
+      const m = rest === '' ? null : MAPPING_LINE.exec(rest)
+      if (m) {
+        i++
+        out.push(mapping(indent + 2, { key: m[1].trim(), rest: m[2].trim(), at: line }))
+        continue
+      }
+      i++
+      out.push(readValue(rest, line, indent))
+    }
+    return out
+  }
+
+  const block = (): Value => {
+    skip()
+    const line = lines[i]
+    if (!line) return fail('the document ends where a value was expected')
+    return line.text === '-' || line.text.startsWith('- ') ? sequence(line.indent) : mapping(line.indent)
+  }
+
+  skip()
+  if (i >= lines.length) fail('the file carries no document')
+  const value = block()
+  skip()
+  if (i < lines.length) fail('there is content after the document', lines[i])
+  return value
+}
+
+// ---------------------------------------------------------------------------------------
+// The validators. Every one of them names the file and the key it refused, because a
+// build error is read by whoever just edited the fact file.
+// ---------------------------------------------------------------------------------------
+
+// What a key that is not there reads as, in the messages below: "not written in the file"
+// rather than the word `undefined`, because the reader of a build error is looking at the
+// file, not at this module.
+function describe(value: Value): string {
+  return value === undefined ? 'not written in the file' : JSON.stringify(value)
+}
+
+function asMap(value: Value, file: string, what: string): { [key: string]: Value } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as a map of keys to values, so nothing below it can be read (W1.3 step 2).`)
+  }
+  return value
+}
+
+function asList(value: Value, file: string, what: string): Value[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as a list, so nothing below it can be read (W1.3 step 2).`)
+  }
+  return value
+}
+
+function asString(value: Value, file: string, what: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as a string — every fact the site renders is written down, and none of them has a default (W1.3 step 2).`)
+  }
+  return value
+}
+
+function asBool(value: Value, file: string, what: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as true or false (W1.3 step 2).`)
+  }
+  return value
+}
+
+function asInt(value: Value, file: string, what: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as a whole number (W1.3 step 2).`)
+  }
+  return value
+}
+
+function asNumber(value: Value, file: string, what: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${file}: ${what} is ${describe(value)}, and it is read as a number (W1.3 step 2).`)
+  }
+  return value
+}
+
+function asURL(value: Value, file: string, what: string): string {
+  const text = asString(value, file, what)
+  let url: URL
+  try {
+    url = new URL(text)
+  } catch {
+    throw new Error(`${file}: ${what} is ${JSON.stringify(text)}, which is not an absolute URL (W1.3 step 2).`)
+  }
+  return url.href
+}
+
+/** A key a data file may leave out, read as its own documented default. */
+function optional(map: { [key: string]: Value }, key: string, fallback: Value): Value {
+  return map[key] === undefined ? fallback : map[key]
+}
+
+function keysOf(map: { [key: string]: Value }): string[] {
+  return Object.keys(map).sort()
+}
+
+function refuseUnknownKeys(map: { [key: string]: Value }, allowed: string[], file: string): void {
+  for (const key of keysOf(map)) {
+    if (!allowed.includes(key)) {
+      throw new Error(
+        `${file}: the key "${key}" is not one the site's pages read. A fact nobody reads is a fact nothing pins — internal/cli/docs_website_boundary_test.go decodes this file with unknown fields refused — so a new key is added with the page that renders it (W1.3 step 2).`,
+      )
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// website/data/site.yaml — the site's own facts.
+// ---------------------------------------------------------------------------------------
+
+/** The analytics block: D93's answer is Firebase Analytics behind a consent banner. */
+export interface AnalyticsFacts {
+  /** False until W3.2 sets the measurement id and turns it on. */
+  enabled: boolean
+  /** The analytics property, empty while the flag is off. */
+  measurementID: string
+}
+
+/** The features the site renders only when they exist (D95, D107). */
+export interface FeatureFacts {
+  consoleDownloads: boolean
+  video: boolean
+}
+
+/** website/data/site.yaml, validated: every value a page reads comes from here. */
+export interface SiteFacts {
+  canonicalURL: string
+  secondaryDomain: string
+  repository: string
+  analytics: AnalyticsFacts
+  features: FeatureFacts
+  minRuns: number
+  allowedHosts: string[]
+}
+
+const SITE_FILE = 'website/data/site.yaml'
+const SITE_KEYS = ['allowed_hosts', 'analytics', 'canonical_url', 'features', 'min_runs', 'repository', 'secondary_domain', 'version']
+
+export function loadSiteFacts(): SiteFacts {
+  const file = SITE_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'site.yaml'), 'the site\'s own facts: the canonical URL, the repository, the feature flags and D97\'s minimum sample (W0.2)'), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, SITE_KEYS, file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  // The canonical URL: the origin alone, because the canonical <link>, the sitemap, the
+  // OpenGraph tag and every absolute link the site prints are built from it. The Go
+  // boundary test pins it to a reserved placeholder host until W2.2 writes the real one.
+  const written = asString(doc.canonical_url, file, 'canonical_url')
+  const canonical = new URL(asURL(doc.canonical_url, file, 'canonical_url'))
+  if (written !== canonical.origin) {
+    throw new Error(
+      `${file}: canonical_url is ${JSON.stringify(written)}, and the site builds every absolute link from the origin alone (${canonical.origin}) — the canonical <link>, the sitemap and the OpenGraph tag each append their own path, so a trailing slash, a path, a query or a scheme-less host here would be copied into all of them (W1.3 step 1).`,
+    )
+  }
+
+  // Both halves of one fact: analytics that report nowhere, and a property id nothing
+  // reports to, are broken states, so the flag and the id are read together and must
+  // agree. The Go boundary test pins the same pair, and W3.2 moves both in one commit
+  // (D93) — which is why this is an agreement rather than "both off".
+  const analytics = asMap(doc.analytics, file, 'analytics')
+  refuseUnknownKeys(analytics, ['enabled', 'measurement_id'], `${file} analytics`)
+  const enabled = asBool(analytics.enabled, file, 'analytics.enabled')
+  const measurementID = asString(analytics.measurement_id, file, 'analytics.measurement_id')
+  if (enabled !== (measurementID.trim() !== '')) {
+    throw new Error(
+      `${file}: analytics is enabled=${enabled} with measurement_id=${JSON.stringify(measurementID)}, and the two move together — W3.2 sets the property id and turns the flag on in one commit, behind W1.12's consent gate (D93, W1.3 step 2).`,
+    )
+  }
+
+  const features = asMap(doc.features, file, 'features')
+  refuseUnknownKeys(features, ['console_downloads', 'video'], `${file} features`)
+
+  const allowedHosts = asList(doc.allowed_hosts, file, 'allowed_hosts').map((host, index) =>
+    asString(host, file, `allowed_hosts[${index}]`),
+  )
+  if (allowedHosts.length === 0) {
+    throw new Error(`${file}: allowed_hosts is empty, and the site's link and origin checks admit exactly the hosts on it (W1.11).`)
+  }
+  for (const host of allowedHosts) {
+    if (host !== host.toLowerCase() || /[/:@?#]/.test(host)) {
+      throw new Error(
+        `${file}: allowed_hosts carries ${JSON.stringify(host)}, and an entry is a bare lowercase host with no scheme, port or path — it is compared against a URL's host (W1.11).`,
+      )
+    }
+  }
+
+  const minRuns = asInt(doc.min_runs, file, 'min_runs')
+  if (minRuns < 1) {
+    throw new Error(`${file}: min_runs is ${minRuns}, and D97's minimum sample is a positive count (W0.3, internal/stats.MinRuns).`)
+  }
+
+  return {
+    canonicalURL: canonical.origin,
+    secondaryDomain: asString(doc.secondary_domain, file, 'secondary_domain'),
+    repository: asURL(doc.repository, file, 'repository'),
+    analytics: { enabled, measurementID },
+    features: {
+      consoleDownloads: asBool(features.console_downloads, file, 'features.console_downloads'),
+      video: asBool(features.video, file, 'features.video'),
+    },
+    minRuns,
+    allowedHosts,
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// website/data/install.yaml — the install facts (W0.1), which the hero and the
+// getting-started page render command by command rather than typing them.
+// ---------------------------------------------------------------------------------------
+
+/** One platform the site describes, with the repository's own status for it. */
+export interface PlatformFacts {
+  id: string
+  name: string
+  goos: string
+  /** `supported` or `untested`: the wording D94 settled, and never a support promise. */
+  status: string
+  note: string
+}
+
+/** One way to install, with the commands the site prints verbatim. */
+export interface InstallPathFacts {
+  id: string
+  name: string
+  /** The file in this repository the commands were taken from. */
+  source: string
+  platforms: string[]
+  commands: string[]
+  /** The path's own sentence, rendered as written. */
+  note: string
+  /** Development only: the site says so, and offers no release artifact (W0.1). */
+  devOnly: boolean
+  /** The Releases page, for the path that downloads an archive. Empty otherwise. */
+  releasePage: string
+  /** The Homebrew tap, for the path that installs through it. Empty otherwise. */
+  tapRepository: string
+  /** The archive's name template, as .goreleaser.yaml writes it. Empty otherwise. */
+  nameTemplate: string
+  /** The archive's extension, without the dot. Empty otherwise. */
+  extension: string
+}
+
+/** website/data/install.yaml, validated. */
+export interface InstallFacts {
+  build: { os: string[]; arch: string[] }
+  platforms: PlatformFacts[]
+  paths: InstallPathFacts[]
+}
+
+const INSTALL_FILE = 'website/data/install.yaml'
+
+export function loadInstallFacts(): InstallFacts {
+  const file = INSTALL_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'install.yaml'), 'the one install source the site renders: the commands, the platforms and the archive names (W0.1)'), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, ['build', 'paths', 'platforms', 'version'], file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const build = asMap(doc.build, file, 'build')
+  refuseUnknownKeys(build, ['arch', 'os'], `${file} build`)
+  const strings = (value: Value, what: string): string[] =>
+    asList(value, file, what).map((entry, index) => asString(entry, file, `${what}[${index}]`))
+
+  const platforms = asList(doc.platforms, file, 'platforms').map((entry, index) => {
+    const platform = asMap(entry, file, `platforms[${index}]`)
+    refuseUnknownKeys(platform, ['goos', 'id', 'name', 'note', 'status'], `${file} platforms[${index}]`)
+    return {
+      id: asString(platform.id, file, `platforms[${index}].id`),
+      name: asString(platform.name, file, `platforms[${index}].name`),
+      goos: asString(platform.goos, file, `platforms[${index}].goos`),
+      status: asString(platform.status, file, `platforms[${index}].status`),
+      note: asString(optional(platform, 'note', ''), file, `platforms[${index}].note`),
+    }
+  })
+  if (platforms.length === 0) {
+    throw new Error(`${file}: platforms is empty, and the install section renders the platforms a reader might be on (W0.1).`)
+  }
+
+  // The facts every path carries, and the ones only some do. An optional fact is read as
+  // the empty string rather than defaulted to a sentence: a page renders the note this
+  // file writes or it renders none, and it never invents one (Global Constraint 6).
+  const paths = asList(doc.paths, file, 'paths').map((entry, index) => {
+    const installPath = asMap(entry, file, `paths[${index}]`)
+    refuseUnknownKeys(installPath, ['commands', 'dev_only', 'extension', 'id', 'name', 'name_template', 'note', 'platforms', 'release_page', 'source', 'tap_repository'], `${file} paths[${index}]`)
+    const what = `paths[${index}]`
+    // A path a reader can follow: the commands they type, or the page they download from.
+    // The release archive has the second and no command (W0.1), and a path with neither is
+    // an install step that asks a reader to do nothing.
+    const commands = strings(optional(installPath, 'commands', []), `${what}.commands`)
+    const releasePage = asString(optional(installPath, 'release_page', ''), file, `${what}.release_page`)
+    if (commands.length === 0 && releasePage === '') {
+      throw new Error(`${file}: ${what} carries neither a command nor a release page, so there is nothing on the page for a reader to follow (W1.3 step 2).`)
+    }
+    return {
+      id: asString(installPath.id, file, `${what}.id`),
+      name: asString(installPath.name, file, `${what}.name`),
+      source: asString(installPath.source, file, `${what}.source`),
+      platforms: strings(installPath.platforms, `${what}.platforms`),
+      commands,
+      note: asString(optional(installPath, 'note', ''), file, `${what}.note`),
+      devOnly: asBool(optional(installPath, 'dev_only', false), file, `${what}.dev_only`),
+      releasePage,
+      tapRepository: asString(optional(installPath, 'tap_repository', ''), file, `${what}.tap_repository`),
+      nameTemplate: asString(optional(installPath, 'name_template', ''), file, `${what}.name_template`),
+      extension: asString(optional(installPath, 'extension', ''), file, `${what}.extension`),
+    }
+  })
+
+  return {
+    build: { os: strings(build.os, 'build.os'), arch: strings(build.arch, 'build.arch') },
+    platforms,
+    paths,
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// website/content/ — the generated documents, and the aggregation's published output.
+// ---------------------------------------------------------------------------------------
+
+/** One generated document, with the header it carries read out of the file itself. */
+export interface GeneratedDocument {
+  /** The file's name under content/, e.g. `security.md`. */
+  name: string
+  /** The document's path, relative to the repository root: what a message names. */
+  path: string
+  /** The command that generated it, as its own header names it. */
+  generator: string
+  /** The file it was generated from, from the header's `source:` line. */
+  source: string
+  /** The header line, verbatim. */
+  header: string
+  /** The document below its header. */
+  body: string
+}
+
+export function loadGeneratedDocument(name: string): GeneratedDocument {
+  const file = `website/content/${name}`
+  const text = readBytes(path.join(CONTENT_DIR, name), `the generated document ${name} (W0.4 and W0.5 generate the site's documents with \`go run ./internal/clidoc\`)`)
+  const lines = text.split('\n')
+
+  const header = lines[0] ?? ''
+  const m = GENERATED_HEADER.exec(header)
+  if (!m) {
+    throw new Error(
+      `${file} does not say on its first line that it is generated: every file under content/ is generated, its first line names the command that regenerates it, and a file without that line is one somebody edited by hand — the copy that drifts first (W1.3 step 2). Its first line is ${JSON.stringify(header)}.`,
+    )
+  }
+
+  // The `source:` line, when the generator wrote one, is the header's second line and is
+  // part of the header rather than of the document: it is dropped here and kept as a fact.
+  const sourceMatch = SOURCE_HEADER.exec(lines[1] ?? '')
+  const body = lines
+    .slice(sourceMatch ? 2 : 1)
+    .join('\n')
+    .trim()
+  if (body === '') {
+    throw new Error(`${file} carries its header and nothing below it: a generated document with no body renders an empty page, and the build fails rather than rendering one (W1.3 step 2).`)
+  }
+
+  return { name, path: file, generator: m[1].trim(), source: sourceMatch ? sourceMatch[1].trim() : m[1].trim(), header, body }
+}
+
+/** Every generated document under content/, keyed by file name. */
+function loadGeneratedDocuments(): { [name: string]: GeneratedDocument } {
+  if (!existsSync(CONTENT_DIR)) {
+    throw new Error(
+      'website/content/ is missing: it is where Part 0 writes the site\'s generated documents (W0.4\'s CLI reference and W0.5\'s security page), and the build fails rather than rendering pages without them (W1.3 step 2).',
+    )
+  }
+
+  const names = readdirSync(CONTENT_DIR).filter((name) => name.endsWith('.md')).sort()
+  const documents: { [name: string]: GeneratedDocument } = {}
+  for (const name of names) documents[name] = loadGeneratedDocument(name)
+
+  for (const name of REQUIRED_DOCUMENTS) {
+    if (!(name in documents)) {
+      throw new Error(
+        `website/content/${name} is missing: the site renders it, so the build fails here rather than on the page that would have rendered nothing (W1.3 step 2).`,
+      )
+    }
+  }
+  return documents
+}
+
+/** One measure's published figures: min, median and p90, and never a mean (D97). */
+export interface Percentiles {
+  min: number
+  median: number
+  p90: number
+}
+
+/** One recipe's published figures, as W0.3's `--json` prints them. */
+export interface CostsGroup {
+  recipe: string
+  runs: number
+  computeNotEstimated: number
+  durationS: Percentiles
+  costUSD: Percentiles
+}
+
+/** website/content/costs.json, validated, or null while the owner has not run it. */
+export interface CostsFacts {
+  project: string
+  since: string
+  until: string
+  minRuns: number
+  groups: CostsGroup[]
+  totals: { [key: string]: number }
+  notAPromise: string
+}
+
+const COSTS_FILE = 'website/content/costs.json'
+
+function loadCosts(minRuns: number): CostsFacts | null {
+  const file = COSTS_FILE
+  const absolute = path.join(CONTENT_DIR, 'costs.json')
+  if (!existsSync(absolute)) {
+    // The honest empty state rather than a failure: the aggregation is owner-run, and the
+    // caps-and-costs page renders its "not enough runs yet" state until it has been run
+    // (W1.5, D96).
+    return null
+  }
+
+  const raw = readBytes(absolute, 'the aggregation\'s published output, written by the owner-run `fugaro stats runs --project <installation> --json` (W0.3)')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    throw new Error(`${file} is not JSON: ${(err as Error).message} (W1.3 step 2).`)
+  }
+  const doc = asMap(parsed as Value, file, 'the document')
+
+  // Seconds and dollars are fractional (internal/stats.Percentiles carries float64), so
+  // these are numbers and not counts. A percentile the aggregation did not have is a
+  // missing figure, not a zero, so all three keys are required.
+  const percentiles = (value: Value, what: string): Percentiles => {
+    const map = asMap(value, file, what)
+    return {
+      min: asNumber(map.min, file, `${what}.min`),
+      median: asNumber(map.median, file, `${what}.median`),
+      p90: asNumber(map.p90, file, `${what}.p90`),
+    }
+  }
+
+  const groups = asList(doc.recipes, file, 'recipes').map((entry, index) => {
+    const group = asMap(entry, file, `recipes[${index}]`)
+    const runs = asInt(group.runs, file, `recipes[${index}].runs`)
+    const recipe = asString(group.recipe, file, `recipes[${index}].recipe`)
+    if (runs < minRuns) {
+      throw new Error(
+        `${file}: the group "${recipe}" carries ${runs} runs, below the minimum of ${minRuns} the site publishes a figure from. The command suppresses a group below the threshold (W0.3, D97); a group that reached this file anyway is not published, and the site's own facts fix the threshold in website/data/site.yaml (W1.3 step 2).`,
+      )
+    }
+    return {
+      recipe,
+      runs,
+      computeNotEstimated: asInt(group.compute_not_estimated, file, `recipes[${index}].compute_not_estimated`),
+      durationS: percentiles(group.duration_s, `recipes[${index}].duration_s`),
+      costUSD: percentiles(group.cost_usd, `recipes[${index}].cost_usd`),
+    }
+  })
+
+  const fileMinRuns = asInt(doc.min_runs, file, 'min_runs')
+  if (fileMinRuns !== minRuns) {
+    throw new Error(
+      `${file}: min_runs is ${fileMinRuns} and website/data/site.yaml says ${minRuns}. The threshold is one number: the site publishes no figure drawn from fewer runs than the aggregation's own minimum, and the two cannot disagree (D97, W1.3 step 2).`,
+    )
+  }
+
+  const totals = asMap(doc.totals, file, 'totals')
+  const numbers: { [key: string]: number } = {}
+  for (const key of keysOf(totals)) numbers[key] = asInt(totals[key], file, `totals.${key}`)
+
+  return {
+    project: asString(doc.project, file, 'project'),
+    since: asString(doc.since, file, 'since'),
+    until: asString(doc.until, file, 'until'),
+    minRuns: fileMinRuns,
+    groups,
+    totals: numbers,
+    notAPromise: asString(doc.not_a_promise, file, 'not_a_promise'),
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// The rest of what a page needs, each read from the one place it is written down.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The tagline: **README.md's own tagline line, the line under its `# Fugaro` title**
+ * (F48, D102). It is read rather than copied into a component, because a tagline typed
+ * into a template is a second copy of the README's line and the one that drifts — and
+ * because every other sentence the site prints has to be traceable to a document or a
+ * command, starting with this one.
+ *
+ * The line's markdown emphasis is not part of the sentence, so the `**` that makes it
+ * bold in the README is stripped: what a page renders is the text a reader reads.
+ */
+export function loadTagline(): string {
+  const file = 'README.md'
+  const lines = readBytes(path.join(REPO_ROOT, 'README.md'), 'the tagline: the line under its `# Fugaro` title, which the site renders rather than restating (F48, D102)').split('\n')
+
+  const title = lines.findIndex((line) => line.trim() === '# Fugaro')
+  if (title === -1) {
+    throw new Error(`${file}: no "# Fugaro" title, and the site's tagline is the line under it (F48, D102, W1.3 step 1).`)
+  }
+  const line = lines.slice(title + 1).find((candidate) => candidate.trim() !== '')
+  if (line === undefined) {
+    throw new Error(`${file}: the "# Fugaro" title is the last thing in the file, and the tagline is the line under it (F48, D102).`)
+  }
+  const tagline = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
+  if (tagline === '') {
+    throw new Error(`${file}: the line under the "# Fugaro" title is empty, and the site renders that line as its tagline (F48, D102).`)
+  }
+  return tagline
+}
+
+/**
+ * The self-hosted fonts the artifact ships, read from `public/fonts/` — the directory
+ * W1.1's README names — so the head preloads a font this build produces and nothing else
+ * (D106). A font that is not in the artifact is not preloaded: a preload is a request a
+ * reader's browser makes before it has parsed anything, and pointing one at a file that
+ * does not exist is a request for nothing.
+ */
+export function loadFonts(): { href: string; type: string }[] {
+  const dir = path.join(PUBLIC_DIR, 'fonts')
+  if (!existsSync(dir)) return []
+  const types: { [extension: string]: string } = {
+    '.woff2': 'font/woff2',
+    '.woff': 'font/woff',
+    '.ttf': 'font/ttf',
+    '.otf': 'font/otf',
+  }
+  return readdirSync(dir)
+    .filter((name) => path.extname(name) in types)
+    .sort()
+    .map((name) => ({ href: `/fonts/${name}`, type: types[path.extname(name)] }))
+}
+
+/**
+ * The sitemap's URL, or null while the build does not ship one.
+ *
+ * A `<link rel="sitemap">` is a crawler's hint and not a visible link, but it is still a
+ * pointer at a file, and the site's rule about pointers is the one Global Constraint 9
+ * states for downloads: a page names an artifact that exists. The sitemap arrives with
+ * the integration that produces it — `@astrojs/sitemap`, declared in astro.config.mjs,
+ * which no Part 1 task adds and W2.2's canonical-URL work is where it belongs — so the
+ * link is emitted from the canonical origin the moment that line is there, and not
+ * before.
+ */
+export function loadSitemapHref(canonicalURL: string): string | null {
+  const config = path.join(SITE_ROOT, 'astro.config.mjs')
+  if (!existsSync(config)) return null
+  // The config is a module, so it is imported (in a child process, because this loader is
+  // synchronous) and its declared integrations are read: a comment or a string that
+  // merely names the package is not an integration, and must not make the head point at a
+  // sitemap the build does not produce.
+  const script = `import(${JSON.stringify(pathToFileURL(config).href)}).then((mod) => process.stdout.write(JSON.stringify((mod.default.integrations ?? []).flat().map((entry) => entry && entry.name))))`
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: SITE_ROOT, encoding: 'utf8' })
+  if (result.status !== 0) {
+    throw new Error(`website/astro.config.mjs could not be loaded to read its integrations: ${result.stderr || result.error}`)
+  }
+  if (!(JSON.parse(result.stdout) as unknown[]).includes('@astrojs/sitemap')) return null
+  return new URL('/sitemap-index.xml', canonicalURL).href
+}
+
+/** Everything a page renders from, read once per build. */
+export interface Site {
+  facts: SiteFacts
+  install: InstallFacts
+  /** README.md's tagline line, the site's default page description. */
+  tagline: string
+  /** The generated documents under content/, keyed by file name. */
+  documents: { [name: string]: GeneratedDocument }
+  /** The aggregation's published figures, or null while the owner has not run it. */
+  costs: CostsFacts | null
+  fonts: { href: string; type: string }[]
+  sitemapHref: string | null
+}
+
+let loaded: Site | null = null
+
+/**
+ * The whole pipeline: the site's facts, the install facts, the generated documents, the
+ * aggregation's figures, the tagline, the fonts and the sitemap — each read from its own
+ * source, each validated, and any one of them missing or malformed a build error naming
+ * the file.
+ *
+ * Every page renders through the base layout, and the base layout calls this, so the
+ * whole generated layer is checked on every build that renders a page. The result is
+ * memoized: a build of forty pages reads the same facts once.
+ */
+export function loadSite(): Site {
+  if (loaded !== null) return loaded
+  const facts = loadSiteFacts()
+  loaded = {
+    facts,
+    install: loadInstallFacts(),
+    tagline: loadTagline(),
+    documents: loadGeneratedDocuments(),
+    costs: loadCosts(facts.minRuns),
+    fonts: loadFonts(),
+    sitemapHref: loadSitemapHref(facts.canonicalURL),
+  }
+  return loaded
+}

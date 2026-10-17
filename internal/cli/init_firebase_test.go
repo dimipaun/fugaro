@@ -539,6 +539,52 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	}
 }
 
+// TestInitRefusesADatabaseFromANewerFugaro: the marker records which
+// generation of the security rules is deployed, and a marker above this
+// binary's RulesVersion says the rules came from a newer Fugaro. init
+// --firebase deploys the rules *this* binary carries, so it must refuse rather
+// than overwrite the newer installation's rules with older ones and record its
+// own generation over the newer number — the state doctor warns about and
+// tells the owner not to cause ("do not re-run 'fugaro init --firebase' with
+// this binary", policy-rules-skew).
+//
+// Hand mutation this fails on: dropping the refusal from infra.DB.Plan, which
+// rewrites the marker down to this binary's generation (and, on a real
+// downgrade, redeploys the older rules document).
+func TestInitRefusesADatabaseFromANewerFugaro(t *testing.T) {
+	r := newFBRig(t)
+	r.historyImage()
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.db.RulePuts(); n != 1 {
+		t.Fatalf("rules deployed %d times, want 1 (the fixture)", n)
+	}
+	newer := projectpolicy.RulesVersion + 1
+	r.db.Set(projectpolicy.PathRulesMarker(), newer)
+	puts := len(r.db.Requests())
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an older binary must not deploy over a newer installation's rules", err)
+	}
+	for _, want := range []string{projectpolicy.PathRulesMarker(), "generation"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); got != json.Number(strconv.Itoa(newer)) {
+		t.Errorf("%s = %#v, want %d: the refusal rewrote the newer installation's marker", projectpolicy.PathRulesMarker(), got, newer)
+	}
+	if n := r.db.RulePuts(); n != 1 {
+		t.Errorf("rules deployed %d times, want 1: the older document was put over the newer one", n)
+	}
+	for _, q := range r.db.Requests()[puts:] {
+		if q.Method == "PUT" || q.Method == "PATCH" {
+			t.Errorf("the refused init wrote %s /%s", q.Method, q.Path)
+		}
+	}
+}
+
 // TestInitLeavesAnUpToDateMarkerAlone: a database whose rules are already the
 // generated ones is not re-deployed, and a marker that already records this
 // generation is not rewritten: init writes nothing at all.

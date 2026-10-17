@@ -38,6 +38,23 @@ import (
 // budgetBackendOn reports whether runs of the project use the budget
 // backend: its mode is not off and a database is configured. A backend with
 // no signer cannot launch anything: say so.
+//
+// The database is half of that on purpose, and this function is where the
+// decision belongs: a config with a mode (observe or enforce) and no
+// budget.rtdb_url launches, and the launch reads no policy and refuses nothing
+// on the mode alone. A mode-only refusal was written here once and removed
+// deliberately — the same owner decision internal/infra's readiness note
+// records in full, and the reason its drift note exists — because a mode is
+// not a policy: this CLI cannot see a policy without a database address, and
+// refusing on the mode alone would stop every launch of a project that has
+// published nothing, which is the shape a never-configured installation has
+// always had. What keeps that from being a hole is the run side, which is
+// fail-closed rather than optimistic: a run whose job carries a Firebase
+// backend, or a token marker, and cannot read the policy it is entitled to
+// refuses instead of falling back to the environment ceiling (internal/runner's
+// projectPolicy, R2-3). So a launch is held to a policy this side can see and
+// no stricter rule, and the deploy is what refuses the job that can see one and
+// cannot read it.
 func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return false, nil
@@ -64,6 +81,14 @@ func budgetSignerOn(lc *localcfg.Config) error {
 // ceiling the environment was deployed with, whatever the policy says. What
 // the local mode still decides is the job's FUGARO_BUDGET_MODE, which is the
 // fallback for the case the policy node is absent (P3).
+//
+// A config that names no database has no policy this CLI can see, and says so
+// without a call, whatever the mode is: a mode that is on is not a policy, and
+// nothing is blocked until one exists (internal/infra's readiness gate blocks
+// the deploy — and this launcher's own gate refuses a launch — only for a
+// policy this side can actually see). A job of such an installation carries no
+// backend either, so the run reads no policy and the environment ceiling stands,
+// which is what the mode-off and never-configured shapes have always done.
 func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
 	if on, err := budgetBackendOn(e.lc); err != nil || on {
 		return on, err
@@ -136,10 +161,16 @@ func policyReadErr(err error) error {
 	var ve *projectpolicy.VersionError
 	var me *projectpolicy.MarkerError
 	switch {
-	case errors.As(err, &ve) && ve.Found < ve.Understood:
-		return olderPolicyRefusal(ve)
 	case errors.As(err, &ve):
-		return userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
+		// The remedy depends on the direction of the skew — an older node is
+		// removed with `fugaro project policy publish --delete` before this
+		// release publishes again (never a re-run of init, which writes no
+		// policy node), an older binary wants upgrading — and
+		// projectpolicy.SkewSentence is the one place that picks between the
+		// two sentences for this reader (the launch gate beside this file
+		// words the same error through it, ReaderCLI, and so does the
+		// runner's own refusal, ReaderRunner).
+		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
 	case errors.As(err, &me):
 		return userErr("%v", err)
 	case errors.Is(err, rtdb.ErrPermission):

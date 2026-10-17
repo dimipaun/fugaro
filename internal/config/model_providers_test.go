@@ -517,3 +517,44 @@ func TestClaimedClaudeRouteKeepsEveryOtherRefusal(t *testing.T) {
 		t.Errorf("a claimed Claude route under enforce was refused: %s", problemsText(got))
 	}
 }
+
+// TestTheNameDirectIsRefused is the review of this task's routing work: a
+// resolved route is a provider entry's *name* (RoutingClaudeFor answers the
+// entry, not the entry's kind), and the direct route is spelled with the same
+// string (RouteDirect, the value of routing.claude.via that means "call
+// Anthropic"). providerNameRE allows "direct", so nothing refused a provider
+// entry called that, and a switch routing a Claude ID to it resolved to
+// RouteDirect: the runner reads a route of RouteDirect as a call that went
+// direct and halts an otherwise valid run ("the project's routing switch is not
+// usable", internal/runner/routing.go), and a pin carrying the entry's own
+// route ID is refused as a direct pin (internal/config/pins.go).
+//
+// The collision is not asserted here, because the resolver no longer answers
+// one: a later change fixed it where the route is decided rather than where the
+// name is written (reservedRouteName, in RoutingClaudeFor and CheckRouting), so
+// this test pins what the three places that answer for the name do now — the
+// resolver failing closed first, because that is what makes a route of
+// RouteDirect unreachable even for a caller that never asked CheckRouting.
+func TestTheNameDirectIsRefused(t *testing.T) {
+	p := okProvider()
+	p.Models = []string{"anthropic/claude-sonnet-5.5"}
+	providers := map[string]ModelProvider{RouteDirect: p}
+	sw := &RoutingClaude{Via: RouteOpenRouter, Models: []string{"claude-sonnet-5-5"}}
+	if route, sent, ok := RoutingClaudeFor(sw, "claude-sonnet-5-5", providers); ok || route != "" || sent != "" {
+		t.Errorf("RoutingClaudeFor(an entry named %q) = %q, %q, %v: %q is the direct route to every caller, so the resolver must fail closed rather than answer a route no caller can tell from direct",
+			RouteDirect, route, sent, ok, RouteDirect)
+	}
+	if got := problemsText(CheckRouting(&Routing{Claude: sw}, providers, "routing")); !strings.Contains(got, "Rename the provider entry") {
+		t.Errorf("CheckRouting accepted a switch routed through an entry named %q: %s", RouteDirect, got)
+	}
+	ps := ValidateModelProviders(providers)
+	if len(ps) == 0 {
+		t.Fatalf("a provider entry named %q was accepted: a call routed to it reads as a call that went direct", RouteDirect)
+	}
+	got := problemsText(ps)
+	for _, want := range []string{"providers." + RouteDirect, "direct", "routing.claude.via", "halt"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not name %q: %s", want, got)
+		}
+	}
+}

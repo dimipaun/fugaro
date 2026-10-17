@@ -2,8 +2,10 @@ package projectpolicy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -106,6 +108,15 @@ const (
 // pattern that cannot match a canonical repository is refused, so a typo fails
 // at publish time (the CLI, task 1.6) instead of silently un-enrolling a
 // repository; Decode applies the same check to a node it reads.
+//
+// The provider segment is held to config.Providers — the kinds a repository's
+// git.provider may be, and so the kinds a canonical repository can carry — and
+// not to task.ValidProvider, which accepts any lower-case word a slug could be
+// built from ("githubb"). A pattern it accepted but no repository could match
+// is precisely the silent un-enrollment the check exists to prevent, and this
+// function is what `fugaro project repos add` validates the entry with
+// (internal/cli's canonicalRepoArg), so a misspelt kind fails at publish time
+// rather than at the next launch of a repository nobody admitted.
 func ValidPattern(pattern string) error {
 	if pattern == "*" {
 		return nil
@@ -120,6 +131,15 @@ func ValidPattern(pattern string) error {
 	if len(segs) < 3 {
 		return fmt.Errorf("pattern %q must name a provider, an owner and a repository (as in \"github/acme/app\" or \"github/acme/*\")", pattern)
 	}
+	// There is deliberately no cap on the segment count above that floor: a
+	// repository path may nest (task.CanonicalRepo admits "acme/group/app", and
+	// this package's TestCanonical pins Canonical("bitbucket", "acme/group/app")
+	// as valid), and MatchRepo compares segment against segment, so
+	// "bitbucket/acme/group/app" admits exactly that repository. A cap of three
+	// refused an entry that does admit one, and Decode applies this function to
+	// a node the run reads: a published entry of that shape would have become
+	// unreadable and halted every run of the project (the review finding on
+	// this change).
 	stars := 0
 	for i, s := range segs {
 		if s == "" {
@@ -139,8 +159,8 @@ func ValidPattern(pattern string) error {
 			}
 			return fmt.Errorf("pattern %q: %q is not a repository character (names are lower-case; \"*\" is the wildcard)", pattern, string(c))
 		}
-		if i == 0 && s != "*" && !task.ValidProvider(s) {
-			return fmt.Errorf("pattern %q: %q is not a provider kind", pattern, s)
+		if i == 0 && s != "*" && !slices.Contains(config.Providers, s) {
+			return fmt.Errorf("pattern %q: %q is not a git provider kind (%s): a canonical repository is spelled with one of those (task.CanonicalRepo takes its kind from the repository's own git.provider), so this entry would enroll nothing", pattern, s, strings.Join(config.Providers, ", "))
 		}
 	}
 	if stars > maxPatternStars {
@@ -162,14 +182,17 @@ func ValidPattern(pattern string) error {
 // backtracking scan of every star is exponential in their number (a pattern is
 // attacker-chosen text on a node, so the cost must not be).
 //
-// The star case is tested *before* the literal case, and that order is the
-// whole correctness of a subject that contains a star: a "*" in the pattern is
-// never a literal character, so a subject "*ba" against the pattern "*" must be
-// a match (the star takes the subject's own "*", and everything after it),
-// while comparing them as equal bytes would consume the pattern's only star
-// literally and leave nothing to record a backtrack point with — "*ba" would
-// then not match "*" at all, and a subject that only a wildcard admits would be
-// refused. Every other character is unaffected: no case compares bytes twice.
+// The "*" case must come before the literal one, and that order is
+// load-bearing: s is not always a concrete repository name. MatchRepo's callers
+// read a pattern as its second argument too — cli's admittedBy asks whether the
+// runs of a *removed* entry are still admitted — and there s carries "*"
+// characters of its own, which must be read as ordinary characters. Testing
+// equality first spends the pattern's star on that single character and loses
+// it, so "*" would not admit "*app" and "a*" would not admit "a*b": a matcher
+// that refuses a string its pattern does match. In `fugaro project repos rm`
+// that read as a revocation which did not happen — the confirmation said "its
+// runs are refused from now on" while a broader remaining entry still admitted
+// every expansion of what was removed.
 func matchSeg(pattern, s string) bool {
 	var (
 		p, i     int // the positions being compared

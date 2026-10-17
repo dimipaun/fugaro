@@ -1,0 +1,26 @@
+---
+/**
+ * website/src/pages/caps-and-costs.astro — the caps-and-costs guide (website plan, Task
+ * W1.5).
+ *
+ * The page is a heading and the guide itself: what a cap is and how to set it, and what
+ * runs actually cost are `src/components/CapsCosts.astro`, which renders the CLI's own
+ * reference and the owner-run aggregation's own output. Nothing is written here, and
+ * nothing on this page is a figure the aggregation did not produce (F26, F31, F33, D96,
+ * D97).
+ */
+import Base from '../layouts/Base.astro'
+import CapsCosts from '../components/CapsCosts.astro'
+---
+
+<Base title="Caps and costs">
+  <h1>Caps and costs</h1>
+
+  <p>
+    Fugaro bounds what a run may spend, and it records what its runs actually spent. This page
+    is the caps that bound it, the commands that set them, and the measurements themselves —
+    each rendered from the repository's own output rather than described here.
+  </p>
+
+  <CapsCosts />
+</Base>

@@ -796,8 +796,45 @@ func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
 	if !strings.Contains(c.Problem, "acme-personal") {
 		t.Fatalf("problem doesn't name the account: %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal --repo acme/app") {
+	// The fix stores the token where D2 (plan Task 2.1) puts this name: the
+	// project copy, which is the one the job mounts and the reach the
+	// account's own allow_data_to already decided. `--repo acme/app` would
+	// store a repository copy that then wins over the project copy forever
+	// (§5, the footgun the project-secret checks name).
+	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal") {
 		t.Fatalf("fix doesn't name the exact commands: %q", c.Fix)
+	}
+	if strings.Contains(c.Fix, "--repo") {
+		t.Fatalf("the fix asks for a repository copy that would override the project's: %q", c.Fix)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredFromTheProject: a named account's token
+// stored once for the project is stored -- the job mounts the project copy --
+// so doctor must not call it missing, and must not hand the owner the
+// repository-copy command that would override it (code review, medium: the
+// check read only the repository's own containers).
+func TestDoctorClaudeAccountsStoredFromTheProject(t *testing.T) {
+	r := claudeAccountsRig(t)
+	const value = "fake-token-0123456789"
+	putProjectSecret(t, r.sm, "aurora", "claude-oauth-token-acme-personal", []byte(value))
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || !c.OK {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if strings.Contains(out, value) {
+		t.Fatalf("the value leaked: %s", out)
 	}
 	if a := r.sm.Accessed(); len(a) != 0 {
 		t.Fatalf("doctor read a secret value: %v", a)
@@ -1007,7 +1044,7 @@ func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
 	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
 		hostileAccount: {AllowDataTo: []string{hostileRepo}},
 	}}
-	c := claudeAccountsStoredCheck(lc, hostileRepo, []secretEntry{})
+	c := claudeAccountsStoredCheck(lc, hostileRepo, []secretEntry{}, nil, true)
 	if c == nil || c.OK {
 		t.Fatalf("claudeAccountsStoredCheck = %+v", c)
 	}
@@ -1026,7 +1063,7 @@ func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
 	// The "could not list" warning branch (listed == nil) prints the repo and
 	// the names too: it must escape and bound them just the same (replacing
 	// printableRepo/printableNamed with the raw values there stayed green).
-	w := claudeAccountsStoredCheck(lc, hostileRepo, nil)
+	w := claudeAccountsStoredCheck(lc, hostileRepo, nil, nil, false)
 	if w == nil || w.OK {
 		t.Fatalf("claudeAccountsStoredCheck(listed=nil) = %+v, want a warning", w)
 	}
@@ -1483,11 +1520,20 @@ func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) {
 	if !strings.Contains(c.Problem, "github-app-key") {
 		t.Fatalf("problem doesn't name the secret: %q", c.Problem)
 	}
+	if !strings.Contains(c.Fix, "secrets set github-app-key") {
+		t.Fatalf("fix doesn't name the command: %q", c.Fix)
+	}
 	if !strings.Contains(c.Fix, "secrets set github-app-key --repo acme/app") {
 		t.Fatalf("fix doesn't name the repository command: %q", c.Fix)
 	}
-	if !strings.Contains(c.Fix, "secrets set github-app-key --project-wide") {
-		t.Fatalf("fix doesn't name the project-wide command: %q", c.Fix)
+	// The bare command leads (code review, low): it is D2's default store, so
+	// it is the command that puts the value where the repositories the owner
+	// allow-listed it for mount it. --repo first offered a repository copy --
+	// the one that wins over the project copy forever -- to a person whose
+	// repository may already mount the shared one. The sibling
+	// claude-accounts check leads the same way.
+	if first, _, _ := strings.Cut(c.Fix, ", or "); !strings.HasSuffix(first, "secrets set github-app-key") {
+		t.Fatalf("fix does not lead with the bare command: %q", c.Fix)
 	}
 }
 
@@ -1512,6 +1558,95 @@ func TestDoctorProjectSecretStoredPassesWithEitherCopy(t *testing.T) {
 	}
 	if out := string(r.sm.Latest(gcp.SecretID(slug, "github-app-key"))); out != "" {
 		t.Fatalf("a repository copy exists: %q", out)
+	}
+}
+
+// apiKeyRig is a doctor rig inside a checkout of github.com/acme/app whose
+// config takes the api-key auth with lines (the agent and budget blocks to
+// splice in) and whose local config offers one provider serving deepseek/*.
+func apiKeyRig(t *testing.T, lines string) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	yaml := strings.Replace(cliMinimalYAML, "workflows:", lines+"workflows:", 1)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"+
+		"repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n")
+	// The two names this rig's runs really need, so the key under test is the
+	// only thing left: the git credential, and the provider's own key.
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("pem"))
+	putProjectSecret(t, r.sm, "aurora", "openrouter-api-key", []byte("provider-value"))
+	return r
+}
+
+// TestDoctorDoesNotRequireTheOptionalAnthropicKey: D2's sweep makes
+// anthropic-api-key project-wide-eligible for every repository (a reserved
+// name with no per-name list), and the project-secret-stored check then
+// demanded a stored value for it. The key is one a job can go without
+// (infra.OptionalSecret): a repository whose models all route through a
+// provider never needs one, and Readiness drops the mount and deploys rather
+// than gate it -- so doctor failed outright, "no run of a workflow mounting
+// one can start", for a repository whose runs are fine (code review, high).
+func TestDoctorDoesNotRequireTheOptionalAnthropicKey(t *testing.T) {
+	apiKeyRig(t, "agent: { auth: api-key, models: { coder: deepseek/coder, reviewer: deepseek/coder } }\n"+
+		"budget: { mode: enforce, per_run_usd: 20 }\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed a repository that needs no Anthropic key: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	for _, id := range []string{"project-secret-stored", "project-secret-optional"} {
+		if c, ok := doctorCheckByID(o.Checks, id); ok && !c.OK {
+			t.Fatalf("%s = %+v, want no check or an ok one: the job drops the key's mount and deploys without it", id, c)
+		}
+	}
+}
+
+// TestDoctorWarnsForTheOptionalAnthropicKeyWhenItIsNeeded: the key is needed
+// when a pin no provider serves goes direct to Anthropic, and when the budget
+// isn't enforcing every call goes there whatever the pins are
+// (config.AnthropicKeyNeeded) -- so a keyless repository's runs are refused
+// at agent start. Readiness says so as a note and never gates the deploy, so
+// doctor warns and does not fail.
+func TestDoctorWarnsForTheOptionalAnthropicKeyWhenItIsNeeded(t *testing.T) {
+	for _, tc := range []struct{ name, lines string }{
+		{"a pin no provider serves", "agent: { auth: api-key, models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 } }\n" +
+			"budget: { mode: enforce, per_run_usd: 20 }\n"},
+		{"nothing routes to a provider", "agent: { auth: api-key, models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 } }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorWarnsForTheOptionalAnthropicKey(t, tc.lines)
+		})
+	}
+}
+
+func doctorWarnsForTheOptionalAnthropicKey(t *testing.T, lines string) {
+	t.Helper()
+	apiKeyRig(t, lines)
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed on a warning: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-optional")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-optional = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "anthropic-api-key") {
+		t.Fatalf("problem doesn't name the key: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "secrets set anthropic-api-key") {
+		t.Fatalf("fix doesn't name the command: %q", c.Fix)
+	}
+	if stored, ok := doctorCheckByID(o.Checks, "project-secret-stored"); ok && !stored.OK {
+		t.Fatalf("project-secret-stored = %+v: the optional key is not the red gate", stored)
 	}
 }
 
@@ -1626,6 +1761,328 @@ func TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack(t *testing.T) {
 	}
 }
 
+// secretScopeRig is a doctor rig whose local config opts github-app-key into
+// project-wide storage for acme/app (projectSecretsRig) and whose checkout
+// carries a workflow secret of its own, so the scope listing has both a
+// project-eligible name and a repository-only one to show.
+func secretScopeRig(t *testing.T) *doctorRig {
+	t.Helper()
+	r := secretScopeCheckout(t)
+	addLocalLines(t, r, projectSecretsConfig)
+	return r
+}
+
+// secretScopeSweepRig is the same checkout with the other half of the same
+// rule: a local config with no project_secrets entry at all. github-app-key is
+// still project-scope eligible there — config.ProjectScopeByDefault sweeps in
+// the reserved names the platform itself mounts, "the same reach the CLI's
+// default store announces" (infra.ProjectSecretCandidate) — so both doctor
+// checks have to answer for that case too, not only for an owner's entry.
+func secretScopeSweepRig(t *testing.T) *doctorRig {
+	t.Helper()
+	r := secretScopeCheckout(t)
+	addLocalLines(t, r, "repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n")
+	return r
+}
+
+// secretScopeCheckout is the checkout both rigs above share: github.com/acme/app,
+// one workflow mounting a secret of its own, and the local config's repos block
+// left to the caller.
+func secretScopeCheckout(t *testing.T) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: db-password, env: DB_PASSWORD }] }\n"
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	return r
+}
+
+// TestDoctorSecretScopeCheck: doctor lists each name this checkout's jobs
+// mount with the copy Fugaro resolves for it — the project's, or the
+// repository's own (plan Task 2.3 step 1) — as an info line, which never
+// fails doctor and names no value.
+func TestDoctorSecretScopeCheck(t *testing.T) {
+	r := secretScopeRig(t)
+	// The project's copy of the App key, and this repository's own copy of
+	// the workflow secret: one name each way, with two values that must never
+	// appear in doctor's output.
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+	slug := mustSlug("github", "acme/app")
+	r.sm.Seed(gcp.SecretID(slug, "db-password"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "db-password"}, []byte("repo-value"))
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "secret-scope")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("secret-scope = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, "project scope") {
+		t.Fatalf("secret-scope does not name the project-scope name: %q", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "db-password") || !strings.Contains(c.Problem, "repository copy") {
+		t.Fatalf("secret-scope does not name the repository copy: %q", c.Problem)
+	}
+	if checksFail([]doctorCheck{c}, true) {
+		t.Fatalf("the informational scope listing failed doctor under --strict: %+v", c)
+	}
+	for _, leak := range []string{"project-value", "repo-value"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("doctor printed a secret value %q:\n%s", leak, out)
+		}
+	}
+	// The D2 sweep (plan Task 2.1 step 2): the same installation with no
+	// project_secrets entry at all. github-app-key is project-scope eligible
+	// through config.ProjectScopeByDefault, so the line has to say "project
+	// scope" for it here too — and say "no enabled copy this repository can
+	// resolve" for the workflow secret nothing has a version of, which is
+	// the answer the docs promise
+	// for every name (both copies really are read: the payloads are here and
+	// the assertions below keep them out of the output).
+	sweep := secretScopeSweepRig(t)
+	putProjectSecret(t, sweep.sm, "aurora", "github-app-key", []byte("project-value"))
+	sout, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed on the sweep rig: %v\n%s", err, sout)
+	}
+	sc := secretScopeOf(t, sout)
+	if !strings.Contains(sc.Problem, "github-app-key") || !strings.Contains(sc.Problem, "project scope") {
+		t.Fatalf("the D2 sweep is not listed as project scope: %q", sc.Problem)
+	}
+	if !strings.Contains(sc.Problem, "db-password") || !strings.Contains(sc.Problem, "no enabled copy this repository can resolve") {
+		t.Fatalf("a name with no stored copy is missing from the listing: %q", sc.Problem)
+	}
+	for _, leak := range []string{"project-value", "repo-value"} {
+		if strings.Contains(sout, leak) {
+			t.Fatalf("doctor printed a secret value %q:\n%s", leak, sout)
+		}
+	}
+}
+
+// secretScopeOf is doctor --json's "secret-scope" check, which has to be
+// there: the listing is the check these tests are about.
+func secretScopeOf(t *testing.T, out string) doctorCheck {
+	t.Helper()
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "secret-scope")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("secret-scope = %+v", c)
+	}
+	return c
+}
+
+// TestDoctorDoesNotShadowADisabledRepositoryCopy: the repository's container
+// exists but holds no enabled version (the state a disabled version leaves),
+// so the project's copy is the one Fugaro resolves for the name and nothing
+// is shadowed. Only an enabled version wins (design project-secrets.md §5),
+// and warning here would name a footgun that is not there — and send the
+// operator to a store command for a value that already reaches this
+// repository.
+func TestDoctorDoesNotShadowADisabledRepositoryCopy(t *testing.T) {
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	// Seeded with no versions: latest is empty, which is what a disabled
+	// version leaves behind.
+	r.sm.Seed(gcp.SecretID(slug, "github-app-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "secret-scope-shadowed"); ok {
+		t.Fatalf("a disabled repository copy was reported as shadowing the project's: %+v", c)
+	}
+	if c := secretScopeOf(t, out); !strings.Contains(c.Problem, "github-app-key — project scope") {
+		t.Fatalf("the name does not resolve to the project's copy: %q", c.Problem)
+	}
+	if strings.Contains(out, "project-value") {
+		t.Fatalf("doctor printed a secret value:\n%s", out)
+	}
+}
+
+// TestDoctorSecretScopeSilentWhenAListingIsUnreadable: neither check says
+// anything when either listing could not be read. project-secret-stored
+// already fails closed on exactly that state, and a second warning about the
+// same unreadable listing would tell the operator nothing new — while a
+// listing built from half the state could name the wrong copy as the one a
+// job mounts.
+func TestDoctorSecretScopeSilentWhenAListingIsUnreadable(t *testing.T) {
+	facts := doctorRepoSecrets{repo: "acme/app",
+		candidates: map[string]string{"github-app-key": gcp.ProjectSecretID("aurora", "github-app-key")},
+		repoIDs:    map[string]string{"github-app-key": gcp.SecretID("slug", "github-app-key")}}
+	for name, got := range map[string][]doctorCheck{
+		"the repository's listing could not be read": doctorSecretScopeChecks(facts, nil, nil, true),
+		"the project's listing could not be read":    doctorSecretScopeChecks(facts, []secretEntry{{Name: "github-app-key", Latest: "1"}}, nil, false),
+	} {
+		if got != nil {
+			t.Errorf("%s: checks = %+v, want none", name, got)
+		}
+	}
+}
+
+// TestDoctorSecretScopeSaysNoEnabledCopyNotNoCopyStored: the line's last
+// answer is about what a job resolves to, and the two states that reach it
+// with a container in them are not "nothing is stored" (code review, minor:
+// the wording said "no copy stored", which is false of both). A container
+// that exists holding only disabled versions left something stored, and so
+// did a project-wide copy that is enabled but not eligible for this
+// repository — ProjectSecretCandidate is what makes a project copy
+// reachable here, and a name outside it resolves to nothing however many
+// versions the project's container holds. Neither state may be reported as
+// having no copy at all.
+func TestDoctorSecretScopeSaysNoEnabledCopyNotNoCopyStored(t *testing.T) {
+	facts := doctorRepoSecrets{repo: "acme/app",
+		repoIDs: map[string]string{"github-app-key": gcp.SecretID("slug", "github-app-key")}}
+	cases := map[string]struct {
+		listed  []secretEntry
+		project []gcp.SecretInfo
+	}{
+		"the repository's container holds only a disabled version": {
+			listed: []secretEntry{{Name: "github-app-key", Latest: ""}},
+		},
+		"the project's container holds an enabled version this repository cannot resolve": {
+			listed:  []secretEntry{},
+			project: []gcp.SecretInfo{{ID: gcp.ProjectSecretID("aurora", "github-app-key"), Latest: "1"}},
+		},
+	}
+	for name, tc := range cases {
+		checks := doctorSecretScopeChecks(facts, tc.listed, tc.project, true)
+		if len(checks) == 0 {
+			t.Fatalf("%s: no secret-scope line", name)
+		}
+		got := checks[0].Problem
+		if strings.Contains(got, "no copy stored") {
+			t.Errorf("%s: the line says a copy is not stored when one is: %q", name, got)
+		}
+		if !strings.Contains(got, "no enabled copy this repository can resolve") {
+			t.Errorf("%s: the line does not say which copy resolves: %q", name, got)
+		}
+	}
+}
+
+// TestDoctorWarnsOnAShadowedProjectName: the same name is stored both
+// project-wide and in this repository's own container. A repository copy
+// with an enabled version wins over the project's forever (design
+// project-secrets.md §5, the footgun `fugaro secrets set` warns about at
+// store time), so the project's value never reaches this repository. A
+// warning, not red: the next fugaro init --repo cannot change it, and the
+// value the repository mounts is the one its own copy holds.
+func TestDoctorWarnsOnAShadowedProjectName(t *testing.T) {
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	r.sm.Seed(gcp.SecretID(slug, "github-app-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, []byte("repo-value"))
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "secret-scope-shadowed")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("secret-scope-shadowed = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, "wins") {
+		t.Fatalf("the warning doesn't name the shadowed name and the rule: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "secrets set github-app-key --repo acme/app") {
+		t.Fatalf("the fix doesn't name the command that stores the repository's own value: %q", c.Fix)
+	}
+	for _, leak := range []string{"project-value", "repo-value"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("doctor printed a secret value %q:\n%s", leak, out)
+		}
+	}
+	// And the same footgun under the D2 sweep, with no project_secrets entry
+	// anywhere: the project-wide copy is not the owner's entry's doing but
+	// config.ProjectScopeByDefault's, which is the case most installations
+	// are in.
+	sweep := secretScopeSweepRig(t)
+	sslug := mustSlug("github", "acme/app")
+	sweep.sm.Seed(gcp.SecretID(sslug, "github-app-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, sslug), gcp.LabelSecret: "github-app-key"}, []byte("repo-value"))
+	putProjectSecret(t, sweep.sm, "aurora", "github-app-key", []byte("project-value"))
+	sout, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("the sweep's warning must not fail doctor either: %v\n%s", err, sout)
+	}
+	var so doctorOutput
+	if jerr := json.Unmarshal([]byte(sout), &so); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, sout)
+	}
+	sc, ok := doctorCheckByID(so.Checks, "secret-scope-shadowed")
+	if !ok || sc.OK || sc.Severity != "warning" {
+		t.Fatalf("GitHub App key stored both ways with no project_secrets entry: secret-scope-shadowed = %+v", sc)
+	}
+	if !strings.Contains(sc.Problem, "github-app-key") || !strings.Contains(sc.Fix, "secrets set github-app-key --repo acme/app") {
+		t.Fatalf("the sweep's warning does not name the name and the fix: %+v", sc)
+	}
+	if strings.Contains(sout, "project-value") || strings.Contains(sout, "repo-value") {
+		t.Fatalf("doctor printed a secret value:\n%s", sout)
+	}
+}
+
+// TestDoctorNamesEveryShadowedName: the shadowed warning's fix is printed to
+// be pasted, so it carries one command per shadowed name rather than only the
+// first one's (code review, minor).
+func TestDoctorNamesEveryShadowedName(t *testing.T) {
+	// agent.auth: api-key, so this checkout's job mounts two reserved names --
+	// the App key and the Anthropic key -- and both can be stored both ways.
+	r := newDoctorRig(t)
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	slug := mustSlug("github", "acme/app")
+	addLocalLines(t, r, "project_secrets:\n  github-app-key:\n    allow_data_to: [acme/app]\n  anthropic-api-key:\n    allow_data_to: [acme/app]\n"+
+		"repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n")
+	for _, name := range []string{"github-app-key", "anthropic-api-key"} {
+		r.sm.Seed(gcp.SecretID(slug, name), map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: name}, []byte("repo-value"))
+		putProjectSecret(t, r.sm, "aurora", name, []byte("project-value"))
+	}
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "secret-scope-shadowed")
+	if !ok || c.OK {
+		t.Fatalf("secret-scope-shadowed = %+v", c)
+	}
+	for _, name := range []string{"github-app-key", "anthropic-api-key"} {
+		if !strings.Contains(c.Fix, "secrets set "+name+" --repo acme/app") {
+			t.Errorf("the fix has no command for %s: %q", name, c.Fix)
+		}
+		if !strings.Contains(c.Problem, name) {
+			t.Errorf("the problem does not name %s: %q", name, c.Problem)
+		}
+	}
+}
+
 // extraAccessorRig is a doctor rig whose local config opts github-app-key
 // into project-wide storage for acme/app only, and records acme/old (which
 // is not allow-listed any more) with one workflow, so its job's service
@@ -1734,6 +2191,12 @@ func TestDoctorFlagsExtraAccessorForNamedAccountVariant(t *testing.T) {
 	// needs its token stored, or that check fails doctor outright and this
 	// test could not tell a warning from a failure.
 	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-personal", []byte("repo-value"))
+	// D2's sweep makes github-app-key a project candidate for every
+	// repository, so project-secret-stored now also asks whether a value is
+	// stored anywhere for the key this checkout's workflow mounts: without
+	// one its own check is red (no run can start), which is not what this
+	// test is about.
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "github-app-key", []byte("repo-value"))
 
 	const name = "claude-oauth-token-acme-personal"
 	projID := putProjectSecret(t, r.sm, "aurora", name, []byte("project-value"))

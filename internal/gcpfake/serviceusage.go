@@ -27,6 +27,11 @@ type ServiceUsage struct {
 	// SERVICE_DISABLED after its enable, as happens while the enable
 	// propagates.
 	Propagation int
+	// Deactivating is how many enable calls are answered Google's "the
+	// service is currently being deactivated" (400 FAILED_PRECONDITION),
+	// which is what enabling a just-disabled service gets until the disable
+	// has finished. It counts down with each enable.
+	Deactivating int
 
 	mu       sync.Mutex
 	services map[string]*usageService
@@ -108,6 +113,12 @@ func (f *ServiceUsage) handle(w http.ResponseWriter, r *http.Request, _ []byte) 
 	defer f.mu.Unlock()
 	if m := usageEnableRE.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodPost {
 		service := m[2]
+		if f.Deactivating > 0 {
+			f.Deactivating--
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION",
+				"The service "+service+" is currently being deactivated. Please try again later.")
+			return
+		}
 		s := f.services[service]
 		if s == nil || !s.disabled {
 			// Enabled already: a no-op, answered done at once, as Google does.

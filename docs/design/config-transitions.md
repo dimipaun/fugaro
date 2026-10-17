@@ -210,7 +210,7 @@ Next command:
   fugaro init --repo . --retire
 ```
 
-**The three groups are the counts made visible, and with the union there is no `KEPT` block in this case.** A live container carrying this repository's labels goes back into `RepoSpec.Secrets` in `Readiness` (#329's N4, `Existing.ExtraSecrets`), so the plan **produces** its address again and adopts it: the container is not retired at all, the repository module keeps making its per-secret operator grants, and none of that is a leftover to keep or to fear for. `KEPT` is what the yaml cannot ask for — a container the label list did not find, or did not find *correctly labelled* — and then it names the logical name and the Secret Manager ID, says the value stays, and points at `fugaro secrets ls`:
+**The three groups are the counts made visible, and with the union there is no `KEPT` block in this case.** A live container carrying this repository's labels goes back into `RepoSpec.Secrets` in `Readiness` (#329's N4, `Existing.ExtraSecrets`), so the plan **produces** its address again and adopts it: the container is not retired at all, the repository module keeps making its per-secret operator grants, and none of that is a leftover to keep or to fear for. `KEPT` is what the yaml cannot ask for — a container the label list did not find, or did not find *correctly labelled* — and then it names the logical name and the Secret Manager ID, says the value stays, and points at `fugaro secrets ls --repo` (the repository's own containers, which is what the label list reads; without `--repo` the listing is the project's):
 
 ```
 Removed from Terraform's state, and never deleted (2):
@@ -221,7 +221,7 @@ KEPT — Fugaro never deletes a secret or a secret version:
   claude-oauth-token-bmb           leaves Terraform's state, unmanaged; Secret Manager is untouched
   Nothing here deletes a container, so one that still exists keeps its value. A live container
   carrying this repository's labels is adopted back into the plan instead of being retired at
-  all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.
+  all, so these are the ones the label list did not find: check them with `fugaro secrets ls --repo`.
 ```
 
 That is the shape §1's unlabelled case produces — **14 retired, 12 going away, 2 kept, 3 state-removed before the plan** (§1's note has the two number sets side by side, and says which is which) — and it is what a state-only retirement sees before discovery has run in front of it. The `KEPT` list is still built from the same label discovery as the orphan set (§3.1a), so **a rerun after a failed delete still names the kept secret** even though its container is no longer in the state. Its addresses come from `Orphans` for exactly that reason.

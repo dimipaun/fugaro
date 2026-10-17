@@ -152,4 +152,108 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 	}
 }
 
+// A price entry's member names are held to the documented spelling, like the
+// budget block's: DisallowUnknownFields refuses a rate written "input_perm",
+// and encoding/json matches "INPUT_PER_M" to the same field as input_per_m, so
+// the rate a run is priced by would otherwise depend on the order the keys were
+// written in. The long_context tier is an object of its own and reads the same
+// way.
+func TestModelPricesRefusesCaseFoldedMembers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"a case-folded rate beside the real one": `{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "INPUT_PER_M": 1000, "output_per_m": 1}}}`,
+		"a rate written twice":                   `{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "input_per_m": 1000, "output_per_m": 1}}}`,
+		"a case-folded tier member":              `{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "long_context": {"above_input_tokens": 100000, "input_per_m": 2, "INPUT_PER_M": 3, "output_per_m": 4}}}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "model_prices") {
+			t.Errorf("%s: err = %v, want it to name the block", name, err)
+		}
+	}
+	// The documented spelling, tier and all, is read as before.
+	p, found, err := Decode([]byte(`{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "long_context": {"above_input_tokens": 100000, "input_per_m": 2, "output_per_m": 4}}}}`))
+	if err != nil || !found || p == nil {
+		t.Fatalf("a correctly spelled price entry was refused: (%v, %v, %v)", p, found, err)
+	}
+	price, ok := p.Prices["deepseek/deepseek-v4-flash"]
+	if !ok || price.InputPerM == nil || *price.InputPerM != 5 || price.LongContext == nil || *price.LongContext.InputPerM != 2 {
+		t.Errorf("Prices = %+v, want the entry as written", p.Prices)
+	}
+}
+
+// TestModelPricesRefusesACaseFoldedTierMemberAlone: the long_context tier is
+// held to the same name check as the entry around it, and that check's own
+// rule — a name this Fugaro models, spelled in another case, is refused — only
+// fires for a name the list it is handed holds. priceTierMembers carried
+// input_per_m and output_per_m but not above_input_tokens, which is the tier's
+// third field (projectpolicy.PriceTier), so a lone "ABOVE_INPUT_TOKENS" went
+// through: not the fail-open the two-spelling case is (the decoder still
+// resolves the field and a second spelling beside it is caught by the fold
+// check), but the invariant the function's comment states did not hold, and
+// the next writer of that list would have no reason to notice. Listed, the
+// spelling is refused like any other.
+func TestModelPricesRefusesACaseFoldedTierMemberAlone(t *testing.T) {
+	const raw = `{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, ` +
+		`"long_context": {"ABOVE_INPUT_TOKENS": 100000, "input_per_m": 2, "output_per_m": 4}}}}`
+	p, found, err := Decode([]byte(raw))
+	if err == nil || p != nil || !found {
+		t.Fatalf("Decode(%s) = (%v, %v, %v), want a refusal", raw, p, found, err)
+	}
+	for _, w := range []string{"model_prices.long_context", "above_input_tokens", `"ABOVE_INPUT_TOKENS"`} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("err = %v, want it to name %s", err, w)
+		}
+	}
+}
+
+// TestModelPricesRefusesOneModelPricedTwice: the block is keyed by model ID,
+// and the ID is the *unescaped* key, so one model has two spellings on the
+// node — the escaped one this package writes and the literal one a person
+// writes by hand. A block that carries both is a block whose two prices land
+// on one map entry, and which of the two survives is the order the members
+// were read in: the run's accounting and the per_run_usd comparison would move
+// run to run, from a document nobody edited between them. An exact repeat of
+// one key is the same loss one step earlier (the map keeps the last of the
+// two), so both are refused and both name what was written.
+func TestModelPricesRefusesOneModelPricedTwice(t *testing.T) {
+	const id = "deepseek/deepseek-v4.1-flash"
+	for name, raw := range map[string]string{
+		"the escaped spelling beside the literal one": `{"version": 2, "model_prices": {"` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}, "` + id + `": {"input_per_m": 99, "output_per_m": 2}}}`,
+		"the literal spelling first":                  `{"version": 2, "model_prices": {"` + id + `": {"input_per_m": 99, "output_per_m": 2}, "` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}}}`,
+		"the same key twice":                          `{"version": 2, "model_prices": {"deepseek/*": {"input_per_m": 1, "output_per_m": 2}, "deepseek/*": {"input_per_m": 99, "output_per_m": 2}}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "model_prices") {
+			t.Errorf("%s: err = %v, want it to name the block", name, err)
+		}
+	}
+	// The same two keys under two different models are two entries and are
+	// read: the refusal is the collision, not the spelling.
+	raw := []byte(`{"version": 2, "model_prices": {"` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}, "deepseek/other": {"input_per_m": 99, "output_per_m": 2}}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found || p == nil || len(p.Prices) != 2 {
+		t.Fatalf("Decode(%s) = (%v, %v, %v), want both entries", raw, p, found, err)
+	}
+	// And one model written once is priced at what it says, whichever spelling
+	// was used: the escaped form is what this package writes, the literal one
+	// is what a person writes.
+	for _, key := range []string{escKey(id), id} {
+		raw := []byte(`{"version": 2, "model_prices": {"` + key + `": {"input_per_m": 7, "output_per_m": 2}}}`)
+		p, found, err := Decode(raw)
+		if err != nil || !found || p == nil {
+			t.Fatalf("Decode(%s) = (%v, %v, %v), want it read", raw, p, found, err)
+		}
+		if price, ok := p.Prices[id]; !ok || price.InputPerM == nil || *price.InputPerM != 7 {
+			t.Errorf("Prices = %+v, want %s priced at 7 under the catalogue's spelling", p.Prices, id)
+		}
+	}
+}
+
 func rate(v float64) *float64 { return &v }

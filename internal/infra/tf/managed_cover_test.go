@@ -86,6 +86,11 @@ func TestManagedAllowedTypesGolden(t *testing.T) {
 	}
 	wantDropped := []string{
 		"google_billing_budget",
+		// main's compute module's network (0.9.0), dropped on the merge of
+		// main into next-0.8.5 as the fail-closed default.
+		"google_compute_firewall",
+		"google_compute_router",
+		"google_compute_router_nat",
 		"google_firebase_database_instance",
 		"google_firebase_project",
 		"google_logging_log_view",

@@ -1,0 +1,32 @@
+// website/astro.config.mjs — the site's Astro configuration.
+//
+// The site is static-first (the spec's stack sentence read as a constraint, F56):
+// `output: 'static'` and no adapter, so `astro build` writes plain HTML and every byte a
+// reader's browser receives was produced by this build. Nothing here fetches: there is no
+// integration, no image service, no remote font and no adapter that talks to a host, so
+// the build behaves the same with the network off as with it on (W1.1 step 2, D106).
+//
+// What is deliberately NOT here, and where it belongs instead:
+//   - the canonical URL, the sitemap and the OpenGraph tags: the base layout (W1.3) reads
+//     website/data/site.yaml, which is the one place a site-wide URL is written down;
+//   - the styles and the palette tokens: website/src/styles/ (W1.2);
+//   - the analytics loader: the base layout (W1.3) written so that W1.12's consent gate
+//     decides whether anything is fetched, and nothing is loaded without consent.
+//
+// A build that needs no network is the point of the empty integration list: an
+// integration is code that runs during the build and may fetch, and one added later has
+// to be argued for rather than inherited.
+
+import { defineConfig } from 'astro/config'
+
+export default defineConfig({
+  // The one markdown file is a generated reference, shown as written: `--out` must not be
+  // rewritten to an en dash. (Raw HTML in it is escaped by src/lib/escape-raw-html.mjs.)
+  markdown: { smartypants: false },
+  // Static output: no server, no adapter, nothing rendered per request.
+  output: 'static',
+  // Stated rather than omitted, because "the shell ships no integration" is a rule this
+  // site is held to and not a consequence of an absent line. An island that needs one
+  // adds it in the task that needs it, with the byte budget that task carries.
+  integrations: [],
+})

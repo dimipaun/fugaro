@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -70,6 +71,49 @@ func TestProfileCheckout(t *testing.T) {
 	l := mustLayer(t, head+"profiles:\n  p:\n    checkout: clone\n    commands: { build: make, test: make test }\n")
 	if l.Profiles["p"].Checkout != CheckoutClone {
 		t.Fatalf("Profiles[p].Checkout = %q, want %q", l.Profiles["p"].Checkout, CheckoutClone)
+	}
+}
+
+// TestProfileArtifactKeys pins that a profile may set 0.8.0's artifact keys
+// (scope InProfile|InRepo: config.Scopes and docs/project-layer.md's table):
+// commands.render, commands.probe, timeouts.render and inputs: decode onto
+// Profile rather than failing the strict decode as unknown fields. Without
+// the field a profile carrying inputs: was refused with yaml.v3's raw
+// KnownFields error, while the scope table, docs/project-layer.md and
+// docs/design/layered-config.md all say a profile may set it.
+func TestProfileArtifactKeys(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	body := `profiles:
+  p:
+    commands: { build: make, test: make test, render: make shots, probe: make check }
+    timeouts: { render: 30m }
+    inputs: { max_files: 4, max_bytes: 1048576, max_total_bytes: 4194304 }
+`
+	l := mustLayer(t, head+body)
+	pr := l.Profiles["p"]
+	if pr.Commands.Render != "make shots" || pr.Commands.Probe != "make check" {
+		t.Errorf("Profiles[p].Commands = %+v", pr.Commands)
+	}
+	if d := pr.Timeouts.Render; d.Duration != 30*time.Minute || !d.Set {
+		t.Errorf("Profiles[p].Timeouts.Render = %+v, want 30m set", d)
+	}
+	if pr.Inputs.MaxFileCount() != 4 || pr.Inputs.MaxFileBytes() != 1048576 || pr.Inputs.MaxSetBytes() != 4194304 {
+		t.Errorf("Profiles[p].Inputs = %+v, want 4 files / 1 MiB / 4 MiB", pr.Inputs)
+	}
+	// And the profile's values reach the workflow that starts from it: the
+	// key-by-key merge (docs/design/layered-config.md §4) is what makes
+	// InProfile mean anything, and it is the merged workflow the launcher
+	// and the runner read the caps and the render command from.
+	c, res, ps := Resolve([]byte(minimalRepo), mustLayer(t, head+"defaults:\n  git: { provider: github }\ndefault_profile: p\n"+body))
+	if len(ps) > 0 {
+		t.Fatalf("resolve problems: %v", ps)
+	}
+	w := c.Workflows[ImplicitWorkflow]
+	if w.Commands.Render != "make shots" || w.Timeouts.Render.Duration != 30*time.Minute || w.Inputs.MaxFileCount() != 4 {
+		t.Errorf("the resolved workflow = %+v, want the profile's render/inputs", w)
+	}
+	if got := res.SourceOf("workflows.default.commands.render"); got != SourceProfile("p") {
+		t.Errorf("SourceOf(workflows.default.commands.render) = %q, want %q", got, SourceProfile("p"))
 	}
 }
 
@@ -146,6 +190,12 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"a bad profile name", head + "profiles:\n  P_1: {}\n", "a profile name must be"},
 		{"legacy image.node in a profile", head + "profiles:\n  p: { image: { node: '20' } }\n", "profiles.p.image.node: was removed in 0.7.0"},
 		{"a bad checkout", head + "profiles:\n  p: { checkout: sometimes }\n", "profiles.p.checkout: must be baked or clone"},
+		// 0.8.0's artifact keys are profile keys (scope InProfile|InRepo);
+		// the caps and the render timeout are checked the same way a
+		// workflow's own are (validateInputs, validateProfile's timeout list).
+		{"an inputs cap over its ceiling", head + "profiles:\n  p:\n    inputs: { max_files: 65 }\n", "profiles.p.inputs.max_files: must be at most 64"},
+		{"a negative inputs cap", head + "profiles:\n  p:\n    inputs: { max_bytes: -1 }\n", "profiles.p.inputs.max_bytes: must not be negative"},
+		{"a zero render timeout", head + "profiles:\n  p:\n    timeouts: { render: 0s }\n", "profiles.p.timeouts.render: must be positive"},
 		{"clone refuses apt in a profile", head + "profiles:\n  p: { checkout: clone, image: { apt: [jq] } }\n", "profiles.p.image.apt: checkout: clone runs the base image with no build; use checkout: baked to build an image"},
 		{"clone refuses a legacy base in a profile", head + "profiles:\n  p: { base: go, checkout: clone }\n", "profiles.p.base: was removed in 0.7.0"},
 		{"oversized", head + "# " + strings.Repeat("x", LayerMaxBytes) + "\n", "over the 64 KiB limit"},

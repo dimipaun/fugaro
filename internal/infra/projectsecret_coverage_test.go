@@ -42,9 +42,10 @@ func TestProjectSecretCoverageProjectCopyIsNotMissing(t *testing.T) {
 
 // A project container whose only version is DISABLED covers nothing: the
 // container is there, and no enabled version is, so the name stays missing
-// and the fix names the --project-wide command -- never a repository copy,
-// which would then win forever over the project's (the silent precedence
-// flip, design docs/design/project-secrets.md §5).
+// and the fix names the project-wide command -- the bare one, since D2 made
+// project scope the default store (`--project-wide` is a synonym) -- never a
+// repository copy, which would then win forever over the project's (the
+// silent precedence flip, design docs/design/project-secrets.md §5).
 func TestProjectSecretCoverageDisabledProjectVersionIsMissing(t *testing.T) {
 	ctx := context.Background()
 	f := newCloud(t)
@@ -66,8 +67,9 @@ func TestProjectSecretCoverageDisabledProjectVersionIsMissing(t *testing.T) {
 		if st.Name != "bitbucket-token" {
 			continue
 		}
-		if !strings.Contains(st.Commands[0], "fugaro secrets set bitbucket-token --project-wide") {
-			t.Errorf("step = %+v, want the --project-wide command", st)
+		if !strings.Contains(st.Commands[0], "fugaro secrets set bitbucket-token ") ||
+			strings.Contains(st.Commands[0], "--repo") {
+			t.Errorf("step = %+v, want the project-wide command, never a repository copy", st)
 		}
 	}
 	if _, missing, _ := readinessOf(t, f, spec); !missingNames(missing, "bitbucket-token") {
@@ -76,8 +78,9 @@ func TestProjectSecretCoverageDisabledProjectVersionIsMissing(t *testing.T) {
 }
 
 // A name that is a project candidate but is stored nowhere is still the real
-// missing case, and its fix is the --project-wide command: storing a
-// repository copy would resolve to it forever after.
+// missing case, and its fix is the project-wide command (the bare one, D2's
+// default store): storing a repository copy would resolve to it forever
+// after.
 func TestProjectSecretCoverageNeitherStoredNamesProjectWideFix(t *testing.T) {
 	ctx := context.Background()
 	f := newCloud(t)
@@ -96,7 +99,7 @@ func TestProjectSecretCoverageNeitherStoredNamesProjectWideFix(t *testing.T) {
 			got = st.Commands[0]
 		}
 	}
-	if want := "fugaro secrets set bitbucket-token --project-wide < PATH-TO-THE-VALUE-FILE"; got != want {
+	if want := "fugaro secrets set bitbucket-token < PATH-TO-THE-VALUE-FILE"; got != want {
 		t.Errorf("command = %q, want %q", got, want)
 	}
 }

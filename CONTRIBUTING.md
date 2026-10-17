@@ -22,14 +22,14 @@ Some tests sit behind build tags and need extra tools. CI type-checks all of the
 | `docker` | the image and gateway tests that build or run containers | Docker |
 | `live` | tests against real cloud accounts; never run in CI, only type-checked | your own project |
 
-Terraform changes: `terraform fmt -check -recursive deploy/terraform`, and `terraform validate` and `terraform test` in each root under `deploy/terraform/gcp/roots/` (`installation`, `firebase`, `repo`).
+Terraform changes: `terraform fmt -check -recursive deploy/terraform`, and `terraform validate` and `terraform test` in each root under `deploy/terraform/gcp/roots/` (`installation`, `firebase`, `repo`, `compute`). A change to a shared module is a change to every root that uses it, and the compute backend's root is the one CI does not reach until the staged `docs/pending-workflows/ci.yml` is copied in (see below).
 
 ## What CI runs
 
-`.github/workflows/ci.yml` has three jobs, and all three are required checks on pull requests:
+`.github/workflows/ci.yml` has three jobs. CI is not a pull-request gate (the owner's 2026-10-16 ruling: the in-run loop already runs the tests): it runs on every push to `main` and on demand with `gh workflow run ci --ref <branch>`, and `scripts/release-gate.sh` requires it green on the tag's commit. Run it against your branch before merging.
 
 - `test`: gofmt, `go vet` with every tag above, then `go test -race ./...`
-- `terraform`: fmt, validate and `terraform test` of the three roots, tflint, a Trivy scan, and the `terraform`-tagged tests
+- `terraform`: fmt, validate and `terraform test` of every root under `deploy/terraform/gcp/roots/` (the job's `for r in ...` loop — `compute` is added by the staged `docs/pending-workflows/ci.yml`, so until that file is copied in the new root is validated locally only), tflint, a Trivy scan, and the `terraform`-tagged tests
 - `rules`: the database rules against the emulator, which fails (not skips) if the emulator is missing
 
 ## Skills

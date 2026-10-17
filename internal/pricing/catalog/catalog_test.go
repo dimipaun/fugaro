@@ -134,6 +134,37 @@ func TestLoadRejectsMalformedFile(t *testing.T) {
 		{"a zdr tier with no zdr endpoints", func(t *testing.T) []byte {
 			return []byte(strings.Replace(string(marshal(t, valid(t))), `"zdr_endpoints":1`, `"zdr_endpoints":0`, 1))
 		}, "zdr_endpoints"},
+		// canonical_id is one model's direct spelling beside the route's key
+		// (plan Task 1b.2 step 1): a row that claims its own key, or a second
+		// row claiming a canonical ID the first already has, is a file whose
+		// price for one pin would depend on which row was read.
+		{"a canonical_id that is the row's own key", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["canonical_id"] = "vendor/model"
+			return marshal(t, d)
+		}, "its own key"},
+		{"two rows claiming one canonical ID", func(t *testing.T) []byte {
+			d := valid(t)
+			models := d["models"].(map[string]any)
+			row := models["vendor/model"].(map[string]any)
+			clone := map[string]any{"canonical_id": "claude-sonnet-5-5"}
+			for k, v := range row {
+				clone[k] = v
+			}
+			row["canonical_id"] = "claude-sonnet-5-5"
+			models["anthropic/claude-sonnet-5.5"] = clone
+			return marshal(t, d)
+		}, "both claim canonical_id"},
+		// The value is the *direct* spelling and never another route's ID: a
+		// canonical_id with a vendor prefix pairs the model with a second
+		// route, which is exactly the second answer to where a call goes and
+		// what it costs that the map exists to remove (review finding on this
+		// change).
+		{"a canonical_id that is a route ID", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["canonical_id"] = "anthropic/claude-opus-5.5"
+			return marshal(t, d)
+		}, "is a route ID, not the canonical one"},
 		{"trailing data", func(t *testing.T) []byte {
 			return append(marshal(t, valid(t)), []byte("{}")...)
 		}, "trailing data"},

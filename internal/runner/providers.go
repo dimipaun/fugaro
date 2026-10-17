@@ -27,16 +27,7 @@ const maxProvidersBytes = 16 << 10
 // ProvidersEnv is the value of ModelProvidersEnv for the providers that may
 // receive repo's code, "" when there are none.
 func ProvidersEnv(providers map[string]config.ModelProvider, repo string) (string, error) {
-	out := map[string]config.ModelProvider{}
-	for _, name := range slices.Sorted(maps.Keys(providers)) {
-		if p := providers[name]; p.AllowsData(repo) {
-			// The run only needs to know it is allowed: the other
-			// repositories the owner listed stay out of the job's
-			// environment.
-			p.AllowDataTo = []string{repo}
-			out[name] = p
-		}
-	}
+	out := ProvidersFor(providers, repo)
 	if len(out) == 0 {
 		return "", nil
 	}
@@ -48,6 +39,33 @@ func ProvidersEnv(providers map[string]config.ModelProvider, repo string) (strin
 		return "", fmt.Errorf("the model providers are %d bytes as %s, more than the %d allowed", len(b), ModelProvidersEnv, maxProvidersBytes)
 	}
 	return string(b), nil
+}
+
+// ProvidersFor is the set of providers a run of repo has, as values: exactly
+// the ones ProvidersEnv writes into the job's environment (and the ones a run's
+// own routing, pricing and gateway see), each with allow_data_to cut down to
+// the repository it is there for.
+//
+// It is exported for the readers that have to answer a question about a run
+// they are not running — `fugaro doctor`'s routing check asks which route a
+// repository's runs take — so that answer comes from this filter rather than
+// from a second copy of it: a resolution read over the unfiltered block is a
+// route a run may not carry, and printing it is the false confidence the check
+// exists to remove. repo is the canonical owner/name a run is launched for; an
+// empty repo matches only the providers written for every repository ([]string
+// {"*"} or an absent allow_data_to), never the ones written for a list.
+func ProvidersFor(providers map[string]config.ModelProvider, repo string) map[string]config.ModelProvider {
+	out := map[string]config.ModelProvider{}
+	for _, name := range slices.Sorted(maps.Keys(providers)) {
+		if p := providers[name]; p.AllowsData(repo) {
+			// The run only needs to know it is allowed: the other
+			// repositories the owner listed stay out of the job's
+			// environment.
+			p.AllowDataTo = []string{repo}
+			out[name] = p
+		}
+	}
+	return out
 }
 
 // ProvidersFromEnv reads ModelProvidersEnv. Unset is no providers; a value

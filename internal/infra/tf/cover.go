@@ -25,25 +25,37 @@ var allowedTypes = map[string]bool{
 	"google_cloud_run_v2_job":                        true,
 	"google_cloud_run_v2_job_iam_member":             true,
 	"google_cloud_scheduler_job":                     true,
-	"google_firebase_database_instance":              true,
-	"google_firebase_project":                        true,
-	"google_logging_log_view":                        true,
-	"google_logging_log_view_iam_member":             true,
-	"google_logging_project_bucket_config":           true,
-	"google_logging_project_exclusion":               true,
-	"google_logging_project_sink":                    true,
-	"google_monitoring_alert_policy":                 true,
-	"google_monitoring_notification_channel":         true,
-	"google_project_iam_custom_role":                 true,
-	"google_project_iam_member":                      true,
-	"google_project_service":                         true,
-	"google_secret_manager_secret":                   true,
-	"google_secret_manager_secret_iam_member":        true,
-	"google_service_account":                         true,
-	"google_service_account_iam_member":              true,
-	"google_storage_bucket":                          true,
-	"google_storage_bucket_iam_member":               true,
-	"google_storage_bucket_object":                   true,
+	// The Batch backend's own root (design compute-backend §8.1 task 6) is a
+	// root of its own, applied by its own stage behind --provision-batch and
+	// its own typed confirmation: these three types are the NAT, its router
+	// and the deny-all ingress rule on the run-class accounts, and they are
+	// listed here because every module the tree embeds has to be decided on.
+	// The installation root does not include that module, so no plan this one
+	// confirmation covers can carry them. What the compute stage does run
+	// over its own plan is GrantsNotCovered: the grant rules below, the
+	// launchers' Batch Job Editor condition among them.
+	"google_compute_firewall":                 true,
+	"google_compute_router":                   true,
+	"google_compute_router_nat":               true,
+	"google_firebase_database_instance":       true,
+	"google_firebase_project":                 true,
+	"google_logging_log_view":                 true,
+	"google_logging_log_view_iam_member":      true,
+	"google_logging_project_bucket_config":    true,
+	"google_logging_project_exclusion":        true,
+	"google_logging_project_sink":             true,
+	"google_monitoring_alert_policy":          true,
+	"google_monitoring_notification_channel":  true,
+	"google_project_iam_custom_role":          true,
+	"google_project_iam_member":               true,
+	"google_project_service":                  true,
+	"google_secret_manager_secret":            true,
+	"google_secret_manager_secret_iam_member": true,
+	"google_service_account":                  true,
+	"google_service_account_iam_member":       true,
+	"google_storage_bucket":                   true,
+	"google_storage_bucket_iam_member":        true,
+	"google_storage_bucket_object":            true,
 }
 
 // who says what kind of principal a module grants a role to: People are the
@@ -74,8 +86,12 @@ var grantRules = map[string]map[string]who{
 		customKey + "fugaroLauncher":              toPeople,
 		customKey + "fugaroBuildSubmitter":        toPeople | toAccounts,
 		customKey + "fugaroHistory":               toAccounts,
+		customKey + "fugaroReaper":                toAccounts,
+		customKey + "fugaroPreloadBuilder":        toAccounts,
 		"roles/aiplatform.user":                   toAccounts,
 		"roles/cloudasset.viewer":                 toPeople,
+		"roles/batch.agentReporter":               toAccounts,
+		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
 		"roles/datastore.user":                    toAccounts,
 		"roles/datastore.viewer":                  toPeople,
 		"roles/firebaseauth.admin":                toAccounts,
@@ -152,13 +168,20 @@ type Cover struct {
 	// Owner refuses every remote path, so a caller that forgets one cannot
 	// reopen the hole.
 	Ghcr, Owner string
+	// Accounts are service accounts (IAM members) a plan may grant to as
+	// Fugaro's own although their IDs have none of the shapes fugaroAccount
+	// knows: the compute root's run accounts, which it reads from the project
+	// by their Fugaro job display name, and the project's Cloud Build and
+	// Cloud Scheduler service agents, which act as the preload account. The
+	// installation's cover names none.
+	Accounts []string
 }
 
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs. Job and build accounts are fugaro-<readable>-<8 hex>.
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory"}
-	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer"}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder"}
+	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
 var (
@@ -180,6 +203,19 @@ var RolePermissions = map[string][]string{
 	"fugaroTagMover":       {"artifactregistry.tags.delete"},
 	"fugaroTokenMinter":    {"iam.serviceAccounts.signJwt"},
 	"fugaroHistory":        {"run.executions.list", "run.executions.get", "run.jobs.get", "run.jobs.list", "run.operations.get"},
+	// The reaper's six, and no others (design compute-backend §3.7): it is
+	// never roles/batch.jobsEditor and never roles/compute.instanceAdmin.v1,
+	// both of which carry the create permissions a reaper must not have.
+	"fugaroReaper": {"batch.jobs.list", "batch.jobs.get", "batch.jobs.cancel", "batch.jobs.delete", "compute.instances.list", "compute.instances.delete"},
+	// The preloaded boot image's build: boot one COS VM, read its serial
+	// output, stop it, image its disk, delete it — and nothing else, setMetadata
+	// (how SSH keys reach a VM) among the nothing else.
+	"fugaroPreloadBuilder": {"compute.instances.create", "compute.instances.setMetadata", "compute.instances.setLabels",
+		"compute.instances.setServiceAccount", "compute.instances.get", "compute.instances.list", "compute.instances.getSerialPortOutput",
+		"compute.instances.stop", "compute.instances.delete", "compute.disks.create", "compute.subnetworks.use",
+		"compute.images.useReadOnly", "compute.zoneOperations.get", "compute.disks.useReadOnly", "compute.images.create",
+		"compute.images.setLabels", "compute.images.get", "compute.images.getFromFamily", "compute.images.list",
+		"compute.images.delete", "compute.globalOperations.get"},
 }
 
 // knownCommands are the container command and args the modules set: none for
@@ -216,34 +252,8 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 	}
 	var out []string
 	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
-	// What this plan creates, by module: a computed member or role is trusted
-	// only when the resource it comes from is created in the same module.
-	creates := map[string]bool{}
-	// createdSAIDs are the job accounts this plan creates, by module and
-	// account ID: a bucket grant whose member is computed belongs to one of
-	// them, and its condition is accepted only against the account the title
-	// names (bucketCondition).
-	createdSAIDs := map[string]bool{}
-	// heldSAIDs are the accounts each module holds after this plan — created,
-	// updated or unchanged, never deleted — by module and account ID: a
-	// bucket grant that names its member is a project job's widened one only
-	// for the account its own module holds (projectJobCondition).
-	heldSAIDs := map[string]bool{}
-	for _, rc := range p.ResourceChanges {
-		if rc.Type == "google_service_account" && len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
-			if id := str(rc.Change.After["account_id"]); id != "" {
-				heldSAIDs[modulePrefix(rc)+"|"+id] = true
-			}
-		}
-		if slices.Contains(rc.Change.Actions, "create") {
-			creates[modulePrefix(rc)+"|"+rc.Type] = true
-			if rc.Type == "google_service_account" {
-				if id := str(rc.Change.After["account_id"]); id != "" {
-					createdSAIDs[modulePrefix(rc)+"|"+id] = true
-				}
-			}
-		}
-	}
+	creates := creates(p)
+	createdSAIDs, heldSAIDs := planAccounts(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
 		switch {
@@ -274,11 +284,107 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case c.attributes(rc, creates) != "":
 			add(rc, c.attributes(rc, creates))
 		case strings.HasSuffix(t, "_iam_member"):
-			why := c.checkGrant(rc.Type, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"])
-			if why == "" && t == "google_storage_bucket_iam_member" {
-				why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
+			if why := c.grant(rc, creates, createdSAIDs, heldSAIDs); why != "" {
+				add(rc, why)
 			}
-			if why != "" {
+		}
+	}
+	return out
+}
+
+// creates is what a plan creates, by module and type: a computed member or
+// role is trusted only when the resource it comes from is created in the same
+// module.
+func creates(p *Plan) map[string]bool {
+	out := map[string]bool{}
+	for _, rc := range p.ResourceChanges {
+		if slices.Contains(rc.Change.Actions, "create") {
+			out[modulePrefix(rc)+"|"+rc.Type] = true
+		}
+	}
+	return out
+}
+
+// planAccounts are the job accounts of a plan, by module and account ID:
+// created, the accounts this plan creates (a bucket grant whose member is
+// computed belongs to one of them, and its condition is accepted only against
+// the account the title names, bucketCondition), and held, the accounts each
+// module holds after this plan — created, updated or unchanged, never deleted
+// (a bucket grant that names its member is a project job's widened one only
+// for the account its own module holds, projectJobCondition).
+func planAccounts(p *Plan) (created, held map[string]bool) {
+	created, held = map[string]bool{}, map[string]bool{}
+	for _, rc := range p.ResourceChanges {
+		if rc.Type != "google_service_account" {
+			continue
+		}
+		id := str(rc.Change.After["account_id"])
+		if id == "" {
+			continue
+		}
+		if len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
+			held[modulePrefix(rc)+"|"+id] = true
+		}
+		if slices.Contains(rc.Change.Actions, "create") {
+			created[modulePrefix(rc)+"|"+id] = true
+		}
+	}
+	return created, held
+}
+
+// grant says why one *_iam_member change is not the modules', "" when it is:
+// the type's grant rules, then a bucket grant's or a Batch Job Editor
+// grant's condition.
+//
+// createdSAIDs and heldSAIDs are planAccounts': a project job's widened bucket
+// condition is accepted only for the project module's own account
+// (projectJobCondition).
+func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool) string {
+	t := rc.Type
+	why := c.checkGrant(t, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"])
+	if why == "" && t == "google_storage_bucket_iam_member" {
+		why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
+	}
+	if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
+		why = c.jobsCondition(rc.Change)
+	}
+	return why
+}
+
+// GrantsNotCovered lists why the plan's grants are not the modules', empty
+// when they are: NotCovered's IAM half alone, for the compute root, whose plan
+// the run's one confirmation never covers (its stage always asks its own typed
+// confirmation) but whose grants must still be the module's. Every
+// *_iam_member a plan creates or updates is checked exactly as NotCovered
+// checks it — the type's grant rules, its project and target, and the
+// launchers' Batch Job Editor condition (jobsCondition) for the cover's own
+// project and region — and an authoritative IAM resource or a service account
+// key is refused. A resource that is not a grant is not this function's to
+// judge, and neither is a delete (tf.Guard refuses those). A nil plan is not
+// covered.
+func (c Cover) GrantsNotCovered(p *Plan) []string {
+	if p == nil {
+		return []string{"no plan"}
+	}
+	var out []string
+	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
+	made := creates(p)
+	createdSAIDs, heldSAIDs := planAccounts(p)
+	for _, rc := range p.ResourceChanges {
+		acts := rc.Change.Actions
+		if allOf(acts, "no-op", "read", "delete") && rc.Change.Importing == nil {
+			continue
+		}
+		t := rc.Type
+		switch {
+		case strings.HasSuffix(t, "_iam_binding") || strings.HasSuffix(t, "_iam_policy") || strings.HasSuffix(t, "_iam_audit_config"):
+			add(rc, "an authoritative IAM resource")
+		case t == "google_service_account_key":
+			add(rc, "a service account key")
+		case strings.HasSuffix(t, "_iam_member"):
+			if why := c.attributes(rc, made); why != "" {
+				add(rc, why)
+			} else if why := c.grant(rc, made, createdSAIDs, heldSAIDs); why != "" {
 				add(rc, why)
 			}
 		}
@@ -450,6 +556,63 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole bool) st
 	return ""
 }
 
+// grantConditions reads a grant's condition blocks, or says why they cannot
+// be trusted (what names the grant in that reason): a condition known only
+// after apply, a condition that is not a block or a list of them, a list
+// holding anything else, or more than one block.
+func grantConditions(ch Change, what string) ([]map[string]any, string) {
+	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") || unknownAt(ch.AfterUnknown, "condition", 0, "description") {
+		return nil, what + " whose condition is not known"
+	}
+	condRaw := ch.After["condition"]
+	switch v := condRaw.(type) {
+	case nil, map[string]any:
+	case []any:
+		// objects() silently drops a list entry that is not itself a condition
+		// block: without this check, a condition such as ["true"] would read as
+		// zero conditions (objects() returns none of it), covering a grant that
+		// is not in fact unconditioned.
+		if len(objects(v)) != len(v) {
+			return nil, what + " whose condition list holds something that is not a condition block"
+		}
+	default:
+		return nil, what + " whose condition is not a condition block or a list of them"
+	}
+	conds := objects(condRaw)
+	if len(conds) > 1 {
+		return nil, what + " with more than one condition"
+	}
+	return conds, ""
+}
+
+// jobsCondition says why a roles/batch.jobsEditor grant's condition is not
+// the compute module's, "" when it is. The role lets its holder create a
+// Batch job with any image, command and secrets, as any account it has
+// actAs on, so it is covered only under exactly gcp.LauncherJobsCondition for
+// the grant's own project and this run's region, with the module's title and
+// description: no condition, a different one, and one that merely contains
+// or prefixes it are all refused, as is a cover with no region to check it
+// against.
+func (c Cover) jobsCondition(ch Change) string {
+	conds, why := grantConditions(ch, "a Batch Job Editor grant")
+	if why != "" {
+		return why
+	}
+	if len(conds) == 0 {
+		return "grants roles/batch.jobsEditor with no condition, which is every Batch job in the project"
+	}
+	project := str(ch.After["project"])
+	if !slices.Contains(c.Projects, project) || !gcp.ValidJobsConditionScope(project, c.Region) {
+		return "grants roles/batch.jobsEditor where the Fugaro job-name condition cannot be checked (project or region)"
+	}
+	cd := conds[0]
+	if str(cd["title"]) != gcp.LauncherJobsConditionTitle || str(cd["description"]) != gcp.LauncherJobsConditionDescription ||
+		str(cd["expression"]) != gcp.LauncherJobsCondition(project, c.Region) {
+		return "grants roles/batch.jobsEditor under a condition that is not the compute module's Fugaro job-name condition"
+	}
+	return ""
+}
+
 // accountClause is one clause of a job or build account's bucket condition,
 // as gcp.BucketCondition writes it.
 var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/(runs|cache|locks|builds)/([a-z0-9][a-z0-9_-]*)/"\)$`)
@@ -470,26 +633,9 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // a per-repository job's grant — or a stranger's — is still stopped.
 func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool) string {
 	ch := rc.Change
-	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") || unknownAt(ch.AfterUnknown, "condition", 0, "description") {
-		return "a bucket grant whose condition is not known"
-	}
-	condRaw := ch.After["condition"]
-	switch v := condRaw.(type) {
-	case nil, map[string]any:
-	case []any:
-		// objects() silently drops a list entry that is not itself a condition
-		// block: without this check, a condition such as ["true"] would read as
-		// zero conditions (objects() returns none of it), covering a grant that
-		// is not in fact unconditioned.
-		if len(objects(v)) != len(v) {
-			return "a bucket grant whose condition list holds something that is not a condition block"
-		}
-	default:
-		return "a bucket grant whose condition is not a condition block or a list of them"
-	}
-	conds := objects(condRaw)
-	if len(conds) > 1 {
-		return "a bucket grant with more than one condition"
+	conds, why := grantConditions(ch, "a bucket grant")
+	if why != "" {
+		return why
 	}
 	var title, expr string
 	if len(conds) == 1 {
@@ -606,6 +752,9 @@ func (c Cover) projectJobCondition(rc ResourceChange, createdSAIDs, heldSAIDs ma
 
 func (c Cover) fugaroAccount(m string) bool {
 	sm := saMember.FindStringSubmatch(m)
+	if slices.Contains(c.Accounts, m) && strings.HasPrefix(m, "serviceAccount:") {
+		return true
+	}
 	if sm == nil || !slices.Contains(c.Projects, sm[2]) {
 		return false
 	}

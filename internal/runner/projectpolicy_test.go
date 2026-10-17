@@ -489,6 +489,34 @@ func TestPolicyVersionMismatchHaltsTheRun(t *testing.T) {
 	}
 }
 
+// The other direction of P8: a node OLDER than this image — a hand-written
+// node, or one a release before this shape wrote — is refused the same way,
+// but the remedy is not the image's: refreshing the image cannot make a
+// version-0 node current, so what has to change is the node. The runner
+// printed the image-upgrade sentence for both directions (the review finding
+// on this change), and a run is where the wording is pinned, because the
+// runner cannot publish mid-run and the refusal has to say who can.
+func TestPolicyOlderVersionHaltsTheRunWithThePublishRemedy(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":0,"budget":{"mode":"enforce"}}`, capScript(3)...)
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a policy of an older version must stop the run: rec = %+v", rec)
+	}
+	for _, want := range []string{"version 0", fmt.Sprintf("understands version %d", projectpolicy.Version), "fugaro project policy publish --delete", projectpolicy.PathShared()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	for _, bad := range []string{"refresh the runner image", "upgrade Fugaro"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the refusal tells the operator to %q, but the node is the older side: %v", bad, err)
+		}
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("%d stages ran", len(b.agent.calls))
+	}
+}
+
 // Carried review item (d): a marker that is not an integer generation is a
 // user's node, named as itself — never read as "no marker", which would make a
 // project-centric installation a legacy one.

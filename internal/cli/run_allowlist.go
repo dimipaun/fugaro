@@ -42,6 +42,20 @@ import (
 // the launch claim: a refused launch leaves nothing behind at all — no task,
 // no token, no claim and no execution.
 func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
+	// A config that names no database has no policy this launcher can see, and
+	// the read below answers "not found" without a call. That is not read as a
+	// refusal: nothing is blocked until a policy exists (internal/infra's
+	// readiness gate says the same at deploy time — a job whose mode is on and
+	// whose environment carries no backend is a note there, and becomes a gate
+	// the moment the project has published a policy this installation cannot
+	// read), and a mode that is on is not a policy. What refuses a launch is a
+	// policy the launcher *can* see and cannot honour: an allow-list that does
+	// not admit the repository (below), a node that cannot be read, a version it
+	// does not understand, a key the policy lists and this Fugaro does not know.
+	//
+	// The allow-list is still not the pre-check's to skip: the pre-check is the
+	// operator's (--no-budget-check) and skips itself when there is no backend,
+	// while this gate runs whatever the mode is.
 	p, found, err := env.policy.read(ctx, env.lc)
 	var ve *projectpolicy.VersionError
 	if errors.As(err, &ve) {
@@ -100,31 +114,16 @@ func allowListRefusal(p *projectpolicy.Policy, provider, repo string) error {
 }
 
 // policySkewRefusal is the policySince gate's message (plan task 1.5 step 4):
-// the sentence the CLI already prints for a policy written by a newer Fugaro,
-// the release the policy model ships in quoted beside the policy's own
-// version, and the fix. launchPolicyGates refuses a launch with it before the
-// execution is created.
-//
-// The older direction — a node an older Fugaro published, such as a version-1
-// policy from before a runner enforced a profile's allow_repos (plan task
-// 3.3's bump) — is refused as well, since this binary's runs would halt on it,
-// but "upgrade Fugaro" is backwards there: olderPolicyRefusal names the remedy
-// that works.
+// the sentence the CLI prints for a policy written in a version this Fugaro
+// does not read, the release the policy model ships in quoted beside the
+// policy's own version, and the remedy for *this direction* of the skew, which
+// the gate takes from projectpolicy.SkewRemedy — the one place both this
+// package's readers and the runner's word a version skew from, so neither side
+// can tell an operator to upgrade a binary that is already ahead of the node
+// (the review finding on this change). launchPolicyGates refuses a launch with
+// it before the execution is created.
 func policySkewRefusal(ve *projectpolicy.VersionError) error {
-	if ve.Found < ve.Understood {
-		return olderPolicyRefusal(ve)
-	}
-	return userErr("%s (the policy model is fugaro %s's): upgrade Fugaro (fugaro upgrade) to launch a run with this policy, or publish a policy of version %d",
-		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood), policySince, ve.Understood)
-}
-
-// olderPolicyRefusal is the refusal of a policy node older than this binary:
-// a hand-written node, or one an earlier release published (version 1 predates
-// the profile gate of plan task 3.3). This binary's runs refuse it at
-// bootstrap, so a launch or a plan that read it would only defer the halt. The
-// remedy is the publisher's own (publishedPolicyOf): publishing over an older
-// node is refused, so the node is removed first and then published again.
-func olderPolicyRefusal(ve *projectpolicy.VersionError) error {
-	return userErr("%s: it was published by an older Fugaro, and this Fugaro's runs refuse it; remove it with 'fugaro project policy publish --delete' and publish it again with this Fugaro",
-		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood))
+	return userErr("%s (the policy model is fugaro %s's): %s",
+		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood), policySince,
+		projectpolicy.SkewRemedy(ve, projectpolicy.ReaderCLI))
 }

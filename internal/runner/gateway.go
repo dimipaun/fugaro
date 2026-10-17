@@ -41,10 +41,13 @@ const allowRoutingSettingsEnv = "FUGARO_TEST_ALLOW_ROUTING_SETTINGS"
 // vertexRegionPrefix starts Claude Code's per-model Vertex region overrides.
 const vertexRegionPrefix = "VERTEX_REGION_"
 
-// gatewayOn reports whether the agent's calls go through the gateway: the
-// budget is on and the credential is a model API's (an oauth run never is).
+// gatewayOn reports whether the agent's calls go through the gateway. It is
+// GatewayOn — the same predicate for the readers that hold a mode and an auth
+// rather than a run — read off the run, and it is the only place that happens:
+// the routing switch's own question (RoutingInertReason) and the gateway's
+// rules all ask one function, so no reader can answer it differently.
 func (r *run) gatewayOn() bool {
-	return r.cfg != nil && r.spend.On() && (r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex")
+	return r.cfg != nil && GatewayOn(r.cfg.Agent.Auth, r.spend.Mode)
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
@@ -336,8 +339,11 @@ func (r *run) checkBudget() error {
 	if err := r.checkProviderModels(); err != nil {
 		return err
 	}
-	// The allow-list bounds the models whatever the credential or the mode.
-	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed()); len(ps) > 0 {
+	// The allow-list bounds the models whatever the credential or the mode. The
+	// switch and the routes are the run's own: a route ID is admitted only
+	// where the switch routes the model to it, which is the resolution
+	// applyRouting performed a step ago (resolvePolicy).
+	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders()); len(ps) > 0 {
 		msgs := make([]string, len(ps))
 		for i, p := range ps {
 			msgs[i] = p.String()

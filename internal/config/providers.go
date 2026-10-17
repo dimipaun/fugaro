@@ -327,6 +327,21 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 		if !providerNameRE.MatchString(name) {
 			add(at, "provider name must match %s", providerNameRE)
 		}
+		if name == RouteDirect {
+			// The one name the pattern allows and routing cannot carry. A
+			// resolved route is the provider entry's *name* (RoutingClaudeFor),
+			// and the direct route is spelled with the same string, so a call
+			// routed to an entry named "direct" reads as a call that went
+			// direct: the resolver fails closed for the name
+			// (reservedRouteName), CheckRouting refuses the switch that names a
+			// model the entry claims, and a pin carrying the entry's own route
+			// ID is refused as a direct pin (internal/config/pins.go). This is
+			// that same refusal where the *name* is judged, and it is the one
+			// of the three an entry nothing routes to yet reaches: the entry is
+			// refused beside its name rather than at the first switch that
+			// reads it.
+			add(at, "a provider entry may not be named %q: that is the switch's own value for the direct route (routing.claude.via: %s, config.RouteDirect), so a call routed to this entry would read as a call that went direct and the run would halt. Name the entry after the service that serves it (for openrouter-compatible routes, 'openrouter')", name, RouteDirect)
+		}
 		if p.Kind != ModelProviderKind {
 			add(at+".kind", "must be %s", ModelProviderKind)
 		}

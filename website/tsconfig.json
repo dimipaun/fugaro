@@ -1,0 +1,14 @@
+{
+  // Astro's own strict preset: `astro/tsconfigs/strict` extends its base config and sets
+  // `"strict": true`, which is what turns strictNullChecks (and the rest of the strict
+  // family) on. Nothing is overridden below, because there is nothing to override.
+  //
+  // No TypeScript is declared as a dependency of this site and nothing here runs `tsc`:
+  // this file is what an editor and Astro's own diagnostics read, and Astro compiles the
+  // .astro sources itself (the preset's `noEmit`). `dist` is excluded because it is build
+  // output, and `.astro/types.d.ts` is included because Astro generates the site's types
+  // there during a build.
+  "extends": "astro/tsconfigs/strict",
+  "include": [".astro/types.d.ts", "**/*"],
+  "exclude": ["dist"]
+}

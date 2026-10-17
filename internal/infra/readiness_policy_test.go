@@ -38,7 +38,7 @@ func readinessPolicy(t *testing.T, f *cloud, spec RepoSpec, policy bool) (RepoSp
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,19 @@ func readinessPolicyErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) (Rep
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	return Readiness(context.Background(), f.c, spec, ex)
+	return Readiness(context.Background(), f.c, spec, ex, false)
+}
+
+// readinessPolicyPlanErr is readinessPolicyErr under --plan-only: Readiness is
+// read-only there, so a refusal that exists to stop a change is skipped.
+func readinessPolicyPlanErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) (RepoSpec, []Missing, error) {
+	t.Helper()
+	_, ex, err := DiscoverRepo(context.Background(), f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex.PolicyExists = policy
+	return Readiness(context.Background(), f.c, spec, ex, true)
 }
 
 // The other half of D11's gate, which nothing pinned before (the review of
@@ -132,6 +144,47 @@ func TestReadinessRefusesAnApplyThatWouldStrandAnExistingJobsPolicy(t *testing.T
 		t.Errorf("err = %v, want the apply to go ahead and warn before a policy exists", err)
 	} else if !slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingNote }) {
 		t.Errorf("missing = %v, want the L3 note", missing)
+	}
+}
+
+// The refusal above exists to stop a *change*, so --plan-only skips it, as
+// init.go's planRepo skips refuseClonesNotShipped and the retirement gate: a
+// plan creates and changes nothing, and an operator who cannot see the plan
+// cannot fix what the refusal is about. What is skipped is only the refusal —
+// the plan still reports the Firebase gate for the very job, so it prints as
+// one that cannot be deployed until the backend is configured.
+func TestReadinessSkipsTheStrandingRefusalUnderPlanOnly(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	for _, ws := range spec.Workflows {
+		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+		f.run.SetJobEnv(ws.Job, map[string]string{
+			RTDBURLEnv:        "https://aurora-fp-default-rtdb.firebaseio.com",
+			FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
+		})
+	}
+	got, missing, err := readinessPolicyPlanErr(t, f, spec, true)
+	if err != nil {
+		t.Fatalf("err = %v, want --plan-only to show the plan rather than refuse it: the plan changes nothing", err)
+	}
+	if len(got.Workflows) == 0 {
+		t.Fatal("the plan carries no workflow")
+	}
+	// The problem the refusal is about is not hidden with it.
+	gated := map[string]bool{}
+	for _, m := range missing {
+		if m.Kind == MissingFirebase {
+			gated[m.Workflow] = true
+		}
+	}
+	for name := range got.Workflows {
+		if !gated[name] {
+			t.Errorf("workflow %s's plan does not report the Firebase gate: %v", name, missing)
+		}
 	}
 }
 
@@ -221,6 +274,41 @@ func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T)
 	}
 }
 
+// The drift note above is asked before the generic "your budget is on and you
+// carry no backend" one, and this is why: a config that lost its
+// budget.rtdb_url still carries the mode its owner set (budgetEnv writes the
+// mode whenever it is not off), so both notes are true at once, and only the
+// drift one names the damage — that this apply is what removes the policy from
+// the jobs that can read it today. Asking about the mode first would answer
+// "nothing refuses this deploy" for exactly that apply.
+func TestReadinessPrefersTheDriftNoteOverTheModeNote(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, "\nbudget:\n  mode: enforce\n  per_run_usd: 5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	for _, ws := range spec.Workflows {
+		if ws.Env[BudgetModeEnv] != "enforce" {
+			t.Fatalf("workflow %s carries %s=%q, want the mode the config names: this test is about the two notes being true together",
+				ws.Job, BudgetModeEnv, ws.Env[BudgetModeEnv])
+		}
+		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+		f.run.SetJobEnv(ws.Job, map[string]string{
+			RTDBURLEnv:        "https://aurora-fp-default-rtdb.firebaseio.com",
+			FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
+		})
+	}
+	_, missing := readinessPolicy(t, f, spec, false)
+	for name := range spec.Workflows {
+		if !slices.ContainsFunc(missing, func(m Missing) bool {
+			return m.Kind == MissingNote && strings.Contains(m.Reason, name) && strings.Contains(m.Reason, "would remove them")
+		}) {
+			t.Errorf("workflow %s: missing = %v, want the drift note (the mode note is true too, and it is not the one with damage to name)", name, missing)
+		}
+	}
+}
+
 // The same apply with no backend in the jobs is silent: a legacy installation
 // must not be warned about a model it never adopted.
 func TestReadinessSaysNothingAboutFirebaseWhenTheJobsHaveNone(t *testing.T) {
@@ -264,5 +352,63 @@ func TestReadinessWarnsBeforeAPolicyExists(t *testing.T) {
 	}
 	if slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingFirebase }) {
 		t.Errorf("missing = %v, want no gate before a policy exists", missing)
+	}
+	// And the note states this shape's outcome exactly. This config names no
+	// budget.rtdb_url, which is the whole reason the gate above cannot fire
+	// for it: the node is read through this machine's own config, so a config
+	// with no address sees no policy however much the project has published,
+	// and the deploy goes ahead with a job that will read none. The owner
+	// accepted the gap; a note that promised a refusal once a policy exists
+	// would be wrong in the direction that costs something — an operator would
+	// wait for a block that never comes.
+	for _, want := range []string{"names no database address", "nothing refuses this deploy"} {
+		if !slices.ContainsFunc(missing, func(m Missing) bool {
+			return m.Kind == MissingNote && strings.Contains(m.Reason, want)
+		}) {
+			t.Errorf("missing = %v, want a note saying %q", missing, want)
+		}
+	}
+}
+
+// The gate's one reachable shape, apart from the tests that inject
+// PolicyExists into a spec with no backend at all (a combination the CLI
+// cannot produce: it reads the node through the operator's own config, so a
+// policy is only ever visible to a config that names budget.rtdb_url — the gap
+// docs/gcp-setup.md states and TestReadinessWarnsBeforeAPolicyExists pins). A
+// config that names the address and no budget.firebase_api_key deploys a job
+// that can see a policy and could not read one, and that config is where the
+// two halves of the gate both land: the note before a policy exists, the gate
+// itself once one does.
+func TestReadinessGatesTheKeylessBackendOnceAPolicyExists(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, "budget:\n  mode: observe\n  rtdb_url: https://aurora-fp-default-rtdb.firebaseio.com\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	for _, ws := range spec.Workflows {
+		if ws.Env[RTDBURLEnv] == "" || ws.Env[FirebaseAPIKeyEnv] != "" {
+			t.Fatalf("workflow %s carries %v, want the address and no key", ws.Job, ws.Env)
+		}
+	}
+	got, missing := readinessPolicy(t, f, spec, false)
+	for name, ws := range got.Workflows {
+		if !ws.DeployJob {
+			t.Errorf("workflow %s is not deployed though no policy is published: %v", name, missing)
+		}
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Kind == MissingNote && strings.Contains(m.Reason, "sees a published policy") && strings.Contains(m.Reason, "stops being deployable")
+	}) {
+		t.Errorf("missing = %v, want the note to say this job stops being deployable once a policy exists", missing)
+	}
+	if slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingFirebase }) {
+		t.Errorf("missing = %v, want no gate before a policy exists", missing)
+	}
+	// The same spec, with a policy published: the gate holds the job back.
+	if _, pub := readinessPolicy(t, f, spec, true); !slices.ContainsFunc(pub, func(m Missing) bool {
+		return m.Kind == MissingFirebase && strings.Contains(m.Reason, FirebaseAPIKeyEnv)
+	}) {
+		t.Errorf("missing = %v, want the Firebase gate naming %s once a policy exists", pub, FirebaseAPIKeyEnv)
 	}
 }
