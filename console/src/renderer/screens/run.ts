@@ -571,7 +571,8 @@ export function parseLogWindow(raw: unknown): LogWindow {
     // The read's own count when it carries one and it is not smaller than what
     // it handed over; otherwise the lines themselves are the whole count.
     total: total !== null && total >= parsed.length ? total : parsed.length,
-    refused: window === null ? 0 : wholeAt(window['refused']),
+    // A bare list carries no count of refused lines: unavailable, not zero.
+    refused: window === null ? null : wholeAt(window['refused']),
   }
 }
 
