@@ -27,6 +27,7 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
@@ -196,6 +197,35 @@ const DEGRADED: JSONDoc = Object.freeze({
  * did not (eleven of the thirty-six), which made every real degraded document
  * refuse at `runs[0].terminal`. This is the same probe a reviewer would run.
  */
+/**
+ * RUNVIEW_GO is `internal/runview/runview.go`, and `rowKeysFromTheStruct` reads
+ * `type Row struct`'s JSON keys straight out of it, in the struct's own order.
+ *
+ * The reason this is a read of the Go source rather than a hand-written list in
+ * this file: the list *was* hand-written here, and it reproduced the very
+ * omission it was supposed to catch. `RECORD_KEYS` was missing
+ * `artifact_count` and `artifact_bytes`, this test carried the same 36 keys, and
+ * the two agreed with each other while disagreeing with the struct -- so a
+ * document from a run with artifacts was refused at `runs[0].artifact_count`
+ * with every test green. "Pinned against the struct" is only a claim a test can
+ * make if the struct is what it reads.
+ *
+ * It is a test-time read of a sibling file in the same repository, not a runtime
+ * dependency: nothing under `console/` imports the Go module (console/README.md's
+ * first rule, and `internal/cli/docs_console_boundary_test.go`'s subject), and
+ * the Go side already reads the console's contract document the same way. A
+ * missing or renamed `Row` is a loud failure here, which is the point.
+ */
+const RUNVIEW_GO = fileURLToPath(new URL('../../../internal/runview/runview.go', import.meta.url))
+
+function rowKeysFromTheStruct(): readonly string[] {
+  const source = readFileSync(RUNVIEW_GO, 'utf8')
+  // gofmt puts the closing brace of a top-level type in column zero.
+  const struct = /type Row struct \{([\s\S]*?)\n\}/.exec(source)
+  if (struct === null) throw new Error(`${RUNVIEW_GO}: no \`type Row struct\``)
+  return [...(struct[1] ?? '').matchAll(/json:"([^",]+)/g)].map((match) => match[1] ?? '')
+}
+
 const FULL_ROW: JSONDoc = Object.freeze({
   run: '20261015-120000-aa01',
   repo: 'r-4c25cf20/r-f1aa9214',
@@ -228,6 +258,8 @@ const FULL_ROW: JSONDoc = Object.freeze({
   settled: true,
   branch: 'feat/console-fixtures',
   outcome: 'ready',
+  artifact_count: 3,
+  artifact_bytes: 4_194_304,
   task_pr: 411,
   record_pr: 412,
   pr: 412,
@@ -341,20 +373,15 @@ describe('both document shapes decode', () => {
     expect(row?.prUrl).toBe('https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412')
   })
 
-  it('lists every key of `runview.Row`, and refuses one the struct cannot write', () => {
-    // The list, pinned against the struct it was read off. A key added to
+  it('lists every key of `runview.Row`, read off the struct itself', () => {
+    // The list, diffed against the Go type it claims to be. A key added to
     // `Row` and not to this list refuses real documents; a key removed from
-    // `Row` and kept here is a key the console accepts from nothing.
-    const fromTheStruct = [
-      'run', 'repo', 'workflow', 'oauth_account', 'recipe', 'project_layer',
-      'config_sha256', 'run_id', 'status', 'stage', 'reason', 'halt', 'batch',
-      'requested_by', 'pr_url', 'execution', 'log_url', 'created', 'cost',
-      'image_age_s', 'terminal', 'settled', 'branch', 'outcome', 'task_pr',
-      'record_pr', 'pr', 'pushed', 'pushed_head', 'started_at', 'base_branch',
-      'previous_run', 'follow_up', 'draft_fallback', 'pr_status_at', 'stale_draft',
-    ]
-    expect([...RECORD_KEYS].sort()).toEqual([...fromTheStruct].sort())
-    expect(RECORD_KEYS.length).toBe(fromTheStruct.length)
+    // `Row` and kept here is a key the console accepts from nothing -- and a
+    // hand-written second copy of the list, which is what this test used to
+    // carry, can be wrong in exactly the same way as the list it checks.
+    const fromTheStruct = rowKeysFromTheStruct()
+    expect(fromTheStruct.length).toBeGreaterThan(30)
+    expect([...RECORD_KEYS]).toEqual([...fromTheStruct])
     // The four without `omitempty` are the ones whose absence broke it.
     for (const always of ['terminal', 'settled', 'pushed', 'follow_up']) {
       expect(RECORD_KEYS, always).toContain(always)
@@ -365,6 +392,28 @@ describe('both document shapes decode', () => {
     const refusal = refusalFor(patched(DEGRADED_REAL, ['runs', 0, 'rogue'], 1))
     expect(refusal.name).toBe('unknown-key')
     expect(refusal.field).toBe('runs[0].rogue')
+  })
+
+  it('accepts the two keys an artifact run writes, which a real document carries', () => {
+    // The regression this pins, named on its own because it is the second time
+    // this list has been written from the wrong place: `artifact_count` and
+    // `artifact_bytes` are `runview.Row`'s (both `omitempty`, so absent for
+    // every run that opens a pull request), and a list without them refused the
+    // whole `runs ls --json` document -- every screen behind it became the skew
+    // state -- for any run whose record reported artifacts.
+    for (const artifacts of ['artifact_count', 'artifact_bytes']) {
+      expect(RECORD_KEYS, artifacts).toContain(artifacts)
+      expect(Object.keys(FULL_ROW), artifacts).toContain(artifacts)
+    }
+    // The fixture carries them, so the decode below exercises the real path
+    // rather than a document that happens to have none.
+    const result = decodeDocument(DEGRADED_REAL, 'a degraded document with artifacts')
+    expect(result.ok, result.ok ? '' : result.skew.because).toBe(true)
+    // Still accepted-and-unread, like the other keys this screen has no use for
+    // yet: the shape is what is being fixed here, not the runs list's columns.
+    if (result.ok && result.value.shape === 'degraded') {
+      expect(result.value.runs[0]?.run).toBe('20261015-120000-aa01')
+    }
   })
 
   it("lists every key of `JSONRepo`, and refuses the two a total carries alone", () => {
