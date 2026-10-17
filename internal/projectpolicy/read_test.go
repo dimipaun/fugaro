@@ -172,7 +172,7 @@ func TestReadRefusesANonIntegerMarker(t *testing.T) {
 // project-centric installation silently legacy: every run of it would keep the
 // ceiling its job environment was deployed with, with the policy it was meant
 // to be bound by unread, and a launcher could publish one that never governs.
-// No deploy writes a negative generation (RulesVersion is 1 and only goes up),
+// No deploy writes a negative generation (RulesVersion only goes up),
 // so the node is refused as the MarkerError it is, exactly as a value that is
 // not an integer at all is: the caller must halt on a node a person edited,
 // never guess what it meant.

@@ -21,9 +21,19 @@ const Version = 1
 // the PutRules action), and read by the runner before it reads a policy (task
 // 1.3), which must not decode a policy its deployed rules do not protect.
 //
-// A rules generation that changes the policy nodes bumps this. It is not
-// Version: the policy schema and the rules that guard it move independently.
-const RulesVersion = 1
+// Any generation of the rules document bumps this, not only one that changes
+// the policy nodes: the marker records *which document* the database runs
+// under, and a run that met a document it does not know is not one that may
+// act as though it knew it. Generation 2 is the mailbox (mobile plan task
+// P2.1, design m9 §6.4): the grant that lets the app read the caps, the day
+// counters and the kill switches directly, and the subtree the phone's user
+// and the mailbox's consumer write. An installation still on generation 1 has
+// no mailbox, so a run reading one would be reading nodes its rules do not
+// fence.
+//
+// It is not Version: the policy schema and the rules that guard it move
+// independently.
+const RulesVersion = 2
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

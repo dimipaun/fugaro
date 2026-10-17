@@ -71,8 +71,8 @@ func (e *MarkerError) Error() string {
 // legacy path, and a hand-edited -1 would silently take a project-centric
 // installation's policy out of every run's reach — the fail-open MarkerError's
 // own doc forbids, on the one node that decides whether a published policy is
-// read at all. No deploy writes a negative generation (RulesVersion is 1 and
-// only goes up), so a negative one is a hand edit, and it is named rather than
+// read at all. No deploy writes a negative generation (RulesVersion only goes
+// up), so a negative one is a hand edit, and it is named rather than
 // guessed at. The same reading applies to a generation far above RulesVersion:
 // that is a newer installation's marker, and it is at least this one's, so it
 // reads as deployed.
