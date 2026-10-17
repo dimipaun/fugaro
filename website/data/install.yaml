@@ -80,12 +80,12 @@ paths:
     source: README.md
     platforms: [darwin, linux]
     note: >-
-      The plugin route README.md's "## Getting started" prints: fugaro init wires the Fugaro plugin
-      into the checkout's .claude/settings.json, /fugaro:setup writes
-      fugaro.yaml, a teammate who opens the folder and trusts it gets the
-      plugin installed, and fugaro upgrade --local repairs it when the skills
-      are not listed. The marketplace commands a person runs inside Claude Code
-      are not here: README.md does not print them.
+      The plugin route README.md's "## Getting started" prints: fugaro init
+      wires the Fugaro plugin into the checkout's .claude/settings.json,
+      /fugaro:setup writes fugaro.yaml, a teammate who opens the folder and
+      trusts it gets the plugin installed, and fugaro upgrade --local repairs
+      it when the skills are not listed. The marketplace commands a person
+      runs inside Claude Code are not here: README.md does not print them.
     commands:
       - |-
         fugaro init
