@@ -457,11 +457,19 @@ const BRANCH_RE =
  * path rooted at `/` or `~/` with at least two segments. **A space is part of a
  * segment when more path follows it**, so `/Users/Zora Kell/plan/x` is one path
  * and a sentence after a path is not. Two slashes is what keeps a sentence from
- * being eaten: `and/or` is not rooted. */
+ * being eaten: `and/or` is not rooted.
+ *
+ * The separator between joined segments is `\s`, not `[ \t]` (review round 5 of
+ * PR 478): the rules read the *prepared* form, which keeps its line breaks, and
+ * a flattening that happens later means `checkout /home\nzora/.ssh here` was two
+ * matches that neither rule took -- the operator's home drawn whole, in the one
+ * class that is deny-by-default. A line break is whitespace between two segments
+ * the same way a space is, and the whole run still has to be followed by more
+ * path (`SEG/`) to join, so a sentence after a path is still not eaten. */
 const PATH_SEGMENT = String.raw`[^\s\/\\"'\x60<>|;,:()\[\]{}*?]+`
 const ABS_PATH_RE = new RegExp(
   [
-    String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:[ \t]+SEG)*\/)+SEG`,
+    String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:\s+SEG)*\/)+SEG`,
     String.raw`(?:~\/|\/)(?:SEG\/)+SEG`,
   ]
     .join('|')
@@ -541,12 +549,24 @@ function isAddressMarker(value: string): boolean {
 }
 
 // The sentinels hold a pseudonym aside while the rest of the pass runs. They are
-// private-use code points, which no document can carry in practice and which the
+// private-use code points, which no *screen* has a use for, and which the
 // invisible-character strip above never removes -- so a pseudonym cannot be
-// eaten by the net, and cannot be re-inserted into text that happened to contain
-// the sentinel, because the text cannot contain it.
+// eaten by the net.
+//
+// Review round 5 of PR 478 corrected the claim that used to stand here. It said
+// the text "cannot contain" the sentinel, and that is false: a private-use code
+// point is a code point like any other, and a document may carry one. A value
+// that carried `U+E000` `0` `U+E001` of its own would have had the first restore
+// land on the document's own characters, leaving a real sentinel in the drawn
+// value and moving the pseudonym into text the document chose. No value leaked,
+// but the drawn text was not the text the pass decided. So `SENTINEL_RE` takes
+// the two code points out of every value before the sentinels go in: the value
+// cannot contain one afterwards, which is what makes the restore exact and the
+// first-occurrence `replace` below correct. The cost is that a value loses two
+// characters nobody can read.
 const SENTINEL_START = '\ue000'
 const SENTINEL_END = '\ue001'
+const SENTINEL_RE = /[\ue000\ue001]/g
 
 /** PERCENT_RUN_RE is a run of the characters a percent-encoded value is made of:
  * one character class, scanned once. A run with an escape in it
@@ -771,11 +791,13 @@ function credentialPass(text: string, nested: boolean): string {
 /**
  * runRules runs one list of rules in order and reports what fired. The
  * pseudonyms are held aside for the duration and put back at the end, so the
- * entropy net cannot eat a redaction the recorder already made.
+ * entropy net cannot eat a redaction the recorder already made. The value's own
+ * sentinel code points are removed first, which is what makes the hold exact --
+ * see `SENTINEL_RE`.
  */
 function runRules(text: string, rules: readonly OneRule[], nested: boolean): Changed {
   const held: string[] = []
-  let working = text.replace(ANY_PSEUDONYM_RE, (found) => {
+  let working = text.replace(SENTINEL_RE, '').replace(ANY_PSEUDONYM_RE, (found) => {
     held.push(found)
     return `${SENTINEL_START}${String(held.length - 1)}${SENTINEL_END}`
   })
@@ -1331,6 +1353,56 @@ export function sanitizeText(
   // than a value that falls through unclassified.
   const exhaustive: never = textClass
   return refuse(`${field} has a text class the console does not draw: ${String(exhaustive)}`)
+}
+
+/**
+ * sanitizeRefusal is the way the **CLI's own refusal sentence** becomes
+ * something a screen may draw. It is a third door beside `sanitizeText` and
+ * `safeUrl`, and it exists because the two rules that meet on that channel
+ * disagreed (review round 5 of PR 478).
+ *
+ * The sentence is the child's stderr, delivered on the `SourceRefusal` channel
+ * (`src/source/source.ts`, `refusalFrom`), and design section 6.3 requires it on
+ * screen **"verbatim ... the console shows that text unedited"**, because for
+ * `report`'s permission refusal the sentence *is* the remedy: it names
+ * `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`, and a
+ * screen that redacted them would leave the operator with a refusal and no fix.
+ *
+ * `sentence` is the wrong class for it. `FREE_TEXT_RULES` runs the pattern
+ * classes, which are for text whose *shape* the console cannot vouch for, and
+ * two of them eat the remedy: `roles/datastore.viewer` is two long segments
+ * around a slash, so `REPO_TOKEN_RE` draws it `[redacted]`, and `project
+ * sandbox-db` is a GCP name in a sentence, so `GCP_CONTEXT_RE` draws it
+ * `<project>`. Meanwhile refusing to draw stderr at all would be the opposite
+ * error: stderr is not a document, but it is not the console's own text either,
+ * and a credential a child echoed into it must not reach a screen.
+ *
+ * So this pass is `CREDENTIAL_RULES` and only those -- a percent-encoded run
+ * decoded, the token families, an assignment, the entropy net -- plus this
+ * layer's own two: the invisible characters go (a value a screen is made to
+ * misspell is not a value), and the display bound applies. A refusal sentence
+ * that echoes a token is redacted; a refusal sentence that names a role, a
+ * project or a path is drawn as the CLI printed it, which is what the design
+ * asks for and what makes the screen useful. The last of those is the trade the
+ * design makes deliberately: `sentence` would draw `/home/zora/checkout` as
+ * `<path>`, and this does not, because the operator's own refusal is the one
+ * message on this console the console may not paraphrase.
+ *
+ * The whole of the `console` side is expected to reach this through one helper
+ * per screen, so that "the CLI's sentence is drawn verbatim" is one rule in two
+ * places rather than two rules that disagree.
+ */
+export function sanitizeRefusal(raw: unknown, field = 'the refusal'): Sanitized {
+  if (typeof raw !== 'string') return refuse(`${field} is a ${typeof raw}, not text`)
+  if (raw.length > MAX_TEXT_INPUT_LENGTH) {
+    return refuse(
+      `${field} is longer than the console will read (${String(MAX_TEXT_INPUT_LENGTH)} characters)`,
+    )
+  }
+  const stripped = stripInvisible(raw)
+  const rules = runRules(stripped.text, CREDENTIAL_RULES, false)
+  const cut = clipped(oneLine(rules.text))
+  return ok(cut.text, [...stripped.flags, ...rules.flags, ...cut.flags])
 }
 
 /**

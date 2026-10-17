@@ -41,8 +41,9 @@ import {
 } from '../../src/source/cli'
 import { loadFixture } from '../../src/source/fixture'
 import { refusalFrom } from '../../src/source/source'
+import { githubToken } from '../support/fakeSecrets'
 import { UNAVAILABLE_MARK, formatReading } from '../../src/shared/availability'
-import { sanitizeText } from '../../src/shared/sanitize'
+import { sanitizeRefusal, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeDocument } from '../../src/shared/schema'
 import type { DegradedDocument, LiveDocument } from '../../src/shared/schema'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from '../../src/renderer/screens/live'
@@ -460,16 +461,34 @@ describe('the console after a refused read', () => {
     expect(all(tree, 'live')).toEqual([])
   })
 
-  it('is drawn verbatim because the sanitizer would eat the remedy', () => {
-    // This is why the one string on this screen is not drawn through `putText`,
+  it('is drawn verbatim because `putText` would eat the remedy', () => {
+    // This is why the sentence does not go through the `sentence` class,
     // asserted rather than argued: the free-text rules redact inside it, and one
-    // of the things they redact is the answer to the operator's problem.
+    // of the things they redact is the answer to the operator's problem. Review
+    // round 5 of PR 478 kept the assertion and changed what the screen does with
+    // it: `refusedState` runs `sanitizeRefusal`, which is the credential rules
+    // and nothing else, so the remedy survives while a token does not.
     const through = sanitizeText(REFUSAL_SENTENCE, 'sentence', 'the CLI sentence')
     expect(through.ok).toBe(true)
     const text = through.ok ? through.text : ''
     expect(text).not.toBe(REFUSAL_SENTENCE)
     expect(text).toContain('[redacted]')
     expect(text).not.toContain('roles/datastore.viewer')
+    // And the door the screen actually uses draws it character for character.
+    const drawn = sanitizeRefusal(REFUSAL_SENTENCE, 'the CLI refusal sentence')
+    expect(drawn.ok && drawn.text).toBe(REFUSAL_SENTENCE)
+  })
+
+  it('still redacts a credential a child echoed into its refusal', () => {
+    // The half the raw `literal` this screen used to call skipped: a sentence is
+    // not a document, but it is also not the console's own text, and a child
+    // that prints the token it failed with must not put it on a screen.
+    const token = githubToken()
+    const refusal = refusalFrom('budget.show', `permission denied for ${token}`)
+    const tree = renderUnavailable(factory, refusedState('budget.show', refusal), 'light')
+    const sentence = one(tree, 'unavailable-sentence')
+    expect(sentence.textContent).not.toContain(token)
+    expect(sentence.textContent).toBe(`permission denied for ${TOKEN_PLACEHOLDER}`)
   })
 
   it('does not offer a link, a control or a second sentence about the fix', () => {

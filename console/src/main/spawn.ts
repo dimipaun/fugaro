@@ -1427,7 +1427,14 @@ export function startSidecar(
       timers.clearTimeout(timer)
       timer = null
     }
-    deps.log?.close()
+    // Review round 5 of PR 478: this used to close `deps.log` here. The sidecar
+    // never *opens* a log -- `deps.log` is always a writer it was handed -- and
+    // design section 5.1 rule 10 wants one line per child process the app
+    // spawns, so a feed that ends must leave the log open for the next child
+    // rather than ending the writer the whole session shares. The closer is
+    // whoever opened it: `CliSource.close()` when the source opened it, the
+    // caller when the caller injected it (the rule `#ownsLog` states, and the
+    // one `runToCompletion` in this same file already keeps).
     if (settle !== null) settle(end)
     events.onEnded(end)
   }

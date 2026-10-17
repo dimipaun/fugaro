@@ -81,6 +81,7 @@ import {
   isMarkerText,
   punycodeDecode,
   safeUrl,
+  sanitizeRefusal,
   sanitizeText,
 } from '../../src/shared/sanitize'
 import type { SanitizeFlag, TextClass } from '../../src/shared/sanitize'
@@ -290,6 +291,63 @@ describe('the hostile-title corpus', () => {
     expect(reason).not.toContain(hostile)
     expect(reason).not.toContain('javascript')
     expect(reason).toContain('runs[0].url')
+  })
+})
+
+describe('the refusal door', () => {
+  // `sanitizeRefusal` is the pass the CLI's own refusal sentence goes through
+  // (review round 5 of PR 478): the credential rules and this layer's own, and
+  // none of the pattern classes. Two screens draw that channel -- the
+  // refused-read screen and the Projects panel -- and they used to draw it two
+  // different ways.
+  const REMEDY =
+    "project sandbox-db's spend history refused the read: you need the Cloud Datastore Viewer role (roles/datastore.viewer) and the Service Usage Consumer role (roles/serviceusage.serviceUsageConsumer)"
+
+  it('draws the CLI’s remedy character for character', () => {
+    const drawn = sanitizeRefusal(REMEDY)
+    expect(drawn.ok && drawn.text).toBe(REMEDY)
+    expect(drawn.ok && drawn.flags).toEqual([])
+  })
+
+  it('is the `sentence` class that would have eaten it, not this door', () => {
+    // Design section 6.3 requires the message verbatim; the free-text rules
+    // would draw the role name and the project as their placeholders.
+    const through = sanitizeText(REMEDY, 'sentence', 'the CLI sentence')
+    expect(through.ok && through.text).not.toBe(REMEDY)
+    expect(through.ok && through.text).toContain('[redacted]')
+    expect(through.ok && through.text).toContain('<project>')
+  })
+
+  it('still redacts a credential a child echoed into a refusal', () => {
+    for (const token of [fake.githubToken(), fake.googleApiKey(), fake.slackToken()]) {
+      const drawn = sanitizeRefusal(`permission denied for ${token}`)
+      expect(drawn.ok && drawn.text, token).toBe(`permission denied for ${TOKEN_PLACEHOLDER}`)
+    }
+  })
+
+  it('strips the invisible characters and flattens the sentence, as every class does', () => {
+    // The zero-width space goes (it is removed, not turned into a space) and the
+    // line break is flattened: a sentence is drawn as one line.
+    const drawn = sanitizeRefusal('no\u200bbackend\nfor this project')
+    expect(drawn.ok && drawn.text).toBe('nobackend for this project')
+    expect(drawn.ok && drawn.flags).toContain('stripped-invisible')
+    // The private-use code points `runRules` holds pseudonyms with are taken out
+    // of the value first, so a value cannot carry one into the hold.
+    const sentinel = sanitizeRefusal('before \ue0000\ue001 after')
+    expect(sentinel.ok && sentinel.text).toBe('before 0 after')
+  })
+
+  it('refuses what is not text, and what is longer than the console will read', () => {
+    const long = 'a'.repeat(MAX_TEXT_INPUT_LENGTH + 1)
+    const refused = sanitizeRefusal(long, 'the CLI sentence')
+    expect(refused.ok).toBe(false)
+    expect(refused.ok ? '' : refused.reason).toContain('the CLI sentence')
+    expect(sanitizeRefusal(7).ok).toBe(false)
+    // A sentence at the bound is drawn, clipped to the display bound.
+    const at = sanitizeRefusal('a'.repeat(MAX_TEXT_INPUT_LENGTH))
+    expect(at.ok).toBe(true)
+    expect(at.ok && at.text.length).toBe(MAX_TEXT_LENGTH)
+    expect(at.ok && at.flags).toContain('clipped')
   })
 })
 

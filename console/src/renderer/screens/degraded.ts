@@ -47,7 +47,7 @@
 
 import { measured, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
-import { sanitizeText } from '../../shared/sanitize'
+import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { CostView, DegradedDocument, RecordView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import { feedReading, notionalReading } from './live'
@@ -157,9 +157,30 @@ export interface NoFirebaseModel {
   readonly feed: FeedHealth | null
 }
 
-/** costReadings is one row's three dollar accounts. Compute is unavailable when
- * the row says it was not estimated, and a subscription row's model figure is
- * notional. */
+/** computeOf is the row's compute figure, held to the same rules `projects.ts`
+ * and `run.ts` state on the same field (design section 6.1 rule 1: compute is
+ * "an estimate by design", so it carries the `est.` mark whenever the document
+ * says it was estimated). Review round 5 of PR 478: this screen used to draw a
+ * row whose `compute_estimated` was true as a plain measured figure -- `$0.90`
+ * where the other two screens draw `est. $0.90` -- and to hide a non-zero
+ * figure whose flag was off, which is not a shape the CLI writes and which the
+ * other two screens draw as the number it is.
+ *
+ * A figure with the flag off is the case the flag exists for: `runstore.Cost`
+ * writes `compute_estimated: false` with `compute_usd: 0`, and the zero means
+ * "not estimated", never "free" (`internal/runstore/cost.go`). */
+function computeOf(cost: CostView): Reading {
+  if (cost.computeEstimated) {
+    return cost.computeUsd.value === null ? cost.computeUsd : { ...cost.computeUsd, state: 'estimated' }
+  }
+  if (cost.computeUsd.value === null || cost.computeUsd.value === 0) return unavailable(NO_COMPUTE_BECAUSE)
+  return cost.computeUsd
+}
+
+/** costReadings is one row's three dollar accounts. A subscription row's model
+ * figure is notional -- the one state this screen sets for itself, because
+ * `runstore.Cost` has no notional split on a row and `model_basis` is what says
+ * the figure was never billed. */
 function costOf(cost: CostView): {
   readonly modelUsd: Reading
   readonly computeUsd: Reading
@@ -169,7 +190,7 @@ function costOf(cost: CostView): {
   const subscription = cost.modelBasis === 'subscription'
   return {
     modelUsd: subscription ? notionalReading(cost.modelUsd) : cost.modelUsd,
-    computeUsd: cost.computeEstimated ? cost.computeUsd : unavailable(NO_COMPUTE_BECAUSE),
+    computeUsd: computeOf(cost),
     totalUsd: cost.totalUsd,
     notionalModel: subscription,
   }
@@ -206,14 +227,23 @@ function rowOf(record: RecordView): DegradedRunRow {
  * `Totals.ComputeNotEstimated` doing it: a project where every run priced its
  * compute reads exactly as it always did, and a project where one did not says
  * so on the figure rather than in a footnote nobody reads.
+ *
+ * Review round 5 of PR 478: `compute_not_estimated` is a `Reading` like every
+ * other figure, and this used to read `?? 0` off it -- so a document whose count
+ * was *unavailable* drew `$9.40` and `$0.90` unmarked beside a note that still
+ * promised lower bounds, which is the skew case (Task 3.2) the module exists to
+ * survive. The rule now is the count's own value: it is `0` and only `0` that
+ * makes a total exact, because `null` means the console does not know whether
+ * any run's compute went unpriced. An unknown count is the count drawn `n/a`
+ * (the reading is passed through untouched) with the figures still marked as
+ * lower bounds, which is the weaker and therefore the safe claim.
  */
 export function buildNoFirebaseModel(
   document: DegradedDocument,
   notices: readonly { readonly text: string }[] = [],
   feed: FeedHealth | null = null,
 ): NoFirebaseModel {
-  const unknown = document.totals.computeNotEstimated.value ?? 0
-  const bounded = unknown > 0
+  const bounded = document.totals.computeNotEstimated.value !== 0
   return {
     kind: 'no-firebase',
     project: document.project,
@@ -259,6 +289,7 @@ function literal(element: ScreenElement, text: string): ScreenElement {
   element.textContent = text
   return element
 }
+
 
 /** cell is a text cell of the console's own making, appended to a parent. */
 function cell(parent: ScreenElement, factory: ScreenFactory, tag: string, ...classes: string[]): ScreenElement {
@@ -369,7 +400,10 @@ function caps(factory: ScreenFactory, model: NoFirebaseModel): ScreenElement {
 }
 
 /** totals draws the three accounts kept apart, and the count that makes two of
- * them lower bounds. */
+ * them lower bounds. The note and the `>=` marks are drawn together or not at
+ * all: a count of zero is the one document that makes these sums exact, and a
+ * note promising lower bounds beside unmarked figures is the mismatch review
+ * round 5 of PR 478 found. */
 function totals(factory: ScreenFactory, model: NoFirebaseModel): ScreenElement {
   const element = make(factory, 'div', 'degraded-totals')
   numberCell(element, factory, 'span', model.totals.runs, 'count', 'degraded-runs')
@@ -378,7 +412,9 @@ function totals(factory: ScreenFactory, model: NoFirebaseModel): ScreenElement {
   numberCell(element, factory, 'span', model.totals.computeUsd, 'usd', 'degraded-compute-usd')
   numberCell(element, factory, 'span', model.totals.totalUsd, 'usd', 'degraded-total-usd')
   numberCell(element, factory, 'span', model.totals.computeNotEstimated, 'count', 'degraded-compute-unknown')
-  literal(cell(element, factory, 'span', 'degraded-compute-word'), COMPUTE_LOWER_BOUND_NOTE)
+  if (model.totals.totalUsd.lowerBound) {
+    literal(cell(element, factory, 'span', 'degraded-compute-word'), COMPUTE_LOWER_BOUND_NOTE)
+  }
   return element
 }
 
@@ -449,11 +485,34 @@ export interface RefusedState {
 /** UnavailableState is either of them. */
 export type UnavailableState = NoBinaryState | RefusedState
 
-/** refusedState builds the refused screen's data from a `SourceRefusal`, taking
- * its `sentence` unchanged: this is the one place the CLI's text is carried, so
- * a later edit that trimmed or reworded it here would be visible in one diff. */
+/** REFUSAL_UNREADABLE is what the refused-read screen says when the CLI's own
+ * sentence cannot be drawn at all (`sanitizeRefusal` refuses it: a sentence
+ * longer than the console reads, or one that is not text). The console still
+ * names the read above it, so the screen is not empty -- the operator is owed
+ * the fact that there was a refusal, and that its wording could not be shown. */
+export const REFUSAL_UNREADABLE =
+  'the CLI refused this read, and its own sentence is longer than the console will draw'
+
+/**
+ * refusedState builds the refused screen's data from a `SourceRefusal`. This is
+ * the one place the CLI's text is carried, so a later edit that trimmed or
+ * reworded it would be visible in one diff -- and review round 5 of PR 478 is
+ * why what happens here is `sanitizeRefusal` rather than nothing at all.
+ *
+ * The screen used to draw the sentence through a raw `literal`, which was right
+ * about the remedy (design section 6.3: "the console shows that text unedited")
+ * and wrong about the door: the Projects panel drew the same channel's text
+ * through `putText`, so one input had two treatments, and neither was right.
+ * `sanitizeRefusal` is the single treatment -- the credential rules and this
+ * layer's own, never the pattern classes that eat `roles/datastore.viewer` --
+ * so the remedy survives *and* a token a child echoed into its stderr is still
+ * redacted. Sanitizing here, in the model, is what keeps `refused()`'s `literal`
+ * call honest: by the time the drawing reads `state.sentence`, it is a string
+ * the sanitizer produced.
+ */
 export function refusedState(operation: string, refusal: { readonly sentence: string }): RefusedState {
-  return { kind: 'refused', operation, sentence: refusal.sentence }
+  const drawn = sanitizeRefusal(refusal.sentence, 'the CLI refusal sentence')
+  return { kind: 'refused', operation, sentence: drawn.ok ? drawn.text : REFUSAL_UNREADABLE }
 }
 
 /** picker draws the binary-picker affordance: what it is for, and the path the
@@ -524,28 +583,28 @@ function refused(factory: ScreenFactory, state: RefusedState): ScreenElement {
   // The operation is the console's own label of what it asked for
   // (`OperationName`), never a document's string.
   literal(cell(element, factory, 'span', 'unavailable-operation'), state.operation)
-  // And this is the CLI's sentence, character for character -- drawn through
-  // `literal`, which is the one place in this file that is true, and the reason
-  // is worth stating in full because it looks like the defect Task 2.3's review
-  // found four times.
+  // And this is the CLI's sentence, already through `sanitizeRefusal` in
+  // `refusedState` -- which is what makes a `literal` call honest here, since
+  // the value is no longer a string this screen did not write. The reasoning is
+  // worth stating because it looks like the defect Task 2.3's review found four
+  // times (a raw string drawn straight into a cell):
   //
-  //   - **This value is not a document's string**, which is what Task 2.0's
-  //     rule ("every string from a CLI document reaches the renderer only
-  //     through the sanitizer") covers. It is the child's *stderr*, delivered on
-  //     the `SourceRefusal` channel (`src/source/source.ts`), and the CLI has
-  //     already run `safetext.Strip` over it before printing it.
-  //   - **The sanitizer would destroy the sentence.** Design section 6.3
-  //     requires the CLI's remedy to be on screen, and `FREE_TEXT_RULES` eats
-  //     it: `roles/datastore.viewer` is two long segments around a slash, so
-  //     `REPO_TOKEN_RE` draws it as `[redacted]`, and `project sandbox-db` is a
-  //     GCP project named in a sentence, so `GCP_CONTEXT_RE` draws it as
-  //     `<project>`. `degraded.test.ts` asserts both of those things -- the
-  //     sentence unchanged here, and changed by `putText` -- so the reason
-  //     cannot rot into a claim nobody checks.
+  //   - **This value is not a document's string.** Task 2.0's rule ("every
+  //     string from a CLI document reaches the renderer only through the
+  //     sanitizer") is about the documents; this is the child's *stderr*,
+  //     delivered on the `SourceRefusal` channel (`src/source/source.ts`).
+  //   - **`putText` (the `sentence` class) would destroy the sentence.** Design
+  //     section 6.3 requires the CLI's remedy on screen, and `FREE_TEXT_RULES`
+  //     eats it: `roles/datastore.viewer` is two long segments around a slash,
+  //     so `REPO_TOKEN_RE` draws it `[redacted]`, and `project sandbox-db` is a
+  //     GCP project named in a sentence, so `GCP_CONTEXT_RE` draws it
+  //     `<project>`. `degraded.test.ts` asserts both halves -- the sentence
+  //     unchanged through `sanitizeRefusal`, and changed by `putText` -- so the
+  //     reason cannot rot into a claim nobody checks.
   //   - **The screen is the operator's only copy of it.** `report.go`'s
   //     `firestoreErr` is the one place the two role names are written, and a
-  //     screen that redacted them would leave the operator with a refusal and
-  //     no remedy.
+  //     screen that redacted them would leave the operator with a refusal and no
+  //     remedy.
   literal(cell(element, factory, 'p', 'unavailable-sentence'), state.sentence)
   return element
 }

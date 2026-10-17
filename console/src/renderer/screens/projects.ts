@@ -58,7 +58,7 @@ import { measured, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
 import type { KillView } from '../../shared/schema'
-import { sanitizeText } from '../../shared/sanitize'
+import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
@@ -157,6 +157,11 @@ export type ProjectPanelState = 'read' | 'unavailable' | 'not-built'
  * an unbuilt section is *never* drawn as a zero: a screen has no reading to
  * format, so there is nothing that could render as `0`.
  */
+/** ProjectsBecauseKind names the two doors a panel's reason may go through: see
+ * `ProjectsPanel.becauseKind`. It is a named type rather than an inline union
+ * because the panel constructors take it as a defaulted argument. */
+type ProjectsBecauseKind = 'refusal' | 'document'
+
 export interface ProjectsPanel {
   readonly key: ProjectsPanelKey
   readonly title: string
@@ -168,6 +173,21 @@ export interface ProjectsPanel {
   /** `because` is why there is nothing, in the CLI's words when it printed a
    * sentence and in the console's own otherwise. Non-null unless `read`. */
   readonly because: string | null
+  /** `becauseKind` says which door `because` goes through, and it is not
+   * decoration: review round 5 of PR 478 found the same channel drawn two ways
+   * (this panel through `putText`, the refused-read screen through a literal).
+   *
+   *   - `refusal` -- the console's account of a read that produced nothing,
+   *     carrying the CLI's own sentence when the child printed one (`absent`).
+   *     It goes through `sanitizeRefusal`: the credential rules and this
+   *     layer's own, so a token echoed into stderr is redacted and the CLI's
+   *     remedy -- `roles/datastore.viewer` -- is *not* drawn as `[redacted]`,
+   *     which is what design section 6.3 requires ("the console shows that text
+   *     unedited").
+   *   - `document` -- a string a **document** wrote (`accounts`' `note`). Task
+   *     2.0's rule applies to it unchanged: it goes through `putText` with its
+   *     wire class, or it does not reach the screen. */
+  readonly becauseKind: ProjectsBecauseKind
   readonly count: Reading | null
 }
 
@@ -479,6 +499,7 @@ function readPanel(
     operation,
     state: 'read',
     because: null,
+    becauseKind: 'refusal',
     count: measured(count),
   }
 }
@@ -489,6 +510,7 @@ function unavailablePanel(
   operation: OperationName,
   because: string,
   source?: string,
+  becauseKind: ProjectsBecauseKind = 'refusal',
 ): ProjectsPanel {
   return {
     key,
@@ -496,13 +518,23 @@ function unavailablePanel(
     source: source ?? PROJECTS_SOURCE_LINES[operation] ?? `fugaro ${operation}`,
     operation,
     state: 'unavailable',
-    because,
+    because: becauseKind === 'refusal' ? drawnRefusal(because) : because,
+    becauseKind,
     count: null,
   }
 }
 
 function notBuiltPanel(key: ProjectsPanelKey, title: string, source: string, because: string): ProjectsPanel {
-  return { key, title, source, operation: null, state: 'not-built', because, count: null }
+  return {
+    key,
+    title,
+    source,
+    operation: null,
+    state: 'not-built',
+    because: drawnRefusal(because),
+    becauseKind: 'refusal',
+    count: null,
+  }
 }
 
 /** POLICY_BECAUSE and ENROLLMENT_BECAUSE are the two not-built reasons, in the
@@ -513,6 +545,36 @@ const POLICY_BECAUSE =
 
 const ENROLLMENT_BECAUSE =
   'not readable with this CLI: the enrollment allow-list ships with project-centric phase 1 and phase 4; the repositories below are the ones the CLI reports, not the ones the project admits'
+
+/** REFUSAL_UNREADABLE is what a panel says when its reason cannot be drawn at
+ * all (`sanitizeRefusal` refuses it -- a string longer than the console reads,
+ * or one that is not text). The console still knows the read refused, which is
+ * what the panel's own state and source line say. */
+const REFUSAL_UNREADABLE =
+  'the CLI refused this read, and its own sentence is longer than the console will draw'
+
+/**
+ * drawnRefusal is `sanitizeRefusal`'s decision for a panel's reason, applied
+ * where the reason is **built** rather than where it is drawn.
+ *
+ * Review round 5 of PR 478: this screen drew the CLI's refusal sentence through
+ * `putText`, so a refusal naming `roles/datastore.viewer` was drawn
+ * `[redacted]` here while the refused-read screen drew it verbatim -- one
+ * channel, two treatments, and this one lost the remedy design section 6.3
+ * requires ("the console shows that text unedited"). Now both screens run the
+ * same pass: the credential rules and this layer's own, never the pattern
+ * classes that eat a role name. A document's own string never reaches this
+ * function; the accounts panel's `note` is drawn through `putText` like every
+ * other document string (`becauseKind`).
+ *
+ * Sanitizing in the panel constructors is also what keeps `panelShell`'s
+ * `literal` call honest: every `because` it draws is either a string this pass
+ * produced or one of the console's own constants.
+ */
+function drawnRefusal(because: string): string {
+  const drawn = sanitizeRefusal(because, 'the reason this panel has nothing to draw')
+  return drawn.ok ? drawn.text : REFUSAL_UNREADABLE
+}
 
 /** absent is the sentence for a panel whose read produced nothing and whose
  * refusal carried no CLI sentence of its own. */
@@ -727,6 +789,10 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
             'Claude accounts',
             'accounts.inventory',
             accountNote ?? 'the document says complete: false: the project config could not be selected',
+            undefined,
+            // A document's own `note` is a document's string: it goes through
+            // `putText`, not through the refusal door.
+            accountNote === null ? 'refusal' : 'document',
           ),
     secretList === null
       ? unavailablePanel('secrets', 'secrets inventory', 'secrets.inventory', absent('secrets.inventory', inputs.sentences))
@@ -893,9 +959,21 @@ function panelShell(factory: ScreenFactory, panel: ProjectsPanel): ScreenElement
   // not-built panel from rendering as a zero: there is no reading to format.
   if (panel.count !== null) numberCell(element, factory, 'span', panel.count, 'count', 'projects-count')
   // `because` is the console's sentence *or* the CLI's own refusal sentence
-  // (`absent`), which is stderr text the console did not write: it goes through
-  // `putText` like every other string from outside.
-  if (panel.because !== null) textCell(element, factory, 'p', panel.because, 'sentence', 'because', 'projects-because')
+  // (`absent`), and the two doors it may go through are named by
+  // `becauseKind`. A `refusal` reason was already drawn through
+  // `sanitizeRefusal` where it was built (`drawnRefusal`), which is why a
+  // `literal` call is honest here; a `document` reason -- the accounts panel's
+  // own `note` -- goes through `putText` with its wire class, like every other
+  // document string. Review round 5 of PR 478: this cell used to send *both*
+  // through `putText`, which drew the CLI's remedy as `[redacted]` while the
+  // refused-read screen drew it verbatim.
+  if (panel.because !== null) {
+    if (panel.becauseKind === 'document') {
+      textCell(element, factory, 'p', panel.because, 'sentence', 'because', 'projects-because')
+    } else {
+      literal(cell(element, factory, 'p', 'projects-because'), panel.because)
+    }
+  }
   return element
 }
 
