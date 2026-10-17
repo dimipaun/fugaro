@@ -1,0 +1,308 @@
+---
+/**
+ * website/src/components/CapsCosts.astro — the caps-and-costs guide's two halves
+ * (website plan, Task W1.5).
+ *
+ * The page answers two questions — what a cap is and how to set it, and what runs actually
+ * cost — and both answers are **rendered from something the repository already generates**:
+ *
+ *   - **The caps half renders the CLI's own reference.** Every command below is a `Usage:`
+ *     line and a one-line description read out of `website/content/cli-reference.md`
+ *     (W0.4, generated from the command tree), so the guide cannot print a flag the command
+ *     does not ship and a renamed flag reaches this page the day the reference is
+ *     regenerated (finding 26, Global Constraint 6). The page writes no command of its own —
+ *     `website/test/caps-and-costs.mjs` asserts that nothing here carries `fugaro budget`
+ *     outside an element the reference filled.
+ *   - **The costs half renders the aggregation's own output.** `website/content/costs.json`
+ *     is what the owner's run of W0.3's command writes, and the page publishes the figures
+ *     it holds — each with the window and the sample size behind it — or, while the file is
+ *     absent, the empty state, which is the honest state on day one (D96, D97). No figure
+ *     is written here, and none is rounded: a rounded figure is one the JSON does not
+ *     carry, and `website/test/caps-and-costs.mjs` fails on any number the file does not
+ *     contain.
+ *
+ * What this file deliberately does not do: it does not restate the reference's long
+ * descriptions (they carry the amounts' own bounds, which are the command's business and
+ * not a page's), it does not print a total the file does not carry, and it does not
+ * describe a group the aggregation suppressed. A thin group is absent from the file and
+ * the page renders what is there; a file that carries one anyway stops the build in W1.3's
+ * pipeline rather than reaching a reader (D96's answer fixes the minimum at 20 runs).
+ */
+import { loadSite } from '../content.ts'
+
+const site = loadSite()
+
+// The generated reference, as bytes. It is a required document of the content pipeline, so
+// its header and its body have already been checked before this line runs (W1.3).
+const reference = site.documents['cli-reference.md'].body
+
+interface ReferenceCommand {
+  /** The command path the reference's heading names, e.g. `fugaro budget set`. */
+  path: string
+  /** The reference's one-line description: cobra's own `Short`, as generated. */
+  short: string
+  /** The reference's `Usage:` line: cobra's own `Use` string, as generated. */
+  usage: string
+}
+
+/**
+ * The reference's budget sections: its heading, its one-line description and its usage
+ * line. The generated document's shape is fixed by `internal/clidoc` (`## \`fugaro x\``,
+ * then the short description, then the long one, then `Usage: \`...\``), and this reader
+ * takes exactly those three facts and refuses to guess at anything else.
+ */
+function readReference(body: string): Map<string, ReferenceCommand> {
+  const commands = new Map<string, ReferenceCommand>()
+  const lines = body.split('\n')
+  let current: ReferenceCommand | null = null
+  let sawShort = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const heading = /^## `(.+)`$/.exec(lines[i])
+    if (heading) {
+      if (current !== null) commands.set(current.path, current)
+      current = { path: heading[1], short: '', usage: '' }
+      sawShort = false
+      continue
+    }
+    if (current === null) continue
+    if (!sawShort) {
+      // The first non-empty line under the heading is the command's one-line description.
+      if (lines[i].trim() !== '') {
+        current.short = lines[i].trim()
+        sawShort = true
+      }
+      continue
+    }
+    if (current.usage === '' && lines[i].startsWith('Usage: `')) {
+      current.usage = /^Usage: `(.+)`$/.exec(lines[i])?.[1] ?? ''
+    }
+  }
+  if (current !== null) commands.set(current.path, current)
+  return commands
+}
+
+const commands = readReference(reference)
+
+/**
+ * The commands the guide prints, each with the one sentence that says which scope it
+ * covers. The sentence is a map from a scope to a command and not a claim about one: what
+ * the command does is the reference's line, rendered beside it.
+ *
+ * The same array is the coverage the guide owes (the project's caps, the defaults a
+ * repository without its own inherits, one repository's own caps, the lease limit and the
+ * mode, and both halves of the kill switch) — a command it loses is a cap with no command
+ * beside it, which `website/test/caps-and-costs.mjs` fails on.
+ */
+const GUIDE = [
+  {
+    path: 'fugaro budget set',
+    scope:
+      "The caps: the project's own daily and per-run caps, the defaults a repository without caps of its own inherits, and one repository's own — with the largest single lease and the mode, which are project-wide.",
+  },
+  {
+    path: 'fugaro budget show',
+    scope: "What is set now, what today has counted, what is left under the caps, the kill switches and the runs in flight.",
+  },
+  {
+    path: 'fugaro budget kill',
+    scope: 'The kill switch: the whole project, or one repository, with the reason recorded.',
+  },
+  {
+    path: 'fugaro budget resume',
+    scope: 'Clear a kill switch again.',
+  },
+]
+
+const parent = commands.get('fugaro budget')
+for (const entry of [{ path: 'fugaro budget' }, ...GUIDE]) {
+  const command = commands.get(entry.path)
+  if (command === undefined || command.short === '' || command.usage === '') {
+    throw new Error(
+      `website/content/cli-reference.md carries no usable section for \`${entry.path}\`: the caps guide prints the CLI reference's own usage lines and one-line descriptions, so a command the reference does not carry is a command this page cannot print. Regenerate the reference with \`go run ./internal/clidoc\` (W0.4, W1.5).`,
+    )
+  }
+}
+
+/** The figures the owner's run of the aggregation published, or null while it has not run. */
+const costs = site.costs
+
+/**
+ * The counts the page prints, each one a number the file carries or nothing at all.
+ *
+ * A count the file does not carry is **omitted rather than defaulted**: a template that
+ * renders `undefined` puts a hole on the page, and a template that renders `0` for a
+ * count nobody measured states something the aggregation did not. The command prints every
+ * one of these keys (W0.3's `--json`), so in practice all of them render; the page is
+ * written not to depend on that, because the counts are the aggregation's and the page's
+ * job is to print what is there.
+ */
+function countOf(name: string): number | null {
+  const value = costs?.totals[name]
+  return typeof value === 'number' ? value : null
+}
+
+const counters: { label: string; value: number }[] = []
+const addCounter = (name: string, label: (value: number) => string): void => {
+  const value = countOf(name)
+  if (value !== null) counters.push({ label: label(value), value })
+}
+
+addCounter('runs_below_min_runs', (value) => `${value} runs were below that threshold and are not grouped`)
+addCounter('runs_without_a_figure', (value) => `${value} runs carried no finished figure`)
+addCounter('runs_unknown_recipe', (value) => `${value} runs named a recipe this binary does not ship`)
+addCounter('runs_not_estimated', (value) => `${value} runs carried no compute estimate`)
+
+const windowRuns = countOf('runs')
+const windowRecipes = countOf('recipes')
+---
+
+<section id="caps">
+  <h2>The caps</h2>
+
+  <p>
+    Every command below is rendered from <code>website/content/cli-reference.md</code>, the
+    reference generated from the command tree: the usage line and the one-line description are
+    the command's own, so this page cannot print a flag the command does not ship.
+  </p>
+
+  {parent !== undefined && <p class="lede"><strong>{parent.short}</strong></p>}
+
+  <p>
+    A cap is a ceiling on what a run may spend, and the mode decides what happens when one
+    bites: in <code>observe</code> the project counts what a run spent and logs what a cap
+    would have refused, and in <code>enforce</code> it halts. The commands below are the
+    whole of the interface, and each row is one of the scopes a cap can be set at.
+  </p>
+
+  <dl class="commands">
+    {GUIDE.map((entry) => {
+      const command = commands.get(entry.path)
+      return (
+        <div class="command" data-guide={entry.path}>
+          <dt>
+            <code class="usage" data-command={command?.usage}>{command?.usage}</code>
+          </dt>
+          <dd>
+            <p>{command?.short}</p>
+            <p class="scope">{entry.scope}</p>
+          </dd>
+        </div>
+      )
+    })}
+  </dl>
+</section>
+
+<section id="costs">
+  <h2>The measured figures</h2>
+
+  {costs === null ? (
+    <p class="empty">
+      This page carries no figures yet — there are not enough runs behind them. A figure here
+      is drawn from an aggregation the owner runs, read-only, over one named installation's own
+      run records, and until that has been run the honest state is this one: an empty figure is
+      honest, an invented one is not.
+    </p>
+  ) : (
+    <>
+      <p class="window">Measured over the <code>{costs.project}</code> installation's own run records, from <code>{costs.since}</code> to <code>{costs.until}</code>{windowRuns !== null && windowRecipes !== null ? `: ${windowRuns} runs in the window, of which ${windowRecipes} recipes carried enough runs to publish a figure.` : '.'}</p>
+
+      <p class="suppressed">A group thinner than the {costs.minRuns} runs this site publishes from is absent rather than approximated{counters.length > 0 ? ', and the rest of the window is counted rather than grouped:' : '.'}</p>
+      {counters.length > 0 && (
+        <ul class="counters">
+          {counters.map((counter) => (
+            <li>{counter.label}</li>
+          ))}
+        </ul>
+      )}
+
+      <table>
+        <caption>
+          Duration and cost per recipe: the minimum, the median and the p90, with the sample
+          size behind every figure.
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Recipe</th>
+            <th scope="col">Runs</th>
+            <th scope="col">Duration, s — min / median / p90</th>
+            <th scope="col">Cost, USD — min / median / p90</th>
+            <th scope="col">Runs with no compute estimate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {costs.groups.map((group) => (
+            <tr data-recipe={group.recipe}>
+              <th scope="row">{group.recipe}</th>
+              <td>{group.runs}</td>
+              <td>{group.durationS.min} / {group.durationS.median} / {group.durationS.p90}</td>
+              <td>{group.costUSD.min} / {group.costUSD.median} / {group.costUSD.p90}</td>
+              <td>{group.computeNotEstimated}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p class="not-a-promise">{costs.notAPromise}</p>
+    </>
+  )}
+</section>
+
+<style>
+  /* The guide's own box. Every space, radius and colour is a token from
+     `src/styles/tokens.css`; nothing here names a value of its own, and nothing here is a
+     colour literal (D104, D105). */
+  section {
+    margin-block: var(--space-xl);
+    max-width: var(--measure);
+  }
+
+  .lede {
+    border-left: var(--border-width) solid var(--accent);
+    padding-left: var(--space-sm);
+    color: var(--text);
+  }
+
+  .command {
+    border-top: var(--border-width) solid var(--border);
+    padding-block: var(--space-sm);
+  }
+
+  .usage {
+    display: inline-block;
+    background: var(--surface);
+    padding: var(--space-3xs) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    overflow-wrap: anywhere;
+  }
+
+  .scope,
+  .suppressed,
+  .window,
+  caption {
+    color: var(--text-muted);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  th,
+  td {
+    border-bottom: var(--border-width) solid var(--border);
+    padding: var(--space-2xs) var(--space-xs);
+    text-align: left;
+  }
+
+  .empty {
+    border-left: var(--border-width) solid var(--warn);
+    padding-left: var(--space-sm);
+  }
+
+  .not-a-promise {
+    border-left: var(--border-width) solid var(--border);
+    padding-left: var(--space-sm);
+    color: var(--text-muted);
+  }
+</style>
