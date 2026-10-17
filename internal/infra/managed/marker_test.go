@@ -119,6 +119,65 @@ func TestMarkerJSONShape(t *testing.T) {
 	}
 }
 
+// markerBudgetJSON is the version-2 object, byte for byte: the same fact,
+// with the monthly amount and the currency a managed creation was required
+// to choose (Task 4.2). Three fields, and the budget's own two inside it —
+// still no token, no key, no email: the amount is a figure the owner chose,
+// never a credential, and this is the constant anything added to it has to
+// come through.
+const markerBudgetJSON = `{"version":2,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"}}`
+
+// The budget version's shape: the version follows the budget and nothing
+// else does, so a marker whose version and budget disagree is refused rather
+// than written. The two refusals are what make the version a fact the read
+// can believe — the read takes version 2 to mean "this creation chose an
+// amount", and a writer that set the version without one would record a
+// managed project with no line to compare a spend against.
+func TestMarkerBudgetVersionShape(t *testing.T) {
+	m := Marker{Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: 7, Currency: "USD"}}
+	b, err := m.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != markerBudgetJSON {
+		t.Errorf("Bytes() = %q, want %q", b, markerBudgetJSON)
+	}
+	var back Marker
+	if err := json.Unmarshal([]byte(markerBudgetJSON), &back); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(back, m) {
+		t.Errorf("the fixture parses as %+v, want %+v", back, m)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(markerBudgetJSON), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 {
+		t.Errorf("the object holds %d fields (%v): a fact and an amount, not a credential", len(fields), fields)
+	}
+	if budget, ok := fields["budget"].(map[string]any); !ok || len(budget) != 2 {
+		t.Errorf("the budget is %v, want the amount and the currency and nothing else", fields["budget"])
+	}
+
+	for name, tc := range map[string]Marker{
+		"version 1 with a budget":    {Version: MarkerVersion, GCPProject: testProject, Budget: &Budget{Amount: 7, Currency: "USD"}},
+		"version 2 with no budget":   {Version: MarkerVersionBudget, GCPProject: testProject},
+		"an amount of 0":             {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Currency: "USD"}},
+		"a negative amount":          {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: -1, Currency: "USD"}},
+		"an amount with no currency": {Version: MarkerVersionBudget, GCPProject: testProject, Budget: &Budget{Amount: 7}},
+		"a version this build does not know": {
+			Version: MarkerVersionBudget + 1, GCPProject: testProject,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if b, err := tc.Bytes(); err == nil {
+				t.Fatalf("Bytes() = %q, want a refusal", b)
+			}
+		})
+	}
+}
+
 // The write, read back through the API a person and the read of this
 // package both use; and a second call, which is an error rather than an
 // update: the fact is written once, from the one place that knows it.
@@ -126,19 +185,64 @@ func TestWriteMarkerRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
-	if err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber); err != nil {
+	if err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber, nil); err != nil {
 		t.Fatal(err)
 	}
 	b, ok := readMarker(t, s, testBucket)
 	if !ok || string(b) != markerJSON {
 		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerJSON)
 	}
-	err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber)
+	err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber, nil)
 	if err == nil || !strings.Contains(err.Error(), "already") {
 		t.Fatalf("second write: %v, want a refusal naming the object as already there", err)
 	}
 	if b, _ := readMarker(t, s, testBucket); string(b) != markerJSON {
 		t.Errorf("the second call changed the object to %q", b)
+	}
+}
+
+// The same write for a managed creation: WriteMarker with a budget writes
+// the version that carries it, and a call with a budget that is not an
+// amount — no currency, an amount of 0 — is refused with nothing written,
+// which is the fail-closed direction of a fact the read believes.
+func TestWriteMarkerRecordsTheBudgetItWasGiven(t *testing.T) {
+	ctx := context.Background()
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	budget := &Budget{Amount: 7, Currency: "USD"}
+	if err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber, budget); err != nil {
+		t.Fatal(err)
+	}
+	b, ok := readMarker(t, s, testBucket)
+	if !ok || string(b) != markerBudgetJSON {
+		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerBudgetJSON)
+	}
+	// Once, like version 1: the amount is what the creation was required to
+	// choose, and a later run's budget flags change the Terraform budget
+	// rather than rewriting the record of what was chosen.
+	err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber, budget)
+	if err == nil || !strings.Contains(err.Error(), "already") {
+		t.Fatalf("second write: %v, want a refusal naming the object as already there", err)
+	}
+
+	// What must not happen is a version-2 object with no amount in it, or
+	// with an amount that is not one. (nil is not this table: it writes
+	// version 1, the object TestWriteMarkerRoundTrip asserts.)
+	for name, bad := range map[string]*Budget{
+		"no amount":     {Currency: "USD"},
+		"no currency":   {Amount: 7},
+		"a zero amount": {Currency: "USD"},
+	} {
+		t.Run("a write with "+name+" is refused", func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			if err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber, bad); err == nil {
+				t.Fatal("want a refusal: the amount and the currency are a pair, above 0")
+			}
+			if names := objects(t, s, testBucket); len(names) != 0 {
+				t.Errorf("a refused call wrote %v", names)
+			}
+		})
 	}
 }
 
@@ -173,7 +277,7 @@ func TestWriteMarkerWritesNothingWithoutTheFact(t *testing.T) {
 			s, f := newStorage(t)
 			f.AddBucket(testBucket, testProjectNumber, testManaged)
 			// created is "" here: the project this run installs into.
-			if err := WriteMarker(ctx, s, tc.bucket, "", tc.project, tc.number); err != nil {
+			if err := WriteMarker(ctx, s, tc.bucket, "", tc.project, tc.number, nil); err != nil {
 				t.Fatalf("err = %v, want a silent no-op", err)
 			}
 			// Not one request, before the reads below make their own: a run
@@ -206,7 +310,7 @@ func TestWriteMarkerRefusesAProjectThisRunDidNotCreate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, f := newStorage(t)
 			f.AddBucket(testBucket, testProjectNumber, testManaged)
-			err := WriteMarker(ctx, s, testBucket, tc.created, tc.project, testProjectNumber)
+			err := WriteMarker(ctx, s, testBucket, tc.created, tc.project, testProjectNumber, nil)
 			if err == nil {
 				t.Fatal("want a refusal")
 			}
@@ -247,7 +351,7 @@ func TestWriteMarkerNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, f := newStorage(t)
 			f.AddBucket(testBucket, testProjectNumber, tc.labels)
-			err := WriteMarker(ctx, s, tc.bucket, testProject, testProject, tc.number)
+			err := WriteMarker(ctx, s, tc.bucket, testProject, testProject, tc.number, nil)
 			if err == nil {
 				t.Fatal("want a refusal")
 			}
@@ -260,13 +364,13 @@ func TestWriteMarkerNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	// so the table above is not passing for the wrong reason.
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
-	if err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber); err != nil {
+	if err := WriteMarker(ctx, s, testBucket, testProject, testProject, testProjectNumber, nil); err != nil {
 		t.Fatalf("the project's own runs bucket was refused: %v", err)
 	}
 	// And the client the rows above all have: a call with none is a refusal
 	// rather than a panic, the way WriteDeleteList's own nil-client branch is
 	// (deletelist_test.go, the same assertion for the other object).
-	if err := WriteMarker(ctx, nil, testBucket, testProject, testProject, testProjectNumber); err == nil {
+	if err := WriteMarker(ctx, nil, testBucket, testProject, testProject, testProjectNumber, nil); err == nil {
 		t.Error("the write was made with no storage client")
 	}
 }
