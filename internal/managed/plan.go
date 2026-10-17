@@ -23,6 +23,11 @@ import (
 const (
 	guardGate = "guard"
 	coverGate = "cover"
+	// costGate is the cost list's (Task 1.3): the blocked attributes a plan
+	// states, which tf.ManagedCostRefusals reads. The verdict is where they
+	// are enforced, and nothing else consumes them: Task 3.1's apply reaches
+	// them only through Gate.
+	costGate = "cost"
 )
 
 // Cover is the scope-and-attribute gate a plan in a managed project runs
@@ -77,9 +82,9 @@ type Spec struct {
 	TF *tf.TF
 }
 
-// Verdict is what the gate decided about one plan. OK is true only when both
-// gates admitted every change; Refusals carries every refusal from both gates,
-// the guard's first, each with the gate that made it, the address and the
+// Verdict is what the gate decided about one plan. OK is true only when the
+// guard, the cover and the cost list admitted every change; Refusals carries
+// every refusal from them, the guard's first, the cost list's last, each with the gate that made it, the address and the
 // rule's own words for why.
 //
 // A Verdict is not bound to the plan's bytes: it says nothing about which file
@@ -92,7 +97,15 @@ type Spec struct {
 type Verdict struct {
 	OK       bool
 	Refusals []Refusal
+	// Flags are the findings of entries that only flag (Task 1.3, D62): recorded
+	// here for whoever confirms, from the cost list's non-blocking findings. They
+	// never affect OK.
+	Flags []Refusal
 }
+
+// costFindings is tf.ManagedCosts; a variable only so a test can supply a
+// flag-only finding, which no entry of the real list produces.
+var costFindings = tf.ManagedCosts
 
 // guard is tf.Guard; a variable only so a test can make it refuse in words the
 // real guard never writes.
@@ -114,9 +127,11 @@ type Refusal struct {
 // second, in that order — what a plan would delete or replace is decided
 // before anything else is asked about it.
 //
-// Both gates always run, so the verdict carries every refusal rather than the
-// first: the guard's list of refused addresses and the cover's list of refused
-// changes. OK is false when either gate refused anything, and nothing here
+// Every check always runs, so the verdict carries every refusal rather than
+// the first: the guard's list of refused addresses, the cover's list of refused
+// changes and the cost list's blocked attributes (Task 1.3, owned here: the
+// verdict is the only place a block can bite). OK is false when any of them
+// refused anything, and nothing here
 // applies anything — Gate reads a plan and returns, and applying the saved
 // plan is a separate step with its own caller (Tasks 3.1 and 3.2).
 //
@@ -135,9 +150,22 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 	}
 	notCovered := spec.notCovered(plan)
 	v.Refusals = append(v.Refusals, refusals(coverGate, strings.Join(notCovered, "\n"))...)
+	// The cost list is a third check on the same plan, run whatever the cover
+	// said: its refusals are the plan's own words about what it states, and a
+	// cover that admits a plan says nothing about what it costs.
+	var costRefused, costFlagged []string
+	for _, f := range costFindings(plan) {
+		if f.Block {
+			costRefused = append(costRefused, f.String())
+		} else {
+			costFlagged = append(costFlagged, f.String())
+		}
+	}
+	v.Refusals = append(v.Refusals, refusals(costGate, strings.Join(costRefused, "\n"))...)
+	v.Flags = refusals(costGate, strings.Join(costFlagged, "\n"))
 	// Fail closed on the errors themselves, not on the refusals they were
 	// turned into: a guard that errs with an empty message refuses all the same.
-	v.OK = guardErr == nil && len(notCovered) == 0
+	v.OK = guardErr == nil && len(notCovered) == 0 && len(costRefused) == 0
 	return v, nil
 }
 
