@@ -1,5 +1,10 @@
 /dist/
 /fugaro
+# Binaries a `go build` of a main package writes into the root: the CLI, and
+# the website's generators under internal/ (go build ./internal/clidoc leaves
+# a 74 MB clidoc here). `go run` compiles into the build cache and writes
+# nothing, which is what the generators' headers tell a reader to use.
+/clidoc
 # A local terraform init or test run under deploy/terraform. Set TF_DATA_DIR
 # outside the tree instead: go:embed doesn't read .gitignore, and a
 # .terraform/ there would put provider binaries in the fugaro binary.

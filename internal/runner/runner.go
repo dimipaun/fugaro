@@ -180,8 +180,17 @@ type run struct {
 	// bootstrap (resolvePolicy) from the ceiling, the default branch and
 	// the run's own fugaro.yaml. Nothing recomputes them, so an edit of
 	// fugaro.yaml during the run changes neither.
-	spend        Spend
-	policy       policy.Effective
+	spend  Spend
+	policy policy.Effective
+	// ceiling is the layer the merge started from: the job environment's
+	// budget, or — when the project has published a policy — the policy node
+	// (resolvePolicy). Error messages name the right one.
+	ceiling policy.Layer
+	// projPolicy and ident memoize the run's read of the project's policy and
+	// the Firebase identity it is read with, so the node is read once, decoded
+	// once and its token taken once (projectpolicy.go).
+	projPolicy   policyRead
+	ident        budgetIdentity
 	defFile      defaultBranchData
 	instructions string
 	reviewFile   string
@@ -315,7 +324,10 @@ const prAttempts = 3
 // nothing and returns a nil record. The error is non-nil for an
 // infra_error, for a cancellation seen during bootstrap (before any stage
 // or finalize runs, where the record's status is cancelled rather than
-// infra_error), or when writing the final record itself fails.
+// infra_error), or when writing the final record itself fails. Whatever error
+// it returns is redacted (redactedErr): the caller prints it — internal/cli's
+// exec hands it to the command's error and cmd/fugaro/main.go writes that to
+// the job's stderr — and a git failure quotes the remote it was given.
 func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	if d.Now == nil {
 		d.Now = time.Now
@@ -343,6 +355,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			// lock are not ours to touch.
 			d.Log.Error("not the run's owner; exiting without writing", "execution", d.Execution, "err", r.redact(err.Error()))
 			rec = nil
+			err = r.redactErr(err)
 			return
 		}
 		r.closeGateway()
@@ -381,11 +394,21 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			case errors.Is(cerr, runstore.ErrExists):
 				d.Log.Error("another execution's run record is in place; not replacing it", "execution", d.Execution)
 				rec = nil
+				// The error is the run's own bootstrap failure — the one this
+				// execution met before it could claim anything — and the
+				// caller prints it, so it is redacted here like the ones
+				// above and below. It is the third of the not-the-owner
+				// returns: ErrDuplicateExecution and errOwnerUnknown come
+				// back earlier, and this is the execution whose bootstrap
+				// failed outright while another execution's record was
+				// already in the bucket.
+				err = r.redactErr(err)
 				return
 			case cerr != nil && err == nil:
 				err = fmt.Errorf("writing run record: %w", cerr)
 			}
 			rec = r.rec
+			err = r.redactErr(err)
 			return
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
@@ -394,6 +417,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			err = fmt.Errorf("writing run record: %w", werr)
 		}
 		rec = r.rec
+		err = r.redactErr(err)
 	}()
 
 	r.addMountedSecrets()
@@ -537,6 +561,33 @@ func (r *run) claimRecord(ctx context.Context) error {
 
 // redact removes every known secret value from s.
 func (r *run) redact(s string) string { return agent.Redact(s, r.secretList()) }
+
+// redactedErr is an error whose text is the redacted one: Error returns it,
+// Unwrap returns the error underneath, so errors.Is and errors.As still find
+// what the caller was matching on (Run's callers match ErrDuplicateExecution
+// and errOwnerUnknown that way, and internal/cli matches the run's own error
+// kinds through the layers above).
+type redactedErr struct {
+	err  error
+	text string
+}
+
+func (e redactedErr) Error() string { return e.text }
+func (e redactedErr) Unwrap() error { return e.err }
+
+// redactErr is the error Run returns: the same error with its text redacted.
+// The value Run returns is not only recorded — internal/cli/exec.go hands it to
+// the command's own error, which cmd/fugaro/main.go prints, so in a job it is
+// the process's stderr and then Cloud Logging. Git's own failures quote the
+// remote they were given (internal/gitops writes "git <args>" with the URL
+// among the args, and git's stderr quotes it too), so that text is redacted the
+// same way the record's reason is, not only where the run publishes it.
+func (r *run) redactErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedErr{err: err, text: r.redact(err.Error())}
+}
 
 // secretList is a snapshot of the secrets known now.
 func (r *run) secretList() []string {
@@ -837,11 +888,24 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
 	// Read before the sync below moves the checkout off the baked commit.
 	r.rec.Image = r.imageInfo(ctx)
+
+	// Every credential the run's two remotes can carry — the job's own
+	// FUGARO_REMOTE and the origin of a checkout already in the work
+	// directory — is in the redactor before anything can quote either of
+	// them: the run's own record, which the claim below is what writes, the
+	// admission refusal further down, git's messages about a remote it could
+	// not reach, and result.json.
+	r.addRemoteSecrets(r.d.Remote)
+	r.addRemoteSecrets(r.originURL(ctx))
+
 	if r.owned {
 		r.save(ctx)
 	} else if err := r.claimRecord(ctx); err != nil {
 		// Claimed before the lock, so two executions of one run are
-		// always told apart here (design §4.7).
+		// always told apart here (design §4.7) — and before the admission
+		// check below, so a duplicate is told it is a duplicate whatever
+		// else about it would have been refused (fugaro exec exits a
+		// duplicate as a remote error, and prints no record).
 		return err
 	}
 	if r.d.SpendErr != nil {
@@ -870,6 +934,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.artifact = true
 	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
+		return err
+	}
+
+	// The run's admission, in the order the security property needs it:
+	// task.json has been read, the project's policy is read here (memoized;
+	// Task 1.3), and only then is the provider opened and the clone made. No
+	// git credential is requested, nothing is cloned, and no lease, no
+	// outcome and no spend is written, so a run that is not admitted for this
+	// repository leaves exactly one trace: its own run record, claimed above
+	// and carrying the refusal — which is what makes it visible to the
+	// operator and to the launcher instead of looking like a run that never
+	// started (R2-12). It is the record and nothing else: the claim above is
+	// what makes this execution the run's owner, and a duplicate was turned
+	// away there.
+	if err := r.admissionCheck(ctx); err != nil {
 		return err
 	}
 
@@ -1033,18 +1112,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
-	if !r.artifact {
-		// An artifact run has no implement/fix/review loop: planOf builds
-		// the ordinary loop's plan and checkPlan demands a trailing review
-		// step, neither of which an artifact recipe's [plan], render shape
-		// has. Its own stage list is read directly (artifactHasPlan), and
-		// the render is the runner's (artifact.go).
-		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
-		if err := checkPlan(plan); err != nil {
-			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
-		}
-		r.plan = plan
-	}
 	r.gateSteps = checkGateSteps(rcp)
 	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
@@ -1094,6 +1161,30 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
+	}
+	// The plan is derived here, *after* the policy: the routing switch is
+	// applied inside resolvePolicy and rewrites the pins the plan's
+	// first-line decision is read off — Agent.FirstLineOn asks whether the
+	// coder's model is claimed by a route and the reviewer's is not — so a
+	// plan derived before it would answer from the pins the switch replaced.
+	// Concretely, with `agent.first_line_review: auto` and a switch that
+	// routes only the coder, the canonical coder pin is unclaimed before the
+	// rewrite and claimed after it, and the earlier order silently dropped the
+	// cheap first-line loop of exactly the runs a switch routed (the review
+	// finding on this change). Nothing between here and the loop reads the
+	// plan, so deriving it here changes nothing else, and the steps' rounds
+	// and the trailing-review check are the same derivation as before.
+	if !r.artifact {
+		// An artifact run has no implement/fix/review loop: planOf builds
+		// the ordinary loop's plan and checkPlan demands a trailing review
+		// step, neither of which an artifact recipe's [plan], render shape
+		// has. Its own stage list is read directly (artifactHasPlan), and
+		// the render is the runner's (artifact.go).
+		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
+		if err := checkPlan(plan); err != nil {
+			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+		}
+		r.plan = plan
 	}
 	// The run's Firebase identity, the shared caps and the kill switches:
 	// a halt here is outcome none (nothing is locked, pushed or opened).
@@ -1379,13 +1470,14 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
 	}
 	// The layer's claims are merged here, before anything reads a route:
-	// bootstrap reaches this at runner.go's own first step and asks planOf
-	// about the reviewer (FirstLineOn) a moment later, well before
-	// checkBudget and the gateway's routes. A merge any later leaves a
-	// layer-only claimed senior looking unclaimed and the derived recipe
-	// keeps its cheap first line. An overlap — a claim colliding with a
-	// route this run has — fails bootstrap here, as a config error naming
-	// the key, before any call.
+	// bootstrap reaches this at runner.go's own first step, and the plan that
+	// reads a claim — planOf's FirstLineOn about the reviewer, derived after
+	// resolvePolicy returns, which is also where the routing switch rewrites
+	// the pins it reads — is derived later still, well before checkBudget and
+	// the gateway's routes. A merge any later leaves a layer-only claimed
+	// senior looking unclaimed and the derived recipe keeps its cheap first
+	// line. An overlap — a claim colliding with a route this run has — fails
+	// bootstrap here, as a config error naming the key, before any call.
 	//
 	// ClaimsOnRoutes first, because the run's routes are the job's own
 	// FUGARO_MODEL_PROVIDERS: written per repository, holding only the

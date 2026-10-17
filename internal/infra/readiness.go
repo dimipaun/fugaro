@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -31,6 +32,17 @@ const (
 	// key: the job deploys without it, and a call that needs Anthropic is
 	// refused until a key is stored).
 	MissingNote MissingKind = "note"
+	// MissingFirebase is a job that does not carry both the RTDB URL and the
+	// Firebase web key — carries neither, or only one of the two — so a run
+	// of it cannot read the project's policy
+	// (D11, plan task 1.4 step 2). It gates the job only once a policy
+	// exists: an installation that has not adopted the model is not
+	// blocked, it is warned. The gate has two shapes, because a job's
+	// deployment does: a job that does not exist yet is left undeployed
+	// (this Missing, Deployed false), and one that already exists — which
+	// nothing ever un-deploys (P7a) — is refused outright, in Readiness's
+	// loop rather than here.
+	MissingFirebase MissingKind = "firebase"
 )
 
 // Missing is something a workflow's job needs that doesn't exist yet.
@@ -73,6 +85,17 @@ var errFound = errors.New("found")
 // is required for the job to work at all.
 func OptionalSecret(logical string) bool { return logical == config.AnthropicSecret }
 
+// carriesFirebase reports whether a workflow's job carries what a run needs
+// to read the project's policy: the database's address and the Firebase web
+// key, both of which budgetEnv writes whenever the installation has them,
+// whatever the budget mode (plan task 1.4 step 1 — the key is not optional:
+// the token exchange needs it). A job that carries them is not promised a
+// policy, only able to read one; whether one exists is Readiness's
+// PolicyExists.
+func carriesFirebase(ws WorkflowSpec) bool {
+	return ws.Env[RTDBURLEnv] != "" && ws.Env[FirebaseAPIKeyEnv] != ""
+}
+
 // dropMount removes a logical secret from a job's mounts: the variable it
 // would become is deleted, so no secret_key_ref points at a secret with no
 // version (Cloud Run checks a job's secrets when it creates it), and the
@@ -107,7 +130,19 @@ func dropMount(ws WorkflowSpec, logical string) {
 //   - The daily check's schedule stays paused until every workflow it
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
-func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (RepoSpec, []Missing, error) {
+//
+// planOnly is fugaro init --repo's --plan-only, and it exempts the refusals
+// that exist to stop a *change* rather than to describe a state: this function
+// returns one, for an existing job this apply would deploy without the backend
+// a published policy is read through (D11). A plan is read-only, so it may be
+// shown whatever the apply would refuse — the same exemption init.go's
+// planRepo applies to refuseClonesNotShipped and the --retire/--plan-only
+// pair, and the reason is the same: an operator who cannot see the plan cannot
+// fix what the refusal is about. What plan-only does not do is hide the
+// problem: the gate above still reports MissingFirebase for that job, so the
+// plan prints the job as one that cannot be deployed until the backend is
+// configured.
+func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, planOnly bool) (RepoSpec, []Missing, error) {
 	out := cloneRepoSpec(spec)
 	tg := target{project: spec.GCPProject, number: ex.ProjectNumber}
 	// A secret a repository's own Terraform module once created can stop
@@ -140,8 +175,11 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 	// the one that resolves; fix names the command that would change that.
 	resolveProject := func(logical string) (resolved bool, fix string, err error) {
 		// The command that would store a copy, from the one place that
-		// decides where it belongs (SecretFix): --project-wide when this
-		// repository may use a project copy, --repo otherwise.
+		// decides where it belongs (SecretFix): the bare command when this
+		// repository may use a project copy -- which D2 made the default
+		// store, so it is what an operator is asked to type, and no longer
+		// the --project-wide synonym (plan Task 2.1 step 3, the message
+		// half of finding 13) -- and the repository-copy command otherwise.
 		fix = SecretFix(spec, logical, "fugaro", func(s string) string { return s })
 		cand, isCandidate := spec.ProjectSecretCandidates[logical]
 		if !isCandidate {
@@ -222,7 +260,81 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			unresolved = append(unresolved, logical)
 			reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: %s", logical, fix)})
 		}
+		// D11: project-centric mode requires the Firebase backend, and there
+		// is no other way to detect the mode (plan task 1.4 step 2). The
+		// runner cannot see a policy without the run's own Firebase identity,
+		// and a job deployed without the two variables below would run on the
+		// environment ceiling with the project's policy unread and unenforced
+		// — silently, because it cannot tell "no policy" from "no way to read
+		// one". So once a policy has been published this gates the job;
+		// before that it is a note, because an installation that has not
+		// adopted the model is not blocked — and the gate is exact about
+		// which "once" it means: PolicyExists is read through this machine's
+		// own config (internal/cli's policyReadOnce, over budget.rtdb_url), so
+		// a config that names no database address cannot see a policy at all
+		// and this gate never fires for it, whatever the project holds. That
+		// is the gap the note below states in full; the owner accepted it, and
+		// what the gate does refuse is the config that can see the policy and
+		// would deploy a job unable to read it.
+		//
+		// The note is for the installation that wants the shared budget and
+		// has no backend to hold it: one whose jobs carry a mode that is not
+		// off. An installation that leaves the budget off has chosen the
+		// per-repository path, permanently (design §5(1)), and its runs are
+		// told so by `fugaro doctor` — warning it about a model it is not
+		// adopting would be noise on every apply. The exception is the last
+		// branch below, which fires only for a job that HAS the backend in
+		// the cloud: there the local config is what changed, and the note is
+		// about damage this apply would do rather than about a model the
+		// owner has not adopted.
+		if !carriesFirebase(ws) {
+			if ex.PolicyExists {
+				reasons = append(reasons, gate{MissingFirebase, fmt.Sprintf(
+					"the project has published a policy (%s), which only a job carrying %s and %s can read: set the project's Firebase backend (fugaro init --firebase <firebase-project-id>), then run fugaro init --repo for %s",
+					projectpolicy.PathShared(), RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)})
+			} else if ex.JobsFirebase[name] {
+				// The job has the backend today and this apply would take it
+				// away: the local config names no database address (or no
+				// web key), so budgetEnv writes a job without either. That is
+				// the one case with no other signal at all — the policy
+				// cannot be read from a config that has no URL, so
+				// ex.PolicyExists is false whatever the project has
+				// published, and the jobs would silently stop reading a
+				// policy that exists. Loud, but not a gate: the harm is
+				// drift, and the fix is one command (L3 of the PR #379
+				// review).
+				//
+				// This note is asked before the mode one below, because the
+				// two are usually true together and this one is the one with
+				// damage to name: losing budget.rtdb_url is not the same
+				// decision as turning the budget off, so a config that has
+				// lost the address still carries the mode its owner set
+				// (budgetEnv writes it whenever it is not off), and the
+				// generic note would otherwise answer with "nothing refuses
+				// this deploy" for the very apply that is taking the backend
+				// away from the jobs.
+				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
+					"workflow %s's job carries %s and %s today and this init --repo would remove them: the local config names no budget.rtdb_url (or no budget.firebase_api_key), so the job is deployed without the backend and every run of this repository stops reading the project's policy. Restore it with 'fugaro init --firebase <firebase-project-id>' (which writes budget.rtdb_url and budget.firebase_api_key), then run fugaro init --repo again",
+					name, RTDBURLEnv, FirebaseAPIKeyEnv)})
+			} else if ws.Env[BudgetModeEnv] != "" {
+				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
+					"this job's budget is on (%s=%s) but it does not carry both %s and %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Which of the two the local config is missing decides what happens next, and the gate above is exact about it: a config that names budget.rtdb_url sees a published policy, so the day the project publishes one this job stops being deployable until it can read it; a config that names no database address sees none, whatever the project has published — that same config is what the gate reads the node through — so nothing refuses this deploy and the job goes out unable to read a policy that may well exist. That gap is the owner's, accepted on purpose. A launch is held to what the launcher's own config can see and no stricter rule: it refuses a policy it can see and cannot honour, never a budget mode on its own",
+					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
+			}
+		}
 		current, exists := ex.Jobs[name]
+		// D11's gate needs a second shape for a job that already exists, and
+		// the review of PR #379 is why: DeployJob is never false for an
+		// existing job (P7a, below), so the Missing above would be reported
+		// while this apply deployed the very job it is about. A job that
+		// exists is deployed by this apply whatever the gate says, so here
+		// the refusal is the apply's: deploying it without the backend takes
+		// the published policy away from every run of the repository, and
+		// the operator learns at the next launch instead of here.
+		if !planOnly && exists && ex.PolicyExists && !carriesFirebase(ws) {
+			return RepoSpec{}, nil, userErr("the project has published a policy (%s), and this init --repo would deploy workflow %s's job without %s or %s in its environment: the job exists already, so it stays deployed and the policy it is bound by would stop being readable by every run of %s. Set the project's Firebase backend (fugaro init --firebase <firebase-project-id>) and run fugaro init --repo again",
+				projectpolicy.PathShared(), name, RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)
+		}
 		// P7a: an existing job must never carry a secret_env entry with no
 		// version anywhere. Omitting it (rather than refusing the update)
 		// keeps the job's other properties updating; DeployJob is never set
@@ -303,20 +415,22 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			}
 			if ok {
 				if logical == gitLogical {
-					gitSecretID = spec.Secrets[logical]
+					gitSecretID = out.MountSecretID(logical)
 				}
 				continue
 			}
 			// B4: the check job mounts a subset of the same logical names,
 			// and reads the same repo-wide local.secrets Terraform local, so
-			// it resolves precedence identically.
+			// it resolves precedence identically -- which is why the ID it
+			// names comes from MountSecretID, the one spelling of that
+			// precedence, rather than from the maps here.
 			resolved, fix, err := resolveProject(logical)
 			if err != nil {
 				return RepoSpec{}, nil, err
 			}
 			if resolved {
 				if logical == gitLogical {
-					gitSecretID = spec.ProjectSecretCandidates[logical]
+					gitSecretID = out.MountSecretID(logical)
 				}
 				continue
 			}

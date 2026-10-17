@@ -70,6 +70,12 @@ type cloudEnv struct {
 	// noBudgetCheck is --no-budget-check: fugaro run skips the launch
 	// pre-check of the budget (nothing else).
 	noBudgetCheck bool
+	// policy is the project's published policy, read at most once per run
+	// through the operator's own credentials (policyReadOnce.read): the launch
+	// gate reads it before anything of the launch exists, and the mint
+	// decision reads it again on the path where the local budget mode is off.
+	// One launch must not be admitted against two different policies.
+	policy policyReadOnce
 }
 
 // openRecordBucket opens the bucket build records are read from. Tests

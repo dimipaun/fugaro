@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 const testSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
@@ -147,6 +151,340 @@ func TestRetryMintsFresh(t *testing.T) {
 	}
 }
 
+// A config that names a budget mode and no database is not refused for that
+// alone (the review of this PR reconciled the launcher with internal/infra's
+// readiness rule, "nothing is blocked until a policy exists"): the mode is the
+// operator's claim about the budget, never a policy, and an installation whose
+// config names no database has no policy this launcher can see however its mode
+// is spelled. What refuses a launch is a policy the launcher *can* see and
+// cannot honour — an allow-list that does not admit the repository
+// (TestRunRefusesBeforeLaunch), a published node it cannot read
+// (TestLaunchRefusesADeniedPolicyRead) — and at deploy time the readiness gate
+// is what blocks a project-centric installation whose jobs carry no backend.
+//
+// So this launch goes ahead, with no token and with no database call at all:
+// the same shape a never-configured or mode-off installation has always had.
+//
+// Both orders are pinned because they are different code: without
+// --no-budget-check the budget pre-check runs first (and skips, having no
+// database to check either), with it the policy gate is the only thing left.
+// Each order gets its own fixture: the launch now succeeds, so a second one on
+// the same run id would be refused as an already-launched run and would pin
+// nothing.
+func TestModeOnWithoutADatabaseLaunchesAsBefore(t *testing.T) {
+	for _, mode := range []string{"observe", "enforce"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, tc := range []struct {
+				name string
+				args []string
+			}{
+				{"as launched", nil},
+				{"--no-budget-check", []string{"--no-budget-check"}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					f := newCloudFixture(t)
+					f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5 }\n")
+					var env map[string]string
+					f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
+					args := append([]string{"run", "--repo", "acme/app", "--run-id", budgetRun}, tc.args...)
+					_, errOut, err := execute(t, append(args, "Add a feature")...)
+					if err != nil {
+						t.Fatalf("err = %v (%s), want a launch: a mode that is on is not a policy, and with no database there is no policy to read", err, errOut)
+					}
+					if n := len(f.run.Executions()); n != 1 {
+						t.Errorf("%d executions were created, want 1", n)
+					}
+					if !storedTask(t, f) {
+						t.Error("the launch stored no task")
+					}
+					if tok := readToken(t, f, budgetRun); tok != "" {
+						t.Error("a launch with no database to read a policy from minted a budget token")
+					}
+					// And the job carries no backend, which is the same
+					// shape a never-configured installation deploys: no
+					// address to read a policy from, so no mode to claim
+					// either. A project that then publishes a policy is
+					// what internal/infra's readiness gate stops the next
+					// deploy for.
+					for _, k := range []string{runner.RTDBURLEnv, runner.BudgetTokenEnv, "FUGARO_BUDGET_MODE"} {
+						if v, ok := env[k]; ok {
+							t.Errorf("the job's environment carries %s=%q with no database to read a policy from", k, v)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// The mint decision, at the line the original finding cites (budgetMintOn's
+// early return): with no database there is no policy this CLI can see, whatever
+// the mode says, so the answer is "no token needed" rather than a refusal. That
+// reading is what makes the mode-off installation and the never-configured one
+// the same path — and it is sound because the side that can see a policy, the
+// launcher's own gate and internal/infra's readiness gate, is what refuses.
+func TestMintIsNotNeededWithoutADatabaseWhateverTheMode(t *testing.T) {
+	for _, cfg := range []string{
+		"budget: { mode: observe, per_run_usd: 5 }\n",
+		"budget: { mode: enforce, per_run_usd: 5 }\n",
+		"",
+	} {
+		f := newCloudFixture(t)
+		f.appendConfig(t, cfg)
+		env := memEnv(t, f)
+		if on, err := env.budgetMintOn(context.Background()); on || err != nil {
+			t.Fatalf("budgetMintOn with %q = (%v, %v), want a skip: no database, so no policy this CLI could see", cfg, on, err)
+		}
+	}
+}
+
+// newOffModeBudget is the launch fixture with the budget mode off in the
+// operator's config and the budget block spelled as given, so that what makes
+// a launch mint (or refuse to) is the only thing that varies.
+func newOffModeBudget(t *testing.T, budget string) *launchBudgetFixture {
+	t.Helper()
+	iam := gcpfake.NewIAMCredentials(t)
+	iam.AddSigner(testSigner)
+	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
+	f.appendConfig(t, budget)
+	f.db.Set("fugaro/project", "aurora")
+	f.db.Set("config/mode", "enforce")
+	return f
+}
+
+// The launcher's mint decision follows the published policy, not the
+// operator's local mode (plan task 1.3 step 2): a job of a project that has
+// published a policy must be able to read it, whatever mode its environment
+// was deployed with, and the runner reads the policy's mode through that
+// identity. Without a policy there is nothing to read and no token is minted
+// — which is what makes the runner's "budget off, no token" path a legacy
+// installation rather than a hole.
+func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) {
+	budget := func(f *launchBudgetFixture) string {
+		return "budget: { mode: off, per_run_usd: 5, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
+			", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n"
+	}
+	// The allow-list admits the fixture's repository: a published policy with
+	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
+	// no repository would refuse the launch before the mint decision these
+	// subtests are about.
+	policy := `{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
+
+	t.Run("no policy, no token", func(t *testing.T) {
+		f := newOffModeBudget(t, "")
+		f.appendConfig(t, budget(f))
+		var env map[string]string
+		f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
+		if _, _, err := runBudget(t); err != nil {
+			t.Fatal(err)
+		}
+		if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
+			t.Fatalf("a launch for a project with no policy minted a token: %q", tok)
+		}
+		if v, ok := env[runner.BudgetTokenEnv]; ok {
+			t.Fatalf("a launch that minted nothing set %s = %q", runner.BudgetTokenEnv, v)
+		}
+		if n := len(f.iam.SignCalls()); n != 0 {
+			t.Fatalf("sign calls = %d", n)
+		}
+	})
+	t.Run("a policy, a token", func(t *testing.T) {
+		f := newOffModeBudget(t, "")
+		f.appendConfig(t, budget(f))
+		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
+		var env map[string]string
+		f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
+		if _, _, err := runBudget(t); err != nil {
+			t.Fatal(err)
+		}
+		tok := readToken(t, f.cloudFixture, budgetRun)
+		if tok == "" {
+			t.Fatal("a launch for a project with a published policy minted no token")
+		}
+		if c := claimsOf(t, f, tok); c["fs"] != appSlug || c["fr"] != budgetRun || c["fp"] != "aurora" {
+			t.Fatalf("claims = %v", c)
+		}
+		// M2: the launch that minted marks this execution with the token, and
+		// the marker is the run request's, not the job's deployment (that
+		// environment is init --repo's, and internal/infra pins that it never
+		// carries the marker). It is what makes a missing token a refusal for
+		// this run instead of "this project has published no policy".
+		if env[runner.BudgetTokenEnv] != "1" {
+			t.Fatalf("a launch that minted a token set %s = %q in its request, want 1", runner.BudgetTokenEnv, env[runner.BudgetTokenEnv])
+		}
+		// The launch is not the deploy: the job's own environment is the one
+		// the mode was deployed with, and the launcher does not rewrite it to
+		// the policy's mode. What the policy decides is the runner's mode,
+		// which it reads with the identity minted here.
+		if env[runner.BudgetModeEnv] == "enforce" {
+			t.Fatalf("the launcher rewrote the job's %s to the policy's", runner.BudgetModeEnv)
+		}
+	})
+	t.Run("a policy with no signer is refused", func(t *testing.T) {
+		f := newOffModeBudget(t, "")
+		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
+		_, _, err := runBudget(t)
+		if err == nil || !strings.Contains(err.Error(), "budget.token_signer") {
+			t.Fatalf("err = %v, want the missing-signer refusal", err)
+		}
+		if launchedAny(f) {
+			t.Fatal("the run was launched without a budget identity")
+		}
+	})
+}
+
+// The launch reads the policy once. Two things read it on this path: the gate,
+// before anything of the launch exists, and the mint decision, because a
+// published policy is what makes a token necessary whatever the local mode is.
+// Two reads are two chances for an owner to change the node under one launch,
+// on the launch that mints a run its identity, so both go through the launch's
+// one memoized read (policyReadOnce) and the database sees a single GET of the
+// node. (The runner reads it again in its own process; that read is the one
+// that counts.)
+//
+// Mutation (run, restored): read it directly in launchPolicyGates again
+// (projectPolicyRead instead of env.policy.read) — the count below becomes 2
+// and this test fails.
+func TestLaunchReadsThePolicyOnce(t *testing.T) {
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	publishPolicy(t, f, `{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	for _, r := range f.db.Requests() {
+		if r.Method == http.MethodGet && strings.Contains(r.Path, projectpolicy.PathShared()) {
+			reads++
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("%d reads of %s in one launch, want 1: the gate and the mint decision must not be admitted against two different policies", reads, projectpolicy.PathShared())
+	}
+}
+
+// L2 of the PR #379 review, the first mutation no test caught: the CLI must
+// not read a denied read of a published policy as "no policy here". The
+// marker is deployed, so a policy may exist, and the database refuses the node
+// to this operator — the rules were changed out from under it. Reading that as
+// an absent node would launch the run with no budget identity at all, and the
+// run would then go on with the project's policy unread and unenforced.
+//
+// A second mutation lives here, and this test carries the observable that
+// catches it: swallowing the error in the launch gate (launchPolicyGates) so
+// the launch goes on. Nothing else tells the two apart — the mint's own read
+// then fails with the same message and the same exit code, no token is
+// written and no execution is created either way. What differs is where the
+// launch stopped: with the gate swallowing, createTask has already run, so the
+// run's task.json is in the bucket. No stored task is this gate's promise
+// ("a refused launch leaves nothing behind at all"), and it is asserted below.
+func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	f.db.DenyRead(projectpolicy.PathShared())
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a refusal (the policy node is published and cannot be read)", err)
+	}
+	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "init --firebase"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if launchedAny(f) || readToken(t, f.cloudFixture, budgetRun) != "" {
+		t.Fatal("a denied read of a published policy minted a token or launched the run")
+	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("the refused launch stored a task: the gate read the policy after createTask had run")
+	}
+}
+
+// Carried review item (b), the CLI half: the decoder reports the top-level
+// keys nobody reads, the runner logs them and goes on (an image cannot be
+// upgraded mid-run), and the CLI — which the operator can upgrade — refuses
+// them, because a misspelt key is a policy the owner believes he set.
+func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"allow_repo":["acme/*"]}`))
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
+		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
+	}
+	// The refusal names the node itself, and policyReadErr must leave it alone:
+	// re-prefixing it printed the same path twice ("config/policy/shared:
+	// config/policy/shared lists ...").
+	if n := strings.Count(err.Error(), projectpolicy.PathShared()); n != 1 {
+		t.Errorf("the refusal names %s %d times, want once: %v", projectpolicy.PathShared(), n, err)
+	}
+	if launchedAny(f) {
+		t.Fatal("the run was launched with a policy this Fugaro does not understand")
+	}
+}
+
+// The branch of the CLI's policy read no test reached (the review of PR #379): a
+// policy node the database handed over and this Fugaro could not read is the
+// project's own published data, so it is the user's error (exit 1) — the class
+// dbErr and checkDBProject use for a bad node in the same database. It used to
+// fall through to remote (exit 2), which sends the operator to the dashboard
+// for a policy he wrote himself.
+func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
+	for name, node := range map[string]string{
+		"a budget the decoder refuses": `{"version":1,"budget":{"mode":"nonsense"}}`,
+		"a node with no version":       `{"budget":{"mode":"enforce"}}`,
+		"not a JSON object":            `["budget"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newOffModeBudget(t, "")
+			f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+				", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+			f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+			f.db.Set(projectpolicy.PathShared(), json.RawMessage(node))
+			_, _, err := runBudget(t)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v (exit %d), want the user's own error (exit %d)", err, ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), projectpolicy.PathShared()) {
+				t.Errorf("the refusal does not name the node to fix: %v", err)
+			}
+			if launchedAny(f) || readToken(t, f.cloudFixture, budgetRun) != "" {
+				t.Fatal("a launch read a policy it cannot parse and minted the run an identity anyway")
+			}
+		})
+	}
+}
+
+// The other half of the same split: an outage is remote (exit 2) — the launch
+// cannot see whether the project has a policy at all, and nothing the operator
+// writes in the policy would help. It fails closed, like dbErr.
+func TestLaunchClassifiesAnUnreachablePolicyReadAsRemote(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close() // nothing answers on that port now
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	_, _, err = runBudget(t)
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("err = %v (exit %d), want a remote failure (exit %d)", err, ExitCode(err), ExitRemoteError)
+	}
+	if launchedAny(f) {
+		t.Fatal("the run was launched without seeing the project's policy")
+	}
+}
+
 func TestMintedTokenNotInJobsRunRequest(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	var env map[string]string
@@ -175,6 +513,13 @@ func TestMintedTokenNotInJobsRunRequest(t *testing.T) {
 			if strings.Contains(v, secret) {
 				t.Fatalf("the token is in the job's env %s", k)
 			}
+		}
+		// The marker, and only the marker: the runner learns that this
+		// execution was minted a token from this one variable, and never the
+		// token itself (internal/runner's BudgetTokenEnv, M2).
+		if env[runner.BudgetTokenEnv] != "1" {
+			t.Fatalf("%s = %q in the launch, want \"1\": the runner cannot tell a deleted token from a project with nothing published",
+				runner.BudgetTokenEnv, env[runner.BudgetTokenEnv])
 		}
 		if strings.Contains(out+errOut, secret) {
 			t.Fatal("the token was printed")
@@ -370,12 +715,17 @@ func TestNoBudgetCheckSkipsOnlyPrecheck(t *testing.T) {
 	if !strings.Contains(errOut, "--no-budget-check") {
 		t.Fatalf("the skip is not announced: %q", errOut)
 	}
-	// The mint still happens, and no database read did.
+	// The mint still happens, and the pre-check's own reads did not: the only
+	// calls left are the policy read the launch makes for itself (its
+	// admission and skew gates, plan task 1.5 step 4), never a cap, a kill
+	// switch or a lease.
 	if len(f.iam.SignCalls()) != 1 || readToken(t, f.cloudFixture, budgetRun) == "" || !launchedAny(f) {
 		t.Fatal("the skip must still mint and launch")
 	}
-	if n := len(f.db.Requests()); n != 0 {
-		t.Fatalf("%d database requests with the pre-check skipped", n)
+	for _, r := range f.db.Requests() {
+		if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+			t.Fatalf("--no-budget-check skipped the pre-check, but the launch made a budget read: %s %s", r.Method, r.Path)
+		}
 	}
 }
 
@@ -383,7 +733,11 @@ func TestBudgetOffSkipsEverything(t *testing.T) {
 	for name, cfg := range map[string]string{
 		"off, backend configured": "budget: { mode: off, rtdb_url: URL, token_signer: " + testSigner + " }\n",
 		"no budget block":         "",
-		"observe, no backend":     "budget: { mode: observe, per_run_usd: 5 }\n",
+		// A mode that is not off with no database is the same skip: nothing is
+		// blocked until a policy exists, and this config has none the launcher
+		// could see (TestModeOnWithoutADatabaseLaunchesAsBefore is the launch
+		// half of it, with the pre-checks in the way).
+		"observe, no backend": "budget: { mode: observe, per_run_usd: 5 }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			iam := gcpfake.NewIAMCredentials(t)
@@ -398,7 +752,17 @@ func TestBudgetOffSkipsEverything(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if env == nil || len(iam.SignCalls()) != 0 || len(db.Requests()) != 0 || readToken(t, f, budgetRun) != "" {
+			// A budget-off launch touches no part of the budget: no caps, no
+			// kill switch, no registry, no token. It does read whether the
+			// project has published a policy, with the operator's own
+			// credentials, because a published policy means the run needs an
+			// identity whatever the mode is (task 1.3 step 2).
+			for _, r := range db.Requests() {
+				if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+					t.Fatalf("a budget-off launch made a database call it should not: %s %s", r.Method, r.Path)
+				}
+			}
+			if env == nil || len(iam.SignCalls()) != 0 || readToken(t, f, budgetRun) != "" {
 				t.Fatalf("a budget-off launch touched the backend (env %v)", env)
 			}
 			if strings.Contains(errOut, "budget") {

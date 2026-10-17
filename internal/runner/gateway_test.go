@@ -175,7 +175,7 @@ func TestNoCapHaltAtBootstrap(t *testing.T) {
 	if !strings.HasPrefix(rec.Reason, "halted: no_cap: ") || !strings.Contains(rec.Halt.Detail, "budget.per_run_usd") {
 		t.Fatalf("reason = %q, halt = %+v", rec.Reason, rec.Halt)
 	}
-	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Fatal("the branch lock was taken")
 	}
 	if len(g.provider.State.PRs) != 0 || testutil.Git(t, g.remote, "for-each-ref", "refs/heads/fugaro/") != "" {
@@ -667,7 +667,7 @@ func TestSpendErrIsInfraErrorAfterClaim(t *testing.T) {
 	if stored, rerr := h.store.ReadRecord(context.Background()); rerr != nil || stored.Status != runstore.StatusInfraError {
 		t.Fatalf("the failure was not recorded: %+v, %v", stored, rerr)
 	}
-	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Fatal("the branch lock was taken")
 	}
 }
@@ -803,7 +803,7 @@ func TestHaltWaitsForCallBoundary(t *testing.T) {
 	if cancelledAtEnd {
 		t.Fatal("the stage was stopped although the agent was exiting by itself")
 	}
-	data, err := g.bucket.ReadAll(context.Background(), "runs/acme-app/"+runID+"/transcripts/implement-1.jsonl")
+	data, err := g.bucket.ReadAll(context.Background(), "runs/"+repoSlug+"/"+runID+"/transcripts/implement-1.jsonl")
 	if err != nil || !strings.Contains(string(data), `"result"`) {
 		t.Fatalf("the transcript is incomplete: %q, %v", data, err)
 	}

@@ -555,20 +555,25 @@ var (
 )
 
 // ownerCommands are the commands only the user runs, and only from a
-// user-runs block: they change a budget, store a secret, or (init) apply.
-var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set"}
+// user-runs block: they change a budget or a published policy, store a
+// secret, or (init) apply. The policy publish is one of them for the same
+// reason the budget commands are — it raises the project-wide ceiling and
+// rewrites the allow_repos allow-list, so an agent told to run it can lift
+// its own spending bound — and the skills' own prose already classifies it
+// as the user's decision (setup/reference/decisions.md, working/reference/status.md).
+var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.
 var userLeadRE = regexp.MustCompile(`(?i)\b(user|owner|admin|they|their)\b[^.\n]*\b(run|runs|type|types)\b`)
 
 // lintForbidden is design §9's list: what a skill must never tell an agent to
-// do. The owner's commands (budget set, kill and resume, secrets set, an
-// applying init) are named only in a block marked user-runs, never anywhere
-// else, not even in a "never" sentence, and wherever they sit (a span, a
+// do. The owner's commands (budget set, kill and resume, secrets set, the
+// project policy publish, an applying init) are named only in a block marked
+// user-runs, never anywhere else, not even in a "never" sentence, and wherever they sit (a span, a
 // block, a link text, a wrapped paragraph, behind a prefix or a global flag).
 // Other forbidden commands may be named by a sentence in an inline span that
 // forbids them. A secret-shaped value is wrong everywhere.
@@ -1349,11 +1354,19 @@ func TestLintRejectsBudgetOutsideUserRuns(t *testing.T) {
 	expectViolation(t, demoTree(t, "Never run `fugaro budget set`.\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "```bash\n$ fugaro budget set --global --daily 1\n```\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "```bash\nsudo -u x env A=b fugaro budget kill\n```\n"), "an owner's command")
+	// The policy publish raises a project-wide ceiling and rewrites the
+	// allow_repos allow-list, so it is the owner's on the same terms as the
+	// budget commands: named only in a user-runs block, and never in an
+	// instruction to the agent — not even one that forbids it.
+	expectViolation(t, demoTree(t, "Raise the ceiling with `fugaro project policy publish`.\n"), "an owner's command")
+	expectViolation(t, demoTree(t, "```bash\nfugaro project policy publish --delete\n```\n"), "an owner's command")
+	expectViolation(t, demoTree(t, "Never run `fugaro project policy publish`.\n"), "an owner's command")
 }
 
 func TestLintAllowsUserRunsBlock(t *testing.T) {
 	expectClean(t, demoTree(t, "The owner runs this in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro budget set --global --daily 50\nfugaro budget kill\nfugaro budget resume\n```\n"))
 	expectClean(t, demoTree(t, "The owner runs it in their own terminal, not through the agent:\n\n~~~bash user-runs\nfugaro budget kill\n~~~\n"))
+	expectClean(t, demoTree(t, "The owner runs it in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro project policy publish\n```\n"))
 }
 
 // TestLintNegationIsScoped: a negation covers a command only in its own

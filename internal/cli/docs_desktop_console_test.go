@@ -755,11 +755,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 // phase table row whose Phase cell names phase (a substring of it), and the
 // row's own text, so a claim about which phase ships a command can be checked
 // against the phase it is actually in.
+//
+// The plan's phase table carries a Release column between Phase and What
+// ships, so the header named here and the cell read are the table's own.
 func planPhaseRow(t *testing.T, plan, phase string) (whatShips, row string) {
 	t.Helper()
-	for _, cells := range docTableAfter(t, "docs/plans/2026-10-14-project-centric.md", plan, "| Phase | What ships |") {
+	for _, cells := range docTableAfter(t, "docs/plans/2026-10-14-project-centric.md", plan, "| Phase | Release | What ships |") {
 		if strings.Contains(cells[0], phase) {
-			return cells[1], strings.Join(cells, " | ")
+			return cells[2], strings.Join(cells, " | ")
 		}
 	}
 	t.Fatalf("docs/plans/2026-10-14-project-centric.md's phase table has no row naming %q", phase)

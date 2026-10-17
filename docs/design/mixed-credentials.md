@@ -117,7 +117,7 @@ Open, still for the owner, and the plan's remaining tasks and live checks do not
 
 1. Is a non-Claude senior (GPT or Gemini through OpenRouter) acceptable as the first step, before any Claude senior? The owner rules it; **Check 45** is the by-hand comparison the ruling is made from, and it has not been run.
 2. Should `stage_auth` generalize later to the coder role? Recommendation: no.
-3. §4's own question, kept open on purpose: do Claude Code's prompt-cache markers survive the Anthropic-compatible endpoint? **Check 46** measures it — `cache_read`/`cache_write_5m` and the charge, the same task run routed against direct — and it has not been run.
+3. §4's own question, kept open on purpose: do Claude Code's prompt-cache markers survive the Anthropic-compatible endpoint? **Check 46** measures it — `cache_read`/`cache_write_5m` and the charge, the same task run routed against direct — and it has not been run. The owner-written switch that supersedes this interim claim path is phase 1b's `routing.claude`: its owner-facing paragraph (the object, the explicit list, absent-means-direct, the `allow_data_to` requirement, and this same cache-marker question with the cost attached) is [multi-model.md](../multi-model.md)'s §2, the resolution it licenses is what `fugaro validate` prints or calls unresolved offline, and **Check 50** ([gcp-live-checklist.md](../gcp-live-checklist.md)) is the same measurement on the switch's route — also not yet run.
 
 ## 9. Testing and live checks
 

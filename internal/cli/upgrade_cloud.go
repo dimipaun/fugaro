@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -198,11 +199,17 @@ var jobConfigCopyTimeout = 30 * time.Second
 // default one also refreshes every named-account job, so running it fixes
 // both; this note just never checks the named ones itself.
 //
-// "" is nothing to say: every existing job's copy agrees, no workflow has a
-// job yet, or resolveCloudRepo finds nothing to check here at all (no
-// fugaro.yaml, a teammate checkout, a development build, a repository not
-// onboarded: U9's cloudNotHere skips), in which case the note is silent,
-// exactly as the cloud step itself is in those cases. Everything else is
+// "" is nothing to say: no workflow has a job yet, resolveCloudRepo finds
+// nothing to check here at all (no fugaro.yaml, a teammate checkout, a
+// development build, a repository not onboarded: U9's cloudNotHere skips), or
+// every existing job's copy agrees **and no mount can have drifted under it**,
+// in which case the note is silent, exactly as the cloud step itself is in
+// those cases. The last one is narrower than "the copies agree" (code review,
+// minor: the mount clause below was added to the mount-only branch and this
+// paragraph kept the old, exhaustive wording): a project-scope name in the
+// repository's job one is created or deleted for after its apply changes what
+// that job mounts without changing a byte of its env, so jobs whose env
+// matches are still a reason to speak. Everything else is
 // not silent, resolveCloudRepo's own cloudFailed included (a bad fugaro.yaml
 // or origin, an unreadable local config): it says it could not check, with
 // resolveCloudRepo's own reason (already one line and safe to print, the
@@ -248,6 +255,7 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	var now map[string]string
 	var diffs []string
 	seen := map[string]bool{}
+	projectScopes := map[string]bool{}
 	anyJob := false
 	for _, name := range names {
 		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, name)
@@ -255,6 +263,17 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 			return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
 		}
 		now = spec.Env // the same local-config-derived half for every workflow
+		// The mount half, which no env diff can see: the names this job
+		// mounts that this repository may also use from the project's
+		// container (infra.ProjectSecretCandidate, the one answer about
+		// scope). A project-scope copy of one of these changes the
+		// container the job mounts, and that is not in the job's env at
+		// all (FUGARO_SECRET_ENVS carries variable names, not IDs).
+		for logical := range spec.SecretIDs {
+			if _, ok := infra.ProjectSecretCandidate(lc, logical, repo); ok {
+				projectScopes[logical] = true
+			}
+		}
 		jobEnv, exists, err := be.JobFullEnv(cctx, spec.Job)
 		if err != nil {
 			return couldNotCheckJobConfigCopy("reading the deployed job failed")
@@ -273,11 +292,93 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	if !anyJob {
 		return "" // no workflow has a deployed job here yet
 	}
+	mount := jobConfigCopyMountNote(slices.Sorted(maps.Keys(projectScopes)))
 	if len(diffs) == 0 {
+		// The mount-only case: nothing the diff can see has drifted, but
+		// the mounts are the half it never sees, so the note is still
+		// owed a reader who created or deleted a project secret since
+		// the last init --repo. Nobody holds such a name, though: then
+		// there is nothing this note could tell them and it stays
+		// silent, exactly as it did before the mounts had a clause.
+		if mount == "" {
+			return ""
+		}
+		return "the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount
+	}
+	stale := fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it",
+		strings.Join(diffs, "; "))
+	// The policy half (plan task 1.6 step 5): with a policy published, the
+	// keys it governs are read from the node at run time, so drift in them is
+	// no longer a reason to re-run init --repo — and saying which keys still
+	// are is the difference between a note the operator acts on and one they
+	// learn to ignore.
+	if p := jobConfigCopyPolicyNote(cctx, lc); p != "" {
+		if mount == "" {
+			return stale + p
+		}
+		return stale + p + "; " + mount
+	}
+	tail := fmt.Sprintf("; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
+		pluginwire.Printable(repo))
+	if mount != "" {
+		tail += "; " + mount
+	}
+	return stale + tail
+}
+
+// jobConfigCopyMountNote is the drift note's mount clause (plan Task 2.3
+// step 2): after D2 a name stored at project scope changes what a job
+// mounts when the project's copy is created or deleted, so the mounts are
+// the half of the job's configuration the policy does not carry and the
+// note has to keep sending the operator to init --repo for. Phase 3 moves
+// the mounts to a shared profile, which is the release that removes the
+// step, and saying so here is what keeps this note from reading as a
+// permanent tax.
+//
+// names are the mounted logical secrets this repository may use from the
+// project's container (infra.ProjectSecretCandidate), sorted, and it is the
+// only thing the clause is about: with none of them, no project secret can
+// change a mount of this repository's job, so there is no reason to send
+// anybody to init --repo for it and the clause is "" (the note is silent in
+// the mount-only case then). The caller joins it with "; " after the STALE
+// sentence, or prints it alone.
+//
+// Both halves of the question are stated, because a reader who has just
+// rotated a value is the one most likely to re-run a step that changes
+// nothing: creating or deleting a project secret is what needs the re-run,
+// a new version or a rotated value is not — the job mounts the container,
+// not a copy of the value.
+func jobConfigCopyMountNote(names []string) string {
+	if len(names) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
-		strings.Join(diffs, "; "), pluginwire.Printable(repo))
+	return fmt.Sprintf("what a job mounts is still decided here: a project secret created or deleted after the last `fugaro init --repo .` changes what this repository's job mounts (`fugaro secrets set NAME`, D2's default), and for this repository those names are %s — that is what a re-run is for, while a new version of one of them or a rotated value needs no re-run, because the job mounts the container and not a copy of the value; a run picks a mount change up on the next `fugaro init --repo .` in your own terminal, until phase 3 gives the mounts to a shared profile",
+		strings.Join(names, ", "))
+}
+
+// jobConfigCopyPolicyNote is the drift note's policy clause: what a
+// published policy now governs, and what a job's environment still has to be
+// refreshed for. "" when there is nothing to say — no policy published, no
+// database to read one from, or a read that failed: the note is advisory,
+// and the STALE sentence it would qualify stands on its own.
+//
+// The keys named as still needing init --repo are the ones a run cannot do
+// without and does not read from the node: `providers`, which the node carries
+// and a run routes by the job's own copy of (the one cut to this repository's
+// allow_data_to, whose key name is the mounted secret — so a provider change
+// still reaches every repository through init --repo, and the routing switch
+// resolves against the copy the job has), the pointer that makes the policy
+// reachable at all (RTDBURLEnv, FirebaseAPIKeyEnv — task 1.4), the mounts
+// (a workflow's committed secrets and agent.auth, which come from the
+// repository's own fugaro.yaml), and the platform-side settings
+// (infra.PlatformEnv: the region's compute price, the GitHub App ID).
+func jobConfigCopyPolicyNote(ctx context.Context, lc *localcfg.Config) string {
+	_, found, err := projectPolicyRead(ctx, lc)
+	if err != nil || !found {
+		return ""
+	}
+	return fmt.Sprintf("; the policy published at %s now governs model_prices, the budget mode, the per-run ceiling, the allowed models, the token limit, the allow-list and the routing switch, and runs read those from the node: drift in them is not a reason to re-run fugaro init --repo. The providers block is the part the node carries that a run does not read from it — a run routes by the copy in its own job's environment, cut to this repository with the key's mount, so a changed provider (its base URL, models, allow_data_to or route_fee_pct) is still a reason to re-run it, as are the keys the policy does not carry (%s and %s, without which a run never finds the policy; the repository's mounted secrets and agent.auth; the region's compute price and the GitHub App ID)",
+		projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv)
 }
 
 // couldNotCheckJobConfigCopy is jobConfigCopyNote's note when a real error

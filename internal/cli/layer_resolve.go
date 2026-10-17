@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // layerOptions say where findLayer takes the project layer from.
@@ -298,35 +300,103 @@ func resolveFugaroYAML(ctx context.Context, data []byte, lc *localcfg.Config, o 
 	return resolvedFile{Cfg: cfg, Res: res, Layer: fl, Problems: ps}, nil
 }
 
-// layerRoutes are the routes an in-checkout command must judge a pin or a
-// provider by: lc's own, with the checkout layer's claude_models merged in
-// (config.ApplyClaudeClaims, design mixed-credentials.md §4 and P8). Without
-// it a pin the layer claims is refused here as "no provider serves it" while
-// the same run succeeds in the cloud. Never lc.Providers itself: the project
-// config on disk carries no claim.
+// layerRoutes are the two route tables an in-checkout command reads when a
+// project layer applies: routes, the repository's runs' own with the checkout
+// layer's claude_models merged in (config.ApplyClaudeClaims, design
+// mixed-credentials.md §4 and P8), and claimed, the owner's whole table with
+// those same claimed models written over it. Without them a pin the layer
+// claims is refused here as "no provider serves it" while the same run
+// succeeds in the cloud. Never lc.Providers itself: the project config on disk
+// carries no claim.
 //
-// Only the *routing* rules take this map. The price table stays lc.Providers'
-// — the claim-blind table the run's own environment builds, since
-// FUGARO_MODEL_PROVIDERS never carries a claim — so a claimed ID is priced by
-// the operator's model_prices and never by the catalog, and validate can
-// never accept a pin the run would refuse as unpriced (P4, P11).
+// "The repository's runs' own" is runner.ProvidersFor's filter — the entries
+// whose allow_data_to names repo, exactly what runner.ProvidersEnv writes into
+// the job's FUGARO_MODEL_PROVIDERS — and not the whole installation table. The
+// merge is a rule over the routes the table it is handed holds (a claim may
+// only extend a route the owner defined, and the result must not collide with
+// another route), so merging over the unfiltered table judged claims against
+// routes this repository's runs never carry: a claim colliding only with an
+// entry the repository is not allowed to use halted validate while the run
+// resolved the same claim happily. The run's own merge is the same two steps
+// over the same table — runner.resolveConfig: config.ClaimsOnRoutes, then
+// config.ApplyClaudeClaims — and both use the shared helpers, so the two
+// cannot disagree about a claim either way.
 //
-// A layer that did not apply (nil, or no claim) returns lc.Providers, and so
-// does a merge the rules refuse — an undefined provider name, an empty list, a
-// pattern collision: the problems are returned instead, because the run would
-// not start either and no rule may judge a route table that was refused.
-func layerRoutes(lc *localcfg.Config, l *config.ProjectLayer) (map[string]config.ModelProvider, []config.Problem) {
+// Which table a rule takes is which question it asks. The *routing* rules take
+// routes: a pin is routed, and its background derived, exactly as the run's own
+// table would derive it (claudePins, over the run's own table, which is where
+// EffectiveBackground's "a provider serves the coder" is decided). Everything
+// that names a provider or reads an entry's allow_data_to takes claimed,
+// because a table the filter has already dropped this repository's other routes
+// from cannot answer the question those rules exist for: CheckProviderPolicy
+// asks which entry claims a pin *and* whether that entry's allow_data_to names
+// this repository, and over the filtered table the second half is always yes —
+// so a pin served by a route this repository may not use read "is not a Claude
+// model and no provider serves it: providers are set by the owner in the
+// project config", sending the operator to write a provider that already
+// exists instead of to list the repository in its allow_data_to. claimed is the
+// owner's table as the owner wrote it — base_url, auth, secret and
+// allow_data_to per entry, the entries the run does not carry included — with
+// the layer's claims written into the entries it does. The *prices* stay
+// lc.Providers' for both — the claim-blind table the run's own environment
+// builds, since FUGARO_MODEL_PROVIDERS never carries a claim — so a claimed ID
+// is priced by the operator's model_prices and never by the catalog, and
+// validate can never accept a pin the run would refuse as unpriced (P4, P11).
+//
+// A layer that did not apply (nil, or no claim) returns lc.Providers for both,
+// and so does a merge the rules refuse — an undefined provider name, an empty
+// list, a pattern collision: the problems are returned instead, because the run
+// would not start either and no rule may judge a route table that was refused.
+//
+// The one rule that is validate's own rather than a run's is the P8 refusal of
+// a claim naming a provider the *installation* config does not define: the
+// filter above drops such a name like any other route this repository does not
+// carry, and this command holds the whole table, which is where that name can
+// be told apart from one written for another repository (config.
+// UnknownClaimNames, over lc.Providers).
+func layerRoutes(lc *localcfg.Config, l *config.ProjectLayer, repo string) (routes, claimed map[string]config.ModelProvider, problems []config.Problem) {
 	if lc == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	if len(config.ClaudeClaimsOf(l)) == 0 {
-		return lc.Providers, nil
+	claims := config.ClaudeClaimsOf(l)
+	if len(claims) == 0 {
+		return lc.Providers, lc.Providers, nil
 	}
-	merged, ps := config.ApplyClaudeClaims(lc.Providers, l.ClaudeModels)
+	carried := runner.ProvidersFor(lc.Providers, repo)
+	merged, ps := config.ApplyClaudeClaims(carried, config.ClaimsOnRoutes(carried, claims))
 	if len(ps) > 0 {
-		return lc.Providers, ps
+		return lc.Providers, lc.Providers, ps
 	}
-	return merged, nil
+	if ps := config.UnknownClaimNames(lc.Providers, claims); len(ps) > 0 {
+		return lc.Providers, lc.Providers, ps
+	}
+	return merged, claimsOverCarried(lc.Providers, merged), nil
+}
+
+// claimsOverCarried is the owner's whole table with merged's models written
+// over the entries merged carries: every entry the run has keeps the owner's
+// own base_url, auth, secret and allow_data_to and gains the layer's claimed
+// models, and every entry the run does not carry is left exactly as the owner
+// wrote it. It is the table the rules that name a provider read (layerRoutes),
+// and it may not be replaced by the merge itself: those rules want each entry's
+// own allow_data_to, which runner.ProvidersFor has already rewritten to `[repo]`
+// for every entry it kept, and has dropped the others for not naming it.
+//
+// A claim that names a route this repository does not carry is not written
+// anywhere in it: the run's own table has no such entry either, ClaimsOnRoutes
+// drops the claim (a run cannot tell such a name from one nothing defines), and
+// this table answers what a run of this repository carries.
+func claimsOverCarried(providers, merged map[string]config.ModelProvider) map[string]config.ModelProvider {
+	out := maps.Clone(providers)
+	for name, p := range merged {
+		orig, ok := out[name]
+		if !ok {
+			continue // impossible: merged is built from this table
+		}
+		orig.Models = p.Models
+		out[name] = orig
+	}
+	return out
 }
 
 // parseCheckoutFugaroYAML is config.Parse for a checkout's fugaro.yaml over

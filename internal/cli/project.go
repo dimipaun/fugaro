@@ -239,9 +239,31 @@ func selectedProjectName(ctx context.Context) string {
 // selectedProjectConfig is the project config selectedProjectName names, or
 // nil.
 func selectedProjectConfig(ctx context.Context) *localcfg.Config {
+	lc, _ := selectedProjectConfigErr(ctx)
+	return lc
+}
+
+// selectedProjectConfigErr is selectedProjectConfig with the reason it found
+// none: a nil error for a machine where nothing selects a project config (no
+// config at all, or several and nothing picking one — the states the offline
+// commands work in, and the ones "this command has none selected" is true of),
+// and localcfg.Select's own error for a project config that is there and was
+// refused — a real problem with the operator's own config, which
+// selectedProjectConfig's nil cannot be told apart from.
+//
+// The commands that only want the config if there is one keep calling
+// selectedProjectConfig; `fugaro validate` calls this one, because it printed
+// the second state as the first: a config whose routing switch names a model no
+// entry claims fails at load (localcfg's CheckRouting), and validate said "this
+// command has none selected" about it and exited 0.
+//
+// A checkout whose own fugaro.yaml cannot be read is swallowed here too, as it
+// always was: that is a problem with the file being validated, which validate
+// reports against the file itself, not a selection that failed.
+func selectedProjectConfigErr(ctx context.Context) (*localcfg.Config, error) {
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	if co != nil && co.Project == "" {
 		// A checkout without project: would refuse; the file being
@@ -249,10 +271,16 @@ func selectedProjectConfig(ctx context.Context) *localcfg.Config {
 		co = nil
 	}
 	_, lc, err := selectFrom(cloudOptions{}, co, false)
-	if err != nil {
-		return nil
+	if err == nil {
+		return lc, nil
 	}
-	return lc
+	var se *localcfg.SelectError
+	if errors.As(err, &se) {
+		// Nothing selected, or several and nothing picking one: a state, not a
+		// broken config.
+		return nil, nil
+	}
+	return nil, err
 }
 
 // checkRepoProject refuses a repository whose fugaro.yaml names another

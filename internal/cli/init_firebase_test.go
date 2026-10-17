@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -482,8 +484,127 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 			puts = append(puts, strings.TrimSuffix(q.Path, ".json"))
 		}
 	}
-	if len(puts) == 0 || puts[len(puts)-1] != "/.settings/rules" || puts[0] != "/fugaro/mark" {
+	// The rules go in last of the database's own writes, over a database that
+	// is already marked and configured: the mark is written before them. The
+	// one write after them is the rules-generation marker, which exists to say
+	// the deploy above succeeded and must not be there otherwise
+	// (TestRulesMarkerOnlyAfterTheRulesDeploy).
+	if len(puts) < 2 || puts[0] != "/fugaro/mark" || puts[len(puts)-2] != "/.settings/rules" ||
+		puts[len(puts)-1] != "/"+projectpolicy.PathRulesMarker() {
 		t.Errorf("PUT order = %v", puts)
+	}
+}
+
+// TestRulesMarkerOnlyAfterTheRulesDeploy: config/limits/policyRules records
+// which generation of the rules is deployed, and the runner (phase 1 task 1.3)
+// reads it so it never decodes a policy the deployed rules do not protect. A
+// marker written without a successful deploy — or before one — would halt
+// every budget-on run of a database whose rules were never deployed, so the
+// marker is written only after the deploy, and a deploy that fails leaves no
+// marker at all.
+func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
+	marker := func(r *fbRig) any { return r.db.Value(projectpolicy.PathRulesMarker()) }
+
+	// A refused rules deploy: init fails and leaves no marker.
+	refused := newFBRig(t)
+	refused.historyImage()
+	refused.db.DenyRules(1)
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err == nil {
+		t.Fatal("init reported success although the rules deploy was refused")
+	}
+	if got := marker(refused); got != nil {
+		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the runner would read a policy these rules do not protect", projectpolicy.PathRulesMarker(), got)
+	}
+	if n := refused.db.RulePuts(); n != 0 {
+		t.Errorf("rules deployed %d times, want 0", n)
+	}
+
+	// A deploy that succeeds records this generation.
+	r := newFBRig(t)
+	r.historyImage()
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if r.db.RulePuts() != 1 {
+		t.Errorf("rules deployed %d times, want 1", r.db.RulePuts())
+	}
+	num, ok := marker(r).(json.Number)
+	if !ok || num.String() != strconv.Itoa(projectpolicy.RulesVersion) {
+		t.Errorf("%s = %#v, want %d (RulesVersion): the runner compares them", projectpolicy.PathRulesMarker(), marker(r), projectpolicy.RulesVersion)
+	}
+	// It sits beside the largest lease, not on top of it.
+	lim, _ := r.db.Value("config/limits").(map[string]any)
+	if len(lim) != 2 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the marker beside maxReserveMicros", lim)
+	}
+}
+
+// TestInitRefusesADatabaseFromANewerFugaro: the marker records which
+// generation of the security rules is deployed, and a marker above this
+// binary's RulesVersion says the rules came from a newer Fugaro. init
+// --firebase deploys the rules *this* binary carries, so it must refuse rather
+// than overwrite the newer installation's rules with older ones and record its
+// own generation over the newer number — the state doctor warns about and
+// tells the owner not to cause ("do not re-run 'fugaro init --firebase' with
+// this binary", policy-rules-skew).
+//
+// Hand mutation this fails on: dropping the refusal from infra.DB.Plan, which
+// rewrites the marker down to this binary's generation (and, on a real
+// downgrade, redeploys the older rules document).
+func TestInitRefusesADatabaseFromANewerFugaro(t *testing.T) {
+	r := newFBRig(t)
+	r.historyImage()
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.db.RulePuts(); n != 1 {
+		t.Fatalf("rules deployed %d times, want 1 (the fixture)", n)
+	}
+	newer := projectpolicy.RulesVersion + 1
+	r.db.Set(projectpolicy.PathRulesMarker(), newer)
+	puts := len(r.db.Requests())
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an older binary must not deploy over a newer installation's rules", err)
+	}
+	for _, want := range []string{projectpolicy.PathRulesMarker(), "generation"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); got != json.Number(strconv.Itoa(newer)) {
+		t.Errorf("%s = %#v, want %d: the refusal rewrote the newer installation's marker", projectpolicy.PathRulesMarker(), got, newer)
+	}
+	if n := r.db.RulePuts(); n != 1 {
+		t.Errorf("rules deployed %d times, want 1: the older document was put over the newer one", n)
+	}
+	for _, q := range r.db.Requests()[puts:] {
+		if q.Method == "PUT" || q.Method == "PATCH" {
+			t.Errorf("the refused init wrote %s /%s", q.Method, q.Path)
+		}
+	}
+}
+
+// TestInitLeavesAnUpToDateMarkerAlone: a database whose rules are already the
+// generated ones is not re-deployed, and a marker that already records this
+// generation is not rewritten: init writes nothing at all.
+func TestInitLeavesAnUpToDateMarkerAlone(t *testing.T) {
+	r := newFBRig(t)
+	r.historyImage()
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	puts := len(r.db.Requests())
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.db.RulePuts(); n != 1 {
+		t.Errorf("the rules were deployed %d times, want 1: they are already the generated ones", n)
+	}
+	for _, q := range r.db.Requests()[puts:] {
+		if q.Method == "PUT" || q.Method == "PATCH" {
+			t.Errorf("the second init wrote %s /%s", q.Method, q.Path)
+		}
 	}
 }
 
@@ -797,10 +918,19 @@ func TestInitFirebasePrintVarsNoCalls(t *testing.T) {
 	}
 }
 
-// init --repo writes the backend's address and web key into the workflow
-// jobs of a repository whose budget is on, and nothing of it otherwise.
+// init --repo writes the backend's address and web key into the workflow jobs
+// whenever the installation has them, whatever its budget mode (D11, plan
+// task 1.4 step 1). The mode is the project's policy now, and a run reads that
+// policy with these two (the token exchange needs the key, not only the URL);
+// a job deployed with the mode off and nothing to read the policy with would
+// run on the environment ceiling with the policy unenforced. What the mode
+// still decides is FUGARO_BUDGET_MODE and the grace, which are the fallback
+// for an installation that has published no policy at all.
 func TestInitRepoPassesRTDBEnv(t *testing.T) {
-	for mode, want := range map[string]bool{"observe": true, "off": false} {
+	for mode, want := range map[string]map[string]bool{
+		"observe": {"FUGARO_RTDB_URL": true, "FUGARO_FIREBASE_API_KEY": true, "FUGARO_BUDGET_GRACE": true, "FUGARO_BUDGET_MODE": true},
+		"off":     {"FUGARO_RTDB_URL": true, "FUGARO_FIREBASE_API_KEY": true, "FUGARO_BUDGET_GRACE": false, "FUGARO_BUDGET_MODE": false},
+	} {
 		isolateProjects(t, t.TempDir())
 		path := writeProject(t, "aurora", "proj-1234")
 		data, err := os.ReadFile(path)
@@ -819,9 +949,9 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, key := range []string{"FUGARO_RTDB_URL", "FUGARO_FIREBASE_API_KEY", "FUGARO_BUDGET_GRACE"} {
-			if got := strings.Contains(out, key); got != want {
-				t.Errorf("mode %s: %s in the job's env = %v, want %v", mode, key, got, want)
+		for key, wantKey := range want {
+			if got := strings.Contains(out, key); got != wantKey {
+				t.Errorf("mode %s: %s in the job's env = %v, want %v", mode, key, got, wantKey)
 			}
 		}
 		for _, secretish := range []string{fpSigner, "aurora-fp\"", "token_signer"} {

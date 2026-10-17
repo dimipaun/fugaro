@@ -501,6 +501,21 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				return launchResult{}, err
 			}
 		}
+		// The project's policy, read with the operator's own credentials
+		// before anything of this launch is written (plan task 1.5 step 4):
+		// the repository must be admitted, and the policy must not be newer
+		// than this binary. Before createTask and before the launch claim, so
+		// a refused launch leaves no task, no token and no execution behind.
+		// Outside the --no-budget-check branch, which is deliberate: neither
+		// check is a budget check, so neither is an operator's to skip. After
+		// the budget pre-check, so an unreachable database is refused by the
+		// pre-check's own fail-closed message when that check runs; the gate
+		// refuses it itself, with the node named, when it does not. Before the
+		// attach upload below as well, so a repository the policy does not
+		// admit never gets its inputs into the bucket either.
+		if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
+			return launchResult{}, err
+		}
 		// The upload, last of everything an --attach launch does and still
 		// before createTask: every refusal this launcher can make from what
 		// it already has has been made above, so a refused launch leaves no
@@ -1583,7 +1598,17 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, userErr("workflow %s is not a plain workflow name, so it can't be combined with Claude account %s; nothing started", oneLineCLI(spec.Workflow), pluginwire.Printable(spec.OAuthToken))
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
-	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
+	lspec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)}
+	if minted {
+		// This execution carries a budget token, so the runner must never read
+		// the token's absence as "this project has published no policy": with
+		// the marker set, a missing token stops the run whatever the job's own
+		// mode (internal/runner's BudgetTokenEnv, plan R2-8(a)). It is an
+		// execution override — minting is a fact about this launch, not about
+		// the job's deploy-time environment.
+		lspec.Env = []string{runner.BudgetTokenEnv + "=1"}
+	}
+	ref, err := env.be.Launch(lctx, lspec)
 	cancel()
 	if err != nil {
 		if errors.Is(err, backend.ErrRejected) {

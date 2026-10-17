@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -1010,6 +1011,21 @@ func TestPolicyRecordSchema(t *testing.T) {
 		t.Errorf("schema rejects a record without policy: %v", err)
 	}
 	// An empty allow-list (forbid everything) is valid and is written.
+	// PR #379's own layer: a key the project's published node set is written
+	// with the source "policy" (internal/policy.SourcePolicy, set by the
+	// runner's policySources), including the source of an ignored value the
+	// node's ceiling replaced. A run of a project-centric installation
+	// writes this, and internal/runner's TestHaltedRecordSchema validates a
+	// stored record against this schema, so the enum has to have it.
+	policied := &runstore.PolicyRecord{
+		Effective: runstore.PolicyEffective{Mode: "enforce", PerRunUSD: 5},
+		Sources:   map[string]string{"mode": policy.SourcePolicy, "per_run_usd": policy.SourcePolicy, "max_run_tokens": policy.SourceCeiling},
+		Ignored: []runstore.PolicyIgnored{{Key: "per_run_usd", Value: "500", Effective: "5",
+			Source: policy.SourcePolicy, From: policy.SourceBranch}},
+	}
+	if err := check(policied); err != nil {
+		t.Errorf("schema rejects a record whose ceiling came from the project's policy: %v", err)
+	}
 	empty := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{AllowedModels: []string{}}}
 	if err := check(empty); err != nil {
 		t.Errorf("schema rejects an empty allow-list: %v", err)
@@ -1036,6 +1052,60 @@ func TestPolicyRecordSchema(t *testing.T) {
 	inst, _ := jsonschema.UnmarshalJSON(strings.NewReader(doc))
 	if err := sch.Validate(inst); err == nil {
 		t.Error("schema accepts an unknown key in policy")
+	}
+}
+
+// The schema's layer names and internal/policy's are one list. The runner
+// writes whichever the merge produced — "policy" for a key the project's
+// published node named (PR #379), the rest for the ceiling, the default
+// branch and the run's branch — so a Go constant the schema does not carry is
+// a stored result.json the repository's own validator rejects. `from` stays
+// without "policy" on purpose: the node is not a later layer that can ask for
+// a looser value, it *is* the first layer, and its keys are replaced rather
+// than loosened (plan task 1.3, H1).
+func TestPolicyRecordSchemaLayersAgreeWithGo(t *testing.T) {
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	at := func(v any, path ...string) any {
+		for _, k := range path {
+			m, ok := v.(map[string]any)
+			if !ok {
+				t.Fatalf("schema has no %v", path)
+			}
+			v = m[k]
+		}
+		return v
+	}
+	enum := func(v any) []string {
+		var out []string
+		for _, x := range v.([]any) {
+			out = append(out, x.(string))
+		}
+		slices.Sort(out)
+		return out
+	}
+	pol := at(doc, "properties", "policy", "properties")
+	for _, where := range []struct {
+		name string
+		got  []string
+		want []string
+	}{
+		{"policy.sources", enum(at(pol, "sources", "additionalProperties", "enum")),
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+		{"policy.ignored[].source", enum(at(pol, "ignored", "items", "properties", "source", "enum")),
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+		{"policy.ignored[].from", enum(at(pol, "ignored", "items", "properties", "from", "enum")),
+			slices.Sorted(slices.Values([]string{policy.SourceDefaultBranch, policy.SourceBranch}))},
+	} {
+		if !slices.Equal(where.got, where.want) {
+			t.Errorf("schema's %s = %v, internal/policy's layers are %v", where.name, where.got, where.want)
+		}
 	}
 }
 
