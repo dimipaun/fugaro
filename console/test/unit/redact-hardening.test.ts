@@ -45,7 +45,9 @@ describe('addresses, in any script', () => {
   it('redacts an address whose local part is not ASCII, in a value', () => {
     const out = red({ title: 'ping zorá@widgetco.example' })
     expect(out).not.toContain('widgetco')
-    expect(out).not.toContain('dim')
+    // The local part goes too, accent and all: a rule that matched only the
+    // ASCII run before the accent would leave `zor` behind.
+    expect(out).not.toContain('zor')
     expect(out).toContain(ADDRESS_MARKER)
   })
 
@@ -189,6 +191,19 @@ describe('credentials the shape list did not know', () => {
     expect(() => {
       assertRedacted({ message: `failed with ${secret} at noon` })
     }).toThrow(/credential-shaped/)
+  })
+
+  it('keeps a long run whose entropy is below the threshold, and redacts one just above it', () => {
+    // The threshold pinned from the other side: "it redacts identity, not
+    // hostility ... it does not invent data". Each run below mixes upper case,
+    // lower case and digits and is 20+ characters long, so only the entropy
+    // decides. Built by concatenation, so no literal here is token-shaped.
+    const repeated = 'RunA2026' + 'RunA2026' + 'RunA' // 2.77 bits per character
+    const below = 'Ab1Cd2Ef3Gh' + 'Ab1Cd2Ef3Gh' // 3.46 bits per character
+    const above = 'Ab1Cd2Ef3GhIj' + 'Ab1Cd2Ef3G' // 3.65 bits per character
+    expect(red({ message: `build ${repeated} done` })).toBe(JSON.stringify({ message: `build ${repeated} done` }))
+    expect(red({ message: `build ${below} done` })).toBe(JSON.stringify({ message: `build ${below} done` }))
+    expect(red({ message: `build ${above} done` })).toBe(JSON.stringify({ message: `build ${TOKEN_MARKER} done` }))
   })
 
   it('redacts a token split across two fields', () => {
