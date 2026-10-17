@@ -107,10 +107,18 @@ func (r *run) jobIdentity(ctx context.Context) (profile, provider, account strin
 // job's name is the one thing about the job a launcher cannot write (finding
 // 4, 12a item 1). Deps.Execution carries the name the platform returned, and
 // ExecutionFromEnv refuses an empty CLOUD_RUN_JOB before any of this runs
-// (internal/backend's codec), so "no name" here means "not on Cloud Run".
+// (internal/backend's codec), so "no name" here means "not on Cloud Run" — and
+// "not on Cloud Run" is local only when the invocation said so (Deps.Local).
+// A process no backend claims is in the cloud (backend.Platform.InCloud fails
+// closed) and has no job name to place, so it can neither adopt a project
+// job's identity nor be told apart from one: it halts here, before any git
+// credential (review C2).
 func (r *run) jobName() (string, error) {
 	if r.d.Execution == "" {
-		return "", nil
+		if r.d.Local {
+			return "", nil
+		}
+		return "", fmt.Errorf("this run reports no Cloud Run execution and is not a local invocation (fugaro exec --task-file): a process no backend claims is in the cloud, and with no job name it cannot be placed in the job it is in, so it adopts no identity and is not admitted. The run stops before any git credential is requested; check that the job's environment carries the platform's own variables (CLOUD_RUN_JOB, CLOUD_RUN_EXECUTION)")
 	}
 	job, err := backend.JobOf(r.d.Execution)
 	if err != nil {

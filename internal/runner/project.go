@@ -272,9 +272,10 @@ func remoteDisplay(remote string) string {
 // git credential exists and before the clone (plan tasks 1.5 and 3.3): the run
 // is placed in the job it is in, the run's slug and its repository must agree
 // under that job's provider, and the policy must admit the repository — for the
-// project, and on a project job for the profile the job's own name pins. A run
-// with no Cloud Run execution is not checked: the binding exists because a
-// job's identity is what an admission rests on (R2-9).
+// project, and on a project job for the profile the job's own name pins. A
+// local invocation is not checked: the binding exists because a job's identity
+// is what an admission rests on (R2-9). A process with no Cloud Run execution
+// that is not local is in the cloud, and it is refused (jobName).
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
 // provider is opened, so no git credential exists yet and nothing has been
@@ -294,10 +295,17 @@ func remoteDisplay(remote string) string {
 // the environment; then the admission — all of it before openProvider and
 // before the budget session takes a lease.
 func (r *run) admissionCheck(ctx context.Context) error {
-	if r.d.Execution == "" {
-		// No Cloud Run execution: no job identity to bind to, so no binding
-		// (R2-9). fugaro exec --provider fake, a local run and the end-to-end
-		// tests keep the path they have always had.
+	if r.d.Local && r.d.Execution == "" {
+		// A local invocation (`fugaro exec --task-file`, the file-backed fake
+		// provider, the end-to-end tests) has no job identity to bind to, so
+		// no binding (R2-9). The skip needs both halves (review C2, and main's
+		// #453 for the phase-1 shape): Local's zero value means the cloud
+		// (runner.go), and a process no backend claims — a platform this
+		// build does not recognise, or a job whose environment was edited —
+		// carries no execution name either. Reading the missing name alone as
+		// "local" exempted that process from everything below while the git
+		// credential stayed scoped to whatever remote its environment named;
+		// it now reaches jobIdentity, which halts it (jobName).
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)

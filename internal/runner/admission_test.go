@@ -176,6 +176,30 @@ func countAuths(b *bk) *int {
 	return &n
 }
 
+// A process with no Cloud Run execution that the invocation did not name local
+// is in the cloud (backend.Platform.InCloud fails closed): a platform no
+// backend claims, or a job whose environment was edited so that the codec
+// reports nothing. The admission used to read "no execution" as "not on Cloud
+// Run" and skip every check below — the job binding, the slug, the remote and
+// the allow-list — while the git credential stayed scoped to whatever remote
+// that environment named (review C2; main's #453 fixed the same guard for the
+// phase-1 shape). Such a run has no job name to place, so it cannot adopt or
+// rule out a project job's identity, and it stops before any git credential.
+//
+// Mutation (run, restored): make admissionCheck's skip read Execution == ""
+// alone again. The run then goes on to clone and this test fails on the
+// credential counter and on the reason.
+func TestAdmissionRefusesAnUnclaimedProcessWithNoExecution(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
+	b.deps.Execution = ""
+	b.deps.Local = false
+	// A cloud run carries its project (checkProject refuses one without it
+	// after the clone, which would hide where this refusal happens).
+	b.deps.Project = "aurora"
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "no Cloud Run execution", "not a local invocation", "before any git credential")
+}
+
 // A FUGARO_GIT_PROVIDER (the --provider flag's default, internal/cli/exec.go)
 // that agrees with the kind the slug derives is not what the binding trusts —
 // it is derived from the slug either way — and one that disagrees is refused,
