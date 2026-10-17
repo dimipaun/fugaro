@@ -539,9 +539,14 @@ These record where the build settled something the design left open. The authori
   {repo, workflow, title, stage, round, verify, coder, reviewer, auth, prUrl,
    startedAt, stageStartedAt, stageDeadline, updatedAt, spent, halted}
 /outcomes/<day>/<slug>/<run>               # {status}: written once at run end; counted by the history job
+/mailbox/<mb>                              # the account's mailbox; <mb> is its Firebase Auth uid (mobile plan D112-D113b)
+  inbox/<msg>                              # {id, sender, text, at}: the phone writes it
+  outbox/<msg>                             # {id, sender, text, at, acked?}: the consumer writes it, the phone acks it
+  heartbeat                                # {at, boot}: the consumer's liveness (mobile plan D117)
 ```
 
 - **`title`** is the task's first line, clipped to 80 characters and redacted. Launchers already read every `task.json`.
+- **The mailbox** is the mobile app's own family (`docs/mobile/`, plan task P2.1): one node per account, keyed by that account's Firebase Auth uid, so a person with two installations has two mailboxes and neither is reachable from the other. A **message** is the shared schema's (`shared/mailbox-schema`): `id` (the node key it is stored under), `sender` (the writer's identity, bound by the rules to the writer's claim), `text` (already redacted, non-empty, bounded), `at` (epoch milliseconds) and, on an outbox message only, `acked` — the phone's acknowledgement of a message it has spoken. `heartbeat` is `{at, boot}`: when the consumer last wrote, and which boot of it, so a restart is distinguishable from a stall (§6.5). Nothing here is spend: the mailbox carries text and liveness, and the writer's own messages are not a cap, a lease or a counter.
 - **Day nodes older than 8 days** are deleted by the rollover only after the day is final, equal to its Firestore documents and read back (§9). `spend/<day>/meta` is not written by M9d (nothing reads it); the Firestore document, not a flag in RTDB, says a day is archived.
 
 **Firestore** (the `(default)` database):
@@ -595,6 +600,12 @@ The global figure is computed on read. There is no composite index: `report` que
 - **`RUN`**: `auth != null && auth.token.fs == $slug && auth.token.fr == $run && auth.token.fx > now`.
 - **`TODAY`**: `$day == '' + ((now - now % 86400000) / 86400000)`.
 
+The mailbox's fragments use three more, which name an identity rather than a path. Both of the claims they read are **read by the rules and minted nowhere in this repository** — setting one on a Firebase Auth user is the owner's own step, by hand, when an account is added:
+
+- **`USER`**: `auth != null && auth.token.mu != null && auth.token.mu == auth.uid` — the mobile app's user claim (mobile plan D112). `mu` names the mailbox its holder owns, and the agreement with `auth.uid` is what keeps a token that carries someone else's mailbox out of it. It names no path, so it is usable on the four families the dashboard reads and cannot reach a mailbox by itself.
+- **`MAILBOX`**: `USER && $mb == auth.uid` — the owner of *this* mailbox: the claim, and the location being written being that account's own. Both halves are needed.
+- **`CONSUMER`**: `auth != null && auth.token.mc != null && auth.token.mc == $mb` — the mailbox's consumer (mobile plan D113b), the writer on the other side of the phone: `mc` names the mailbox it serves.
+
 **Rules in outline:**
 
 ```
@@ -626,6 +637,12 @@ The global figure is computed on read. There is no composite index: `report` que
   .validate: N ≥ O && N − O ≤ limits.maxReserveMicros × (the calls-field limit for calls)
 /agents/$slug/$run   .write: RUN   .validate: every string ≤ 200 characters, and the fields and types fixed
 /outcomes/$day/$slug/$run   .write: RUN && !data.exists()   (written once)
+/mailbox/$mb/inbox/$msg    .write: MAILBOX && newData.exists()
+/mailbox/$mb/outbox/$msg   .write: CONSUMER && newData.exists()
+/mailbox/$mb/outbox/$msg/acked   .write: MAILBOX && newData.exists()
+/mailbox/$mb/heartbeat     .write: CONSUMER && newData.exists()
+  (the three read grants the phone has: $mb/outbox, $mb/heartbeat, each .read: MAILBOX;
+   and, for the user claim alone, config/caps/**, spend/$day/** and config/kill/** — see below)
 ```
 
 Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is false, so the write is denied: the rules fail closed.
@@ -661,6 +678,33 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
 - **Reports aren't checked against real usage.** The rules can't verify that `spent` matches real usage, which is D2's residual.
 - **Launchers can mint tokens for arbitrary run IDs.** Each can fill its per-run cap, so a launcher can exhaust the counters (denial of service). A launcher can't spend real money, though: launchers hold no model credential.
 
+**The mailbox, and the two identities it admits (mobile plan task P2.1).** The mobile app ([docs/mobile/](../mobile/)) puts one more family in this tree and two more identities in front of it, and the rules **read** both claims rather than minting either: `mu`, the app's user claim (mobile plan D112, D113), and `mc`, the mailbox consumer's (D113b). Setting either on a Firebase Auth user is the owner's own step, by hand, when an account is added; nothing in Fugaro writes a claim.
+
+The subtree follows the **subtree idiom** `agents/$slug/$run` and `outcomes/$day/$slug/$run` already use (F21), not the leaf idiom the ledgers and counters use: one `.write` on the node its writer writes whole, `.validate`-only children, and `"$other": {".validate": false}` so an unknown field is refused rather than stored. **Four writes, one per writer and no more:**
+
+| location | writer | the claim it must carry |
+|---|---|---|
+| `/mailbox/<mb>/inbox/<msg>` | the phone | `MAILBOX`: `mu == auth.uid`, and `$mb == auth.uid` |
+| `/mailbox/<mb>/outbox/<msg>/acked` | the phone | `MAILBOX` |
+| `/mailbox/<mb>/outbox/<msg>` | the consumer | `CONSUMER`: `mc == $mb` |
+| `/mailbox/<mb>/heartbeat` | the consumer | `CONSUMER` |
+
+Each of the four also carries `newData.exists()`, so a delete is denied — validation rules do not run on a delete, the same reason every leaf of the ledgers carries it.
+
+**What the phone reads.** D112's answer is that the app reads the database directly rather than through a mirror, and the grant is exactly the set the owner named (mobile plan tension (b1)): `config/caps/**`, `spend/$day/**`, `config/kill/**`, and its own mailbox's `outbox` and `heartbeat`. It is **added, never widened**: the eight expressions that carried a run's read now read `… || USER` — `config/caps/global`, `config/caps/defaults`, `config/caps/repos/$slug`, `config/kill/global`, `config/kill/repos/$slug`, `spend/$day/global`, `spend/$day/repos/$slug` and `spend/$day/runs/$slug/$run` — so every read a run token had, it still has, word for word, and the app's is a second disjunct beside it. Nothing else moves: `config/limits`, `config/mode`, `config/policy/*`, `agents/**` and `outcomes/**` carry no user grant, so **a signed-in user who carries no `mu` is admitted nowhere** (F8), and the job list has no run titles (F13, tension (b1)). `spend/$day/meta` is not in the template at all and is not granted either: it is the history job's node, written over IAM like `config/limits`.
+
+**The mailbox's grants are per child, not on the parent.** `mailbox/<mb>` carries neither a read nor a write: an RTDB grant on it would cascade to the inbox, which the phone must not read — the consumer, not the phone, collects what the phone wrote. So `outbox` and `heartbeat` each carry `.read: MAILBOX`, and the inbox carries no read at all; the phone's own copy of a message it wrote is its optimistic local one.
+
+**What the rules refuse, field by field**, for the phone's and the consumer's writes alike: the four required fields must be present; `id` must equal the node it is stored under (`$msg`) and be within the key bound (`internal/budget/rules`' `MaxKeyLength`, which is the schema's `ID_MAX`); `text` must be non-empty and at most 4096 characters (`MaxText`, which is the schema's `TEXT_MAX`); `at` must be an epoch-millisecond instant at most `MaxTimestamp` (the schema's `AT_MAX`, the largest integer a double represents exactly — deliberately **not** an amount: a clock reading held to the amount bound would refuse a message the phone's own validator accepts, at a date no run's spend will reach); `acked` is a boolean and only an outbox message has the field — the inbox's `$other` refuses it, because the phone's ack is of a message it has spoken, and what it speaks is what the consumer wrote into the outbox; `sender` must equal `<mb>` — for the phone that is `auth.uid`, for the consumer its own `mc`, so in both directions the sender is bound to the writer's claim; and any field the schema does not name is refused. The numbers the two artifacts share are held together by `TestMailboxRulesAgreeWithTheSharedSchema`, which reads `shared/mailbox-schema/index.js` and fails when a bound moves on one side only.
+
+**Where the rules are looser than the schema**, stated rather than claimed away: an `id`'s key rule (no `%`, no control character, no lone surrogate) and `text`'s control characters are the schema's alone, because an RTDB expression cannot look at a string's characters — the database itself refuses `.`, `#`, `$`, `[`, `]` and `/` in a key, which leaves `%` and the control characters for the schema. The direction that matters is closed: every bound the rules put on a message is the schema's own number, so nothing the phone's validator accepts is refused by the database.
+
+**What a mailbox identity cannot do.** Write outside its own mailbox (the claim names one `mb` and the two predicates compare it with the location); write another account's mailbox (`$mb == auth.uid` on the phone's side, `mc == $mb` on the consumer's); delete a message or a heartbeat; write the other writer's node — the phone cannot write an outbox message or the heartbeat, and the consumer cannot write the inbox; or read any mailbox as the consumer, which holds no read grant anywhere. A phone's ack is one field on a message that is already there: the rules enforce the shape of the ack, not that the phone ever spoke the message.
+
+**The ack is the one node both identities can reach, and the shape is why.** `.write` cascades downward, so the consumer's grant on a message node covers that message's `acked` child as well as the message: it can set a boolean on a message it wrote itself, in a mailbox it already writes. That is not a second grant — nothing above the inbox grants the consumer anything, which is what keeps the inbox out of its reach — and the value says "the phone has spoken this", which the consumer is the only reader of. The phone's ack is unaffected, since the child is a place the phone can reach and no ancestor of the outbox is; and what the rules decide in either case is the shape of the field. `emulator_mailbox_test.go` pins both directions (`TestMailboxPhoneAcksWhatItSpoke`, `TestMailboxConsumerWritesOnlyItsMailbox`).
+
+**Generation 2.** This change bumps `RulesVersion` (`internal/projectpolicy`) to 2. The marker `config/limits/policyRules` names the document the database runs under, and every reader of it — the deploy's refusal to put this binary's rules over a newer marker, `fugaro doctor`'s `policy-rules-skew`, the runner's policy gate — compares generations rather than assuming one. Until the owner's `fugaro init --firebase` (mobile plan P2.3) deploys this document, an installation is on generation 1 and has no mailbox — and it is not a policy-less installation: generation 1's document already carries §5's policy nodes, which is why the generation that introduced *those* is a separate constant (`projectpolicy.PolicyRulesVersion`, which stays 1: a published policy is read and enforced, and publishing another is not refused, whatever later generation is deployed). The generated document is pinned by `internal/budget/rules/testdata/rules.golden.json` (`TestRulesGolden`) and, with the emulator, by the `firebase`-tagged suite (`TestRulesParity`): a grant reaching any family outside the set above fails them, and the directed denial cases — the fences `F21` claims, which prove a phone cannot write outside its mailbox, that the consumer cannot write what is not its, and that the user claim reads exactly the four families named above — are `internal/budget/rules/emulator_mailbox_test.go` (mobile plan task P2.2).
+
 **A budget service stays documented as later hardening.** A Cloud Run service that owns every write would remove all token and rules logic from jobs, and could host the external gateway (§11).
 
 ### 6.5 The agent registry without `onDisconnect`
@@ -670,6 +714,7 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
   - A heartbeat every 15 s updates the stage, round, verify step, spend and `updatedAt`.
   - At run end the runner writes `outcomes/<day>/<slug>/<run>` and deletes its entry.
 - **How watch flags a run.** It shows an entry as **silent** after 60 s without a heartbeat, and as **lost** after 3 minutes.
+- **The mailbox's heartbeat is a different thing with the same shape** (mobile plan D117). `/mailbox/<mb>/heartbeat` is `{at, boot}` — when the consumer last wrote, and which boot of it, so a restart is told apart from a stall — written by the consumer at a bounded interval and read by the phone, which shows "orchestrator offline" after N missed intervals rather than accepting a message into the void. Two of its properties are D117's and are not the registry's: the interval is a setting **with a floor**, because RTDB bills per write, and **the server's timestamp is the authority, never the phone's clock** — a skew beyond the bound is shown as "clock differs", not as "offline". The rules therefore accept any non-negative epoch-millisecond `at` instead of fencing it against `now`: a writer whose clock is ahead would otherwise be refused and would read as offline, which is the state D117 exists to tell apart. The app distinguishes them by comparing `at` with the server's own time for that read, and writing `at` from the server (RTDB's `{".sv": "timestamp"}`) is the convention the consumer follows. Nothing sweeps a mailbox: one node per account holding its consumer's latest write is the state to display, not a node to delete.
 - **The sweeper.** The history job runs every 15 minutes (D12). It lists the project's Cloud Run executions (as `ls` does) and removes the registry entries of executions that have ended or no longer exist. It records `crashed` on their `/runs` ledgers, whose outstanding amounts stay counted, and writes an `infra_error` outcome. It also deletes the auth users of runs older than 2 days.
 
 ### 6.6 Terraform

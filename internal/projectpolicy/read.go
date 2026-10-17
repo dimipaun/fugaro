@@ -15,12 +15,22 @@ import (
 //
 //   - The rules marker, config/limits/policyRules, records which generation
 //     of the database's security rules is deployed. Absent, or below
-//     RulesVersion, this installation's rules predate the policy nodes: no
-//     policy can have been published here (publishing refuses without the
-//     marker), so the answer is "not found" and a permission-denied or
-//     missing read of config/policy/shared is not an error. This is what
-//     keeps a release from halting an installation whose rules deploy is the
-//     owner's own step.
+//     PolicyRulesVersion, this installation's rules are older than the policy
+//     nodes: no policy can have been published here (publishing refuses
+//     without a current marker), so the answer is "not found" and a
+//     permission-denied or missing read of config/policy/shared is not an
+//     error. This is what keeps a release from halting an installation whose
+//     rules deploy is the owner's own step.
+//
+//     The gate is PolicyRulesVersion and not RulesVersion, and that is the
+//     whole of the difference between "this installation has no policy" and
+//     "this installation runs a document older than mine". A marker between
+//     the two — generation 1, the only such value today — is a deployment that
+//     carries the policy nodes: the policy published under it is read here, and
+//     what it lacks is the nodes a later generation added beside them (the
+//     mailbox, RulesVersion). Gating on RulesVersion would answer "not found"
+//     for a node that is there, which every caller of this function reads as an
+//     empty ceiling (the review finding on P2.1).
 //   - With the marker deployed, the node decides: absent (or null) is
 //     "installed, not adopted", today's behaviour; anything else that cannot
 //     be read or decoded is an error the caller must treat as a halt, never
@@ -35,7 +45,7 @@ func Read(ctx context.Context, db *rtdb.Client) (*Policy, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	if gen < RulesVersion {
+	if gen < PolicyRulesVersion {
 		return nil, false, nil
 	}
 	var raw json.RawMessage
@@ -66,13 +76,14 @@ func (e *MarkerError) Error() string {
 // may halt on that).
 //
 // A *negative* generation is a MarkerError and not a small one. Read asks this
-// function only whether the generation is at least RulesVersion, so a marker of
-// -1 would answer "no": the whole node would read as "not found", which is the
+// function only whether the generation is at least PolicyRulesVersion, so a
+// marker of -1 would answer "no": the whole node would read as "not found",
+// which is the
 // legacy path, and a hand-edited -1 would silently take a project-centric
 // installation's policy out of every run's reach — the fail-open MarkerError's
 // own doc forbids, on the one node that decides whether a published policy is
-// read at all. No deploy writes a negative generation (RulesVersion is 1 and
-// only goes up), so a negative one is a hand edit, and it is named rather than
+// read at all. No deploy writes a negative generation (RulesVersion only goes
+// up), so a negative one is a hand edit, and it is named rather than
 // guessed at. The same reading applies to a generation far above RulesVersion:
 // that is a newer installation's marker, and it is at least this one's, so it
 // reads as deployed.

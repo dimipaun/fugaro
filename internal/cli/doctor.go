@@ -1546,7 +1546,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks := doctorRulesSkew(ctx, db)
 	// The node is read through projectpolicy.Read, the reader a run uses
 	// (design §5(3)), not with a plain Get: with no marker, or one below
-	// RulesVersion, no run reads the policy however the node is written, and a
+	// PolicyRulesVersion, no run reads the policy however the node is written, and a
 	// check that read the node directly printed "a policy is published" as info
 	// while every run took the legacy path and the job environment's ceiling.
 	p, found, err := projectpolicy.Read(ctx, db)
@@ -2073,8 +2073,9 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // The same check reports the marker's other wrong values: a value that is not a
 // generation this Fugaro may read at all (not an integer, or the negative one no
 // deploy writes — both are Read's MarkerError, and both report its text here)
-// and present-and-*below* this generation's (see the gen < RulesVersion
-// branch). An absent marker is not one of them — it is generation 0 without a
+// and present-and-*below* this generation's, in the two states the two branches
+// below separate (below the policy generation, and between it and this
+// binary's). An absent marker is not one of them — it is generation 0 without a
 // claim, and there is nothing for the rules to be older than; what an absent
 // marker does to a node is doctorPolicyChecks's line to draw.
 func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
@@ -2094,11 +2095,12 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// that is a negative integer no deploy writes. Read reads both as a
 		// MarkerError (projectpolicy's MarkerHandEdited carries the argument),
 		// so the report of a marker's wrong value is one text for both here
-		// too. The marker-below branch below is the other state, and its
-		// sentence says the installation's rules predate the policy nodes —
-		// true of an old generation and not of a hand edit, which would send
-		// the operator to redeploy rules that are not what is wrong (the
-		// review finding on this change).
+		// too. The marker-below branches are the other states, and their
+		// sentences are about a generation that is genuinely old — true of a
+		// generation below the policy one and of the policy generation under
+		// this binary, and not of a hand edit, which would send the operator to
+		// redeploy rules that are not what is wrong (the review finding on this
+		// change).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
 			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
@@ -2122,22 +2124,38 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro init --firebase' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
 				projectpolicy.RulesVersion)}}
 	}
-	if gen < projectpolicy.RulesVersion {
-		// Present and below this generation's is a state of its own, not an
-		// absent marker: it records rules that predate the policy nodes, so
-		// `fugaro project policy publish` refuses (requirePolicyRules) and no
-		// run reads a policy (Read gates on the marker alone). Reporting
-		// nothing here printed "a policy is published" as info while every run
-		// took the legacy path.
+	if gen < projectpolicy.PolicyRulesVersion {
+		// Present and below the generation that carries the policy nodes is a
+		// state of its own, not an absent marker: it records rules that predate
+		// the policy nodes, so `fugaro project policy publish` refuses
+		// (requirePolicyRules) and no run reads a policy (Read gates on the same
+		// generation). Reporting nothing here printed "a policy is published" as
+		// info while every run took the legacy path.
 		//
-		// The body is rulesMarkerBelowText, which is the very sentence the
+		// The body is rulesMarkerPrePolicyText, which is the very sentence the
 		// publish refuses with: one text per state, or the refusal and the
 		// report contradict each other (the reviews of PR #402 and of this
 		// branch).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: rulesMarkerBelowText(gen),
+			Problem: rulesMarkerPrePolicyText(gen),
 			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				policySince, projectpolicy.RulesVersion)}}
+	}
+	if gen < projectpolicy.RulesVersion {
+		// The state between the two generations, and the one the bump to
+		// generation 2 created: generation 1 carries the policy nodes, so the
+		// policy this installation published is read and enforced by every run
+		// and a publish is not refused (Read and requirePolicyRules both gate on
+		// PolicyRulesVersion), while the deployed document is not the one this
+		// binary deploys. Reporting it as the state below is what said "no run
+		// reads a published policy" about rules that read one, and sent the
+		// operator to redeploy after a policy that already governs (the review
+		// finding on P2.1); reporting nothing at all would leave the missing
+		// mailbox grant — the state the operator's app meets — unexplained.
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+			Problem: rulesMarkerOlderText(gen),
+			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document — the rules a policy is read under, plus the mailbox — and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+				projectpolicy.RulesVersion)}}
 	}
 	live, err := db.Rules(ctx)
 	if err != nil {

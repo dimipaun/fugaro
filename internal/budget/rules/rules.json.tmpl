@@ -8,9 +8,9 @@
     },
     "config": {
       "caps": {
-        "global": { ".read": "TOKEN" },
-        "defaults": { ".read": "TOKEN" },
-        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug" } }
+        "global": { ".read": "TOKEN || USER" },
+        "defaults": { ".read": "TOKEN || USER" },
+        "repos": { "$slug": { ".read": "(TOKEN && auth.token.fs == $slug) || USER" } }
       },
       "policy": {
         "shared": { ".read": "TOKEN", ".write": false },
@@ -19,8 +19,8 @@
       "limits": { ".read": "TOKEN" },
       "mode": { ".read": "TOKEN" },
       "kill": {
-        "global": { ".read": "TOKEN" },
-        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug" } }
+        "global": { ".read": "TOKEN || USER" },
+        "repos": { "$slug": { ".read": "(TOKEN && auth.token.fs == $slug) || USER" } }
       },
       "admin": { ".read": false, ".write": false }
     },
@@ -62,7 +62,7 @@
     "spend": {
       "$day": {
         "global": {
-          ".read": "TOKEN",
+          ".read": "TOKEN || USER",
           "counted": {
             ".write": "TOKEN && DAYOK && newData.exists()",
             ".validate": "AMOUNT && D(spend/$day/global/counted) == RUNDELTA && (NEW <= OLD || !ENFORCE || NEW <= GLOBALDAILY)"
@@ -82,7 +82,7 @@
         },
         "repos": {
           "$slug": {
-            ".read": "TOKEN && auth.token.fs == $slug",
+            ".read": "(TOKEN && auth.token.fs == $slug) || USER",
             "counted": {
               ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
               ".validate": "AMOUNT && D(spend/$day/repos/$slug/counted) == RUNDELTA && (NEW <= OLD || !ENFORCE || NEW <= REPODAILY)"
@@ -129,7 +129,7 @@
         "runs": {
           "$slug": {
             "$run": {
-              ".read": "RUN",
+              ".read": "RUN || USER",
               "reserved": {
                 ".write": "RUN && DAYOK && newData.exists()",
                 ".validate": "AMOUNT && NEW >= OLD && (NEW == OLD || ($day == TODAY && NEW - OLD == D(runs/$slug/$run/reserved))) && COUNTERS_FOLLOW"
@@ -187,6 +187,45 @@
             "requestedBy": { ".validate": "STR && RBOK" },
             "$other": { ".validate": false }
           }
+        }
+      }
+    },
+    "mailbox": {
+      "$mb": {
+        "inbox": {
+          "$msg": {
+            ".write": "MAILBOX && newData.exists()",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && $msg.length <= {{.MaxKeyLength}}",
+            "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
+            "sender": { ".validate": "STR && newData.val() == $mb" },
+            "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
+            "at": { ".validate": "TIMESTAMP" },
+            "$other": { ".validate": false }
+          }
+        },
+        "outbox": {
+          ".read": "MAILBOX",
+          "$msg": {
+            ".write": "CONSUMER && newData.exists()",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && $msg.length <= {{.MaxKeyLength}}",
+            "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
+            "sender": { ".validate": "STR && newData.val() == $mb" },
+            "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
+            "at": { ".validate": "TIMESTAMP" },
+            "acked": {
+              ".write": "MAILBOX && newData.exists()",
+              ".validate": "newData.isBoolean()"
+            },
+            "$other": { ".validate": false }
+          }
+        },
+        "heartbeat": {
+          ".read": "MAILBOX",
+          ".write": "CONSUMER && newData.exists()",
+          ".validate": "newData.hasChildren(['at', 'boot'])",
+          "at": { ".validate": "TIMESTAMP" },
+          "boot": { ".validate": "STR" },
+          "$other": { ".validate": false }
         }
       }
     }

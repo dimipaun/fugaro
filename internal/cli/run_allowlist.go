@@ -63,9 +63,11 @@ func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *ta
 		// by policyReadErr: the gate is the owner of the release a policy may
 		// name (plan task 1.5 step 4). The rules-version marker is
 		// deliberately not part of it: a marker absent or below
-		// RulesVersion is the legacy path (found = false, no policy read, no
-		// refusal), and an unmarked installation has no policy for this gate
-		// to compare (plan task 1.3 step 1, P3).
+		// PolicyRulesVersion is the legacy path (found = false, no policy read,
+		// no refusal), and an installation without the policy nodes has no
+		// policy for this gate to compare (plan task 1.3 step 1, P3) — while a
+		// marker at or above it, this binary's generation included, reads the
+		// policy and is compared below.
 		return policySkewRefusal(ve)
 	}
 	if err != nil {
