@@ -1,14 +1,18 @@
 package infra
 
 import (
+	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -65,6 +69,15 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	out := make(map[string]ProjectJob, len(lc.Profiles))
 	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 		pr := lc.Profiles[name]
+		// Bitbucket stays on the per-repository path in phase 3: the owner
+		// ruled on 2026-10-15 (probe U1) that a Bitbucket credential cannot
+		// be scoped to one project's repositories, so a job every repository
+		// of a profile shares must never hold one (plan Task 3.0 step 2, D5
+		// amended). The policy may still name such a profile; no job is
+		// deployed for it.
+		if pr.Provider == "bitbucket" {
+			return nil, userErr("profiles.%s.provider: a shared job never serves bitbucket in phase 3: a Bitbucket credential cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15), so Bitbucket repositories stay on their per-repository jobs. Remove the profile or make it a github one", name)
+		}
 		timeout, err := config.ParseDuration(pr.TimeoutClass)
 		if err != nil {
 			// CheckProfiles holds the spelling; this cannot happen, and a
@@ -72,10 +85,13 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			return nil, userErr("profiles.%s.timeout_class: %v", name, err)
 		}
 		env := projectJobEnv(lc, bucket)
-		secretEnv, account, err := projectJobSecrets(lc, name, env, pr)
+		secretEnv, err := projectJobSecrets(lc, name, env, pr)
 		if err != nil {
 			return nil, err
 		}
+		// The account axis: empty until phase 5, because no profile may
+		// mount a Claude OAuth token yet (projectJobSecrets).
+		const account = ""
 		saID := gcp.ProjectServiceAccountID(name, pr.Provider, account)
 		out[gcp.ProjectJobName(name, pr.Provider, account)] = ProjectJob{
 			Profile:        name,
@@ -139,10 +155,10 @@ func projectJobEnv(lc *localcfg.Config, bucket string) map[string]string {
 	return env
 }
 
-// projectJobSecrets resolves a profile's secrets into a project job's mounts
-// and the Claude account the job runs as: the plain env, the secret env
-// (variable → project-wide secret container, the shape the workflow module's
-// secret_env has) and the account axis of the job's name.
+// projectJobSecrets resolves a profile's secrets into a project job's secret
+// env (variable → project-wide secret container, the shape the workflow
+// module's secret_env has); env is the job's plain env, which no secret may
+// shadow.
 //
 // A profile is shared by every repository admitted to it, so it may mount
 // only project-wide containers — a name with no container is refused rather
@@ -151,60 +167,93 @@ func projectJobEnv(lc *localcfg.Config, bucket string) map[string]string {
 // nothing per-repository can be mounted here: a repository's own secret is
 // reachable only by a job that repository alone runs.
 //
-// The account is the Claude OAuth account whose token the profile mounts
-// (config.ClaudeAccountBySecret), and it is the account axis of the job's
-// name: one job and one service account per (profile, provider, account)
-// exists so that each account's token is readable only by the runs using
-// that account (design §7's reason for the axis). A profile that mounts no
-// Claude token — an api-key or Vertex installation — runs as no account, and
-// its job's account segment is empty.
+// Two kinds of secret are refused whatever the profile says. The Bitbucket
+// token, because Bitbucket stays per-repository in phase 3 (see ProjectJobs).
+// And every Claude OAuth token — the default account's claude-oauth-token and
+// a named account's alike — because a Claude account is person-owned (design
+// D2 and §7: D2 sweeps API keys and the git credential into project scope,
+// never claude-oauth-token) and its allow_data_to is a per-repository list a
+// shared job cannot honour: every repository the profile admits runs on the
+// same job. Phase 5 decides how an account reaches a shared job; until then
+// the account axis of the job's name is always empty, and the field stays so
+// that phase does not rename every job.
 //
-// A job holds one identity, and the account can never be ambiguous: every
-// Claude account's token is mounted as the one variable the runner reads
-// (CLAUDE_CODE_OAUTH_TOKEN), so a profile naming two accounts fails the
-// duplicate-variable check below — the account axis has exactly one value or
-// the profile is refused.
-func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]string, pr config.JobProfile) (secretEnv map[string]string, account string, err error) {
+// What a shared job does not honour for the secrets it does mount is the
+// project_secrets entry's allow_data_to: the entry decides that the container
+// exists (projectSecretContainers), and the profile decides who mounts it.
+// That is D2's ruling — a project-scope key reaches every repository on the
+// profiles that mount it — not an oversight.
+func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]string, pr config.JobProfile) (map[string]string, error) {
 	containers := projectSecretContainers(lc)
-	secretEnv = map[string]string{}
+	secretEnv := map[string]string{}
 	for i, name := range pr.Secrets {
+		if name == "bitbucket-token" {
+			return nil, userErr("profiles.%s.secrets[%d]: %q is the Bitbucket credential, and a shared job never holds one in phase 3: it cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15)", profile, i, name)
+		}
+		if _, isClaude := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); isClaude {
+			return nil, userErr("profiles.%s.secrets[%d]: %q is a Claude account's OAuth token, which is person-owned (design D2): a shared job cannot honour the account's allow_data_to, so no profile mounts one until phase 5 decides how an account reaches a shared job", profile, i, name)
+		}
 		if _, ok := containers[name]; !ok {
-			return nil, "", userErr("profiles.%s.secrets[%d]: %q is not stored project-wide, so a shared job cannot mount it: a profile is shared by every repository it admits, and only a project-wide secret has one copy. Store it with project_secrets in the local config", profile, i, name)
+			return nil, userErr("profiles.%s.secrets[%d]: %q is not stored project-wide, so a shared job cannot mount it: a profile is shared by every repository it admits, and only a project-wide secret has one copy. Store it with project_secrets in the local config", profile, i, name)
 		}
 		v, ok := projectSecretEnv(lc, name)
 		if !ok {
-			return nil, "", userErr("profiles.%s.secrets[%d]: %q is neither a secret Fugaro reserves nor the key of a configured model provider or Claude account", profile, i, name)
+			return nil, userErr("profiles.%s.secrets[%d]: %q is neither a secret Fugaro reserves nor the key of a configured model provider", profile, i, name)
 		}
 		if _, dup := secretEnv[v]; dup {
-			return nil, "", userErr("profiles.%s.secrets[%d]: the variable %s is mounted twice", profile, i, v)
+			return nil, userErr("profiles.%s.secrets[%d]: the variable %s is mounted twice", profile, i, v)
 		}
 		secretEnv[v] = name
-		if acc, isClaude := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); isClaude {
-			account = acc
-		}
 	}
 	for k := range secretEnv {
 		if _, dup := env[k]; dup {
-			return nil, "", userErr("profiles.%s: the secret variable %s collides with a variable the platform sets", profile, k)
+			return nil, userErr("profiles.%s: the secret variable %s collides with a variable the platform sets", profile, k)
 		}
 	}
-	return secretEnv, account, nil
+	return secretEnv, nil
 }
 
 // projectSecretEnv is the variable a project-wide secret is mounted as: the
-// reserved name's own variable, a Claude account's token variable (every
-// account's token is CLAUDE_CODE_OAUTH_TOKEN, the one the runner reads) or a
-// model provider's key variable. ok is false for a name that is none of
-// those, whatever its shape.
+// reserved name's own variable or a model provider's key variable. ok is
+// false for a name that is neither, whatever its shape. A Claude account's
+// token never reaches it: projectJobSecrets refuses those first.
 func projectSecretEnv(lc *localcfg.Config, name string) (string, bool) {
 	if v, ok := config.ReservedSecrets[name]; ok {
 		return v, true
-	}
-	if _, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok {
-		return config.ReservedSecrets["claude-oauth-token"], true
 	}
 	if _, ok := config.ProviderBySecret(lc.Providers, name); ok {
 		return config.ProviderKeyEnv(name), true
 	}
 	return "", false
+}
+
+// projectJobAddress is the address of a project job's Cloud Run job in the
+// installation root (roots/installation/main.tf calls modules/project as
+// "project", one instance per job name).
+var projectJobAddress = regexp.MustCompile(`^module\.project\["[^"]+"\]\.google_cloud_run_v2_job\.this$`)
+
+// RefuseProjectJobDeletes refuses a plan that deletes or replaces a project
+// job, whatever --allow-delete names. Retiring a project job is deferred: the
+// module protects its job from deletion and, unlike the workflow module
+// (modules/workflow/job.tf's allow_job_delete, internal/infra/retire.go), has
+// no switch to lift it. A profile removed, or one whose provider or secrets
+// change and so its job's name, plans the old instance's delete, and an apply
+// let through would destroy the launchers' grants on the job and then fail on
+// the deletion protection, leaving the job unlaunchable. So the plan is
+// stopped before the apply, with the way back.
+func RefuseProjectJobDeletes(p *tf.Plan) error {
+	if p == nil {
+		return nil
+	}
+	var refused []string
+	for _, rc := range p.ResourceChanges {
+		if projectJobAddress.MatchString(rc.Address) && slices.Contains(rc.Change.Actions, "delete") {
+			refused = append(refused, fmt.Sprintf("%s (%s)", rc.Address, strings.Join(rc.Change.Actions, ", ")))
+		}
+	}
+	if len(refused) == 0 {
+		return nil
+	}
+	return userErr("the plan would delete or replace %d project job(s), and retiring a project job is not supported yet: the job has deletion protection and nothing lifts it, so the apply would remove its launchers' grants and then fail. Nothing was applied; restore the profile as it was in the local config (its name, provider and secrets):\n  %s",
+		len(refused), strings.Join(refused, "\n  "))
 }

@@ -132,11 +132,11 @@ func TestGoldenInstallationHasOneProjectJobPerTriple(t *testing.T) {
 	// Design §13 names the ceiling this claim is about — Google's default
 	// service-account quota, about 100 per project, which today's model exceeds
 	// at about 60 repositories and this one does not — and settling it is Check
-	// 52 step 5 (U4), which the plan's Task 3.0 owns. That check is written and
-	// not run (its section is headed NOT RUN and step 5's FACT line is empty),
-	// so this assertion stands on the design's claim and on the shape above,
-	// not on a measured count; the probe's numbers belong in the checklist,
-	// which is where the plan records them, and not here.
+	// 52 step 5 (U4), which the plan's Task 3.0 owns. The owner ran it on
+	// 2026-10-16: 10 accounts in the sandbox project, ServiceAccountsPerProject
+	// reported as -1 (no limit, UNVERIFIED) and 30 creates per minute
+	// (docs/design/project-centric.md §4.1). This assertion stands on the
+	// shape above, not on those numbers, which belong in the checklist.
 	projectSAs := map[string]bool{}
 	for _, rc := range p.ResourceChanges {
 		if rc.Type == "google_service_account" && strings.HasPrefix(rc.Address, "module.project[") {
@@ -214,9 +214,9 @@ func TestProjectJobBucketGrantsAreTheWidenedCondition(t *testing.T) {
 	//     account (modules/workflow/sa.tf), and a per-repository job account is
 	//     fugaro-<readable>-<8 hex> just as a project job's is, so the module
 	//     path is what tells the two apart. Accepting it would let one
-	//     confirmation widen a per-repository job's grant to a whole profile.
-	saID := gcp.ProjectServiceAccountID("standard", "bitbucket", "default")
-	mod := `module.project["` + gcp.ProjectJobName("standard", "bitbucket", "default") + `"]`
+	//     confirmation widen a per-repository job's grant to the whole bucket.
+	saID := gcp.ProjectServiceAccountID("standard", "github", "")
+	mod := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"]`
 	created := inModule(mod, "google_service_account", map[string]any{"account_id": saID}, map[string]any{}, "create")
 	grant := func(mod, id string) ResourceChange {
 		return inModule(mod, "google_storage_bucket_iam_member", map[string]any{
@@ -230,6 +230,26 @@ func TestProjectJobBucketGrantsAreTheWidenedCondition(t *testing.T) {
 	stranger := inModule(mod, "google_service_account", map[string]any{"account_id": "fugaro-p-other-github-0123456789ab"}, map[string]any{}, "create")
 	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{stranger, grant(mod, saID)}}, nil); len(got) == 0 {
 		t.Error("a widened grant whose title names no account the plan creates is covered")
+	}
+
+	// The named-member form in the project module (an update plan, where the
+	// account already exists): covered only for the account that module
+	// itself holds, which an update plan lists as a no-op. Another Fugaro job
+	// account of the run's project — a second profile's, or a repository's —
+	// is not the module's own, so the widened grant is not covered for it.
+	namedIn := func(mod, id string) ResourceChange {
+		return inModule(mod, "google_storage_bucket_iam_member", map[string]any{
+			"bucket": f.RunsBucket, "role": "roles/storage.objectUser", "member": "serviceAccount:" + id + "@" + goldenCover().Projects[0] + ".iam.gserviceaccount.com",
+			"condition": []any{map[string]any{"title": gcp.BucketConditionTitle(id), "expression": want, "description": nil}},
+		}, map[string]any{}, "update")
+	}
+	held := inModule(mod, "google_service_account", map[string]any{"account_id": saID}, map[string]any{}, "no-op")
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{held, namedIn(mod, saID)}}, nil); len(got) != 0 {
+		t.Errorf("a project job's widened grant naming the module's own account is not covered: %q", got)
+	}
+	otherSA := gcp.ProjectServiceAccountID("heavy", "github", "")
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{held, namedIn(mod, otherSA)}}, nil); !refusedTheGrant(got, mod+".google_storage_bucket_iam_member.x") {
+		t.Errorf("a widened grant in %s naming another module's account %s is covered\nrefused: %q", mod, otherSA, got)
 	}
 
 	// A per-repository job's own module: the account is created there, so
