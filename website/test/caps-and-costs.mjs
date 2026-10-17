@@ -62,11 +62,12 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { linkNodeModules } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -132,7 +133,7 @@ function copyOfTheRepository() {
       return true
     },
   })
-  symlinkSync(path.join(SITE, 'node_modules'), path.join(root, 'website', 'node_modules'), 'dir')
+  linkNodeModules(path.join(root, 'website', 'node_modules'))
   return { dir, root, site: path.join(root, 'website') }
 }
 
