@@ -84,7 +84,7 @@ type LaunchSpec struct {
 	// secret entry only where the design accepts its audience — Cloud Run's
 	// execution override, priced in §7.1 — and refuses the launch where it
 	// cannot (Batch, whose only carrier is the job definition's plain
-	// variables, readable by anyone who can describe the job). No backend
+	// variables, readable through the Batch API by every launcher (roles/batch.jobsEditor, conditioned on the Fugaro job prefix) and by the reaper (batch.jobs.get), and possibly in the CreateJob audit record — not by a peer run, whose account holds only agentReporter and logWriter, and kept for the job's whole retention). No backend
 	// quotes a secret entry's value in an error. A name may not be in both
 	// Env and SecretEnv.
 	SecretEnv []string

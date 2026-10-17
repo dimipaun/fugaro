@@ -29,6 +29,10 @@ func TestLaunchEnvCarriesSecretEntriesAndNeverQuotesThem(t *testing.T) {
 		"a reserved name":    {SecretEnv: []string{"FUGARO_RUN=" + v}},
 		"named in Env too":   {Env: []string{"FUGARO_BUDGET_TOKEN=1"}, SecretEnv: []string{"FUGARO_BUDGET_TOKEN=" + v}},
 		"named twice as one": {SecretEnv: []string{"FUGARO_BUDGET_TOKEN=" + v, "FUGARO_BUDGET_TOKEN=" + v}},
+		// A launcher bug that runs the name into the value, in either list:
+		// the refusal must not quote the entry, which carries the value.
+		"plain, no =":  {Env: []string{"FUGARO_BUDGET_TOKEN" + v}},
+		"secret, no =": {SecretEnv: []string{"FUGARO_BUDGET_TOKEN" + v}},
 	} {
 		_, err := LaunchEnv(spec, "FUGARO_RUN")
 		if err == nil {

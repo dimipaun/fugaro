@@ -101,13 +101,15 @@ func LaunchEnv(spec LaunchSpec, reserved ...string) ([]EnvVar, error) {
 	add := func(kv string, secret bool) error {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok || name == "" {
+			// Nothing of a malformed entry is quoted, secret or not: an entry
+			// with no "=" may be a name run into its value (a launcher bug such
+			// as the marker's name directly followed by the seal key), so the
+			// refusal names only the shape it wanted.
+			kind := "a launch env entry"
 			if secret {
-				// The entry is a secret's: nothing of it is quoted, not even a
-				// part that might be the name, because an entry with no "="
-				// may be the value alone.
-				return fmt.Errorf("a secret launch env entry is not NAME=value")
+				kind = "a secret launch env entry"
 			}
-			return fmt.Errorf("launch env %q: it must be NAME=value", kv)
+			return fmt.Errorf("%s is not NAME=value (the entry is not quoted: it may carry a value)", kind)
 		}
 		if own[name] {
 			return fmt.Errorf("launch env %s: the job's own environment already sets it, and that value is what the run reads its own identity and configuration from (design §2.1, §2.5): refusing rather than leaving which of the two the platform hands the run to chance", name)

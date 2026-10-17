@@ -60,9 +60,16 @@ add `tokens` to the job's objectUser prefixes.
 
 **The Batch backend refuses a sealed launch (decided in Slice B; an open owner question).** Once
 the launcher seals, the key it hands the execution would, on Batch, become a plain variable of the
-job's definition — Batch has no per-execution override — readable by anyone who can describe the
-job (`gcloud batch jobs describe`, `batch.jobs.get`), a wider and longer-lived audience than the
-Cloud Run override §7.1 prices (compute Task 7, `docs/design/compute-backend.md`). This document
+job's definition — Batch has no per-execution override. **The note this replaces named the wrong
+reader** (a peer's `gcloud run jobs describe`): on Batch a run's own account holds only
+`roles/batch.agentReporter` and `roles/logging.logWriter` (`deploy/terraform/gcp/modules/compute/iam.tf`),
+so a peer run cannot describe the job. The real audience is **every launcher**, through
+`roles/batch.jobsEditor` conditioned on the Fugaro job-name prefix (same file), which reads any
+Fugaro job's variables; **the reaper**, whose custom role carries `batch.jobs.get`, through
+`gcloud batch jobs describe`; and possibly the **CreateJob audit record** (unverified; Check 60
+step 3 records it). That is close to the override's audience in kind, but it is a standing copy in
+the job resource for as long as the job is kept rather than one request, and it widens to the
+reaper's account (compute Task 7, `docs/design/compute-backend.md`). This document
 allows no other carrier: a per-run Secret Manager secret read by the VM's account is C2, rejected
 above (the shared account reads every peer's secret, and revocation is not fail-closed). So the
 launcher hands the key as a *secret* launch variable (`LaunchSpec.SecretEnv`), Cloud Run carries it
@@ -840,7 +847,9 @@ untouched:
    object out of the runs bucket: it is not a JWT, it does not parse as one, and it carries no
    readable claim. Record the object's size and the fact that `fs`/`fr` are not in it.
 3. **The key is not in the bucket, and not in the logs.** Reads of the job's own environment
-   (`gcloud run jobs describe`, the v1 path Check 52 step 1 uses) and of the execution's overrides
+   (`gcloud run jobs describe`, the v1 path Check 52 step 1 uses; and, on an installation with the
+   compute backend, `gcloud batch jobs describe` of a Fugaro Batch job, which must show no key
+   because a sealed launch is refused on Batch) and of the execution's overrides
    (`gcloud run jobs executions describe`, Check 52 step 3's own read) show no key, and neither does
    the run's own log (`fugaro logs`). **The execution's record is a FACT, not a fact to assume**
    (Check 52 step 3, §3.1): U2 — the design's D10 option (b), whether the API serves an execution's

@@ -2102,8 +2102,10 @@ func equalJSON(a, b any) bool {
 // TestLaunchRefusesASecretEnv is the Batch half of the seal's carrier
 // (docs/design/budget-token-channel.md, the Slice B note): a Batch job has no
 // per-execution override, so the only place a launch's variable can go is the
-// job definition's plain variables, which anyone who can describe the job
-// reads — a wider audience than the Cloud Run override the design prices. So
+// job definition's plain variables, which every launcher (batch.jobsEditor)
+// and the reaper (batch.jobs.get) read back with `gcloud batch jobs describe`
+// for as long as the job is kept — a standing copy, not the Cloud Run
+// override the design prices. So
 // a launch carrying a secret entry (the budget seal key) is refused before
 // the create, definitively (ErrRejected, so the launcher drops its claim and
 // its sealed object), and the refusal does not quote the value. Batch carries
