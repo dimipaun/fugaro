@@ -264,6 +264,9 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// What the modules grant.
 		{project, "projects/proj-1/roles/fugaroLauncher", person, true},
 		{project, "roles/datastore.viewer", person, true},
+		// The whole-project inventory's read role, on the operator who runs
+		// the managed apply that makes the read (Task 4.1, design D59).
+		{project, "roles/cloudasset.viewer", person, true},
 		{project, "roles/firebasedatabase.admin", account, true},
 		{project, "roles/logging.logWriter", account, true},
 		{sacct, "projects/fp-2/roles/fugaroTokenMinter", person, true},
@@ -287,6 +290,7 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{project, "projects/proj-1/roles/fugaroLauncher", account, false},
 		{project, "projects/proj-1/roles/fugaroJobRunner", person, false},
 		{project, "roles/datastore.user", person, false},
+		{project, "roles/cloudasset.viewer", account, false},
 		{project, "roles/firebaseauth.admin", person, false},
 		{project, "roles/aiplatform.user", person, false},
 		{sacct, "projects/proj-1/roles/fugaroTokenMinter", account, false},
