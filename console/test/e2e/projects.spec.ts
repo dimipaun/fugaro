@@ -205,6 +205,8 @@ interface Screen {
   readonly notKilled: number
   readonly enrolled: readonly string[]
   readonly seen: readonly string[]
+  readonly onlySeen: readonly string[]
+  readonly onlyEnrolled: readonly string[]
   readonly jobs: number
   readonly secretNames: readonly string[]
   readonly anchors: number
@@ -234,6 +236,8 @@ function screen(page: Page): Promise<Screen> {
       notKilled: all('.projects-kill-none').length,
       enrolled: texts('.projects-enrolled-repo'),
       seen: texts('.projects-seen-repo'),
+      onlySeen: texts('.projects-only-seen-repo'),
+      onlyEnrolled: texts('.projects-only-enrolled-repo'),
       jobs: all('.projects-job').length,
       secretNames: texts('.projects-secret-name'),
       // A screen may offer no navigation at all, and no destination attribute
@@ -306,9 +310,10 @@ const BUDGET: JSONDoc = {
 }
 
 /**
- * RUNS is `runs ls --json`: one job for the enrolled repository, and one for a
- * repository no cap row knows -- the "seen but not enrolled" case the screen
- * exists to show.
+ * RUNS is `runs ls --json`: one job for an enrolled repository, and one for a
+ * repository no cap row knows (`unenrolled-repo`) -- the "seen but not
+ * enrolled" case the screen exists to show. `BUDGET`'s second cap row
+ * (`other-repo`) has no run, so the fixture holds the opposite case too.
  */
 const RUNS: JSONDoc = {
   project: 'example-project',
@@ -330,7 +335,7 @@ const RUNS: JSONDoc = {
     {
       run: '20261015-100000-1122',
       run_id: '1122',
-      repo: 'example-owner/other-repo',
+      repo: 'example-owner/unenrolled-repo',
       workflow: 'default',
       status: 'finished',
       stage: 'done',
@@ -506,10 +511,19 @@ test.describe('the Projects screen', () => {
     await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
+    // Enrolled is the cap document's set and seen is the run list's: they
+    // overlap in one repository and differ in one each, so a screen that drew
+    // one list twice would fail here.
     expect(drawn.enrolled).toEqual(['example-owner/example-repo', 'example-owner/other-repo'])
-    expect(drawn.seen).toEqual(['example-owner/example-repo', 'example-owner/other-repo'])
+    expect(drawn.seen).toEqual(['example-owner/example-repo', 'example-owner/unenrolled-repo'])
+    expect(drawn.enrolled).not.toEqual(drawn.seen)
     // The repository with a run and no cap row is the case worth a line of its
-    // own: it is running with no cap above it.
+    // own: it is running with no cap above it. And the cap row with no run yet
+    // is named as that, not as a repository that was seen.
+    expect(drawn.onlySeen).toEqual(['example-owner/unenrolled-repo'])
+    expect(drawn.onlyEnrolled).toEqual(['example-owner/other-repo'])
+    expect(drawn.text).toContain('running with no cap row:')
+    expect(drawn.text).toContain('a cap row and no run yet:')
     expect(drawn.text).toContain('enrolled (a cap row exists)')
     expect(drawn.text).toContain('seen (a run has been recorded)')
   })
