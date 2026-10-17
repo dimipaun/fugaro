@@ -37,14 +37,9 @@ import { loadSite } from '../content.ts'
 // static `import '../styles/tokens.css'` of a file that does not exist fails the build,
 // which would make this task's own gate red until another task's branch merges. The glob
 // resolves to nothing when the file is absent (the build stays green, and the pages fall
-// back to the browser's own defaults) and carries the stylesheet into the built page the
-// moment W1.2's file lands. What that looks like is Astro's decision rather than this
-// file's: with `build.inlineStylesheets` left at its default, a sheet this size is inlined
-// into the page's own `<style>` and the build emits no `.css` file and no
-// `<link rel="stylesheet">` for it — the `<link>` arrives only once the sheet grows past
-// the inline threshold, at which point it is a build output this comment's absence would
-// not have changed. No file is created under `src/styles/` here: that directory is
-// W1.2's.
+// back to the browser's own defaults) and bundles the stylesheet into the build, with the
+// `<link>` Astro emits for it, the moment W1.2's file lands. No file is created under
+// `src/styles/` here: that directory is W1.2's.
 import.meta.glob('../styles/tokens.css', { eager: true })
 
 interface Props {
