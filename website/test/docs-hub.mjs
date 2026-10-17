@@ -283,7 +283,7 @@ test('the docs page repeats no prose from a document it links', () => {
       if (probe.split(/\s+/).length < 6) continue
       assert.ok(
         !document.includes(probe),
-        `docs page repeats a sentence from ${relative}: ${JSON.stringify(probe)}. The entry about a guide says what the guide answers in the hub's own words; the guide's own sentence belongs in the guide (finding 37, D98)`,
+        `docs page repeats a sentence from ${relative}: ${JSON.stringify(probe)}. The entry about a guide says what the guide answers in the hub's own words; the guide's own sentence is the guide's to make (finding 37, D98)`,
       )
     }
   }
