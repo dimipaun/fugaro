@@ -165,7 +165,15 @@ function fakeChild(): SpawnedChildLike {
   return {
     stdout: { on: () => undefined },
     stderr: { on: () => undefined },
-    on: () => undefined,
+    // Node emits `spawn` on the tick after the process exists, before any I/O.
+    // This fake fires it at registration instead: the ordering the assertions
+    // here depend on is the same (a spawn-log line exists before the child's
+    // first byte), without a tick for every test to wait out. `scriptedChild`
+    // below does the same, and `childThatNeverSpawns` is the other half.
+    on: (event: string, listener: () => void) => {
+      if (event === 'spawn') listener()
+      return undefined
+    },
     kill: () => true,
   }
 }
@@ -239,8 +247,15 @@ function scriptedChild(): SpawnedChildLike & {
       on: (_event: string, listener: (chunk: Buffer | string) => void) => stderrListeners.push(listener),
       destroy: () => destroyed.push('stderr'),
     },
-    on(event: 'error' | 'exit' | 'close', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
-      if (event === 'error') errorListeners.push(listener as (error: Error) => void)
+    on(
+      event: 'spawn' | 'error' | 'exit' | 'close',
+      listener:
+        | (() => void)
+        | ((error: Error) => void)
+        | ((code: number | null, signal: string | null) => void),
+    ) {
+      if (event === 'spawn') (listener as () => void)()
+      else if (event === 'error') errorListeners.push(listener as (error: Error) => void)
       else if (event === 'exit') exitListeners.push(listener as (code: number | null, signal: string | null) => void)
       else closeListeners.push(listener as (code: number | null, signal: string | null) => void)
       return undefined
@@ -2036,6 +2051,30 @@ const throwingSpawner: ChildSpawner = () => {
   throw error
 }
 
+/**
+ * childThatNeverSpawns is the other way a spawn produces no process, and the one
+ * that does not throw: `child_process.spawn` returns a `ChildProcess` object
+ * whatever happens, then emits `error` (ENOENT for a binary that is not there,
+ * EACCES for one that is not executable) and never emits `spawn`. The streams
+ * are never readable, and nothing is ever written to them.
+ */
+function childThatNeverSpawns(): SpawnedChildLike {
+  return {
+    stdout: { on: () => undefined },
+    stderr: { on: () => undefined },
+    on: (event: string, listener: (error?: Error) => void) => {
+      if (event !== 'error') return undefined
+      queueMicrotask(() => {
+        const error = new Error('spawn /opt/homebrew/bin/fugaro ENOENT') as Error & { code?: string }
+        error.code = 'ENOENT'
+        listener(error)
+      })
+      return undefined
+    },
+    kill: () => true,
+  }
+}
+
 describe('the spawn log records children, not attempts', () => {
   it('writes no line when a one-shot read never produced a child', async () => {
     const log = countingLog()
@@ -2044,11 +2083,39 @@ describe('the spawn log records children, not attempts', () => {
     expect(log.records).toBe(0)
   })
 
+  it('writes no line when the spawner handed back a child that never spawned', async () => {
+    // The case a throwing spawner hides: `spawn` returns a `ChildProcess` for a
+    // binary that is not there and fails afterwards, so a line recorded on the
+    // spawner's return is a line for a process that never existed (review).
+    const log = countingLog()
+    const plan = planFor('budget.show', {}, safeContext())
+    await expect(runToCompletion(plan, { spawner: () => childThatNeverSpawns(), log })).rejects.toThrow(
+      /ENOENT/,
+    )
+    expect(log.records).toBe(0)
+  })
+
   it('writes one line for a one-shot read that did spawn', () => {
     const log = countingLog()
     const plan = planFor('budget.show', {}, safeContext())
     void runToCompletion(plan, { spawner: recordingSpawner(), log })
     expect(log.records).toBe(1)
+  })
+
+  it('writes no line for a feed whose child never spawned, and ends as unstartable', () => {
+    const log = countingLog()
+    const plan = planFor('live.watch', {}, safeContext())
+    const ended: string[] = []
+    startSidecar(plan, {
+      onFrame: () => undefined,
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: (end) => ended.push(end.reason),
+    }, { spawner: () => childThatNeverSpawns(), timers: manualTimers(), log })
+    return waitFor(() => ended.length > 0).then(() => {
+      expect(ended).toEqual(['unstartable'])
+      expect(log.records).toBe(0)
+    })
   })
 
   it('writes no line when a feed never produced a child, and one per child it did', () => {

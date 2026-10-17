@@ -129,13 +129,19 @@ class StubChild implements SpawnedChildLike {
     return true
   }
 
+  on(event: 'spawn', listener: () => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit' | 'close', listener: (code: number | null, signal: string | null) => void): unknown
   on(
-    event: 'error' | 'exit' | 'close',
-    listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void),
+    event: 'spawn' | 'error' | 'exit' | 'close',
+    listener: (() => void) | ((error: Error) => void) | ((code: number | null, signal: string | null) => void),
   ): unknown {
-    if (event === 'error') this.#errors.push(listener as (error: Error) => void)
+    // `spawn` is fired at registration, as in `spawn.test.ts`'s fakes: Node
+    // emits it on the tick after the process exists, which for these tests is
+    // the same ordering -- a spawn-log line before the child's first byte --
+    // without a tick to wait out.
+    if (event === 'spawn') (listener as () => void)()
+    else if (event === 'error') this.#errors.push(listener as (error: Error) => void)
     else if (event === 'exit') this.#exits.push(listener as (code: number | null, signal: string | null) => void)
     else this.#closes.push(listener as (code: number | null, signal: string | null) => void)
     return this

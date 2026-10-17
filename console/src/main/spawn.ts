@@ -903,6 +903,11 @@ function readText(stream: ReadableLike | null, onText: (text: string) => void): 
 export interface SpawnedChildLike {
   readonly stdout: ReadableLike | null
   readonly stderr: ReadableLike | null
+  /** `spawn` fires once the process exists: Node emits it before any I/O and
+   * never for a spawn that failed, where a missing or non-executable binary
+   * hands back a `ChildProcess` and then emits `error` (ENOENT/EACCES) instead.
+   * It is what the spawn log's one-line-per-child rule is held to. */
+  on(event: 'spawn', listener: () => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
   /** `close` comes after `exit`, once the child's stdio has drained: a reader
@@ -1039,10 +1044,16 @@ export function runToCompletion(
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
-    // Recorded once the spawner has handed back a child, never before: the
-    // log is one line per child process (`spawnlog.ts`), and a spawn that threw
-    // (the binary removed between resolution and spawn) produced none.
-    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+    // Recorded when the child process exists, which is what `spawn` means (`spawnlog.ts`'s
+    // one line per child). It is *not* the spawner's return: `spawn` hands back
+    // a `ChildProcess` before it knows whether there is a process, and a binary
+    // that is missing or not executable produces none -- it emits `error`,
+    // never `spawn` -- so recording on return wrote a line for a child that
+    // never ran (review). A spawner that throws, above, is the other half of
+    // the same rule and records nothing either.
+    child.on('spawn', () => {
+      deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+    })
     let stdout = ''
     let stderr = ''
     let settled = false
@@ -1563,8 +1574,9 @@ export function startSidecar(
       })
       return
     }
-    // After the spawner returned, as in `runToCompletion`: one line per child.
-    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+    started.on('spawn', () => {
+      deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+    })
     child = started
     stderr = ''
     buffer = ''

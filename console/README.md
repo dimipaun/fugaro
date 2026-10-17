@@ -561,7 +561,10 @@ array as spawned with the binary's absolute path first, `cwd` is absolute, and
 `project` is the installation's project name — **the value passed as
 `--project`, so the bare `version` handshake still records which installation it
 was for**. It holds no command output, no environment, no credential and nothing
-a job wrote. It is **bounded at 1000 records**: at the 1001st spawn the writer
+a job wrote. **A spawn that produced no process records nothing**: the line is
+written when the child's own `spawn` event says the process exists, so a binary
+that is missing or not executable — which `spawn` answers with a `ChildProcess`
+and then an `error`, never with a throw — is not a line in this file. It is **bounded at 1000 records**: at the 1001st spawn the writer
 appends one `{"truncated":true,"limit":1000}` line and stops, rather than
 rotating or truncating in place. It is never read back, never rotated, never
 deleted and never transmitted — `test/unit/spawnlog.test.ts` holds the first and
