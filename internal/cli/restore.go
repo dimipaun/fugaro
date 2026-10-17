@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -144,14 +143,8 @@ re-created rather than lost, and the output says so.`,
 // order the sequence uses them, so each step reads only what an earlier step
 // has already decided.
 type restoreRun struct {
-	cmd *cobra.Command
-	o   restoreOptions
-	// in is the run's single reader over the command's stdin. It exists so
-	// that the typed confirmation and the creating path below share one
-	// buffered reader: a second bufio.Reader over the same stdin would find
-	// nothing, because the first one has already buffered the whole input.
-	in *bufio.Reader
-
+	cmd  *cobra.Command
+	o    restoreOptions
 	sel  localcfg.Selection
 	lc   *localcfg.Config // the installation as it is: the project that was lost
 	path string           // the project config's file, which this run moves
@@ -202,16 +195,9 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	if err := restoreNewProjectID(lc, newID); err != nil {
 		return err
 	}
-	// The project config this run moves, and it must be a file. A selection
-	// with no path is the config published to the runs bucket: it is read
-	// from a bucket and nothing may write it, so an installation whose only
-	// config is the shared one is not a restore's to move — that is a first
-	// run for this machine, which is fugaro init's job and not a weaker
-	// second one of this command's.
-	if sel.Path == "" {
-		return userErr("%s's project config was read from the shared config in gs://fugaro-runs-%s (selected by %s), and a bucket object cannot be moved: run fugaro init --name %s in the new project to write this machine's own project config, then restore into it", lc.Name, lc.GCPProject, sel.From, lc.Name)
+	if rr.path, err = restoreConfigPath(sel, lc); err != nil {
+		return err
 	}
-	rr.path = sel.Path
 	if rr.old, err = os.ReadFile(rr.path); err != nil {
 		return userErr("reading the project config %s: %v", rr.path, err)
 	}
@@ -225,6 +211,14 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 		return err
 	}
 	if rr.budget, err = rr.budgetOf(ctx, c); err != nil {
+		return err
+	}
+	// What the config's move will be, before the confirmation rather than
+	// after it: the two things it refuses (a runs_bucket that is not the
+	// installation's default, a terraform.state_bucket of the operator's own)
+	// are refusals a typed name does not help with, so the operator is told
+	// them before typing, not after.
+	if err := rr.planConfig(); err != nil {
 		return err
 	}
 	// The one confirmation, before anything is changed: the local config, the
@@ -244,7 +238,7 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	// The apply: the same function `fugaro managed apply` runs, so the
 	// preflight allowlist, the gate, the plan-hash re-check, the credential
 	// and the confirmation are the same ones and not a second, weaker path.
-	if err := managedApply(cmd, o.cloud, rr.root); err != nil {
+	if err := managedApply(cmd, restoreApplyCloud(o.cloud), rr.root); err != nil {
 		return err
 	}
 	return rr.report()
@@ -284,6 +278,33 @@ func restoreNewProjectID(lc *localcfg.Config, id string) error {
 		return userErr("%s is the ID of the installation that was lost: a deleted project's ID stays reserved about thirty days, so a restore always creates a new one and updates the repository's gcp_project: line to it", id)
 	}
 	return nil
+}
+
+// restoreApplyCloud is the cloud flags the final apply is given.
+//
+// --gcp-project is dropped, and only it: by the time the apply runs, the
+// project config has moved to the new project, and a --gcp-project that got
+// this far named the OLD one (any other value would have been refused by the
+// first selection). Handing it on would make the apply's own selection refuse
+// at the last step — after the project exists and the config has moved. The
+// rest of the flags (--config, --project, --region) name the same project
+// before and after the move and are passed through unchanged.
+func restoreApplyCloud(o cloudOptions) cloudOptions {
+	o.gcpProject = ""
+	return o
+}
+
+// restoreConfigPath is the project config this run moves, and it must be a
+// file. A selection with no path is the config published to the runs bucket:
+// it is read from a bucket and nothing may write it, so an installation whose
+// only config is the shared one is not a restore's to move — that is a first
+// run for this machine, which is fugaro init's job and not a weaker second
+// one of this command's.
+func restoreConfigPath(sel localcfg.Selection, lc *localcfg.Config) (string, error) {
+	if sel.Path == "" {
+		return "", userErr("%s's project config was read from the shared config in gs://fugaro-runs-%s (selected by %s), and a bucket object cannot be moved: run fugaro init --name %s in the new project to write this machine's own project config, then restore into it", lc.Name, lc.GCPProject, sel.From, lc.Name)
+	}
+	return sel.Path, nil
 }
 
 // budgetOf is the monthly amount the new project is created with (D64, Task
@@ -391,15 +412,33 @@ func restoreConfig(lc *localcfg.Config, newID string) (*localcfg.Config, []strin
 	return &next, left, nil
 }
 
-// reader is the run's one reader over stdin. It is created once and shared
-// with the creating path below, because a second bufio.Reader over the same
-// stdin would find nothing: the first one has already buffered the whole
-// input. This is initRun's own r.in, for the same reason.
-func (rr *restoreRun) reader(cmd *cobra.Command) *bufio.Reader {
-	if rr.in == nil {
-		rr.in = bufio.NewReader(cmd.InOrStdin())
+// readConfirmLine reads one line from in, one byte at a time.
+//
+// It is byte-wise and not a bufio.Reader, and that is the whole point. The
+// creating path below is handed the SAME reader this run's confirmations read
+// from, so that it sees the user's terminal — stdinIsTerminal is a type
+// assertion on an *os.File — and a bufio.Reader would break that twice over:
+// the child would be handed the *bufio.Reader itself and every typed step of
+// the creation would be left for the user ("not finished: 1 step(s) left for
+// you") after this run had already moved the operator's project config; and
+// the first read would buffer every line after it, so the child would find an
+// empty input even if it did see a terminal.
+func readConfirmLine(in io.Reader) (string, error) {
+	var line []byte
+	b := make([]byte, 1)
+	for {
+		n, err := in.Read(b)
+		if n > 0 {
+			if b[0] == '\n' {
+				return string(line), nil
+			}
+			line = append(line, b[0])
+			continue
+		}
+		if err != nil {
+			return string(line), err
+		}
 	}
-	return rr.in
 }
 
 // whatToDo is the question's subject: what this run is about to make
@@ -427,7 +466,7 @@ func (rr *restoreRun) confirm(cmd *cobra.Command) error {
 		return userErr("%s: %s", initflow.NeedsTerminal("the typed confirmation of a restore"), rr.whyPermanent())
 	}
 	fmt.Fprintf(out, "Type %s to confirm: ", rr.lc.Name)
-	line, err := rr.reader(cmd).ReadString('\n')
+	line, err := readConfirmLine(cmd.InOrStdin())
 	if err != nil && !errors.Is(err, io.EOF) {
 		return userErr("reading the confirmation: %v", err)
 	}
@@ -437,16 +476,28 @@ func (rr *restoreRun) confirm(cmd *cobra.Command) error {
 	return nil
 }
 
-// writeConfig is the local config's move: the diff, a backup of the old file,
-// and the write through init's own helpers. It runs behind the run's typed
-// confirmation, so it asks nothing of its own.
-func (rr *restoreRun) writeConfig() error {
+// planConfig is what the config's move will be, decided before the run's
+// typed confirmation: restoreConfig's refusals are refusals a typed name does
+// not help with, and the operator reads them before typing rather than after.
+func (rr *restoreRun) planConfig() error {
 	next, left, err := restoreConfig(rr.lc, rr.newID)
 	if err != nil {
 		return err
 	}
 	rr.next, rr.left = next, left
-	data, err := next.Marshal()
+	return nil
+}
+
+// writeConfig is the local config's move: the diff, a backup of the old file,
+// and the write through init's own helpers. It runs behind the run's typed
+// confirmation, so it asks nothing of its own, and it takes the value
+// planConfig decided.
+//
+// There is no "already up to date" branch, because there is no such run: the
+// config names the OLD project (newID == lc.GCPProject is refused before
+// this) and the move writes gcp_project: <newID>, so the two are never equal.
+func (rr *restoreRun) writeConfig() error {
+	data, err := rr.next.Marshal()
 	if err != nil {
 		return userErr("marshalling the moved project config: %v", err)
 	}
@@ -454,10 +505,6 @@ func (rr *restoreRun) writeConfig() error {
 		return userErr("the moved project config: %v", err)
 	}
 	w := rr.cmd.OutOrStdout()
-	if bytes.Equal(rr.old, data) {
-		fmt.Fprintf(w, "The project config %s is up to date.\n", rr.path)
-		return nil
-	}
 	fmt.Fprintf(w, "The project config %s changes:\n%s", rr.path, lineDiff(string(rr.old), string(data)))
 	if err := os.MkdirAll(filepath.Dir(rr.path), 0o700); err != nil {
 		return userErr("%v", err)
@@ -473,7 +520,7 @@ func (rr *restoreRun) writeConfig() error {
 		return userErr("writing the project config: %v", err)
 	}
 	fmt.Fprintf(w, "wrote %s\n", rr.path)
-	for _, l := range left {
+	for _, l := range rr.left {
 		fmt.Fprintf(w, "note: %s\n", l)
 	}
 	return nil
@@ -483,9 +530,17 @@ func (rr *restoreRun) writeConfig() error {
 // --create-project --managed` with this run's inputs. It is a function of its
 // own so that what the restore delegates to is one thing a reader (and a
 // test) can see whole.
+//
+// --config is the moved project config's own file, and it is not optional:
+// without it the creating run selects a project from scratch, and an operator
+// who had to name the project (or a machine with several project configs)
+// would give the child either no selection or another project's config — one
+// whose gcp_project then contradicts --gcp-project. Naming the file this run
+// just wrote is the one selection that cannot be another project.
 func (rr *restoreRun) createArgs() []string {
 	args := []string{
 		"--create-project",
+		"--config", rr.path,
 		"--gcp-project", rr.newID,
 		"--link-billing", rr.o.billingAccount,
 		"--managed",
@@ -515,16 +570,17 @@ func (rr *restoreRun) createArgs() []string {
 // account typed, and the installation's own review — exactly as a person
 // running it by hand would.
 //
-// The stdin is this run's own reader, not the raw command input: the typed
-// confirmation above has already buffered what is left of it, and a second
-// reader over the same input would find nothing.
+// The stdin is the command's own, unchanged: the child has to see the user's
+// terminal (stdinIsTerminal is a type assertion on an *os.File), and this
+// run's own confirmations read it a byte at a time so that they take one line
+// and leave the rest — see readConfirmLine.
 func (rr *restoreRun) create(ctx context.Context) error {
 	cmd := rr.cmd
 	args := rr.createArgs()
 	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: creating the project through the same path fugaro init --create-project --managed uses: fugaro init %s\n", strings.Join(args, " "))
 	child := newInitCmd()
 	child.SetArgs(args)
-	child.SetIn(rr.reader(cmd))
+	child.SetIn(cmd.InOrStdin())
 	child.SetOut(cmd.OutOrStdout())
 	child.SetErr(cmd.ErrOrStderr())
 	return child.ExecuteContext(ctx)
@@ -560,7 +616,7 @@ func (rr *restoreRun) anchor(cmd *cobra.Command) error {
 		return nil
 	}
 	fmt.Fprintf(w, "Write this to %s? [y/N]: ", path)
-	line, _ := rr.reader(cmd).ReadString('\n') // an ended input is a no
+	line, _ := readConfirmLine(cmd.InOrStdin()) // an ended input is a no
 	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
 		fmt.Fprint(w, addLine)
 		return nil

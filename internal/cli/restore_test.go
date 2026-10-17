@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -511,14 +512,23 @@ func TestRestoreConfirmWantsTheNameTyped(t *testing.T) {
 // and if either stopped happening there, the restore would leave a new
 // project that is not managed.
 //
-// The whole creating path runs here, over the fakes, from the moved config.
+// The whole creating path runs here, over the fakes, from the moved config,
+// and under a terminal seam that is a terminal for exactly the one reader the
+// command was given — never for a wrapper around it. That is the assertion
+// this test exists for as much as the marker is: stdinIsTerminal in
+// production is a type assertion on an *os.File, so a restore that handed the
+// child a *bufio.Reader would leave every typed step of the creation for the
+// user ("fugaro init is not finished: 1 step(s) left for you") after it had
+// already moved the operator's project config. A constant-true seam cannot
+// see that, which is why this test does not use one.
 func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T) {
 	r, lc := newRestoreRig(t)
-	terminal(t, true)
 	// The restore's own confirmation is the first line; the rest is what the
 	// creating path asks for and never covers with a flag: the project's ID,
 	// the billing account, and the installation's own review.
-	cmd, out := restoreTestCmd(initProjectName + "\n" + createStdin)
+	in := strings.NewReader(initProjectName + "\n" + createStdin)
+	restoreTestTerminal(t, in)
+	cmd, out := restoreTestCmdIn(in)
 	rr := &restoreRun{cmd: cmd, o: restoreOptions{billingAccount: billingAcc, displayName: "Fugaro Restored"},
 		lc: lc, newID: newProj, path: r.cfg, old: mustRead(t, r.cfg),
 		budget: &managed.Budget{Amount: 7, Currency: "USD"}}
@@ -526,11 +536,17 @@ func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T
 	if err := rr.confirm(cmd); err != nil {
 		t.Fatalf("the restore's own confirmation: %v", err)
 	}
+	if err := rr.planConfig(); err != nil {
+		t.Fatalf("planning the local config's move: %v", err)
+	}
 	if err := rr.writeConfig(); err != nil {
 		t.Fatalf("moving the local config: %v", err)
 	}
 	if err := rr.create(t.Context()); err != nil {
 		t.Fatalf("the creating path: %v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "left for you") {
+		t.Errorf("the creating path left a typed step for the user: it was not given the user's terminal\n%s", out.String())
 	}
 
 	bucket := "fugaro-runs-" + newProj
@@ -690,17 +706,200 @@ func TestRestoreNamesWhatItDoesNotBringBack(t *testing.T) {
 	}
 }
 
+// TestRestoreGCPProjectLine: the three shapes the line's move is made of,
+// beyond the one the checkout test drives (a line naming the old project).
+// The file with no line at all is init's own editor's case, delegated to it;
+// a line naming a third project is refused, never rewritten.
+func TestRestoreGCPProjectLine(t *testing.T) {
+	// yamlRest (init_fugaroyaml_test.go) is the rest of a fugaro.yaml that
+	// parses: setGCPProjectLine reads its own edit back, so the delegation
+	// this case asserts needs a file config.Parse accepts whole.
+	const noLine = "version: 1\nproject: " + initProjectName + "\n" + yamlRest
+	const third = "version: 1\nproject: " + initProjectName + "\ngcp_project: someone-elses-99\n" + yamlRest
+
+	t.Run("no line at all: init's own editor adds it", func(t *testing.T) {
+		out, changed, err := restoreGCPProjectLine([]byte(noLine), initProject, restoreNewProj)
+		if err != nil {
+			t.Fatalf("a fugaro.yaml with no gcp_project: line: %v", err)
+		}
+		if !changed {
+			t.Error("the file was left without the line: the restore is the run that puts it there")
+		}
+		if !strings.Contains(string(out), "gcp_project: "+restoreNewProj) {
+			t.Errorf("the line was not added:\n%s", out)
+		}
+		// After the project: line, where init puts it, and the rest untouched.
+		want := strings.Replace(noLine, "project: "+initProjectName+"\n", "project: "+initProjectName+"\ngcp_project: "+restoreNewProj+"\n", 1)
+		if string(out) != want {
+			t.Errorf("fugaro.yaml is\n%s\nwant\n%s", out, want)
+		}
+	})
+
+	t.Run("a third project is refused, never rewritten", func(t *testing.T) {
+		out, changed, err := restoreGCPProjectLine([]byte(third), initProject, restoreNewProj)
+		if err == nil {
+			t.Fatalf("a line naming another project was rewritten to %q:\n%s", out, out)
+		}
+		if changed || out != nil {
+			t.Errorf("a refused edit returned bytes: %q", out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+		}
+		if !strings.Contains(err.Error(), "someone-elses-99") {
+			t.Errorf("the refusal does not name the value it found: %v", err)
+		}
+		if !strings.Contains(err.Error(), "not edited") {
+			t.Errorf("the refusal does not say the file was left alone: %v", err)
+		}
+	})
+
+	t.Run("the no-op is the file already naming the new project", func(t *testing.T) {
+		moved := strings.Replace(third, "someone-elses-99", restoreNewProj, 1)
+		out, changed, err := restoreGCPProjectLine([]byte(moved), initProject, restoreNewProj)
+		if err != nil || changed {
+			t.Errorf("a file already naming %s: changed=%v err=%v", restoreNewProj, changed, err)
+		}
+		if string(out) != moved {
+			t.Errorf("the file was rewritten:\n%s", out)
+		}
+	})
+}
+
+// TestRestoreAnchorWithoutATerminal: with no terminal the line is not written
+// and the run prints the one line the operator has to add. A restore has no
+// --yes, and a pipe is not a terminal: nothing here confirms an edit to a
+// committed file.
+func TestRestoreAnchorWithoutATerminal(t *testing.T) {
+	const doc = "version: 1\nproject: " + initProjectName + "\ngcp_project: " + initProject + "\nworkflows:\n  default: {}\n"
+	root := t.TempDir()
+	path := filepath.Join(root, "fugaro.yaml")
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	terminal(t, false)
+	cmd, out := restoreTestCmd("y\n") // a yes on a pipe confirms nothing
+	rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
+	if err := rr.anchor(cmd); err != nil {
+		t.Fatalf("no terminal is not an error: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != doc {
+		t.Errorf("the file was written with no terminal:\n%s", after)
+	}
+	if !strings.Contains(out.String(), "gcp_project: "+restoreNewProj) {
+		t.Errorf("the run did not print the line to add:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), path) {
+		t.Errorf("the run did not say which file to add it to:\n%s", out.String())
+	}
+}
+
+// TestRestoreRefusesAProjectConfigItDoesNotHold: the config this command
+// moves is a file. A selection with no path is the config published to the
+// runs bucket, and a restore that moved a bucket object would be writing a
+// shared config from one machine's run — the refusal names the first run that
+// writes this machine's own config instead.
+func TestRestoreRefusesAProjectConfigItDoesNotHold(t *testing.T) {
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject}
+	path, err := restoreConfigPath(localcfg.Selection{From: "shared config"}, lc)
+	if err == nil {
+		t.Fatalf("a shared config was taken as a file to move (%q)", path)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	for _, want := range []string{"fugaro init --name " + initProjectName, initRunsBucket, "shared config"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// And a selection that does hold a file is passed through.
+	if got, err := restoreConfigPath(localcfg.Selection{Path: "/tmp/x.yaml", From: "--config"}, lc); err != nil || got != "/tmp/x.yaml" {
+		t.Errorf("restoreConfigPath = %q, %v, want the file", got, err)
+	}
+}
+
+// TestRestoreApplyCloudDropsTheOldProjectID: the apply at the end selects its
+// project from the config this run moved, so the --gcp-project that got this
+// far — the OLD project, since any other value was refused by the first
+// selection — is dropped. Handing it on would make the apply refuse at the
+// last step, after the project exists and the config has moved. Every other
+// flag names the same project before and after and is passed through.
+func TestRestoreApplyCloudDropsTheOldProjectID(t *testing.T) {
+	o := cloudOptions{config: "/tmp/x.yaml", project: initProjectName, gcpProject: initProject, region: "us-east5"}
+	got := restoreApplyCloud(o)
+	if got.gcpProject != "" {
+		t.Errorf("the apply is given --gcp-project %q: it names the project that was lost", got.gcpProject)
+	}
+	if got.config != o.config || got.project != o.project || got.region != o.region {
+		t.Errorf("restoreApplyCloud dropped more than the old ID: %+v", got)
+	}
+}
+
+// TestRestorePlansTheConfigBeforeItAsks: restoreConfig's refusals (a
+// runs_bucket that is not the installation's default, a state bucket of the
+// operator's own) are refusals a typed name does not help with, so they are
+// decided before the confirmation — runRestore calls planConfig, then
+// confirm — and nothing is written when one of them fires.
+func TestRestorePlansTheConfigBeforeItAsks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aurora.yaml")
+	const doc = "version: 1\nname: " + initProjectName + "\ngcp_project: " + initProject + "\nruns_bucket: somewhere-else\n"
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, RunsBucket: "somewhere-else"}
+	rr := &restoreRun{lc: lc, newID: restoreNewProj, path: path, old: mustRead(t, path)}
+	if err := rr.planConfig(); err == nil {
+		t.Fatal("a config whose runs bucket cannot move was planned")
+	} else if !strings.Contains(err.Error(), "runs_bucket") {
+		t.Errorf("the refusal does not name runs_bucket: %v", err)
+	}
+	if rr.next != nil {
+		t.Errorf("a refused plan left a config behind: %+v", rr.next)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != doc {
+		t.Errorf("a refused plan wrote the file:\n%s", after)
+	}
+}
+
 // ---------------------------------------------------------------- the rig
 
 // restoreTestCmd is a command a piece of the restore can be driven with: its
 // stdin is the text, and its output is captured.
 func restoreTestCmd(stdin string) (*cobra.Command, *bytes.Buffer) {
+	return restoreTestCmdIn(strings.NewReader(stdin))
+}
+
+// restoreTestCmdIn is restoreTestCmd with the reader given, so a test can
+// hand the terminal seam the same object the command holds.
+func restoreTestCmdIn(in io.Reader) (*cobra.Command, *bytes.Buffer) {
 	cmd := &cobra.Command{Use: "restore"}
 	buf := &bytes.Buffer{}
-	cmd.SetIn(strings.NewReader(stdin))
+	cmd.SetIn(in)
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
 	return cmd, buf
+}
+
+// restoreTestTerminal makes stdinIsTerminal a terminal for exactly the reader
+// in, and for nothing else: a *bufio.Reader wrapped around it is not, exactly
+// as production's seam (a type assertion on an *os.File) says. terminal(t,
+// true) is the wrong seam for a test that drives the creating path this
+// command delegates to: it would report a terminal for whatever the child was
+// handed, including a buffered reader the child cannot read a line from.
+func restoreTestTerminal(t *testing.T, in io.Reader) {
+	t.Helper()
+	old := stdinIsTerminal
+	stdinIsTerminal = func(x io.Reader) bool { return x == in }
+	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
 func mustRead(t *testing.T, path string) []byte {
