@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -425,5 +426,99 @@ func noMarker(t *testing.T, g *gcpfake.GCS, bucket string) {
 	t.Helper()
 	if b, ok := markerAt(t, g, bucket); ok {
 		t.Fatalf("gs://%s/%s is there (%s): this run must not have written one", bucket, managed.MarkerObject, b)
+	}
+}
+
+// managedRuns is markedRuns plus the creation fact: the project's runs bucket
+// is the installation's own and holds fugaro/managed.json naming this GCP
+// project, which is what Task 0.2's read (IsManaged) answers managed with. A
+// marker for another project, or none, is the not-managed direction, and the
+// tests below use both.
+func (r *initRig) managedRuns(t *testing.T, name, gcp string) {
+	t.Helper()
+	r.markedRuns(t, name, gcp)
+	body := fmt.Sprintf(`{"version":1,"gcp_project":%q}`, gcp)
+	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, []byte(body), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Task 3.2 at the call site: in a managed project `fugaro init`'s guard
+// refusal is the managed one — it names the owner's own list and the owner-run
+// command that writes it, and no flag — and infra.DeleteHints, whose whole
+// purpose is to say which flags to re-pass, is not called at all there. In any
+// project that is not managed the refusal is today's, byte for byte, hints and
+// all: the removal D55 answered for is a managed project's and nothing else.
+func TestManagedInitRefusalNamesTheOwnersListAndNoFlag(t *testing.T) {
+	const a = "user:a@example.com"
+	// (a) A managed project: the refusal names the owner's object, the
+	// owner-run command that writes it and the address it refused, carries no
+	// flag and no DeleteHints line, and applies nothing.
+	r := newInitRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	out, _, err := executeStdin(t, "", "init", "--yes")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"gs://" + initRunsBucket + "/fugaro/allow-delete.json",
+		"fugaro allow-delete",
+		`state["` + a + `"]`,
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the managed refusal does not name %q:\n%s", want, msg)
+		}
+	}
+	noFlagName(t, msg)
+	for _, marker := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"} {
+		if strings.Contains(msg, marker) {
+			t.Errorf("the managed refusal names the marker %s:\n%s", marker, msg)
+		}
+	}
+	if strings.Contains(msg, "hint: ") {
+		t.Errorf("a managed refusal carried a hint, and DeleteHints tells a reader which flags to re-pass:\n%s", msg)
+	}
+	if len(r.ran(t, "apply")) != 0 {
+		t.Fatal("a plan the guard refused was applied")
+	}
+
+	// (b) The same plan in a project that is not managed — no creation fact —
+	// is today's refusal: the flag, and the hints beside it.
+	r2 := newInitRig(t)
+	r2.stateBucket()
+	r2.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	out2, _, err := executeStdin(t, "", "init", "--yes")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out2)
+	}
+	if !strings.Contains(err.Error(), "--allow-delete") || !strings.Contains(err.Error(), "--launcher and --operator") {
+		t.Errorf("the unmanaged refusal is not today's (the flag and the hints):\n%s", err)
+	}
+	if len(r2.ran(t, "apply")) != 0 {
+		t.Fatal("a plan the guard refused was applied")
+	}
+}
+
+// noFlagName fails when s names a command-line flag (Task 3.2's negative test:
+// a refusal that names one is read by the session it refuses as a thing to
+// pass).
+func noFlagName(t *testing.T, s string) {
+	t.Helper()
+	for _, flag := range []string{
+		"--allow-delete", "--allow-job-delete", "--launcher", "--operator", "--alert-email",
+		"--budget", "--billing-account", "--yes", "--non-interactive", "--managed",
+	} {
+		if strings.Contains(s, flag) {
+			t.Errorf("the refusal names %s:\n%s", flag, s)
+		}
+	}
+	if i := strings.Index(s, "--"); i >= 0 {
+		tail := s[i:]
+		if len(tail) > 24 {
+			tail = tail[:24]
+		}
+		t.Errorf("the refusal names a flag (%q):\n%s", tail, s)
 	}
 }

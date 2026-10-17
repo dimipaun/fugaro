@@ -448,6 +448,13 @@ type initRun struct {
 	// (init_review.go).
 	review *runReview
 
+	// managed is the creation fact of the project this run installs into
+	// (managedProject): whether a guard refusal is the managed one. Read at
+	// most once per run — managedRead is what makes it once — and false
+	// whenever nothing said otherwise, which is the fail-closed direction.
+	managed     bool
+	managedRead bool
+
 	// policy is the project's published policy, read at most once per run
 	// through the operator's own credentials (policyReadOnce.read). Readiness's
 	// D11 gate turns on whether one exists.
@@ -1256,13 +1263,36 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 	return remote(fmt.Errorf("%s was enabled in %s but still answers SERVICE_DISABLED: the enable is still propagating; rerun fugaro init in a few minutes", infra.ServiceResourceManager, r.gcpProject))
 }
 
-// guard is tf.Guard, a refusal being exit 1 with a hint for each refused
-// delete that flags left out of this run would keep. A project job's delete
-// is refused first and whatever allowDelete names: its retirement is not
-// supported yet (infra.RefuseProjectJobDeletes).
-func guard(plan *tf.Plan, allowDelete []string) error {
+// guard is tf.Guard at init's call sites, and the one place a managed
+// project's refusal differs from every other project's (Task 3.2 of
+// docs/plans/2026-10-16-managed-projects.md, D72/D74).
+//
+// A refusal is exit 1. Outside a managed project it is today's text, byte for
+// byte: Guard's own sentence naming --allow-delete, and a hint for each refused
+// delete that flags left out of this run would keep, infra.DeleteHints' lines.
+//
+// In a managed project that sentence is false and dangerous, and so is every
+// hint: the addresses a managed project may delete or replace come from the
+// owner-written list a managed apply reads, an address named on the command
+// line of an applying command approves nothing (D74), and a refusal that named
+// a flag would be an instruction the session it refuses would follow — an agent
+// reads this text. So the sentence is the managed one (managedmode.DeleteAdvice
+// names the owner's object and the owner-run fugaro allow-delete, and no flag)
+// and DeleteHints is not called at all: its whole purpose is to say which flags
+// to re-pass, and in a managed project there are none to re-pass. The refusal
+// is replaced, never joined by a second one beside it.
+//
+// A project job's delete is refused first and whatever allowDelete names: its
+// retirement is not supported yet (infra.RefuseProjectJobDeletes).
+func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, allowDelete []string) error {
 	if err := infra.RefuseProjectJobDeletes(plan); err != nil {
 		return userErr("%v", err)
+	}
+	if r.managedProject(ctx, c) {
+		if err := tf.GuardWith(plan, allowDelete, managedmode.DeleteAdvice(r.gcpProject)); err != nil {
+			return userErr("%s", err.Error())
+		}
+		return nil
 	}
 	err := tf.Guard(plan, allowDelete)
 	if err == nil {
@@ -1273,6 +1303,31 @@ func guard(plan *tf.Plan, allowDelete []string) error {
 		msg += "\nhint: " + h
 	}
 	return userErr("%s", msg)
+}
+
+// managedProject is whether the project this run installs into is managed: the
+// creation fact of Task 0.2, read at most once per run and cached, and only
+// when a guard refusal needs it (the fact decides which sentence that refusal
+// ends with, and nothing else in init's flow turns on it).
+//
+// The read is fail-closed and its failure is not an error here: an unreadable
+// marker, a project with no creation fact, a run with no clients and a project
+// that is simply not managed all leave the refusal as today's. That is the
+// direction the fact is read in everywhere — not managed is what a run does
+// when nothing says otherwise, and a refused plan is refused either way; what
+// this decides is which sentence a person reads, and the sentence that names a
+// flag is only true where the flag is honoured.
+func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) bool {
+	if r.managedRead {
+		return r.managed
+	}
+	r.managedRead = true
+	if c == nil {
+		return false
+	}
+	ok, _, err := managed.IsManaged(ctx, c.Storage, c.CRM, r.projectName, r.gcpProject)
+	r.managed = err == nil && ok
+	return r.managed
 }
 
 // prepare writes the root's tfvars, imports and backend configuration.
@@ -1418,7 +1473,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
 		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
-		if err := guard(plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
+		if err := r.guard(ctx, c, plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
 			return outs, false, err
 		}
 		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
@@ -1921,7 +1976,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		if err := infra.CheckForgetPlan(plan); err != nil {
 			return initErr(err)
 		}
-		if err := guard(plan, infra.ForgetAllowDelete(plan)); err != nil {
+		if err := r.guard(ctx, c, plan, infra.ForgetAllowDelete(plan)); err != nil {
 			return err
 		}
 		counts := infra.CountPlan(plan)
@@ -2685,7 +2740,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
-	if err := guard(plan, r.o.allowDelete); err != nil {
+	if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
 		return infra.RepoSpec{}, nil, err
 	}
 	counts := infra.CountPlan(plan)
