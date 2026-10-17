@@ -34,7 +34,17 @@ package cli
 // internal/stats.MinRuns, the canonical URL's host is on the site's own host
 // list, and every decision-backed value is in the state its decision left it
 // in -- analytics' flag and measurement id agreeing with each other (D93; W3.2 sets both together), the console's downloads off
-// (D95), the video off (D107), and no second domain (D92).
+// (D95), the video off (D107), and the second domain, when there is one,
+// distinct from the canonical host and off the host list (D92).
+//
+// W2.2 adds three checks to this file, all three of them about the domain
+// being real: the canonical URL is a real host, and it and the secondary domain
+// appear in site.yaml and nowhere else under website/
+// (TestWebsiteDomainsAppearOnlyInSiteYaml), no firebase.json redirect rule sends
+// one of the site's own paths to the site's own host
+// (TestWebsiteFirebaseRedirectsDoNotLoop -- the rule a domain-level redirect
+// replaces), and the register carries the two owner-run live checks the plan
+// reserves for this task (TestWebsiteChecklistHasCheck69aAnd69b).
 //
 // THE BOUNDARY IS ABOUT CODE, NOT ABOUT BYTES, and that distinction is the
 // console boundary's own (docs_console_boundary_test.go), carried here so the
@@ -53,8 +63,11 @@ package cli
 // pattern.
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -101,15 +114,16 @@ type websiteFactsFile struct {
 	Version int `yaml:"version"`
 	// CanonicalURL is the one absolute URL every other absolute link, the
 	// sitemap, the canonical <link> and the OpenGraph tag are built from
-	// (W1.3). It is a reserved placeholder until W2.2 replaces it: no domain is
-	// registered and nothing is deployed, and the registration, the Firebase
-	// custom domain and the DNS records are the owner's steps rather than an
-	// agent's (D92).
+	// (W1.3). It was a reserved placeholder until W2.2 replaced it with the
+	// domain the owner registered and connected Firebase Hosting to; the
+	// registration, the Firebase custom domain and the DNS records are the
+	// owner's steps rather than an agent's (D92).
 	CanonicalURL string `yaml:"canonical_url"`
-	// SecondaryDomain is the second domain the site would redirect to the
-	// canonical one, and there is none: D92's answer is one domain and no
-	// redirect domain, so the value is empty and W2.2 writes the redirect block
-	// in firebase.json only for a domain that exists.
+	// SecondaryDomain is the second domain the site redirects to the canonical
+	// one. D92's answer is one canonical domain and a second one whose only job
+	// is to send the reader back, so the value is a bare host or empty, and the
+	// redirect that uses it is a property of the attached domain rather than a
+	// firebase.json rule (the owner's, and check 69a's first step).
 	SecondaryDomain string `yaml:"secondary_domain"`
 	// Repository is the repository every GitHub link on the site is built
 	// from (W1.7), pinned below to go.mod's own module path.
@@ -321,9 +335,11 @@ func websiteDownloadNeedle(t *testing.T, repository string) string {
 // websitePlaceholderHost reports whether a host is a name reserved for
 // documentation: RFC 2606's `.test`, `.example`, `.invalid` and `.localhost`
 // TLDs, and the reserved example.com/example.net/example.org names. A name
-// under one of them can never resolve, which is the only kind of host
-// canonical_url may carry while the site has no domain -- a host that resolves
-// is a claim about a domain this repository has not registered.
+// under one of them can never resolve, so it is the shape a placeholder
+// canonical_url had before the site had a domain -- W2.2 replaced that
+// placeholder with the registered domain, and this function is what refuses the
+// placeholder coming back: a canonical_url on a reserved name is a claim that
+// the site is served somewhere it never will be.
 func websitePlaceholderHost(host string) bool {
 	host = strings.ToLower(host)
 	switch host {
@@ -666,13 +682,16 @@ func TestWebsiteDownloadNeedleSeesEverySpelling(t *testing.T) {
 //   - min_runs: internal/stats.MinRuns, the aggregation's own minimum (D97's
 //     N is 20 and it is one number, not two). A change to D97's N moves both
 //     values, in the aggregation's task rather than in a page's;
-//   - canonical_url: a reserved placeholder origin (websitePlaceholderHost)
-//     with no path, no query and no trailing slash, whose host is on the
-//     site's own allowed_hosts list. W2.2 replaces the value and relaxes this
-//     check in the same commit, when the domain exists and serves the site;
-//   - secondary_domain: empty, because D92's answer is one domain and no
-//     redirect domain. W2.2 writes a value here, with the redirect rule in
-//     firebase.json, only if the owner ever acquires a second domain;
+//   - canonical_url: an absolute https origin -- the origin alone, with no
+//     path, no query and no trailing slash -- whose host is a real host (not a
+//     reserved placeholder name) and is on the site's own allowed_hosts list.
+//     W2.2 replaced the placeholder W0.2 wrote with the domain the owner
+//     registered and connected Firebase Hosting to, and relaxed this check in
+//     the same commit;
+//   - secondary_domain: empty, or a bare lowercase host that is neither the
+//     canonical host nor a host the site links (D92: one canonical domain, and
+//     a second one whose only job is to send the reader back to it). W2.2 set
+//     it to the domain the owner acquired and redirects to the canonical one;
 //   - analytics: the flag and the measurement id agree with each other -- on
 //     with a property, or off without one -- so W3.2 sets both when it turns
 //     the measurement on (D93) and does not have to edit this file at all;
@@ -694,8 +713,12 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	}
 
 	// The canonical URL: an absolute https URL with no path, no query and no
-	// trailing slash, under a reserved placeholder host the site's own list
-	// admits. W2.2 is the task that writes the real one.
+	// trailing slash, under a real host -- the domain the owner registered and
+	// connected Firebase Hosting to -- which the site's own list admits. The
+	// pin was the reverse until W2.2 (a reserved placeholder host, because no
+	// domain existed); W2.2 writes the real value and relaxes this check in the
+	// same commit, which is what the task's "the pin is relaxed in the same
+	// commit" means.
 	const scheme = "https://"
 	host, found := strings.CutPrefix(facts.CanonicalURL, scheme)
 	switch {
@@ -704,16 +727,36 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	case host == "" || strings.ContainsAny(host, "/?#"):
 		t.Errorf("%s: canonical_url = %q, want the origin alone -- the canonical <link>, the sitemap and the OpenGraph tag are built from it, so a path or a query here would be copied into all of them", websiteFactsPath, facts.CanonicalURL)
 	default:
-		if !websitePlaceholderHost(host) {
-			t.Errorf("%s: canonical_url names the host %q, which is not a reserved placeholder: no domain is registered and nothing is deployed, so a real host here would make the canonical <link>, the sitemap, the OpenGraph tag and every absolute link the site builds point at a domain this repository does not serve. W2.2 sets the real canonical URL, in the same commit that relaxes this check (D92, plan Task W2.2 step 1)", websiteFactsPath, host)
+		if websitePlaceholderHost(host) {
+			t.Errorf("%s: canonical_url names the reserved placeholder host %q: the domain is registered and Firebase Hosting serves the site on it, so the canonical <link>, the sitemap, the OpenGraph tag and every absolute link the site builds would point at a name that can never resolve. W2.2 sets the real canonical URL (D92, the owner's ruling of 2026-10-17, plan Task W2.2 step 1)", websiteFactsPath, host)
 		}
 		if !slices.Contains(facts.AllowedHosts, host) {
 			t.Errorf("%s: canonical_url names the host %q, which allowed_hosts %v does not: the list admits exactly the hosts the site may send a reader to, and the site's own is one of them. W2.2 changes both lines together, in the same commit (W1.11, plan Task W0.2 step 1)", websiteFactsPath, host, facts.AllowedHosts)
 		}
 	}
 
+	// The secondary domain: empty, or the bare host the site redirects TO the
+	// canonical one (D92: one canonical domain, and a second whose only job is
+	// to send the reader back). It is a host and not a URL -- the direction is
+	// the whole point of it -- it is not the canonical host, and it is not on
+	// allowed_hosts: that list admits the hosts the site may LINK to, and the
+	// site links nothing on the domain it redirects away from. The redirect
+	// itself is a domain-level setting and not a firebase.json rule, which is
+	// why nothing in this file pins a rule in that file (see
+	// TestWebsiteFirebaseRedirectsDoNotLoop).
 	if facts.SecondaryDomain != "" {
-		t.Errorf("%s: secondary_domain = %q, want empty: D92's answer is one domain and no redirect domain, so a value here would be a redirect the site cannot make and a second source for a name. W2.2 sets it, with the redirect rule in firebase.json, only for a domain that exists (D92, plan Task W2.2 step 1)", websiteFactsPath, facts.SecondaryDomain)
+		secondary := facts.SecondaryDomain
+		switch {
+		case !strings.Contains(secondary, ".") || strings.ContainsAny(secondary, "/:@?#") || secondary != strings.ToLower(secondary):
+			t.Errorf("%s: secondary_domain = %q, want a bare lowercase host: it names the domain the site redirects FROM, so a scheme, a path, a port or a userinfo part here would describe something that is not the domain the owner attached (D92, plan Task W2.2 step 1)", websiteFactsPath, secondary)
+		default:
+			if secondary == host {
+				t.Errorf("%s: secondary_domain = %q and canonical_url's host are the same: a domain that redirects to itself is a loop, not a redirect (D92, plan Task W2.2 step 1)", websiteFactsPath, secondary)
+			}
+			if slices.Contains(facts.AllowedHosts, secondary) {
+				t.Errorf("%s: secondary_domain = %q is on allowed_hosts %v: that list admits the hosts the site links to, and the site links nothing on the domain whose only job is to send the reader back to the canonical one (W1.11, plan Task W2.2 step 1)", websiteFactsPath, secondary, facts.AllowedHosts)
+			}
+		}
 	}
 
 	// Analytics: the two values have to agree, and that is the invariant worth
@@ -754,6 +797,535 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	for _, placeholder := range []string{"TODO", "FIXME", "XXX"} {
 		if strings.Contains(raw, placeholder) {
 			t.Errorf("%s carries the placeholder %q: a value a page reads is either the fact or the empty state, never a note to a future reader", websiteFactsPath, placeholder)
+		}
+	}
+}
+
+// websiteBuildDir is the site's build output, relative to the module root. The
+// canonical-host scan below steps over it: a page under it carries the canonical
+// origin because the build RENDERED it from website/data/site.yaml, which is
+// what rendering means, and nothing there is committed or edited by hand
+// (website/.gitignore). A built copy is a copy the build makes, not a second
+// source of the fact.
+const websiteBuildDir = "website/dist"
+
+// websiteHostHit is one line of one file under website/ that names a host.
+type websiteHostHit struct {
+	file string
+	line int
+	text string
+}
+
+// websiteHostHits is the host scan: every line under root's website/ that names
+// host, with the build output stepped over (websiteBuildDir explains why). It is
+// the whole mechanism, so the tests that state the rule and the positive control
+// that proves the mechanism sees a planted copy read the same code rather than
+// two copies of it.
+//
+// The files come from websiteBoundaryFiles, so the scan cannot pass by walking
+// an empty directory, and every file is read: a host in a lockfile, a document
+// or a built page is a line of a file under website/ like any other.
+func websiteHostHits(t *testing.T, root, host string) []websiteHostHit {
+	t.Helper()
+	var hits []websiteHostHit
+	for _, rel := range websiteBoundaryFiles(t, root) {
+		if rel == websiteBuildDir || strings.HasPrefix(rel, websiteBuildDir+"/") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, host) {
+				hits = append(hits, websiteHostHit{file: rel, line: i + 1, text: strings.TrimSpace(line)})
+			}
+		}
+	}
+	return hits
+}
+
+// TestWebsiteDomainsAppearOnlyInSiteYaml holds the site to D92's single source
+// for its own names: the canonical origin and the secondary domain are written
+// in website/data/site.yaml and nowhere else under website/, so pointing the
+// site at a domain is that one line and a rebuild, and so no page can go on
+// serving a domain the site stopped being -- or name the domain the site
+// redirects away from, which is a link out of the site nobody meant to write.
+//
+// The needles are hosts and not the whole URLs: a page that wrote fugaro.dev
+// with no scheme, or a template that supplies the scheme itself, is a second
+// copy of the same fact, and that is the spelling a hard-coded link in a
+// component would have.
+//
+// The scan reads every file under website/ that websiteWalk returns except the
+// build output (websiteBuildDir). Documents under docs/ are out of scope on
+// purpose: they are not the site, and this plan's own documents name the domain
+// where they record the task that set it.
+func TestWebsiteDomainsAppearOnlyInSiteYaml(t *testing.T) {
+	root := consoleBoundaryRoot(t)
+	facts, _ := readWebsiteFacts(t)
+	host, found := strings.CutPrefix(facts.CanonicalURL, "https://")
+	if !found || host == "" || strings.ContainsAny(host, "/?#") {
+		t.Fatalf("%s: canonical_url = %q, want an absolute https origin: this scan reads the host out of it (TestWebsiteFactsMatchTheRepository holds the value's shape)", websiteFactsPath, facts.CanonicalURL)
+	}
+	// The secondary domain is a bare host in the facts file (the value's shape
+	// is TestWebsiteFactsMatchTheRepository's), and it is scanned for the same
+	// reason the canonical host is: the site names it in one place, or the
+	// redirect's own direction has two sources.
+	hosts := []string{host}
+	if facts.SecondaryDomain != "" {
+		hosts = append(hosts, facts.SecondaryDomain)
+	}
+
+	for _, h := range hosts {
+		hits := websiteHostHits(t, root, h)
+
+		// The hit that has to be there. Without it the scan is reading nothing,
+		// and a scan that finds nothing passes for the wrong reason.
+		if !slices.ContainsFunc(hits, func(x websiteHostHit) bool { return x.file == websiteFactsPath }) {
+			t.Fatalf("no line of %s names the host %q, so this scan is not reading the site's own facts: either the value is not what this test read (%v), or the walk lost the file", websiteFactsPath, h, hits)
+		}
+		for _, hit := range hits {
+			if hit.file == websiteFactsPath {
+				continue
+			}
+			t.Errorf("%s:%d names the site's host %q: the canonical URL and the secondary domain have one source, %s, and every absolute link, the canonical <link>, the sitemap and the OpenGraph tag are built from it -- a copy here is a second source that keeps pointing at the old domain after the one line changes (D92, plan Task W2.2 step 1)\n%s", hit.file, hit.line, h, websiteFactsPath, hit.text)
+		}
+	}
+}
+
+// TestWebsiteHostScanSeesAPlantedCopy is that scan's positive control: it plants
+// a host in a page, in the facts file and in a built page of a temp tree, and
+// proves the scan reports the first two and steps over the third, so the rule
+// above cannot pass by looking at nothing and cannot be tightened into a rule
+// about the build by a later change to the walk. It runs the scan once per
+// spelling the rule scans for, the canonical host and the secondary domain, so a
+// scan that quietly stopped covering the second one is a red control and not a
+// silent hole.
+func TestWebsiteHostScanSeesAPlantedCopy(t *testing.T) {
+	const canonical, secondary = "fugaro.dev", "fugaro.ai"
+	root := t.TempDir()
+	planted := map[string]string{
+		websiteFactsPath:                      "canonical_url: https://" + canonical + "\nsecondary_domain: " + secondary + "\n",
+		websiteInstallFactsPath:               "version: 1\n",
+		"website/src/pages/index.astro":       "<a href=\"https://" + canonical + "/docs\">Docs</a>\n<a href=\"https://" + secondary + "/\">fugaro.ai</a>\n",
+		"website/src/components/Footer.astro": "<span>fugaro</span>\n",
+		websiteBuildDir + "/index.html":       "<link rel=\"canonical\" href=\"https://" + canonical + "/\">\n",
+	}
+	for rel, body := range planted {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, host := range []string{canonical, secondary} {
+		seen := map[string]bool{}
+		for _, hit := range websiteHostHits(t, root, host) {
+			seen[hit.file] = true
+		}
+		for _, want := range []string{websiteFactsPath, "website/src/pages/index.astro"} {
+			if !seen[want] {
+				t.Errorf("the scan for %q did not see the planted host in %s: a rule that finds nothing passes for the wrong reason", host, want)
+			}
+		}
+		for _, dontWant := range []string{"website/src/components/Footer.astro", websiteBuildDir + "/index.html"} {
+			if seen[dontWant] {
+				t.Errorf("the scan for %q reported %s: a file that does not name the host, or a built page the build rendered the origin into, is not a second source of the fact", host, dontWant)
+			}
+		}
+	}
+}
+
+// firebaseRedirect is one entry of firebase.json's hosting.redirects list, as
+// firebase-tools' config schema defines it (schema/firebase-config.json,
+// definitions/HostingRedirects: destination plus exactly one of source, glob and
+// regex, and an optional type -- additionalProperties is false there, so a key
+// this struct does not carry is a config firebase-tools refuses, not a field
+// this test ignores).
+type firebaseRedirect struct {
+	Source      string `json:"source"`
+	Glob        string `json:"glob"`
+	Regex       string `json:"regex"`
+	Destination string `json:"destination"`
+	Type        int    `json:"type"`
+}
+
+// firebasePlaceholderEnd returns the index just past the placeholder name that
+// starts at i in a pattern ("/:splat" at the ":" ends at the end of the string).
+func firebasePlaceholderEnd(p string, i int) int {
+	j := i + 1
+	for j < len(p) && (p[j] == '_' || p[j] == '-' || p[j] >= '0' && p[j] <= '9' || p[j] >= 'a' && p[j] <= 'z' || p[j] >= 'A' && p[j] <= 'Z') {
+		j++
+	}
+	return j
+}
+
+// firebaseRedirectPath normalizes a redirect pattern or destination path for the
+// comparison below: a splat or a capture placeholder is the wildcard it stands
+// for ("/:splat", "/:1" and "/**" all become "/*"), a pattern with no leading
+// slash is the path it would be with one (Firebase writes its catch-all both
+// ways, "**" and "/**"), and the root is that same wildcard, because Firebase's
+// "/**" matches "/" as well. Two paths that normalize to the same string are the
+// same path to every request that reaches either of them.
+func firebaseRedirectPath(p string) string {
+	for {
+		i := strings.IndexByte(p, ':')
+		if i < 0 {
+			break
+		}
+		p = p[:i] + "*" + p[firebasePlaceholderEnd(p, i):]
+	}
+	p = strings.ReplaceAll(p, "**", "*")
+	if p == "" || p == "/" {
+		return "/*"
+	}
+	if !strings.HasPrefix(p, "/") {
+		return "/" + p
+	}
+	return p
+}
+
+// firebasePatternMatches reports whether a Firebase Hosting glob pattern matches
+// a concrete request path -- the question the guard below has to ask, because a
+// rule whose own destination is matched by its own source answers the request
+// that rule just made: the redirect is followed, the rule fires again, and the
+// browser reports a loop. It is what makes a catch-all source visible: "/**" and
+// "**" (the spelling Firebase's own examples use) match every path there is, so
+// a catch-all pointed at any path on the site's own host loops, whatever that
+// path is -- "/index.html" and the bare origin included.
+//
+// Firebase's glob has two wildcards, and this is them: "**" as a whole path
+// segment stands for any run of segments, including none, and inside a segment
+// "*" stands for any run of characters while ":name" stands for a whole captured
+// segment. Nothing else in a pattern is special.
+func firebasePatternMatches(pattern, path string) bool {
+	return firebaseSegmentsMatch(firebasePatternSegments(pattern), firebasePatternSegments(path))
+}
+
+// firebasePatternSegments splits a pattern or a path into its segments, with the
+// root ("/", "//", "") as no segments at all and a leading slash carrying no
+// meaning of its own.
+func firebasePatternSegments(p string) []string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, "/")
+}
+
+func firebaseSegmentsMatch(pattern, path []string) bool {
+	if len(pattern) == 0 {
+		return len(path) == 0
+	}
+	if pattern[0] == "**" {
+		for i := 0; i <= len(path); i++ {
+			if firebaseSegmentsMatch(pattern[1:], path[i:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(path) == 0 || !firebaseSegmentMatches(pattern[0], path[0]) {
+		return false
+	}
+	return firebaseSegmentsMatch(pattern[1:], path[1:])
+}
+
+func firebaseSegmentMatches(pattern, segment string) bool {
+	for {
+		if pattern == "" {
+			return segment == ""
+		}
+		switch pattern[0] {
+		case ':':
+			// A capture placeholder is a whole segment, so it has to have
+			// something to capture; a suffix after the name is matched against
+			// what is left of the segment.
+			if segment == "" {
+				return false
+			}
+			rest := pattern[firebasePlaceholderEnd(pattern, 0):]
+			if rest == "" {
+				return true
+			}
+			for i := 1; i <= len(segment); i++ {
+				if firebaseSegmentMatches(rest, segment[i:]) {
+					return true
+				}
+			}
+			return false
+		case '*':
+			if len(pattern) == 1 {
+				return true
+			}
+			for i := 0; i <= len(segment); i++ {
+				if firebaseSegmentMatches(pattern[1:], segment[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if segment == "" || segment[0] != pattern[0] {
+			return false
+		}
+		pattern, segment = pattern[1:], segment[1:]
+	}
+}
+
+// firebaseSelfRedirects returns the redirect rules of a firebase.json that
+// answer a request for one of the site's own paths with a redirect to the site's
+// own host -- the loop. own is the set of hosts the site itself serves (the
+// canonical host and, when there is one, the secondary domain).
+//
+// Why this is a rule and not a preference: Firebase Hosting matches a redirect
+// rule against the request URL PATH, and firebase-tools' schema for one carries
+// no field that could condition it on the host (see firebaseRedirect), so a rule
+// that sends every path to the canonical origin fires for requests that already
+// arrive on the canonical origin: "https://fugaro.dev/faq" is answered with a
+// 301 to "https://fugaro.dev/faq" and the browser reports a redirect loop. The
+// redirect from a secondary domain to the canonical one is therefore a property
+// of the attached domain (the Firebase console's own redirect option when the
+// domain is added, or the Hosting API's custom-domain redirect), which is the
+// owner's step and is recorded in website/README.md and in check 69a -- never a
+// firebase.json entry. A rule whose destination is another origin, or one of the
+// site's own paths that its source does not match, is legitimate and is not
+// reported.
+//
+// What counts as the loop is firebasePatternMatches' question and not a string
+// comparison: a rule loops when its source matches its own destination, so a
+// catch-all pointed at "/index.html" on the site's own host is reported like the
+// same-path rule is. A guard that only compared the two strings would leave the
+// catch-all -- the shape a later task is most likely to reach for -- invisible.
+//
+// A rule that uses `regex` cannot be compared with a destination path here, so a
+// regex rule pointing at one of the site's own hosts is reported rather than
+// judged: whoever writes one extends this test with the rule they mean.
+func firebaseSelfRedirects(t *testing.T, path string, config []byte, own []string) []string {
+	t.Helper()
+	var cfg struct {
+		Hosting json.RawMessage `json:"hosting"`
+	}
+	if err := json.Unmarshal(config, &cfg); err != nil {
+		t.Fatalf("%s is not JSON: %v", path, err)
+	}
+	if len(cfg.Hosting) == 0 {
+		t.Fatalf("%s has no hosting object: the redirect rules live under it, so a scan that found none is not reading the site's Hosting config", path)
+	}
+	var hosting struct {
+		Redirects []firebaseRedirect `json:"redirects"`
+	}
+	if err := json.Unmarshal(cfg.Hosting, &hosting); err != nil {
+		t.Fatalf("%s: hosting is not an object with a redirects list: %v", path, err)
+	}
+
+	var loops []string
+	for i, r := range hosting.Redirects {
+		u, err := url.Parse(r.Destination)
+		if err != nil {
+			t.Errorf("%s: redirects[%d] destination %q does not parse: %v", path, i, r.Destination, err)
+			continue
+		}
+		// An empty host is a destination on this site ("/new"), which is a
+		// host the site serves like any other; a destination on another host
+		// leaves the site and cannot loop.
+		if u.Host != "" && !slices.Contains(own, u.Host) {
+			continue
+		}
+		if r.Regex != "" {
+			loops = append(loops, fmt.Sprintf("redirects[%d]: regex %q -> %s (a regex rule's match set is not compared here: extend this test if this one is meant)", i, r.Regex, r.Destination))
+			continue
+		}
+		source := r.Source
+		if source == "" {
+			source = r.Glob
+		}
+		// Two ways a same-host destination loops, and both are needed: the
+		// source and the destination are the same path, or the source is a
+		// pattern that matches the destination path -- which is how a catch-all
+		// ("/**", "**") pointed at any path on this site loops, and how a
+		// wildcard segment pointed at a path inside its own match set does. The
+		// first is what catches a destination that is itself a pattern
+		// ("https://fugaro.dev/:splat"), which the second cannot match against.
+		if firebaseRedirectPath(source) == firebaseRedirectPath(u.Path) || firebasePatternMatches(source, u.Path) {
+			loops = append(loops, fmt.Sprintf("redirects[%d]: %q -> %s", i, source, r.Destination))
+		}
+	}
+	return loops
+}
+
+// TestWebsiteFirebaseRedirectsDoNotLoop refuses the one redirect rule
+// that would take the live site down: a rule that sends one of the site's own
+// paths back to the site's own host. firebaseSelfRedirects carries the reasoning
+// and the schema citation.
+//
+// This is the mechanical half of W2.2's answer about the redirect: the
+// secondary domain's redirect is a domain-level setting and not a firebase.json
+// entry, so the file has no redirects block today, and the rule this test states
+// is what keeps a later task from adding the looping one in the belief that the
+// domain-level step was already done. The positive control beside it plants the
+// loop, so the test cannot pass by looking at an empty list.
+func TestWebsiteFirebaseRedirectsDoNotLoop(t *testing.T) {
+	root := consoleBoundaryRoot(t)
+	facts, _ := readWebsiteFacts(t)
+	own := []string{}
+	if host, ok := strings.CutPrefix(facts.CanonicalURL, "https://"); ok && host != "" {
+		own = append(own, host)
+	}
+	if facts.SecondaryDomain != "" {
+		own = append(own, facts.SecondaryDomain)
+	}
+	if len(own) == 0 {
+		t.Fatalf("%s: canonical_url = %q names no host, so this test would compare every destination against an empty list", websiteFactsPath, facts.CanonicalURL)
+	}
+
+	const path = "firebase.json"
+	data, err := os.ReadFile(filepath.Join(root, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, loop := range firebaseSelfRedirects(t, path, data, own) {
+		t.Errorf("%s carries a redirect that answers a request on the site's own host with a redirect to the site's own host: %s. Hosting matches a rule against the path only and has no host condition, so this rule fires on the canonical domain too and loops. The secondary domain's redirect is a property of the attached domain (the console's own option, or the Hosting API's custom-domain redirect) and is recorded in website/README.md and in check 69a -- not here (plan Task W2.2 step 2)", path, loop)
+	}
+}
+
+// TestWebsiteFirebaseRedirectGuardSeesAPlantedLoop is that guard's positive
+// control: every shape of the loop it exists for, and the shapes a legitimate
+// rules list can have beside them -- a redirect to another origin, a redirect to
+// another path on this site, a relative destination, a wildcard whose
+// destination is outside its own match set -- so the guard cannot pass by
+// looking at nothing and cannot become a rule against redirects.
+//
+// The looping shapes are the two spellings of Firebase's catch-all ("/**" and
+// "**", the one the docs' own examples use) pointed at a path on the site's own
+// host, and the same path twice. The catch-all is the one a string comparison
+// misses and this control exists for: "/**" does not equal "/index.html", so a
+// guard that only compared source to destination would report nothing and pass
+// while the live site looped.
+func TestWebsiteFirebaseRedirectGuardSeesAPlantedLoop(t *testing.T) {
+	const path = "firebase.json"
+	own := []string{"fugaro.dev", "fugaro.ai"}
+	planted := `{"hosting":{"public":"website/dist","redirects":[
+		{"source":"/**","destination":"https://fugaro.dev/:splat","type":301},
+		{"source":"/**","destination":"https://fugaro.dev/index.html","type":301},
+		{"source":"**","destination":"https://fugaro.dev","type":301},
+		{"source":"/old","destination":"https://fugaro.dev/old","type":301},
+		{"source":"/legacy/*","destination":"/legacy/index.html","type":301},
+		{"source":"/old","destination":"https://fugaro.dev/new","type":301},
+		{"source":"/moved","destination":"/moved-here","type":302},
+		{"source":"/blog/:slug","destination":"/posts/:slug","type":301},
+		{"source":"/**","destination":"https://fugaro.ai/:splat","type":301},
+		{"source":"/releases","destination":"https://github.com/dimipaun/fugaro/releases","type":302}
+	]}}`
+	want := []int{0, 1, 2, 3, 4, 8}
+
+	var got []int
+	for _, loop := range firebaseSelfRedirects(t, path, []byte(planted), own) {
+		var i int
+		if n, err := fmt.Sscanf(loop, "redirects[%d]:", &i); n != 1 || err != nil {
+			t.Fatalf("the guard reported %q, which this control cannot read an index out of: the message has to name the rule, or a report cannot be acted on", loop)
+		}
+		got = append(got, i)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the guard reported rules %v, want %v: a guard that misses a planted loop passes for the wrong reason (rule 1 and rule 2 are the catch-all spellings, which no string comparison sees; rule 3 is a path redirected to itself, rule 4 is a wildcard pointing inside its own match set, and rule 8 is the same catch-all on the secondary domain, which is a host this site serves), and one that also reports a redirect to another origin, another path or a relative destination is a rule against redirects", got, want)
+	}
+}
+
+// TestWebsiteChecklistHasCheck69aAnd69b pins W2.2's half of the website plan's check 69
+// in docs/gcp-live-checklist.md: the two rows of the summary table and the two
+// sections they point at, each of them the owner's to run against the live site
+// and each naming its own pass and failure conditions. W2.3 owns 69c, the third
+// live check of the same line of work, and writes it in the level after this
+// one, so this test names only the two.
+//
+// The register's shape is the point of the test rather than decoration: a check
+// that exists as a section but not as a row is a check nobody reads first, a row
+// with no section is a command nobody can follow, and a check written as
+// something an agent runs is a check that will be run by an agent -- the whole
+// line of work is owner-run because a live site, a domain and a DNS record are
+// not an agent's to touch (D92, D108).
+func TestWebsiteChecklistHasCheck69aAnd69b(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	rows := map[string]string{}
+	for _, line := range strings.Split(doc, "\n") {
+		for _, n := range []string{"| 69a |", "| 69b |"} {
+			if strings.HasPrefix(line, n) {
+				if rows[n] != "" {
+					t.Errorf("%s has more than one %q row: one check, one row", path, strings.Trim(n, "| "))
+				}
+				rows[n] = line
+			}
+		}
+	}
+	for _, n := range []string{"| 69a |", "| 69b |"} {
+		row := rows[n]
+		if row == "" {
+			// Not a Fatalf: the sections below are checked either way, so the
+			// failure names both halves of what is missing at once -- the row a
+			// reader sees first, and the section it points at.
+			t.Errorf("the summary table has no %q row: the check is in the register's index or it is not in the register", strings.Trim(n, "| "))
+			continue
+		}
+		for _, want := range []string{"USER-RUN, NOT RUN", "run by you", "No agent runs any step", "See \"Check " + strings.Trim(n, "| ") + "\" below"} {
+			if !strings.Contains(row, want) {
+				t.Errorf("the %q row does not carry %q: %s", strings.Trim(n, "| "), want, row)
+			}
+		}
+	}
+
+	for _, c := range []struct {
+		heading string
+		wants   []string
+	}{
+		{
+			heading: "## Check 69a:",
+			wants: []string{
+				"NOT RUN",
+				"run by you",
+				"No agent runs any step",
+				"website/data/site.yaml",
+				"secondary_domain",
+				"301",
+				"HTTPS",
+				"features.console_downloads",
+				"features.video",
+				"runs hermetically",
+				"FACT:",
+				"Passes when:",
+				"Fails when:",
+				"Paste back:",
+			},
+		},
+		{
+			heading: "## Check 69b:",
+			wants: []string{
+				"NOT RUN",
+				"run by you",
+				"No agent runs any step",
+				"allowed_hosts",
+				"network panel",
+				"font",
+				"pixel",
+				"before consent",
+				"analytics",
+				"FACT:",
+				"Passes when:",
+				"Fails when:",
+				"Paste back:",
+			},
+		},
+	} {
+		section := docSection(t, path, doc, c.heading)
+		for _, want := range c.wants {
+			if !strings.Contains(section, want) {
+				t.Errorf("%s does not carry %q: a live check says who runs it, what to run or look at, when it passes and what failing looks like (plan Task W2.2 step 4)", c.heading, want)
+			}
 		}
 	}
 }
