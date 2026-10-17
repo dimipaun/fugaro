@@ -61,6 +61,14 @@ say() { printf 'fugaro-preload: %s\n' "$*"; }
 #    delete would leave a RUNNING VM and its disk behind -- money, and a name
 #    the next build then has to clear. The trap is the backstop; step 6 is the
 #    ordinary path and clears the flag so this stays quiet.
+#
+#    One ending it does NOT cover: Cloud Build's own timeout (1800 s,
+#    preload.tf) kills the step's process tree, and a SIGKILL runs no trap. A
+#    build that times out can therefore leave its builder VM running until the
+#    next scheduled build's step 3 finds it (the same name, the same
+#    fugaro=managed label) and deletes it. A leak of up to a week, bounded by
+#    the schedule, and the price of the timeout being Cloud Build's rather
+#    than this script's.
 BUILDER_UP=""
 cleanup() {
   rc=$?

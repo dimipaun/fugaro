@@ -1701,7 +1701,12 @@ project-wide. **Built that way** (Task 6,
 `resource.name.startsWith(...)` condition built from the job prefix the
 module is given (`local.job_name_prefix`), and `serviceAccountUser` granted
 as the cross product of the launchers and the run accounts — actAs on the
-accounts this installation named and on no others, never on the project.
+accounts this installation named and on no others, never on the project. The
+module refuses a launcher that is not people, or a group of them
+(`modules/compute/variables.tf`'s `launchers` validation): a `domain:` member
+would be handed both of those grants for every account in the domain, which
+is far wider than the runs bucket's `objectUser` — the grant the installation
+module accepts a `domain:` launcher for.
 `TestComputeLauncherJobsEditorIsConditioned` refuses a second
 `batch.jobsEditor` binding, a binding without the condition, and any
 `compute.instanceAdmin.v1`, `compute.admin`, `editor` or `owner` grant
@@ -1726,7 +1731,20 @@ constrain what a Fugaro-shaped job may contain — the launcher can still create
 from another repository's or a teammate's, since those jobs are `fugaro-`named
 too. So the "trusted to a greater degree than before" bullet above stands
 mostly **undone**, and the account split C22 asks for (launcher, reaper and
-run-class accounts kept apart) is what carries the rest. The same shape is to
+run-class accounts kept apart) is what carries the rest. **What the content
+gap leaves open is cost, and that is an accepted risk rather than something
+Task 6 closes:** a launcher who may name any image and any command may also
+ask for the largest machine type the region offers, for GPUs and for any task
+count in a `fugaro-`named job, and nothing in the binding, the module or the
+CLI caps them — the Condition is about `resource.name`, and Batch has no
+per-job spending limit. What caps the bill is the project's own quota: the
+regional CPU, GPU and VM-instance quotas refuse the job rather than running
+it (§1.4, Check 57a step 11), and the installation's budget alert reports
+rather than refuses. The honest statement of a launcher account's blast
+radius on this backend is therefore **"the project's quota"** — larger than a
+launcher's on Cloud Run, and the price of Batch's coarser IAM model. The
+mitigation is C22's account split and a project whose launchers are trusted
+with its quota, not a narrower grant. The same shape is to
 be used for `serviceAccountUser`,
 scoped to the `fugaro-*` run-class accounts. Veto alternative: one
 account for everything, simpler to provision and much harder to reason about —
@@ -3894,7 +3912,7 @@ senior reviewer before merge, not just the normal one.
    `TestCIWorkflowTestsEveryTerraformRoot` reads the staged copy the same way
    it reads `images.yml`'s — until the copy lands, CI checks the root's files
    through `terraform fmt`, `tflint`, `scan.sh` and the Go-side pins, but does
-   not run its `validate` or its thirteen mock-provider runs.** Image
+   not run its `validate` or its sixteen mock-provider runs.** Image
    streaming is **not** enabled (C4: the preloaded boot image is the
    fast-start path, and a Docker run's `options` needs streaming off), so
    `containerfilesystem` is not among the APIs it enables. The preload
@@ -3916,7 +3934,25 @@ senior reviewer before merge, not just the normal one.
    deliberate and bounded rather than dropped: a builder VM with no startup
    script pulls nothing, so the build has no version of itself without it, and
    its only holder is the preload account, which nothing but the scheduled
-   rebuild and its Cloud Build step runs as.
+   rebuild and its Cloud Build step runs as. Two things about the builder VM
+   are recorded here as **follow-ups, not fixes** — both from the independent
+   review of Task 6, and neither a blocker. **It boots as one of the run
+   accounts** (`preload.tf`'s `RUN_ACCOUNT`, `sort(run_accounts)[0]`) with
+   `--scopes=cloud-platform`, so the identity that pulls the base image is
+   also an account that holds that repository's secrets and its runs bucket
+   prefix; a dedicated pull-only account — `artifactregistry.reader` on the
+   one repository and nothing else — would be least privilege. It is not an
+   escalation of what the installation already hands out (a launcher holds
+   actAs on every run-class account and can run an arbitrary container as one
+   through Batch, §3.7), and it needs no interface change to close, which is
+   why it is a follow-up rather than a change in this task. **And the `EXIT`
+   trap is not the last word on the builder's lifetime**: Cloud Build's own
+   `timeout` (1800 s, `preload.tf`) kills the step's process tree when a build
+   overruns, and a SIGKILL runs no trap at all, so a build that times out can
+   leave its builder VM running until the next scheduled build's step 3 finds
+   it — same name, same `fugaro=managed` label — and deletes it. The leak is
+   bounded by the schedule rather than permanent, which is why it is accepted:
+   the alternative is a second sweeper for a case one build a week clears.
    `TestComputePreloadBuilderRoleAreExactlyTheBuild` pins the list, so
    widening it is a test failure. The installation's `operators` hold actAs on
    the preload account and nothing else here: applying the root creates the

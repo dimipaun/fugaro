@@ -103,6 +103,24 @@ variable "manage_apis" {
 variable "launchers" {
   description = "The IAM members who may launch a run on this backend: they get Batch Job Editor on Fugaro-shaped jobs only, and actAs on the run-class accounts."
   type        = set(string)
+
+  # People, or the groups that stand for them -- never a whole domain, and
+  # never a wildcard. What a launcher is given here is much wider than what a
+  # launcher holds on the Cloud Run backend (one job's runWithOverrides, with
+  # the image, command and environment fixed by the job): Batch Job Editor on
+  # Fugaro-shaped jobs is the power to create a job with ANY image, command
+  # and secretVariables, on any machine type, running as any account it holds
+  # actAs on, and the condition narrows the job's NAME only (§3.7). So a
+  # `domain:example.com` member -- every account in that domain, including
+  # ones created after this apply, with no membership list to review -- would
+  # hand all of that to the whole domain, which is not what "the people who
+  # may launch a run" means. The installation module accepts domain: launchers
+  # because its grant is the runs bucket's objectUser; this one is not that
+  # grant, so it refuses rather than widening.
+  validation {
+    condition     = alltrue([for m in var.launchers : can(regex("^(user|group):[^@[:space:]]+@[^@[:space:]]+$", m))])
+    error_message = "launchers must be people: user:<email>, or group:<email> for a managed set of them. A domain: member (or a wildcard, or allUsers) would give Batch Job Editor on every Fugaro-shaped job -- and actAs on every run-class account -- to every account it covers."
+  }
 }
 
 variable "operators" {
@@ -139,9 +157,16 @@ variable "base_image" {
   description = "The installation's pinned base image, the thing the preload bakes into the boot image. Its host, project and repository are the installation's own and are checked against region, project and registry_repository below."
   type        = string
 
+  # The path's last part is an alphabet, not `.+`: this string is interpolated
+  # into the builder's startup script inside single quotes (preload.sh's
+  # `docker pull '${BASE_IMAGE}'`), and a quote or a `$(...)` in it would end
+  # that word and run whatever followed -- on a VM that runs as a run-class
+  # account with --scopes=cloud-platform. What an image reference may contain
+  # is narrow (lower-case path components, a tag or a digest), so the alphabet
+  # below is the whole of it: letters, digits, `.`, `_`, `/`, `@`, `:` and `-`.
   validation {
-    condition     = can(regex("^[a-z0-9.-]+-docker\\.pkg\\.dev/[a-z][a-z0-9-]{4,28}[a-z0-9]/[a-z][a-z0-9-]{2,62}/.+$", var.base_image))
-    error_message = "base_image must be a pinned Artifact Registry image path: <region>-docker.pkg.dev/<project>/<repository>/<image>:<version>."
+    condition     = can(regex("^[a-z0-9.-]+-docker\\.pkg\\.dev/[a-z][a-z0-9-]{4,28}[a-z0-9]/[a-z][a-z0-9-]{2,62}/[A-Za-z0-9][A-Za-z0-9._/@:-]*$", var.base_image))
+    error_message = "base_image must be a pinned Artifact Registry image path: <region>-docker.pkg.dev/<project>/<repository>/<image>:<version>. The image part may hold only letters, digits, '.', '_', '/', '@', ':' and '-' -- it is interpolated into the builder VM's startup script, so a quote or a shell metacharacter in it would run on that VM."
   }
 
   # The image the preload pulls must be one a run could pull, which is what

@@ -522,3 +522,59 @@ run "a_base_image_from_another_repository_is_refused" {
 
   expect_failures = [var.base_image]
 }
+
+# The image part of the pin is interpolated into the builder VM's startup
+# script inside single quotes (preload.sh's `docker pull '${BASE_IMAGE}'`), on
+# a VM that runs as a run-class account with --scopes=cloud-platform: a pin
+# carrying a quote would end that word and run whatever followed it. The
+# alphabet the first validation allows is what refuses it -- this pin is in
+# this installation's own registry, so only the alphabet can.
+run "a_base_image_with_a_shell_metacharacter_is_refused" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    base_image = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/acme/fugaro-base:1.2.3'; echo not-an-image; echo '"
+  }
+
+  expect_failures = [var.base_image]
+}
+
+# A launcher gets Batch Job Editor on Fugaro-shaped jobs and actAs on every
+# run-class account -- far wider than a launcher's grant on the Cloud Run
+# backend -- so the member has to be people, or a group of them. A domain:
+# member covers every account in the domain, including ones created after this
+# apply, and there is no membership list to review; the module refuses it
+# instead of widening both grants to it.
+run "a_domain_launcher_is_refused" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    launchers = ["domain:example.com"]
+  }
+
+  expect_failures = [var.launchers]
+}
+
+# A group is people with a membership list someone manages, and it is what the
+# installation module already grants the runs bucket's objectUser to, so it is
+# accepted here: refusing it would make a supported installation's launchers
+# unable to provision the backend they run on.
+run "a_group_launcher_is_accepted" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  variables {
+    launchers = ["group:launchers@example.com"]
+  }
+}
