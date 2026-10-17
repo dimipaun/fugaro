@@ -279,6 +279,39 @@ func ProviderFor(providers map[string]ModelProvider, model string) (name string,
 // its name belongs, and is refused rather than stored as a name.
 const keyPrefix = "sk-"
 
+// CheckSecretName reports why name is not a secret name, or "" when it is.
+//
+// It is the rule a document that names a secret holds every name to, and its
+// caller is the project policy's profiles (projectpolicy.validProfiles): a
+// name is written into a document every run of a shared job can read, where a
+// *value* must never be. Neither message echoes the value: this check exists
+// because the value may BE a key, and quoting it would print one into a
+// terminal, a log or a halt message, which is the leak the check is for.
+//
+// ValidateModelProviders does not call this function — the providers block
+// words its own two refusals ("the key" the provider holds, and the offending
+// prefix quoted back) and adds two rules a profile's secrets have no use for
+// (a name Fugaro already uses, and two providers claiming one secret). The
+// *rules* are shared all the same — SecretNameRE and keyPrefix below are one
+// definition for both — and TestTheSecretNameRuleIsOneRule holds the two
+// readers to the same verdict on the same names, so the spellings cannot drift
+// apart without a test failing.
+func CheckSecretName(name string) string {
+	switch {
+	case name == "":
+		return "must be a secret name, and it is empty: a value is never written where its name belongs"
+	case !SecretNameRE.MatchString(name):
+		return "must be a secret name (lower-case letters, digits and '-'), the name of the secret that holds the value, never the value"
+	case strings.HasPrefix(name, keyPrefix):
+		// Every model provider's key begins with "sk-", and the rest of a key
+		// is lower-case, digits and dashes often enough to pass the name rule
+		// above, so a pasted key would otherwise be accepted and published as
+		// the name of a secret (ValidateModelProviders' own comment).
+		return "looks like an API key, not the name of a secret: a value must never be written where its name belongs"
+	}
+	return ""
+}
+
 // ValidateModelProviders reports every rule the providers block breaks. Paths
 // are relative to the local config ("providers.<name>.<field>").
 func ValidateModelProviders(providers map[string]ModelProvider) []Problem {

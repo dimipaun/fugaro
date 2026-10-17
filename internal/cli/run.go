@@ -1229,12 +1229,13 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // existingLaunch is the run's launch, or nil when it has not launched. When
 // the CLI that launched died before writing launch.json, it backfills one
 // from result.json, where the runner records the same canonical execution
-// name launch.json holds. Either name must be of the run's own job: the
-// run's service account can write both objects.
+// name launch.json holds. Either name must be the run's own execution: the
+// run's service account can write both objects, and the execution's own
+// FUGARO_RUN is what says whose it is (checkExecution).
 func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec *task.Spec) (*runstore.Launch, error) {
 	runID := spec.RunID
 	check := func(name string) error {
-		if err := env.checkExecution(name, s.Slug(), spec); err != nil {
+		if _, err := env.checkExecution(ctx, nil, name, s.Slug(), runID); err != nil {
 			return remote(fmt.Errorf("run %s/%s: not following its execution: %w", s.Slug(), runID, err))
 		}
 		return nil
@@ -1331,6 +1332,16 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	} else if cancelled {
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
+	// The job this launch runs on (project_job.go): the shared project job of
+	// the profile the workflow selects, or nil for the per-repository job this
+	// launch has always used. Resolved before the claim is taken, so a policy
+	// this CLI cannot read costs no claim to release — and it is resolved
+	// before the mint, because it is what the token's window is measured
+	// against.
+	job, err := env.launchProjectJobFor(ctx, spec)
+	if err != nil {
+		return res, err
+	}
 	hook(launchHooks.beforeClaim)
 	holder := claimHolder()
 	for round := 0; ; round++ {
@@ -1380,7 +1391,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// The run's budget identity: minted and left in the bucket before the
 	// execution can start, by the one CLI that holds the claim. A failure
 	// here means nothing started, so the claim goes back.
-	minted, err := env.mintBudgetToken(hctx, slug, spec)
+	minted, err := env.mintBudgetToken(hctx, slug, spec, job)
 	if err != nil {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
@@ -1404,6 +1415,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
 	lspec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)}
+	if job != nil {
+		// The shared project job, by its own name. FUGARO_RUN is still set
+		// (backend/gcp's Launch): on a job every repository shares it is the
+		// only thing that says which run an execution is.
+		lspec.Job = job.Name
+	}
 	if minted {
 		// This execution carries a budget token, so the runner must never read
 		// the token's absence as "this project has published no policy": with

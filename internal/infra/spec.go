@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -25,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -455,31 +455,18 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 
 // repoURL is the https clone URL: the given one, which must be on the
 // provider's host and carry no credentials, else the provider's usual one.
+//
+// The rules are repourl.CloneURL's, and only the error shape is this
+// package's: the deployer and the runner (a project job's clone URL, plan task
+// 3.3 step 3) must give the same answer, so a URL one of them refuses cannot
+// be one the other accepts. A per-repository job's FUGARO_REMOTE is written
+// from here (cloneJobEnv) and a project job's URL is computed there.
 func repoURL(provider, repo, given string) (string, error) {
-	if given == "" {
-		host := map[string]string{gitprov.KindGitHub: "github.com", gitprov.KindBitbucket: "bitbucket.org"}[provider]
-		if host == "" {
-			return "", userErr("git.provider %q is not bitbucket or github", provider)
-		}
-		return "https://" + host + "/" + repo + ".git", nil
-	}
-	u, err := url.Parse(given)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", userErr("the repository URL %s is not an https URL without credentials", gcp.RedactURL(given))
-	}
-	if gitprov.KindForURL(given) != provider {
-		return "", userErr("the repository URL %s is not on %s's host", given, provider)
-	}
-	// The URL is where the build and the check clone from, so it must be
-	// this repository, not only this provider.
-	want, err := task.CanonicalRepo(repo)
+	u, err := repourl.CloneURL(provider, repo, given)
 	if err != nil {
 		return "", userErr("%v", err)
 	}
-	if got, err := task.CanonicalRepo(strings.Trim(u.Path, "/")); err != nil || got != want {
-		return "", userErr("the repository URL %s is not %s", given, repo)
-	}
-	return given, nil
+	return u, nil
 }
 
 // withDefaults fills in the outputs the installation has not reported

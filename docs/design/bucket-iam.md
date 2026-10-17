@@ -97,6 +97,8 @@ So:
 - `builds/<slug>/` is written by operators and that repository's own build account, which keeps L6's copy rule.
 - `cache/` and `locks/` are written by operators and each repository's own job account.
 
+**Update 2026-10-16 — the project job's account is not the "Job account" row above (phase 3, D4).** The table describes the per-repository job. Phase 3 adds a second kind: one Cloud Run job and one job service account per (profile, provider, Claude account) (`deploy/terraform/gcp/modules/project/`, [project-centric.md](project-centric.md) §4.1), which every repository admitted to that profile runs on. Such an account cannot have a per-slug condition — it is not a repository's account — so its grant is `roles/storage.objectUser` with the whole of `runs/`, `cache/` and `locks/` (`gcp.ProjectBucketCondition`), one clause per prefix and no slug. Every project job account gets the same condition, whatever its profile. §10 states what that reaches — every repository's objects, not one profile's — and why the profile is not the mitigation D4 assumed. An installation whose local config names no profile gets no project job.
+
 ## 4. How to express it (H1 to H5)
 
 **H1: IAM Conditions on the existing bucket (recommended).** Launchers get two grants:
@@ -151,8 +153,11 @@ Veto alternative: build the expression in HCL from `var.runs_bucket`. That gives
 | `objectAdmin` | person | no condition |
 | `objectViewer` | person | no condition |
 | `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |
-| `objectUser` | Fugaro account | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/<slug>/")`, with `<b>` in `Cover.Buckets`, `<p>` in `runs`, `cache`, `locks` or `builds`, and a non-empty `<slug>` |
+| `objectUser` | Fugaro account in a repository's workflow module | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/<slug>/")`, with `<b>` in `Cover.Buckets`, `<p>` in `runs`, `cache`, `locks` or `builds`, and a non-empty `<slug>` |
+| `objectUser` | Fugaro job account in the project module (`module.project["<job>"]`, phase 3) | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/")` — the widened form, with no `<slug>` at all — with `<b>` and `<p>` as above |
 | `objectViewer` | Fugaro account | no condition (the history account) |
+
+The two `objectUser` rows are told apart by the module the grant is in, not by the account's name: a per-repository job account is `fugaro-` + the repository slug + `-` + the workflow + `-` + 8 hex, so a repository whose slug begins with `p` gets an ID of the project job's own shape (`fugaro-p-…`), and a name-shape check alone would admit the widened condition for it. `Cover.projectJobCondition` therefore takes the widened condition only under `module.project["<job>"]` (`Cover`'s `projectModule`): the one confirmation that covers a project job's grant without a per-clause comparison cannot be reached by a grant a repository's workflow module writes. The widened row is §10's regression (D4; its mitigation is open).
 
 A condition known only after apply is not covered. `grantRules` moves `objectUser` and `objectViewer` to `toPeople | toAccounts`. The other checks still apply: a person must be on the review screen (`Listed`) and the bucket must be this run's.
 
@@ -313,6 +318,19 @@ So the stealth paths of layered-config §11 (items 1, 2 and 6 across repositorie
 
 **A compromised agent inside a run** (the job account) is unchanged. It can write its own repository's `runs/`, `cache/` and `locks/`. So it can poison that repository's cache and plant session files for that repository's follow-ups (existing residuals, [v1.md](v1.md) §6).
 
+**A run of a shared project job reaches every repository in the bucket (phase 3, D4) — a regression of a 0.7.0 property, documented.** One account serves every repository admitted to its profile, so its grant names no slug, and every project job account gets the same condition whatever its profile: one run's agent can act on any repository's objects — another profile's, and a repository still on its own per-repository job — not only its own:
+
+- **Poison another repository's cache** (`cache/<other-slug>/`), which that repository's next run restores into its workspace: cross-repository code execution there, under that repository's secrets.
+- **Forge or steal a lock** (`locks/<other-slug>/`), which is exactly what this document credits 0.7.0 with removing from a launcher's reach (above, "What it can no longer do").
+- **Rewrite another repository's queued `task.json`** before its job reads it: the task, ref and workflow a run executes are read from it.
+
+Two more objects under the same prefixes, which D4's accepted list does not name on its own and which this document states separately:
+
+- **Another queued run's budget token** (`runs/<slug>/<run>/budget-token`, `internal/budget/token/object.go`). It is that run's Realtime Database identity, not a cache entry: a run that reads it can spend against that run's budget record. This is **D13**, ruled by the owner on 2026-10-15: **accepted**, documented beside D4 in [SECURITY.md](../../SECURITY.md), with [budget-token-channel.md](budget-token-channel.md) designing the channel that removes the exposure (still awaiting the owner's approval to implement) and separate profiles as the interim boundary. There is no gate on this task.
+- **Another run's `launch.json` and `result.json`**, which `ls`, `report` and the history rollover read: a run can rewrite what another run is recorded to have been. `CheckRunExecution` (`internal/backend/gcp/run.go`) exists for that reason, and plan Task 3.4 is where it is applied to project jobs.
+
+**A profile is not the mitigation — OPEN, for the owner to re-rule.** D4 and D13 named separate profiles as the boundary for repositories that must stay apart, on the premise that a profile boundary is a bucket boundary. It is a job-service-account boundary, which separates **secrets** only: the objects are laid out `<prefix>/<slug>/…`, with no profile in the path, so no per-profile condition can be written (plan Task 3.2 step 2: the condition "cannot be narrowed to a profile prefix yet"), and every project job account holds the same three whole prefixes. The choices are the owner's: change the object layout so a profile has its own prefix, keep repositories that must stay apart off shared jobs, or accept the installation-wide reach. Until that ruling the only bucket isolation is not deploying a shared job. A launcher's own reach is not the measure of this one (D4): a launcher is a person trusted with the installation's jobs, while a run is a coding agent executing a task and a repository's code, and one repository's run is not trusted with its neighbours'. An installation whose config names no profile has no project job and keeps the per-slug grants.
+
 **A compromised build** (a repository's Dockerfile or `image.setup` running in Cloud Build as the build account) is unchanged. It can rewrite its own `builds/<slug>/`, its layer copy included. That copy then steers its own next rebuild, where it already runs code (L6's argument).
 
 **A stolen operator credential is full control of the installation.** Bucket IAM does not limit it. It can:
@@ -379,7 +397,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 
 - Per-repository launcher lists, or per-repository `runs/<slug>/` grants for people.
 - Signing or verifying the project layer, recipes or `task.json` content (a possible later layer of defence against L3).
-- Changing the job, build, history or scheduler accounts' grants.
+- Changing the job, build, history or scheduler accounts' grants. Phase 3's project job accounts are new accounts of a new kind, not a change to these: §10 states their widened grant, which D4 accepted on a premise §10 shows does not hold.
 - Changing the state bucket.
 - Any live apply by Claude.
 

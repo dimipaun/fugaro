@@ -1202,8 +1202,13 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 }
 
 // guard is tf.Guard, a refusal being exit 1 with a hint for each refused
-// delete that flags left out of this run would keep.
+// delete that flags left out of this run would keep. A project job's delete
+// is refused first and whatever allowDelete names: its retirement is not
+// supported yet (infra.RefuseProjectJobDeletes).
 func guard(plan *tf.Plan, allowDelete []string) error {
+	if err := infra.RefuseProjectJobDeletes(plan); err != nil {
+		return userErr("%v", err)
+	}
 	err := tf.Guard(plan, allowDelete)
 	if err == nil {
 		return nil
