@@ -1,6 +1,7 @@
 // The Spend screen: the design's screen 2, drawn from `report --json` and
-// `budget show --json` (desktop-console plan Task 2.2; design sections 6.1
-// rule 1 and 6.2 screen 2; console/docs/json-contract.md sections 3 and 4).
+// `budget show --json` (desktop-console plan Tasks 2.2 and 2.4; design sections
+// 6.1 rule 1, 6.2 screen 2 and 5.1 rule 6; console/docs/json-contract.md
+// sections 3 and 4).
 //
 // The file has two halves, separated the way Task 2.1's Live screen separates
 // them: `buildSpendModel` turns the two documents into rows, three series and a
@@ -67,6 +68,25 @@
 // address on the wire is the console's own marker (`redacted@example.invalid`)
 // and never the address itself.
 //
+// **The controls are wired, and they are wired to one read.** The range picker,
+// the breakdown switch and the operator's person knob (D15) all feed
+// `SpendControls`, and `spendArguments` turns that state into the argument
+// object `spend.report` already declares -- `--since`/`--until` from the picker,
+// `--by` from the switch -- which `readSpend` hands to the **existing**
+// `runReport` operation. No new write, no new spawn-table row and no new
+// channel: the renderer supplies values, main builds the argv (section 5.1 rule
+// 6), and a value outside the screen's own closed sets is refused before
+// anything is spawned. A control change is one `report --json` read and a
+// re-render from the document that came back; the budget document is not
+// re-read, because no control this screen draws is about it.
+//
+// **And the person view is off until the operator says otherwise.** `--by
+// person` is not a read this screen makes while the knob is off, and the
+// document's person rows are not drawn either (see the D15 paragraph above):
+// both halves are held by `spend-controls.test.ts` against a default of `on`.
+// The knob is per session, and nothing here writes it anywhere -- the console
+// never writes to disk (design section 5.1 rule 10).
+//
 // **What is deliberately not here.** No stylesheet and no colour: the design's
 // density rules are markup and CSS, and `src/renderer/theme/tokens.css` is in
 // the plan's tree but in no task's Files, so this screen emits what only markup
@@ -74,15 +94,13 @@
 // `data-` readings for the numbers a bar needs to be a shape. Nothing sets an
 // inline style, and nothing sets the `style` attribute at all (`style-src
 // 'self'`). No link: this screen offers none, so there is no anchor in it and
-// nothing for design section 4.3's gap 7 to be about. And no picker behaviour:
-// the screen draws the range the document covers and the breakdown it was asked
-// for, which is what `spend.report`'s validated arguments (`by`, `since`,
-// `until`) re-read. The range picker and the breakdown switch are drawn and
-// **not yet wired**: no task in docs/plans/2026-10-15-desktop-console.md owns
-// the second read or the operator's person-view knob (D15) -- Task 2.2 draws
-// them, Tasks 2.3 and 3.1 do not touch them -- so the `data-current` and
-// `data-enabled` hooks stay as written until a later console PR (to be named in
-// the plan) wires them.
+// nothing for design section 4.3's gap 7 to be about. No event handler either:
+// the picker, the switch and the knob are drawn with the `data-` hooks their
+// wiring reads (`data-current`, `data-enabled`, `data-day`, `data-until`), and
+// the wiring itself is a pure function of the controls, so which element a click
+// lands on is not this file's business. And no refusal panel: `readSpend`
+// answers with the console's sentence for a refused read and the *caller* draws
+// it, because Task 3.2 owns the skew and refusal states.
 
 import {
   estimated,
@@ -97,6 +115,7 @@ import {
 } from '../../shared/availability'
 import type { Reading, Sample } from '../../shared/availability'
 import type { KillView } from '../../shared/schema'
+import { sanitizeRefusal } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
@@ -887,6 +906,12 @@ function capRowOf(raw: unknown): SpendCapRow | null {
 const PERSON_OFF_NOTE =
   'the person breakdown is off for this installation: these rows name the people whose runs spent the money'
 
+/** PERSON_ON_NOTE is the same line for the view once the operator has turned it
+ * on: what it shows, and that an address on the wire is drawn as the console's
+ * own marker (`sanitize.ts`'s `person` class). */
+const PERSON_ON_NOTE =
+  'the person breakdown is on for this session: it names the people whose runs spent the money, and each address is drawn as the console’s own marker'
+
 /** dimensionOf reads the document's `by`. */
 function dimensionOf(raw: string | null): SpendDimension | null {
   for (const dimension of SPEND_DIMENSIONS) {
@@ -1035,6 +1060,210 @@ function withheldSeries(account: SpendAccount): SpendSeries {
 }
 
 // ---------------------------------------------------------------------------
+// The controls.
+// ---------------------------------------------------------------------------
+
+/**
+ * SPEND_PICKER_WINDOWS is the range picker's closed set of windows, in
+ * `reportRange`'s own grammar (`internal/cli/report.go`): `Nd` is the last N
+ * days up to `--until` and `Nw` the last N weeks, and every one of them is a
+ * `--since` the CLI parses. It is the part of the picker that is *drawn*; a UTC
+ * day is the picker's other form (a range with an end the operator chose),
+ * which is why `SpendControls.since` is a string and this list is the closed set
+ * the drawn windows come from.
+ */
+export const SPEND_PICKER_WINDOWS = Object.freeze(['7d', '30d', '90d', '12w'] as const)
+
+/** SpendWindow is one window the picker offers. */
+export type SpendWindow = (typeof SPEND_PICKER_WINDOWS)[number]
+
+/**
+ * SpendControls is the operator's view state, and the whole of what this screen
+ * asks for: the range the picker holds, the breakdown the switch holds, and
+ * whether the person view is on.
+ *
+ * It is the renderer's own state and it is **not** argv. `spendArguments` turns
+ * it into the validated argument object and main builds the argv from that
+ * (design section 5.1 rule 6), so no string in here can become a flag: the
+ * values are checked against this screen's own closed sets first.
+ */
+export interface SpendControls {
+  /** the picker's `--since`: one of `SPEND_PICKER_WINDOWS`, or a UTC day */
+  readonly since: string
+  /** the picker's `--until`: a UTC day, or `null` for `report`'s own today */
+  readonly until: string | null
+  /** the breakdown switch's `--by` */
+  readonly by: SpendDimension
+  /** the person view's own knob (design D15) */
+  readonly persons: boolean
+}
+
+/**
+ * SPEND_DEFAULT_CONTROLS is the screen as it opens, and none of the three
+ * defaults is the console's invention: `30d` is `reportDefaultSince` and `day`
+ * is `--by`'s own default, so the first read is the read an operator's own
+ * `fugaro report --json` would have made, and the person view is off (D15).
+ *
+ * `until` is `null` on purpose. The CLI defaults it to today in UTC and this
+ * screen cannot know what today is: a date it invented would be a day nobody
+ * measured, drawn as if it had been asked for.
+ */
+export const SPEND_DEFAULT_CONTROLS: SpendControls = Object.freeze({
+  since: '30d',
+  until: null,
+  by: 'day',
+  persons: false,
+})
+
+/** SpendArguments is the argument object this screen sends: `spend.report`'s
+ * own keys, strings only, and nothing else. */
+export type SpendArguments = Readonly<Record<string, string>>
+
+/** SpendArgumentDecision is `spendArguments`'s answer: the object to send, or
+ * the console's sentence for why there is none. */
+export type SpendArgumentDecision =
+  | { readonly ok: true; readonly args: SpendArguments }
+  | { readonly ok: false; readonly reason: string }
+
+/** WINDOW_UNKNOWN, UNTIL_NOT_A_DAY, BREAKDOWN_UNKNOWN and PERSON_OFF_BECAUSE are
+ * the console's own sentences for a control value it will not send. Each is the
+ * console's words and **not** the value: an out-of-schema value is never echoed
+ * back into a sentence, the rule the Live screen's unknown flags follow. */
+const WINDOW_UNKNOWN =
+  'the range picker asked for a window this console does not know: it offers 7d, 30d, 90d and 12w, or a UTC day'
+const UNTIL_NOT_A_DAY = 'the range picker’s end of the range is not a UTC day (YYYY-MM-DD)'
+const BREAKDOWN_UNKNOWN = 'the breakdown switch asked for a breakdown this console does not know'
+const PERSON_OFF_BECAUSE =
+  'the breakdown switch asked for the person breakdown, which is off for this installation until the operator turns the person view on'
+
+/** pickerSince is the picker's `since` as `report --since`, or `null` for a
+ * value outside the picker's own two forms: a window of `SPEND_PICKER_WINDOWS`,
+ * or a UTC day. */
+function pickerSince(since: string): string | null {
+  for (const window of SPEND_PICKER_WINDOWS) if (window === since) return since
+  return dayNumber(since) === null ? null : since
+}
+
+/**
+ * spendArguments is the one place a control becomes an argument object, and it
+ * is **closed**: every value is checked against this screen's own sets before
+ * anything is spawned, and a value outside them is refused here, in the
+ * console's own words, rather than handed to the allow-list to refuse. The
+ * allow-list is the second lock on the same door (`ipc.ts`'s `spend.report`),
+ * not the first.
+ *
+ * The three fields are that operation's own: `since` a day or `Nd`/`Nw`,
+ * `until` a day, `by` one of the seven words. `--repo` is admitted on this
+ * command by the design's allow-list and is deliberately not here -- this screen
+ * draws the whole project, and a field it does not draw is a field it must not
+ * send. There is no `--csv`, no path, no free-form string, no command and no
+ * URL: main builds the argv from this object (design section 5.1 rule 6).
+ */
+export function spendArguments(controls: SpendControls): SpendArgumentDecision {
+  const since = pickerSince(controls.since)
+  if (since === null) return { ok: false, reason: WINDOW_UNKNOWN }
+  if (controls.until !== null && dayNumber(controls.until) === null) {
+    return { ok: false, reason: UNTIL_NOT_A_DAY }
+  }
+  const by = dimensionOf(controls.by)
+  if (by === null) return { ok: false, reason: BREAKDOWN_UNKNOWN }
+  // The person breakdown is off until its own knob is on (D15), and that is
+  // enforced here and not only in the drawing: a switch word the operator never
+  // turned on must not become a read, however the state was reached.
+  if (by === 'person' && !controls.persons) return { ok: false, reason: PERSON_OFF_BECAUSE }
+  // `--until` is omitted rather than sent empty: absent is `report`'s own
+  // today, and an empty string is not a day.
+  const args: Record<string, string> =
+    controls.until === null ? { by, since } : { by, since, until: controls.until }
+  return { ok: true, args: Object.freeze(args) }
+}
+
+/** SpendReader is the one read this screen makes: `spend.report` through the
+ * preload bridge's `runReport`, with a validated argument object and no argv. It
+ * answers with the document, and refuses with a `SourceRefusal` carrying the
+ * CLI's own sentence. */
+export type SpendReader = (args: SpendArguments) => Promise<JSONDoc>
+
+/** SpendOutcome is what one read produced: the model to draw, or the console's
+ * sentence for why there is nothing to draw. `args` is what was asked for --
+ * `null` when the controls themselves were refused and nothing was spawned. */
+export type SpendOutcome =
+  | { readonly ok: true; readonly args: SpendArguments; readonly model: SpendModel }
+  | { readonly ok: false; readonly args: SpendArguments | null; readonly reason: string }
+
+/** READ_REFUSED and READ_REFUSED_UNDRAWABLE are the two sentences for a read
+ * that refused with nothing this screen can draw. */
+const READ_REFUSED = 'the read was refused, and the CLI printed no sentence this console can draw'
+const READ_REFUSED_UNDRAWABLE =
+  'the CLI refused this read, and its own sentence is one this console will not draw'
+
+/**
+ * refusalSentence is the CLI's own sentence out of whatever the read threw,
+ * through `sanitizeRefusal` -- the same treatment the refused-read screen gives
+ * a refusal (design section 6.3: the console shows that text unedited, so the
+ * credential rules and this layer's own apply, and never the pattern classes
+ * that eat a role name).
+ *
+ * The sentence is read **structurally** (`sentence`) rather than by importing
+ * `SourceRefusal`: `src/source/source.ts` is main's module, and this file is
+ * bundled into the window, where main's modules must not be reachable at all.
+ */
+function refusalSentence(cause: unknown): string {
+  const raw = (cause as { readonly sentence?: unknown } | null | undefined)?.sentence
+  if (typeof raw !== 'string' || raw.trim() === '') return READ_REFUSED
+  const drawn = sanitizeRefusal(raw, 'the reason the spend read refused')
+  return drawn.ok ? drawn.text : READ_REFUSED_UNDRAWABLE
+}
+
+/**
+ * readSpend makes the screen's one read and builds the model from what came
+ * back. It is a function of its arguments and touches no element: the drawing is
+ * `renderSpend`'s, and the caller decides when a control change re-reads.
+ *
+ * The budget document is the caller's, because it is `budget.show`'s read and a
+ * different operation: a control change re-reads the report and re-draws the
+ * caps panel from the document the screen already holds. Reading both here would
+ * make one control change two spawns, and the second one about nothing the
+ * operator changed.
+ */
+export async function readSpend(
+  read: SpendReader,
+  controls: SpendControls,
+  caps: JSONDoc | null,
+): Promise<SpendOutcome> {
+  const decision = spendArguments(controls)
+  if (!decision.ok) return { ok: false, args: null, reason: decision.reason }
+  let document: JSONDoc
+  try {
+    document = await read(decision.args)
+  } catch (cause) {
+    return { ok: false, args: decision.args, reason: refusalSentence(cause) }
+  }
+  return {
+    ok: true,
+    args: decision.args,
+    model: buildSpendModel(document, caps, { persons: controls.persons }),
+  }
+}
+
+/**
+ * personView is the operator's own knob (design D15: the person breakdown is off
+ * by default and turned on for the installation, per session). Turning it on
+ * asks for the person breakdown -- the same `runReport` with `by person` and
+ * nothing more -- and turning it off leaves no read that names a person: the
+ * switch's own word goes back to `day`, because `--by person` with the view off
+ * is a read `spendArguments` refuses.
+ */
+export function personView(controls: SpendControls, on: boolean): SpendControls {
+  if (on) return Object.freeze({ ...controls, by: 'person', persons: true })
+  return Object.freeze({
+    ...controls,
+    by: controls.by === 'person' ? 'day' : controls.by,
+    persons: false,
+  })
+}
+
+// ---------------------------------------------------------------------------
 // The drawing.
 // ---------------------------------------------------------------------------
 
@@ -1167,6 +1396,77 @@ function header(factory: ScreenFactory, model: SpendModel): ScreenElement {
   if (model.notice !== null) {
     textCell(element, factory, 'p', model.notice, 'sentence', 'notice', 'spend-notice')
   }
+  return element
+}
+
+/**
+ * windowItem is one window of the range picker: a cell whose word the caller
+ * passes as a literal (the console's own vocabulary for `reportRange`'s
+ * grammar), and whether the operator chose it.
+ */
+function windowItem(parent: ScreenElement, factory: ScreenFactory, current: boolean): ScreenElement {
+  const item = cell(parent, factory, 'li', 'spend-window')
+  item.setAttribute('data-current', current ? 'true' : 'false')
+  return item
+}
+
+/**
+ * picker draws the range picker: `report --since`'s windows as the console's own
+ * words, with the one the operator chose marked, and whether the range's end is
+ * the operator's own day rather than `report`'s today.
+ *
+ * What it draws is the **request**; the header draws the range that came back,
+ * which is the document's own `since`/`until`. The two are different statements
+ * and the screen makes both: a picker that drew only what came back could not
+ * say what was asked for, and a range whose days the history does not hold would
+ * read as a range nobody chose.
+ *
+ * Every word is a literal, because they are the console's vocabulary and not a
+ * document's strings -- the same rule the breakdown switch's seven words follow.
+ */
+function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement {
+  const element = make(factory, 'ol', 'spend-picker')
+  const week = controls.since === '7d'
+  const month = controls.since === '30d'
+  const quarter = controls.since === '90d'
+  const twelveWeeks = controls.since === '12w'
+  literal(windowItem(element, factory, week), '7d')
+  literal(windowItem(element, factory, month), '30d')
+  literal(windowItem(element, factory, quarter), '90d')
+  literal(windowItem(element, factory, twelveWeeks), '12w')
+  // A range the operator named as a day is not one of these windows, and the
+  // picker says so rather than marking the nearest one.
+  const day = !week && !month && !quarter && !twelveWeeks
+  element.setAttribute('data-day', day ? 'true' : 'false')
+  // `--until` is the CLI's own today unless the operator set an end. Which of
+  // the two it is, is a fact about the request; the day itself is the header's.
+  const end = controls.until !== null
+  element.setAttribute('data-until', end ? 'set' : 'cli')
+  return element
+}
+
+/**
+ * personKnob draws the person view's own switch (design D15): its word, whether
+ * it is on, and the one-line note the design asks for beside a view that is off
+ * by default.
+ *
+ * It is a control of its own rather than a state of the breakdown switch: the
+ * switch's `person` word is one of the seven the CLI has, and the operator's
+ * decision about it is a different thing from the breakdown the screen is
+ * currently drawn by. The knob's own `data-enabled` is what the event wiring
+ * reads, and the switch's `person` word is drawn disabled until it is on.
+ */
+function personKnob(factory: ScreenFactory, model: SpendModel): ScreenElement {
+  const element = make(factory, 'div', 'spend-persons')
+  const on = model.persons.enabled
+  element.setAttribute('data-enabled', on ? 'true' : 'false')
+  literal(cell(element, factory, 'span', 'spend-persons-word'), 'person breakdown')
+  const state = cell(element, factory, 'span', 'spend-persons-state')
+  if (on) literal(state, 'on')
+  else literal(state, 'off')
+  const note = cell(element, factory, 'p', 'spend-persons-note')
+  if (on) literal(note, PERSON_ON_NOTE)
+  else literal(note, PERSON_OFF_NOTE)
   return element
 }
 
@@ -1385,17 +1685,30 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
  * renderSpend draws the model and returns the tree it built, so a test can walk
  * what was drawn rather than read a window no test can see.
  *
+ * `controls` is the operator's view state, and it is what the picker and the
+ * person knob draw; the model is what came back from the read those controls
+ * asked for. A caller that has no view state (a static render, a test of the
+ * drawing alone) gets `SPEND_DEFAULT_CONTROLS`, which is the state the screen
+ * opens on.
+ *
  * Every string a document wrote reaches the document through `putText` and
  * every number through `putReading`; the only thing written directly is the
  * console's own vocabulary, through `literal`. No string is parsed as markup,
  * nothing is written into the navigating attribute, and this screen offers no
  * link at all.
  */
-export function renderSpend(factory: ScreenFactory, model: SpendModel, theme: SpendTheme): ScreenElement {
+export function renderSpend(
+  factory: ScreenFactory,
+  model: SpendModel,
+  theme: SpendTheme,
+  controls: SpendControls = SPEND_DEFAULT_CONTROLS,
+): ScreenElement {
   const root = make(factory, 'section', 'spend')
   root.setAttribute('data-theme', theme)
   root.append(header(factory, model))
+  root.append(picker(factory, controls))
   root.append(tabs(factory, model))
+  root.append(personKnob(factory, model))
 
   const accounts = cell(root, factory, 'div', 'spend-accounts')
   for (const series of model.series) accounts.append(accountBlock(factory, model, series))

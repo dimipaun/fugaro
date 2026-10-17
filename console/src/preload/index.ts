@@ -95,6 +95,14 @@ export const BRIDGE_VERSION = 1
  * this declaration, and `assertClosedSurface`, whose `@ts-expect-error`
  * directives stop being errors -- and so fail `npm run typecheck` -- if the
  * literal types are ever widened back into `string`.
+ *
+ * **The twelve rows are still twelve.** The Spend screen's controls (Task 2.4)
+ * wire the range picker and the breakdown switch to `runReport`, and they do it
+ * with the arguments `spend.report` already declares: no operation was added
+ * here, no method was added to one, and no screen gained a way to name a
+ * channel. A task that needs a *new read* adds a row to the table in
+ * `src/main/ipc.ts` and a row here, and the test above is what makes forgetting
+ * the second half fail rather than pass.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],

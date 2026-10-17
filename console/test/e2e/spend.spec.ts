@@ -242,7 +242,7 @@ interface Screen {
   readonly currentWindows: readonly string[]
   readonly personsEnabled: string | null
   readonly personState: string | null
-  readonly points: readonly string[]
+  readonly points: number
   readonly text: string
 }
 

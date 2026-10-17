@@ -35,11 +35,19 @@ import {
   SPEND_DEFAULT_CONTROLS,
   SPEND_DIMENSIONS,
   SPEND_PICKER_WINDOWS,
+  buildSpendModel,
   personView,
   readSpend,
+  renderSpend,
   spendArguments,
 } from '../../src/renderer/screens/spend'
-import type { SpendControls, SpendDimension, SpendReader } from '../../src/renderer/screens/spend'
+import type {
+  ScreenElement,
+  ScreenFactory,
+  SpendControls,
+  SpendDimension,
+  SpendReader,
+} from '../../src/renderer/screens/spend'
 import { installStub } from './stub'
 import type { Stub } from './stub'
 
@@ -62,9 +70,9 @@ const WEEK_DOCUMENT: JSONDoc = {
   weeks: 'iso-utc-monday',
   rows: [
     {
-      key: '2026-10-09',
-      start: '2026-10-09',
-      end: '2026-10-09',
+      key: '2026-10-05',
+      start: '2026-10-05',
+      end: '2026-10-05',
       partial: false,
       model_micros: 1_250_000,
       model_usd: '1.250000',
@@ -78,9 +86,9 @@ const WEEK_DOCUMENT: JSONDoc = {
       calls: 17,
     },
     {
-      key: '2026-10-10',
-      start: '2026-10-10',
-      end: '2026-10-10',
+      key: '2026-10-06',
+      start: '2026-10-06',
+      end: '2026-10-06',
       partial: false,
       model_micros: 900_000,
       model_usd: '0.900000',
@@ -361,12 +369,13 @@ describe('the spend controls', () => {
       '2026-10-11',
     ])
     expect(billed?.points.filter((point) => point.reading.state === 'gap').map((point) => point.key)).toEqual([
-      '2026-10-05',
-      '2026-10-06',
       '2026-10-07',
       '2026-10-08',
+      '2026-10-09',
+      '2026-10-10',
     ])
-    // The four missing days break the line, and no point of them is a figure.
+    // The four missing days break the line in two, and no point of them is a
+    // figure.
     expect(billed?.segments).toBe(2)
     for (const point of billed?.points ?? []) {
       if (point.reading.state !== 'gap') continue
@@ -455,6 +464,76 @@ describe('the spend controls', () => {
   })
 
   // -------------------------------------------------------------------------
+  // The drawing the wiring reads.
+  // -------------------------------------------------------------------------
+  //
+  // The two tests below draw the screen in plain Node. The e2e's goldens are
+  // the real check of the drawing, but they need an Electron and a display;
+  // these assert the two facts the *wiring* depends on -- which window the
+  // picker marks as current, and what the person knob says -- so a control
+  // drawn in a state nothing can read is a failing test and not a screenshot
+  // somebody has to notice.
+
+  it('marks the picker’s current window, and marks a day range as a day range', () => {
+    const off = renderSpend(factory, buildSpendModel(WEEK_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
+    expect(texts(off, 'spend-window')).toEqual(['7d', '30d', '90d', '12w'])
+    expect(marked(off, 'spend-window')).toEqual(['30d'])
+    const pickerOff = only(off, 'spend-picker')
+    expect(pickerOff.getAttribute('data-day')).toBe('false')
+    // The end of the range is the CLI's own today unless the operator set one,
+    // and the picker says which of the two it is.
+    expect(pickerOff.getAttribute('data-until')).toBe('cli')
+    // The header draws the *document's* range, not the window asked for: the
+    // two are different statements and the screen keeps them apart.
+    expect(texts(off, 'spend-since')).toEqual(['2026-10-05'])
+    expect(texts(off, 'spend-until')).toEqual(['2026-10-11'])
+
+    // A day range is not one of the four windows, so none of them is marked:
+    // the picker does not round the operator's days to the nearest window.
+    const day = renderSpend(
+      factory,
+      buildSpendModel(WEEK_DOCUMENT, null),
+      'light',
+      { ...SPEND_DEFAULT_CONTROLS, since: '2026-10-05', until: '2026-10-11' },
+    )
+    expect(marked(day, 'spend-window')).toEqual([])
+    const pickerDay = only(day, 'spend-picker')
+    expect(pickerDay.getAttribute('data-day')).toBe('true')
+    expect(pickerDay.getAttribute('data-until')).toBe('set')
+  })
+
+  it('draws the person knob off, with no person row on the screen, until the knob is on', () => {
+    // Off: the knob is on the screen and it is off, and the person document's
+    // rows are withheld rather than drawn -- the address is not on the screen
+    // at all, not even as a key this console redacted after drawing it.
+    const off = renderSpend(factory, buildSpendModel(PERSON_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
+    expect(only(off, 'spend-persons').getAttribute('data-enabled')).toBe('false')
+    expect(texts(off, 'spend-persons-state')).toEqual(['off'])
+    expect(texts(off, 'spend-persons-note')[0]).toContain('person breakdown is off')
+    expect(all(off, 'spend-row')).toEqual([])
+    expect(drawnText(off)).not.toContain('ada')
+
+    // On: the same document, and the rows are the document's own keys. The one
+    // address is drawn as the console's own marker for it, and the note beside
+    // the knob says what turning it on costs.
+    const on = renderSpend(
+      factory,
+      buildSpendModel(PERSON_DOCUMENT, null, { persons: true }),
+      'light',
+      personView(SPEND_DEFAULT_CONTROLS, true),
+    )
+    expect(only(on, 'spend-persons').getAttribute('data-enabled')).toBe('true')
+    expect(texts(on, 'spend-persons-state')).toEqual(['on'])
+    expect(texts(on, 'spend-persons-note')[0]).toContain('is on for this session')
+    expect(all(on, 'spend-row')).toHaveLength(2)
+    expect(drawnText(on)).toContain('redacted@example.invalid')
+    expect(drawnText(on)).not.toContain('ada')
+    // The switch's own word for the grouping is drawn from the document: the
+    // knob and the switch agree about what this screen is grouped by.
+    expect(texts(on, 'spend-key')).toContain('unknown')
+  })
+
+  // -------------------------------------------------------------------------
   // Values the allow-list does not have.
   // -------------------------------------------------------------------------
 
@@ -522,4 +601,90 @@ function validateOk(args: Readonly<Record<string, string>>) {
   const decision = validateArguments('spend.report', args)
   if (!decision.ok) throw new Error(decision.reason)
   return decision.args
+}
+
+// ---------------------------------------------------------------------------
+// The drawn tree, in plain Node.
+// ---------------------------------------------------------------------------
+
+/**
+ * FakeScreen is a `ScreenElement` that records what it was told and nothing
+ * else. It is deliberately permissive: the attribute names a screen may write
+ * are `screen-literals.test.ts`'s business (it reads the source), and the tags
+ * and classes a screen may draw are `spend.test.ts`'s. What these two tests ask
+ * is only what the tree *says*.
+ */
+class FakeScreen implements ScreenElement {
+  readonly attributes = new Map<string, string>()
+  readonly nodes: FakeScreen[] = []
+  textContent: string | null = null
+
+  constructor(readonly tag: string) {}
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value)
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null
+  }
+
+  removeAttribute(name: string): void {
+    this.attributes.delete(name)
+  }
+
+  append(child: ScreenElement): void {
+    this.nodes.push(child as FakeScreen)
+  }
+
+  childNodes(): readonly ScreenElement[] {
+    return this.nodes
+  }
+}
+
+const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+
+/** walk is the whole tree under `node`, in draw order, the root last. */
+function walk(node: ScreenElement): readonly FakeScreen[] {
+  const out: FakeScreen[] = []
+  const visit = (one: ScreenElement): void => {
+    for (const child of one.childNodes()) visit(child)
+    out.push(one as FakeScreen)
+  }
+  visit(node)
+  return out
+}
+
+/** all is every element of the tree carrying `className`. */
+function all(node: ScreenElement, className: string): readonly FakeScreen[] {
+  return walk(node).filter((one) => (one.getAttribute('class') ?? '').split(/\s+/).includes(className))
+}
+
+/** only is the one element of the tree carrying `className`. */
+function only(node: ScreenElement, className: string): FakeScreen {
+  const found = all(node, className)
+  expect(found).toHaveLength(1)
+  const [first] = found
+  if (first === undefined) throw new Error(`no element carries ${className}`)
+  return first
+}
+
+/** texts is the text of every element carrying `className`, in draw order. */
+function texts(node: ScreenElement, className: string): readonly (string | null)[] {
+  return all(node, className).map((one) => one.textContent)
+}
+
+/** marked is the text of the `className` elements marked `data-current`. */
+function marked(node: ScreenElement, className: string): readonly (string | null)[] {
+  return all(node, className)
+    .filter((one) => one.getAttribute('data-current') === 'true')
+    .map((one) => one.textContent)
+}
+
+/** drawnText is everything the tree says, in one string: the assertion "this
+ * value is nowhere on the screen" needs the whole of it, not a slot. */
+function drawnText(node: ScreenElement): string {
+  return walk(node)
+    .map((one) => one.textContent ?? '')
+    .join('\n')
 }
