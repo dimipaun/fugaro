@@ -778,11 +778,24 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
   with a host literal's stem (`Zoras-Laptop-Pro.local` is also
   `Zoras-Laptop-Pro`). **A person is identity wherever the document spells
   them**: every person-class value is collected before anything is redacted,
-  and the same string anywhere else in the document — a substring, in any
-  case, in NFKC — gets the same pseudonym its field got. The CLI titles a
-  queued run with no workflow by its requester (`internal/watch/queued.go`),
-  and `requested_by` is the config's free-form `user:`, so without this a
-  queued run's title carried the name its `requested_by` had lost. A document
+  and the same name anywhere else in the document — matched on whole words,
+  in any case, in NFKC, look-alikes folded, with any separator between its
+  words and last word first (`Ana  Smith`, `Ana-Smith`, `Smith, Ana`) — gets
+  the same pseudonym its field got. The CLI titles a queued run with no
+  workflow by its requester (`internal/watch/queued.go`), and `requested_by` is
+  the config's free-form `user:`, so without this a queued run's title carried
+  the name its `requested_by` had lost. **People and literals are replaced
+  after every pattern rule**, never before: a requester called `ya29`,
+  `password`, `local` or `42` would otherwise switch off the rule for a token,
+  an assignment, a host or an IP address. The names are a hash table of word
+  sequences, one scan of each string's words whatever the number of people, and
+  a document naming more than 4096 distinct persons (or a person in more than
+  16 words) is refused. A requester that is a contract keyword (`queued`,
+  `run`, `api`, ...) or the `-` placeholder is not a name, and the contract
+  fields (`run`, `id`, `stage`, `status`, `auth`, `health`, `deadline`,
+  `verify`, `outcome`, `mode`, `state`) are never rewritten by the person pass.
+  Every redacted document must be a **fixed point**: redacting it again must
+  change nothing, or the recording is refused. A document
   with a key nobody anticipated still cannot carry an address out of the room, and a test per class holds each one — a run title, a
   requester address, a repository name in the field *and* in a sentence, a
   branch name, a POSIX and a Windows path (including the `/usr`, `/etc`,
@@ -814,7 +827,10 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
   `MAX_REDACTABLE_STRING_LENGTH` (64 KiB) and a feed line longer than
   `MAX_REDACTABLE_LINE_LENGTH` (1 MiB) are **refused before any rule runs**,
   never truncated; the loader holds the same string cap and a record line cap
-  of twice the line cap.
+  of twice the line cap. A document nested deeper than 256 levels, a string
+  whose NFKC form is more than twice its length, and a document whose strings
+  together grow by more than 64 KiB under NFKC are refused too (a `RedactionRefusal`,
+  or a `FixtureRefusal` on load), never a raw `RangeError`.
 - **Redaction is a marker, not a deletion, and the markers are a closed set**
   (`<path>`, `<project>`, `<bucket>`, `<host>`, `<branch>`, `[redacted-token]`,
   `[redacted-url]`, `redacted@example.invalid`, `[redacted]`). A marked value is
