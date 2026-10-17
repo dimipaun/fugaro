@@ -783,3 +783,23 @@ describe('every wire string is classified', () => {
     expect(NON_TEXT_STRING_KEYS.length).toBeGreaterThan(5)
   })
 })
+
+describe('an optional boolean is a boolean or absent (review round 2 of PR 494)', () => {
+  it('refuses a present non-boolean by field name instead of reading it as false', () => {
+    const wrong: readonly { readonly document: JSONDoc; readonly path: readonly (string | number)[]; readonly value: unknown }[] = [
+      { document: first, path: ['runs', 0, 'queued'], value: 'true' },
+      { document: first, path: ['runs', 0, 'stuck'], value: 1 },
+      { document: DEGRADED_REAL, path: ['runs', 0, 'cost', 'compute_estimated'], value: 'true' },
+      { document: DEGRADED_REAL, path: ['runs', 0, 'cost', 'compute_estimated'], value: {} },
+    ]
+    for (const { document, path, value } of wrong) {
+      const refusal = refusalFor(patched(document, path, value))
+      expect(refusal.name, label(path)).toBe('not-a-boolean')
+      expect(refusal.field, label(path)).toBe(label(path))
+    }
+  })
+
+  it('still reads absent and null as false', () => {
+    expect(decodeDocument(patched(DEGRADED_REAL, ['runs', 0, 'cost', 'compute_estimated'], null)).ok).toBe(true)
+  })
+})

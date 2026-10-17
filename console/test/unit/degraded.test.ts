@@ -572,3 +572,20 @@ describe('the console after a refused read', () => {
     expect(all(tree, 'unavailable-install-command')).toEqual([])
   })
 })
+
+describe('the degraded document’s own warnings (review round 2 of PR 494)', () => {
+  it('draws warnings[] through the sentence class, a token in one redacted', () => {
+    const token = githubToken()
+    const document: DegradedDocument = {
+      ...theDegradedDocument(),
+      warnings: ['a failed image rebuild runs a stale image', `the image status can't be read: ${token}`],
+    }
+    const tree = renderNoFirebase(factory, buildNoFirebaseModel(document), 'light')
+    const drawnWarnings = all(tree, 'degraded-document-warning').map((node) => node.textContent)
+    expect(drawnWarnings).toEqual([
+      'a failed image rebuild runs a stale image',
+      `the image status can't be read: ${TOKEN_PLACEHOLDER}`,
+    ])
+    expect(drawn(tree)).not.toContain(token)
+  })
+})

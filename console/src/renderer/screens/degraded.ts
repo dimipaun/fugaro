@@ -146,6 +146,11 @@ export interface NoFirebaseModel {
   /** every non-JSON line the feed carried, in order: contract section 10.8
    * requires the reader to keep them, and a header warning is where they go */
   readonly notices: readonly string[]
+  /** the document's own `warnings[]` (`runs ls --json`'s imageWarnings: "a
+   * failed image rebuild runs a stale image"), job-written text the display
+   * layer re-sanitizes (contract section 9.4) -- the actionable lines, and the
+   * ones the three sibling screens already draw (review round 2 of PR 494) */
+  readonly warnings: readonly string[]
   readonly totals: DegradedTotals
   readonly runs: readonly DegradedRunRow[]
   /** the cap line, always unavailable on this shape */
@@ -249,6 +254,7 @@ export function buildNoFirebaseModel(
     project: document.project,
     notice: document.notice,
     notices: notices.map((one) => one.text),
+    warnings: document.warnings,
     totals: {
       runs: document.totals.runs,
       modelUsd: document.totals.modelUsd,
@@ -379,6 +385,9 @@ function header(factory: ScreenFactory, model: NoFirebaseModel): ScreenElement {
   textCell(element, factory, 'p', model.notice, 'sentence', 'notice', 'degraded-notice')
   for (const notice of model.notices) {
     textCell(element, factory, 'p', notice, 'sentence', 'a line that was not JSON', 'degraded-warning')
+  }
+  for (const [index, warning] of model.warnings.entries()) {
+    textCell(element, factory, 'p', warning, 'sentence', `warnings[${String(index)}]`, 'degraded-document-warning')
   }
   if (model.feed !== null) feedLine(element, factory, model.feed)
   return element

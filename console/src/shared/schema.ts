@@ -339,11 +339,15 @@ function optionalInt(raw: Record<string, unknown>, key: string): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-/** optionalBool reads a key the shape may leave out (`queued`, `stuck`): absent
- * means false, which is what the CLI's own `omitempty` means. */
-function optionalBool(raw: Record<string, unknown>, key: string): boolean {
+/** optionalBool reads a key the shape may leave out (`queued`, `stuck`,
+ * `compute_estimated`): absent or null means false, which is what the CLI's own
+ * `omitempty` means. A value that is there and is not a boolean is refused by
+ * field name, as `boolAt` refuses one (review round 2 of PR 494): reading
+ * `"true"` as false would draw an estimated figure as a measured one. */
+function optionalBool(raw: Record<string, unknown>, key: string, field: string, where: string): boolean {
   const value = raw[key]
-  return value === undefined || value === null ? false : value === true
+  if (value === undefined || value === null) return false
+  return boolAt(value, field === '' ? key : `${field}.${key}`, where)
 }
 
 /** readingOf is the tolerant axis: every number goes through `readNumber`, so an
@@ -797,8 +801,8 @@ function runAt(raw: unknown, index: number, where: string): RunView {
     health: stringAt(required(run, 'health', field, where), `${field}.health`, where),
     deadline: stringAt(required(run, 'deadline', field, where), `${field}.deadline`, where),
     halted: optionalText(run, 'halted', field, where),
-    queued: optionalBool(run, 'queued'),
-    stuck: optionalBool(run, 'stuck'),
+    queued: optionalBool(run, 'queued', field, where),
+    stuck: optionalBool(run, 'stuck', field, where),
     workflow: optionalText(run, 'workflow', field, where),
     requestedBy: optionalText(run, 'requested_by', field, where),
   }
@@ -839,7 +843,7 @@ function costAt(raw: unknown, field: string, where: string): CostView {
     // `compute_estimated`: when it is false, `compute_usd` 0 means "not
     // estimated", not "free" -- so the flag is the state of the number, exactly
     // as `burn.known` is.
-    computeEstimated: optionalBool(cost, 'compute_estimated'),
+    computeEstimated: optionalBool(cost, 'compute_estimated', field, where),
     totalUsd: readingOf(cost, 'total_usd', `${field}.total_usd`),
     modelBasis: stringAt(cost.model_basis ?? '', `${field}.model_basis`, where),
   }
