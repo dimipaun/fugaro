@@ -48,10 +48,10 @@
 
 import { createHash } from 'node:crypto'
 
-import { FeedTracker, MAX_FEED_LINE_LENGTH } from '../main/spawn'
+import { FeedTracker } from '../main/spawn'
 import type { Notice, Timers } from '../main/spawn'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
-import { REDACTOR_VERSION, RedactionRefusal, assertRedacted } from './redact'
+import { MAX_REDACTABLE_LINE_LENGTH, REDACTOR_VERSION, RedactionRefusal, assertRedacted } from './redact'
 import { SourceRefusal, refusalFrom } from './source'
 import type {
   FeedEnd,
@@ -334,7 +334,10 @@ function parseHeader(text: string, where: string): FixtureHeader {
 /** parseRecord reads one body line: a stamp, and a document or a notice. */
 function parseRecord(line: string, where: string, index: number): FixtureRecord {
   const at = `${where} record ${String(index + 1)}`
-  if (line.length > MAX_FEED_LINE_LENGTH) {
+  // A hard cap before the audit runs: the redactor's line bound, doubled for the
+  // record's own wrapper and for markers longer than what they replaced. The
+  // audit then holds every string to the redactor's string bound.
+  if (line.length > 2 * MAX_REDACTABLE_LINE_LENGTH) {
     throw new FixtureRefusal(`${at} is longer than a feed line can be`)
   }
   let parsed: unknown
