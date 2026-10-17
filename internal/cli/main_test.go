@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestMain closes the ways a test could reach real Google through a
@@ -76,7 +77,16 @@ func TestMain(m *testing.M) {
 		}
 		return blobx.Open(ctx, url)
 	}
-	os.Exit(m.Run())
+	// The fake gh of the watch tests links to one wrapper, run once here
+	// before any test can fork (testutil.FakeCommand).
+	cleanupFakes, err := testutil.PrepareFakeCommands()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	cleanupFakes()
+	os.Exit(code)
 }
 
 // A test that reaches findLayer's bucket with a gs:// URL and no seam
