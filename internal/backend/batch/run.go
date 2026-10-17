@@ -155,6 +155,18 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		return nil, fmt.Errorf("launching %s: %w", full, err)
 	}
 	for _, kv := range extra {
+		if kv.Secret {
+			// A secret entry is the budget seal key (D15): the only place this
+			// backend could put it is the job definition's plain variables,
+			// which anyone who can describe the job reads — a wider audience
+			// than the Cloud Run override the design prices
+			// (docs/design/budget-token-channel.md §7.1 and its Slice B note).
+			// Refused rather than carried, and the value is not quoted, until
+			// a carrier the design allows exists for Batch (an open owner
+			// question; secretVariables would need a per-run secret, which is
+			// the design's rejected C2).
+			return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which a job reader can see, so the key is not put there and nothing was created; a sealed budget run cannot run on Batch yet", full, kv.Name)
+		}
 		vars[kv.Name] = kv.Value
 	}
 	// The other fast start, and the one a Docker run cannot have: with
