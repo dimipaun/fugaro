@@ -769,6 +769,37 @@ describe('the burn bars of a repository with no history', () => {
   })
 })
 
+describe('a burn the document marks as not known', () => {
+  // `schema.ts` already maps `known: false` to an unavailable rate, so the
+  // decoded path never reaches the screen's own guard. The screen must not
+  // lean on that: a burn handed to it with `known: false` and a measured zero
+  // beside the flag is drawn as unavailable, never as $0/min.
+  const unknownBurn = { known: false, usdPerMin: measured(0), fast: false }
+
+  it('draws n/a and a gap bar, never a measured $0/min', () => {
+    const frame = theLastFrame()
+    const document: LiveDocument = {
+      ...frame,
+      repos: frame.repos.map((repo) => ({ ...repo, burn: unknownBurn })),
+    }
+    const model = buildLiveModel(document, new BurnHistory())
+    expect(model.repos.length).toBeGreaterThan(0)
+    for (const repo of model.repos) {
+      expect(repo.burnPerMin.state).toBe('unavailable')
+      expect(formatReading(repo.burnPerMin, 'usd')).toBe('n/a')
+    }
+    const tree = renderLive(factory, model, 'light')
+    const rates = all(tree, 'live-burn-rate')
+    expect(rates.length).toBeGreaterThan(0)
+    for (const rate of rates) {
+      expect(rate.textContent).toBe('n/a')
+    }
+    const bars = all(tree, 'live-burn-bar')
+    expect(bars.length).toBeGreaterThan(0)
+    for (const bar of bars) expect(bar.getAttribute('data-state')).toBe('gap')
+  })
+})
+
 describe('the rendered screen', () => {
   it('draws every part the design names', () => {
     const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
