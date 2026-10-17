@@ -1235,8 +1235,10 @@ fails on the first line matching a credential shape — the forges' prefixes, th
 vendors' keys, a JWT's first segment, a PEM header — with the patterns themselves
 assembled from fragments and the scan checked against a planted line, so a scan
 that cannot fail is not mistaken for one that passes. Turning the rule on it
-found and removed seventeen literals left by Task 1.4's own suites (one of them
-a 36-character body that is exactly what a leaked GitHub token looks like), and
+found and removed twenty-one literal lines left by Task 1.4's own suites, across
+five files, one of them a 36-character body that is exactly what a leaked GitHub
+token looks like -- and every test that had been running against them still runs
+against the same strings, assembled at run time. And
 `TOKEN_RES`'s first pattern in `src/source/redact.ts` is now built from
 fragments, character-for-character the expression it was.
 
