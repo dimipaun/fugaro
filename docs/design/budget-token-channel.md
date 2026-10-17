@@ -46,11 +46,16 @@ marker's value (`LaunchSpec.SecretEnv`); a `--retry` re-mints and re-seals under
 deletes the earlier object first (D17); the launcher's own errors are redacted of the key. The
 object moves to `tokens/<slug>/<run>/budget-token` (`token.ObjectPrefix`), `PutObject` has no
 plaintext form, and the take is read-only — no delete, no fallback keyed on a 403 (§7.2). A mixed
-fleet fails closed both ways: the launcher refuses to mint against a job image whose release base
-predates `sealSince` (the gate D19 allows) — and, on the owner's answer of 2026-10-17, against a
-development image whose build record says it was built before the seal's runner half
-(`sealRunnerIntroduced`), while any other development image only warns — and a runner handed a marker of `1` — a launcher from
-before the seal — refuses at the take with the old side named, never reading a plaintext object.
+fleet is gated both ways, closed except for one warned case: the launcher refuses to mint against a
+job image whose release base predates `sealSince` (the gate D19 allows), or whose build record is
+missing or names no base; on the owner's answer of 2026-10-17 it also refuses a development base
+whose record does not say `sealed_budget_token` (the base's own fugaro writes it at render) and was
+built before the seal's runner half (`sealRunnerIntroduced`). A development base with neither — no
+`sealed_budget_token` and a later or missing `built_at`, which is the job image's build time and
+not the base's — cannot be shown either way and **only warns**, so a launch against an old
+development base rebuilt today still goes ahead; the exact list is `docs/release.md`'s `sealSince`
+line. A runner handed a marker of `1` — a launcher from before the seal — refuses at the take with
+the old side named, never reading a plaintext object.
 The grants moved with the object (§7.2, §7.5): the job account's `tokens/<slug>/` is
 `roles/storage.objectViewer` (`google_storage_bucket_iam_member.job_tokens`, in the workflow
 module), and the launchers' conditioned write is widened to `runs/ || tokens/` under the new title

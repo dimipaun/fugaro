@@ -326,11 +326,12 @@ func (e *cloudEnv) batchBudgetPrecheck(ctx context.Context, slug, repo string, n
 // is the one every *Since gate uses (checkImageSince, or checkCloneImageSince
 // for a checkout: clone workflow): a release older than sealSince and a
 // missing build record refuse. An image built from a base that is not a
-// release (a development build) is refused when its build record shows it was
-// built before the seal's runner half existed (sealDevRefusal), and is
-// otherwise only warned about, because whether it supports the seal cannot be
-// shown (the owner's answer of 2026-10-17). A checkout: clone job has no build
-// record, so a development base there is only warned about.
+// release (a development build) passes when its build record says the base's
+// own fugaro reads the sealed token, is refused when the record shows it was
+// built before the seal's runner half existed, and is otherwise only warned
+// about, because whether it supports the seal cannot be shown
+// (sealDevRefusal; the owner's answer of 2026-10-17). A checkout: clone job
+// has no build record, so a development base there is only warned about.
 func (e *cloudEnv) sealGate(ctx context.Context, slug string, spec *task.Spec, kind string, clone bool, warn io.Writer) error {
 	mint, err := e.budgetMintOn(ctx)
 	if err != nil || !mint {
@@ -345,17 +346,26 @@ func (e *cloudEnv) sealGate(ctx context.Context, slug string, spec *task.Spec, k
 }
 
 // sealDevRefusal judges a job image built from a base that is not a release
-// (a development or hand-pushed image) for the seal gate: one whose build
-// record says it was built before the seal's runner half existed
-// (sealRunnerIntroduced) cannot run a runner that reads the sealed token, and
-// is refused with the image named. One built after, or with no build time,
-// cannot be shown either way and is left to checkImageSinceDev's warning.
-func sealDevRefusal(spec *task.Spec) func(rec *imagecheck.Record, ref string) error {
-	return func(rec *imagecheck.Record, ref string) error {
-		if rec.BuiltAt.IsZero() || !rec.BuiltAt.Before(sealRunnerIntroduced) {
-			return nil
+// (a development or hand-pushed image) for the seal gate, from its build
+// record, whose render half the BASE's own fugaro wrote:
+//
+//   - the record says that fugaro reads the sealed token
+//     (imagecheck.Record.SealedBudgetToken): supported, no warning;
+//   - otherwise, a record built before the seal's runner half existed
+//     (sealRunnerIntroduced) cannot come from a base that has it: refused,
+//     with the image named;
+//   - otherwise (built after, or no built_at) it cannot be shown either way —
+//     a job image rebuilt today from an old development base looks the same
+//     as one from a base with only the runner half — and the gate only warns.
+func sealDevRefusal(spec *task.Spec) func(rec *imagecheck.Record, ref string) (bool, error) {
+	return func(rec *imagecheck.Record, ref string) (bool, error) {
+		if rec.SealedBudgetToken {
+			return true, nil
 		}
-		return userErr("a launch that mints a budget token (the token is sealed and its key is in FUGARO_BUDGET_TOKEN) needs a job image whose runner knows the sealed budget token, "+
+		if rec.BuiltAt.IsZero() || !rec.BuiltAt.Before(sealRunnerIntroduced) {
+			return false, nil
+		}
+		return false, userErr("a launch that mints a budget token (the token is sealed and its key is in FUGARO_BUDGET_TOKEN) needs a job image whose runner knows the sealed budget token, "+
 			"but the job image of %s workflow %s was built from %s, which is not a release base image, on %s, and so predates the seal (its runner half was introduced on %s): "+
 			"its runner would echo the seal key into the run's record. Rebuild the base image from a checkout that has the seal and then the job image from it with fugaro image build --repo %s --workflow %s, "+
 			"or move the workflow to a release base image (fugaro %s or later) with fugaro image refresh in its checkout, in your own terminal window",

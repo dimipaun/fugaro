@@ -728,6 +728,12 @@ func TestImageRenderCloudOutputs(t *testing.T) {
 		rec.Image != "" || rec.ImageDigest != "" || rec.Adopted {
 		t.Errorf("record.json = %+v", rec)
 	}
+	// The render step runs the BASE image's own fugaro, so this field is the
+	// base's statement that its runner reads the sealed budget token: the
+	// seal gate's proof for a development base (sealDevRefusal).
+	if !rec.SealedBudgetToken {
+		t.Error("record.json does not say this runner reads the sealed budget token")
+	}
 	for name, want := range map[string]string{"source-commit": commit + "\n", "built-at": rec.BuiltAt.Format(time.RFC3339) + "\n"} {
 		if got, _ := os.ReadFile(filepath.Join(ws, name)); string(got) != want {
 			t.Errorf("%s = %q, want %q", name, got, want)

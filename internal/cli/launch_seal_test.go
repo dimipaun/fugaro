@@ -258,20 +258,25 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 		name, base string
 		record     bool
 		builtAt    time.Time
+		sealed     bool // the record says its base's runner reads the sealed token
 		refused    string
 		warns      string
 	}{
-		{"a release before the seal", "ghcr.io/dimipaun/fugaro-base:0.8.1", true, time.Time{}, "release 0.8.1", ""},
-		{"no build record", "", false, time.Time{}, "has no build record", ""},
-		{"the seal's release", releaseSeal, true, time.Time{}, "", ""},
+		{"a release before the seal", "ghcr.io/dimipaun/fugaro-base:0.8.1", true, time.Time{}, false, "release 0.8.1", ""},
+		{"no build record", "", false, time.Time{}, false, "has no build record", ""},
+		{"the seal's release", releaseSeal, true, time.Time{}, false, "", ""},
 		// A development image built before the seal's runner half existed
 		// cannot carry it: refused, naming the image and the seal (the
 		// owner's answer to open question 2, 2026-10-17).
-		{"a development image older than the seal", devSealBase, true, sealRunnerIntroduced.Add(-time.Hour), "predates the seal", ""},
+		{"a development image older than the seal", devSealBase, true, sealRunnerIntroduced.Add(-time.Hour), false, "predates the seal", ""},
 		// One built after may still run an older base: whether it supports
 		// the seal cannot be shown, so it warns and is not refused.
-		{"a development image built after the seal", devSealBase, true, sealRunnerIntroduced.Add(time.Hour), "", "not a release base image"},
-		{"a development image of unknown age", devSealBase, true, time.Time{}, "", "not a release base image"},
+		{"a development image built after the seal", devSealBase, true, sealRunnerIntroduced.Add(time.Hour), false, "", "not a release base image"},
+		{"a development image of unknown age", devSealBase, true, time.Time{}, false, "", "not a release base image"},
+		// A record whose base's own fugaro says its runner reads the sealed
+		// token (it is the base's binary that renders the record) is shown to
+		// support the seal: no refusal and no warning.
+		{"a development image whose base says it reads the seal", devSealBase, true, sealRunnerIntroduced.Add(time.Hour), true, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")
@@ -279,7 +284,7 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.record {
-				writeBuildRecordAt(t, f.cloudFixture, appSlug, "web", tc.base, tc.builtAt)
+				writeBuildRecordAt(t, f.cloudFixture, appSlug, "web", tc.base, tc.builtAt, tc.sealed)
 			}
 			_, errOut, err := runBudget(t)
 			if tc.refused == "" {
@@ -288,6 +293,9 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 				}
 				if tc.warns != "" && !strings.Contains(errOut, tc.warns) {
 					t.Fatalf("stderr = %q, want a warning that says %q", errOut, tc.warns)
+				}
+				if tc.warns == "" && strings.Contains(errOut, "sealed budget token") {
+					t.Fatalf("stderr = %q, want no seal warning", errOut)
 				}
 				return
 			}
@@ -322,9 +330,9 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 const devSealBase = "europe-docker.pkg.dev/p/r/fugaro-base:dev-abc"
 
 // writeBuildRecordAt is writeBuildRecord with the record's built_at.
-func writeBuildRecordAt(t *testing.T, f *cloudFixture, slug, workflow, baseRef string, builtAt time.Time) {
+func writeBuildRecordAt(t *testing.T, f *cloudFixture, slug, workflow, baseRef string, builtAt time.Time, sealed bool) {
 	t.Helper()
-	data, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: workflow, BaseRef: baseRef, FugaroVersion: "0.5.0", BuiltAt: builtAt})
+	data, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: workflow, BaseRef: baseRef, FugaroVersion: "0.5.0", BuiltAt: builtAt, SealedBudgetToken: sealed})
 	if err != nil {
 		t.Fatal(err)
 	}

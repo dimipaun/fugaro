@@ -52,7 +52,16 @@ type Record struct {
 	ImageDigest string `json:"image_digest"` // sha256:… that latest was promoted to
 
 	FugaroVersion string `json:"fugaro_version"`
-	TemplateSalt  string `json:"template_salt"`
+	// SealedBudgetToken is true when the fugaro that rendered this record —
+	// the BASE image's own binary, which runs the image build's render step
+	// (images/derived/cloudbuild.yaml) and so is the binary the job runs —
+	// reads the sealed budget token (docs/design/budget-token-channel.md
+	// §7.1). It is the only statement a development base, which has no
+	// release version, can make about the seal: the launcher's seal gate
+	// accepts it as proof. A record without it (a base whose fugaro predates
+	// the field) proves nothing either way.
+	SealedBudgetToken bool   `json:"sealed_budget_token,omitempty"`
+	TemplateSalt      string `json:"template_salt"`
 	// Adopted is reserved for a record written for an image the build
 	// did not make; builds always write false.
 	Adopted bool `json:"adopted"`

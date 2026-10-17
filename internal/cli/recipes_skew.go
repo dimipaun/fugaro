@@ -202,13 +202,16 @@ const sealSince = "0.9.0"
 // sealRunnerIntroduced is when the seal's runner half (#417, Slice A) reached
 // the integration branch (its merge into next-0.9, 2026-10-17 17:45:33 UTC).
 // A job image whose base is not a release has no version to compare with
-// sealSince; the one thing its build record can show is when it was built,
-// and an image built before this cannot hold a runner that reads the sealed
+// sealSince. Its build record is rendered by the base's own fugaro, which
+// says so when it reads the sealed token (Record.SealedBudgetToken, a pass);
+// failing that, the record's built_at is the job image's build time, and a
+// job image built before this cannot hold a runner that reads the sealed
 // token, so the seal gate refuses it (the owner's answer of 2026-10-17: a
 // development image that predates the seal is refused, one that cannot be
-// shown either way is warned about). An image built after it may still have
-// been built FROM an older base, which the record cannot show: that one is
-// only warned about.
+// shown either way is warned about). A job image built after it, with no
+// such statement, may have been built FROM an older base, which the record
+// cannot show (built_at is not the base's build time): that one is only
+// warned about.
 var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
 
 // needsRecipeImage reports whether a launch needs a runner that knows
@@ -273,10 +276,11 @@ func checkImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task
 }
 
 // checkImageSinceDev is checkImageSince with a judge for an image whose base
-// is not a release: devRefusal returns the refusal of such an image when its
-// record shows it cannot know knows, and nil when that cannot be shown (the
-// warning then stands). A nil devRefusal only warns, as checkImageSince does.
-func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, since, subject, knows, alt string, devRefusal func(rec *imagecheck.Record, ref string) error, warn io.Writer) error {
+// is not a release: devJudge returns the refusal of such an image when its
+// record shows it cannot know knows, supported when the record shows it does
+// (no warning then), and neither when that cannot be shown (the warning
+// stands). A nil devJudge only warns, as checkImageSince does.
+func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, since, subject, knows, alt string, devJudge func(rec *imagecheck.Record, ref string) (supported bool, err error), warn io.Writer) error {
 	base := "this release's base image"
 	if kind != "" {
 		base = "this release's " + kind + " base image"
@@ -310,9 +314,13 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 	// not judged here; init and image build own that.
 	switch rel, ok := releaseOf(rec.BaseRef); {
 	case !ok:
-		if devRefusal != nil {
-			if err := devRefusal(rec, ref); err != nil {
+		if devJudge != nil {
+			supported, err := devJudge(rec, ref)
+			if err != nil {
 				return err
+			}
+			if supported {
+				return nil
 			}
 		}
 		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows %s is not checked\n", spec.Repo, spec.Workflow, ref, knows)
