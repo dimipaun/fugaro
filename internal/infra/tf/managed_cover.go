@@ -907,6 +907,10 @@ func (c ManagedCover) managedProviderProject(p *Plan) []string {
 		where := "provider_config." + key + " (lands resources in "
 		raw, set := cfg.ProviderConfig[key].Expressions["project"]
 		if !set {
+			// Terraform's JSON gives a provider config of a module nested two
+			// or more deep (module.m.module.n:google) no expressions at all, so
+			// it lands here too: a known conservative refusal that fails closed
+			// (the run asks for the typed confirmation), never a pass.
 			out = append(out, "provider_config."+key+" (sets no project, so it lands resources in whatever project the environment of whoever applies names, which the plan does not show: it is not proven to be this run's — write the project out)")
 			continue
 		}

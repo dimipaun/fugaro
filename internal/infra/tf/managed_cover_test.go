@@ -999,6 +999,16 @@ func TestManagedCoverRefusesAComputedProjectAResourceSets(t *testing.T) {
 		"managed_resource_computed_project_instances_plan.json": {
 			`google_secret_manager_secret.f["x.y"]`, `google_secret_manager_secret.f["z[0]"]`,
 			"google_storage_bucket.c[0]", "google_storage_bucket.c[1]", `module.m["k"].google_storage_bucket.b[0]`},
+		// Real plan output (terraform 1.16, google 8.4.0): the root bucket sets
+		// a computed project and module.m has an identically named bucket that
+		// sets none: only the root one is refused, so a lookup that drops the
+		// module path on both sides is caught.
+		"managed_resource_computed_project_samename_plan.json": {
+			"google_storage_bucket.a"},
+		// The same type.name at four module paths: only module.x's sets a
+		// computed project (var.p), and so does module.y.module.x's.
+		"managed_resource_computed_project_samename_paths_plan.json": {
+			"module.x.google_storage_bucket.a", "module.y.module.x.google_storage_bucket.a"},
 	} {
 		t.Run(fixture, func(t *testing.T) {
 			out := managedTestCover().NotCovered(readPlanFixture(t, fixture), nil)
