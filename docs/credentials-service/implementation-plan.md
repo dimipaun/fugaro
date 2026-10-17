@@ -2,7 +2,7 @@
 
 **Goal.** Build what [spec.md](spec.md) asks for **as amended by [reconciliation.md](reconciliation.md)**, the owner's answers of 2026-10-17 (D130–D154) and the owner's two rulings of 2026-10-17 (**O1: skip Slice 1, go straight to the service**; **O2: `agent.auth: cascade` with no switch in the project policy is refused**): first a **separately deployed Cloud Run service** that alone holds the model credentials and alone writes the cascade's shared state, running the **credential cascade** (tier A, shared subscription OAuth tokens, then tier B, an Anthropic API key) with exhaustion and broken marks, probes, wait-or-switch and per-call accounting, reached by a job through the in-runner gateway with its run identity (Slice 1); then **GitHub App installation tokens minted by the service** per job (Slice 2). Where the reconciliation and the spec disagree, the reconciliation wins.
 
-**Status: plan only; nothing is implemented.** No line of any task below has been written or run. **The owner answered every decision on 2026-10-17** — all as recommended except **D132** (answered "proceed and record the risk as accepted") — and ruled on O1 and O2 the same day. **Answering a decision or ruling on an open item is not approving a task: no task in this plan is approved.** Each task starts only on the owner's explicit go for that task (or for a named group of tasks); the gate at the end of this file is not passed. Two items are open in [reconciliation.md](reconciliation.md) §4: **O3** (a real choice for the owner: how the routing switch's provider-route requirement composes with an A→B cascade) and **O4** (the plan's reading of how the service learns each repository's admitted accounts, to be confirmed); the tasks they hold say so.
+**Status: plan only; nothing is implemented.** No line of any task below has been written or run. **The owner answered every decision on 2026-10-17** — all as recommended except **D132** (answered "proceed and record the risk as accepted") — ruled on O1 and O2 the same day, and answered O3 and confirmed O4 the same day. **Answering a decision or ruling on an item is not approving a task: no task in this plan is approved.** Each task starts only on the owner's explicit go for that task (or for a named group of tasks); the gate at the end of this file is not passed. No item is open in [reconciliation.md](reconciliation.md) §4: **O3** is answered — the cascade's switch is `routing.claude: {via: cascade}`, which needs no provider route while tier C for Claude is off and leaves `via: auto` unchanged — and **O4** is confirmed — the service learns each repository's admitted accounts from what `fugaro project policy publish` publishes.
 
 **What waits for 0.9.0.** Because the service is now the first product slice, **every product task of this plan waits for the seal — both halves — which is held for 0.9.0** (D134): PR #417 (the seal's runner half, Slice A, a held draft on `next-0.9`) **and** its launcher half (the seal design's Slice B, D19's second step: the launcher seals the token object and hands the key to the execution it starts; a `--retry` re-mints and re-seals, D17; not yet opened as a pull request). **What can be done earlier, each still on the owner's go:** Slice 0 (the supersession notes, Checks 90 and 91 written and run by the owner), docs-only work, and one piece of rules groundwork that needs no rules change and no run-token grant (C0.6: emulator tests pinning that today's rules already deny every run token all of `creds/`).
 
@@ -118,7 +118,7 @@ Check 47 (the superseded held plan's) stays reserved and unused (D130).
 A reviewer of **this pull request** (docs only) should check:
 
 - That every answer cell in [reconciliation.md](reconciliation.md) §3 matches the owner's answers, that **D132** reads as an accepted owner risk with no view on Anthropic's terms, and that D136 and D137 carry the dated O1 amendment with the original answer still visible.
-- That O1 and O2 are recorded as the owner's rulings, and O3 and O4 are real items, correctly stated, and that the tasks they hold say so.
+- That O1 and O2 are recorded as the owner's rulings, O3 as answered (`via: cascade`) and O4 as confirmed, and that no task still waits on any of them or names `via: auto` as the cascade's switch.
 - That every path and symbol below exists on `origin/main` (or is marked **new**), and that no task claims a test protects what it does not.
 - That every decision has a consequence in a task (the table "Decisions → tasks" below), every decision whose consequence lived in the declined slice lands in a Slice 1 task, and that no task needs something a later task builds.
 - That the levels contain no two writers of one file, every "Depends on" line is an edge below and every edge is a "Depends on" line, and the critical path is the one named.
@@ -151,15 +151,15 @@ A reviewer of a **task** reads its own "Reviewer" line and the Review notes in i
 | D147 | C1.18 (opt-in variable), C1.20 |
 | D148 | C1.22 |
 | D149 | C1.15 (local `fugaro exec` untouched), C3.5 |
-| D150 | C1.2 (the switch, and O3), C1.19 (the launch reads it); C3.6 |
+| D150 | C1.2 (the switch, `via: cascade` per O3), C1.19 (the launch reads it); C3.6 |
 | D151 | C0.3–C0.5 |
 | D152 | C1.2 (the setting and its validation), C1.11 (the service honours it) |
 | D153 | C1.2 (policy only), C1.9 (backoff), C1.12 (the probe) |
 | D154 | C1.9 (stickiness and the round-robin counter in `creds/`, service-written), C1.11 |
 | O1 (ruling) | The whole plan; Convention 11; Global Constraint 11; C0.6, C1.3 |
 | O2 (ruling) | C1.1 (`fugaro validate`), C1.19 (the launch) |
-| O3 (open) | C1.1, C1.2, C1.19 wait on it |
-| O4 (plan's reading) | C1.2 (admissions published), C1.11 (the service reads them) |
+| O3 (answered: `via: cascade`) | C1.1 (the O2 error names it), C1.2 (`CheckRouting` accepts it without a provider route), C1.19 (the launch reads it) |
+| O4 (confirmed) | C1.2 (admissions published), C1.11 (the service reads them) |
 
 ---
 
@@ -214,8 +214,8 @@ C0.2  ← nothing                      C0.3 ← nothing           C0.6 ← nothi
 C0.4  ← C0.3 (owner)                 C0.5 ← C0.3 (owner)
 G     = #417 merged + seal launcher half merged + C0.4 + C0.5
 
-C1.1  ← G; O3 answered               C1.3  ← G, C0.6
-C1.2  ← G, C1.3; O3 answered         C1.4  ← C1.3
+C1.1  ← G                            C1.3  ← G, C0.6
+C1.2  ← G, C1.3                      C1.4  ← C1.3
 C1.5  ← C1.3, C1.4                   C1.6  ← C1.5 (owner)
 C1.7  ← G                            C1.8  ← C1.7
 C1.9  ← G, C1.2                      C1.10 ← G
@@ -273,7 +273,7 @@ C2.5  ← C2.4, C1.24 (owner; plus a release)
 
 ### Task C0.1: The owner's answers and rulings, written back — performed by this pull request
 
-**Files.** `docs/credentials-service/reconciliation.md`, `README.md`, this file. **Depends on.** The owner's answers and the O1/O2 rulings (2026-10-17). **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`. **Reviewer.** standard.
+**Files.** `docs/credentials-service/reconciliation.md`, `README.md`, this file. **Depends on.** The owner's answers, the O1/O2 rulings and the O3/O4 answers (2026-10-17). **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`. **Reviewer.** standard.
 Writing the answers approves no task.
 
 ### Task C0.2: The supersession notes (D130, D131) — docs
@@ -325,22 +325,22 @@ Writing the answers approves no task.
 ### Task C1.1: `agent.auth: cascade`, its refusals and its skew constant — SECURITY-SENSITIVE
 
 **Files.** `internal/config/validate.go` (`Validate`'s auth list), `internal/config/layer.go` (its auth list), `internal/config/providers.go` (`CheckProviderAuth`), `internal/config/config.go` (doc comment), `schemas/fugaro.schema.json`, `internal/cli/recipes_skew.go` (**new** constant `cascadeSince`), `internal/cli/validate.go` (the O2 refusal).
-**Interfaces.** `agent.auth` gains `cascade`. A `cascade` workflow: needs budget mode `observe` or `enforce` (the gateway must be on; refused otherwise, naming the mode); is refused when `followup.allow_public` is true (D130 carry-over); keeps review mode's trusted-author gate; may name `agent.oauth_token` accounts only from its admitted set. `CheckProviderAuth` keeps refusing `oauth` with any provider route and refuses a `cascade` workflow whose provider route would carry a tier-A credential. **O2 (the owner's ruling, 2026-10-17):** a `cascade` workflow whose project policy does not turn the cascade on is **refused** — by `fugaro validate` here and at launch (C1.19) — with an error naming exactly what to set in the project policy and that only the operator can set it (`routing.claude: {via: auto}`, or the switch O3 settles on): a repository may ask for the cascade, only the operator-written project policy enables it. When `fugaro validate` cannot read the published policy it says so and does not pass the workflow silently.
+**Interfaces.** `agent.auth` gains `cascade`. A `cascade` workflow: needs budget mode `observe` or `enforce` (the gateway must be on; refused otherwise, naming the mode); is refused when `followup.allow_public` is true (D130 carry-over); keeps review mode's trusted-author gate; may name `agent.oauth_token` accounts only from its admitted set. `CheckProviderAuth` keeps refusing `oauth` with any provider route and refuses a `cascade` workflow whose provider route would carry a tier-A credential. **O2 (the owner's ruling, 2026-10-17):** a `cascade` workflow whose project policy does not turn the cascade on is **refused** — by `fugaro validate` here and at launch (C1.19) — with an error naming exactly what to set in the project policy and that only the operator can set it (`routing.claude: {via: cascade}`, the spelling O3 settled): a repository may ask for the cascade, only the operator-written project policy enables it. When `fugaro validate` cannot read the published policy it says so and does not pass the workflow silently.
 **Tests.** `TestValidateAcceptsCascade`, `TestCascadeRefusedWithBudgetOff`, `TestCascadeRefusedWithAllowPublic`, `TestLayerAcceptsCascade`, `TestCheckProviderAuthCascadeNeverSendsOAuthToAProvider`, `TestValidateRefusesCascadeWithoutPolicySwitch` (O2; the message names the setting), `TestInitRepoRefusesCascadeOnOlderBaseImage` (the skew), schema corpus case.
 **Red step.** Write `TestValidateAcceptsCascade` and `TestInitRepoRefusesCascadeOnOlderBaseImage` first; both fail on today's auth list.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/config/... ./schemas/... ./internal/cli -run 'Cascade|Skew|Validate|Schema' -count=1`.
-**Depends on.** G; O3 answered (the switch's spelling). **Reviewer.** opus + mandatory independent review.
+**Depends on.** G. **Reviewer.** opus + mandatory independent review.
 **Commit.** `config: agent.auth cascade, refused without the gateway, with followup.allow_public, without the policy's switch (O2), and on an older base image`
 
 ### Task C1.2: The cascade's policy settings, the admissions and the policy version bump — SECURITY-SENSITIVE
 
-**Files.** `internal/projectpolicy/policy.go` (a `Credentials` member: `fallback` = `oauth-only` | `auto`; `wait_threshold`; `backoff` (initial, cap); `stop_after_exhaustion_per_window`; `concurrency_per_token`; and, per repository in `config/policy/repos/$slug`, the **names** of its admitted Claude accounts — O4), `internal/projectpolicy/version.go` (`Version` 1 → 2), `internal/cli/project_cmd.go` (`fugaro project policy publish`: validation, and publishing each repository's admitted account names from `config.ClaudeAccount.AllowDataTo`), `internal/config/routing.go` (`CheckRouting`'s rule for the cascade, **as O3 decides**).
-**Interfaces.** D152: `fallback` absent means `oauth-only`; `auto` is refused unless the policy's `budget.mode` is `enforce` with `per_run_usd` > 0. D153: these live only in the project policy (no `fugaro.yaml` key). Defaults: threshold 15 min, backoff 15 min doubling, capped at 5 h (probed, C1.12). D150 + O2: the policy's switch turns the cascade on for `cascade` workflows; for every other auth today's meaning of `routing.claude` is unchanged; tier C for Claude stays off (C3.6). **O3:** today `CheckRouting` requires, under `via: auto`, that every listed model is claimed by exactly one provider entry with `allow_data_to` written — a route an A→B cascade never uses — and `via: auto` is project-wide, so turning it on changes where an `api-key` workflow with no Anthropic key sends those models. This task implements whichever the owner chooses in O3 and nothing else. **O4:** admissions are names only, never values; publishing them is how the service (an admin reader) learns which accounts each repository may use; a repository's run can read its own node today and gains nothing it could not already infer from its own job.
+**Files.** `internal/projectpolicy/policy.go` (a `Credentials` member: `fallback` = `oauth-only` | `auto`; `wait_threshold`; `backoff` (initial, cap); `stop_after_exhaustion_per_window`; `concurrency_per_token`; and, per repository in `config/policy/repos/$slug`, the **names** of its admitted Claude accounts — O4), `internal/projectpolicy/version.go` (`Version` 1 → 2), `internal/cli/project_cmd.go` (`fugaro project policy publish`: validation, and publishing each repository's admitted account names from `config.ClaudeAccount.AllowDataTo`), `internal/config/routing.go` (`RoutingClaude.Via` gains `cascade`; `CheckRouting` accepts it with no provider claim while tier C for Claude is off — O3).
+**Interfaces.** D152: `fallback` absent means `oauth-only`; `auto` is refused unless the policy's `budget.mode` is `enforce` with `per_run_usd` > 0. D153: these live only in the project policy (no `fugaro.yaml` key). Defaults: threshold 15 min, backoff 15 min doubling, capped at 5 h (probed, C1.12). D150 + O2: the policy's switch turns the cascade on for `cascade` workflows; for every other auth today's meaning of `routing.claude` is unchanged; tier C for Claude stays off (C3.6). **O3 (answered 2026-10-17):** the switch is `routing.claude: {via: cascade}`. It turns the cascade on for `cascade` workflows and needs no provider route while tier C for Claude is off (C3.6); `via: auto` and `CheckRouting`'s rule for it are unchanged, so an `api-key` workflow's routing does not move. **O4:** admissions are names only, never values; publishing them is how the service (an admin reader) learns which accounts each repository may use; a repository's run can read its own node today and gains nothing it could not already infer from its own job.
 **Version skew.** A node at version 2 read by an older CLI or runner yields today's `SkewSentence` text; tests pin both directions.
-**Tests.** `TestPolicyCredentialsDefaults`, `TestPolicyFallbackAutoRefusedWithoutEnforceCap`, `TestPolicyCredentialsUnknownKeyRefused`, `TestPolicyAdmissionsPublishedNamesOnly`, `TestPolicyVersion2SkewSentences`, `TestRoutingAutoMeaningUnchangedForAPIKey`, and O3's own case.
+**Tests.** `TestPolicyCredentialsDefaults`, `TestPolicyFallbackAutoRefusedWithoutEnforceCap`, `TestPolicyCredentialsUnknownKeyRefused`, `TestPolicyAdmissionsPublishedNamesOnly`, `TestPolicyVersion2SkewSentences`, `TestRoutingAutoMeaningUnchangedForAPIKey`, `TestRoutingCascadeNeedsNoProviderClaim` (O3).
 **Red step.** `TestPolicyFallbackAutoRefusedWithoutEnforceCap` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/projectpolicy/... ./internal/config/... -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run 'Policy|Routing' -count=1`.
-**Depends on.** G; C1.3 (shares `version.go` only); O3 answered. **Reviewer.** opus + mandatory independent review.
+**Depends on.** G; C1.3 (shares `version.go` only). **Reviewer.** opus + mandatory independent review.
 **Commit.** `projectpolicy: credentials fallback, threshold, backoff, the two controls and the admitted accounts (D142, D152, D153); policy version 2`
 
 ### Task C1.3: The rules — `creds/` denied, the run's new children, by-tier counters — SECURITY-SENSITIVE
@@ -486,7 +486,7 @@ Writing the answers approves no task.
 **Tests.** `TestCascadeRefusedWithoutPolicySwitch` (O2, at launch), `TestCascadeRefusedWithoutService`, `TestCascadeAgentEnvHoldsNoCredential`, `TestCascadeRecordsOAuthAccount`, `TestCascadeWritesCurrentCredentialName`, `TestGatewayOnForCascade`.
 **Red step.** `TestCascadeAgentEnvHoldsNoCredential` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/runner/... ./internal/agent/... ./internal/cli -run 'Cascade|Routing|Gateway|Account' -count=1`.
-**Depends on.** C1.1, C1.2, C1.15, C1.17; O3 answered (through C1.1 and C1.2). **Reviewer.** opus + **MANDATORY** independent review.
+**Depends on.** C1.1, C1.2, C1.15, C1.17. **Reviewer.** opus + **MANDATORY** independent review.
 **Commit.** `runner: wire agent.auth cascade — the service upstream, the policy switch (O2), the record`
 
 ### Task C1.20: The mounts and the owner-run init stage — SECURITY-SENSITIVE
@@ -582,4 +582,4 @@ Each needs its own plan amendment and the owner's go.
 
 ## OWNER APPROVAL GATE
 
-**Not passed. No task is approved.** The owner answered D130–D154 and ruled on O1 and O2 on 2026-10-17; that answers the design, not the work. To start any task the owner names it (or a slice) and says go. Before 0.9.0, only Slice 0 can start. Before any Slice 1 task: the seal — #417 and its launcher half — merged, Checks 90 and 91 recorded (C0.4, C0.5); before C1.1, C1.2 and C1.19: O3 answered; before C1.2 and C1.11: O4 confirmed or corrected.
+**Not passed. No task is approved.** The owner answered D130–D154, ruled on O1 and O2, answered O3 and confirmed O4 on 2026-10-17; that answers the design, not the work. To start any task the owner names it (or a slice) and says go. Before 0.9.0, only Slice 0 can start. Before any Slice 1 task: the seal — #417 and its launcher half — merged, Checks 90 and 91 recorded (C0.4, C0.5). No open item holds any task.
