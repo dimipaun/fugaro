@@ -1629,28 +1629,87 @@ func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 		t.Errorf("%s's console job carries `if: %s`: a guarded job is a check that can be skipped, and a skipped check is not a success", consoleTestsWorkflowPath, job.If)
 	}
 
-	// No `paths:`/`paths-ignore:` at the trigger level or on the job. This is the
-	// failure that refuses every release, including the ones that ship none of
-	// the console: once Task 4.6's `names="test terraform rules console"` is in
-	// place, the gate would require a check this filter skipped.
-	for key, value := range on {
-		if key != "push" {
-			continue
-		}
-		push, ok := value.(map[string]any)
-		if !ok {
-			t.Fatalf("%s's push trigger is %T, want a mapping", consoleTestsWorkflowPath, value)
-		}
-		for _, filter := range []string{"paths", "paths-ignore"} {
-			if _, ok := push[filter]; ok {
-				t.Errorf("%s's push trigger carries `%s:`: the console job must run unconditionally or the release gate refuses every tag", consoleTestsWorkflowPath, filter)
-			}
-		}
+	// No `paths:`/`paths-ignore:` at the trigger level or on the job -- **every
+	// trigger**, not just `push`. This is the failure that refuses every release,
+	// including the ones that ship none of the console: once Task 4.6's
+	// `names="test terraform rules console"` is in place, the gate would require
+	// a check this filter skipped. The check is a function over the parsed `on:`
+	// map rather than a loop here, because the file has no such filter anywhere:
+	// a loop passes whether or not it looks at the trigger it is about, and an
+	// earlier revision skipped every key but `push`, so a filter under
+	// `pull_request` -- the trigger that decides whether the console job runs on
+	// a pull request at all -- was never inspected.
+	if offences := triggerFilterOffences(on); len(offences) > 0 {
+		t.Errorf("%s's %s the console job must run unconditionally or the release gate refuses every tag",
+			consoleTestsWorkflowPath, strings.Join(offences, "; "))
 	}
 	for _, filter := range []string{"paths", "paths-ignore", "if"} {
 		if _, ok := rawJobs["console"][filter]; ok {
 			t.Errorf("%s's console job carries `%s:`, and the job that produces the gate's `console` check has neither", consoleTestsWorkflowPath, filter)
 		}
+	}
+}
+
+// triggerFilterOffences reports every trigger-level `paths:`/`paths-ignore:` in
+// a parsed `on:` block: the filters that would stop the console job running for
+// a change, which is the failure Task 4.6's release gate refuses every tag over.
+//
+// It is a function over the parsed map rather than a loop inside the test that
+// calls it, because the staged workflow carries no such filter at any trigger --
+// so a loop there passes by not being reached, which is exactly what an earlier
+// revision did: it skipped every key but `push`, and a `paths:` under
+// `pull_request:` (the trigger that decides whether the console job runs on a
+// pull request at all) was never looked at.
+// TestConsoleTriggerFilterOffencesSeesEveryTrigger hands this function the map
+// that has one, so the check cannot go back to passing vacuously.
+func triggerFilterOffences(on map[string]any) []string {
+	keys := make([]string, 0, len(on))
+	for key := range on {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var offences []string
+	for _, key := range keys {
+		trigger, ok := on[key].(map[string]any)
+		if !ok {
+			// A bare `pull_request:` is YAML null: the trigger with no filters at
+			// all, which is the state this check wants. Anything that is not a
+			// mapping carries no `paths:` either.
+			continue
+		}
+		for _, filter := range []string{"paths", "paths-ignore"} {
+			if _, ok := trigger[filter]; ok {
+				offences = append(offences, key+" trigger carries `"+filter+"`:")
+			}
+		}
+	}
+	return offences
+}
+
+// TestConsoleTriggerFilterOffencesSeesEveryTrigger is the mutation-proof half of
+// the trigger-filter check: it hands that check a map with a filter on the
+// trigger the earlier revision skipped, and one on a trigger that does not exist
+// today, and requires both to be reported -- and the shape the staged workflow
+// actually has to report nothing, so the check is not passing by refusing
+// everything.
+func TestConsoleTriggerFilterOffencesSeesEveryTrigger(t *testing.T) {
+	hostile := map[string]any{
+		"push":              map[string]any{"branches": []any{"main"}},
+		"pull_request":      map[string]any{"paths": []any{"console/**"}},
+		"workflow_dispatch": map[string]any{"paths-ignore": []any{"docs/**"}},
+	}
+	want := []string{
+		"pull_request trigger carries `paths`:",
+		"workflow_dispatch trigger carries `paths-ignore`:",
+	}
+	if got := triggerFilterOffences(hostile); !slices.Equal(got, want) {
+		t.Errorf("triggerFilterOffences(%v) = %v, want %v", hostile, got, want)
+	}
+	// The staged file's own `on:` block: `push:` with branches, and a bare
+	// `pull_request:` (YAML null).
+	clean := map[string]any{"push": map[string]any{"branches": []any{"main"}}, "pull_request": nil}
+	if got := triggerFilterOffences(clean); len(got) != 0 {
+		t.Errorf("triggerFilterOffences(%v) = %v, want no offences: a filter on a bare trigger is nil, not an offence", clean, got)
 	}
 }
 
