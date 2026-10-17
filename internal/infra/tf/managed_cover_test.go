@@ -1,6 +1,7 @@
 package tf
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -893,7 +894,11 @@ func TestManagedCoverRefusesLocks(t *testing.T) {
 // way Task 1.1 re-derived the type list: each is re-justified rather than
 // inherited, the two that carry the spec's step 3 are kept, and the ones that
 // only make sense for Fugaro's own embedded modules are dropped with a fixture
-// that now passes, so the dropping is a diff rather than a silence.
+// that now passes, so the dropping is a diff rather than a silence. The two
+// kept ones are read where they can fire: the project rule on the resource and
+// on the provider block that decides the project of a resource left to it, and
+// the billing rule before the type rule that would otherwise refuse every
+// budget before its account was read.
 
 // TestManagedCoverProjectScope is the first retained check: the project every
 // resource is in, kept as the WIDER rule Cover.Projects is — a resource is
@@ -938,33 +943,111 @@ func TestManagedCoverProjectScope(t *testing.T) {
 
 // TestManagedCoverBillingAccount is the second retained check: the billing
 // account the review showed, which is what makes a plan that moves billing
-// refuse. It is read where it lives rather than through NotCovered, because
-// google_billing_budget is off the managed list (Task 1.1's managedDropped: a
-// billing-account permission no project role can hold) and a plan carrying one
-// is refused for its type first — this rule is the second line a re-decided
-// type would meet. The type's own refusal is asserted beside it, so neither
-// half can be mistaken for the other.
+// refuse. It is read before the type rule and asserted through NotCovered,
+// because google_billing_budget is off the managed list (Task 1.1's
+// managedDropped: a billing-account permission no project role can hold): read
+// after it, this rule could never fire — every budget would be refused for its
+// type first and the account would go unread — while read before it, a plan
+// that moves billing is refused for the account it moves it to, which is the
+// rule's own reason for existing. The type's refusal is asserted beside it, so
+// neither half can be mistaken for the other.
 func TestManagedCoverBillingAccount(t *testing.T) {
 	budget := func(account string) ResourceChange {
 		return mrc("google_billing_budget", map[string]any{"billing_account": account})
 	}
-	if why := managedTestCover().managedAttributes(budget("billingAccounts/AAAA-BBBB")); why != "" {
-		t.Errorf("a budget on the review's billing account gives %q, want it admitted", why)
+	// The passing fixture: the review's own account, which this rule admits —
+	// the refusal that follows is the type's.
+	out := managedTestCover().NotCovered(managedPlan(budget("billingAccounts/AAAA-BBBB")), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "the managed project's allowlist leaves out") {
+		t.Fatalf("a budget on the review's account gives %q, want one refusal for its type", out)
 	}
 	for name, account := range map[string]string{
 		"another billing account": "billingAccounts/CCCC-DDDD",
 		"no billing account":      "",
 	} {
 		t.Run("refuses "+name, func(t *testing.T) {
-			why := managedTestCover().managedAttributes(budget(account))
-			if why == "" || !strings.Contains(why, "billing account") {
-				t.Fatalf("gives %q, want the billing account refused", why)
+			out := managedTestCover().NotCovered(managedPlan(budget(account)), nil)
+			if !refusedWith(out, budget(account).Address+" (", "billing account") {
+				t.Fatalf("gives %q, want the billing account refused", out)
 			}
 		})
 	}
-	out := managedTestCover().NotCovered(managedPlan(budget("billingAccounts/CCCC-DDDD")), nil)
-	if len(out) != 1 || !strings.Contains(out[0], "the managed project's allowlist leaves out") {
-		t.Fatalf("a budget gives %q, want one refusal for its type", out)
+}
+
+// providerProjectPlan is a plan of one managed bucket whose root provider
+// block sets project from expr, with the plan's own variables beside it when
+// given. It is the shape terraform writes for a resource left to its provider
+// block (testdata/managed_provider_clean_plan.json): the bucket's own project
+// is unknown, and the block decides where it lands.
+func providerProjectPlan(t *testing.T, project map[string]any, variables map[string]any) *Plan {
+	t.Helper()
+	cfg := config(nil, []map[string]any{bucketConfig()}, nil)
+	cfg["provider_config"] = map[string]any{"google": map[string]any{
+		"name": "google", "full_name": googleProvider,
+		"expressions": map[string]any{"project": project}}}
+	doc := map[string]any{"format_version": "1.2",
+		"resource_changes": []any{bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)},
+		"configuration":    cfg}
+	if variables != nil {
+		doc["variables"] = variables
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsePlan(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestManagedCoverRefusesAForeignProjectInAProviderBlock is the project rule
+// one level up, and it is what the rule's own justification rests on: a
+// resource that leaves its project to its provider block is admitted because
+// that block decides where it lands, so the block's project is read too —
+// written out, or read from a variable whose value the plan itself carries
+// (testdata/managed_provider_clean_plan.json is terraform's own output for
+// that shape). Without this, the wider rule is bypassed by moving the project
+// one line up: the same resource that is refused for naming proj-2 itself is
+// covered when the block names it, which is the escape a plan that leaves
+// every resource's project unknown is.
+//
+// A variable whose value the plan does not show stays Task 1.1's: the form
+// check admits a setting read from variables alone, and there is no value in
+// the plan to read. A module's own block is checked the same way and no
+// further: terraform writes the module's configuration, not the arguments the
+// call passes it, so a module variable's value is not in the plan.
+func TestManagedCoverRefusesAForeignProjectInAProviderBlock(t *testing.T) {
+	admits := map[string]struct {
+		project   map[string]any
+		variables map[string]any
+	}{
+		"written out":                                 {constant("proj-1"), nil},
+		"read from a variable the plan shows":         {refs("var.project"), map[string]any{"project": map[string]any{"value": "proj-1"}}},
+		"read from a variable the plan does not show": {refs("var.project"), nil},
+	}
+	for name, tc := range admits {
+		t.Run("admits a provider block whose project is "+name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(providerProjectPlan(t, tc.project, tc.variables), nil); len(out) != 0 {
+				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+	refuses := map[string]struct {
+		project   map[string]any
+		variables map[string]any
+	}{
+		"written out":                         {constant("proj-2"), nil},
+		"read from a variable the plan shows": {refs("var.project"), map[string]any{"project": map[string]any{"value": "proj-2"}}},
+	}
+	for name, tc := range refuses {
+		t.Run("refuses a provider block whose project is "+name+" and is not this run's", func(t *testing.T) {
+			out := managedTestCover().NotCovered(providerProjectPlan(t, tc.project, tc.variables), nil)
+			if !refusedWith(out, "provider_config.google (", "in project proj-2, which is not this run's") {
+				t.Fatalf("gives %q, want the provider block refused for the project its resources land in", out)
+			}
+		})
 	}
 }
 
@@ -990,6 +1073,14 @@ func TestManagedCoverRefusesASecondProjectInTerraformsOwnPlan(t *testing.T) {
 // as must be the managed project's own. The sink's project is dropped with its
 // type (TestManagedCoverRefusesTheDroppedTypes), and the bucket or repository
 // a grant is on with the prefix rule, so neither has a fixture here.
+//
+// Each row asserts both halves, so that it isolates the check it is named for
+// rather than the first one init's cover happens to reach: init's cover is
+// asked the same plan and must refuse it for that check's own reason, and the
+// managed cover must admit it. A row whose fixture init's cover refuses
+// earlier — the image check before the command, the command before the check
+// spec — proves nothing about the check it is named for, which is why every
+// job below runs the image init's cover admits.
 func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 	// job is the kept job fixture with the container replaced: its name and its
 	// service account stay what Task 1.1 requires, so the type, the prefix and
@@ -1004,27 +1095,47 @@ func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 			}}}},
 		})
 	}
-	for name, rc := range map[string]ResourceChange{
-		"an image outside this run's registry": job(map[string]any{"image": "docker.io/library/alpine:3"}),
-		"a container command the modules do not set": job(map[string]any{
-			"image": "docker.io/library/alpine:3", "command": []any{"/bin/sh"}, "args": []any{"-c", "true"}}),
-		"a check spec pointing at another registry": job(map[string]any{
-			"image": "docker.io/library/alpine:3",
-			"env":   []any{map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"registry":"attacker.example"}`}}}),
-		"a scheduler calling a job that is not this run's": mrc("google_cloud_scheduler_job", map[string]any{
-			"name": ManagedPrefix + "sweep",
-			"http_target": []any{map[string]any{
-				"uri":         "https://run.googleapis.com/v2/projects/other/locations/us-east5/jobs/fugaro-sweep:run",
-				"oauth_token": []any{map[string]any{"service_account_email": managedAccount}}}}}),
-		"a bucket without public access prevention": mrc("google_storage_bucket", map[string]any{
-			"name": ManagedPrefix + "bucket", "public_access_prevention": "inherited", "uniform_bucket_level_access": false}),
-		"an API key whose targets are not the web key's": mrc("google_apikeys_key", map[string]any{
-			"name":         ManagedPrefix + "key",
-			"restrictions": []any{map[string]any{"api_targets": []any{map[string]any{"service": "compute.googleapis.com"}}}}}),
+	// registryImage is an image of this run's registry: init's image check
+	// admits it (testCover's Ghcr is not a prefix of it, so no pin is read), so
+	// a job running it reaches the checks after the image's own.
+	const registryImage = "us-east5-docker.pkg.dev/proj-1/base/job:1"
+	for name, tc := range map[string]struct {
+		rc   ResourceChange
+		want string // what init's cover refuses it for
+	}{
+		"an image outside this run's registry": {
+			job(map[string]any{"image": "docker.io/library/alpine:3"}),
+			"which is outside this run's registry"},
+		"a container command the modules do not set": {
+			job(map[string]any{"image": registryImage, "command": []any{"/bin/sh"}, "args": []any{"-c", "true"}}),
+			"runs a command the modules do not set"},
+		"a check spec pointing at another registry": {
+			job(map[string]any{"image": registryImage, "command": []any{"fugaro"}, "args": []any{"image", "check", "--job"},
+				"env": []any{map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"registry":"attacker.example"}`}}}),
+			"a check spec whose registry"},
+		"a scheduler calling a job that is not this run's": {
+			mrc("google_cloud_scheduler_job", map[string]any{
+				"name": ManagedPrefix + "sweep",
+				"http_target": []any{map[string]any{
+					"uri":         "https://run.googleapis.com/v2/projects/other/locations/us-east5/jobs/fugaro-sweep:run",
+					"oauth_token": []any{map[string]any{"service_account_email": managedAccount}}}}}),
+			"not a job of this run's project and region"},
+		"a bucket without public access prevention": {
+			mrc("google_storage_bucket", map[string]any{
+				"name": ManagedPrefix + "bucket", "public_access_prevention": "inherited", "uniform_bucket_level_access": false}),
+			"without public access prevention"},
+		"an API key whose targets are not the web key's": {
+			mrc("google_apikeys_key", map[string]any{
+				"name":         ManagedPrefix + "key",
+				"restrictions": []any{map[string]any{"api_targets": []any{map[string]any{"service": "compute.googleapis.com"}}}}}),
+			"whose API targets are not the web key's"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if out := managedTestCover().NotCovered(managedPlan(rc), nil); len(out) != 0 {
+			if out := managedTestCover().NotCovered(managedPlan(tc.rc), nil); len(out) != 0 {
 				t.Fatalf("%s gives %q, want it covered: the check is dropped for a managed plan", name, out)
+			}
+			if out := testCover.NotCovered(managedPlan(tc.rc), nil); !refusedWith(out, tc.want) {
+				t.Fatalf("init's cover gives %q, want it refused for %q: the row would not isolate the check", out, tc.want)
 			}
 		})
 	}
