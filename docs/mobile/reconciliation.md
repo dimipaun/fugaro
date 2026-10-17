@@ -410,7 +410,7 @@ Each row: the question, **this work's recommendation**, the **alternative and wh
 17. **D125** — its own artifact.
 18. **D126** — pure functions against fakes; live checks 80–89 owner-run.
 19. **D127** — a local interrupt switch.
-20. **D128** — D47 inherited: no destructive voice commands in v1. *(Amended by the owner 2026-10-17: cancel and approve/merge allowed on the phone with a read-back and an explicit "confirm"; see D128's cell.)*
+20. **D128** — D47 inherited: no destructive voice commands in v1. *(Amended by the owner 2026-10-17: cancel, approve/merge and confirming an action allowed on the phone with a read-back and an explicit "confirm"; see D128's cell.)*
 21. **D129** — the amendments, made in the separate docs-only change that writes these answers back.
 22. **D113c** — answered option (ii): a new `fugaro` command (tension (c), resolved 2026-10-17: `fugaro mailbox`). Gates Task P4.1.
 
