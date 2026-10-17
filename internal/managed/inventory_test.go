@@ -371,8 +371,8 @@ func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
 			t.Errorf("the installation's %s role does not hold %s:\n%s", RoleCloudAssetReader, want, role)
 		}
 	}
-	if slices.Contains(tf.FugaroRoles, "roles/cloudasset.viewer") {
-		t.Error("the wider predefined Cloud Asset role is still one of FugaroRoles")
+	if strings.Contains(string(iam), "roles/cloudasset.viewer") {
+		t.Error("the installation module still names the wider predefined Cloud Asset role")
 	}
 
 	// And the gate admits the grant the module makes, which is the coupling
