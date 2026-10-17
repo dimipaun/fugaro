@@ -73,6 +73,14 @@ describe('a person-class value is pseudonymised wherever else it appears (review
     expect(out.reason).toBe(`switched off by ${out.kill.by}`)
   })
 
+  it('refuses a document that keeps a person verbatim where no rule rewrites it', () => {
+    // A report's dimension is kept as written; a requester with the same
+    // spelling is a person the audit will not let through.
+    expect(message(() => createRedactor().redactDocument({ requested_by: 'week', report: { by: 'week' } }))).toMatch(
+      /a person the document names in a person field/,
+    )
+  })
+
   it('does not spread a placeholder requester into the words around it', () => {
     const out = JSON.parse(red({ runs: [{ requested_by: '-', title: '- a quiet run -' }] })) as {
       runs: { title: string }[]
@@ -134,7 +142,8 @@ describe('every rule runs in linear time, and a string has a hard cap (review it
     const start = performance.now()
     const said = message(() => redactor.redactDocument({ t: 'a'.repeat(MAX_REDACTABLE_STRING_LENGTH + 1) }))
     expect(performance.now() - start).toBeLessThan(1_000)
-    expect(said).toMatch(/longer than the redactor accepts/)
+    // Refused by the bound itself, not by the audit after a full redaction.
+    expect(said).toMatch(/^a string is longer than the redactor accepts/)
     expect(() => redactor.redactDocument({ ['k'.repeat(MAX_REDACTABLE_STRING_LENGTH + 1)]: 1 })).toThrow(RedactionRefusal)
     expect(() => assertRedacted({ t: 'a'.repeat(MAX_REDACTABLE_STRING_LENGTH + 1) })).toThrow(RedactionRefusal)
     // A string at the cap is fine.
@@ -142,8 +151,10 @@ describe('every rule runs in linear time, and a string has a hard cap (review it
   })
 
   it('refuses a feed line over the cap, and the loader holds the same cap', () => {
-    const line = JSON.stringify({ t: 'a b '.repeat(MAX_REDACTABLE_LINE_LENGTH / 4) })
-    expect(message(() => redactor.redactFeedLine(line))).toMatch(/longer than the redactor accepts/)
+    // Every string in it is short: only the line's own bound refuses it.
+    const line = JSON.stringify({ t: new Array<string>(Math.ceil(MAX_REDACTABLE_LINE_LENGTH / 6) + 16).fill('a b') })
+    expect(line.length).toBeGreaterThan(MAX_REDACTABLE_LINE_LENGTH)
+    expect(message(() => redactor.redactFeedLine(line))).toMatch(/^a feed line is longer than the redactor accepts/)
     const records = [{ at: '2026-10-15T12:00:00Z', document: { t: 'a '.repeat(MAX_REDACTABLE_STRING_LENGTH) } }]
     expect(() => loadFixture(writeFixture(records, SYNTHETIC_META), 'big.ndjson')).toThrow(FixtureRefusal)
   })
