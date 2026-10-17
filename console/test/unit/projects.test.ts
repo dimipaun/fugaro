@@ -218,13 +218,13 @@ const RUNS = {
   project: 'example-project',
   runs: [
     {
-      run: 'run-4a5b6c7d8e9f',
-      run_id: '4a5b6c7d8e9f',
+      run: '20261015-110030-4a5b',
+      run_id: '4a5b',
       repo: 'example-owner/example-repo',
       workflow: 'default',
       status: 'running',
       stage: 'verify',
-      branch: 'fugaro/run-4a5b6c7d8e9f',
+      branch: 'fugaro/20261015-110030-4a5b',
       requested_by: 'operator@example.test',
       pr: 42,
       pr_url: 'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
@@ -232,8 +232,8 @@ const RUNS = {
       cost: { model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' },
     },
     {
-      run: 'run-112233445566',
-      run_id: '112233445566',
+      run: '20261015-100000-1122',
+      run_id: '1122',
       repo: 'example-owner/other-repo',
       workflow: 'default',
       status: 'finished',
@@ -553,8 +553,8 @@ function drawnText(node: ScreenElement): string {
 const DIAGNOSIS = {
   project: 'example-project',
   row: {
-    run: 'run-4a5b6c7d8e9f',
-    run_id: '4a5b6c7d8e9f',
+    run: '20261015-110030-4a5b',
+    run_id: '4a5b',
     repo: 'example-owner/example-repo',
     workflow: 'default',
     oauth_account: 'claude-ops@example.test',
@@ -562,7 +562,7 @@ const DIAGNOSIS = {
     status: 'finished',
     stage: 'done',
     reason: 'the run finished',
-    branch: 'fugaro/run-4a5b6c7d8e9f',
+    branch: 'fugaro/20261015-110030-4a5b',
     outcome: 'success',
     requested_by: 'operator@example.test',
     pr: 42,
@@ -600,7 +600,7 @@ const DIAGNOSIS = {
   flaky: [],
   findings: [],
   log_tail: ['verify: TestSpend failed'],
-  report_path: 'runs/example/run-4a5b6c7d8e9f/report.json',
+  report_path: 'runs/example/20261015-110030-4a5b/report.json',
 }
 
 /** LOG_LINES is `logs RUN --json`: one compact `logLine` object per line, as
@@ -628,7 +628,7 @@ function runInputs(overrides: Partial<RunInputs> = {}): RunInputs {
 describe('buildRunModel', () => {
   it('reads the ledger, the stage timeline and the outcome out of the row', () => {
     const model = buildRunModel(runInputs())
-    expect(model.row.run).toBe('run-4a5b6c7d8e9f')
+    expect(model.row.run).toBe('20261015-110030-4a5b')
     expect(model.row.repo).toBe('example-owner/example-repo')
     expect(model.row.outcome).toBe('success')
     expect(model.row.status).toBe('finished')
