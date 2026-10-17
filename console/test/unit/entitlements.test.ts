@@ -54,6 +54,54 @@ export function commentsOf(source: string): readonly string[] {
   return source.match(/<!--[\s\S]*?-->/g) ?? []
 }
 
+/**
+ * xmlCommentProblems reports every way `source`'s XML comments break XML 1.0's
+ * comment production: a comment's body may not contain `--`, and may not end
+ * with `-`.
+ *
+ * It exists because everything above reads this file with a regular expression,
+ * and a regular expression cannot see this. `<!-- a -- b -->` is matched happily
+ * by `commentsOf` (the only `-->` in it is the real terminator) and stripped
+ * happily by `parseEntitlements`, so the suite is green on a file that *every
+ * real XML parser refuses*: `plistlib` on expat, which is what Apple's own
+ * tooling is built on, answers `not well-formed (invalid token)` and reads no
+ * entitlement at all. This plist was written that way -- `--` as a dash, in the
+ * prose that justifies the set -- and it was this suite's regexes, and nothing
+ * else, that accepted it.
+ *
+ * The scan is deliberately the same shape as the readers above it: find a
+ * comment, take its body, move past it. It is stricter than they are in the one
+ * place that matters, and it says which body it objected to.
+ */
+export function xmlCommentProblems(source: string): readonly string[] {
+  const problems: string[] = []
+  let rest = source
+  for (;;) {
+    const open = rest.indexOf('<!--')
+    const close = rest.indexOf('-->')
+    if (close !== -1 && (open === -1 || close < open)) {
+      problems.push('a `-->` with no `<!--` before it')
+      rest = rest.slice(close + '-->'.length)
+      continue
+    }
+    if (open === -1) return problems
+    const end = rest.indexOf('-->', open + '<!--'.length)
+    if (end === -1) {
+      problems.push('a comment that is never closed')
+      return problems
+    }
+    const body = rest.slice(open + '<!--'.length, end)
+    const double = body.indexOf('--')
+    if (double !== -1) {
+      problems.push(
+        `\`--\` inside a comment: ...${JSON.stringify(body.slice(Math.max(0, double - 30), double + 30))}...`,
+      )
+    }
+    if (body.endsWith('-')) problems.push('a comment whose body ends with `-`')
+    rest = rest.slice(end + '-->'.length)
+  }
+}
+
 const KEY_VALUE_RE = /<key>([^<]+)<\/key>\s*(<true\/>|<false\/>|<string>[^<]*<\/string>)/g
 
 /**
@@ -246,6 +294,29 @@ describe('the entitlements parser refuses more than it reads', () => {
     // The plan's red step, held as a fixture: the minimum set plus one entry.
     expect(notJustified([...GRANTED, PLANTED])).toEqual([PLANTED])
     expect(notJustified(GRANTED)).toEqual([])
+  })
+})
+
+describe('the plist is well-formed XML, not merely readable by this suite', () => {
+  it('has no comment a real XML parser would refuse', () => {
+    // The file is read by electron-builder, by `codesign` and by the owner's
+    // `plutil`/`plistlib`; a comment carrying `--` makes all of them reject the
+    // document whole, and the entitlements with it -- while the two regular
+    // expressions above see nothing wrong.
+    expect(xmlCommentProblems(plistText)).toEqual([])
+  })
+
+  it('reports the breakages it exists for, so the assertion above can fail', () => {
+    // Held as fixtures, because a checker that cannot fail passes the real file
+    // too. The first is the shape the shipped file had (review), the rest are
+    // the two other ways a comment stops being a comment.
+    expect(xmlCommentProblems('<!-- com.apple.security.cs.allow-jit -- granted -->')).toHaveLength(1)
+    expect(xmlCommentProblems('<!-- fine - and fine -->')).toEqual([])
+    expect(xmlCommentProblems('<!-- trailing --->')).toEqual(['a comment whose body ends with `-`'])
+    expect(xmlCommentProblems('<!-- never closed')).toEqual(['a comment that is never closed'])
+    expect(xmlCommentProblems('a stray --> in the document')).toEqual([
+      'a `-->` with no `<!--` before it',
+    ])
   })
 })
 
