@@ -1759,19 +1759,46 @@ the runner's temp directory and hands on its *path*, which is what both
 readers take: `APPLE_API_KEY` is a file to electron-builder and `--key` is a
 file to notarytool. The key's value never reaches a command line.
 
-**No secret is on the runner while anything installs or downloads, and one
-step holds all six.** The checkout, setup-node, `npm ci --ignore-scripts
---no-audit --no-fund`, Electron's own download (`node
-node_modules/electron/install.js`) and an unsigned warm-up `npm run package --
--c.mac.identity=null` (whose output is deleted) run first, with no secret in
-any environment: the warm-up is what downloads the two Electron archives the
+**Two jobs, and the write token is never in the job that runs the packer.**
+`release` (the protected environment, the Apple secrets, the packer, on
+`macos-15`) holds `contents: read` and `checks: read` only: it gates, builds,
+signs, notarises, staples, verifies, and uploads the `.dmg`, the `.zip`, the
+record and the SHA-256 sums as the workflow artifact `console-release-assets`.
+`publish` (`needs: release`, on `ubuntu-24.04`: no environment, no Apple
+secret, no checkout, no packer) is the only job with `contents: write`: it
+downloads the artifact, re-checks every file with `sha256sum --strict --check`
+and that the `.dmg` and `.zip` are named for the tag's version, and publishes.
+The artifact actions carry the pins `release.yml` and `images.yml` already use.
+`GH_TOKEN` is in exactly two steps' `env:`: the gate (read-only) and the
+publish step.
+
+**The version is the tag's.** `package.json` says `0.0.0` and nothing in it is
+a release version, so a step before anything is built refuses a tag that is
+not a strict `vX.Y.Z`, and both packs are stamped with
+`-c.extraMetadata.version=X.Y.Z` (through `env:`). The `.dmg` and `.zip` names
+therefore carry the real version (`Fugaro Console-X.Y.Z-universal.dmg`,
+`…-universal-mac.zip`), the signing step refuses artifacts not named for it,
+and the update feed of plan Tasks 4.3/4.4 depends on it: a console that called
+itself 0.0.0 would never see an update as newer.
+
+**No secret is placed in any step's environment or on disk while anything
+installs or downloads, and one step holds all six.** (The runner process
+receives the environment's secrets when the job starts; what the file controls
+is where they are exposed.) The checkout, setup-node (no `cache:`: a restored
+cache is written by other runs), `npm ci --ignore-scripts --no-audit
+--no-fund`, Electron's own download (`node node_modules/electron/install.js`)
+and an unsigned warm-up `npm run package -- -c.mac.identity=null
+-c.extraMetadata.version=X.Y.Z` (whose output is deleted) run first, with no
+secret in any step's environment: the warm-up is what downloads the two Electron archives the
 universal build needs and the packer's DMG and zip toolsets, into the packer's
 cache. Then **one step** — `Sign, notarise and staple the console` — reads the
 six secrets into its own `env:` (never a workflow- or job-level `env:`) and
 does everything that needs them, in this order: the fail-closed check, the
 temporary keychain, the certificate's team checked against `APPLE_TEAM_ID`,
 the `.p8` file, `npm run package` (with the certificate, its password and the
-key's contents unset, and `APPLE_API_KEY` re-exported as the key file's path),
+key's contents unset — which keeps them out of the packer's environment, not
+out of the signing shell's own starting environment — and `APPLE_API_KEY`
+re-exported as the key file's path),
 the signature's TeamIdentifier and the bundle's staple checked, then the
 `.dmg` signed, notarised and stapled. Its exit trap deletes the keychain and
 both key files whether it passed or failed, so no later step runs with key
@@ -1849,13 +1876,15 @@ succeed: `record()` exits 1 on the first failure.
 the CLI's** (the owner's ruling of 2026-10-17, "Separate console release").
 GoReleaser publishes the CLI's `vX.Y.Z` release from the same tag push, and
 with immutable releases on nothing can be added to it once published. So the
-job creates `console-vX.Y.Z` — X.Y.Z from the CLI tag that triggered it, the
+`publish` job creates `console-vX.Y.Z` — X.Y.Z from the CLI tag that triggered it, the
 same commit and the same gate (D11: one gate, the CLI's tag; its own release) —
 as a **draft**, puts the `.dmg`, the `.zip`, the verification record and the
 sums on it, and publishes it in the same step (`gh release edit --draft=false`,
 `--latest=false` so the CLI's release stays the latest). A re-run never
 clobbers: an existing `console-vX.Y.Z` (published, or a draft left by a failed
-attempt, which the owner deletes before re-running) or tag stops the job. The
+attempt, which the owner deletes before re-running) or tag stops the job, and
+only a 404 counts as "no such tag": any other answer (a 5xx, a rate limit)
+stops it too rather than publishing on a guess. The
 tag ruleset must let the workflow create `console-v*` tags. The console's
 Homebrew cask, when there is one, points at this release.
 
@@ -1867,9 +1896,16 @@ are the first real run, and the workflow's own `Not verified` note in
 59a's to settle:** that electron-builder accepts `CSC_NAME` as a SHA-1 together
 with `CSC_KEYCHAIN`; that codesign signs with only `apple-tool:,apple:` in the
 partition list; that the warm-up pack leaves everything the signed pack needs
-in the cache; and that the signed, stapled DMG passes `spctl --assess --type
-open --context context:primary-signature`. None of these can be checked
-offline.
+in the cache; that `-c.extraMetadata.version` reaches the bundle's version
+and the artifact names as described; and that the signed, stapled DMG passes
+`spctl --assess --type open --context context:primary-signature`. None of
+these can be checked offline. **Accepted residuals:** `security` takes the
+keychain password (`create-keychain -p`, `unlock-keychain -p`,
+`set-key-partition-list -k`) and the `.p12` password (`import -P`) only on its
+command line, so another process of the same user can read them in the process
+list while those commands run, and the signing shell's starting environment
+holds the six secrets for the step's lifetime (`ps -E`, same user); the runner
+is a single-job VM and the packer is the only third-party code in that window.
 
 ### What is deliberately not here (Task 4.2)
 
@@ -1877,11 +1913,13 @@ offline.
   hand. A manual trigger is a second way into a job that reads a private key,
   and the release train this repository already has — one tag, `release.yml` and
   `images.yml` and now this — does not need one.
-- **Any action after the secrets exist.** The signing, notarising, stapling and
-  verifying are `run:` calls to `xcrun`, `codesign`, `security` and `openssl`.
-  The two actions the file uses, checkout and setup-node, run before the
-  signing step and are pinned to full commits with version comments, as
-  everywhere else here.
+- **Any action that could see the key material.** The signing, notarising,
+  stapling and verifying are `run:` calls to `xcrun`, `codesign`, `security`
+  and `openssl`. Checkout and setup-node run before the signing step;
+  upload-artifact runs after it, when its exit trap has removed the key
+  material; download-artifact runs in `publish`. All four are pinned to full
+  commits with version comments, the artifact pair at the pins the applied
+  workflows already use.
 - **An auto-update feed.** `build.publish` is `null` and this workflow publishes
   the console's own release and nowhere else: Task 4.4 is the auto-update task
   and it is not part of this MVP.
@@ -1896,7 +1934,10 @@ offline.
 
 Every claim above is asserted in
 `internal/cli/docs_desktop_console_test.go` (`TestDocsConsoleReleaseWorkflowIsStagedAndPinned`,
-`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger` and
+`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`,
+`TestDocsConsoleReleasePublishRefusesToClobber` and
+`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (these two run the
+staged scripts under bash with a faked `gh`), and
 `TestDocsPendingWorkflowsReadmeNamesTheConsoleRows`, all selected by the
 `-run 'Docs|Lint'` filter), reading the file structurally with yaml.v3 where a
 substring scan would let a mutation through. Each mutation below was applied to
@@ -1927,3 +1968,15 @@ a scratch copy of the staged file and turned the named test red:
 | the certificate's team check emptied (team checked only after notarising) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the team check before `npm run package` |
 | the SHA-256 line removed from the record | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `record cat "$SUMS"` |
 | the signing step moved before the install and the warm-up | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the step order |
+| the version stamp removed from the signed pack, or from the warm-up pack | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on every `npm run package` carrying `-c.extraMetadata.version="$VERSION"` |
+| the tag-shape check disabled (`if false && [[ … ]]`) | `TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions`, on `v1.2` passing |
+| the version-named-artifact check disabled | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the signing step's refusal |
+| a pass-all `*) ;;` default in the existing-release `case` | `TestDocsConsoleReleasePublishRefusesToClobber`, on publishing over a published release and a draft |
+| the tag lookup replaced by `if false` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the tag refusal's shape |
+| a 5xx tag lookup read as "absent" (`*) ;;` in the answer `case`) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that `case`'s default branch |
+| `contents: write` on the release job; `GH_TOKEN` in the warm-up step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on each job's permissions and on which steps hold the token |
+| `environment: console-release` on the publish job | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job holding no environment |
+| `cache: npm` restored on setup-node | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on setup-node's keys |
+| `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
+| the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
+| the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |

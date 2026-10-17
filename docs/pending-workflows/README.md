@@ -105,26 +105,37 @@ something the plan claims away.
 
 The desktop console's signing, notarisation and stapling pipeline, staged by
 Task 4.2 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner
-as Task 4.5. One job keyed exactly `release`, on the pinned `macos-15` runner
-(never `macos-latest`: the runner image is the signing toolchain), triggered by
-a **`push` of a strict `vX.Y.Z` tag and nothing else** — never a pull request,
-never a `pull_request_target`, never a `workflow_run`, never a
-`workflow_dispatch`. In order:
+as Task 4.5. Triggered by a **`push` of a strict `vX.Y.Z` tag and nothing
+else** — never a pull request, never a `pull_request_target`, never a
+`workflow_run`, never a `workflow_dispatch`. **Two jobs, and the write token is
+never in the job that runs the packer:** `release`, on the pinned `macos-15`
+runner (never `macos-latest`: the runner image is the signing toolchain), holds
+the protected environment, the Apple secrets and `contents: read` +
+`checks: read` only; `publish`, on `ubuntu-24.04`, holds `contents: write` and
+nothing else — no environment, no Apple secret, no checkout, no packer.
+`GH_TOKEN` is in two steps' `env:`: the gate's (read-only) and the publish
+step's. The `release` job, in order:
 
-1. checks the tagged commit is reachable from `origin/main`, then runs
-   `scripts/release-gate.sh`, exactly as `release.yml` and `images.yml` do;
-2. with **no secret on the runner**: setup-node, `npm ci --ignore-scripts
+1. checks the tagged commit is reachable from `origin/main`, refuses any tag
+   that is not a strict `vX.Y.Z` (its X.Y.Z becomes the app's version), then
+   runs `scripts/release-gate.sh`, exactly as `release.yml` and `images.yml` do;
+2. with **no secret placed in any step's environment or on disk** (the runner
+   process receives the environment's secrets at job start; what the file
+   controls is where they are exposed): setup-node (no `cache:`: a restored
+   cache is written by other runs), `npm ci --ignore-scripts
    --no-audit --no-fund` from the lockfile (the packer is the pinned
    `electron-builder` devDependency), Electron's own download
    (`node node_modules/electron/install.js`) and an unsigned warm-up
-   `npm run package` whose output is deleted, so the two Electron archives and
+   `npm run package` whose output is deleted (stamped with the tag's version
+   like the signed one), so the two Electron archives and
    the packer's DMG and zip toolsets are downloaded here and not later;
 3. **one step holds all six secrets** and does everything that needs them:
    the fail-closed check, a temporary keychain, the `.p8` key file (both
    created under `umask 077`), the certificate's team checked against
    `APPLE_TEAM_ID` before anything is signed, `npm run package` (Task 4.1's
    script: `--mac --universal --publish never`, the hardened runtime,
-   `console/entitlements.mac.plist`; electron-builder notarises and staples the
+   `console/entitlements.mac.plist`, `-c.extraMetadata.version=X.Y.Z` from the
+   tag; electron-builder notarises and staples the
    `.app` **before** it builds the `.dmg` and the `.zip`), the signature's
    TeamIdentifier and the bundle's staple checked, then the `.dmg` signed with
    `codesign --timestamp`, submitted with `xcrun notarytool submit --wait` and
@@ -133,15 +144,30 @@ never a `pull_request_target`, never a `workflow_run`, never a
    inside the mounted `.dmg` and the extracted `.zip` (`codesign --verify
    --deep --strict`, `spctl --assess --type execute`, `xcrun stapler
    validate`), and the disk image itself (`spctl --assess --type open`) — into
-   `console-verification.txt`;
-5. publishes the console's **own release, `console-vX.Y.Z`**, and never
-   touches the CLI's.
+   `console-verification.txt`, and uploads the `.dmg`, the `.zip`, the record
+   and `console-sha256sums.txt` as the workflow artifact
+   `console-release-assets` (upload-artifact at the pin `release.yml` and
+   `images.yml` use).
+
+The `publish` job (`needs: release`) downloads that artifact (download-artifact
+at the pin `images.yml` uses), re-checks every asset with `sha256sum --strict
+--check` and that the `.dmg` and `.zip` are named for the tag's version, and
+publishes the console's **own release, `console-vX.Y.Z`**, never touching the
+CLI's.
+
+**The version is the tag's.** `console/package.json` says `0.0.0` and nothing
+in it is a release version, so both packs are stamped with
+`-c.extraMetadata.version=X.Y.Z` (through `env:`, never an inlined `${{ }}`):
+the `.dmg` and `.zip` file names carry the real version (`Fugaro
+Console-X.Y.Z-universal.dmg`), the app's version is it, the job refuses
+artifacts not named for it, and the update feed of plan Tasks 4.3/4.4 depends
+on it.
 
 **Its own release, never the CLI's (the owner's ruling of 2026-10-17,
 "Separate console release").** GoReleaser publishes the CLI's `vX.Y.Z` release
 from the same tag push, and with immutable releases on (`docs/release.md`,
 "Before you tag") nothing can be added to a release once it is published. So
-the job creates `console-vX.Y.Z` — X.Y.Z from the CLI tag that triggered it,
+the `publish` job creates `console-vX.Y.Z` — X.Y.Z from the CLI tag that triggered it,
 the same commit and the same gate (D11) — as a **draft**, uploads the `.dmg`,
 the `.zip`, `console-verification.txt` and `console-sha256sums.txt` to it, and
 publishes it (`gh release edit --draft=false`) in the same step, with
@@ -229,7 +255,8 @@ available or permitted in the run that wrote it, and no agent run in this
 repository builds, signs, notarises or verifies a bundle. What *is* verified is
 its text,
 through `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` and
-`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger` in
+`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, `TestDocsConsoleReleasePublishRefusesToClobber` and
+`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (both run the staged scripts under bash with a faked `gh`) in
 `internal/cli/docs_desktop_console_test.go` (both picked up by the
 `-run 'Docs|Lint'` filter): the trigger surface, the ancestry check and the
 gate first, every install and download before the one step that holds the
@@ -238,14 +265,26 @@ secrets, the secret names and their bindings, the fail-closed check, no `if:`,
 line that prints the key material, the keychain and its trust list, the team
 checks, the packed bundle's staple, the disk image's signature, notarisation
 and staple, the verification and its checksums, the separate `console-vX.Y.Z`
-release and its re-run refusals, the two action pins, the permissions, and
+release and its re-run refusals, the two-job split and each job's token,
+the version stamp on both packs, the four action pins, the permissions, and
 byte-identity with the copy under `.github/workflows/` once it exists.
+
+Accepted residuals: the keychain password (`security create-keychain -p`,
+`unlock-keychain -p`, `set-key-partition-list -k`) and the `.p12` password
+(`security import -P`) are on `security`'s argv, which has no stdin form for
+them, so another process of the same user can read them in the process list
+for the moments those commands run; the `unset` before packing keeps the
+certificate, its password and the key's contents out of the packer's
+environment but not out of the signing shell's own starting environment, which
+the same user can read (`ps -E`) while the step runs. The runner is a
+single-tenant, single-job VM.
 
 Unverified offline and left to Check 59a: that electron-builder accepts
 `CSC_NAME` as a certificate's SHA-1 together with `CSC_KEYCHAIN`; that
 `codesign` signs with only `apple-tool:,apple:` in the partition list; that the
 unsigned warm-up pack leaves everything the signed pack needs in the cache; and
-that the signed, stapled DMG passes
+that `-c.extraMetadata.version` reaches the bundle's version and the
+artifact names as described; and that the signed, stapled DMG passes
 `spctl --assess --type open --context context:primary-signature`.
 
 Two things a reader must not take from those tests: the pinned SHAs are read
