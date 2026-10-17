@@ -30,9 +30,16 @@
 //      assignment, or as a long high-entropy run), an address in any script, a
 //      branch, an absolute path, a repository path, a GCP project or bucket
 //      named in a sentence, an IP address, a hostname, or one of the
-//      installation's own literals (case-folded, and with a host's stem).
-//      Every string is matched as written **and** in its NFKC form, so a
-//      fullwidth `＠` is an `@`. A document with a key nobody anticipated still
+//      installation's own literals (case-folded, look-alike-folded, and with a
+//      host's stem). A **reserved key's whole subtree** is its class, and a
+//      person-class value is pseudonymised wherever *else* the document spells
+//      it (a queued run's title is its requester). The rules read the
+//      *prepared* form of every string -- NFKC, then invisible characters
+//      stripped -- so a fullwidth `＠` is an `@` and a zero-width space does not
+//      split an address; a percent-encoded run is decoded first. Every rule is
+//      linear in its input, and a string over `MAX_REDACTABLE_STRING_LENGTH`
+//      (or a line over `MAX_REDACTABLE_LINE_LENGTH`) is refused before any rule
+//      runs. A document with a key nobody anticipated still
 //      cannot carry an address out of the room. **The keys are strings too**,
 //      and a key is the one string that cannot be replaced: renaming it would
 //      change a shape the console reads, so a key carrying identity is a
@@ -63,11 +70,14 @@
 //   4. **It redacts identity, not hostility, and it does not invent data.** A
 //      `<script>` in a title stays a `<script>`: the design wants a hostile-title
 //      *recording*, and making text safe to *render* is the display layer's job
-//      (Task 2.0's `src/shared/sanitize.ts`), not the recorder's. Numbers,
-//      booleans, `null` and an **empty string** are passed through untouched:
+//      (Task 2.0's `src/shared/sanitize.ts`), not the recorder's. Booleans,
+//      `null`, an **empty string** and a number that is neither under a
+//      reserved key nor one of the literals are passed through untouched:
 //      `pr_url: ""` is a run with no pull request, not a URL to redact. A string
-//      in which no rule finds anything is returned byte for byte as it came,
-//      NFKC or not; one in which a rule finds something comes back in NFKC.
+//      in which no rule finds anything is returned byte for byte as it came;
+//      one in which a rule finds something comes back prepared (NFKC, invisible
+//      characters gone) and redacted. A `__proto__` key is refused, because a
+//      copy would drop it without a word.
 //
 // What it is not: it is not a sanitiser (rule 4), it is not a schema (it walks
 // whatever shape it is given, and knows no field beyond the key names its rules

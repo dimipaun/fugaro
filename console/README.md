@@ -745,24 +745,45 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
   `dir`, `cwd`, `checkout`, `binary`, `config`, …), a host (`host`,
   `hostname`, `ip`, …), a URL (`url`, `pr_url`, `log_url`, any `*_url`), a
   credential (`token`, `secret`, `password`, `private_key_id`, any `*_token`,
-  `*_secret`, `*_password`, …), a person or account (`requested_by`,
+  `*_secret`, `*_password`, `*_api_key`, `*_session_id`, …; keys are read
+  through camelCase and hyphens, so `githubToken`, `X-Api-Key` and `sessionId`
+  are credentials too), a person or account (`requested_by`,
   `author`, `user`, `actor`, `owner`, `account`, `oauth_account`, any `*_by`,
   `*_email`; `by` everywhere except a report's break-down dimension), a branch
   (`branch`, `base_branch`, `ref`, any `*_branch`), an opaque identifier
   (`execution`), and a digest (`sha256`, `pushed_head`, …, kept only when it
-  is hex). *Pattern classes* apply to **every** string whatever its key is, as
-  written **and in NFKC**: a URL; a token (GitHub, OpenAI/Anthropic, Slack,
+  is hex). A reserved key's **whole subtree** is its class (`{"branch":
+  {"name": …}}` is a branch all the way down), a **number** under a reserved
+  key becomes its marker (`project_number: 123456789012` is `<project>`), and a
+  number that is one of the literals becomes `[redacted]`. *Pattern classes*
+  apply to **every** string whatever its key is, and they read its **prepared
+  form**: NFKC first, then every default-ignorable, bidi and control character
+  stripped — so a fullwidth `＠` *is* an `@` before the address rule looks
+  (`ana.smith＠acme.com` is `redacted@example.invalid`, local part and all), and
+  a zero-width space, a soft hyphen or a bidi override cannot split an address
+  or a literal. A percent-encoded run is decoded (up to three rounds, so
+  `%2540` is an `@`) and anything a rule finds in it replaces the run:
+  `u=ana.smith%40acme.com` is `u=redacted@example.invalid`. The classes: a URL; a token (GitHub, OpenAI/Anthropic, Slack,
   GitLab, npm, AWS, Google API key, access and refresh token, JWT, bearer
   header, PEM block, a percent- or base64-wrapped one decoded first, a
   `name=value` assignment whose name says secret, and any long high-entropy
-  run, so a token split across two fields loses both halves); an address in
+  run, so a token split across two fields loses both halves, and one split
+  across adjacent strings of an array loses every piece); an address in
   any script, IDN domains included; a branch by its prefix or `refs/`; an
   absolute path, consumed whole with its spaces and non-ASCII characters; a
   repository path; a GCP project or bucket named in a sentence and the runs
   bucket by name; an IPv4 or IPv6 address; a hostname; and the installation's
-  own literals, matched case-insensitively with a host literal's stem
-  (`Zoras-Laptop-Pro.local` is also `Zoras-Laptop-Pro`). A document with a key nobody anticipated still cannot carry an
-  address out of the room, and a test per class holds each one — a run title, a
+  own literals, matched case-insensitively, with Cyrillic and Greek
+  look-alikes folded (`acme-dеvel` with a Cyrillic `е` is the literal), and
+  with a host literal's stem (`Zoras-Laptop-Pro.local` is also
+  `Zoras-Laptop-Pro`). **A person is identity wherever the document spells
+  them**: every person-class value is collected before anything is redacted,
+  and the same string anywhere else in the document — a substring, in any
+  case, in NFKC — gets the same pseudonym its field got. The CLI titles a
+  queued run with no workflow by its requester (`internal/watch/queued.go`),
+  and `requested_by` is the config's free-form `user:`, so without this a
+  queued run's title carried the name its `requested_by` had lost. A document
+  with a key nobody anticipated still cannot carry an address out of the room, and a test per class holds each one — a run title, a
   requester address, a repository name in the field *and* in a sentence, a
   branch name, a POSIX and a Windows path (including the `/usr`, `/etc`,
   `/System` and firmlink forms a prefix whitelist would have missed), a token by
@@ -776,7 +797,24 @@ a recording and `test/fixtures/`, and it is written to be told nothing:
   all end a recording rather than travelling inside one that redacts to itself.
   The audit walks keys with the same rules as values, and reads a key's *parent*
   through an array index, so `{"kill":[{"by":"Ana Smith"}]}` is a person there
-  as it is in the object form.
+  as it is in the object form. A `__proto__` key is refused rather than
+  silently dropped by the copy. **A refusal names no identity**: it names the
+  class and the path, prints a value as its length, and prints a key that is
+  not plain snake_case (or that itself carries a class) as its position
+  (`<key 3>`).
+- **Every rule runs in time linear in its input, and the input is capped.** A
+  pattern that can fail after scanning a run starts only at the start of that
+  run; the percent-encoded rule is a single character-class scan and a
+  hand-written decoder. At 96b81997 three rules were quadratic — 100 KB of
+  `a` took half a minute, and the recorder's 4 MiB line bound made that about
+  twelve hours inside the stdout handler, where the `--duration` timer cannot
+  fire. Now a megabyte of every shape that was quadratic takes well under a
+  second, and `redact-final.test.ts` holds each shape to a 4x-input / under-10x
+  time ratio. On top of that, a string or key longer than
+  `MAX_REDACTABLE_STRING_LENGTH` (64 KiB) and a feed line longer than
+  `MAX_REDACTABLE_LINE_LENGTH` (1 MiB) are **refused before any rule runs**,
+  never truncated; the loader holds the same string cap and a record line cap
+  of twice the line cap.
 - **Redaction is a marker, not a deletion, and the markers are a closed set**
   (`<path>`, `<project>`, `<bucket>`, `<host>`, `<branch>`, `[redacted-token]`,
   `[redacted-url]`, `redacted@example.invalid`, `[redacted]`). A marked value is
@@ -861,8 +899,10 @@ Everything the recorder does before it spawns is a refusal rather than a
 guess, and this is what makes it a tool an agent cannot be talked into
 misusing. `parseRecorderArgs` refuses, by name: a missing `--project` or
 `--gcp-project`; the project `belong`, however it is spaced or spelled (values
-are NFKC-normalised, stripped of whitespace and control characters and
-lower-cased before the check); **any `--out` outside this repository's
+are NFKC-normalised, stripped of whitespace and control characters, folded
+for Cyrillic and Greek look-alikes, lower-cased, and stripped of a trailing dot
+per segment before the check, so `bеlong` with a Cyrillic `е` and `belong.` are
+refused too); **any `--out` outside this repository's
 `console/test/fixtures/`** (any directory merely *named* `fixtures` was
 accepted once) or not ending `.ndjson`; an existing fixture without `--force`; an unknown flag; a
 `--duration` that is not a positive number; and a `--case` outside
@@ -877,9 +917,10 @@ rather than a failed run.
 
 The recorder never prints the child's documents, and it never echoes its
 stderr either — the operator's terminal is theirs, but a scrollback is a leak
-this tool will not create. A stdout line longer than `MAX_FEED_LINE_LENGTH` —
-the loader's own bound — ends the recording before it reaches the redactor,
-so the buffer cannot grow without limit. The child's stderr is **drained and discarded**:
+this tool will not create. A stdout line longer than
+`MAX_REDACTABLE_LINE_LENGTH` (1 MiB, the redactor's own bound) ends the
+recording before it reaches the redactor, so the buffer cannot grow without
+limit and no single line can hold the event loop. The child's stderr is **drained and discarded**:
 drained, because `planFor` gives the child a pipe and a pipe nobody reads fills
 up and then blocks the child's write, which would stall a recording of a CLI
 that logs; discarded, because a stderr line is raw CLI text rather than a feed
