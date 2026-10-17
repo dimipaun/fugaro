@@ -20,10 +20,12 @@
 // a session that goes through this program applies only what the owner's
 // rules admit.
 //
-// And it is inert until phase 4 lands: every path below is behind
-// Request.Enable, whose zero value is closed (enable.go), because the
-// whole-project inventory and the budget are not in this release yet. Task 4.4
-// is the task that opens it.
+// And every path below is behind Request.Enable, whose zero value is closed
+// (enable.go): the whole-project inventory (Task 4.1) and the required budget
+// (Task 4.2) are in the build, and the one thing that opens the gate is the
+// apply-time budget read (Task 4.4) — internal/cli's managed apply makes it and
+// hands the answer in, and this package refuses a gate that read did not open
+// as its own first step.
 package managed
 
 import (
@@ -108,7 +110,9 @@ type Fact struct {
 // caller that holds the cloud clients (internal/cli's fugaro managed apply);
 // nothing here is read from a flag the applying session could choose.
 type Request struct {
-	// Enable is the config gate of enable.go, and the FIRST thing Apply reads.
+	// Enable is the gate of enable.go, made by the caller from the apply-time
+	// budget read, and the FIRST thing Apply reads: a zero value — what a
+	// caller that read nothing passes — refuses.
 	Enable Enable
 	// Project is the managed Fugaro project's name, GCPProject its GCP
 	// project. The state bucket is derived from GCPProject and from nothing
@@ -228,7 +232,8 @@ func (e *RefusedError) Unwrap() error { return ErrRefused }
 //
 // The order is the plan's own, and each step is before the one that trusts it:
 //
-//  1. the config gate (enable.go) — closed refuses before anything is read;
+//  1. the gate (enable.go) — a gate the apply-time budget read did not open
+//     refuses before anything is read;
 //  2. the applying command's own command line — an address there is refused;
 //  3. the creation fact — an unreadable marker is not an apply;
 //  4. the root's own files — read in full BEFORE terraform init, against

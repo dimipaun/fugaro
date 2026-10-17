@@ -55,11 +55,26 @@ import (
 // owner's own rules admit, and applies it as an identity that holds no
 // project-level IAM permission and no write path to the runs bucket.
 //
-// And it is INERT in this release: managedmode.Shipped is closed, and the gate
-// is the first thing this command reads — before a project is selected, before
-// a bucket is read and before terraform runs — so what this release ships is a
-// command that refuses and does nothing else. Task 4.4 is the task that opens
-// it, in internal/managed/enable.go and nowhere else.
+// And the gate it runs behind is the apply-time budget read (Task 4.4), not a
+// release switch: managedmode's Enable is opened by one thing and that thing is
+// the read of the project's creation fact through internal/infra/managed's
+// ReadBudget, which must answer with an amount above 0 and a currency. No
+// constant in the build opens it any more, and every other answer — no marker
+// at all, a version-1 marker with no amount recorded, a read that failed, a
+// malformed, oversized or trailing-data object, a marker naming another
+// project, an amount or a currency the marker's own reader refuses — is a hard
+// refusal.
+//
+// Where in this command's order that read happens, stated because it is not
+// first and was: the flags, the checkout and the cloud clients come first (the
+// command cannot read anything about the project before it knows which one),
+// then the runs bucket is pinned to its default name and the project number is
+// read, and only then the apply-time budget read and the gate it opens — after
+// which come the owner's delete list, the workdir and terraform. A read that
+// does not answer therefore stops the command before a plan exists, before the
+// root is copied, before terraform is looked for and before the deployer is
+// assumed. managed.Apply refuses the same value again as its own first step, so
+// neither check can be left out.
 
 // newManagedCmd is `fugaro managed`: the noun group D76 answers with, which
 // leaves room for the plan's Task 6.1 flagging command under the same noun. It
@@ -122,8 +137,10 @@ of the four is a boundary against a session that goes around this program.`,
 }
 
 // managedApply is newManagedApplyCmd's body. The order is the whole of the
-// design: the config gate, then the local checks, then the reads, then the
-// apply — and every refusal before the apply is a hard return.
+// design: the local checks, then the project and its number, then the
+// apply-time budget read and the gate it opens (Task 4.4), then the reads the
+// apply itself trusts, then the apply — and every refusal before the apply is a
+// hard return.
 func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is

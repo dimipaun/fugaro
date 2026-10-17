@@ -66,6 +66,33 @@ func managedBudgetRig(t *testing.T) (*initRig, string) {
 	return r, root
 }
 
+// noWriteAcrossFakes is the task's own "no write is made" assertion, read off
+// the fakes' call logs rather than off the command's word: over every call the
+// GCS, CRM and IAM fakes received, a refused apply made none that is not a
+// read. The command holds no Budgets client at all — it makes no billing call
+// by construction, and the read it does make is the marker's own reader — so
+// what this pins is the direction that matters: a refusal that created a
+// bucket, put an object, wrote an IAM policy or set a project label fails here
+// even when its sentence is right.
+func noWriteAcrossFakes(t *testing.T, r *initRig) {
+	t.Helper()
+	for _, f := range []struct {
+		what string
+		reqs []gcpfake.Request
+	}{
+		{"GCS", r.gcs.Requests()},
+		{"CRM", r.crm.Requests()},
+		{"IAM", r.iam.Requests()},
+	} {
+		for _, req := range f.reqs {
+			if req.Method != http.MethodGet && req.Method != http.MethodHead {
+				t.Errorf("the refused apply sent a %s to the %s fake (%s), and a refusal writes nothing",
+					req.Method, f.what, req.Path)
+			}
+		}
+	}
+}
+
 // TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate: every way the
 // apply-time budget read fails, end to end. What each case asserts is the way
 // each one can fail — the exit code, the sentence the owner acts on, and the
@@ -150,6 +177,9 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 			if _, err := os.Stat(wd); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("the managed workdir %s exists after a refused apply", wd)
 			}
+			// And nothing was written anywhere: the refusal's cloud calls are
+			// reads, from the fakes' own logs.
+			noWriteAcrossFakes(t, r)
 		})
 	}
 }
