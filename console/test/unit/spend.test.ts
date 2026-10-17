@@ -51,9 +51,11 @@ import {
   unavailable,
 } from '../../src/shared/availability'
 import type { JSONDoc } from '../../src/source/source'
+import { LIVE_THEMES } from '../../src/renderer/screens/live'
 import type { ScreenFactory as LiveScreenFactory } from '../../src/renderer/screens/live'
 import {
   PARTIAL_MARKER,
+  RESERVE_LABEL,
   SPEND_ACCOUNTS,
   SPEND_DIMENSIONS,
   SPEND_MAX_RANGE_DAYS,
@@ -480,7 +482,23 @@ describe('the Spend screen constants', () => {
   })
 
   it('names the same two themes the Live screen\'s goldens are taken for', () => {
+    // Held to the Live screen's own list, which is the claim `spend.ts` makes
+    // in its header: two lists of the same two words are exactly the kind of
+    // pair that drifts when nothing compares them, and a golden per theme is
+    // taken for both screens. `live.test.ts` holds `LIVE_THEMES` to the same
+    // literal, so the chain is literal -> `LIVE_THEMES` -> `SPEND_THEMES`.
+    expect(SPEND_THEMES).toEqual(LIVE_THEMES)
     expect(SPEND_THEMES).toEqual(['light', 'dark'])
+  })
+
+  it('takes the reserve\'s words from the CLI, which prints the same line', () => {
+    // `internal/cli/budget.go`'s `printShow` writes "largest single lease (max
+    // reserve): %s" for `max_reserve_usd`, above the `project` block. The panel
+    // says the CLI's words about the CLI's fact rather than inventing a second
+    // phrase, the way `PARTIAL_MARKER` reuses `report`'s own marker.
+    const source = readFileSync(path.join(REPO_ROOT, 'internal/cli/budget.go'), 'utf8')
+    expect(RESERVE_LABEL).toBe('largest single lease (max reserve)')
+    expect(source).toContain(RESERVE_LABEL)
   })
 })
 
@@ -921,6 +939,59 @@ describe('the caps panel', () => {
     // never be added to.
     expect(texts(tree, 'spend-cap-notional')[0]).toBe(`${NOTIONAL_MARK}$4.20`)
     expect(texts(tree, 'spend-cap-counted')[0]).toBe('$12.50')
+  })
+
+  it('draws the largest single lease with the CLI\'s own words, outside the global block', () => {
+    // `max_reserve_usd` is a **top-level** field of `budget show --json`
+    // (`budgetShowDoc`, `internal/cli/budget.go`): the project's largest single
+    // lease (`budget.Limits.MaxReserveMicros`), a *limit* rather than a cap.
+    // `printShow` writes it above the `project` block, and the CLI's own mode
+    // line keeps it apart from the caps ("kill switches and the reserve limit
+    // apply"). Inside the div whose word is `global` it would read as a global
+    // cap, which is the one thing this panel must not say, so the test asserts
+    // both halves: the figure, and where it is not.
+    const model = modelOf()
+    expect(model.caps.reserve).toEqual(measured(50))
+    const tree = renderSpend(factory, model, 'light')
+    const limit = one(tree, 'spend-cap-limit')
+    expect(limit.getAttribute('data-limit')).toBe('max_reserve')
+    expect(texts(limit, 'spend-cap-word')).toEqual([RESERVE_LABEL])
+    expect(texts(limit, 'spend-cap-reserve')).toEqual(['$50.00'])
+    // Not in the `global` block, and not in anything else either: one figure,
+    // drawn once, in the block that says what it is.
+    const global = one(tree, 'spend-cap-global')
+    expect(texts(global, 'spend-cap-reserve')).toEqual([])
+    expect(texts(tree, 'spend-cap-reserve')).toHaveLength(1)
+    // The model says the same thing structurally: the global block has no
+    // reserve field to misread.
+    expect(Object.keys(model.caps.global ?? {})).not.toContain('reserve')
+  })
+
+  it('draws the project limit even when the document carries no global block', () => {
+    // The two are independent fields of `budgetShowDoc`, so this document is
+    // not a contradiction (`budget show --repo R` still prints the reserve
+    // line), and a limit that vanished with the block it used to sit in would
+    // be a figure lost to a placement mistake.
+    const model = buildSpendModel(DAY_REPORT, { ...BUDGET, global: undefined })
+    expect(model.caps.global).toBeNull()
+    expect(model.caps.reserve).toEqual(measured(50))
+    const tree = renderSpend(factory, model, 'light')
+    expect(texts(one(tree, 'spend-cap-limit'), 'spend-cap-reserve')).toEqual(['$50.00'])
+  })
+
+  it('draws a limit the document does not carry as n/a, never as $0.00', () => {
+    // `max_reserve_usd` is `*float64` on the wire, like every cap here: `null`
+    // is "the document does not say", which is not a project that may take no
+    // lease at all.
+    const model = buildSpendModel(DAY_REPORT, { ...BUDGET, max_reserve_usd: null })
+    expect(model.caps.reserve.state).toBe('unavailable')
+    const tree = renderSpend(factory, model, 'light')
+    expect(texts(one(tree, 'spend-cap-limit'), 'spend-cap-reserve')).toEqual([UNAVAILABLE_MARK])
+    // And with no document at all the panel says so, in one sentence, rather
+    // than drawing a limit it did not read -- the `available: false` path above.
+    const none = buildSpendModel(DAY_REPORT, null)
+    expect(none.caps.reserve.state).toBe('unavailable')
+    expect(drawn(renderSpend(factory, none, 'light'))).not.toContain(RESERVE_LABEL)
   })
 })
 

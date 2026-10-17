@@ -171,6 +171,16 @@ const MICROS_PER_USD = 1_000_000
  */
 export const PARTIAL_MARKER = '(partial)'
 
+/**
+ * RESERVE_LABEL is the words the caps panel puts beside `max_reserve_usd`. They
+ * are the CLI's own words for the same fact: `printShow` in
+ * `internal/cli/budget.go` writes "largest single lease (max reserve): %s" on a
+ * line of its own, **above** the `project` block, because it is a limit on one
+ * lease (`budget.Limits.MaxReserveMicros`) and not a cap. The panel keeps both
+ * halves of that: the CLI's words, and a place outside the `global` block.
+ */
+export const RESERVE_LABEL = 'largest single lease (max reserve)'
+
 // ---------------------------------------------------------------------------
 // The scope names.
 // ---------------------------------------------------------------------------
@@ -305,8 +315,16 @@ export interface SpendTotals {
   readonly partial: boolean
 }
 
-/** SpendGlobalCaps is `budget show`'s `global` block. Every cap is
- * `*float64` on the wire, so `null` is `n/a` and never `0`. */
+/** SpendGlobalCaps is `budget show`'s `global` block, and nothing but it: the
+ * block's own two caps, the counters beside them, and the kill switch. Every cap
+ * is `*float64` on the wire, so `null` is `n/a` and never `0`.
+ *
+ * The largest single lease is deliberately **not** here: `max_reserve_usd` is a
+ * top-level field of the document (`budgetShowDoc`, `internal/cli/budget.go`),
+ * and it is a *limit* rather than a cap -- the CLI prints it on its own line
+ * above the `project` block, and its own mode line treats "the reserve limit" as
+ * something separate from the caps. It is `SpendCaps.reserve`, drawn outside the
+ * block whose word is `global`. */
 export interface SpendGlobalCaps {
   readonly dailyCap: Reading
   readonly perRunCap: Reading
@@ -314,7 +332,6 @@ export interface SpendGlobalCaps {
   readonly spent: Reading
   readonly notional: Reading
   readonly headroom: Reading
-  readonly reserve: Reading
   readonly kill: KillView | null
 }
 
@@ -352,6 +369,10 @@ export interface SpendCaps {
    * carries (the contract's section 3 note), and it is read as **unset** --
    * described below -- rather than drawn as an empty cell. */
   readonly mode: string | null
+  /** the document's top-level `max_reserve_usd`: the largest single lease this
+   * project may take (`budget.Limits.MaxReserveMicros`), which is a **limit**
+   * rather than a cap and belongs to the project, not to the `global` block. */
+  readonly reserve: Reading
   readonly global: SpendGlobalCaps | null
   readonly defaults: SpendDefaultCaps | null
   readonly repos: readonly SpendCapRow[]
@@ -668,25 +689,18 @@ function plotted(row: SpendRow, account: SpendAccount): Plotted {
  * names no figure, because the fact it states is the console's: it has no
  * document for this day -- the day is outside the window `report` read, or it
  * was never written -- which is a different thing from a day that spent
- * nothing. The second sentence is the short form the height carries.
+ * nothing. It is the reading's reason, and `pointAt` carries the same sentence
+ * into the point's height, because the height of a gap is the same fact.
  */
 const NO_DOCUMENT_DAY =
   'the history holds no document for this day: it is outside the retained window, or it was never written'
-const NO_DOCUMENT_DAY_SHORT = 'the history holds no document for this day'
 
-/** dayGap is the point for a day inside the range that the history does not
- * hold: a **gap** in both senses the screen draws -- the em dash where a figure
- * would be, and the break in the line. */
-function dayGap(day: string): SpendPoint {
-  const reading = gap(NO_DOCUMENT_DAY)
-  return {
-    at: day,
-    key: day,
-    reading,
-    height: gap(NO_DOCUMENT_DAY_SHORT),
-    partial: false,
-    hollow: false,
-  }
+/** dayGap is one day inside the range that the history does not hold, as a
+ * value for the series: the reading is a **gap** in both senses the screen
+ * draws -- the em dash where a figure would be, and the break in the line --
+ * and `pointAt` gives it that state again as its height. */
+function dayGap(day: string): Plotted {
+  return { at: day, key: day, reading: gap(NO_DOCUMENT_DAY), partial: false }
 }
 
 /** pointAt is one value once the axis has a top: the reading, whether the row
@@ -728,7 +742,7 @@ export function buildSeries(
     for (const day of days) {
       const row = byKey.get(day)
       if (row === undefined) {
-        values.push({ at: day, key: day, reading: gap(NO_DOCUMENT_DAY), partial: false })
+        values.push(dayGap(day))
         continue
       }
       byKey.delete(day)
@@ -794,6 +808,7 @@ function capsOf(raw: JSONDoc | null): SpendCaps {
       project: null,
       day: null,
       mode: null,
+      reserve: unavailable('no budget show document was read'),
       global: null,
       defaults: null,
       repos: [],
@@ -813,6 +828,10 @@ function capsOf(raw: JSONDoc | null): SpendCaps {
     // setting, so it is `null` and the screen says "unset" in the console's own
     // words.
     mode: mode === null || mode === '' ? null : mode,
+    // The top-level field, read at the top level: `max_reserve_usd` is not
+    // inside `global` (see `SpendGlobalCaps`), and reading it from there would
+    // make the panel claim a project limit is a global cap.
+    reserve: readNumber(document['max_reserve_usd'], 'max_reserve_usd'),
     global:
       global === null
         ? null
@@ -823,7 +842,6 @@ function capsOf(raw: JSONDoc | null): SpendCaps {
             spent: readNumber(global['spent_usd'], 'global.spent_usd'),
             notional: usdReading(global, 'notional_usd', 'notional'),
             headroom: readNumber(global['headroom_usd'], 'global.headroom_usd'),
-            reserve: readNumber(document['max_reserve_usd'], 'max_reserve_usd'),
             kill: killOf(global['kill']),
           },
     defaults:
@@ -1296,6 +1314,15 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
     const unset = cell(element, factory, 'span', 'spend-caps-mode')
     literal(unset, 'mode unset (acts as observe)')
   }
+  // The largest single lease, drawn outside the block whose word is `global`
+  // and above it -- the CLI prints it above the `project` block too. A
+  // project-level limit inside a global block would read as a global cap, and
+  // this panel's whole job is to say which scope each figure belongs to.
+  const reserve = make(factory, 'div', 'spend-cap-limit')
+  reserve.setAttribute('data-limit', 'max_reserve')
+  literal(cell(reserve, factory, 'span', 'spend-cap-word'), RESERVE_LABEL)
+  numberCell(reserve, factory, 'span', caps.reserve, 'usd', 'spend-cap-reserve')
+  element.append(reserve)
   if (caps.global !== null) {
     const global = make(factory, 'div', 'spend-cap-global')
     literal(cell(global, factory, 'span', 'spend-cap-word'), 'global')
@@ -1307,7 +1334,6 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
     // counted dollars beside it.
     numberCell(global, factory, 'span', caps.global.notional, 'usd', 'spend-cap-notional')
     numberCell(global, factory, 'span', caps.global.headroom, 'usd', 'spend-cap-headroom')
-    numberCell(global, factory, 'span', caps.global.reserve, 'usd', 'spend-cap-reserve')
     if (caps.global.kill !== null) global.append(killBanner(factory, caps.global.kill))
     element.append(global)
   }

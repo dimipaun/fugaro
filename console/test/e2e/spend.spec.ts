@@ -181,6 +181,9 @@ interface Screen {
   readonly gaps: readonly string[]
   readonly scopes: readonly string[]
   readonly perRunScopes: readonly (string | null)[]
+  readonly limitWords: readonly string[]
+  readonly limits: readonly string[]
+  readonly limitsInGlobal: number
   readonly rows: number
   readonly notionalCells: readonly string[]
   readonly anchors: number
@@ -211,6 +214,12 @@ function screen(page: Page): Promise<Screen> {
       perRunScopes: all('.spend-cap-repo').map(
         (row) => all('.spend-scope', row)[1]?.getAttribute('data-per-run-scope') ?? null,
       ),
+      // The largest single lease (`max_reserve_usd`) and where it is drawn: the
+      // top-level field is a project limit, not a global cap, and the CLI prints
+      // it outside the caps too.
+      limitWords: texts('.spend-cap-limit .spend-cap-word'),
+      limits: texts('.spend-cap-limit .spend-cap-reserve'),
+      limitsInGlobal: all('.spend-cap-global .spend-cap-reserve').length,
       rows: all('.spend-row').length,
       notionalCells: texts('.spend-notional'),
       anchors: all('a').length,
@@ -499,6 +508,13 @@ test.describe('the Spend screen', () => {
     // A cap the document does not carry is `n/a`, never `$0.00`.
     expect(drawn.text).toContain('no cap is set at this scope')
     expect(drawn.text).toContain('n/a')
+    // The largest single lease is a top-level field (`max_reserve_usd`), and it
+    // is drawn in its own block with the CLI's own words -- never inside the
+    // block whose word is `global`, where a project limit would read as a
+    // global cap.
+    expect(drawn.limitWords).toEqual(['largest single lease (max reserve)'])
+    expect(drawn.limits).toEqual(['$50.00'])
+    expect(drawn.limitsInGlobal).toBe(0)
   })
 
   test('hides the person breakdown by default', async () => {
