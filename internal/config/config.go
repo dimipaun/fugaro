@@ -480,7 +480,9 @@ type Resources struct {
 // a profile naming a job the API would refuse must be refused here, where the
 // operator can see it. TimeoutClass is the task timeout, a duration in Go
 // syntax ("90m", "6h") through the same spelling timeouts.total uses; it
-// becomes the job's task timeout, so Cloud Run's 168h ceiling applies to it.
+// becomes the job's task timeout — plus backend.TaskTimeoutSlack, the same
+// sum internal/infra deploys the job with — so Cloud Run's 168h ceiling
+// applies to the sum, which is what projectpolicy.validTimeoutClass bounds.
 // Secrets are logical secret NAMES the job mounts, never values — the policy
 // node is readable by every run token. AllowRepos is the profile's admission
 // list (design §4.1): the key absent means the project's allow_repos applies,
