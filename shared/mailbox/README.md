@@ -215,6 +215,20 @@ otherwise it is a claim about a command that may never have run:
   is trusted. If the suite cannot fail, the harness says so and exits 2 rather
   than reporting mutants it never measured.
 
+Both controls were reproduced as failures while writing this: with the runner
+removed (`PATH=/usr/bin:/bin`) the script refuses with exit 2 rather than
+reporting mutants it never ran, and with `index.test.js` renamed the positive
+control catches the empty glob — which is why there are two.
+
+The run that is recorded here is **55 guards, 55 killed, 0 survived, 0 not
+applied**, with the control killed first. One clause of the module is
+deliberately *not* counted: `isPlainObject`'s `Array.isArray` check, which the
+prototype check beside it subsumes (an array's prototype is neither
+`Object.prototype` nor `null`). A mutation of it cannot be killed by any test,
+so it is not claimed as a proved guard — the clause is kept for parity with the
+schema's own `isPlainObject`, and the array case is proved by the prototype
+mutation instead.
+
 **One deliberate difference from `mailbox-schema/mutation-proof.sh`:** this
 script's suite is this module's tests (`node --test "mailbox/*.test.js"` from
 `shared/`), not the whole package's `npm test`. The reason is a real one and is
