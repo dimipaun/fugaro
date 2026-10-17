@@ -16,7 +16,7 @@ jobs:
   # push to main runs them all, so a documentation guard test (a link, a
   # command name, a legacy name) that a docs-only change breaks is caught
   # there; run the guards locally before merging a docs-only change
-  # (go test ./internal/cli ./internal/config ./images -run 'Docs|Migration|BaseImageDoc|Design|SecurityMd|RecipesGuide|NoLegacy').
+  # (go test ./internal/cli ./internal/config ./images -run 'Docs|Migration|BaseImageDoc|Design|SecurityMd|RecipesGuide|NoLegacy|Website|CliRef').
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
