@@ -238,7 +238,10 @@ test('the terminal holds the finished command when motion is reduced', () => {
 
   // The end state is in the markup: the finished command is what a reader sees with the
   // animation neutralised, so nothing about it depends on the animation having run.
-  assert.ok(command && page.includes(command), 'the terminal\'s command is not in the markup in full, so a reader whose animation never runs sees a half-typed one')
+  assert.ok(
+    command && text(page).includes(command),
+    'the terminal\'s command is not in the markup in full, so a reader whose animation never runs sees a half-typed one',
+  )
 
   const typing = /\.terminal-command[^{]*\{([^}]*)\}/.exec(css)
   assert.ok(typing, 'the terminal has no typing rule, and the command is meant to be typed (W1.4 step 2)')
