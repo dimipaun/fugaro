@@ -79,7 +79,12 @@ problem from a malformed write instead of seeing "no message" for both:
 | `bad-key` | an `id` containing a character a database key may not contain |
 | `too-long` | a string longer than its bound |
 | `bad-character` | a control character (line breaks are allowed in `text`, not in `sender`), DEL, or an **unpaired surrogate** — half a character that JSON cannot encode |
-| `bad-timestamp` | `at` that is not a non-negative safe integer: a float, `NaN`, `Infinity`, `-1`, or a numeric string |
+| `bad-timestamp` | `at` is **a number but not a time**: a float, `NaN`, `Infinity`, `-1` |
+
+The boundary between the last two rows is the type check, and it is worth stating
+because a caller branching on the code must not be surprised: a **numeric string** such as
+`'1700000000000'` is refused earlier, as `wrong-type` — it is not a number at all — and only
+a value that *is* a number and still not a time reaches `bad-timestamp`.
 
 There is no coercion anywhere: `'1700000000000'` is not a time, `'true'` is not an
 ack, and a padded id is returned padded.
@@ -113,14 +118,39 @@ families above.
 **Every guard in `index.js` is mutation-proved**, not merely covered:
 
 ```sh
-shared/mailbox-schema/mutation-proof.sh   # 19 mutations, 19 killed, 0 survivors
+shared/mailbox-schema/mutation-proof.sh
+# control       the pristine suite passes, 18 tests, 0 failures
+# killed        control: refuse() always succeeds (must be killed)
+# killed        not-an-object guard (null/array/primitive)
+# ...                                                        (17 more)
+# --- control killed; 19 guards: 19 killed, 0 survived, 0 not applied
 ```
 
 The script disables one guard at a time — the object check, the unknown-field check,
 each type check, each bound, each character rule, the surrogate rule, the timestamp
 range, the ack's type check, the freeze and the copy — runs `npm test`, and requires
 the suite to fail each time. It restores the file with `git checkout` after each one
-and refuses to run against an uncommitted module, which is how it stays honest.
+and refuses to run against an uncommitted module.
+
+**"Killed" is only worth reading because of three things it does first**, since
+otherwise it is a claim about a command that may never have run:
+
+- it **finds a working runner or stops**: a working `node` and `npm` on PATH, else one
+  lent by `mise` (`node@22`, the line `package.json`'s `engines` declares — this
+  repository's base image keeps node off PATH, so the path to one is mise's to own, not
+  this script's to hardcode), else exit 2 with a message instead of a count;
+- the **positive control**: the suite must pass on the pristine module *with at least
+  one test run*, which is what catches the empty-glob trap `node --test` sets — a
+  missing test file exits 0 having run nothing, and would otherwise look exactly like a
+  green suite; and
+- the **negative control**: a mutation of `refuse()` that must be caught, before any
+  real one is trusted. If the suite cannot fail, the harness says so and exits 2 rather
+  than reporting mutants it never measured.
+
+Both controls were reproduced as failures while writing this: with the runner removed
+(`PATH=/usr/bin:/bin`) the script refuses; with `index.test.js` renamed the positive
+control passes over the skeleton's two tests alone and the **negative** control catches
+it, which is why there are two.
 
 ## Two honest gaps
 
