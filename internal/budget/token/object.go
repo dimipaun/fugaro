@@ -11,36 +11,55 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
-// ObjectKey is where a run's custom token waits in the runs bucket.
-func ObjectKey(slug, run string) string { return "runs/" + slug + "/" + run + "/budget-token" }
+// ObjectPrefix is the runs bucket prefix the token objects live under, out of
+// runs/ (docs/design/budget-token-channel.md §7.2, D16): runs/ is where a
+// run's task, launch record and logs live, and a job account may write there,
+// while tokens/ is read-only for it, so a peer run cannot delete a queued
+// run's token. The Terraform modules grant on exactly this prefix — the job's
+// read-only condition (internal/backend/gcp's TokenBucketCondition) and the
+// launchers' write (LauncherBucketCondition) — and the bucket's lifecycle rule
+// reaps under it; it is one constant so the name a launcher writes, the name a
+// run reads and the grants cannot disagree.
+const ObjectPrefix = "tokens"
 
-// PutObject leaves tok for the run slug/run, create-if-absent: an object
-// already there (an earlier token nobody took) is ErrObjectExists and is not
-// overwritten, because the object is how a run finds its own identity and a
-// replacement is an identity swap. tok must name that run.
+// ObjectKey is where a run's sealed custom token waits in the runs bucket:
+// tokens/<slug>/<run>/budget-token. The name is also the envelope's additional
+// authenticated data (aad), so an object sealed under the old runs/ name does
+// not open under this one: the formats are not interchangeable across the
+// move, which is the property and not a migration problem (a queued token is
+// short-lived, and a relaunch re-seals).
+func ObjectKey(slug, run string) string {
+	return ObjectPrefix + "/" + slug + "/" + run + "/budget-token"
+}
+
+// PutObject leaves tok for the run slug/run, sealed under key,
+// create-if-absent: an object already there (an earlier token nobody took) is
+// ErrObjectExists and is not overwritten, because the object is how a run
+// finds its own identity and a replacement is an identity swap. tok must name
+// that run.
 //
-// A key that is not empty seals the object (Seal, with ObjectKey as the
-// additional authenticated data) and the caller must then hand the same key
-// to the one execution the token is for; an empty key writes the token
-// plaintext, which is what the launcher does until the seal's second step
-// lands (D19: the seal ships on its own, the launcher seals later).
+// key must be a seal key (KeySize bytes, NewKey): the object is sealed (Seal,
+// with ObjectKey as the additional authenticated data) and the caller hands
+// the same key to the one execution the token is for (D15). There is no
+// plaintext form: a key that is not one is ErrSealKey and nothing is written,
+// because a plaintext object in the bucket is the exposure the seal closes
+// (§7.4), and a reader of tokens/ must never find one written by Fugaro.
 func PutObject(ctx context.Context, b *blobx.Bucket, slug, run, tok string, key []byte) error {
 	if !validSegment(slug) || !validSegment(run) {
 		return errors.New("budget token: invalid slug or run id")
+	}
+	if len(key) != KeySize {
+		return fmt.Errorf("%w: the launcher seals every token object, and a key of %d bytes is not a seal key, so nothing was written", ErrSealKey, len(key))
 	}
 	if err := checkNames(tok, slug, run); err != nil {
 		return err
 	}
 	name := ObjectKey(slug, run)
-	data, contentType := []byte(tok), "text/plain"
-	if len(key) > 0 {
-		sealed, err := Seal(key, name, []byte(tok))
-		if err != nil {
-			return err
-		}
-		data, contentType = sealed, "application/octet-stream"
+	sealed, err := Seal(key, name, []byte(tok))
+	if err != nil {
+		return err
 	}
-	if _, err := b.Create(ctx, name, data, contentType); err != nil {
+	if _, err := b.Create(ctx, name, sealed, "application/octet-stream"); err != nil {
 		if errors.Is(err, blobx.ErrExists) {
 			return ErrObjectExists
 		}
@@ -50,12 +69,13 @@ func PutObject(ctx context.Context, b *blobx.Bucket, slug, run, tok string, key 
 }
 
 // DeleteObject removes the run's token object (the launcher's cleanup when
-// the launch fails after the token was left). A missing object is fine. A
-// refused delete (HTTP 403) must not read as "already gone": gocloud maps a
-// GCS 403 to the same gcerrors.NotFound a missing object gets, so the 403
-// is detected first and reported as blobx.ErrForbidden, never silently
-// treated as success. A token a refused cleanup left behind stays
-// replayable (bucket-iam.md §2.3).
+// the launch fails after the token was left, and its replacement of an
+// earlier attempt's object on a retry). A missing object is fine. A refused
+// delete (HTTP 403) must not read as "already gone": gocloud maps a GCS 403 to
+// the same gcerrors.NotFound a missing object gets, so the 403 is detected
+// first and reported as blobx.ErrForbidden, never silently treated as
+// success. A token a refused cleanup left behind stays replayable by a holder
+// of its key (bucket-iam.md §2.3).
 func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error {
 	if !validSegment(slug) || !validSegment(run) {
 		return errors.New("budget token: invalid slug or run id")
@@ -73,53 +93,57 @@ func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error 
 	}
 }
 
+// ObjectPresent reports whether the run's token object is in the bucket,
+// without reading it as a token: what a run whose job carries no budget
+// backend needs to know (a launcher minted for it), and nothing more.
+func ObjectPresent(ctx context.Context, b *blobx.Bucket, slug, run string) (bool, error) {
+	if !validSegment(slug) || !validSegment(run) {
+		return false, errors.New("budget token: invalid slug or run id")
+	}
+	ok, err := b.Exists(ctx, ObjectKey(slug, run))
+	if err != nil {
+		return false, fmt.Errorf("budget token: checking for the token object failed: %s", errText(err))
+	}
+	return ok, nil
+}
+
 // Untaken objects: a token nobody takes is dead after an hour but the object
-// stays; the runs bucket needs a lifecycle rule that deletes
-// runs/*/*/budget-token objects after a day (T9/T10), and the launcher deletes
-// the object when a launch fails (DeleteObject).
+// stays; the runs bucket's lifecycle rule deletes tokens/*/*/budget-token
+// objects after a day, and the launcher deletes the object when a launch
+// fails (DeleteObject) or is retried.
 //
-// TakeObject consumes the token: a second call finds nothing. A caller whose
-// Exchange fails must retry Exchange with the token it already holds in
-// memory, never call TakeObject again.
+// TakeObject reads the run's token object, unseals it with key and returns
+// the token. It never deletes the object: the job account's grant on tokens/
+// is read-only (D16), so a delete is a request the run already knows is
+// denied, and gocloud reports that denial as NotFound — the same error an
+// object already gone gets — so no path may infer anything from a delete's
+// error (§7.2). Consume-once rests on the key, which the launcher delivers
+// once, to one execution, in the override of the launch that won the claim;
+// the object's stay in the bucket gives no second delivery of the key. A
+// caller whose Exchange fails retries Exchange with the token it already
+// holds in memory.
 //
-// TakeObject reads the run's token object and deletes it, then returns the
-// token. A delete that fails is fatal: the token is NOT returned, because a
-// token left behind could be read by any other run of the repository and
-// replayed. The object is deleted before the token is checked, so even a
-// token that names another run does not stay readable. A missing object is
-// ErrNoToken.
+// Its refusals are §7.4's, and none of them is a fallback to the bytes:
 //
-// key is the launch's seal key, from the job's marker (internal/runner's
-// Backend.TokenKey), and the take has two shapes around it, with no path that
-// infers one from the other's error:
-//
-//   - a key that is not empty unseals the object, computing the same
-//     ObjectKey as the additional authenticated data; a plaintext object, an
-//     unknown envelope version, a short or tampered envelope, a wrong key and
-//     a wrong name are all refusals (Unseal), never a fallback to the bytes;
-//   - an empty key means no launcher sealed anything for this execution, so a
-//     plaintext object is the token, and a *sealed* object is ErrSealedNoKey:
-//     a sealed object with no usable key is the theft case, and reading its
-//     bytes would hand a peer's stolen copy straight back.
+//   - a missing object is ErrNoToken (the caller says what that means);
+//   - with a key: a plaintext object, an unknown envelope version, a short or
+//     tampered envelope, a wrong key and a wrong name are refusals (Unseal);
+//   - with no key: every object is refused, a sealed one as ErrSealedNoKey (the
+//     theft case: reading its bytes would hand a peer's stolen copy straight
+//     back) and a plaintext one as ErrNotSealed (nothing Fugaro writes is
+//     plaintext, so a plaintext object is someone else's write);
+//   - a token whose own fs/fr/uid are not this run's is ErrTokenMismatch.
 func TakeObject(ctx context.Context, b *blobx.Bucket, slug, run string, key []byte) (string, error) {
 	if !validSegment(slug) || !validSegment(run) {
 		return "", errors.New("budget token: invalid slug or run id")
 	}
 	name := ObjectKey(slug, run)
-	data, gen, err := b.Read(ctx, name)
+	data, _, err := b.Read(ctx, name)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
 		return "", ErrNoToken
 	case err != nil:
 		return "", fmt.Errorf("budget token: reading the token object failed: %s", errText(err))
-	}
-	switch err := b.DeleteExisting(ctx, name, gen, data); {
-	case errors.Is(err, blobx.ErrNotExist), errors.Is(err, blobx.ErrConflict):
-		// Someone else deleted or replaced it between our read and our delete:
-		// they took the token, we did not.
-		return "", ErrNoToken
-	case err != nil:
-		return "", fmt.Errorf("budget token: the token object could not be deleted, so it is not used: %s", errText(err))
 	}
 	tok, err := openToken(key, name, data)
 	if err != nil {
@@ -132,8 +156,8 @@ func TakeObject(ctx context.Context, b *blobx.Bucket, slug, run string, key []by
 }
 
 // openToken turns the object's bytes into the token they carry, or refuses
-// them. It is the one place the two shapes of a take are decided, so a
-// plaintext object and a sealed one cannot be read by the same path.
+// them. It is the one place the bytes are decided, and a plaintext object is
+// never a token.
 func openToken(key []byte, name string, data []byte) (string, error) {
 	switch {
 	case len(key) > 0:
@@ -145,7 +169,7 @@ func openToken(key []byte, name string, data []byte) (string, error) {
 	case Sealed(data):
 		return "", fmt.Errorf("%w: the object at %s is sealed and this execution presented none, so it is not read as a token: a plaintext fallback is the exposure the seal exists to close", ErrSealedNoKey, name)
 	default:
-		return string(data), nil
+		return "", fmt.Errorf("%w: the object at %s is not sealed and this execution presented no key: Fugaro writes no plaintext token, so it is not read as one", ErrNotSealed, name)
 	}
 }
 

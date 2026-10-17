@@ -356,7 +356,14 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	return db, nil
 }
 
-// takeBudgetToken reads and deletes the run's token object, once per run. Its
+// errLauncherPredatesSeal is the mixed-fleet refusal (D19): the job's marker
+// is "1", which only a launcher from before the seal writes, so the token it
+// minted is unsealed and under runs/, and this runner reads neither.
+func errLauncherPredatesSeal(runID string) error {
+	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (fugaro upgrade), then fugaro run --retry %s", BudgetTokenEnv, runID)
+}
+
+// takeBudgetToken reads the run's sealed token object, once per run. Its
 // refusals are the shipped ones (plan R10, B1): a job whose environment says
 // the budget is on but carries no Firebase API key, or no runs bucket, or a
 // slug or run id that cannot be a database key, is damage to the job, and the
@@ -373,12 +380,20 @@ func (r *run) takeBudgetToken(ctx context.Context) (string, error) {
 	if budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
 		return "", fmt.Errorf("the repository slug %q or run id %q cannot be used as keys of the budget database", slug, runID)
 	}
+	// A marker of "1" is a launcher from before the seal (D19): it wrote the
+	// token unsealed under runs/, which this runner never reads, and handed
+	// no key. The run refuses here, before the bucket, with the side that is
+	// old named — never by reading a plaintext object instead.
+	if b.TokenMarked && len(b.TokenKey) == 0 {
+		return "", errLauncherPredatesSeal(runID)
+	}
 	// The take carries the launch's seal key (Backend.TokenKey, from the
-	// marker's value): the object is sealed under it once the launcher seals,
-	// and a plaintext object is then refused rather than read (openToken).
-	// An empty key is today's shape, where the launcher writes the token
-	// plaintext. The key itself is registered with the redactor at the top of
-	// Run, before this call, so nothing here may print it.
+	// marker's value) and unseals the object under tokens/ with it; a
+	// plaintext object, and any object with no key, is refused rather than
+	// read (token.TakeObject). The take is read-only — the job's grant on
+	// tokens/ has no delete (D16) — so it removes nothing. The key itself is
+	// registered with the redactor at the top of Run, before this call, so
+	// nothing here may print it.
 	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID, r.d.Backend.TokenKey)
 	switch {
 	case errors.Is(err, token.ErrNoToken):

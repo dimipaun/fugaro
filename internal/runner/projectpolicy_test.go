@@ -162,6 +162,7 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 	})
 	t.Run("the bucket holds no token", func(t *testing.T) {
 		b := newBK(t, gwConfig(t, ""), "off", "")
+		b.unmarked()
 		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
@@ -187,6 +188,7 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 		// gate, and a run that halts here is halting on a credential it was
 		// never given (B1).
 		b := newBK(t, gwConfig(t, ""), "off", "")
+		b.unmarked()
 		b.deps.Backend.APIKey = ""
 		rec, err := b.run(t, implement("feature"), review("ship", 0))
 		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
@@ -198,8 +200,8 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 		if b.itk.Exchanges() != 0 {
 			t.Fatal("a run with its budget off and no key exchanged a token")
 		}
-		// The key is checked before the bucket read, so the take that would
-		// delete the token object never happened: the run did not even look.
+		// The key is checked before the bucket read: the run did not even
+		// look at the token object.
 		if ok, err := b.bucket.Exists(context.Background(), token.ObjectKey(repoSlug, runID)); err != nil || !ok {
 			t.Fatalf("the run's token object is gone (exists = %v, err = %v)", ok, err)
 		}
@@ -251,6 +253,7 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 		// never minted (an installation with nothing published, or a local
 		// run), and it keeps today's behaviour exactly.
 		b := policyRun(t, gwConfig(t, ""), "off", "", policy)
+		b.unmarked()
 		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
@@ -546,8 +549,8 @@ func TestTokenIsTakenOnce(t *testing.T) {
 	if s := sourceOf(t, rec, "mode"); s != "policy" {
 		t.Fatalf("mode source = %q: the policy was not read", s)
 	}
-	if !b.tokenObjectGone() {
-		t.Fatal("the token object is still in the bucket")
+	if !b.tokenObjectKept() {
+		t.Fatal("the run removed the token object: its grant on tokens/ is read-only")
 	}
 	if n := b.itk.Exchanges(); n != 2 {
 		t.Fatalf("%d exchanges, want 2 (the policy read's and the session's)", n)
