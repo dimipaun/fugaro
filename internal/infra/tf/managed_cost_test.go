@@ -2,6 +2,7 @@ package tf
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -103,6 +104,10 @@ var costFixtures = map[string]ResourceChange{
 	"gpu|template.0.node_selector.0.accelerator": costService(map[string]any{
 		"node_selector": []any{map[string]any{"accelerator": "nvidia-l4"}}}),
 	"machine-type|machine_type": costVM("n2-standard-8", nil),
+	"cloud-run-min-instances|scaling.0.min_instance_count": mrc("google_cloud_run_v2_service", map[string]any{
+		"scaling": []any{map[string]any{"min_instance_count": 5}}}),
+	"cloud-run-min-instances|scaling.0.manual_instance_count": mrc("google_cloud_run_v2_service", map[string]any{
+		"scaling": []any{map[string]any{"manual_instance_count": 50}}}),
 }
 
 // TestManagedCostRulesAreCovered holds the fixtures against the rules, in both
@@ -498,5 +503,106 @@ func TestManagedCostFlagOnlyEntryIsFlaggedButNotRefused(t *testing.T) {
 	out := ManagedCostRefusals(managedPlan(rc, vm))
 	if len(out) != 1 || !refusedWith(out, vm.Address, managedCostMachineType) {
 		t.Errorf("the refusals are %q, want only the VM's", out)
+	}
+}
+
+// costAttributes is the documented set of cost-bearing attributes, by resource
+// type, that the managed cover admits or could admit: where the provider states
+// a machine type, a tier, an accelerator or a scaling count. The repository
+// holds no provider schema, so this is the documented set, written out; a type
+// of the managed cover that is in neither this table nor costNone fails the
+// test below, so admitting a type is a decision about its cost attributes.
+var costAttributes = map[string][][]any{
+	"google_cloud_run_v2_job": {{"template", 0, "template", 0, "node_selector", 0, "accelerator"}},
+	"google_cloud_run_v2_service": {
+		{"template", 0, "scaling", 0, "min_instance_count"},
+		{"scaling", 0, "min_instance_count"},
+		{"scaling", 0, "manual_instance_count"},
+		{"template", 0, "node_selector", 0, "accelerator"}},
+	"google_compute_instance":      {{"machine_type"}, {"guest_accelerator"}},
+	"google_sql_database_instance": {{"settings", 0, "tier"}},
+}
+
+// costNone are the types of the managed cover decided to carry no machine type,
+// tier, accelerator or scaling count.
+var costNone = []string{
+	"google_apikeys_key", "google_artifact_registry_repository",
+	"google_artifact_registry_repository_iam_member", "google_cloud_run_v2_job_iam_member",
+	"google_cloud_scheduler_job", "google_project_service", "google_secret_manager_secret",
+	"google_secret_manager_secret_iam_member", "google_service_account",
+	"google_service_account_iam_member", "google_storage_bucket",
+	"google_storage_bucket_iam_member", "google_storage_bucket_object",
+}
+
+// TestManagedCostEveryCostAttributeHasARule fails when a resource type the
+// managed cover admits is neither decided to carry no cost attribute nor has
+// every documented cost attribute under a rule, and when a documented attribute
+// of any type has no rule.
+func TestManagedCostEveryCostAttributeHasARule(t *testing.T) {
+	ruled := map[string]bool{}
+	for _, e := range managedCostList {
+		for _, r := range e.rules {
+			ruled[r.typ+"|"+costPathKey(r.path)] = true
+		}
+	}
+	for typ, paths := range costAttributes {
+		for _, path := range paths {
+			if !ruled[typ+"|"+costPathKey(path)] {
+				t.Errorf("%s states %s, which no cost rule reads", typ, costPathKey(path))
+			}
+		}
+	}
+	for _, typ := range ManagedAllowedTypes() {
+		_, has := costAttributes[typ]
+		if has == slices.Contains(costNone, typ) {
+			t.Errorf("the managed cover admits %s, which is %s: decide its cost attributes", typ,
+				map[bool]string{true: "in both costAttributes and costNone", false: "in neither costAttributes nor costNone"}[has])
+		}
+	}
+}
+
+// TestManagedCostNonConformingTypesAreRefused: a blocked attribute stated in a
+// type the check cannot read is refused, for every blocked attribute alike.
+func TestManagedCostNonConformingTypesAreRefused(t *testing.T) {
+	for name, rc := range map[string]ResourceChange{
+		"a non-number minimum instance count": costService(costScaling("5")),
+		"a non-number manual instance count":  mrc("google_cloud_run_v2_service", map[string]any{"scaling": []any{map[string]any{"manual_instance_count": "50"}}}),
+		"a non-string accelerator (job)":      costJob(map[string]any{"node_selector": []any{map[string]any{"accelerator": 7}}}),
+		"a non-string accelerator (service)":  costService(map[string]any{"node_selector": []any{map[string]any{"accelerator": 7}}}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if fs := ManagedCosts(managedPlan(rc)); len(fs) != 1 || !fs[0].Block {
+				t.Errorf("fires %q, want one blocking entry", fs)
+			}
+		})
+	}
+}
+
+// TestManagedCostSmallClassesGolden pins the classes' contents: bigger types
+// are not small.
+func TestManagedCostSmallClassesGolden(t *testing.T) {
+	keys := func(c managedCostClass) []string { return slices.Sorted(maps.Keys(c.small)) }
+	if got, want := keys(managedCostMachineClass), []string{"e2-medium", "e2-micro", "e2-small", "f1-micro", "g1-small"}; !slices.Equal(got, want) {
+		t.Errorf("machine class %v, want %v", got, want)
+	}
+	if got, want := keys(managedCostSQLClass), []string{"db-f1-micro", "db-g1-small"}; !slices.Equal(got, want) {
+		t.Errorf("sql class %v, want %v", got, want)
+	}
+	if managedCostMachineClass.small["n2-standard-96"] || managedCostSQLClass.small["db-custom-96-614400"] {
+		t.Error("a large class is small")
+	}
+	if managedCostAboveMachineType("n2-standard-96") == "" || managedCostAboveSQLTier("db-custom-96-614400") == "" {
+		t.Error("a large class is not above the line")
+	}
+}
+
+// TestManagedCostAReplaceBills: a replace creates, in either order.
+func TestManagedCostAReplaceBills(t *testing.T) {
+	for _, actions := range [][]string{{"delete", "create"}, {"create", "delete"}} {
+		rc := costService(costScaling(3))
+		rc.Change.Actions = actions
+		if fs := ManagedCosts(managedPlan(rc)); len(fs) != 1 {
+			t.Errorf("a replace %v fires %q, want the min-instances entry", actions, fs)
+		}
 	}
 }

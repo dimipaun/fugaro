@@ -483,3 +483,47 @@ func TestGateAdmitsAPlanBelowTheCostLines(t *testing.T) {
 		t.Fatalf("a plan below the cost lines is refused: %v", v.Refusals)
 	}
 }
+
+// A plan the guard refuses and that also states a blocked cost attribute
+// returns every refusal, the cost one included: the "every refusal" contract.
+func TestGateReturnsTheCostRefusalAlongsideTheGuards(t *testing.T) {
+	const svc = "module.managed.google_cloud_run_v2_service.api"
+	r := newRig(t)
+	r.show(t,
+		change(planBucket, "google_storage_bucket", []string{"delete"}, nil),
+		change(svc, "google_cloud_run_v2_service", []string{"create"}, map[string]any{
+			"template": []any{map[string]any{"scaling": []any{map[string]any{"min_instance_count": 3}}}}}))
+	v := gate(t, r, spec(t, r, admitAll{}))
+	var guarded, costed bool
+	for _, ref := range v.Refusals {
+		guarded = guarded || (ref.Gate == guardGate && ref.Address == planBucket)
+		costed = costed || (ref.Gate == costGate && ref.Address == svc)
+	}
+	if v.OK || !guarded || !costed {
+		t.Errorf("verdict %+v, want not OK with the guard's and the cost gate's refusals", v)
+	}
+}
+
+// A flag-only finding is carried in Verdict.Flags, shown to whoever confirms,
+// and never makes the plan not OK.
+func TestGateCarriesAFlagOnlyFindingWithoutRefusing(t *testing.T) {
+	const addr = "module.managed.google_cloud_run_v2_service.api"
+	old := costFindings
+	costFindings = func(*tf.Plan) []tf.ManagedCostFinding {
+		return []tf.ManagedCostFinding{{Entry: "test-flag", Address: addr, Detail: "the size is large", Block: false}}
+	}
+	t.Cleanup(func() { costFindings = old })
+	r := newRig(t)
+	r.show(t, bucket(planBucket))
+	v := gate(t, r, spec(t, r, admitAll{}))
+	if !v.OK {
+		t.Errorf("a flag-only finding made the plan not OK: %+v", v)
+	}
+	if len(v.Refusals) != 0 {
+		t.Errorf("refusals %v, want none", v.Refusals)
+	}
+	if len(v.Flags) != 1 || v.Flags[0].Gate != costGate || v.Flags[0].Address != addr ||
+		!strings.Contains(v.Flags[0].Why, "test-flag") {
+		t.Errorf("flags %+v, want the finding", v.Flags)
+	}
+}

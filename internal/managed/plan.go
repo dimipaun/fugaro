@@ -97,7 +97,15 @@ type Spec struct {
 type Verdict struct {
 	OK       bool
 	Refusals []Refusal
+	// Flags are the findings of entries that only flag (Task 1.3, D62): recorded
+	// here for whoever confirms, from the cost list's non-blocking findings. They
+	// never affect OK.
+	Flags []Refusal
 }
+
+// costFindings is tf.ManagedCosts; a variable only so a test can supply a
+// flag-only finding, which no entry of the real list produces.
+var costFindings = tf.ManagedCosts
 
 // guard is tf.Guard; a variable only so a test can make it refuse in words the
 // real guard never writes.
@@ -145,8 +153,16 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 	// The cost list is a third check on the same plan, run whatever the cover
 	// said: its refusals are the plan's own words about what it states, and a
 	// cover that admits a plan says nothing about what it costs.
-	costRefused := tf.ManagedCostRefusals(plan)
+	var costRefused, costFlagged []string
+	for _, f := range costFindings(plan) {
+		if f.Block {
+			costRefused = append(costRefused, f.String())
+		} else {
+			costFlagged = append(costFlagged, f.String())
+		}
+	}
 	v.Refusals = append(v.Refusals, refusals(costGate, strings.Join(costRefused, "\n"))...)
+	v.Flags = refusals(costGate, strings.Join(costFlagged, "\n"))
 	// Fail closed on the errors themselves, not on the refusals they were
 	// turned into: a guard that errs with an empty message refuses all the same.
 	v.OK = guardErr == nil && len(notCovered) == 0 && len(costRefused) == 0

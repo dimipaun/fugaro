@@ -195,6 +195,20 @@ var managedCostList = []managedCostEntry{
 				path:  []any{"template", 0, "scaling", 0, "min_instance_count"},
 				above: managedCostAboveInstances,
 			},
+			{
+				// The service's own top-level scaling block, the provider's
+				// service-level scaling (min and manual instance counts).
+				typ:   "google_cloud_run_v2_service",
+				what:  "the service-level minimum instance count",
+				path:  []any{"scaling", 0, "min_instance_count"},
+				above: managedCostAboveInstances,
+			},
+			{
+				typ:   "google_cloud_run_v2_service",
+				what:  "the manual instance count",
+				path:  []any{"scaling", 0, "manual_instance_count"},
+				above: managedCostAboveInstances,
+			},
 		},
 	},
 	{
@@ -511,7 +525,10 @@ func managedCostAboveGPUMachine(v any) string {
 // provider's own way of saying that none is attached (the attribute is
 // optional inside the block).
 func managedCostAboveAccelerator(v any) string {
-	accelerator := str(v)
+	accelerator, isString := v.(string)
+	if !isString {
+		return fmt.Sprintf("a node selector accelerator of %v, which is not a string", v)
+	}
 	if accelerator == "" {
 		return ""
 	}
