@@ -51,8 +51,9 @@ highest written section is 58 today.
 ## Nothing loads from a third party
 
 No font, script, stylesheet, image or embed reaches a page from an origin outside this
-build: a font is **self-hosted in this artifact** (`website/public/fonts/`, when the styles
-land in W1.2), and there is no Google Fonts, no CDN, no embed and no pixel — because every
+build: the pages use the system font stack `src/styles/tokens.css` names, no font file
+ships today, and a font added later is **self-hosted in this artifact**
+(`website/public/fonts/`, which the layout preloads from), and there is no Google Fonts, no CDN, no embed and no pixel — because every
 third-party origin is a request from a reader's browser to a company this project has no
 relationship with (D106). There is exactly **one exception, and the owner chose it**: the
 analytics script (D93), loaded **only after the visitor consents**, with W1.12's banner as
@@ -154,6 +155,7 @@ website/
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ at build time
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
+  public/                          # icons, logo.png, site.webmanifest (scripts/gen-brand-icons.py)
   test/*.mjs                       # every one of them runs under `npm run check`
   dist/                            # the build output, not committed
 ```
@@ -161,9 +163,47 @@ website/
 `node_modules/`, `dist/` and `.astro/` are not committed: the first is what `npm ci`
 installs from the committed lockfile, and the last two are build output.
 
-The deploy comes later and it is **not a Fugaro run's to write**: W2.1 stages a workflow
-under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to deploy
-to the Firebase project created for the website only (D91, D109) — a run may not change
-`.github/workflows/`. `docs/pending-workflows/` holds no pending workflow today,
-and no deploy workflow and no `firebase.json` exists yet: they are W2.1's, and this document describes them in advance
-rather than claiming them.
+## Brand assets
+
+Every icon and the header logo are derived from one file, `brand/fugaro-logo.png` at the
+repository root, by `scripts/gen-brand-icons.py` (see `brand/README.md`). The outputs are
+committed under `public/` — the favicons, the apple-touch icon, the Android icons including
+a maskable one, `logo.png` and `site.webmanifest` — and the base layout links them. Nothing
+is fetched from another origin, and `test/brand.mjs` holds the sizes, the opacity of the
+home-screen icons, the manifest's colours (the palette's `--ground`), the header logo's
+40 KB budget and its empty alt.
+
+## Deploying
+
+`firebase.json` at the repository root is the hosting configuration: it serves
+`website/dist` with clean URLs, a Content-Security-Policy that admits this origin only
+(`script-src 'self'`, inline styles allowed because Astro inlines small stylesheets),
+`nosniff`, a referrer policy, a one-year immutable cache for the hashed `/_astro/` files,
+a day for icons and fonts, and five minutes for HTML. It names no project and there is no
+`.firebaserc`. It landed ahead of W2.1 with the owner's deploy script; W2.1 and W2.2 extend it
+(the staged workflow, the redirect block), and W1.12 or W3.2 must widen the CSP when the
+consented analytics script is switched on, because the policy blocks it today.
+
+`scripts/deploy-website.sh` deploys from the owner's machine with the Firebase CLI, using
+whatever `firebase login` the owner already did — it never reads, prints or takes a token
+or a key:
+
+```sh
+scripts/deploy-website.sh --dry-run                 # build + npm run check, print the deploy command
+scripts/deploy-website.sh                           # deploy live to fugaro-prod
+scripts/deploy-website.sh --channel preview-1       # deploy to a preview channel instead
+scripts/deploy-website.sh --project <id> --dry-run  # another website-only project
+```
+
+The project defaults to `fugaro-prod`, the Firebase project the owner created for the
+website only (D91); `--project` overrides it, and it is never an installation's project.
+The script checks that `node`, `npm` and `firebase` are installed, runs `npm ci` when
+`node_modules/` is missing, runs `npm run check`, refuses an empty `dist/`, and then runs
+`firebase deploy --only hosting --project <id>` (or
+`firebase hosting:channel:deploy <name> --project <id>`). `scripts/deploy-website_test.sh`
+tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test.
+
+The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
+workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
+deploy to the Firebase project created for the website only (D91, D109) — a run may not
+change `.github/workflows/`. `docs/pending-workflows/` holds no pending workflow today.

@@ -1,0 +1,115 @@
+# website/data/faq.yaml -- the FAQ's answers, the file each one is traceable to, and the
+# comparison rows (website plan, Task W1.10; findings 50-52, decisions D102 and D103).
+#
+# This is the FAQ's one source of truth, and the rule it is written to is the site's
+# (Global Constraint 6): a page renders a fact, it never restates one. So every answer
+# below carries the file in this repository that proves it, the page renders that file as
+# the answer's source, and a build refuses an answer whose source is not in the tree --
+# `website/src/pages/faq.astro` reads this file and stops, naming the entry, when it is not
+# (website/test/faq-community.mjs holds that).
+#
+# What an entry is, and what each field is for:
+#
+#   id        the entry's anchor on the page, and the name a build error uses.
+#   question  the heading a reader scans for.
+#   answer    the site's own sentence, consistent with `source` and never a copy of it: a
+#             page that repeats a document's sentences is the second copy of it, and the
+#             copy that drifts first (F37, F47).
+#   source    the file the answer is traceable to, relative to the repository root. The
+#             page renders it as a link and fails the build if it is missing.
+#   more_*    an optional second link, for the two answers whose job is to send a reader to
+#             what carries the detail: the caps-and-costs page (figures and their
+#             provenance) and the security page (which renders SECURITY.md, byte for byte
+#             below its title -- a security claim is never paraphrased, F41, D99).
+#
+# The questions are the six W1.10 step 1 fixes, and they are deliberately the six the
+# repository can answer: what Fugaro is, where the code runs, what a run costs and what
+# stops it, what a failed run leaves behind, what a run can never change, and what the
+# security model does not promise. The four spec sentences the product cannot back today --
+# console downloads (D95), Windows/WSL (D94), the "~2 h" duration claim and the ballpark
+# ranges (D96, D97) -- are not here, and no answer mentions a duration, a platform the
+# build does not produce or a download that does not exist (F50, D102).
+version: 1
+
+# D103's answer puts the owner in the loop: the FAQ, its comparison section included, is
+# reviewed by the owner before it publishes. This flag is that state, and the page renders
+# it as a note rather than publishing the FAQ as final -- the owner flips it to false in the
+# commit that records the review, and the note disappears with it. The test holds the flag
+# and the page together, so the note cannot outlive the review or be forgotten before it.
+review_pending: true
+
+questions:
+  - id: what-it-is
+    question: What is Fugaro?
+    answer: >-
+      A fleet of ephemeral cloud workers for coding agents: one task, one container, one
+      pull request, then gone. Each task gets its own throwaway container in your own cloud
+      project, and the container does not survive the run -- the run record and the pull
+      request are what remain. It is not an agent in your editor: your machine runs the CLI,
+      Terraform and your own agent, and the run's agent is in the cloud.
+    source: README.md
+
+  - id: where-it-runs
+    question: Where does the code run?
+    answer: >-
+      In your own Google Cloud project, not on a service of ours: each task is one Cloud Run
+      job execution, started from the image of the repository's workflow, with a task
+      timeout and no retries. Cache and task objects live in Cloud Storage, each
+      repository's secrets in Secret Manager and each repository's image in Cloud Build.
+      Google Cloud is the first backend; AWS and Azure are wanted and not built.
+    source: README.md
+
+  - id: cost-and-caps
+    question: What does a run cost, and what stops it?
+    answer: >-
+      By default each stage passes Claude Code a dollar limit (agent.max_budget_usd, 25),
+      and when the budget is on with an API key the gateway prices every call and halts the
+      run at its cap; kill switches stop running runs within seconds. Caps guard against
+      mistakes and expensive tasks rather than against a hostile agent, so the caps-and-costs
+      page carries the figures, the sample they were drawn from and the provenance behind
+      each one.
+    source: README.md
+    more_label: Caps and costs
+    more_href: /caps-and-costs/
+
+  - id: a-failed-run
+    question: What does a failed run leave behind?
+    answer: >-
+      A pull request. The draft that opens at the first push is still there when a run
+      fails -- marked not verified -- with the diff, the report and the logs, and Fugaro
+      never merges it: protect the base branch, because a required review is what stops a
+      merge.
+    source: README.md
+
+  - id: workflow-files
+    question: What can a run never change?
+    answer: >-
+      Your workflow files. On GitHub the App holds four repository permissions -- Contents,
+      Pull requests, Issues and Metadata -- and never Workflows, so a push that changed
+      .github/workflows/ is refused by GitHub itself; a run's token is for one repository.
+      There is no equivalent guard for Bitbucket pipelines.
+    source: README.md
+
+  - id: security-limits
+    question: What does the security model not promise?
+    answer: >-
+      This page does not summarize it. The security model states its own limits, residual
+      risks included, and the security page renders that document rather than a paraphrase
+      of it -- because a security claim restated is a security claim altered.
+    source: SECURITY.md
+    more_label: The security page
+    more_href: /security/
+
+# The comparison section (D103, F51-F52). A row about another tool is a claim this
+# repository cannot verify: it has no network and it records no sourced, dated fact about
+# any other agent runner. So a row carries a `source:` and a `date:`, the page refuses to
+# build a row that carries neither, and the section is empty -- and says so -- until the
+# owner supplies rows that carry both. Adding a row is adding it with provenance:
+#
+#   comparison:
+#     - id: <anchor>
+#       name: <the tool, as its own documentation names it>
+#       claim: <the comparison, in one sentence>
+#       source: <the URL the claim was read from>
+#       date: <the date it was read, YYYY-MM-DD>
+comparison: []

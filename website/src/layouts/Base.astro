@@ -29,18 +29,15 @@
  */
 import { loadSite } from '../content.ts'
 
-// The design tokens, which are W1.2's files.
+// The design tokens (W1.2), then the page chrome and element defaults that apply them.
 //
-// They are named through `import.meta.glob` rather than imported directly, and the reason
-// is a real one rather than a stylistic one: W1.2 writes `src/styles/` in parallel with
-// this task, so at the moment this file is written `tokens.css` may not exist yet — and a
-// static `import '../styles/tokens.css'` of a file that does not exist fails the build,
-// which would make this task's own gate red until another task's branch merges. The glob
-// resolves to nothing when the file is absent (the build stays green, and the pages fall
-// back to the browser's own defaults) and bundles the stylesheet into the build, with the
-// `<link>` Astro emits for it, the moment W1.2's file lands. No file is created under
-// `src/styles/` here: that directory is W1.2's.
-import.meta.glob('../styles/tokens.css', { eager: true })
+// The order is the point: `tokens.css` declares the vocabulary (and imports the palette in
+// force), and `base.css` paints the document with it — the ground, the text, the type, the
+// header, the nav, the footer, links, code and tables. Before `base.css` existed the tokens
+// were in every built page and nothing used them, so the browser's white page and serif
+// text showed through. Both are plain static imports: Astro bundles them into the page.
+import '../styles/tokens.css'
+import '../styles/base.css'
 
 interface Props {
   /** The page's `<title>` suffix and its `og:title`: the page names itself. */
@@ -103,6 +100,14 @@ const NAV = [
   { href: '/community/', label: 'Community' },
 ]
 
+// The footer's links into the site: entries of NAV, picked by route, so a label is never
+// written twice.
+const FOOTER_NAV = ['/security/', '/changelog/'].map((href) => {
+  const item = NAV.find((entry) => entry.href === href)
+  if (!item) throw new Error(`Base.astro: the footer links ${href}, which NAV does not list`)
+  return item
+})
+
 // Analytics (D93): off in site.yaml today, and gated on consent even when it is on. The
 // origin is written here rather than added to `site.yaml`'s `allowed_hosts`, because that
 // list is the hosts the site's own pages link to and this one is the single third-party
@@ -141,6 +146,15 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
     <meta property="og:description" content={pageDescription} />
     <meta property="og:url" content={canonicalHref} />
     <meta name="twitter:card" content="summary" />
+
+    {/* The icons and the manifest, all derived from brand/fugaro-logo.png by
+        scripts/gen-brand-icons.py and served from public/, so no icon is fetched from
+        anywhere but this site (D106). */}
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
 
     {fonts.map((font) => (
       <link rel="preload" as="font" type={font.type} href={font.href} crossorigin />
@@ -246,9 +260,11 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
-    <header>
-      <a href="/" rel="home">{SITE_NAME}</a>
-      <nav aria-label="Sections">
+    <header class="site-header">
+      {/* The logo is decoration beside the name, so its alt is empty: the link's
+          accessible name is the word "Fugaro", said once. The file is 2x the size drawn. */}
+      <a class="site-wordmark" href="/" rel="home"><img src="/logo.png" alt="" width="47" height="32" decoding="async" />{SITE_NAME}</a>
+      <nav class="site-nav" aria-label="Sections">
         <ul>
           {NAV.map((item) => (
             <li>
@@ -265,13 +281,23 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
       <slot />
     </main>
 
-    <footer>
-      {/* The repository, from site.yaml: the one fact the footer states, and a link to
-          where the site's own source and the guides it renders live (W1.7 links the same
-          repository from the docs hub). */}
-      <p>
-        <a href={facts.repository} rel="noopener">{facts.repository}</a>
-      </p>
+    <footer class="site-footer">
+      {/* The repository, from site.yaml, and two of the site's own sections from NAV above:
+          the security policy and the changelog, the two pages a reader looks for at the foot
+          of a project's site. No fact is written here that the layout did not already hold
+          (W1.7 links the same repository from the docs hub). */}
+      <nav aria-label="Footer">
+        <ul>
+          <li>
+            <a href={facts.repository} rel="noopener">{facts.repository}</a>
+          </li>
+          {FOOTER_NAV.map((item) => (
+            <li>
+              <a href={item.href}>{item.label}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
     </footer>
   </body>
 </html>
