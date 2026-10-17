@@ -447,7 +447,7 @@ test('a comment that mentions the sitemap package does not make the head point a
   // comment (or a string) that names the package is not one.
   const built = buildWith(t, (copy) => {
     const file = path.join(copy.site, 'astro.config.mjs')
-    writeFileSync(file, `// @astrojs/sitemap arrives with W2.2.\n${readFileSync(file, 'utf8')}`)
+    writeFileSync(file, `// @astrojs/sitemap is not installed, and a comment saying its name is not an integration.\n${readFileSync(file, 'utf8')}`)
   })
 
   assert.ok(!builtPage(built).includes('rel="sitemap"'), 'the page points at a sitemap the build does not produce')
