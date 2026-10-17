@@ -1,0 +1,58 @@
+---
+/**
+ * website/src/pages/changelog.astro — the changelog (website plan, W1.9).
+ *
+ * The page is an index of `docs/releases/vX.Y.Z.md`: the hand-written Highlights of every
+ * release, newest first, rendered from the files themselves. Three things follow from that
+ * and are worth stating here rather than in the component:
+ *
+ *   1. **The entries are built during the build, and nothing is committed.** W0.6's
+ *      `src/lib/changelog.mjs` reads the release files and this page renders what it
+ *      returns, so a Highlights file that lands on `main` before its tag exists is on the
+ *      page at the next build and there is no generated copy in the tree to go stale
+ *      (D100). The page is also the first reader-facing index of those files: `README.md`
+ *      deliberately keeps no changelog section and points at the Releases page instead
+ *      (finding 44).
+ *   2. **The page writes nothing of its own.** Its heading names it and the component
+ *      renders the files' lines; there is no summary, no "what's new" prose and no
+ *      editorial, and `website/test/changelog-page.mjs` fails on a sentence that is not in
+ *      a release file — the page-level form of W0.6's file-level check.
+ *   3. **The repository the entries link is a fact.** It comes from `website/data/site.yaml`
+ *      through the content pipeline (W0.2, W1.3), so the release URLs are built from the
+ *      site's own fact and no host is typed into a template.
+ *
+ * Nothing here fetches anything: the build is network-free and reads this repository only
+ * (Global Constraints 4 and 5).
+ */
+import path from 'node:path'
+import Base from '../layouts/Base.astro'
+import Changelog from '../components/Changelog.astro'
+import { buildChangelog } from '../lib/changelog.mjs'
+import { loadSite, REPO_ROOT } from '../content.ts'
+
+// The releases, read from docs/releases/ at build time (W0.6): newest first, each entry
+// the file's own tag, bullets and operator steps, and its `released` flag from the tags of
+// the checkout this build ran in.
+//
+// **Why the directory and the checkout are passed rather than defaulted.** The generator
+// finds the repository by walking up from its own file, which is right when it is loaded
+// from `website/src/lib/` — as W0.6's own test loads it — and wrong inside a build: Astro
+// bundles it into a chunk under `website/dist/.prerender/`, where that walk lands on
+// `website/` and the release directory it looks for is `website/docs/releases/`, which does
+// not exist. `website/src/content.ts` solves exactly this problem for the site's facts
+// (`findSiteRoot`, W1.3) and exports the repository root it found, so the page passes the
+// one directory and the one checkout the generator should read, and the generator itself is
+// left as W0.6 wrote it.
+const releasesDir = path.join(REPO_ROOT, 'docs', 'releases')
+const entries = buildChangelog({ releasesDir, cwd: REPO_ROOT })
+
+// The site's facts, through the same pipeline every page renders from: the repository is
+// the one fact this page needs, and `loadSite()` fails the build if the facts are not
+// there rather than rendering a page with a hole in it (W1.3).
+const repository = loadSite().facts.repository
+---
+
+<Base title="Changelog">
+  <h1>Changelog</h1>
+  <Changelog entries={entries} repository={repository} />
+</Base>

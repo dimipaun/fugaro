@@ -1,0 +1,18 @@
+{
+  "name": "fugaro-website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Fugaro website: a static Astro build of the facts in this repository.",
+  "engines": {
+    "node": ">=22.22.0 <23",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
+    "check": "npm run build && node --test test/*.mjs"
+  },
+  "dependencies": {
+    "astro": "7.4.0"
+  }
+}

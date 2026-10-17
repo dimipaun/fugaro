@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/api/googleapi"
 
@@ -166,6 +167,38 @@ func TestEnableService(t *testing.T) {
 	}
 }
 
+// REGRESSION (design compute-backend §7.2, §8.1 task 6): enabling a service
+// whose disable has not finished is refused with "currently being
+// deactivated" until it has, so the enable is retried; an enable that is
+// still refused when the retries run out is an error, not a silent success.
+func TestEnableServiceWaitsOutADeactivation(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	restoreRetries, restorePoll := enableDeactivatingRetries, enablePoll
+	enableDeactivatingRetries, enablePoll = []time.Duration{0, 0}, 0
+	t.Cleanup(func() { enableDeactivatingRetries, enablePoll = restoreRetries, restorePoll })
+
+	f.su.Disable(ServiceResourceManager, f.crm.Server)
+	f.su.Deactivating = 2
+	if err := EnableService(ctx, f.c, "proj-1234", ServiceResourceManager); err != nil {
+		t.Fatal(err)
+	}
+	if !f.su.Enabled(ServiceResourceManager) {
+		t.Error("not enabled")
+	}
+	if n := len(f.su.Enables()); n != 3 {
+		t.Errorf("%d enable calls, want 3 (two refused while deactivating, then one)", n)
+	}
+
+	// A deactivation that never finishes is bounded by the retries.
+	f.su.Disable(ServiceResourceManager, f.crm.Server)
+	f.su.Deactivating = 99
+	err := EnableService(ctx, f.c, "proj-1234", ServiceResourceManager)
+	if err == nil || !strings.Contains(err.Error(), "being deactivated") {
+		t.Fatalf("a service that stays deactivated: err = %v, want the refusal", err)
+	}
+}
+
 // Without credentials and without a Service Usage endpoint there is no
 // Service Usage client, so an enable fails instead of calling Google.
 func TestEnableServiceNeedsEndpoint(t *testing.T) {
@@ -257,7 +290,7 @@ func TestDisabledAPIsReadAsMissing(t *testing.T) {
 				t.Fatalf("repo: %v", err)
 			}
 			check("repo", rim, wantRepo)
-			if _, _, err := Readiness(ctx, f.c, spec, ex); err != nil {
+			if _, _, err := Readiness(ctx, f.c, spec, ex, false); err != nil {
 				t.Fatalf("readiness: %v", err)
 			}
 			if len(servers[service].Requests()) == 0 {
@@ -283,7 +316,7 @@ func TestReadinessDisabledAPIsMissing(t *testing.T) {
 			}
 			s := map[string]*gcpfake.Server{"secretmanager.googleapis.com": f.sm.Server, "artifactregistry.googleapis.com": f.ar.Server}[service]
 			f.su.Disable(service, s)
-			_, missing, err := Readiness(ctx, f.c, spec, ex)
+			_, missing, err := Readiness(ctx, f.c, spec, ex, false)
 			if err != nil {
 				t.Fatal(err)
 			}

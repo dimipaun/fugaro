@@ -1,0 +1,121 @@
+# website/data/install.yaml -- the one install source the site renders.
+#
+# Read as bytes by internal/cli/docs_website_install_test.go, which pins:
+# every command below to the file its `source:` names (README.md's
+# "## Getting started" or docs/release.md), verbatim; `build` to
+# .goreleaser.yaml's builds[0]; the archive's name template and extension to
+# archives[0]; the Homebrew line to homebrew_casks[0]; the platform list below
+# to README.md's "## Requirements" and to .goreleaser.yaml, so that a platform
+# no build produces may appear only marked untested and never as something a
+# reader can install on; each path's own platform list to the source that
+# offers it that path; and the absence of any version number. Nothing under
+# website/ is importable by the Go module.
+version: 1
+
+# What this repository actually builds: darwin and linux on amd64 and arm64,
+# and nothing else.
+build:
+  os: [darwin, linux]
+  arch: [amd64, arm64]
+
+# The reader-facing platform list, and the whole of what the site says about
+# the operating systems a reader might be on (reconciliation D94). macOS and
+# Linux are supported. Windows is untested: this repository builds no Windows
+# binary, and the Linux archive may work through WSL, but nobody has verified
+# it. The list is rendered as written -- the Windows entry is a note and never
+# a platform a reader is offered.
+platforms:
+  - id: macos
+    name: macOS
+    goos: darwin
+    status: supported
+  - id: linux
+    name: Linux
+    goos: linux
+    status: supported
+  - id: windows
+    name: Windows
+    goos: windows
+    status: untested
+    note: >-
+      Windows is untested: this repository builds no Windows binary. The Linux
+      archive may work through WSL, but nobody has verified it.
+
+paths:
+  - id: homebrew
+    name: Homebrew
+    source: README.md
+    platforms: [darwin]
+    tap_repository: dimipaun/homebrew-tap
+    note: The Homebrew cask (tested on macOS).
+    commands:
+      - |-
+        brew install dimipaun/tap/fugaro
+
+  - id: archive
+    name: The release archive
+    source: README.md
+    platforms: [darwin, linux]
+    release_page: https://github.com/dimipaun/fugaro/releases
+    name_template: "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    extension: tar.gz
+    note: >-
+      Download an archive from the Releases page (darwin and linux, amd64 and
+      arm64) and verify it with cosign. The site links the Releases page and
+      never builds a download URL: the archive's URL carries a version the
+      site does not know.
+
+  - id: cosign
+    name: Verify a release with cosign
+    source: docs/release.md
+    platforms: [darwin, linux]
+    note: >-
+      The verification block docs/release.md prints, verbatim: download the
+      checksums, their signature bundle and the archive, verify the signature
+      that the release workflow attached to the tag, then check the archive
+      against the checksums -- one checksum line per platform.
+    commands:
+      - |-
+        V=X.Y.Z
+      - |-
+        gh release download v$V -R dimipaun/fugaro -p checksums.txt -p checksums.txt.sigstore.json -p "fugaro_${V}_$(uname -s | tr A-Z a-z)_*"
+      - |-
+        cosign verify-blob checksums.txt \
+          --bundle checksums.txt.sigstore.json \
+          --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/release.yml@refs/tags/v$V" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - |-
+        grep " fugaro_${V}_" checksums.txt | shasum -a 256 -c -      # macOS
+      - |-
+        grep " fugaro_${V}_" checksums.txt | sha256sum -c -         # Linux
+
+  - id: go-install
+    name: Go install
+    source: README.md
+    platforms: [darwin, linux]
+    dev_only: true
+    note: >-
+      For development only: it builds a dev version with no release images and
+      no plugin pin.
+    commands:
+      - |-
+        go install github.com/dimipaun/fugaro/cmd/fugaro@latest
+
+  - id: plugin
+    name: The Fugaro plugin
+    source: README.md
+    platforms: [darwin, linux]
+    note: >-
+      The plugin route README.md's "## Getting started" prints: fugaro init
+      wires the Fugaro plugin into the checkout's .claude/settings.json,
+      /fugaro:setup writes fugaro.yaml, a teammate who opens the folder and
+      trusts it gets the plugin installed, and fugaro upgrade --local repairs
+      it when the skills are not listed. The marketplace commands a person
+      runs inside Claude Code are not here: README.md does not print them.
+    commands:
+      - |-
+        fugaro init
+      - |-
+        /fugaro:setup
+      - |-
+        fugaro upgrade --local

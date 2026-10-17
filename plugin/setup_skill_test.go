@@ -320,7 +320,7 @@ func TestSetupSkillContent(t *testing.T) {
 	files := setupFiles(t)
 	for file, wants := range map[string][]string{
 		"skills/setup/SKILL.md": {
-			"fugaro doctor --json", "fugaro secrets ls --json", "fugaro image render", "fugaro image build --local --json",
+			"fugaro doctor --json", "fugaro secrets ls --repo --json", "fugaro image render", "fugaro image build --local --json",
 			"fugaro validate --json", "fugaro init --repo --plan-only", ".fugaro/<workflow>.Dockerfile", "blank Dockerfile",
 			".github/workflows", "Docker daemon", "`fugaro_yaml`", "WSL2", "agent.instructions",
 			"whole content", "_.source", "[hooks]",

@@ -366,7 +366,7 @@ func newRestoreRig(t *testing.T) *restoreRig {
 	t.Cleanup(func() { bucket.Close() })
 	return &restoreRig{
 		deps: runner.Deps{WorkDir: work, Env: []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}},
-		prev: runstore.Open(bucket, "acme-app", "20260925-101010-abcd"),
+		prev: runstore.Open(bucket, repoSlug, "20260925-101010-abcd"),
 		home: home, head: testutil.Git(t, work, "rev-parse", "HEAD"), parent: parent,
 	}
 }

@@ -177,7 +177,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["effective"],
-      "description": "The budget and model policy the run ran under, merged from the owner's ceiling, the default branch's fugaro.yaml and the run's own. Absent when no layer set any.",
+      "description": "The budget and model policy the run ran under, merged from the project's published policy, the owner's ceiling, the default branch's fugaro.yaml and the run's own. Absent when no layer set any.",
       "properties": {
         "effective": {
           "type": "object",
@@ -200,8 +200,8 @@
         },
         "sources": {
           "type": "object",
-          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch"] },
-          "description": "Policy key to the layer that set its effective value."
+          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch", "policy"] },
+          "description": "Policy key to the layer that set its effective value: ceiling, policy (the project's published node, which replaces the ceiling key by key), default-branch or branch."
         },
         "ignored": {
           "type": "array",
@@ -214,7 +214,7 @@
               "key": { "type": "string" },
               "value": { "type": "string" },
               "effective": { "type": "string" },
-              "source": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer of the effective value." },
+              "source": { "enum": ["ceiling", "default-branch", "branch", "policy"], "description": "The layer of the effective value." },
               "from": { "enum": ["default-branch", "branch"], "description": "The layer that asked for the dropped value." }
             }
           }
@@ -263,6 +263,51 @@
         "timed_out": { "type": "boolean", "description": "commands.render was killed by timeouts.render." },
         "duration_s": { "type": "number", "minimum": 0 },
         "started_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "description": "The files the launcher attached to this run (fugaro run --attach, design artifact-runs.md §4 step 6): the task spec's own list, echoed once the runner downloaded and verified every one, so a reader sees exactly what the run was given. Absent for a run launched without an attachment.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bytes", "sha256"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "The name it is stored and written under: runs/<slug>/<run>/inputs/<name> in the bucket, <checkout>/inputs/<name> in the run. A name of nothing but whitespace is no name (task.InputNameBlank, the same rule the task schema and the launcher apply)." },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The sha256 the launcher read while uploading; the runner verified the object it downloaded against it." }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The files a mode: artifact run uploaded, in name order (design artifact-runs.md §3, §8): one entry per object under this run's artifacts/ prefix. Absent — never an empty array — for every run that delivered none, including every record written before this field existed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bytes", "sha256", "content_type"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The object's key leaf, relative to artifacts/: the sanitiser's own output, never a path out of the prefix, with no .. element, no leading dot, no NUL and no newline." },
+          "bytes": { "type": "integer", "minimum": 0, "description": "The size of the bytes in the bucket, as the upload measured them." },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The sha256 of the bytes in the bucket, hashed in the same pass that wrote them and checked against the staged copy's hash." },
+          "content_type": { "type": "string", "minLength": 1, "description": "Recorded, never trusted (§8.1): from the name's extension or a sniff of the first bytes." },
+          "probe": {
+            "type": "object",
+            "description": "What commands.probe said about this artifact (design artifact-runs.md §3, plan Task 5). Every artifact this runner uploads carries one: a recipe that asks for no probe — outputs.probe: none, or the default — records {ran: false, exit_code: -1} rather than leaving the key out, so 'no probe ran' is stated in the record instead of inferred from a field that is not there (plan Review Focus 6), and a probe that did run records ran: true with the exit code it exited or was killed on (negative when a signal killed it, -1 for the SIGKILL after its grace). Absent only in a record written before the probe step existed.",
+            "additionalProperties": false,
+            "required": ["ran", "exit_code"],
+            "properties": {
+              "ran": { "type": "boolean", "description": "False when the recipe asked for no probe: the runner started no process at all. The exit code beside it is then -1 and not 0, because a reader skimming an exit code must never read 'skipped' as 'passed'." },
+              "exit_code": { "type": "integer" },
+              "warning": { "type": "string", "description": "Empty when the probe passed. Deliberately unwritten by this release: a probe that fails refuses the upload, so a record carries no artifact whose verdict could hold one (plan Task 5)." }
+            },
+            "allOf": [{
+              "if": { "properties": { "ran": { "const": false } }, "required": ["ran"] },
+              "then": { "properties": { "exit_code": { "const": -1 } }, "required": ["exit_code"] }
+            }]
+          }
+        }
       }
     }
   }

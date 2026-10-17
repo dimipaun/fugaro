@@ -70,6 +70,13 @@ type LaunchSpec struct {
 	// Timeout is the workflow's total time for this run; zero means the job's own.
 	// The backend adds TaskTimeoutSlack to it.
 	Timeout time.Duration
+	// Env are extra "NAME=value" variables for this execution only, merged
+	// into the job's own environment (the Cloud Run v2 API merges override env
+	// into the job's; docs/design/project-centric.md §2.2). The launcher sets
+	// the budget marker here — whether it minted a token is a fact about this
+	// launch, not about the job's deploy-time environment, so it cannot come
+	// from init --repo (internal/runner's BudgetTokenEnv, plan R2-8(a)).
+	Env []string
 	// Docker is what the workflow asked for: `docker: true` (design
 	// compute-backend.md §4.2, C16), a real Docker daemon for the run's own
 	// containers. It is the workflow's ask and not a capability, so a backend

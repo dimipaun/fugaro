@@ -67,7 +67,7 @@ func fakePR(n int, branch string, draft bool) fake.PRState {
 func TestLockHeldDuringRunThenReleased(t *testing.T) {
 	h := newHarness(t, "", nil)
 	b := withBucket(h)
-	key := lock.Key("acme-app", "fugaro/"+runID)
+	key := lock.Key(repoSlug, "fugaro/"+runID)
 	held := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		if ok, _ := b.Exists(ctx, key); !ok {
 			t.Error("the branch lock is not held during implement")
@@ -86,7 +86,7 @@ func TestLockHeldDuringRunThenReleased(t *testing.T) {
 func TestBranchBusyIsInfraError(t *testing.T) {
 	h := newHarness(t, "", nil)
 	b := withBucket(h)
-	key := lock.Key("acme-app", "fugaro/"+runID)
+	key := lock.Key(repoSlug, "fugaro/"+runID)
 	if _, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: "20260101-000000-ffff", ExpiresAt: time.Now().Add(time.Hour)}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -125,9 +125,9 @@ func TestForgedRecordNeverTakesOverALiveLock(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t, "", nil)
 			b := withBucket(h)
-			key := lock.Key("acme-app", "fugaro/"+runID)
+			key := lock.Key(repoSlug, "fugaro/"+runID)
 			if c.rec != nil {
-				if err := runstore.Open(h.bucket, "acme-app", holder).WriteRecord(context.Background(), c.rec); err != nil {
+				if err := runstore.Open(h.bucket, repoSlug, holder).WriteRecord(context.Background(), c.rec); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -155,7 +155,7 @@ func TestForgedRecordNeverTakesOverALiveLock(t *testing.T) {
 func TestSelfReleaseMarkerLetsAFollowUpAcquireAtOnce(t *testing.T) {
 	h := newHarness(t, "", nil)
 	b := withBucket(h)
-	key := lock.Key("acme-app", "fugaro/"+runID)
+	key := lock.Key(repoSlug, "fugaro/"+runID)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
@@ -184,7 +184,7 @@ func TestSelfReleaseMarkerLetsAFollowUpAcquireAtOnce(t *testing.T) {
 func TestSelfReleaseMarkerSurvivesAMissingRelease(t *testing.T) {
 	h := newHarness(t, "", nil)
 	b := withBucket(h)
-	key := lock.Key("acme-app", "fugaro/"+runID)
+	key := lock.Key(repoSlug, "fugaro/"+runID)
 	// As if the container died between MarkReleasing and the delete: the
 	// delete itself fails, without touching the real object.
 	runner.SetLockRelease(t, func(*lock.Lock, context.Context) error {
@@ -232,7 +232,7 @@ func TestLockMarkerFailureDoesNotFailTheRun(t *testing.T) {
 	if !strings.Contains(logs.String(), "marking the branch lock as releasing failed") {
 		t.Fatalf("no warning logged for the failed marking:\n%s", logs.String())
 	}
-	key := lock.Key("acme-app", "fugaro/"+runID)
+	key := lock.Key(repoSlug, "fugaro/"+runID)
 	if ok, _ := b.Exists(context.Background(), key); ok {
 		t.Fatal("the lock survives despite Release, which does not depend on marking")
 	}
@@ -285,7 +285,7 @@ func TestSameExecutionSpelledDifferentlyIsNotADuplicate(t *testing.T) {
 func TestDuplicateExecutionLosesLock(t *testing.T) {
 	h := newHarness(t, "", nil)
 	b := withBucket(h)
-	key := lock.Key("acme-app", "fugaro/"+runID)
+	key := lock.Key(repoSlug, "fugaro/"+runID)
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	if _, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: runID, Execution: exec1, ExpiresAt: expires}, time.Now()); err != nil {
 		t.Fatal(err)
@@ -314,7 +314,7 @@ func TestDuplicateExecutionLosesLock(t *testing.T) {
 func TestOwnLockIsAdopted(t *testing.T) {
 	h := newHarness(t, "", nil)
 	b := withBucket(h)
-	key := lock.Key("acme-app", "fugaro/"+runID)
+	key := lock.Key(repoSlug, "fugaro/"+runID)
 	if _, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: runID, Execution: exec1ByNumber, ExpiresAt: time.Now().Add(time.Hour)}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestCancelledRunSkipsCacheWriteback(t *testing.T) {
 	if obj, err := it.Next(context.Background()); err == nil {
 		t.Fatalf("a cancelled run wrote a cache: %s", obj.Key)
 	}
-	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Fatal("a cancelled run kept its lock")
 	}
 }
@@ -389,7 +389,7 @@ func TestCachesRestoredAndWrittenBack(t *testing.T) {
 	it := b.List(nil)
 	var archives int
 	for obj, err := it.Next(context.Background()); err == nil; obj, err = it.Next(context.Background()) {
-		if strings.HasPrefix(obj.Key, "cache/acme-app/app/") && strings.HasSuffix(obj.Key, ".tar.zst") {
+		if strings.HasPrefix(obj.Key, "cache/"+repoSlug+"/app/") && strings.HasSuffix(obj.Key, ".tar.zst") {
 			archives++
 		}
 	}
@@ -403,7 +403,7 @@ func TestCachesRestoredAndWrittenBack(t *testing.T) {
 	}
 	const run2 = "20260926-231530-bcde"
 	spec := &task.Spec{Version: 1, RunID: run2, Repo: "acme/app", Ref: "main", Task: "Again"}
-	h.deps.Store = runstore.Open(h.bucket, "acme-app", run2)
+	h.deps.Store = runstore.Open(h.bucket, repoSlug, run2)
 	if err := h.deps.Store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +465,7 @@ func TestDefaultCacheOnTheImplicitBaseKind(t *testing.T) {
 	it := b.List(nil)
 	var archives int
 	for obj, err := it.Next(context.Background()); err == nil; obj, err = it.Next(context.Background()) {
-		if strings.HasPrefix(obj.Key, "cache/acme-app/app/") && strings.HasSuffix(obj.Key, ".tar.zst") {
+		if strings.HasPrefix(obj.Key, "cache/"+repoSlug+"/app/") && strings.HasSuffix(obj.Key, ".tar.zst") {
 			archives++
 		}
 	}
@@ -488,7 +488,7 @@ func TestCorruptCacheDoesNotFailTheRun(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	obj := cache.ObjectKey("acme-app", "app", key)
+	obj := cache.ObjectKey(repoSlug, "app", key)
 	_ = b.WriteAll(context.Background(), obj, []byte("garbage"), nil)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
@@ -585,7 +585,7 @@ func TestLockReleasedAfterPostLockBootstrapFailure(t *testing.T) {
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "git.provider") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Fatal("a failed bootstrap kept the branch lock")
 	}
 }
@@ -619,7 +619,7 @@ func TestWritebackRekeysFromFinalTree(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return cache.ObjectKey("acme-app", "app", key)
+		return cache.ObjectKey(repoSlug, "app", key)
 	}
 	if ok, _ := b.Exists(context.Background(), keyFor(newReadme)); !ok {
 		t.Fatal("no archive under the final tree's key")
@@ -643,7 +643,7 @@ func TestRestoreTimeoutLoggedOnce(t *testing.T) {
 	runner.SetRestoreBound(t, 50*time.Millisecond)
 	runner.SetSlowRestore(t)
 	out := runLogged(t, cache2YAML)
-	if n := strings.Count(out, "cache restore timed out"); n != 1 || !strings.Contains(out, "object=cache/acme-app/app/") {
+	if n := strings.Count(out, "cache restore timed out"); n != 1 || !strings.Contains(out, "object=cache/"+repoSlug+"/app/") {
 		t.Fatalf("%d timeout warnings, want 1 naming the object:\n%s", n, out)
 	}
 	if !strings.Contains(out, "restore time bound was reached") || !strings.Contains(out, "entries=1") {

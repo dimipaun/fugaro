@@ -61,9 +61,20 @@ func TestNeededSecretsFollowAuth(t *testing.T) {
 			"elsewhere":  {Secret: "elsewhere-key", AllowDataTo: []string{"acme/other"}},
 		}
 		text := left(t, r)
-		for _, want := range []string{"bitbucket-token", "anthropic-api-key", "openrouter-api-key", "npm-token"} {
+		// D2: the names that have a project-wide meaning get the
+		// project-scope command (no --repo); bitbucket-token, whose
+		// credential serves one repository only, and the checkout's own
+		// workflow secret keep the repository one
+		// (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
+		for _, want := range []string{"anthropic-api-key", "openrouter-api-key"} {
+			if !strings.Contains(text, "secrets set "+want+"\n") {
+				t.Errorf("left lacks the project-scope form of %s: %q", want, text)
+			}
+		}
+		for _, want := range []string{"bitbucket-token", "npm-token"} {
+			// npm-token's is the last command, so it has no line after it.
 			if !strings.Contains(text, "secrets set "+want+" --repo acme/app") {
-				t.Errorf("left lacks %s: %q", want, text)
+				t.Errorf("left lacks the repository-scope form of %s: %q", want, text)
 			}
 		}
 		if strings.Contains(text, "elsewhere") || strings.Contains(text, "claude") {
@@ -209,7 +220,7 @@ func TestPEMPasteSurvivesEscapeSequences(t *testing.T) {
 	if lr.err != nil || lr.res.Failed != nil {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
 	}
-	if got := r.store.latest(mustSlug("github", "acme/app"), "github-app-key"); got != pemValue {
+	if got := r.store.latestProject("aurora", "github-app-key"); got != pemValue {
 		t.Fatalf("stored %q", got)
 	}
 }
@@ -323,7 +334,10 @@ func TestJSONNeverPrompts(t *testing.T) {
 	if err != nil || stateOf(res, "secrets") != initflow.NeedsYou || r.store.setCalls() != 0 || strings.Contains(r.errOut.String(), "hidden") {
 		t.Fatalf("%v, %+v, stderr %q", err, res, r.errOut.String())
 	}
-	if len(res.Left) != 1 || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "secrets set bitbucket-token --repo acme/") {
+	// bitbucket-token's command carries --repo: a Bitbucket credential is
+	// issued for one repository and is never stored project-wide by default
+	// (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
+	if len(res.Left) != 1 || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "secrets set bitbucket-token --repo acme/app\n") {
 		t.Errorf("left = %+v", res.Left)
 	}
 	if after := queued(t, f); after != before || before == 0 {

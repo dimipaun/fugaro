@@ -159,9 +159,13 @@ func generate(o options) ([]byte, error) {
 	if _, err := time.Parse("2006-01-02", o.date); err != nil {
 		return nil, fmt.Errorf("-date %q: it must be YYYY-MM-DD (%v)", o.date, err)
 	}
-	ids, err := readAllowlist(o.allow)
+	entries, err := readAllowlist(o.allow)
 	if err != nil {
 		return nil, err
+	}
+	ids := make([]string, len(entries))
+	for i, e := range entries {
+		ids[i] = e.id
 	}
 	src := source{opts: o}
 	modelsRaw, err := src.get("models")
@@ -180,16 +184,20 @@ func generate(o options) ([]byte, error) {
 		return nil, err
 	}
 	f := &catalog.File{Version: catalog.Version, CheckedAt: o.date, Sources: sources, Models: map[string]catalog.Entry{}}
-	for _, id := range ids {
-		eps, err := src.endpoints(id)
+	for _, a := range entries {
+		eps, err := src.endpoints(a.id)
 		if err != nil {
 			return nil, err
 		}
-		e, err := buildEntry(id, eps, zdrTags[id])
+		e, err := buildEntry(a.id, eps, zdrTags[a.id])
 		if err != nil {
 			return nil, err
 		}
-		f.Models[id] = e
+		// The canonical ID the allowlist paired with the key: the row's only
+		// statement about which model it prices, and what the reader's own
+		// rules (catalog.validate) hold to one row per canonical ID.
+		e.CanonicalID = a.canonical
+		f.Models[a.id] = e
 	}
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
@@ -207,33 +215,83 @@ func generate(o options) ([]byte, error) {
 	return b, nil
 }
 
-// readAllowlist reads the model IDs to include: one per line, blank lines
-// and lines starting with '#' ignored. A duplicate is an error (two rows
-// for one model would leave the file depending on which came last), and the
-// result is sorted, so the file does not depend on the list's order.
-func readAllowlist(path string) ([]string, error) {
+// allowEntry is one line of the allowlist: the model ID to include — the key
+// the file will carry, which is the route's own ID — and, for a route that
+// serves a Claude model, the canonical ID of the same model. The pair is the
+// canonical-to-route map's row (plan Task 1b.2 step 1): a pin carries the
+// canonical ID and the route is sent and charged the key.
+type allowEntry struct {
+	id        string
+	canonical string
+}
+
+// readAllowlist reads the models to include: one per line, "<model id>" or
+// "<model id> <canonical id>", blank lines and lines starting with '#'
+// ignored. A duplicate key, or two keys claiming one canonical ID, is an
+// error (either would leave the file depending on which line came last), and
+// the result is sorted, so the file does not depend on the list's order.
+//
+// A Claude row is the pair or nothing: a key under the anthropic/ prefix — the
+// only shape a route may claim a Claude model by (pricing.IsAlias) — must carry
+// the canonical ID, and a canonical ID on any other key is refused. Nothing
+// derives one from the other, here or anywhere: two spellings that look alike
+// are two answers to where a call goes and what it costs, which is the whole
+// reason the map is checked in rather than computed (plan Task 1b.2).
+func readAllowlist(path string) ([]allowEntry, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var ids []string
+	var out []allowEntry
 	seen := map[string]bool{}
+	canonical := map[string]string{} // canonical ID -> the line that first claimed it
 	for i, line := range strings.Split(string(b), "\n") {
-		id := strings.TrimSpace(line)
-		if id == "" || strings.HasPrefix(id, "#") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
-		if seen[id] {
-			return nil, fmt.Errorf("%s:%d: %s appears twice", path, i+1, id)
+		if len(fields) > 2 {
+			return nil, fmt.Errorf("%s:%d: %s has %d fields: a line is \"<model id>\" or \"<model id> <canonical id>\"", path, i+1, strings.Join(fields, " "), len(fields))
 		}
-		seen[id] = true
-		ids = append(ids, id)
+		e := allowEntry{id: fields[0]}
+		if len(fields) == 2 {
+			e.canonical = fields[1]
+		}
+		isClaude := strings.HasPrefix(e.id, "anthropic/")
+		switch {
+		case e.canonical == "" && isClaude:
+			return nil, fmt.Errorf("%s:%d: %s is a Claude row with no canonical ID: write the direct spelling of the same model beside it (%s claude-sonnet-5-5). A Claude model has a different ID per route and nothing derives one from the other, so a row without its pair could be neither claimed at a pin nor priced on the route", path, i+1, e.id, e.id)
+		case e.canonical != "" && !isClaude:
+			return nil, fmt.Errorf("%s:%d: %s carries a canonical ID, and only a Claude row does: the canonical ID is the direct spelling of a model this build routes to Anthropic, and a route's other models are priced under model_prices", path, i+1, e.id)
+		case e.canonical == e.id:
+			// Before the shape check below, which it would otherwise never
+			// reach: the key of a Claude row begins with "anthropic/", so a
+			// pair that repeats the key as its own canonical ID carries a "/"
+			// and was refused as "a route's ID is not a canonical ID" — true
+			// of the value, but not of what the line did, which is write one
+			// spelling where two are required. This case is the one that says
+			// so.
+			return nil, fmt.Errorf("%s:%d: %s is its own canonical ID: the key is the route's own ID (anthropic/claude-sonnet-5.5) and the canonical ID is the direct spelling (claude-sonnet-5-5)", path, i+1, e.id)
+		case e.canonical != "" && strings.ContainsAny(e.canonical, "/ *:"):
+			return nil, fmt.Errorf("%s:%d: %q is not a canonical ID: it is the direct spelling a pin carries (claude-sonnet-5-5), not the route's (%s)", path, i+1, e.canonical, e.id)
+		}
+		if seen[e.id] {
+			return nil, fmt.Errorf("%s:%d: %s appears twice", path, i+1, e.id)
+		}
+		seen[e.id] = true
+		if e.canonical != "" {
+			if prev, dup := canonical[e.canonical]; dup {
+				return nil, fmt.Errorf("%s:%d: %s and %s both carry canonical ID %s: one canonical ID identifies one model, and a map that held both rows would price one pin two ways", path, i+1, prev, e.id, e.canonical)
+			}
+			canonical[e.canonical] = e.id
+		}
+		out = append(out, e)
 	}
-	if len(ids) == 0 {
+	if len(out) == 0 {
 		return nil, fmt.Errorf("%s lists no model ID", path)
 	}
-	sort.Strings(ids)
-	return ids, nil
+	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
+	return out, nil
 }
 
 // source is where the three responses come from: the snapshots -from names,

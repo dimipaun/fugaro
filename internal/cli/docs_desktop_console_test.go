@@ -165,6 +165,16 @@ func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
 			continue
 		}
 		if want, ok := ruled[key]; ok {
+			// D1 alone carries a dated scope note appended on main (mobile D112,
+			// 2026-10-17): the owner's ruling must still open the cell verbatim
+			// and the note must say the console keeps D1.
+			if key == "**D1**" {
+				const note = "**Amended 2026-10-17 by mobile D112"
+				if !strings.HasPrefix(answer, want+" "+note) || !strings.Contains(answer, "**The desktop console keeps D1**") {
+					t.Errorf("%s's D1 answer must open with the ruling of 2026-10-15 verbatim, then the dated mobile D112 scope note that keeps D1 for the console:\n got %q\nwant prefix %q", path, answer, want+" "+note)
+				}
+				continue
+			}
 			if answer != want {
 				t.Errorf("%s's %s answer is no longer the ruling of 2026-10-15:\n got %q\nwant %q", path, key, answer, want)
 			}
@@ -875,11 +885,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 // phase table row whose Phase cell names phase (a substring of it), and the
 // row's own text, so a claim about which phase ships a command can be checked
 // against the phase it is actually in.
+//
+// The plan's phase table carries a Release column between Phase and What
+// ships, so the header named here and the cell read are the table's own.
 func planPhaseRow(t *testing.T, plan, phase string) (whatShips, row string) {
 	t.Helper()
-	for _, cells := range docTableAfter(t, "docs/plans/2026-10-14-project-centric.md", plan, "| Phase | What ships |") {
+	for _, cells := range docTableAfter(t, "docs/plans/2026-10-14-project-centric.md", plan, "| Phase | Release | What ships |") {
 		if strings.Contains(cells[0], phase) {
-			return cells[1], strings.Join(cells, " | ")
+			return cells[2], strings.Join(cells, " | ")
 		}
 	}
 	t.Fatalf("docs/plans/2026-10-14-project-centric.md's phase table has no row naming %q", phase)

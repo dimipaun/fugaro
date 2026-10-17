@@ -86,12 +86,34 @@ func localRecipe(root string, cfg *config.Config) *recipe.Recipe {
 	if name == "" {
 		name = recipe.DefaultName
 	}
+	return localRecipeNamed(root, name)
+}
+
+// localRecipeNamed is localRecipe for a recipe NAME the caller resolved
+// itself, rather than the one this file selects: the follow-up case, where
+// agent.recipe is not consulted at all (recipeForLaunch, internal/cli/run.go,
+// mirroring the runner's resolveRecipe), so the name is recipe.DefaultName
+// whatever the file says. The repository layer is read first and the catalog
+// second, the order the runner reads them in.
+//
+// An empty root is no checkout of the task's repository (checkoutRoot), and
+// then there is no repository layer to read: ReadRepoFile would be handed a
+// RELATIVE path and resolve it against the process's own working directory,
+// so a directory that merely happens to hold .fugaro/recipes/<name>.yaml
+// would decide the launch. The catalog is the only answer that can be given
+// without a checkout, and the runner — which reads the repository layer at
+// the task's ref — is the one that decides the run either way.
+func localRecipeNamed(root, name string) *recipe.Recipe {
 	if !recipe.NameRE.MatchString(name) {
 		return nil
 	}
-	data, found, err := recipe.ReadRepoFile(root, name)
-	if err != nil {
-		return nil
+	var data []byte
+	found := false
+	if root != "" {
+		var err error
+		if data, found, err = recipe.ReadRepoFile(root, name); err != nil {
+			return nil
+		}
 	}
 	if !found {
 		data, _ = recipe.CatalogText(name)

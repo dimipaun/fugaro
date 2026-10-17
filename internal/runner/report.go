@@ -131,11 +131,11 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 }
 
 // artifactsSection is the report's Artifacts section (design §9) for a
-// mode: artifact run: what the render step did, and the compute estimate the
-// run's wall clock priced. The per-file table — name, size, short sha256,
-// recorded content type and the probe's verdict — is deliberately not here:
-// it renders the upload step's and the probe step's own types, so a release
-// without them says the record carries none rather than printing a header
+// mode: artifact run: what the render step did, the files the run uploaded
+// with the probe's verdict on each, and the compute estimate the run's wall
+// clock priced. The per-file table is written from the record's own
+// artifacts, so a record that carries none (a release without the upload
+// step, or a run that ended before it) says so rather than printing a header
 // over nothing.
 func artifactsSection(rec *runstore.Record) string {
 	var b strings.Builder
@@ -153,11 +153,60 @@ func artifactsSection(rec *runstore.Record) string {
 			// on a long run would otherwise read as its own price.
 			fmt.Fprintf(&b, "- **Compute:** $%.4f estimated from the run's wall clock, of which the render is %s\n", c.ComputeUSD, secsText(r.DurationS))
 		}
-		b.WriteString("\nThe render's files are uploaded by the run's own step; this record carries the render alone.\n\n")
+	} else {
+		b.WriteString("- **Render:** none recorded: the run ended before its render step ran.\n")
+	}
+	if len(rec.Artifacts) == 0 {
+		// Reported, not silent: a render that matched none of the recipe's
+		// globs is not an error by itself (design §8.4), so the record
+		// carries no artifacts and this line is where a reader learns that
+		// the run uploaded nothing rather than that the section is missing.
+		b.WriteString("\n**Files:** none recorded: the run uploaded no artifacts (the render matched none of the recipe's `outputs.globs`, or the run ended before its upload step).\n\n")
 		return b.String()
 	}
-	b.WriteString("- **Render:** none recorded: the run ended before its render step ran.\n\n")
+	fmt.Fprintf(&b, "\n%d files, uploaded to this run's bucket under `%s`:\n\n", len(rec.Artifacts), runstore.ArtifactPrefix)
+	b.WriteString("| Artifact | Bytes | sha256 | Type | Probe |\n|---|---|---|---|---|\n")
+	for _, a := range rec.Artifacts {
+		fmt.Fprintf(&b, "| %s | %d | `%s` | %s | %s |\n", tableCode(a.Name), a.Bytes, shortSum(a.SHA256), tableText(a.ContentType), probeCell(a))
+	}
+	b.WriteString("\nEach row is what the run's own record says the object at that name holds: download it and hash it to check the bytes arrived as rendered. In the Probe column, `ok` is the recipe's own `commands.probe` having exited zero on the whole set, `none` is a recipe that asked for no probe, and `—` is a record written before the probe step existed, which carries no verdict to read.\n\n")
 	return b.String()
+}
+
+// probeCell is the table's probe column: what the probe step said about this
+// artifact. "none" is the recipe's own answer when it asked for no probe —
+// the record carries {ran: false, exit_code: -1}, and the column says so
+// rather than leaving a reader to infer it from an empty cell. A recorded
+// non-zero exit code is printed as such rather than folded into "ok": the
+// table must never claim a check passed when the record says it did not.
+//
+// A record with NO verdict is a third thing and gets a third answer. It is a
+// record written before the probe step existed (the schema's own description
+// of the absent key), and what the run knows about it is that nothing was
+// recorded — not that the recipe asked for no probe. Rendering it "none"
+// would put the recipe's intent into a record that cannot know it.
+func probeCell(a runstore.ArtifactFile) string {
+	switch {
+	case a.Probe == nil:
+		return "—"
+	case !a.Probe.Ran:
+		return "none"
+	case a.Probe.ExitCode == 0:
+		return "ok"
+	default:
+		return fmt.Sprintf("exit %d", a.Probe.ExitCode)
+	}
+}
+
+// shortSum is a sha256 as a report row shows it: the first twelve hex
+// characters, which is what a reader compares by eye. The full hash is in
+// result.json, which is what a reader verifies with.
+func shortSum(sum string) string {
+	const n = 12
+	if len(sum) > n {
+		return sum[:n]
+	}
+	return sum
 }
 
 // secsText is a recorded duration in seconds for a report line.
@@ -185,19 +234,51 @@ func testsLine(rec *runstore.Record) string {
 	return s + ")\n\n"
 }
 
-// fence returns a backtick fence longer than any backtick run in s, so s
-// cannot end the code block early.
-func fence(s string) string {
+// tableText renders a value into a markdown table cell. A pipe ends the cell
+// — every value after it slides a column, so a reader sees the render's text
+// where the run's account should be — and GFM's own escape for it is a
+// backslash, which is why the value is escaped rather than the row rebuilt.
+// An artifact's name is the render's to choose, so this is reachable: the
+// sanitiser refuses control characters and keeps punctuation.
+func tableText(s string) string {
+	return strings.ReplaceAll(s, "|", `\|`)
+}
+
+// tableCode is tableText as a code span, which is how the report shows a name
+// or a hash. A backtick inside the value would end the span, so the fence is
+// one backtick longer than the longest run of them in the value, and a value
+// that starts or ends with one gets GFM's own padding space, which the code
+// span's rule strips again.
+func tableCode(s string) string {
+	fence := "`"
+	if n := longestRun(s, '`'); n > 0 {
+		fence = strings.Repeat("`", n+1)
+	}
+	body := tableText(s)
+	if strings.HasPrefix(body, "`") || strings.HasSuffix(body, "`") {
+		body = " " + body + " "
+	}
+	return fence + body + fence
+}
+
+// longestRun is the length of the longest run of c in s.
+func longestRun(s string, c rune) int {
 	longest, run := 0, 0
-	for _, c := range s {
-		if c == '`' {
+	for _, r := range s {
+		if r == c {
 			run++
 			longest = max(longest, run)
 		} else {
 			run = 0
 		}
 	}
-	return strings.Repeat("`", max(3, longest+1))
+	return longest
+}
+
+// fence returns a backtick fence longer than any backtick run in s, so s
+// cannot end the code block early.
+func fence(s string) string {
+	return strings.Repeat("`", max(3, longestRun(s, '`')+1))
 }
 
 // followUpSection renders fu; reason is why the run ended a draft.
