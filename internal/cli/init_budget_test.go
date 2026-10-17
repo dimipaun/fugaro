@@ -242,6 +242,35 @@ func TestManagedBudgetHasNoDefault(t *testing.T) {
 	}
 	noMarker(t, r.gcs, bucket)
 	r.nothingDone(t, "a managed creation refused for its missing amount")
+
+	// The same property where a fallback has room to live: the amount is
+	// absent while the other two flags are there, so a refusal that only
+	// counts flags sees a complete trio. Nothing else in this file reaches
+	// that state — the subtest above passes none of the three and the one in
+	// TestManagedBudgetIsRequiredAtCreation passes an amount without its
+	// currency — and it is the state a constant such as
+	// `if o.budget <= 0 { o.budget = 50 }` turns into a managed project whose
+	// monthly line nobody chose. An absent amount and `--budget 0` are the
+	// same run (the flag defaults to 0), and D64 refuses both: the refusal is
+	// the amount's, not the other two flags'.
+	t.Run("--managed with a currency and a billing account and no amount", func(t *testing.T) {
+		r, bucket := newManagedCreateRig(t)
+		out, errOut, err := r.run(t, true, createStdin,
+			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+			"--managed", "--budget-currency", "USD", "--billing-account", billingAcc)
+		if err == nil {
+			t.Fatalf("a managed creation with no amount was accepted because the other two flags were there:\n%s", refusalText(out, errOut, nil))
+		}
+		s := refusalText(out, errOut, err)
+		if code := ExitCode(err); code != ExitUserError {
+			t.Errorf("exit %d, want %d: a missing amount is the caller's to fix:\n%s", code, ExitUserError, s)
+		}
+		if !strings.Contains(s, "--budget ") {
+			t.Errorf("the refusal does not name the missing amount:\n%s", s)
+		}
+		r.nothingDone(t, "a managed creation refused for its missing amount")
+		noMarker(t, r.gcs, bucket)
+	})
 }
 
 // --create-project --managed on a project that already exists: the project
