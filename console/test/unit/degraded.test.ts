@@ -46,7 +46,7 @@ import { ESTIMATED_MARK, UNAVAILABLE_MARK, estimated, formatReading, measured, u
 import { sanitizeRefusal, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeDocument } from '../../src/shared/schema'
 import type { DegradedDocument, LiveDocument } from '../../src/shared/schema'
-import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from '../../src/renderer/screens/live'
+import { LIVE_BURN_MAX_SAMPLES, LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from '../../src/renderer/screens/live'
 import type { FeedHealth, LiveTheme, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
 import {
   DEGRADED_THEMES,
@@ -487,9 +487,9 @@ describe('the stale Live screen', () => {
 
   it('keeps the last-known bar when the console clock is behind the CLI clock', () => {
     // `document.now` is the CLI's clock and `feed.at` the console's. The rule:
-    // the later of the two is "now" for the silence, so a console that is behind
-    // neither pushes the last-known bar out of the window nor stamps the gap
-    // before it.
+    // the gap is stamped on the CLI's clock (the last stamp plus the measured
+    // silence), so a console that is behind neither pushes the last-known bar
+    // out of the window nor stamps the gap before it.
     const history = new BurnHistory()
     const frame = theLiveFrame()
     const behind: FeedHealth = {
@@ -502,6 +502,52 @@ describe('the stale Live screen', () => {
     expect(bars.map((bar) => bar.height.state === 'gap')).toEqual([false, true])
     expect(bars[0]?.at).toBe(frame.now)
     expect(Date.parse(bars[1]?.at ?? '')).toBeGreaterThanOrEqual(Date.parse(bars[0]?.at ?? ''))
+  })
+
+  it('draws fresh bars at once after a stale episode when the console clock is far ahead of the CLI clock', () => {
+    // Review round 3 of PR 494: a console clock ten minutes ahead stamped the
+    // gap at console time, the history pruned at that stamp, and every fresh
+    // document was older than the cut -- dropped on arrival, bars empty for the
+    // next five minutes of frames. The samples live on the CLI's clock: the gap
+    // is the last document's stamp plus the silence the console measured (a
+    // duration, which no clock offset changes), and the console's own stamp
+    // only decides *whether* the feed is stale.
+    const history = new BurnHistory()
+    const frame = theLiveFrame()
+    const later = (seconds: number): string =>
+      new Date(Date.parse(frame.now) + seconds * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    buildLiveModel(frame, history)
+    const ahead: FeedHealth = { since: later(600), at: later(690), seconds: 90, stale: true }
+    const stale = buildLiveModel(frame, history, ahead).repos[0]?.spark.bars ?? []
+    expect(stale.map((bar) => bar.height.state === 'gap')).toEqual([false, true])
+    expect(stale[1]?.at).toBe(later(90))
+    for (const seconds of [100, 110, 120]) {
+      const fresh: LiveDocument = { ...frame, now: later(seconds) }
+      const bars = buildLiveModel(fresh, history, { since: later(600 + seconds), at: later(601 + seconds), seconds: 1, stale: false })
+        .repos[0]?.spark.bars ?? []
+      const last = bars[bars.length - 1]
+      expect(last?.at, String(seconds)).toBe(fresh.now)
+      expect(last?.height.state, String(seconds)).not.toBe('gap')
+    }
+  })
+
+  it('bounds the history even when the stamps cannot be placed in time', () => {
+    // Review round 3 of PR 494: 5001 samples with unparseable stamps were all
+    // kept. The window is the first bound; LIVE_BURN_MAX_SAMPLES is the second.
+    const history = new BurnHistory()
+    const frame = theLiveFrame()
+    const burn = buildLiveModel(frame, new BurnHistory()).repos[0]?.burnPerMin ?? measured(0)
+    for (let index = 0; index < 5000; index += 1) {
+      history.observe('k', { at: `not a time ${String(index)}`, reading: burn })
+    }
+    expect(history.size('k')).toBeLessThanOrEqual(LIVE_BURN_MAX_SAMPLES)
+    // ... and a run of placeable stamps a second apart, longer than the bound.
+    const placed = new BurnHistory()
+    for (let index = 0; index < 5000; index += 1) {
+      placed.observe('k', { at: new Date(Date.parse(frame.now) + index * 10).toISOString(), reading: burn })
+    }
+    expect(placed.size('k')).toBeLessThanOrEqual(LIVE_BURN_MAX_SAMPLES)
+    expect(placed.window('k', new Date(Date.parse(frame.now) + 4999 * 10).toISOString()).length).toBeGreaterThan(0)
   })
 
   it('keeps the last-known values and says when they were read', () => {

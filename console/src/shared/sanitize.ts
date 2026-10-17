@@ -262,17 +262,178 @@ const INVISIBLE_RE =
   /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\ufff9-\ufffb\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
 
 /**
- * ANSI_RE matches a complete terminal escape sequence: a CSI (ESC `[`, any
- * parameter and intermediate bytes, one final byte; or the one-character C1
- * form U+009B), or an OSC (ESC `]` or U+009D, anything up to BEL or ST). The
- * invisible-character strip removes the ESC itself and would leave `[31m` or
- * `]0;title` behind, joined to the next word, so a token wrapped in colour
- * codes was never at a word boundary and no `\b`-anchored family matched it.
- * Whole sequences go first, before any credential rule reads the text. Every
- * alternative is linear: the bodies are negated classes with a fixed terminator.
+ * TerminalReading names the two ways `stripTerminalSequences` may resolve the
+ * one ambiguity ECMA-48 leaves open for text that was never meant for a
+ * terminal. `ESC [` followed directly by a letter is a complete control sequence
+ * (`ESC [ A` is "cursor up"), so a terminal swallows the letter -- but the same
+ * bytes are what a colour code with its parameters lost, glued to a word, looks
+ * like, and the letter may be the first letter of a token (`ESC [` + an AWS key
+ * id is drawn `KIA...`). `terminal` reads the sequence as a terminal does;
+ * `conservative` keeps the letter as text. The credential rules run over both
+ * readings (`preferConservative`), so a token is redacted if either reading
+ * shows one. The same holds for a two-character escape (`ESC` + a letter).
  */
-const ANSI_RE =
-  /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|(?:\u001b\]|\u009d)[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)/g
+export type TerminalReading = 'terminal' | 'conservative'
+
+/** SEQUENCE_PAD_RE is what the scanner steps over *inside* an escape sequence,
+ * as a terminal does: the invisible formatting characters (so ESC + a
+ * zero-width space + `[31m` is the sequence it renders as), and the C0 controls
+ * a terminal executes in the middle of a sequence without ending it (all but
+ * BEL, ESC, CAN and SUB), and DEL. */
+const SEQUENCE_PAD_RE =
+  /^[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\ufff9-\ufffb\u0000-\u0006\u0008-\u0017\u0019\u001c-\u001f\u007f]$/u
+
+/** SEQUENCE_FAST_RE answers whether a string holds anything that can open a
+ * sequence (ESC or a C1 control); most strings do not, and are returned as
+ * they came. */
+const SEQUENCE_FAST_RE = /[\u001b\u0080-\u009f]/
+
+/** A significant character inside a sequence: its folded code, where it starts
+ * and where the scan resumes after it. */
+interface SequenceChar {
+  readonly code: number
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * sequenceChar is the next character of a sequence at or after `at`, stepping
+ * over `SEQUENCE_PAD_RE` and folding the character through NFKC (so a fullwidth
+ * `［` is the `[` it is drawn as, and a fullwidth digit a parameter byte). It is
+ * how NFKC and the zero-width strip run *before* a sequence is recognised,
+ * without a second pass over the string. `null` is the end of the input.
+ */
+function sequenceChar(text: string, at: number): SequenceChar | null {
+  let index = at
+  while (index < text.length) {
+    const point = text.codePointAt(index) ?? 0
+    const width = point > 0xffff ? 2 : 1
+    const character = String.fromCodePoint(point)
+    if (SEQUENCE_PAD_RE.test(character)) {
+      index += width
+      continue
+    }
+    let code = point
+    if (point > 0x9f) {
+      const folded = character.normalize('NFKC')
+      if (folded.length === 1) code = folded.charCodeAt(0)
+    }
+    return { code, start: index, end: index + width }
+  }
+  return null
+}
+
+const isLetter = (code: number): boolean => (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)
+
+/** controlStringEnd is where a control string (OSC, DCS, SOS, PM, APC) whose
+ * body starts at `from` ends: after BEL, after ST (ESC `\` or U+009C), *at* an
+ * ESC that is not ST (a terminal abandons the string there, and the ESC opens
+ * whatever follows), or at the end of the input. One pass, no backtracking. */
+function controlStringEnd(text: string, from: number): number {
+  for (let index = from; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    if (code === 0x07 || code === 0x9c) return index + 1
+    if (code === 0x1b) {
+      const next = sequenceChar(text, index + 1)
+      return next !== null && next.code === 0x5c ? next.end : index
+    }
+  }
+  return text.length
+}
+
+/**
+ * sequenceEnd answers where the escape sequence whose introducer is `final`
+ * (the byte after ESC, or a C1 control's ESC equivalent) and whose body starts
+ * at `from` ends, in the given reading. It is ECMA-48's grammar, read
+ * leniently:
+ *
+ *   - CSI (`[`): parameter bytes `0-?`, intermediate bytes ` -/`, one final
+ *     byte `@-~`. A malformed CSI ends before the byte that broke it;
+ *   - OSC, DCS, SOS, PM, APC (`]`, `P`, `X`, `^`, `_`): a control string, to
+ *     BEL, ST or the end of the input (`controlStringEnd`);
+ *   - nF (intermediates ` -/` then a final `0-~`), and the two-character Fp,
+ *     Fe and Fs escapes (`0-~`).
+ *
+ * Anything else after ESC is not a sequence, and only the ESC goes.
+ */
+function sequenceEnd(text: string, final: SequenceChar | null, from: number, reading: TerminalReading): number {
+  if (final === null) return from
+  const f = final.code
+  if (f === 0x5b) {
+    let next = sequenceChar(text, from)
+    let bare = true
+    while (next !== null && next.code >= 0x30 && next.code <= 0x3f) {
+      bare = false
+      next = sequenceChar(text, next.end)
+    }
+    while (next !== null && next.code >= 0x20 && next.code <= 0x2f) {
+      bare = false
+      next = sequenceChar(text, next.end)
+    }
+    if (next === null) return text.length
+    if (next.code < 0x40 || next.code > 0x7e) return next.start
+    if (bare && reading === 'conservative' && isLetter(next.code)) return next.start
+    return next.end
+  }
+  if (f === 0x5d || f === 0x50 || f === 0x58 || f === 0x5e || f === 0x5f) {
+    return controlStringEnd(text, from)
+  }
+  if (f >= 0x20 && f <= 0x2f) {
+    let next = sequenceChar(text, from)
+    while (next !== null && next.code >= 0x20 && next.code <= 0x2f) next = sequenceChar(text, next.end)
+    if (next === null) return text.length
+    return next.code >= 0x30 && next.code <= 0x7e ? next.end : next.start
+  }
+  if (f >= 0x30 && f <= 0x7e) {
+    return reading === 'conservative' && isLetter(f) ? final.start : from
+  }
+  return -1
+}
+
+/**
+ * stripTerminalSequences removes every terminal escape sequence and control
+ * string from `text`, in one pass: what a terminal would swallow is gone, whole,
+ * so nothing of it is left glued to the next word. It is the one definition the
+ * three readers of CLI text share -- the sentence class and the refusal door
+ * here, and the recorder (`src/source/redact.ts` imports it) -- and it replaces
+ * a regular expression whose unterminated-OSC branch rescanned the rest of the
+ * string from every U+009D (seconds per call on 64 KiB of them).
+ *
+ * **It is linear**: the index only moves forward, every loop consumes what it
+ * reads, and a lookahead over padding that does not open a sequence is read at
+ * most twice. ESC and the C1 controls (U+0080..U+009F, each the one-character
+ * form of ESC + the byte 0x40 above it) introduce a sequence; the grammar is
+ * `sequenceEnd`'s. An unterminated control string runs to the end of the input:
+ * a terminal draws none of it, and neither does this. The other controls are
+ * left for `INVISIBLE_RE`, which every caller applies afterwards.
+ */
+export function stripTerminalSequences(text: string, reading: TerminalReading = 'terminal'): string {
+  if (!SEQUENCE_FAST_RE.test(text)) return text
+  const kept: string[] = []
+  let copyFrom = 0
+  let index = 0
+  while (index < text.length) {
+    const code = text.charCodeAt(index)
+    if (code !== 0x1b && (code < 0x80 || code > 0x9f)) {
+      index += 1
+      continue
+    }
+    kept.push(text.slice(copyFrom, index))
+    let end: number
+    if (code === 0x1b) {
+      const final = sequenceChar(text, index + 1)
+      end = final === null ? -1 : sequenceEnd(text, final, final.end, reading)
+    } else if (code === 0x9b || code === 0x9d || code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
+      end = sequenceEnd(text, { code: code - 0x40, start: index, end: index + 1 }, index + 1, reading)
+    } else {
+      end = -1
+    }
+    index = end > index ? end : index + 1
+    copyFrom = index
+  }
+  kept.push(text.slice(copyFrom))
+  return kept.join('')
+}
 
 /**
  * CONTROL_RE matches the line and paragraph separators -- the two separators a
@@ -289,8 +450,8 @@ const CONTROL_RE = /[\u2028\u2029]/g
  * can split a shape into pieces no rule recognises. It is the recorder's
  * `prepare`, copied.
  */
-function prepare(text: string): string {
-  return text.replace(ANSI_RE, '').normalize('NFKC').replace(INVISIBLE_RE, '')
+function prepare(text: string, reading: TerminalReading = 'terminal'): string {
+  return stripTerminalSequences(text.normalize('NFKC'), reading).replace(INVISIBLE_RE, '')
 }
 
 /**
@@ -888,16 +1049,40 @@ function runRules(text: string, rules: readonly OneRule[], nested: boolean): Cha
  * that is the form the rule rewrote. The form as written is tried as well, for
  * the rare match that only it shows.
  */
-function freeText(text: string, prepared: string, textClass: TextClass): Changed {
+function freeText(text: string, prepared: string, conservative: string, textClass: TextClass): Changed {
   const rules = textClass === 'sentence' || textClass === 'label' ? FREE_TEXT_RULES : CREDENTIAL_RULES
-  return withRules(text, prepared, rules)
+  return withRules(text, prepared, conservative, rules)
 }
 
-/** withRules runs `rules` over the prepared form and, when they find nothing
- * there, over the form as written -- `freeText`'s rule, shared with
- * `sanitizeRefusal`. */
-function withRules(text: string, prepared: string, rules: readonly OneRule[]): Changed {
+/**
+ * preferConservative decides between the two readings of an ambiguous escape
+ * sequence (`TerminalReading`) once the rules have run over both: `terminal` is
+ * the terminal reading's result, or `null` when the rules found nothing in it,
+ * and `conservative` the conservative reading's, which the rules changed. The
+ * conservative result wins unless the terminal one redacted more credentials:
+ * a token whose first letter a terminal would have swallowed is a token only in
+ * the conservative reading, and a token after a real one-letter command
+ * (`ESC [ K`) is one only in the terminal reading -- whichever reading shows
+ * more of them is the one drawn. The recorder (`src/source/redact.ts`) decides
+ * with this same function, so the three layers agree.
+ */
+export function preferConservative(terminal: string | null, conservative: string): boolean {
+  if (terminal === null) return true
+  return conservative.split(TOKEN_PLACEHOLDER).length >= terminal.split(TOKEN_PLACEHOLDER).length
+}
+
+/** withRules runs `rules` over the prepared form -- in both readings of an
+ * ambiguous escape sequence -- and, when they find nothing there, over the form
+ * as written: `freeText`'s rule, shared with `sanitizeRefusal`. */
+function withRules(text: string, prepared: string, conservative: string, rules: readonly OneRule[]): Changed {
   const fromPrepared = runRules(prepared, rules, false)
+  if (conservative !== prepared) {
+    const fromConservative = runRules(conservative, rules, false)
+    const terminal = fromPrepared.text !== prepared ? fromPrepared.text : null
+    if (fromConservative.text !== conservative && preferConservative(terminal, fromConservative.text)) {
+      return fromConservative
+    }
+  }
   if (fromPrepared.text !== prepared) return fromPrepared
   if (prepared === text) return fromPrepared
   // `text` is the caller's already-stripped form, so the value returned here
@@ -961,9 +1146,10 @@ const LABEL_BREAK_RE = /[\n\r\t\u000b\u000c]/
  * whether it removed anything. */
 function stripInvisible(
   text: string,
+  reading: TerminalReading = 'terminal',
 ): { readonly text: string; readonly flags: readonly SanitizeFlag[] } {
   const flags: SanitizeFlag[] = []
-  let working = text.replace(ANSI_RE, '').replace(INVISIBLE_RE, '')
+  let working = stripTerminalSequences(text, reading).replace(INVISIBLE_RE, '')
   if (working !== text) flags.push('stripped-invisible')
   const before = working
   working = working.replace(CONTROL_RE, '')
@@ -1362,7 +1548,7 @@ export function sanitizeText(
     return ok(HOST_PLACEHOLDER, [...flags, 'host-placeholder'])
   }
 
-  const rules = freeText(text, prepared, textClass)
+  const rules = freeText(text, prepared, prepare(stripInvisible(raw, 'conservative').text, 'conservative'), textClass)
   flags.push(...rules.flags)
   text = rules.text
 
@@ -1479,7 +1665,8 @@ export function sanitizeRefusal(raw: unknown, field = 'the refusal'): Sanitized 
       `${field} is longer than the console will read (${String(MAX_TEXT_INPUT_LENGTH)} characters)`,
     )
   }
-  const rules = withRules(stripped.text, prepared, REFUSAL_RULES)
+  const conservative = prepare(stripInvisible(raw, 'conservative').text, 'conservative')
+  const rules = withRules(stripped.text, prepared, conservative, REFUSAL_RULES)
   const cut = clipped(oneLine(rules.text))
   return ok(cut.text, [...stripped.flags, ...rules.flags, ...cut.flags])
 }

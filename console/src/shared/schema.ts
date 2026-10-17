@@ -205,6 +205,8 @@ export type SchemaRefusalName =
   | 'not-an-array'
   /** a key that must be a boolean is not one */
   | 'not-a-boolean'
+  /** a key that must be an RFC 3339 timestamp is not one */
+  | 'not-a-timestamp'
   /** a live document was expected where a degraded one arrived */
   | 'wrong-shape'
 
@@ -309,6 +311,21 @@ function required(raw: Record<string, unknown>, key: string, field: string, wher
 function stringAt(raw: unknown, field: string, where: string): string {
   if (typeof raw !== 'string') return refuse('not-a-string', field, where)
   return raw
+}
+
+/** TIMESTAMP_RE is RFC 3339's date-time, as Go's `time.RFC3339Nano` writes it:
+ * a full date, a `T`, a time with optional fractional seconds, and `Z` or an
+ * offset. */
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/
+
+/** timestampAt is a string key that must be a timestamp the console can place
+ * in time (`now`). It is refused by field name, as `boolAt` refuses a boolean
+ * (review round 3 of PR 494): a `now` the burn history cannot parse is a frame
+ * it can neither window nor prune by. */
+function timestampAt(raw: unknown, field: string, where: string): string {
+  const text = stringAt(raw, field, where)
+  if (!TIMESTAMP_RE.test(text) || Number.isNaN(Date.parse(text))) return refuse('not-a-timestamp', field, where)
+  return text
 }
 
 function boolAt(raw: unknown, field: string, where: string): boolean {
@@ -898,7 +915,7 @@ function liveAt(raw: Record<string, unknown>, where: string): LiveDocument {
     project: stringAt(required(raw, 'project', '', where), 'project', where),
     mode: stringAt(required(raw, 'mode', '', where), 'mode', where),
     day: stringAt(required(raw, 'day', '', where), 'day', where),
-    now: stringAt(required(raw, 'now', '', where), 'now', where),
+    now: timestampAt(required(raw, 'now', '', where), 'now', where),
     connection: {
       state: stringAt(required(connection, 'state', 'connection', where), 'connection.state', where),
       reason: optionalText(connection, 'reason', 'connection', where),

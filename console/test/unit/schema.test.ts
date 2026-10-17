@@ -606,6 +606,18 @@ describe('a document missing a field the screens read fails decoding by name', (
     }
   })
 
+  it('refuses a now that is not a timestamp, by name (review round 3 of PR 494)', () => {
+    // An unparseable `now` used to decode, and the burn history cannot place a
+    // sample with no time: pruning stopped and the history grew by one sample
+    // per frame for as long as the console stayed open.
+    for (const value of ['', 'not a time', 'yesterday', '2026-13-45T99:99:99Z', '1760000000', '2026-10-15']) {
+      const refusal = refusalFor(patched(first, ['now'], value))
+      expect(refusal.name, value).toBe('not-a-timestamp')
+      expect(refusal.field, value).toBe('now')
+    }
+    expect(decoded(patched(first, ['now'], '2026-10-15T12:00:00.250+02:00')).now).toBe('2026-10-15T12:00:00.250+02:00')
+  })
+
   it('refuses a run whose round is a number, which is the near-miss that matters', () => {
     // `budget show --json` carries `round` as an int. A console that typed this
     // shape's `round` as a number would pass every fixture until a queued run

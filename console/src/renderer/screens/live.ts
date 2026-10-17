@@ -70,6 +70,13 @@ import type { ElementLike } from '../app'
  */
 export const LIVE_BURN_WINDOW_SECONDS = 5 * 60
 
+/** LIVE_BURN_MAX_SAMPLES bounds one key's burn history whatever its stamps say
+ * (review round 3 of PR 494). The window is the first bound -- at the CLI's
+ * one document a second it holds about 300 samples -- and this is the second,
+ * for a feed that sends faster than that or stamps that bunch up: past it the
+ * oldest samples go first, which are the ones a window would drop next. */
+export const LIVE_BURN_MAX_SAMPLES = 1024
+
 /** LIVE_STALE_AFTER_SECONDS is `internal/watch/state.go`'s `StaleAfter`: the
  * 45 s after which the design's header calls the connection stale. */
 export const LIVE_STALE_AFTER_SECONDS = 45
@@ -327,14 +334,15 @@ export class BurnHistory {
    * rather than at the end, so a clock that steps back cannot reorder the bars.
    */
   observe(key: string, sample: Sample): void {
+    const when = Date.parse(sample.at)
+    // An unparseable stamp has no place in time, so no window can ever return
+    // it: keeping it would only grow the list (review round 3 of PR 494, where
+    // one bad `now` kept every later sample). `schema.ts` refuses such a `now`
+    // by name; this is the history's own guard.
+    if (Number.isNaN(when)) return
     const existing = this.samples.get(key)
     if (existing === undefined) {
       this.samples.set(key, [sample])
-      return
-    }
-    const when = Date.parse(sample.at)
-    if (Number.isNaN(when)) {
-      existing.push(sample) // an unparseable stamp has no place in time: keep it last, drop nothing
       return
     }
     const isGap = sample.reading.state === 'gap'
@@ -364,15 +372,19 @@ export class BurnHistory {
     } else {
       existing.splice(index, 0, sample)
     }
-    let newest = when
-    for (const held of existing) {
-      const at = Date.parse(held.at)
-      if (!Number.isNaN(at) && at > newest) newest = at
-    }
+    // The list is ordered and every stamp in it parses, so the newest is last.
+    const newest = Math.max(when, Date.parse(existing[existing.length - 1]?.at ?? ''))
     const cut = newest - LIVE_BURN_WINDOW_SECONDS * 1000
     let keep = 0
     while (keep < existing.length && Date.parse(existing[keep]?.at ?? '') < cut) keep++
+    keep = Math.max(keep, existing.length - LIVE_BURN_MAX_SAMPLES)
     if (keep > 0) existing.splice(0, keep)
+  }
+
+  /** size is how many samples the history holds for `key`: what the bound
+   * (`LIVE_BURN_MAX_SAMPLES`) is a bound on. */
+  size(key: string): number {
+    return this.samples.get(key)?.length ?? 0
   }
 
   /**
@@ -628,13 +640,15 @@ function rowOf(run: RunView): LiveRunRow {
   }
 }
 
-/** laterStamp is the later of two RFC 3339 stamps; an unparseable one loses. */
-function laterStamp(a: string, b: string): string {
-  const x = Date.parse(a)
-  const y = Date.parse(b)
-  if (Number.isNaN(y)) return a
-  if (Number.isNaN(x)) return b
-  return y > x ? b : a
+/** silenceStamp is where a silence ends **on the CLI's clock**: the stamp of
+ * the last document read plus the silence the console measured since it
+ * arrived. The silence is a duration, so no offset between the two clocks can
+ * move it; an unparseable stamp or an unmeasured silence leaves the gap at the
+ * document's own stamp. */
+function silenceStamp(now: string, seconds: number | null): string {
+  const when = Date.parse(now)
+  if (Number.isNaN(when) || seconds === null || seconds <= 0) return now
+  return new Date(when + seconds * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
 /**
@@ -665,15 +679,17 @@ export function buildLiveModel(
     // where it is, which is what makes the break visible at all.
     //
     // Two clocks meet here: `document.now` is the CLI's and `feed.at` is the
-    // console's. The rule is that the later of the two is the console's "now"
-    // for the silence: the gap is stamped there and the window ends there. A
-    // console clock that is behind the CLI's therefore cannot push the last
-    // known bar out of its own window (or put the gap before it); a console
-    // that is ahead by more than the window ages the bar out like any other
-    // sample, and the banner says how long the silence is.
+    // console's. The rule (review round 3 of PR 494): **every sample lives on
+    // the CLI's clock**, and the console's clock only decides *whether* the
+    // feed is stale. The gap is stamped at the last document's stamp plus the
+    // silence the console measured (`silenceStamp`), and the window ends there.
+    // A console clock behind the CLI's cannot put the gap before the last bar,
+    // and one ahead of it -- by any amount -- cannot stamp a gap in the CLI's
+    // future that would prune every fresh document on arrival. The banner still
+    // shows the console's own stamp (`feed.at`), which is the reading it took.
     let at = document.now
     if (feed !== null && feed.stale) {
-      at = laterStamp(document.now, feed.at)
+      at = silenceStamp(document.now, feed.seconds)
       history.observe(repo.slug, {
         at,
         reading: gap(`no document has arrived for ${String(feed.seconds ?? 0)}s, so this series breaks here`),

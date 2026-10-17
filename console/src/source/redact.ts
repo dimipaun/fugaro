@@ -87,7 +87,12 @@
 import { createHmac, randomBytes } from 'node:crypto'
 
 import { decodeFeedLine } from '../main/spawn'
-import { ABS_PATH_SOURCE } from '../shared/sanitize'
+import {
+  ABS_PATH_SOURCE,
+  type TerminalReading,
+  preferConservative,
+  stripTerminalSequences,
+} from '../shared/sanitize'
 
 /**
  * REDACTOR_VERSION is the marker written into every fixture's header and checked
@@ -177,23 +182,14 @@ function tooLong(what: string, bound: number): string {
 const INVISIBLE_RE =
   /[\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu
 
-/**
- * ANSI_RE matches a complete terminal escape sequence: a CSI (ESC `[`, any
- * parameter and intermediate bytes, one final byte; or the one-character C1
- * form U+009B), or an OSC (ESC `]` or U+009D, anything up to BEL or ST). The
- * invisible-character strip removes the ESC itself and would leave `[31m` or
- * `]0;title` behind, joined to the next word, so a token wrapped in colour
- * codes was never at a word boundary and no `\b`-anchored family matched it.
- * Whole sequences go first, before any credential rule reads the text. Every
- * alternative is linear: the bodies are negated classes with a fixed terminator.
- */
-const ANSI_RE =
-  /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|(?:\u001b\]|\u009d)[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)/g
-
 /** prepare is the form every rule reads: NFKC first (so a fullwidth `＠` *is*
- * an `@` before the address rule looks), then the invisible characters gone. */
-function prepare(text: string): string {
-  return text.replace(ANSI_RE, '').normalize('NFKC').replace(INVISIBLE_RE, '')
+ * an `@` before the address rule looks), then every terminal escape sequence
+ * and control string gone, whole (`stripTerminalSequences`, the display layer's
+ * one linear scanner, imported rather than copied so the three readers of CLI
+ * text cannot drift), then the invisible characters gone. `reading` is how an
+ * ambiguous `ESC [` + letter is read (`TerminalReading`). */
+function prepare(text: string, reading: TerminalReading = 'terminal'): string {
+  return stripTerminalSequences(text.normalize('NFKC'), reading).replace(INVISIBLE_RE, '')
 }
 
 /**
@@ -1043,15 +1039,31 @@ function applyRules(text: string, ctx: Ctx, nested = false, persons = true): str
  * address. A string in which no rule finds anything comes back byte for byte as
  * it came (a hostile title keeps its bidi override); one in which a rule finds
  * something comes back prepared and redacted. The form as written is tried as
- * well, for the rare match that only it shows.
+ * well, for the rare match that only it shows. The one exception to "byte for
+ * byte" is a string carrying a terminal escape sequence or control string: it
+ * always comes back without them (review round 3 of PR 494), because a control
+ * string can hide a token from every rule -- `ESC P` + a token, unterminated,
+ * is no token to a rule and all of one to whoever reads the fixture -- and a
+ * fixture is a file a person reads, not a terminal.
  */
 function redactFreeText(text: string, ctx: Ctx, persons = true): string {
   if (text === '' || isMarker(text)) return text
   const prepared = prepare(text)
   const out = applyRules(prepared, ctx, false, persons)
+  const conservative = prepare(text, 'conservative')
+  if (conservative !== prepared) {
+    // An ambiguous `ESC [` + letter: the rules read both readings, and the
+    // display layer's own rule (`preferConservative`) picks the one drawn.
+    const fromConservative = applyRules(conservative, ctx, false, persons)
+    if (fromConservative !== conservative && preferConservative(out !== prepared ? out : null, fromConservative)) {
+      return fromConservative
+    }
+  }
   if (out !== prepared) return out
   if (prepared === text) return text
-  return applyRules(text, ctx, false, persons)
+  const fromText = applyRules(text, ctx, false, persons)
+  if (stripTerminalSequences(text) === text) return fromText
+  return fromText === text ? prepared : prepare(fromText)
 }
 
 /** isAddressMarker answers whether an ADDRESS_RE match is the marker itself. */
@@ -1562,9 +1574,14 @@ function auditString(value: string, here: string, asKey = false): string[] {
   const forms = [value]
   const prepared = prepare(value)
   if (prepared !== value) forms.push(prepared)
+  const conservative = prepare(value, 'conservative')
+  if (conservative !== prepared) forms.push(conservative)
   for (const rule of RULES) {
     if (forms.some((form) => rule.apply(form, AUDIT_CTX, false) !== form)) problems.push(say(rule.what))
   }
+  // The redactor never writes one (`redactFreeText`), and a control string is
+  // where a token hides from every rule above.
+  if (stripTerminalSequences(value) !== value) problems.push(say('a terminal escape sequence'))
   return dedupe(problems)
 }
 
