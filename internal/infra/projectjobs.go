@@ -90,7 +90,9 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			return nil, err
 		}
 		// The account axis: empty until phase 5, because no profile may
-		// mount a Claude OAuth token yet (projectJobSecrets).
+		// mount a Claude OAuth token yet (projectJobSecrets below refuses the
+		// mount, and projectpolicy.validProfiles — the rule publish shares —
+		// refuses the profile).
 		const account = ""
 		saID := gcp.ProjectServiceAccountID(name, pr.Provider, account)
 		out[gcp.ProjectJobName(name, pr.Provider, account)] = ProjectJob{

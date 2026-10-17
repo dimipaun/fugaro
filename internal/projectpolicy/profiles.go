@@ -220,7 +220,10 @@ func providerOf(canonical string) string {
 // pin one provider (required, finding 4), its cpu/memory/timeout be a shape
 // Cloud Run accepts, and every allow_repos pattern name a repository of that
 // one provider — a pattern of another provider could never match and is
-// refused here instead of silently admitting nothing.
+// refused here instead of silently admitting nothing. A secret entry must be a
+// name (CheckSecretName) and never a Claude OAuth token, which no shared job
+// may mount until phase 5 (isClaudeOAuthSecret): the rule `fugaro init` deploys
+// by, stated here so that the two cannot disagree about one profile.
 func validProfiles(profiles map[string]Profile) error {
 	if len(profiles) == 0 {
 		// A block that carries nothing defines nothing — not even the profile
@@ -269,6 +272,22 @@ func validProfiles(profiles map[string]Profile) error {
 			if msg := config.CheckSecretName(secret); msg != "" {
 				return fmt.Errorf("%s.secrets[%d]: %s", at, i, msg)
 			}
+			// A Claude OAuth token is refused here as `fugaro init` refuses to
+			// deploy one (internal/infra's projectJobSecrets), so that publish,
+			// the deployer and both readers of this node hold a profile to ONE
+			// rule. Without it the two documents can disagree about one
+			// profile: publish copies the operator's profiles verbatim, so a
+			// policy can mount the reserved claude-oauth-token and name a job
+			// `fugaro init` never deployed — its account segment is the default
+			// account on the launcher's and the runner's side and empty on the
+			// deployer's. The launcher then reaches Cloud Run on that job and
+			// reads a 404, after the claim and the budget token, and the runner
+			// matches no candidate of its own and halts every run of the profile
+			// with cannotPlaceJob, which blames a stale module version. Like the
+			// two refusals above, it never echoes the entry.
+			if isClaudeOAuthSecret(secret) {
+				return fmt.Errorf("%s.secrets[%d]: a Claude OAuth token is person-owned (design D2), and its allow_data_to is a per-repository list a shared job cannot honour — a profile is shared by every repository admitted to it — so no profile mounts one until phase 5 decides how an account reaches a shared job. `fugaro init` refuses to deploy the job such a profile names, and this node must not name one either", at, i)
+			}
 			if seen[secret] {
 				return fmt.Errorf("%s.secrets[%d]: a secret is listed twice; list each secret once", at, i)
 			}
@@ -292,6 +311,20 @@ func validProfiles(profiles map[string]Profile) error {
 		return fmt.Errorf("projectpolicy: profiles: %s must be defined: it is the profile every workflow that names none runs on", DefaultProfileName)
 	}
 	return nil
+}
+
+// isClaudeOAuthSecret reports whether name is a Claude account's OAuth secret:
+// the reserved claude-oauth-token (config.ClaudeAccountSecret of the default
+// account) or any name in the claude-oauth-token-<account> namespace. The whole
+// namespace rather than the names a claude_accounts block happens to define,
+// because config.ClaudeOAuthTokenPrefix reserves it for the derived secret IDs
+// of accounts: a name merely shaped like one is never a secret of a profile's
+// own, and the deployer refuses it for the same reason (internal/infra's
+// projectJobSecrets, which refuses the reserved name outright and every other
+// name of the namespace for want of a project-wide container or a variable).
+func isClaudeOAuthSecret(name string) bool {
+	return name == config.ClaudeAccountSecret(config.DefaultClaudeAccount) ||
+		strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix)
 }
 
 // validTimeoutClass checks a profile's task timeout. Cloud Run's own ceiling
