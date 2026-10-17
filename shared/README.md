@@ -15,6 +15,8 @@ simulator (P1.5) are planned, unbuilt, and each is its own directory. What exist
 the runner, the skeleton module and `mailbox-schema/`, each with its test, and this document. No task of that plan is
 approved, and this directory is not evidence that one is.
 
+`url/` (P0.3) is the URL validator: built, with an empty host allow-list until the owner answers D124; see `url/README.md`.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has
