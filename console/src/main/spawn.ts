@@ -902,6 +902,9 @@ export interface SpawnedChildLike {
   readonly stderr: ReadableLike | null
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
+  /** `close` comes after `exit`, once the child's stdio has drained: a reader
+   * that must see every byte (the fixture recorder) settles on it. */
+  on(event: 'close', listener: (code: number | null, signal: string | null) => void): unknown
   kill(signal?: NodeJS.Signals): boolean
 }
 

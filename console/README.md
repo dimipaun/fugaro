@@ -684,7 +684,10 @@ everything else here, and `.record-fixture/` is a build output directory that
 rules and not a second copy of them — a recording cannot be of a command the
 console would refuse to run. It records for a bounded time (`--duration`, 120 s
 by default), then stops the child the way the console does, `SIGTERM` and then
-`SIGKILL` after `SHUTDOWN_GRACE_MS`; a torn last line is dropped rather than
+`SIGKILL` after `SHUTDOWN_GRACE_MS`. It reads until the child's pipes **close**
+(not until the process exits: Node may report the exit while the last stdout
+chunks are still in the pipe), with one more grace period after the `SIGKILL` for
+a pipe that never closes. A torn last line is dropped rather than
 recorded as garbage, while a last line that is a whole JSON document — a CLI
 that wrote its final frame without a newline — is recorded like any other.
 
@@ -1113,9 +1116,20 @@ catch:
 have survived the subprocess boundary). It is a copy rather than an import
 because `src/source/redact.ts` reaches for `node:crypto` and the renderer has no
 Node; `sanitize.test.ts` holds the two vocabularies **equal by test** — the
-markers, the placeholders, the bounds and the keep-or-drop decision — by running
-both modules over the same inputs, so drift on either side fails a test rather
-than a screen.
+markers, the placeholders and the bounds by importing both, and the keep-or-drop
+decision over **free text** (the `sentence` class) by running both modules over
+the same inputs, one-directionally: this layer may change more than the recorder,
+never less — so drift on either side fails a test rather than a screen. The
+validating classes are not held to that equality, because they decide
+differently on purpose: the recorder replaces **every** `url` field with
+`[redacted-url]`, while the `url` class keeps a clean `https` link (and refuses
+one whose path, query or fragment carries anything the credential rules match);
+the recorder writes a keyed pseudonym where this layer, with no key, accepts the
+recorder's pseudonym or validates the value's shape.
+
+Every value is held to 64 KiB twice — as it arrives, and again after NFKC (which
+can grow a string eighteen-fold) — and a value past either bound is refused, not
+truncated.
 
 | class | admits | on anything else |
 | --- | --- | --- |
@@ -1127,9 +1141,9 @@ than a screen.
 | `project` | a GCP project name | refused |
 | `person` | a login or a pseudonym | an email address becomes `redacted@example.invalid`; anything else refused |
 | `runId` | the run-id grammar, or a marker | refused |
-| `host` | a hostname | an IP address, or anything that is not a hostname, becomes `<host>` |
+| `host` | a machine name: every value, hostname, IP address or anything else, is drawn as `<host>` (a recorder marker is kept) | — |
 | `path` | a filesystem path | redacted to `<path>` |
-| `url` | `https`, a non-empty host, no userinfo, no whitespace | refused — including `http:` and `javascript:` |
+| `url` | `https`, a non-empty host, no whitespace, and no credential in a path segment, the query or the fragment (each read as written and percent-decoded: the token families, a credential-named assignment such as `access_token=…`, and — in the query and fragment — the high-entropy rule); userinfo is dropped | refused — including `http:`, `javascript:` and a URL carrying a credential |
 
 Every refusal is a **sentence about the class** ("it is not https") that names
 the field and never the value: a refusal that echoed its input would put the
@@ -1138,10 +1152,14 @@ prevent.
 
 ### The entropy guard is copied with its guard, so a model name stays a model name
 
-The recorder's credential net ends with a high-entropy rule, and that rule has a
-guard (`isHighEntropy`) that keeps a string with separators or whitespace out of
-it. Without the guard, `claude-sonnet-4-5-20250929 / claude-opus-4-1` is
-"high-entropy" and every run's model pair would be drawn as `[redacted-token]` —
+The recorder's credential net ends with a high-entropy rule over runs of 20 or
+more token characters, and that rule has a guard (`isHighEntropy`): a run is a
+token only if it is a 32+ character hexadecimal run with both letters and
+digits, or if it mixes upper case, lower case **and** digits at 3.5 bits of
+entropy per character or more. A model name, a run id, a slug and a workflow
+name mix at most two of those three kinds, so the guard keeps them. Without it,
+`claude-sonnet-4-5-20250929` is a 26-character run of the net's alphabet and
+every run's model pair would be drawn as `[redacted-token]` —
 a redaction where there is nothing to redact, which is worse than a leak of a
 model name. The console's copy carries the guard, and the fixture's model pair is
 the standing witness: it is in the committed recording, and it survives decoding

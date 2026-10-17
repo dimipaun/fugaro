@@ -270,6 +270,45 @@ describe('the spawn log', () => {
     expect(new Set(entries.map((entry) => entry.project))).toEqual(new Set(['chosen']))
   })
 
+  it('is closed by the source that opened it, and only by that one', async () => {
+    // Review round 3 of PR 478: `verifyCandidate` closed only the log it opened,
+    // but `CliSource.close()` closed an injected one too -- a caller's writer
+    // ended under it. The ownership is now the same in both.
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, 'runs ls': { stdout: '{}\n' } },
+    })
+    const lines: string[] = []
+    let closes = 0
+    const injected = createSpawnLog({ [SPAWN_LOG_ENV]: '/tmp/unused.jsonl' }, {
+      open: () => 1,
+      write: (_fd, data) => lines.push(data),
+      close: () => {
+        closes += 1
+      },
+    })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+      spawnLog: injected,
+    })
+    await source.listRuns({})
+    await source.close()
+    expect(closes).toBe(0)
+    expect(lines).toHaveLength(2)
+    // The caller's writer is still live after the source is gone.
+    await (await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+      spawnLog: injected,
+    })).close()
+    expect(lines).toHaveLength(3)
+    injected.close()
+    expect(closes).toBe(1)
+  })
+
   it('stops at the bound: one truncation line at record 1001, then nothing', () => {
     const seen: string[] = []
     const writer = createSpawnLog({ [SPAWN_LOG_ENV]: '/tmp/unused.jsonl' }, {

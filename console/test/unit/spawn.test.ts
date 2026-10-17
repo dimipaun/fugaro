@@ -212,9 +212,9 @@ function scriptedChild(): SpawnedChildLike & {
   return {
     stdout: { on: (_event, listener) => stdoutListeners.push(listener) },
     stderr: { on: (_event, listener) => stderrListeners.push(listener) },
-    on(event: 'error' | 'exit', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
+    on(event: 'error' | 'exit' | 'close', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
       if (event === 'error') errorListeners.push(listener as (error: Error) => void)
-      else exitListeners.push(listener as (code: number | null, signal: string | null) => void)
+      else if (event === 'exit') exitListeners.push(listener as (code: number | null, signal: string | null) => void)
       return undefined
     },
     kill(signal?: NodeJS.Signals) {

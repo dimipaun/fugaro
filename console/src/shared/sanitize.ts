@@ -21,8 +21,11 @@
 //      re-runs the recorder's own rules (`src/source/redact.ts`) rather than a
 //      cheaper approximation of them: the pattern classes below are that file's
 //      list, in its order, and the corpus test in `sanitize.test.ts` asserts the
-//      property that makes them a re-run -- this layer never draws a value the
-//      recorder would have changed. The two rules this layer cannot reproduce
+//      property that makes them a re-run -- in free text, this layer never draws
+//      a value the recorder would have changed. (The `url` class is the
+//      deliberate exception: the recorder replaces every url field, and this
+//      class keeps a clean https link and refuses one that carries a
+//      credential.) The two rules this layer cannot reproduce
 //      (the people pass and the installation's literals) are named where the
 //      list is, in `FREE_TEXT_RULES`, and neither is approximated.
 //   3. **the text can be a shape it must not be.** A repository name that is
@@ -140,9 +143,14 @@ export const MARKERS: readonly string[] = Object.freeze([
 
 /**
  * MAX_TEXT_INPUT_LENGTH is how much text this layer will look at, and it is the
- * recorder's own bound (64 KiB). A longer value is **refused before any rule
- * runs**, never truncated: every rule below is linear in its input, and a
- * hostile 40 MB title must cost the renderer one comparison, not a frame.
+ * recorder's own bound (64 KiB). A longer value is **refused, never
+ * truncated**, and the bound is measured twice: on the value as it came, before
+ * anything runs (a hostile 40 MB title costs the renderer one comparison, not a
+ * frame), and again on the form the rules read -- after NFKC, which can grow a
+ * string eighteen-fold (U+FDFA is one code unit and eighteen after it), so a
+ * value inside the first bound can still be a million characters by the time a
+ * rule sees it. Every rule below is linear in what it reads, so bounding what it
+ * reads is what bounds the cost.
  */
 export const MAX_TEXT_INPUT_LENGTH = 64 * 1024
 
@@ -794,9 +802,8 @@ function runRules(text: string, rules: readonly OneRule[], nested: boolean): Cha
  * that is the form the rule rewrote. The form as written is tried as well, for
  * the rare match that only it shows.
  */
-function freeText(text: string, textClass: TextClass): Changed {
+function freeText(text: string, prepared: string, textClass: TextClass): Changed {
   const rules = textClass === 'sentence' || textClass === 'label' ? FREE_TEXT_RULES : CREDENTIAL_RULES
-  const prepared = prepare(text)
   const fromPrepared = runRules(prepared, rules, false)
   if (fromPrepared.text !== prepared) return fromPrepared
   if (prepared === text) return fromPrepared
@@ -895,10 +902,36 @@ function clipped(text: string): { readonly text: string; readonly flags: readonl
   return { text: `${text.slice(0, cut).trimEnd()}${ELLIPSIS}`, flags: ['clipped'] }
 }
 
-/** applyUrl is the URL class: `https` only, a non-empty host, no userinfo. It
- * is the only way this layer produces a URL, and `safeUrl` below is the same
- * function with a `null` instead of a refusal, so a screen has one door and not
- * two. */
+/**
+ * carriesCredential answers whether one piece of a URL -- its query, its
+ * fragment, or one path segment -- holds something the credential rules would
+ * change. It reads the piece as written and percent-decoded, each in the
+ * prepared form, and runs the credential pass the validating classes run (the
+ * token families, a bearer header, a PEM block, a base64-wrapped candidate, and
+ * an assignment such as `access_token=...`, which loses its value whatever it
+ * looks like). `entropy` adds the high-entropy net, for the query and the
+ * fragment: a path segment is left out of it on purpose, because a commit link's
+ * 40-hex digest is a path segment, and refusing every commit link would be a
+ * refusal of the forge's own URLs.
+ */
+function carriesCredential(piece: string, entropy: boolean): boolean {
+  if (piece === '') return false
+  for (const form of new Set([prepare(piece), prepare(percentDecode(piece))])) {
+    if (credentialPass(form, true) !== form) return true
+    if (entropy) {
+      ENTROPY_RE.lastIndex = 0
+      for (const match of form.matchAll(ENTROPY_RE)) {
+        if (isHighEntropy(match[0])) return true
+      }
+    }
+  }
+  return false
+}
+
+/** applyUrl is the URL class: `https` only, a non-empty host, no userinfo, and
+ * nothing credential-shaped in its path, query or fragment. It is the only way
+ * this layer produces a URL, and `safeUrl` below is the same function with a
+ * `null` instead of a refusal, so a screen has one door and not two. */
 function applyUrl(text: string, field: string): Sanitized {
   if (isMarkerText(text)) {
     // A redaction is not a link. It is text, and it is the truth about the
@@ -927,6 +960,19 @@ function applyUrl(text: string, field: string): Sanitized {
   }
   if (parsed.hostname === '') {
     return refuse(`${field} is not a valid url, so the console will not draw it`)
+  }
+  // A credential in the query, the fragment or a path segment is refused, not
+  // rewritten: the URL is drawn as text, put in a title and offered as a link,
+  // and a link with its key cut out is a different link. The recorder replaces
+  // a url field whole; this class keeps a clean one and refuses the rest.
+  const query = parsed.search.replace(/^\?/, '')
+  const fragment = parsed.hash.replace(/^#/, '')
+  if (
+    carriesCredential(query, true) ||
+    carriesCredential(fragment, true) ||
+    parsed.pathname.split('/').some((segment) => carriesCredential(segment, false))
+  ) {
+    return refuse(`${field} is a url that carries a credential, so the console will not draw it`)
   }
   if (parsed.username === '' && parsed.password === '') {
     // No userinfo to drop, so the text is returned exactly as it arrived: `URL`
@@ -975,6 +1021,14 @@ export function sanitizeText(
   const stripped = stripInvisible(raw)
   const flags: SanitizeFlag[] = [...stripped.flags]
   let text = stripped.text
+  // The second half of the bound (`MAX_TEXT_INPUT_LENGTH`): the form the rules
+  // read, after NFKC, is held to the same 64 KiB as the form that arrived.
+  const prepared = prepare(text)
+  if (prepared.length > MAX_TEXT_INPUT_LENGTH) {
+    return refuse(
+      `${field} is longer than the console will read (${String(MAX_TEXT_INPUT_LENGTH)} characters)`,
+    )
+  }
 
   if (textClass === 'url') {
     return applyUrl(text, field)
@@ -999,7 +1053,7 @@ export function sanitizeText(
     return ok(HOST_PLACEHOLDER, [...flags, 'host-placeholder'])
   }
 
-  const rules = freeText(text, textClass)
+  const rules = freeText(text, prepared, textClass)
   flags.push(...rules.flags)
   text = rules.text
 

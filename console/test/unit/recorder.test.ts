@@ -111,6 +111,7 @@ class StubChild implements SpawnedChildLike {
   readonly stderr: ReadableLike = new StubStream()
   readonly signals: NodeJS.Signals[] = []
   readonly #exits: ((code: number | null, signal: string | null) => void)[] = []
+  readonly #closes: ((code: number | null, signal: string | null) => void)[] = []
   readonly #errors: ((error: Error) => void)[] = []
   #alive = true
 
@@ -119,25 +120,44 @@ class StubChild implements SpawnedChildLike {
     this.signals.push(signal)
     // A child that is SIGKILLed is gone; one that is SIGTERMed may yet exit on
     // its own, and that difference is what the grace timer is for.
-    if (signal === 'SIGKILL') this.#alive = false
+    // Node then reports the exit, and the close once the pipes have drained.
+    if (signal === 'SIGKILL') {
+      this.#alive = false
+      for (const listener of this.#exits) listener(null, signal)
+      for (const listener of this.#closes) listener(null, signal)
+    }
     return true
   }
 
   on(event: 'error', listener: (error: Error) => void): unknown
-  on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
+  on(event: 'exit' | 'close', listener: (code: number | null, signal: string | null) => void): unknown
   on(
-    event: 'error' | 'exit',
+    event: 'error' | 'exit' | 'close',
     listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void),
   ): unknown {
     if (event === 'error') this.#errors.push(listener as (error: Error) => void)
-    else this.#exits.push(listener as (code: number | null, signal: string | null) => void)
+    else if (event === 'exit') this.#exits.push(listener as (code: number | null, signal: string | null) => void)
+    else this.#closes.push(listener as (code: number | null, signal: string | null) => void)
     return this
   }
 
-  /** exit is the child going away by itself. */
+  /** exit is the child going away by itself, its pipes drained: `exit`, then
+   * `close`, as Node reports them. */
   exit(code: number | null): void {
+    this.exitOnly(code)
+    this.close(code)
+  }
+
+  /** exitOnly is the process gone with its pipes still holding output: Node may
+   * emit `exit` before the last stdout chunk, and `close` only after it. */
+  exitOnly(code: number | null): void {
     this.#alive = false
     for (const listener of this.#exits) listener(code, null)
+  }
+
+  /** close is the pipes drained after an `exitOnly`. */
+  close(code: number | null): void {
+    for (const listener of this.#closes) listener(code, null)
   }
 
   /** fail is a spawn that never started (`ENOENT`). */
@@ -594,6 +614,38 @@ describe('a recording in progress', () => {
     const result = await recording.finished
     expect(result.exitCode).toBe(1)
     expect(result.records).toHaveLength(1)
+  })
+
+  it('reads until the pipes close, not until the process exits', async () => {
+    // Review round 3 of PR 478: the recording settled on `exit`, which Node may
+    // emit before the last stdout chunk, and a chunk after it was dropped.
+    const { stub, recording } = started()
+    stub.write('{"day":"2026-10-15"}\n')
+    stub.exitOnly(0)
+    stub.write('{"day":"2026-10-16"}\n')
+    stub.write('{"day":"2026-10-17"}')
+    stub.close(0)
+    const result = await recording.finished
+    expect(result.exitCode).toBe(0)
+    expect(result.records).toHaveLength(3)
+  })
+
+  it('still ends a recording whose pipes never close after the SIGKILL', async () => {
+    // A grandchild holding the pipe open would keep `close` from ever coming;
+    // the recording ends one grace period after the SIGKILL anyway.
+    const stub = new StubChild()
+    stub.kill = (signal: NodeJS.Signals = 'SIGTERM'): boolean => {
+      stub.signals.push(signal)
+      return true
+    }
+    const { timers, recording } = started(full('--duration', '30'), new FakeTimers(), stub)
+    stub.write('{"day":"2026-10-15"}\n')
+    timers.advanceTo(30_000 + SHUTDOWN_GRACE_MS)
+    expect(stub.signals).toEqual(['SIGTERM', 'SIGKILL'])
+    timers.advanceTo(30_000 + 2 * SHUTDOWN_GRACE_MS)
+    const result = await recording.finished
+    expect(result.records).toHaveLength(1)
+    expect(timers.scheduled).toEqual([])
   })
 
   it('keeps a final frame the child wrote without a newline, and still drops a torn one', async () => {

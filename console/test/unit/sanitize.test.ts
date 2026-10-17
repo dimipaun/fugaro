@@ -782,6 +782,45 @@ describe('the class rules', () => {
     expect(refused('javascript:alert(1)', 'url')).toContain('not https')
   })
 
+  it('refuses a URL whose query, fragment or path carries a credential', () => {
+    // Review round 3 of PR 478: the class kept an https URL exactly as it came,
+    // so a token in its query or fragment went into the cell's text, its title
+    // and its `data-href`, while the recorder replaces every url field whole.
+    // Every value is assembled at run time (see this file's header).
+    const base = 'https://github.com/o/r/pull/1'
+    const token = fake.githubToken()
+    const encoded = ['gh', '%70_', 'a'.repeat(36)].join('')
+    for (const [what, url] of [
+      ['a token-named query key', `${base}?access_token=${token}`],
+      ['a credential-named key with a shapeless value', `${base}?api_key=hunter2`],
+      ['a token in the fragment', `${base}#${token}`],
+      ['an assignment in the fragment', `${base}#access_token=abcdef`],
+      ['a percent-encoded token in the query', `${base}?x=${encoded}`],
+      ['a high-entropy run in the fragment', `${base}#${fake.highEntropyRun()}`],
+      ['a token as a path segment', `https://github.com/o/r/pull/${token}`],
+      ['a percent-encoded token as a path segment', `https://github.com/o/r/${encoded}`],
+    ] as const) {
+      const reason = refused(url, 'url', 'finished[0].pr_url')
+      expect(reason, what).toContain('finished[0].pr_url')
+      expect(reason, what).not.toContain(token)
+      expect(safeUrl(url), what).toBeNull()
+      const target = element()
+      putLink(target, url, 'finished[0].pr_url')
+      expect(target.getAttribute(DESTINATION_ATTRIBUTE), what).toBeNull()
+      expect(target.textContent ?? '', what).not.toContain(token)
+      expect(target.getAttribute('title') ?? '', what).not.toContain(token)
+    }
+    // The links a forge writes are kept as they came: a review anchor, a tab, a
+    // commit (a hex digest in a path is a commit, not a key).
+    for (const url of [
+      `${base}#issuecomment-1234567`,
+      `${base}/files?tab=files`,
+      `https://github.com/o/r/commit/${fake.hexDigest()}`,
+    ]) {
+      expect(text(url, 'url'), url).toBe(url)
+    }
+  })
+
   it('refuses a value that is not a string at all, naming the field', () => {
     for (const value of [null, undefined, 42, true, {}, []]) {
       const reason = refused(value, 'sentence', 'runs[0].title')
@@ -798,6 +837,22 @@ describe('the class rules', () => {
     expect(refused(long, 'sentence', 'runs[0].title')).toContain('longer than the console will read')
     // At the bound it is accepted, and clipped by the display bound instead.
     expect(text('a'.repeat(MAX_TEXT_INPUT_LENGTH), 'sentence')).toHaveLength(MAX_TEXT_LENGTH)
+  })
+
+  it('bounds the text again after NFKC, which can grow it eighteen-fold', () => {
+    // Review round 3 of PR 478: the bound was measured before normalisation, so
+    // 65 000 x U+FDFA (one code unit each, eighteen after NFKC) passed it and
+    // every rule then ran over more than a million characters.
+    const growth = String.fromCharCode(0xfdfa)
+    expect(growth.normalize('NFKC').length).toBe(18)
+    const grows = growth.repeat(4000)
+    expect(grows.length).toBeLessThan(MAX_TEXT_INPUT_LENGTH)
+    expect(grows.normalize('NFKC').length).toBeGreaterThan(MAX_TEXT_INPUT_LENGTH)
+    for (const textClass of ['sentence', 'label', 'branch'] as const) {
+      expect(refused(grows, textClass, 'runs[0].title'), textClass).toContain('longer than the console will read')
+    }
+    // A value that grows but stays inside the bound is still read.
+    expect(text(growth.repeat(10), 'sentence')).toBe(growth.repeat(10))
   })
 })
 

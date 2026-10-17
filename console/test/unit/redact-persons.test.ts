@@ -374,4 +374,15 @@ describe('a notice goes through the person pass too (review round 2 of PR 478)',
     r.redactDocument({ runs: [{ requested_by: name }] })
     expect(r.redactText(`queued by ${name}`)).not.toContain('Whitfield')
   })
+
+  it('audits against the same people, so a name left in a notice is a problem', () => {
+    // `problems()` is the audit a recording runs over what it is about to
+    // write. Audited against no people, a requester's name left in a notice
+    // was clean; against the redactor's own table, it is a finding.
+    const r = redactor()
+    expect(r.problems(`queued by ${name}`)).toEqual([])
+    r.redactDocument({ runs: [{ requested_by: name }] })
+    expect(r.problems(`queued by ${name}`).join('\n')).toMatch(/a person the document names/)
+    expect(r.problems(r.redactText(`queued by ${name}`))).toEqual([])
+  })
 })

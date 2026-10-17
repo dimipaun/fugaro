@@ -118,6 +118,9 @@ export class CliSource implements FugaroSource {
   readonly #env: Readonly<Record<string, string | undefined>>
   readonly #directory: string
   readonly #log: SpawnLogWriter
+  /** `#ownsLog` is whether `create` opened the log. A log the caller injected
+   * is the caller's to close, as it is in `verifyCandidate`. */
+  readonly #ownsLog: boolean
   readonly #clock: () => Date
   readonly #binaryPath: string
   /** The live feeds, keyed by the argv that produced them: one child per
@@ -129,6 +132,7 @@ export class CliSource implements FugaroSource {
     this.#env = options.appEnv ?? {}
     this.#directory = bucket.directory
     this.#log = bucket.log
+    this.#ownsLog = bucket.ownsLog
     this.#clock = options.clock ?? ((): Date => new Date())
     this.#binaryPath = bucket.binaryPath
     this.installation = bucket.installation
@@ -145,16 +149,26 @@ export class CliSource implements FugaroSource {
     const env = options.appEnv ?? {}
     const directory = options.checkout ?? privateWorkingDirectory()
     const log = options.spawnLog ?? createSpawnLog(env)
-    const resolution = await resolveBinary({
-      ...(options.configuredBinaryPath === undefined ? {} : { configuredPath: options.configuredBinaryPath }),
-      appEnv: env,
-      directory,
-      target: options.target,
-      ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
-      ...(options.home === undefined ? {} : { home: options.home }),
-      log,
-    })
-    if (!resolution.ok) throw new SourceRefusal(resolution.reason)
+    const ownsLog = log !== options.spawnLog
+    let resolution: Awaited<ReturnType<typeof resolveBinary>>
+    try {
+      resolution = await resolveBinary({
+        ...(options.configuredBinaryPath === undefined ? {} : { configuredPath: options.configuredBinaryPath }),
+        appEnv: env,
+        directory,
+        target: options.target,
+        ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
+        ...(options.home === undefined ? {} : { home: options.home }),
+        log,
+      })
+    } catch (error) {
+      if (ownsLog) log.close()
+      throw error
+    }
+    if (!resolution.ok) {
+      if (ownsLog) log.close()
+      throw new SourceRefusal(resolution.reason)
+    }
 
     const installation: InstallationRef = {
       binaryPath: resolution.path,
@@ -169,6 +183,7 @@ export class CliSource implements FugaroSource {
     return new CliSource(options, {
       directory,
       log,
+      ownsLog,
       binaryPath: resolution.path,
       installation,
     })
@@ -320,7 +335,7 @@ export class CliSource implements FugaroSource {
     const feeds = [...this.#feeds.values()]
     this.#feeds.clear()
     await Promise.all(feeds.map((feed) => feed.stop()))
-    this.#log.close()
+    if (this.#ownsLog) this.#log.close()
   }
 }
 
@@ -328,6 +343,7 @@ export class CliSource implements FugaroSource {
 interface ResolvedSource {
   readonly directory: string
   readonly log: SpawnLogWriter
+  readonly ownsLog: boolean
   readonly binaryPath: string
   readonly installation: InstallationRef
 }

@@ -623,6 +623,7 @@ export function startRecording(deps: RecordingDeps): Recording {
   let ending = false
   let durationTimer: ReturnType<typeof setTimeout> | null = null
   let graceTimer: ReturnType<typeof setTimeout> | null = null
+  let closeTimer: ReturnType<typeof setTimeout> | null = null
   let settle: () => void = () => {}
 
   /** finish is what the end of a recording owes the records, before anyone
@@ -661,24 +662,38 @@ export function startRecording(deps: RecordingDeps): Recording {
       finish()
       if (durationTimer !== null) timers.clearTimeout(durationTimer)
       if (graceTimer !== null) timers.clearTimeout(graceTimer)
+      if (closeTimer !== null) timers.clearTimeout(closeTimer)
       resolve({ records, refusal, exitCode })
     }
   })
 
+  /** awaitClose gives the child's pipes one more grace period to close. The
+   * recording settles on `close`, which comes once stdout has drained; this
+   * timer is only for a pipe that never closes (a grandchild holding it open),
+   * so a recording cannot hang on one. */
+  const awaitClose = (): void => {
+    if (settled) return
+    closeTimer = timers.setTimeout(settle, SHUTDOWN_GRACE_MS)
+  }
+
   /** end stops the child the way the console stops one: SIGTERM, then SIGKILL
-   * for a child that will not go. The recording is finished when the child is
-   * gone, not when the signal was sent, and a second `stop()` -- a Ctrl-C on a
-   * recording that is already ending -- is not a second signal. */
+   * for a child that will not go. The recording is finished when the child's
+   * pipes have closed, not when the signal was sent, and a second `stop()` -- a
+   * Ctrl-C on a recording that is already ending -- is not a second signal. A
+   * child that cannot be signalled has already exited: its `close` is still to
+   * come, unless the recording is a refusal, which writes nothing and so has
+   * nothing left to read. */
   const end = (): void => {
     if (settled || ending) return
     ending = true
     if (!child.kill('SIGTERM')) {
-      settle()
+      if (refusal !== null) settle()
+      else awaitClose()
       return
     }
     graceTimer = timers.setTimeout(() => {
       child.kill('SIGKILL')
-      settle()
+      awaitClose()
     }, SHUTDOWN_GRACE_MS)
   }
 
@@ -696,7 +711,9 @@ export function startRecording(deps: RecordingDeps): Recording {
   // fixture as though `watch --json` had written them.
   child.stderr?.on('data', () => undefined)
   child.stdout?.on('data', (chunk: Buffer | string) => {
-    if (settled) return
+    // Every chunk up to `close` is read; after a refusal there is nothing more
+    // to record, because nothing will be written.
+    if (settled || refusal !== null) return
     partial += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
     const lines = partial.split('\n')
     partial = lines.pop() ?? ''
@@ -719,14 +736,17 @@ export function startRecording(deps: RecordingDeps): Recording {
         refusal = error instanceof Error ? error : new Error(String(error))
         end()
       }
-      if (settled) return
+      if (settled || refusal !== null) return
     }
   })
   child.on('error', (error: Error) => {
     refusal = refusal ?? error
     end()
   })
-  child.on('exit', (code: number | null) => {
+  // `close`, not `exit`: Node may emit `exit` while the last stdout chunks are
+  // still in the pipe, and a recording settled then would drop them. `close`
+  // comes once every stdio stream has ended.
+  child.on('close', (code: number | null) => {
     if (!settled && graceTimer === null) exitCode = code
     settle()
   })
