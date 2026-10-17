@@ -37,6 +37,7 @@
 // asked it for anything else would fail here rather than pass on an answer it
 // should not have been able to get.
 
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { _electron as electron, expect, test } from '@playwright/test'
@@ -55,11 +56,37 @@ import type { BinaryResolution } from '../../src/main/spawn'
 // these specs as CommonJS.
 const consoleDir = join(__dirname, '..', '..')
 
+/**
+ * documentMarker is the sentence a bundled document carries, **read out of the
+ * document itself** rather than retyped here.
+ *
+ * That is the fix for a real defect in the first version of this file: the
+ * dashboard's sentence was retyped with a typographic apostrophe ("console’s")
+ * where `index.html` has a straight one ("console's"), so `toContain` failed on
+ * the one test that always runs and -- far worse -- every `not.toContain` built
+ * on the same constant was true for the wrong reason. The negative half is the
+ * D7 claim ("a refused version never draws a dashboard"), so a marker that
+ * cannot match would have made the claim unasserted while the suite stayed
+ * green. Reading the bytes is what makes the two sides the same string.
+ */
+function documentMarker(file: string): string {
+  const html = readFileSync(join(consoleDir, 'src', 'renderer', file), 'utf8').replace(
+    /<!--[\s\S]*?-->/g,
+    '',
+  )
+  const paragraph = /<main>[\s\S]*?<p>([^<]+)<\/p>/.exec(html)
+  const sentence = paragraph?.[1]?.trim()
+  if (sentence === undefined || sentence === '') {
+    throw new Error(`${file} carries no <p> in its <main>: this spec's markers are read from the documents`)
+  }
+  return sentence
+}
+
 /** DASHBOARD_MARKER is the sentence `src/renderer/index.html` carries and the
  * refusal document does not: the one string that tells the two documents apart
  * from inside the page, whatever a later task's renderer does to either. */
-const DASHBOARD_MARKER = 'The console’s window is up'
-const REFUSAL_MARKER = 'will not draw a dashboard'
+const DASHBOARD_MARKER = documentMarker('index.html')
+const REFUSAL_MARKER = documentMarker('refusal.html')
 
 /** HOSTILE is the line the plan asks for: an ANSI escape, a markup tag and a
  * version-shaped run, in one line a binary chose. Nothing of it may be live on
@@ -149,6 +176,11 @@ test.describe('the startup handshake, in the real app', () => {
       } else {
         expect(shape.url).toBe(APP_ENTRY_URL)
         expect(shape.text).toContain(DASHBOARD_MARKER)
+        // Both markers, each against the other document: this is the pair that
+        // makes the `not.toContain(DASHBOARD_MARKER)` above a claim rather than
+        // a spelling mistake. A dashboard that carried the refusal's sentence
+        // (or a marker that matched nothing) fails here.
+        expect(shape.text).not.toContain(REFUSAL_MARKER)
       }
     } finally {
       await app.close()
