@@ -39,10 +39,15 @@ func TestAOneBitMarkerIsALauncherThatPredatesTheSeal(t *testing.T) {
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError {
 		t.Fatalf("a run marked by a pre-seal launcher ran: rec = %+v, err = %v", rec, err)
 	}
-	for _, want := range []string{"predates the seal", "fugaro upgrade", "fugaro run --retry"} {
+	for _, want := range []string{"predates the seal", "fugaro upgrade", "start a new run (fugaro run with the same task)"} {
 		if !strings.Contains(rec.Reason, want) {
 			t.Errorf("the refusal does not say %q: %q", want, rec.Reason)
 		}
+	}
+	// The run has launched (launch.json exists), so --retry reports it as
+	// already launched and starts nothing: it is not the cure.
+	if strings.Contains(rec.Reason, "--retry") {
+		t.Errorf("the refusal names --retry, which never relaunches a launched run: %q", rec.Reason)
 	}
 	if strings.Contains(rec.Reason, plain) || b.itk.Exchanges() != 0 {
 		t.Fatal("the plaintext token was read")

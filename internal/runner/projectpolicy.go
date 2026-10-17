@@ -343,10 +343,10 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// and its cure first. It names no object, and no key.
 		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro init --repo for this repository in its checkout"
 		if r.d.Backend.TokenMarked {
-			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s, then fugaro run --retry %s), or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant, r.d.Store.RunID())
+			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s, then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it), or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant)
 			return nil, c.err
 		}
-		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s, then fugaro run --retry %s); launch the run again", grant, r.d.Store.RunID())
+		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s, then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it); launch the run again", grant)
 		return nil, c.err
 	default:
 		c.err = err
@@ -370,7 +370,7 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 // is "1", which only a launcher from before the seal writes, so the token it
 // minted is unsealed and under runs/, and this runner reads neither.
 func errLauncherPredatesSeal(runID string) error {
-	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (fugaro upgrade), then fugaro run --retry %s", BudgetTokenEnv, runID)
+	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (fugaro upgrade), then start a new run (fugaro run with the same task): run %s has launched, and retrying its run id would only report it", BudgetTokenEnv, runID)
 }
 
 // takeBudgetToken reads the run's sealed token object, once per run. Its

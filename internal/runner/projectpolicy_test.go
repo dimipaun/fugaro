@@ -248,13 +248,17 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 		// cause; a job account not re-applied since the token moved to
 		// tokens/ is the likely one, and gocloud reports its 403 exactly as
 		// a missing object. The refusal names that cause and its cure.
-		for _, want := range []string{"tokens/", "read grant", "fugaro init --repo", "fugaro run --retry " + runID} {
+		for _, want := range []string{"tokens/", "read grant", "fugaro init --repo", "start a new run (fugaro run with the same task)"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal does not say %q: %v", want, err)
 			}
 		}
 		if strings.Contains(err.Error(), "already taken") {
 			t.Errorf("the refusal blames a take that no longer deletes: %v", err)
+		}
+		// The run has launched, so --retry would only report it.
+		if strings.Contains(err.Error(), "--retry") {
+			t.Errorf("the refusal names --retry, which never relaunches a launched run: %v", err)
 		}
 		if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 			t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
@@ -370,7 +374,7 @@ func TestRunnerWithTheModeOnAndNoTokenHalts(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, err := b.run(t, implement("feature"))
-	if err == nil || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "fugaro init --repo") || strings.Contains(err.Error(), "already taken") {
+	if err == nil || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "fugaro init --repo") || strings.Contains(err.Error(), "already taken") || strings.Contains(err.Error(), "--retry") {
 		t.Fatalf("err = %v, want the missing-token refusal naming the tokens/ grant", err)
 	}
 	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
