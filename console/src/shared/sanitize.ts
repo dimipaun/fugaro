@@ -889,6 +889,23 @@ function containsSecret(text: string): boolean {
   return false
 }
 
+/** holdsCredential answers whether a whole value a *validating* class is about
+ * to accept is credential-shaped: a token family's own shape, a bearer header,
+ * a PEM header, an assignment, or a run the entropy rule calls a secret -- which
+ * is the pair `containsSecret` and `isHighEntropy`, and the same pair the URL
+ * class asks of a form it is about to link (`applyUrl`). The classes that
+ * *redact* rather than validate run the whole rule list and would replace such a
+ * run; a class that draws its value whole or not at all has to ask this instead,
+ * because a placeholder in a login cell is a login that never existed. */
+function holdsCredential(text: string): boolean {
+  if (containsSecret(text)) return true
+  ENTROPY_RE.lastIndex = 0
+  for (const match of text.matchAll(ENTROPY_RE)) {
+    if (isHighEntropy(match[0])) return true
+  }
+  return false
+}
+
 /** Changed is what one run of the rules did: the text, and which classes fired
  * on it. */
 interface Changed {
@@ -1900,6 +1917,19 @@ export function sanitizeText(
       return ok(ADDRESS_PLACEHOLDER, [...flags, 'address-marker'])
     }
     if (isMarkerText(text)) return ok(text, flags)
+    // The login grammar is `[A-Za-z0-9-]{1,39}`, and every token family in
+    // `TOKEN_SHAPES` fits inside it: an AWS key id (`AKIA` + 16), a Google API
+    // key (`AIza` + 35, exactly 39), a GitLab PAT, a Slack token -- and so does
+    // any long high-entropy run, which is the one shape no pattern can find.
+    // Every one of those is redacted in a title, a reason and a stage, and the
+    // recorder pseudonymises the same value, so this class was the single place
+    // a credential came out whole: design section 5.1 rule 7 makes this layer
+    // the last line of defence for live (non-fixture) documents. A validating
+    // class draws the value whole or not at all, so this is a refusal and never
+    // a placeholder -- half of a login is not a person.
+    if (holdsCredential(text)) {
+      return refuse(`${field} is shaped like a credential and not like a person, so the console will not draw it`)
+    }
     if (LOGIN_RE.test(text)) return ok(text, flags)
     return refuse(`${field} is not a valid person, so the console will not draw it`)
   }

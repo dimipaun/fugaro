@@ -757,6 +757,35 @@ describe('the class rules', () => {
     }
   })
 
+  it('refuses a credential that fits the login grammar, rather than drawing it', () => {
+    // The login grammar is `[A-Za-z0-9-]{1,39}` and every one of these fits
+    // inside it, which made the `person` class the single door a token could
+    // come out whole: `TOKEN_SHAPES` redacts each of them in a title, a reason
+    // and a stage, and the recorder pseudonymises the same value, so a live
+    // document's `kill.by` or `requested_by` was the one place they survived --
+    // and design section 5.1 rule 7 makes this layer the last line of defence
+    // for live data. Each value is assembled at run time (`fakeSecrets.ts`), so
+    // no line of this repository holds the shape.
+    const shaped: readonly string[] = [
+      fake.awsKeyId(),
+      fake.googleApiKey(),
+      fake.gitlabToken(),
+      fake.slackToken(),
+      fake.highEntropyRun(),
+    ]
+    for (const value of shaped) {
+      // `refused` throws when the value is accepted at all, so this fails if the
+      // credential check is deleted: each of these fits the login grammar
+      // (`[A-Za-z0-9-]{1,39}`) and would otherwise be drawn whole.
+      expect(refused(value, 'person')).toContain('shaped like a credential')
+    }
+    // ...and an ordinary login is still a login, so the class is not "refuse
+    // everything long": the three people the design's own screens draw.
+    for (const good of ['fixture-operator', 'zora-kell', 'person-2f9a4c1e', 'Ana']) {
+      expect(text(good, 'person'), good).toBe(good)
+    }
+  })
+
   it('keeps a run id, and refuses anything that is not one', () => {
     expect(text('20261015-120000-aa01', 'runId')).toBe('20261015-120000-aa01')
     // A run whose id the recorder redacted is a marker, not a run id -- and the
