@@ -90,9 +90,9 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			return nil, err
 		}
 		// The account axis: empty until phase 5, because no profile may
-		// mount a Claude OAuth token yet (projectJobSecrets below refuses the
-		// mount, and projectpolicy.validProfiles — the rule publish shares —
-		// refuses the profile).
+		// mount a Claude OAuth token yet — projectpolicy.validProfiles
+		// refuses such a profile above, which is the one rule publish, this
+		// deployer and both readers of the node share.
 		const account = ""
 		saID := gcp.ProjectServiceAccountID(name, pr.Provider, account)
 		out[gcp.ProjectJobName(name, pr.Provider, account)] = ProjectJob{
@@ -184,16 +184,24 @@ func projectJobEnv(lc *localcfg.Config, bucket string, vertex bool) map[string]s
 // nothing per-repository can be mounted here: a repository's own secret is
 // reachable only by a job that repository alone runs.
 //
-// Two kinds of secret are refused whatever the profile says. The Bitbucket
-// token, because Bitbucket stays per-repository in phase 3 (see ProjectJobs).
-// And every Claude OAuth token — the default account's claude-oauth-token and
-// a named account's alike — because a Claude account is person-owned (design
-// D2 and §7: D2 sweeps API keys and the git credential into project scope,
-// never claude-oauth-token) and its allow_data_to is a per-repository list a
-// shared job cannot honour: every repository the profile admits runs on the
-// same job. Phase 5 decides how an account reaches a shared job; until then
-// the account axis of the job's name is always empty, and the field stays so
-// that phase does not rename every job.
+// Two rules refuse a secret, and they are held at two different places on
+// purpose. A Claude OAuth token — the default account's claude-oauth-token and
+// a named account's alike — is refused by the profile's own rule, before any
+// job is built: a Claude account is person-owned (design D2 and §7: D2 sweeps
+// API keys and the git credential into project scope, never
+// claude-oauth-token) and its allow_data_to is a per-repository list a shared
+// job cannot honour, since every repository the profile admits runs on the
+// same job. ProjectJobs runs projectpolicy.CheckProfiles first, so that rule
+// is the one this function's callers hit — the same rule `fugaro project
+// policy publish` holds a profile to, which is the point of it being there
+// rather than here (an earlier revision repeated the refusal below, where it
+// could never be reached). Phase 5 decides how an account reaches a shared
+// job; until then the account axis of the job's name is always empty, and the
+// field stays so that phase does not rename every job.
+//
+// The Bitbucket token is the one this function refuses itself, because
+// Bitbucket stays per-repository in phase 3 (see ProjectJobs) and that is not
+// a rule about profiles a policy would have an opinion on.
 //
 // What a shared job does not honour for the secrets it does mount is the
 // project_secrets entry's allow_data_to: the entry decides that the container
@@ -206,9 +214,6 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 	for i, name := range pr.Secrets {
 		if name == "bitbucket-token" {
 			return nil, userErr("profiles.%s.secrets[%d]: %q is the Bitbucket credential, and a shared job never holds one in phase 3: it cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15)", profile, i, name)
-		}
-		if _, isClaude := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); isClaude {
-			return nil, userErr("profiles.%s.secrets[%d]: %q is a Claude account's OAuth token, which is person-owned (design D2): a shared job cannot honour the account's allow_data_to, so no profile mounts one until phase 5 decides how an account reaches a shared job", profile, i, name)
 		}
 		if _, ok := containers[name]; !ok {
 			return nil, userErr("profiles.%s.secrets[%d]: %q is not stored project-wide, so a shared job cannot mount it: a profile is shared by every repository it admits, and only a project-wide secret has one copy. Store it with project_secrets in the local config", profile, i, name)
@@ -233,7 +238,8 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // projectSecretEnv is the variable a project-wide secret is mounted as: the
 // reserved name's own variable or a model provider's key variable. ok is
 // false for a name that is neither, whatever its shape. A Claude account's
-// token never reaches it: projectJobSecrets refuses those first.
+// token never reaches it: projectpolicy.validProfiles refuses such a profile
+// before ProjectJobs builds anything.
 func projectSecretEnv(lc *localcfg.Config, name string) (string, bool) {
 	if v, ok := config.ReservedSecrets[name]; ok {
 		return v, true

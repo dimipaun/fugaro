@@ -444,6 +444,15 @@ type initRun struct {
 	// stage, held in memory for the pre-check and cleared when the run ends.
 	appKeyMem []byte
 
+	// projectExisted is whether the project this run installs into was
+	// already there when the project stage read it (projectStage.read). It
+	// is the fact markCreated's --managed warning needs and r.res.Created
+	// cannot give: an empty Created says this run created no project, which
+	// is what adoption leaves behind — and also what --plan-only, a declined
+	// or unaskable typed confirmation, an environment refusal and a failure
+	// before the project stage leave behind.
+	projectExisted bool
+
 	// review is the run's one confirmation, set only by the converge
 	// (init_review.go).
 	review *runReview
@@ -664,12 +673,19 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// ordinary run of an existing installation — fugaro's own, belong, the
 	// owner's — comes through here with it empty.
 	if r.res.Created == "" {
-		// --managed asked for a managed creation, and a project that already
-		// existed was adopted instead: nothing was created, so there is no
-		// fact to record — and the owner must not silently get an unmarked
-		// project where they asked for a managed one.
+		// --managed asked for a managed creation and this run created no
+		// project, so there is no fact to record — and the owner must not
+		// silently get an unmarked project where they asked for a managed
+		// one. Which of the two ways that happened is said as it is, because
+		// only one of them is adoption: a project the run read and found
+		// already there (projectExisted), or a creation that never ran or
+		// never finished. An empty Created alone cannot tell them apart.
 		if r.o.managed {
-			r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed", r.gcpProject))
+			if r.projectExisted {
+				r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed", r.gcpProject))
+			} else {
+				r.warn(fmt.Sprintf("--managed was not applied: this run created no project (it stopped before creating one, or the creation did not finish), so no creation fact was written and %s is not managed", r.gcpProject))
+			}
 		}
 		return
 	}

@@ -88,9 +88,16 @@ resource "google_project_iam_member" "operator_build_submitter" {
 # the Cloud Asset API, and the operator running a managed apply is the identity
 # that makes that read (design D59: a read-only query at apply time). A read
 # role, and the narrowest that lists a project's assets, so holding it adds no
-# write to what an operator has. The apply's own credential becomes the
-# impersonated deployer account (D75, Task 1.5), and the grant that account
-# needs is that account's to make, beside the roles it is created with.
+# write to what an operator has.
+#
+# The managed apply's own credential is the impersonated deployer account
+# (D75, Task 1.5), and that account does NOT hold this role: it is created
+# with its two custom roles and nothing else (deployer.tf), and the managed
+# gate refuses this role to a service-account member, so a plan cannot grant
+# it either. The read is therefore made on the operator's own credentials —
+# the identity this grant is for — and a read made under the deployer is the
+# role-missing failure, which falls the run back to its confirmations rather
+# than reading a project as clean.
 resource "google_project_iam_member" "operator_cloudasset_viewer" {
   for_each = toset(var.operators)
 

@@ -363,6 +363,39 @@ func TestInventoryCloudAssetAPIAndGrantAreTheModules(t *testing.T) {
 	if why := cover.NotCovered(plan, nil); len(why) != 0 {
 		t.Errorf("the installation's own gate refuses the grant its module makes: %q", why)
 	}
+
+	// The other half of "the identity that makes the read holds the role":
+	// the impersonated deployer does not, and cannot be given it. The apply's
+	// credential is the deployer account (D75), so a caller that makes this
+	// read under it has to know it is the fail-closed case and not a clean
+	// one — and the two facts below are what make that so. First, the
+	// deployer's own roles grant no Cloud Asset permission: granting one is a
+	// decision about D75's account, not a detail, and this test is where it
+	// has to be made deliberately (D75's roles are enumerated one permission
+	// per line in deployer.tf).
+	deployer, err := fs.ReadFile(terraform.FS, "gcp/modules/installation/deployer.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(deployer), "cloudasset") {
+		t.Errorf("the deployer's roles name a Cloud Asset permission: the account applies as the impersonated deployer (D75), and %s on it is a decision, not a detail — read internal/managed/inventory.go's %s comment before making it", RoleCloudAssetViewer, "RoleCloudAssetViewer")
+	}
+	// Second, a plan cannot grant it to an account either: the same
+	// allowlist refuses the role to a service-account member, so no admitted
+	// managed plan can widen the deployer with it.
+	sa := "serviceAccount:fugaro-deployer@" + gcpProject + ".iam.gserviceaccount.com"
+	saPlan := &tf.Plan{ResourceChanges: []tf.ResourceChange{{
+		Address: `google_project_iam_member.deployer_cloudasset_viewer`,
+		Type:    "google_project_iam_member",
+		Change: tf.Change{Actions: []string{"create"},
+			After: map[string]any{"member": sa, "role": RoleCloudAssetViewer, "project": gcpProject}},
+	}}}
+	// The account is listed, so the refusal below is the role's own rule and
+	// not "a member nobody listed".
+	cover.Listed = []string{op, sa}
+	if why := cover.NotCovered(saPlan, nil); len(why) != 1 || !strings.Contains(why[0], "a kind of principal the installation's modules do not grant it to") {
+		t.Errorf("the gate's answer to %s on the deployer account %s is %q, want it refused for the principal kind: if it is admitted, the read runs under the deployer and the role-missing fallback above is wrong", RoleCloudAssetViewer, sa, why)
+	}
 }
 
 // grantBlock is the body of the module's *_iam_member resource that grants

@@ -54,10 +54,18 @@ const ServiceCloudAsset = "cloudasset.googleapis.com"
 // identity that makes the read. The module grant and this role's entry in
 // internal/infra/tf's grantRules landed together, because that table is an
 // allowlist — an installation grant of a role the table does not name makes
-// fugaro init refuse the installation's own plan. The apply's own credential
-// becomes the impersonated deployer account (D75, Task 1.5), and the grant
-// that account needs of this role is that task's to make beside the roles the
-// account is created with.
+// fugaro init refuse the installation's own plan.
+//
+// The impersonated deployer is NOT an identity that holds it, and nothing
+// here may assume one. The deployer is created with its two custom roles and
+// no other (D75, Task 1.5; deployer.tf), and the table above refuses this
+// role to a service-account member, so a managed plan cannot grant it either:
+// a read made under the deployer's credential answers CauseRoleMissing and
+// falls the run back to its confirmations, which is the fail-closed direction
+// (the fallback a call that fails for any reason takes) rather than a clean
+// read. Which credential the caller makes the read with is the caller's to
+// decide, and is not built yet: Task 3.1's apply is where this check is
+// called from, and this paragraph is the constraint it has to meet.
 const RoleCloudAssetViewer = "roles/cloudasset.viewer"
 
 // inventoryPageSize is how many assets the read asks for per page. The read

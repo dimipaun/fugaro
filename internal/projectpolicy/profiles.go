@@ -272,13 +272,15 @@ func validProfiles(profiles map[string]Profile) error {
 			if msg := config.CheckSecretName(secret); msg != "" {
 				return fmt.Errorf("%s.secrets[%d]: %s", at, i, msg)
 			}
-			// A Claude OAuth token is refused here as `fugaro init` refuses to
-			// deploy one (internal/infra's projectJobSecrets), so that publish,
-			// the deployer and both readers of this node hold a profile to ONE
-			// rule. Without it the two documents can disagree about one
-			// profile: publish copies the operator's profiles verbatim, so a
-			// policy can mount the reserved claude-oauth-token and name a job
-			// `fugaro init` never deployed — its account segment is the default
+			// A Claude OAuth token is refused here, and this is where the
+			// deployer's refusal is too: ProjectJobs runs CheckProfiles over
+			// the local config's profiles before it builds any job, so
+			// publish, the deployer and both readers of this node hold a
+			// profile to ONE rule rather than to a copy of it each. Without
+			// it the documents can disagree about one profile: publish copies
+			// the operator's profiles verbatim, so a policy can mount the
+			// reserved claude-oauth-token and name a job `fugaro init` never
+			// deployed — its account segment is the default
 			// account on the launcher's and the runner's side and empty on the
 			// deployer's. The launcher then reaches Cloud Run on that job and
 			// reads a 404, after the claim and the budget token, and the runner
@@ -319,9 +321,9 @@ func validProfiles(profiles map[string]Profile) error {
 // namespace rather than the names a claude_accounts block happens to define,
 // because config.ClaudeOAuthTokenPrefix reserves it for the derived secret IDs
 // of accounts: a name merely shaped like one is never a secret of a profile's
-// own, and the deployer refuses it for the same reason (internal/infra's
-// projectJobSecrets, which refuses the reserved name outright and every other
-// name of the namespace for want of a project-wide container or a variable).
+// own, and the deployer refuses it by this rule rather than by one of its own
+// (internal/infra's ProjectJobs calls CheckProfiles before it builds a job, so
+// a profile mounting one never reaches the job it would name).
 func isClaudeOAuthSecret(name string) bool {
 	return name == config.ClaudeAccountSecret(config.DefaultClaudeAccount) ||
 		strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix)

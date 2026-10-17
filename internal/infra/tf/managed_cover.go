@@ -373,7 +373,14 @@ func managedConfiguration(p *Plan) []string {
 			}
 		}
 		for _, name := range slices.Sorted(maps.Keys(m.ModuleCalls)) {
-			walk(prefix+"module."+name+".", m.ModuleCalls[name].Module)
+			call := m.ModuleCalls[name]
+			// A call's own keys are read here, at the call, before the
+			// module it calls: what the call passes is not an attribute of
+			// any resource, so nothing further in the walk sees it.
+			at := where + ".module_calls." + name
+			out = append(out, unknownFields(at, call.fields, managedModuleCallKeys)...)
+			out = append(out, managedModuleCallArguments(at, call.fields)...)
+			walk(prefix+"module."+name+".", call.Module)
 		}
 	}
 	walk("", cfg.RootModule)
@@ -401,6 +408,22 @@ var managedInertPlanKeys = map[string]bool{
 var (
 	managedConfigurationKeys = map[string]bool{"provider_config": true, "root_module": true}
 	managedModuleKeys        = map[string]bool{"resources": true, "module_calls": true, "outputs": true, "variables": true}
+	// managedModuleCallKeys are the keys of a module call this cover reads or
+	// knows inert: what it calls (source, module) and the arguments it passes
+	// (expressions), which are read where they land — a resource's own
+	// expressions, or the variable a module's block declares — rather than at
+	// the call. Anything else, a version constraint among them, is refused
+	// when it carries anything.
+	managedModuleCallKeys = map[string]bool{"source": true, "module": true, "expressions": true}
+	// managedModuleCallMetaKeys are the keys of a call's expressions that are
+	// not arguments: the meta-arguments that decide how many instances the
+	// call makes (count, for_each), which provider configurations the called
+	// module's resources use (providers) and what the call waits for
+	// (depends_on). The cover reads none of them — it reads the provider
+	// blocks by key, the resources by address, and nothing at all that a call
+	// multiplies itself by — so a call carrying one is refused rather than
+	// read as inert.
+	managedModuleCallMetaKeys = map[string]bool{"count": true, "for_each": true, "providers": true, "depends_on": true}
 )
 
 // managedPlanFields says why the plan carries a top-level key a managed plan
@@ -418,6 +441,37 @@ func unknownFields(where string, fields map[string]json.RawMessage, known map[st
 			continue
 		}
 		out = append(out, fmt.Sprintf("%s (carries %q, which the managed cover does not read: an action runs at apply and a deferred change is a resource the plan does not show, so a key it does not know is refused rather than read as inert)", where, k))
+	}
+	return out
+}
+
+// managedModuleCallArguments lists, as refusals at at, the meta-arguments a
+// module call's expressions carry: the keys of managedModuleCallMetaKeys that
+// carry anything. count and for_each decide how many instances the call makes,
+// providers decides which provider configuration the called module's resources
+// use, and depends_on decides what the apply waits for — none of them is an
+// attribute of a resource the cover reads, and a plan whose shape the cover
+// cannot see is refused rather than admitted on the assumption that the
+// instances it multiplies into are all the ones the resource changes show.
+//
+// An expressions block that does not decode as an object is refused too: a
+// call's arguments the cover cannot read are not read as carrying no
+// meta-argument. Empty is nothing — absent, null, [] and {} — as in
+// unknownFields.
+func managedModuleCallArguments(at string, fields map[string]json.RawMessage) []string {
+	raw, ok := fields["expressions"]
+	if !ok || emptyJSON(raw) {
+		return nil
+	}
+	var exprs map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &exprs); err != nil {
+		return []string{fmt.Sprintf("%s.expressions (does not decode as a module call's arguments: the managed cover reads them for the meta-arguments it refuses, so what it cannot read it does not call inert)", at)}
+	}
+	var out []string
+	for _, k := range slices.Sorted(maps.Keys(exprs)) {
+		if managedModuleCallMetaKeys[k] && !emptyJSON(exprs[k]) {
+			out = append(out, fmt.Sprintf("%s.expressions.%s (a module call's meta-argument: it decides what the call makes rather than what any resource in it is, and a managed plan carries none)", at, k))
+		}
 	}
 	return out
 }
