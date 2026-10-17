@@ -319,6 +319,15 @@ func TestAllowDeleteRefusesAnAddressTheApplyingCommandPasses(t *testing.T) {
 	if !strings.Contains(err.Error(), "google_storage_bucket.elsewhere") {
 		t.Errorf("the refusal does not name the address it refuses: %v", err)
 	}
+	// And it names no flag: the session it refuses is the one that would read
+	// a flag name here as the thing to pass next, so the managed refusal says
+	// what the owner's list is instead of naming an argument.
+	if strings.Contains(err.Error(), "--") {
+		t.Errorf("the managed refusal names a flag: %v", err)
+	}
+	if !strings.Contains(err.Error(), AllowDeleteObject) {
+		t.Errorf("the refusal does not name the object the owner's addresses come from: %v", err)
+	}
 	if len(list) != 0 {
 		t.Errorf("GuardAllowList() = %v, want no addresses", list)
 	}

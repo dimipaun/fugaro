@@ -199,9 +199,14 @@ func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 // owner's object is written with the owner's own credentials, while the
 // command line of whatever applies the plan belongs to the session that
 // applies it — a coding agent's session holds the operator's credentials and
-// can pass --allow-delete itself. So an address passed there is refused by
-// name rather than honoured, whatever the object says, and even when the
-// object allows it: what is refused is the source.
+// can pass such a flag itself. So an address passed there is refused by name
+// rather than honoured, whatever the object says, and even when the object
+// allows it: what is refused is the source.
+//
+// The refusal names the address and the owner-run command that writes the
+// same list, and no flag at all (the managed message's own rule): a refusal
+// that named one would be read by the session it refuses as a thing to pass,
+// which is the shape the refusal exists to stop.
 //
 // It is exported now because it is where the plan's "an address the applying
 // command passes is refused" is testable; the applying commands (fugaro init
@@ -212,7 +217,7 @@ func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject 
 	if len(applied) > 0 {
 		named := slices.Clone(applied)
 		slices.Sort(named)
-		return nil, fmt.Errorf("refusing --allow-delete %s: in a managed project the addresses a run may delete come from the owner's own list (gs://%s/%s, written by fugaro allow-delete with the operator's credentials), never from the arguments of the command that applies the plan; ask the owner to approve %s",
+		return nil, fmt.Errorf("refusing the addresses the applying command was given on its own command line (%s): in a managed project the addresses a run may delete or replace come from the owner's own list at gs://%s/%s, written with the operator's credentials by fugaro allow-delete, never from the arguments of the command that applies the plan; ask the owner to approve %s",
 			strings.Join(named, ", "), bucket, AllowDeleteObject, strings.Join(named, ", "))
 	}
 	return AllowDelete(ctx, s, bucket, gcpProject, number)
