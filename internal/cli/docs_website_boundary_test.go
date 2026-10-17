@@ -24,9 +24,9 @@ package cli
 // A fourth test is not about the Go module at all but is this task's other
 // half, and it is the mechanical form of Global Constraint 9 -- the site never
 // links an unsigned or unreleased artifact: while website/data/site.yaml's
-// features.console_downloads is false, no file under website/ may carry a
-// releases/download/ URL. W3.1 flips that flag when the console ships, and
-// extends this test in the same commit (§7's L9 file row names this file).
+// features.console_downloads is false, no file under website/ may carry this
+// repository's release-asset URL. W3.1 flips that flag when the console ships,
+// and extends this test in the same commit (§7's L9 file row names this file).
 //
 // And a fifth pins the facts file itself to the repository it describes,
 // because a site that copies a fact is a site that drifts from it (Global
@@ -77,12 +77,15 @@ const (
 	// to assert it is where the site's pages expect it, which is what keeps
 	// the file walk from passing on an empty directory.
 	websiteInstallFactsPath = "website/data/install.yaml"
-	// websiteDownloadPath is the one URL shape the site may not carry while
-	// the console's downloads are off: a release asset of THIS repository.
+	// websiteDownloadSuffix is the shape the site may not carry while the
+	// console's downloads are off: the release-asset path of THIS repository,
+	// appended to site.yaml's own repository URL, so a page that links an
+	// asset of a tag that does not exist is caught, while some third party's
+	// download path in a lockfile or a document is not this rule's business.
 	// The archive a reader downloads is reached from the Releases page, which
 	// is a page and not a versioned asset URL (finding 25, Global Constraint
 	// 9).
-	websiteDownloadPath = "releases/download/"
+	websiteDownloadSuffix = "/releases/download"
 )
 
 // websiteFactsFile is website/data/site.yaml, decoded with unknown fields
@@ -434,20 +437,33 @@ func TestNoGoFileEmbedsFromWebsite(t *testing.T) {
 // mechanical: the site never links an unsigned or unreleased artifact. The
 // console is designed and not shipped (finding 23), so its section renders as
 // a placeholder -- and while website/data/site.yaml's features.console_downloads
-// is false, a releases/download/ URL anywhere under website/ is a link to an
-// asset that does not exist.
+// is false, this repository's release-asset URL anywhere under website/ is a
+// link to an asset that does not exist.
 //
 // The flag is the site's own, so this is a scan of the site rather than of the
 // Go tree, and it is deliberately blunt: every file under website/, whatever
 // its name, is read. W3.1 flips the flag when the console's first release
 // ships, and it extends this test in the same commit -- so a true flag fails
-// here, loudly, rather than turning the check below into a silent pass.
+// here, loudly, rather than turning the scan below into a silent pass.
+//
+// The URL to look for is built from the facts file's own `repository`, so the
+// rule follows the repository the site links to, and the field's pin (in
+// TestWebsiteFactsMatchTheRepository) keeps that value honest.
 func TestWebsiteLinksNoConsoleWhileTheFlagIsOff(t *testing.T) {
 	root := consoleBoundaryRoot(t)
 	facts, _ := readWebsiteFacts(t)
 
 	if facts.Features.ConsoleDownloads {
-		t.Fatalf("%s: features.console_downloads is true and this test has not been extended: the flag is flipped by W3.1 when the console ships, in the same commit that extends this test to check every releases/download/ URL under %s/ against a release asset of a tag that exists (W1.6 step 2, W3.1, Global Constraint 9)", websiteFactsPath, websiteDirName)
+		t.Fatalf("%s: features.console_downloads is true and this test has not been extended: the flag is flipped by W3.1 when the console ships, in the same commit that extends this test to check every release-asset URL under %s/ against a release asset of a tag that exists (W1.6 step 2, W3.1, Global Constraint 9)", websiteFactsPath, websiteDirName)
+	}
+
+	// The URL the site may not carry, built from the facts file's own
+	// repository rather than typed here, so the rule follows the repository the
+	// site links to (and the pin in TestWebsiteFactsMatchTheRepository keeps
+	// that value honest).
+	download := strings.TrimSuffix(facts.Repository, "/") + websiteDownloadSuffix
+	if !strings.HasPrefix(download, "https://") {
+		t.Fatalf("%s: repository = %q, which does not build an absolute URL; this check cannot say what to look for", websiteFactsPath, facts.Repository)
 	}
 
 	for _, rel := range websiteBoundaryFiles(t, root) {
@@ -456,10 +472,10 @@ func TestWebsiteLinksNoConsoleWhileTheFlagIsOff(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			if !strings.Contains(line, websiteDownloadPath) {
+			if !strings.Contains(line, download) {
 				continue
 			}
-			t.Errorf("%s:%d carries the download path %q while features.console_downloads is false: the console is not released, the site links the Releases page and never a versioned asset URL, and a link here would either 404 or point at an unsigned artifact (finding 25, D95, Global Constraint 9)\n%s", rel, i+1, websiteDownloadPath, line)
+			t.Errorf("%s:%d carries the console download URL %q while features.console_downloads is false: the console is not released, the site links the Releases page and never a versioned asset URL, and a link here would either 404 or point at an unsigned artifact (finding 25, D95, Global Constraint 9)\n%s", rel, i+1, download, line)
 		}
 	}
 }
