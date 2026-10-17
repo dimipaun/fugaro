@@ -1,0 +1,319 @@
+---
+/**
+ * website/src/pages/community.astro — the community page (website plan, Task W1.10;
+ * findings 45-47, decision D101).
+ *
+ * The page's rule is D101's answer, and it is the opposite of a landing page's instinct:
+ * **link, and do not restate.** The contributing guide, the code of conduct, the security
+ * policy, the issue templates and the licence all exist in this repository and are the
+ * documents a contributor follows; a second copy of any of them on the site is a copy that
+ * goes stale the first time the original changes — and the contributing guide's own CI
+ * paragraph is stale today (finding 11, F46), which is exactly the failure repeating it
+ * would produce. So every one of them is a link, the licence is stated inline because a
+ * licence identifier is a fact rather than a claim, and the only prose this page carries
+ * about them is what each link is for.
+ *
+ * Three facts are read from the tree rather than typed here:
+ *
+ *   - **The repository and its branch.** `website/data/site.yaml` names the repository, and
+ *     the branch the links point at is the one `ci.yml` pushes to — so a link cannot point
+ *     at a branch the project has stopped building on.
+ *   - **The issue templates.** The directory is read, so a template that is added or removed
+ *     changes this page with it, and each entry's name and description come from the template
+ *     file itself.
+ *   - **The CI description** (F46, D101). It is rendered from `.github/workflows/ci.yml`'s
+ *     own `on:` block: the branches a push triggers, whether the workflow can be dispatched
+ *     and whether a pull request triggers it. `CONTRIBUTING.md`'s `## What CI runs` paragraph
+ *     is the stale copy this exists to not repeat, and the workflow file is the source that
+ *     cannot be stale about itself (website/test/faq-community.mjs mutates the file and holds
+ *     the page to the change).
+ */
+import Base from '../layouts/Base.astro'
+import { loadSite, REPO_ROOT } from '../content.ts'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
+
+const site = loadSite()
+const facts = site.facts
+
+const CI_FILE = '.github/workflows/ci.yml'
+const TEMPLATE_DIR = '.github/ISSUE_TEMPLATE'
+
+// ---------------------------------------------------------------------------------------
+// ci.yml's `on:` block, read as the workflow writes it.
+// ---------------------------------------------------------------------------------------
+
+interface Triggers {
+  /** The branches a `push` triggers on, in the order the file writes them. */
+  branches: string[]
+  /** Whether the workflow can be run on demand (`workflow_dispatch`). */
+  dispatch: boolean
+  /** Whether a pull request triggers it. It does not today, and the page says so. */
+  pullRequest: boolean
+}
+
+function readTriggers(file: string): Triggers {
+  const text = readFileSync(path.join(REPO_ROOT, file), 'utf8')
+  const lines = text.split('\n')
+
+  // The `on:` block: its own line, then everything indented under it, up to the next
+  // top-level key. Comments are not triggers — ci.yml explains in a comment *why* it has no
+  // pull-request trigger, and this reader would otherwise describe that explanation as one.
+  const start = lines.findIndex((line) => line.trimEnd() === 'on:')
+  if (start === -1) {
+    throw new Error(`${file} has no top-level \`on:\` block, and this page's CI description is rendered from it rather than from a paragraph that goes stale (F46, D101, W1.10 step 4).`)
+  }
+  const body: string[] = []
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    if (!/^\s/.test(line)) break
+    body.push(line)
+  }
+  if (body.length === 0) {
+    throw new Error(`${file}'s \`on:\` block is empty, so there is nothing for this page to describe (W1.10 step 4).`)
+  }
+
+  const indentOf = (line: string): number => line.length - line.trimStart().length
+  const triggerIndent = Math.min(...body.map(indentOf))
+  const triggers = body.filter((line) => indentOf(line) === triggerIndent).map((line) => line.trim().replace(/:.*$/, ''))
+
+  const pushAt = body.findIndex((line) => indentOf(line) === triggerIndent && line.trim().startsWith('push:'))
+  let branches: string[] = []
+  if (pushAt >= 0) {
+    for (let i = pushAt + 1; i < body.length && indentOf(body[i]) > triggerIndent; i++) {
+      const m = /^branches:\s*\[(.*)\]\s*$/.exec(body[i].trim())
+      if (m) branches = m[1].split(',').map((branch) => branch.trim()).filter((branch) => branch !== '')
+    }
+  }
+
+  return { branches, dispatch: triggers.includes('workflow_dispatch'), pullRequest: triggers.includes('pull_request') }
+}
+
+const ci = readTriggers(CI_FILE)
+
+/** The branch the page's links point at: the branch CI builds on. */
+function baseBranch(): string {
+  if (ci.branches.length === 0) {
+    throw new Error(`${CI_FILE}'s push trigger names no branch, and every link this page renders points at the branch the project builds on (W1.10 step 4).`)
+  }
+  return ci.branches[0]
+}
+
+const branch = baseBranch()
+/** A file in this repository, at the branch CI builds on. */
+const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}/${file}`
+
+// ---------------------------------------------------------------------------------------
+// The community surfaces, each one read from where it is written down.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The repository's own documents, and what each link is for. The path is checked here for
+ * the same reason the FAQ checks its sources: a community page whose link 404s is the
+ * download-link defect in a smaller size (Global Constraint 9 — the site never points at an
+ * artifact that is not there).
+ */
+const DOCUMENTS: { file: string; label: string; note: string }[] = [
+  {
+    file: 'CONTRIBUTING.md',
+    label: 'Contributing',
+    note: 'how to build and test the project, what a pull request is expected to carry, and the conventions a change is held to',
+  },
+  {
+    file: 'CODE_OF_CONDUCT.md',
+    label: 'Code of conduct',
+    note: 'what taking part in the project asks of everyone who takes part in it',
+  },
+  {
+    file: 'SECURITY.md',
+    label: 'Security policy',
+    note: 'how to report a vulnerability privately — not in an issue',
+  },
+]
+
+/** An issue template, with the name and description its own file gives it. */
+interface Template {
+  file: string
+  name: string
+  description: string
+}
+
+/**
+ * The issue templates the repository carries, read from the directory: one link per
+ * template, named as the template names itself. `config.yml` is the chooser's configuration
+ * rather than a template — it sets `blank_issues_enabled` and the contact links — so it is
+ * not offered as one.
+ */
+function loadTemplates(): Template[] {
+  const dir = path.join(REPO_ROOT, TEMPLATE_DIR)
+  if (!existsSync(dir)) {
+    throw new Error(`.github/ISSUE_TEMPLATE/ is missing, and this page links the issue templates it holds rather than describing them (W1.10 step 4).`)
+  }
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.yml') && name !== 'config.yml')
+    .sort()
+    .map((name) => {
+      const file = `${TEMPLATE_DIR}/${name}`
+      const text = readFileSync(path.join(dir, name), 'utf8')
+      // The template's own top-level `name:` and `description:`: the keys a GitHub issue
+      // form declares about itself, at the start of a line and with no indentation, which is
+      // what distinguishes them from the `description:` a field inside `body:` carries.
+      const name_ = /^name:\s*(.+)$/m.exec(text)
+      const description = /^description:\s*(.+)$/m.exec(text)
+      if (!name_) {
+        throw new Error(`${file} declares no top-level \`name:\`, and this page links each template by the name it gives itself (W1.10 step 4).`)
+      }
+      return { file, name: name_[1].trim(), description: description ? description[1].trim() : '' }
+    })
+}
+
+const templates = loadTemplates()
+
+/**
+ * The licence, as `LICENSE` writes it: the identifier is its first line without the word
+ * "License" — the file is the source, and the page states the identifier inline rather than
+ * describing the licence, because that is a fact and D101's answer is to state facts and link
+ * claims.
+ */
+function licenceIdentifier(): string {
+  const first = readFileSync(path.join(REPO_ROOT, 'LICENSE'), 'utf8').split('\n', 1)[0].trim()
+  const identifier = first.replace(/\s+Licen[cs]e$/i, '').trim()
+  if (identifier === '') {
+    throw new Error(`LICENSE's first line is ${JSON.stringify(first)}, which names no licence identifier for this page to state (W1.10 step 4).`)
+  }
+  return identifier
+}
+
+const licence = licenceIdentifier()
+
+// ---------------------------------------------------------------------------------------
+// The CI description, in the words a reader reads.
+// ---------------------------------------------------------------------------------------
+
+/** `a`, `a and b`, `a, b and c`: the trigger list as a sentence. */
+function listOf(parts: string[]): string {
+  if (parts.length === 1) return parts[0]
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
+
+const triggers: string[] = []
+if (ci.branches.length > 0) triggers.push(`every push to ${ci.branches.join(', ')}`)
+if (ci.dispatch) triggers.push('on demand')
+if (ci.pullRequest) triggers.push('on pull requests')
+
+const triggersSentence = `CI runs on ${listOf(triggers)}.`
+
+// The pull-request sentence flips with the trigger, and it is the one sentence on this page
+// that answers `CONTRIBUTING.md`'s stale paragraph directly (finding 11, F46): a repository
+// whose CI runs on pull requests says so, and one whose CI does not says that instead.
+const pullRequestsSentence = ci.pullRequest
+  ? 'Pull requests run CI too, including the ones opened from a fork.'
+  : 'Pull requests do not run CI: it is not a gate a change has to pass to be merged here.'
+---
+
+<Base
+  title="Community"
+  description="Where Fugaro's repository, contributing guide, code of conduct, issue templates and licence are — linked, not restated."
+>
+  <h1>Community</h1>
+
+  <p class="lede">
+    Fugaro is a small open-source project and everything a contributor needs is in the
+    repository. This page points at those documents rather than repeating them: a second copy
+    of a guide is a copy that goes stale the first time the guide changes.
+  </p>
+
+  <section id="repository">
+    <h2>The repository</h2>
+    <p>
+      <a href={facts.repository} rel="noopener">{facts.repository}</a>
+    </p>
+    <ul class="documents">
+      {DOCUMENTS.map((document) => (
+        <li>
+          <a href={sourceHref(document.file)} rel="noopener">{document.label}</a>
+          {' — '}{document.note}
+        </li>
+      ))}
+      <li>
+        <a href={sourceHref('LICENSE')} rel="noopener">Licence</a>{' — '}the {licence} licence,
+        stated here because it is a fact about the source rather than a claim about anyone
+      </li>
+    </ul>
+  </section>
+
+  <section id="issues">
+    <h2>Issues</h2>
+    <p>
+      The repository is where a bug, a question and a proposal go, and the templates fix what
+      a report should carry so that it can be acted on:
+    </p>
+    <ul class="templates">
+      {templates.map((template) => (
+        <li>
+          <a href={sourceHref(template.file)} rel="noopener">{template.name}</a>
+          {template.description !== '' && <>{' — '}{template.description}</>}
+        </li>
+      ))}
+    </ul>
+  </section>
+
+  {/* The CI description, rendered from ci.yml's own `on:` block (F46, D101). The three data
+      attributes are the page restating that block as flags, so the page's test can hold the
+      whole section to the workflow file rather than to a sentence somebody remembered. */}
+  <section
+    id="ci"
+    data-push-branches={ci.branches.join(' ')}
+    data-on-demand={String(ci.dispatch)}
+    data-on-pull-requests={String(ci.pullRequest)}
+  >
+    <h2>Continuous integration</h2>
+    <p id="ci-triggers">{triggersSentence}</p>
+    <p id="ci-pull-requests">{pullRequestsSentence}</p>
+    <p class="note">
+      That is what <a href={sourceHref(CI_FILE)} rel="noopener">{CI_FILE}</a> does today, read
+      from the workflow itself. Where a change has to pass before it merges is a question for
+      the repository's own branch protection, which the contributing guide covers.
+    </p>
+  </section>
+
+  <section id="licence">
+    <h2>Licence</h2>
+    <p>
+      Fugaro is released under the {licence} licence: <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>
+      is the whole of it, and it is the only text that governs what you may do with the code.
+    </p>
+  </section>
+</Base>
+
+<style>
+  /* The page's own layout, in the site's tokens (W1.2, D104): no colour is named here. */
+  .lede {
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+  }
+
+  section {
+    max-width: var(--measure);
+    margin-block: var(--space-lg);
+  }
+
+  .documents,
+  .templates {
+    padding-inline-start: var(--space-md);
+  }
+
+  .documents li,
+  .templates li {
+    margin-block: var(--space-2xs);
+  }
+
+  .note {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+</style>
