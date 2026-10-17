@@ -376,24 +376,17 @@ run "a duplicate does not re-arm the record" \
 run "the cap refuses rather than evicting a live record" \
   "  if (kept.length >= state.maxSeen) {" "  if (false) {"
 run "the per-sender quota refuses" \
-  "  if (inFlight.length >= state.maxPerSender) {" "  if (false) {"
+  "  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {" "  if (false) {"
 run "the per-sender quota counts only that sender" \
-  "  const inFlight = kept.filter((entry) => entry.sender === sender && entry.status !== STATUS.ACKED);" \
-  "  const inFlight = kept.filter((entry) => entry.status !== STATUS.ACKED);"
-run "the per-sender quota counts only work in flight" \
-  "  const inFlight = kept.filter((entry) => entry.sender === sender && entry.status !== STATUS.ACKED);" \
-  "  const inFlight = kept.filter((entry) => entry.sender === sender);"
+  "  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {" \
+  "  if (kept.length >= state.maxPerSender) {"
+run "the per-sender quota counts acked records too" \
+  "  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {" \
+  "  if (kept.filter((entry) => entry.sender === sender && entry.status !== STATUS.ACKED).length >= state.maxPerSender) {"
 run "the watermark refuses what was evicted" \
   "  if (at <= state.evictedThrough) {" "  if (false) {"
 run "the watermark is inclusive" \
   "  if (at <= state.evictedThrough) {" "  if (at < state.evictedThrough) {"
-run "compaction: only an acked record is compacted" \
-  "    const oldest = kept.findIndex((entry) => entry.status === STATUS.ACKED);" \
-  "    const oldest = kept.findIndex(() => true);"
-run "compaction: nothing acked to compact is dedupe-full" \
-  "    if (oldest === -1) {" "    if (false) {"
-run "compaction raises the watermark" \
-  "    through = Math.max(through, kept[oldest].at);" ""
 run "the delivery's new watermark is kept in the state" \
   "  return answered(OUTCOME.ACCEPTED, STATE.PENDING, state, values.now, entries, sender, id, through);" \
   "  return answered(OUTCOME.ACCEPTED, STATE.PENDING, state, values.now, entries, sender, id);"
@@ -409,9 +402,9 @@ run "eviction: only past the horizon" \
 run "eviction: at exactly the horizon a record is kept" \
   "    if (now - entry.at <= horizon) return true;" "    if (now - entry.at < horizon) return true;"
 run "eviction: the horizon covers the prompt TTL" \
-  "  const horizon = Math.max(state.windowMs, state.promptTtlMs);" "  const horizon = state.windowMs;"
+  "  return Math.max(state.windowMs, state.promptTtlMs);" "  return state.windowMs;"
 run "eviction: the horizon covers the command window" \
-  "  const horizon = Math.max(state.windowMs, state.promptTtlMs);" "  const horizon = state.promptTtlMs;"
+  "  return Math.max(state.windowMs, state.promptTtlMs);" "  return state.promptTtlMs;"
 run "eviction raises the watermark" \
   "    through = Math.max(through, entry.at);" ""
 run "act: late work is surfaced as stale-pending" \
@@ -426,10 +419,13 @@ run "act: stale by the record's own kind's window" \
 
 # 9b. The watermark as a state field, the forward jump, and never throwing.
 run "state: the watermark is in range" \
-  "  if (!isIntegerInRange(values.evictedThrough, 0, values.now)) {" "  if (false) {"
-run "state: the watermark is not ahead of now" \
-  "  if (!isIntegerInRange(values.evictedThrough, 0, values.now)) {" \
-  "  if (!isIntegerInRange(values.evictedThrough, 0, TIME_MAX)) {"
+  "  if (!isIntegerInRange(values.evictedThrough, 0, Math.max(0, values.now - horizonOf(values)))) {" "  if (false) {"
+run "state: the watermark is never later than now - horizon" \
+  "  if (!isIntegerInRange(values.evictedThrough, 0, Math.max(0, values.now - horizonOf(values)))) {" \
+  "  if (!isIntegerInRange(values.evictedThrough, 0, values.now)) {"
+run "state: the watermark's floor when now is within one horizon" \
+  "  if (!isIntegerInRange(values.evictedThrough, 0, Math.max(0, values.now - horizonOf(values)))) {" \
+  "  if (!isIntegerInRange(values.evictedThrough, 0, values.now - horizonOf(values))) {"
 run "initialState: the watermark is not the caller's to set" \
   "    STATE_FIELDS.filter((field) => field !== 'phase' && field !== 'seen' && field !== 'evictedThrough')," \
   "    STATE_FIELDS.filter((field) => field !== 'phase' && field !== 'seen'),"
@@ -447,8 +443,6 @@ run "initialState never throws" \
   } catch {" \
   "    return initialStateUnguarded(options);
   } finally {"
-run "the declared table: an idle mailbox cannot be full" \
-  "      no: DELIVERY_REFUSALS(false)," "      no: DELIVERY_REFUSALS(true),"
 
 # 10. The dispatch table, the declared table, the derived phase, the freezes.
 run "dispatch: the closed row is not the open row" \

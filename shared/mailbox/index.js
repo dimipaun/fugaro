@@ -45,13 +45,14 @@
 //     twice" failure dedupe is for, or work lost silently;
 //   * an acked record is evicted by age only past the horizon
 //     `max(windowMs, promptTtlMs)` -- one horizon whatever the record's kind,
-//     so a kind the event claims cannot reopen it -- and under pressure (a
-//     full ledger) the oldest acked record is compacted early;
+//     so a kind the event claims cannot reopen it. Nothing inside the
+//     horizon is ever dropped, so inside it the same (sender, id) is never
+//     acted on twice;
 //   * every eviction raises the watermark (`evictedThrough`) to the evicted
-//     record's `at`, and nothing at or before it is admitted again, whatever
-//     window a later state carries: eviction cannot re-admit a replay;
-//   * a full ledger of work in flight is REFUSED (`dedupe-full`), and a sender
-//     already holding its quota of work in flight is REFUSED (`sender-full`);
+//     record's `at`; it moves only by horizon age, so it is never later than
+//     `now - horizon`, and nothing at or before it is admitted again;
+//   * a full ledger is REFUSED (`dedupe-full`), and a sender already holding
+//     its quota of records (acked or not) is REFUSED (`sender-full`);
 //   * a record is consulted whatever its age: the same `(sender, id)` with the
 //     same `at` is a `duplicate`, and with a different `at` it is
 //     `id-conflict` — the id is the message's identity, so a second message
@@ -364,10 +365,7 @@ export const TRANSITIONS = Object.freeze({
   [STATE.IDLE]: Object.freeze({
     [EVENT.DELIVER]: Object.freeze({
       ok: Object.freeze([OUTCOME.ACCEPTED, OUTCOME.DUPLICATE]),
-      // Idle holds only acked records, which compaction can always make room
-      // from, and the quota counts only un-acked ones: so neither
-      // `dedupe-full` nor `sender-full` can be answered here.
-      no: DELIVERY_REFUSALS(false),
+      no: DELIVERY_REFUSALS(),
       next: Object.freeze([STATE.PENDING, STATE.IDLE]),
     }),
     [EVENT.ACT]: Object.freeze({
@@ -389,7 +387,7 @@ export const TRANSITIONS = Object.freeze({
   [STATE.PENDING]: Object.freeze({
     [EVENT.DELIVER]: Object.freeze({
       ok: Object.freeze([OUTCOME.ACCEPTED, OUTCOME.DUPLICATE]),
-      no: DELIVERY_REFUSALS(true),
+      no: DELIVERY_REFUSALS(),
       next: Object.freeze([STATE.PENDING]),
     }),
     [EVENT.ACT]: Object.freeze({
@@ -415,7 +413,7 @@ export const TRANSITIONS = Object.freeze({
   [STATE.ACTED]: Object.freeze({
     [EVENT.DELIVER]: Object.freeze({
       ok: Object.freeze([OUTCOME.ACCEPTED, OUTCOME.DUPLICATE]),
-      no: DELIVERY_REFUSALS(true),
+      no: DELIVERY_REFUSALS(),
       next: Object.freeze([STATE.PENDING, STATE.ACTED]),
     }),
     [EVENT.ACT]: Object.freeze({
@@ -447,8 +445,7 @@ export const TRANSITIONS = Object.freeze({
  * the schema can refuse a message with, because a delivery is refused by the
  * schema's verdict as much as by the window.
  */
-function DELIVERY_REFUSALS(inFlight) {
-  const full = inFlight ? [REFUSAL.DEDUPE_FULL, REFUSAL.SENDER_FULL] : [];
+function DELIVERY_REFUSALS() {
   return Object.freeze([
     ...new Set([
       REFUSAL.NOT_AN_OBJECT,
@@ -460,7 +457,8 @@ function DELIVERY_REFUSALS(inFlight) {
       REFUSAL.EXPIRED,
       REFUSAL.FUTURE_TIMESTAMP,
       REFUSAL.ID_CONFLICT,
-      ...full,
+      REFUSAL.DEDUPE_FULL,
+      REFUSAL.SENDER_FULL,
       ...Object.values(REFUSALS),
     ]),
   ]);
@@ -765,28 +763,19 @@ function deliver(state, values) {
     return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'message.at');
   }
 
-  let { kept, through } = evict(state, values.now);
+  const { kept, through } = evict(state, values.now);
   if (kept.length >= state.maxSeen) {
-    // Under pressure, the oldest acked record is compacted into the watermark:
-    // forgotten as a record, remembered as a bound. Its redelivery (and any
-    // message as old) is then refused rather than re-admitted.
-    const oldest = kept.findIndex((entry) => entry.status === STATUS.ACKED);
-    if (oldest === -1) {
-      // Every slot is work in flight: refusing is the only answer that does not
-      // lose a record, and a lost record is a message that can be acted on twice.
-      return refuse(REFUSAL.DEDUPE_FULL, 'seen');
-    }
-    through = Math.max(through, kept[oldest].at);
-    kept = kept.filter((_, position) => position !== oldest);
+    // No room, and nothing is dropped to make some: a record inside the
+    // horizon is never forgotten, so the same (sender, id) is never acted on
+    // twice inside it. Refusing is the only answer that keeps that promise.
+    return refuse(REFUSAL.DEDUPE_FULL, 'seen');
   }
-  // The quota counts what a sender has in flight (accepted or acted), not what
-  // is finished: acked records can always be compacted, so they hold no one
-  // out. Refused, never evicted: the quota is a fence, not a reason to forget.
-  const inFlight = kept.filter((entry) => entry.sender === sender && entry.status !== STATUS.ACKED);
-  if (inFlight.length >= state.maxPerSender) {
+  // The quota counts every record the sender holds -- accepted, acted or
+  // acked -- so one sender can fill only its own share, never the mailbox.
+  // Refused, never evicted: the quota is a fence, not a reason to forget.
+  if (kept.filter((entry) => entry.sender === sender).length >= state.maxPerSender) {
     return refuse(REFUSAL.SENDER_FULL, 'message.sender');
   }
-
   const entries = insert(kept, Object.freeze({ sender, id, at, kind, status: STATUS.ACCEPTED }));
   return answered(OUTCOME.ACCEPTED, STATE.PENDING, state, values.now, entries, sender, id, through);
 }
@@ -865,18 +854,20 @@ function refuseClosed() {
  * window). With one horizon, a record is kept for as long as *any* kind could
  * still deliver its message.
  *
- * Every eviction raises the watermark to the evicted record's `at`, so the
- * guarantee does not rest on the windows staying what they were: a state
- * handed back with a wider window still refuses everything at or before the
- * watermark (`deliver` checks it). At an age of exactly the horizon the
- * message is still deliverable, so its record must still be there.
+ * Every eviction raises the watermark to the evicted record's `at`. This is
+ * the only thing that moves it, so it is always older than `now - horizon`:
+ * it can never pass `now` (a future-dated acked record is evicted only once
+ * it, too, is past the horizon), and no sender's flood can move it. At an age
+ * of exactly the horizon the message is still deliverable, so its record must
+ * still be there. A state handed back with a wider window than its watermark
+ * allows is refused by readState (`invalid-evicted-through`).
  *
  * Nothing that is not acked is ever dropped, at any age: an accepted record is
  * work not yet done, and an acted one is work this consumer still owes an ack
  * for. Dropping either would lose the work or make room for a second action.
  */
 function evict(state, now) {
-  const horizon = Math.max(state.windowMs, state.promptTtlMs);
+  const horizon = horizonOf(state);
   let through = state.evictedThrough;
   const kept = state.seen.filter((entry) => {
     if (entry.status !== STATUS.ACKED) return true;
@@ -885,6 +876,11 @@ function evict(state, now) {
     return false;
   });
   return { kept, through };
+}
+
+/** The eviction horizon: the longest window any kind is accepted for. */
+function horizonOf(state) {
+  return Math.max(state.windowMs, state.promptTtlMs);
 }
 
 /** The acceptance window of a kind: the command window, or the prompt TTL. */
@@ -964,9 +960,11 @@ function readState(state) {
   if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {
     return refuse(REFUSAL.INVALID_FUTURE_TOLERANCE, 'futureToleranceMs');
   }
-  // The watermark is a time at or before the state's own `now`, or 0 when
-  // nothing has been evicted yet.
-  if (!isIntegerInRange(values.evictedThrough, 0, values.now)) {
+  // The watermark moves only by horizon eviction, so it is never later than
+  // `now - horizon` (or 0 when nothing has been evicted yet). A state that
+  // claims otherwise -- or whose windows were widened past what its
+  // watermark allows -- is refused rather than trusted.
+  if (!isIntegerInRange(values.evictedThrough, 0, Math.max(0, values.now - horizonOf(values)))) {
     return refuse(REFUSAL.INVALID_EVICTED_THROUGH, 'evictedThrough');
   }
 

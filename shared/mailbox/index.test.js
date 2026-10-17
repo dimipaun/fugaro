@@ -404,28 +404,28 @@ test('a now that moves backwards is refused: the window cannot run in reverse', 
 // Bounded memory: the cap, the eviction and the refusal
 // ---------------------------------------------------------------------------
 
-test('the ledger never grows past its cap: a full one compacts an acked record, or refuses', () => {
+test('the ledger never grows past its cap: a full one refuses rather than forgets a record inside the horizon', () => {
   let state = newMailbox({ maxSeen: 2 });
 
-  // Two deliveries, each acted on and acked, both INSIDE the window.
+  // Two deliveries, each acted on and acked, both INSIDE the horizon.
   for (const id of ['m-0001', 'm-0002']) {
-    state = stepped(state, deliver(message({ id, at: NOW - (id === 'm-0001' ? 2_000 : 1_000) }))).state;
+    state = stepped(state, deliver(message({ id }))).state;
     state = stepped(state, act()).state;
     state = stepped(state, ack()).state;
   }
   assert.equal(state.seen.length, 2);
   assert.equal(state.phase, STATE.IDLE);
 
-  // The cap is reached: the oldest acked record is compacted into the
-  // watermark -- forgotten as a record, remembered as a bound -- so the new
-  // delivery is admitted and the ledger stays at its cap.
-  const fresh = stepped(state, deliver(message({ id: 'm-0003' })));
-  assert.equal(fresh.outcome, OUTCOME.ACCEPTED);
-  assert.deepEqual(ids(fresh.state), ['m-0002', 'm-0003']);
-  assert.equal(fresh.state.evictedThrough, NOW - 2_000);
-  // And the compacted message is never re-admitted, though it is in its window.
-  refused(fresh.state, deliver(message({ id: 'm-0001', at: NOW - 2_000 })), REFUSAL.REPLAY);
-  refused(fresh.state, deliver(message({ id: 'm-0001', at: NOW - 2_000 }), { kind: KIND.PROMPT }), REFUSAL.EXPIRED);
+  // The cap is reached and nothing is past the horizon: refused. Forgetting an
+  // acked record here would let its id be acted on again inside the horizon.
+  refused(state, deliver(message({ id: 'm-0003' })), REFUSAL.DEDUPE_FULL);
+  assert.equal(state.evictedThrough, 0);
+
+  // Past the horizon they are evicted, the watermark rises, and there is room.
+  const past = NOW + PROMPT_TTL + 1_001;
+  const fresh = stepped(state, deliver(message({ id: 'm-0003', at: past }), { now: past }));
+  assert.deepEqual(ids(fresh.state), ['m-0003']);
+  assert.equal(fresh.state.evictedThrough, NOW - 1_000);
 });
 
 test('an eviction cannot re-admit a replay: what is evicted is outside the window', () => {
@@ -476,7 +476,7 @@ test('the ledger stays bounded over a long mixed sequence', () => {
   let now = NOW;
 
   for (let i = 0; i < 200; i++) {
-    now += 1_000;
+    now += 10_000;
     const id = `m-${String(i).padStart(4, '0')}`;
     const delivered = step(state, deliver(message({ id, at: now - 500 }), { now }));
     if (!delivered.ok) {
@@ -493,14 +493,15 @@ test('the ledger stays bounded over a long mixed sequence', () => {
     assert.ok(state.seen.length <= 3, `the ledger grew to ${state.seen.length}`);
   }
 
-  // Every delivery is admitted -- each one is acked before the next, so the
-  // cap compacts an acked record rather than refusing -- and the ledger never
-  // passes its cap. (A full ledger of work in flight is refused instead; see
-  // 'a delivery that is still in flight is never evicted'.)
-  assert.equal(accepted, 200, 'an acked-only ledger refused a delivery');
-  assert.equal(refusals, 0);
+  // Both happen, and that is the point: the cap refuses while the records are
+  // inside the horizon, and the horizon keeps making room. A cap that refused
+  // everything, or an eviction that dropped everything, would pass a test
+  // that checked the bound alone.
+  assert.ok(accepted > 3, 'the horizon never made room');
+  assert.ok(refusals > 0, 'the cap never refused a delivery');
   assert.ok(state.seen.length <= 3);
   assert.ok(state.evictedThrough > NOW, 'the watermark never moved');
+  assert.ok(state.evictedThrough <= state.now - PROMPT_TTL);
 });
 
 // ---------------------------------------------------------------------------
@@ -571,14 +572,9 @@ const MODULE_DELIVERY_CODES = Object.freeze([
   'sender-full',
 ]);
 const CLOSED_CELL = { ok: [], next: ['closed'], no: ['mailbox-closed'] };
-// An idle mailbox holds only acked records: the cap compacts one rather than
-// refusing, and the quota counts only records in flight, so neither
-// `dedupe-full` nor `sender-full` can be answered there.
-const IDLE_DELIVERY_CODES = DELIVERY_CODES.filter((code) => code !== 'dedupe-full' && code !== 'sender-full');
-const IN_FLIGHT_ONLY = Object.freeze(['dedupe-full', 'sender-full']);
 const EXPECTED = {
   idle: {
-    deliver: { ok: ['accepted', 'duplicate'], next: ['pending', 'idle'], no: IDLE_DELIVERY_CODES },
+    deliver: { ok: ['accepted', 'duplicate'], next: ['pending', 'idle'], no: DELIVERY_CODES },
     act: { ok: ['nothing-to-act'], next: ['idle'], no: [] },
     ack: { ok: ['nothing-to-ack'], next: ['idle'], no: [] },
     close: { ok: ['closed'], next: ['closed'], no: [] },
@@ -673,6 +669,23 @@ const COMPOSITIONS = {
   'prompt past the command window, inside its TTL': [record('a', 'pr', OLD, P, KIND.PROMPT)],
   'prompt past its TTL': [record('a', 'pr', DEAD, P, KIND.PROMPT)],
   'acked prompt inside its TTL': [record('a', 'pr', OLD, K, KIND.PROMPT)],
+  // Round 4: a record dated inside the future tolerance, alone and in a full
+  // ledger, and ledgers whose watermark is already set.
+  'future-dated acked': [record('a', 'f1', NOW + TOLERANCE, K)],
+  'future-dated acked at cap': [record('a', 'k1', NOW - 3_000, K), record('b', 'k2', NOW - 2_000, K), record('c', 'k3', NOW - 1_000, K), record('d', 'f1', NOW + TOLERANCE, K)],
+  'watermark set, idle': [record('a', 'k1', NOW - 1_000, K)],
+  'watermark set, pending': [record('a', 'p1', NOW - 1_000, P)],
+  'watermark set, acted': [record('a', 't1', NOW - 1_000, A)],
+  'watermark set, empty': [],
+};
+
+/** The state fields a composition sets beside its ledger. */
+const WATERMARK = NOW - PROMPT_TTL; // the latest a watermark may be at NOW
+const COMPOSITION_STATE = {
+  'watermark set, idle': { evictedThrough: WATERMARK },
+  'watermark set, pending': { evictedThrough: WATERMARK },
+  'watermark set, acted': { evictedThrough: WATERMARK },
+  'watermark set, empty': { evictedThrough: WATERMARK },
 };
 
 /** Every event worth sending to a composition. */
@@ -683,6 +696,8 @@ function probesFor(entries) {
     ['deliver', deliver(message({ sender: 'c', id: 'fresh-p', at: NOW - WINDOW - 5 }), { kind: KIND.PROMPT })],
     ['deliver', deliver(message({ id: 'old', at: NOW - WINDOW - 1 }))],
     ['deliver', deliver(message({ id: 'dead', at: NOW - PROMPT_TTL - 1 }), { kind: KIND.PROMPT })],
+    // Aged exactly the TTL: inside the window, and at the watermark when set.
+    ['deliver', deliver(message({ sender: 'c', id: 'edge', at: NOW - PROMPT_TTL }), { kind: KIND.PROMPT })],
     ['deliver', deliver(message({ id: 'ahead', at: NOW + TOLERANCE + 1 }))],
     ['deliver', deliver(message({ id: 'zero', at: 0 }))],
     ['deliver', deliver(message({ id: 'negzero', at: -0 }))],
@@ -724,7 +739,7 @@ test('every ledger composition x every event agrees with the expected table, and
 
   let probes = 0;
   for (const [name, entries] of Object.entries(COMPOSITIONS)) {
-    const open = stateWith(entries);
+    const open = stateWith(entries, COMPOSITION_STATE[name] ?? {});
     // The composition must be a state the module reads, or this test proves
     // nothing about it.
     assert.equal(step(open, close()).ok, true, `${name} is not a readable state`);
@@ -770,7 +785,6 @@ test('every ledger composition x every event agrees with the expected table, and
       if (event === 'deliver' && phase !== 'closed') {
         for (const code of seen.no) raised.add(code);
         for (const code of MODULE_DELIVERY_CODES) {
-          if (phase === 'idle' && IN_FLIGHT_ONLY.includes(code)) continue;
           assert.ok(seen.no.includes(code), `${phase} x deliver never refused with ${code}`);
         }
       }
@@ -1250,17 +1264,6 @@ test('an acked record at exactly the horizon\'s age is kept, and its redelivery 
   refused(state, deliver(message({ at: NOW }), { now: past }), REFUSAL.REPLAY);
 });
 
-test('a full ledger compacts an acked record still inside its window, and still refuses its replay', () => {
-  let state = stepped(newMailbox({ maxSeen: 1 }), deliver(message({ at: NOW }))).state;
-  state = stepped(state, act()).state;
-  state = stepped(state, ack()).state;
-  const edge = NOW + WINDOW;
-  const fresh = stepped(state, deliver(message({ id: 'm-0002', at: edge }), { now: edge }));
-  assert.deepEqual(ids(fresh.state), ['m-0002']);
-  // At age exactly WINDOW m-0001 is still deliverable by the window rule;
-  // the watermark is what refuses it now, not the ledger.
-  refused(fresh.state, deliver(message({ at: NOW }), { now: edge }), REFUSAL.REPLAY);
-});
 
 test('one sender cannot starve another: the per-sender quota', () => {
   // The default quota: a quarter of the cap. 8 records, 2 per sender.
@@ -1544,10 +1547,12 @@ test('probe D: widening a window on a stored state does not let an evicted messa
   assert.equal(back.ok, false, `x was re-admitted after the window was widened: ${JSON.stringify(back)}`);
 });
 
-test('probe F: acked records do not lock a new sender out of a full ledger', () => {
-  // Four senders fill an 8-slot ledger to their quota of 2, all acked, inside
-  // a 72h prompt TTL; at 71h a fifth sender must still be admitted.
-  let state = sized();
+test('probe F, as ruled: many senders can fill the ledger; the refusal is dedupe-full, and the horizon recovers', () => {
+  // Four senders at their quota of 2, all acked, fill an 8-slot ledger inside
+  // a 72h prompt TTL. A fifth is refused -- the lockout trade-off the README
+  // documents (it needs `sender` tied to the writer by P2.1's rules) -- and is
+  // admitted once the records age past the horizon. Nothing is compacted.
+  let state = sized({ maxPerSender: 2 });
   for (const sender of ['s1', 's2', 's3', 's4']) {
     for (const id of ['p-1', 'p-2']) {
       state = stepped(state, deliver(message({ sender, id }), { kind: KIND.PROMPT })).state;
@@ -1557,9 +1562,11 @@ test('probe F: acked records do not lock a new sender out of a full ledger', () 
   }
   assert.equal(state.seen.length, 8);
   const t = NOW + 71 * HOUR;
-  const fifth = step(state, deliver(message({ sender: 's5', id: 'p-1', at: t }), { now: t, kind: KIND.PROMPT }));
-  assert.equal(fifth.ok, true, `a fifth sender was locked out: ${JSON.stringify(fifth)}`);
-  assert.ok(fifth.state.seen.length <= 8);
+  refused(state, deliver(message({ sender: 's5', id: 'p-1', at: t }), { now: t, kind: KIND.PROMPT }), REFUSAL.DEDUPE_FULL);
+  const later = NOW + 72 * HOUR + 1_001;
+  const fifth = stepped(state, deliver(message({ sender: 's5', id: 'p-1', at: later }), { now: later, kind: KIND.PROMPT }));
+  assert.equal(fifth.outcome, OUTCOME.ACCEPTED);
+  assert.deepEqual(ids(fifth.state), ['p-1']);
 });
 
 test('probe E: one far-future now cannot freeze the mailbox', () => {
@@ -1592,11 +1599,10 @@ test('a throwing proxy is a refusal, never an exception, and the refusal echoes 
   assert.ok(results.some((result) => result.code === REFUSAL.INTERNAL_ERROR));
 });
 
-test('the watermark is a time no later than the state\'s own now, or 0', () => {
+test('the watermark is an integer from 0, set only by the module', () => {
   const state = newMailbox();
   assert.equal(state.evictedThrough, 0);
-  assert.equal(step({ ...state, evictedThrough: NOW }, act()).ok, true);
-  for (const bad of [NOW + 1, -1, -0, 1.5, '0', null]) {
+  for (const bad of [-1, -0, 1.5, '0', null]) {
     refused({ ...state, evictedThrough: bad }, act(), REFUSAL.INVALID_EVICTED_THROUGH);
   }
   const missing = { ...state };
@@ -1606,20 +1612,6 @@ test('the watermark is a time no later than the state\'s own now, or 0', () => {
   assert.equal(initialState({ ...options(), evictedThrough: 5 }).code, REFUSAL.UNKNOWN_FIELD);
 });
 
-test('the per-sender quota counts only what is in flight', () => {
-  let state = newMailbox({ maxSeen: 8, maxPerSender: 2 });
-  for (const id of ['a-1', 'a-2', 'a-3', 'a-4']) {
-    state = stepped(state, deliver(message({ id }))).state;
-    state = stepped(state, act()).state;
-    state = stepped(state, ack()).state;
-  }
-  assert.equal(state.seen.length, 4, 'acked records are kept for dedupe');
-  state = stepped(state, deliver(message({ id: 'a-5' }))).state;
-  state = stepped(state, deliver(message({ id: 'a-6' }))).state;
-  refused(state, deliver(message({ id: 'a-7' })), REFUSAL.SENDER_FULL);
-  // The acked ones are still remembered: their redelivery is a duplicate.
-  assert.equal(stepped(state, deliver(message({ id: 'a-1' }))).outcome, OUTCOME.DUPLICATE);
-});
 
 test('the horizon covers the command window even when the prompt TTL is shorter', () => {
   // promptTtlMs (1h) < windowMs (6h): an acked command at 2h is still inside
@@ -1637,9 +1629,89 @@ test('the horizon covers the command window even when the prompt TTL is shorter'
   assert.equal(stepped(state, deliver(message({ id: 'x', at: NOW }), { now: t })).outcome, OUTCOME.DUPLICATE);
 });
 
-test('a prompt below the watermark has expired; a command below it is a replay', () => {
-  const state = { ...newMailbox(), evictedThrough: NOW - 1_000 };
-  refused(state, deliver(message({ at: NOW - 1_000 }), { kind: KIND.PROMPT }), REFUSAL.EXPIRED);
-  refused(state, deliver(message({ at: NOW - 1_000 })), REFUSAL.REPLAY);
-  assert.equal(stepped(state, deliver(message({ at: NOW - 999 }))).outcome, OUTCOME.ACCEPTED);
+test('a prompt at or below the watermark has expired; a command there is a replay', () => {
+  // horizon = WINDOW (promptTtlMs = WINDOW), watermark at its latest legal
+  // value: a message aged exactly the window passes the window rule (it is
+  // inclusive), and the watermark is what refuses it.
+  const state = { ...newMailbox({ promptTtlMs: WINDOW }), evictedThrough: NOW - WINDOW };
+  refused(state, deliver(message({ at: NOW - WINDOW }), { kind: KIND.PROMPT }), REFUSAL.EXPIRED);
+  refused(state, deliver(message({ at: NOW - WINDOW })), REFUSAL.REPLAY);
+  assert.equal(stepped(state, deliver(message({ at: NOW - WINDOW + 1 }))).outcome, OUTCOME.ACCEPTED);
+});
+
+// ---------------------------------------------------------------------------
+// Round 4 (third review; design ruled by the coordinator): no compaction
+// inside the horizon; the watermark moves only by horizon age; the quota
+// counts every record a sender holds
+// ---------------------------------------------------------------------------
+
+test('round-3 HIGH: a future-dated acked record never pushes the watermark past now', () => {
+  // An acked record dated inside the future tolerance, then the ledger fills.
+  let state = newMailbox({ maxSeen: 2 });
+  state = stepped(state, deliver(message({ id: 'f', at: NOW + TOLERANCE }))).state;
+  state = stepped(state, act()).state;
+  state = stepped(state, ack()).state;
+  state = stepped(state, deliver(message({ id: 'y' }))).state;
+  const full = step(state, deliver(message({ id: 'z' })));
+  if (full.ok) state = full.state;
+  // Whatever the answer, every later step must still read the state.
+  assert.ok(state.evictedThrough <= state.now, `watermark ${state.evictedThrough} > now ${state.now}`);
+  assert.equal(step(state, act(NOW + 1)).ok, true, 'the mailbox is stuck');
+  assert.equal(full.ok, false, 'a full ledger must refuse, not compact');
+  assert.equal(full.code, REFUSAL.DEDUPE_FULL);
+});
+
+test('round-3 MEDIUM 1: one sender\'s flood cannot censor another sender', () => {
+  const T0 = NOW;
+  let state = sized({ maxPerSender: undefined }); // the default quota: 8 / 4 = 2
+  const flood = T0 + HOUR;
+  let refusedFlood = 0;
+  for (let i = 0; i < 9; i++) {
+    const delivered = step(state, deliver(message({ sender: 'evil', id: `e-${i}`, at: flood }), { now: flood }));
+    if (!delivered.ok) {
+      assert.equal(delivered.code, REFUSAL.SENDER_FULL);
+      refusedFlood++;
+      continue;
+    }
+    state = stepped(delivered.state, act(flood)).state;
+    state = stepped(state, ack(flood)).state;
+  }
+  assert.equal(refusedFlood, 7, 'the flooder is held to its own quota');
+  assert.equal(state.evictedThrough, 0, 'a flood moved the watermark');
+  const bob = stepped(state, deliver(message({ sender: 'bob', id: 'b-1', at: T0 + 10_000 }), { now: flood, kind: KIND.PROMPT }));
+  assert.equal(bob.outcome, OUTCOME.ACCEPTED);
+});
+
+test('round-3 MEDIUM 2: inside the horizon the same id is never acted on twice, even at maxSeen 1', () => {
+  let state = stepped(newMailbox({ maxSeen: 1 }), deliver(message({ id: 'x', at: NOW }))).state;
+  state = stepped(state, act()).state;
+  state = stepped(state, ack()).state;
+  const again = step(state, deliver(message({ id: 'x', at: NOW + 6 }), { now: NOW + 6 }));
+  assert.equal(again.ok, false, `x was re-admitted: ${JSON.stringify(again)}`);
+  assert.equal(again.code, REFUSAL.ID_CONFLICT);
+  refused(state, deliver(message({ id: 'y', at: NOW + 6 }), { now: NOW + 6 }), REFUSAL.DEDUPE_FULL);
+  assert.equal(stepped(state, deliver(message({ id: 'x', at: NOW }), { now: NOW + 6 })).outcome, OUTCOME.DUPLICATE);
+});
+
+test('the watermark never passes now minus the horizon', () => {
+  const state = newMailbox(); // horizon = max(WINDOW, PROMPT_TTL) = PROMPT_TTL
+  assert.equal(step({ ...state, evictedThrough: NOW - PROMPT_TTL }, act()).ok, true);
+  refused({ ...state, evictedThrough: NOW - PROMPT_TTL + 1 }, act(), REFUSAL.INVALID_EVICTED_THROUGH);
+  // Early in time, when now is within one horizon of the epoch, only 0 fits.
+  const early = newMailbox({ now: 5 });
+  refused({ ...early, evictedThrough: 1 }, act(5), REFUSAL.INVALID_EVICTED_THROUGH);
+  assert.equal(step(early, act(5)).ok, true);
+});
+
+test('the per-sender quota counts every record a sender holds inside the horizon, acked or not', () => {
+  let state = newMailbox({ maxSeen: 8, maxPerSender: 2 });
+  for (const id of ['a-1', 'a-2']) {
+    state = stepped(state, deliver(message({ id }))).state;
+    state = stepped(state, act()).state;
+    state = stepped(state, ack()).state;
+  }
+  refused(state, deliver(message({ id: 'a-3' })), REFUSAL.SENDER_FULL);
+  // Once the records age past the horizon they are evicted, and A has room.
+  const past = NOW + PROMPT_TTL + 1_001;
+  assert.equal(stepped(state, deliver(message({ id: 'a-3', at: past }), { now: past })).outcome, OUTCOME.ACCEPTED);
 });

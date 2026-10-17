@@ -117,24 +117,23 @@ from becoming a hole in the fence:
   second review found: a command evicted after 6 hours came back by claiming
   to be a prompt (inside the prompt's 72-hour TTL) and was acted on twice, and
   a prompt with a 1-hour TTL came back as a command;
+- **nothing inside the horizon is ever forgotten** — acked or not, there is no
+  compaction and no early eviction (a design ruling of round 4, replacing round
+  3's compaction, which the third review showed could push the watermark past
+  `now`, let one sender's flood censor another, and act on the same id twice
+  inside the window). **So inside the horizon the same `(sender, id)` is never
+  acted on twice**: its record is there to call a redelivery a `duplicate` or
+  an `id-conflict`;
 - **the watermark** (`evictedThrough`, a state field the module sets): every
-  eviction raises it to the evicted record's `at`, and a delivery whose `at` is
-  at or before it is refused (`replay`, or `expired` for a prompt) — after the
-  ledger lookup, so a held record is still a duplicate or a conflict. This is
-  what makes **eviction unable to re-admit a replay** even when a state is
-  handed back with a *wider* window or TTL (the second review's probe D: evict
-  at 6 hours, widen to 12, redeliver at 7 — refused). It starts at 0, may not
-  pass the state's own `now`, and only rises;
-- **under pressure, the oldest acked record is compacted** into the watermark:
-  a delivery that finds the ledger full of records evicts the oldest `acked`
-  one even inside the horizon, and raises the watermark to its `at`. Acked
-  records therefore never lock anyone out (probe F: four senders at quota, all
-  acked, inside a 72-hour TTL, no longer refuse a fifth with `dedupe-full`).
-  **The cost, stated:** a message that was never delivered here and whose
-  `at` is at or before the compacted record's is refused as a `replay` while
-  still inside its window — refused visibly, never accepted twice and never
-  dropped silently; the sender re-sends it as a new message. Compaction takes
-  the oldest acked record, so the watermark rises as little as it can;
+  horizon eviction raises it to the evicted record's `at`, and nothing else
+  moves it. A delivery whose `at` is at or before it is refused (`replay`, or
+  `expired` for a prompt) — after the ledger lookup, so a held record is still
+  a duplicate or a conflict. Because it moves only by horizon age it is always
+  at or before `now - horizon` (or 0), which `step` checks on every state it
+  reads (`invalid-evicted-through`): it can never pass `now`, and no sender's
+  traffic can move it, so one sender cannot censor another through it. A state
+  handed back with a *wider* window or TTL than its watermark allows is
+  refused rather than trusted (the second review's probe D);
 - a record is **consulted whatever its age**: the same `(sender, id)` with the
   same `at` and kind is a `duplicate`; with a different `at` or kind it is
   `id-conflict` — the id is the message's identity, so a second message under
@@ -143,24 +142,28 @@ from becoming a hole in the fence:
 - an `accepted` record the window has passed is kept, and `act` answers
   **`stale-pending`** for it instead of `acted`, so late work is surfaced
   rather than lost;
-- **the quota counts work in flight**: a sender already holding `maxPerSender`
-  records that are `accepted` or `acted` is **refused** (`sender-full`); its
-  acked records do not count, because they can always be compacted. A ledger
-  whose every slot is in flight is **refused** (`dedupe-full`). Neither
-  evicts. The quota is a state field, default `max(1, floor(maxSeen / 4))`
-  (`defaultMaxPerSender`). **It only means something if `sender` is tied to
-  the writer's identity by P2.1's rules** — a writer free to choose `sender`
-  is as many senders as it likes.
+- **the quota counts every record a sender holds** inside the horizon —
+  accepted, acted or acked. A sender at `maxPerSender` is **refused**
+  (`sender-full`), so one sender can fill only its own share, never the whole
+  mailbox. A full ledger is **refused** (`dedupe-full`). Neither evicts. The
+  quota is a state field, default `max(1, floor(maxSeen / 4))`
+  (`defaultMaxPerSender`).
 
-**The exact bound, and the recovery path.** The ledger never holds more than
-`maxSeen` records (refused on read, never grown on write), plus one number,
-the watermark. At most `maxPerSender` records per sender are in flight.
-`dedupe-full` happens only when every one of the `maxSeen` slots is work in
-flight — at least `ceil(maxSeen / maxPerSender)` senders whose work the
-consumer has not acked — and the recovery is the consumer's own: act and ack,
-and the next delivery compacts. Nothing is recovered by a fresh
-`initialState`, which forgets the ledger and the watermark and so reopens
-every replay still inside its window.
+**The lockout trade-off, stated rather than hidden.** With a quarter-of-the-cap
+quota, four senders at their quota fill the ledger, and a fifth is refused
+`dedupe-full` until records age past the horizon (with a 72-hour prompt TTL,
+up to 72 hours). That is the price of never forgetting a record inside the
+horizon. It is bounded by three things: **the quota only means something if
+`sender` is tied to the writer's identity by P2.1's rules** (a writer free to
+choose `sender` is as many senders as it likes); the **recovery** is the
+consumer acting and acking and the records ageing past the horizon; and an
+operator who expects more senders sets a **larger `maxSeen`**. Nothing is
+recovered by a fresh `initialState`, which forgets the ledger and the
+watermark and so reopens every replay still inside its window.
+
+**The exact bound.** The ledger never holds more than `maxSeen` records
+(refused on read, never grown on write), plus one number, the watermark; at
+most `maxPerSender` of them belong to one sender.
 
 ## The kinds, and the owner's ruling on the window
 
@@ -192,9 +195,10 @@ the validated message.
 
 **The caller's duty, until then: `kind` must be a fixed function of the
 MAC-verified message.** Today the kind is the event's claim, and nothing in
-the event is authenticated. The horizon and the watermark make a *switched*
-kind harmless to the replay guarantee (the same id is never acted on twice),
-but the kind still chooses the acceptance window: a consumer that let a
+the event is authenticated. The single horizon makes a *switched* kind
+harmless to the replay guarantee (inside the horizon the record is kept
+whatever kind a redelivery claims, so the same id is not acted on twice), but
+the kind still chooses the acceptance window: a consumer that let a
 writer pick it would let a command be judged by a prompt's TTL. P4.1 must
 derive it from the message it has verified (D113b's MAC), never from anything
 the writer can set beside it.
@@ -253,7 +257,7 @@ the lease), so the two modules cannot disagree about a timestamp.
 | `invalid-now` | a `now` (on the state **or** the event) that is not an integer in `1 .. TIME_MAX`, `-0` included |
 | `now-went-backwards` | a `now` earlier than the state's own |
 | `now-jumped` | a `now` more than `MAX_FORWARD_JUMP_MS` ahead of the state's own |
-| `invalid-evicted-through` | an `evictedThrough` watermark that is not an integer in `0 .. now` |
+| `invalid-evicted-through` | an `evictedThrough` watermark that is not an integer in `0 .. max(0, now - horizon)` — later than horizon eviction could have set it, which includes a state handed back with a window widened past its watermark |
 | `internal-error` | an input that threw while being read (a revoked Proxy, a throwing trap); what was thrown is never echoed |
 | `invalid-window` | `windowMs` outside `MIN_WINDOW_MS .. MAX_WINDOW_MS` |
 | `invalid-max-seen` | `maxSeen` outside `MIN_MAX_SEEN .. MAX_MAX_SEEN` |
@@ -271,8 +275,8 @@ the lease), so the two modules cannot disagree about a timestamp.
 | `expired` | a prompt older than its TTL (`promptTtlMs`), or at or before the watermark |
 | `future-timestamp` | a message whose `at` is further ahead than the future tolerance, or past `TIME_MAX` |
 | `id-conflict` | a known `(sender, id)` — whatever its record's age — carrying a different `at` or kind |
-| `dedupe-full` | a delivery with no room in the ledger and every record in flight (nothing acked to compact) |
-| `sender-full` | a delivery whose sender already holds `maxPerSender` records in flight |
+| `dedupe-full` | a delivery with no room in the ledger and nothing past the horizon to evict |
+| `sender-full` | a delivery whose sender already holds `maxPerSender` records (acked or not) |
 | `mailbox-closed` | any event at all, once the mailbox is closed |
 
 ### The schema's codes, propagated verbatim
@@ -351,11 +355,12 @@ removed (`PATH=/usr/bin:/bin`) the script refuses with exit 2 rather than
 reporting mutants it never ran, and with `index.test.js` renamed the positive
 control catches the empty glob — which is why there are two.
 
-The run that is recorded here (round 3, node 26 on PATH) is **111 guards, 111
+The run that is recorded here (round 4, node 26 on PATH) is **108 guards, 108
 killed, 0 survived, 0 not applied**, with the control killed first. Round 3
-added the eviction horizon, the watermark (its check, its inclusive edge, both
-raises and their carrying forward, its range), compaction, the in-flight-only
-quota, the forward-jump bound and the two never-throw guards. One clause of the module is
+added the eviction horizon, the watermark, the forward-jump bound and the two
+never-throw guards; round 4 removed compaction and the in-flight-only quota
+with their guards, and added the watermark's `now - horizon` bound and the
+quota's counting of acked records. One clause of the module is
 deliberately *not* counted: `isPlainObject`'s `Array.isArray` check, which the
 prototype check beside it subsumes (an array's prototype is neither
 `Object.prototype` nor `null`). A mutation of it cannot be killed by any test,
@@ -365,9 +370,10 @@ mutation instead.
 
 **The exhaustive table test does not trust the module's table.** It writes the
 EXPECTED table by hand, asserts the module's `TRANSITIONS` equals it, and
-drives 24 literal ledger compositions (empty, pending-only, acted-only,
+drives 30 literal ledger compositions (empty, pending-only, acted-only,
 acked-only, mixed, at the cap in each phase with and without acked records, a sender at its quota in each
-phase, stale records of every status, prompts inside and past their TTL) in
+phase, stale records of every status, prompts inside and past their TTL, future-dated acked records alone and in a
+full ledger, and ledgers whose watermark is already set) in
 both an open and a closed phase through every event — then checks the other
 direction too: every outcome and next phase a cell declares is actually
 reached, and every one of this module's delivery refusals is produced in every
@@ -394,11 +400,19 @@ instead.
   *own* iterator cannot hide a record; a realm whose built-ins are replaced
   (`Array.prototype[Symbol.iterator]`, `Object.getOwnPropertyDescriptor`) is
   not defended against, and nothing pure could be.
-- **An acked, evicted id can be used again.** Once a record is acked *and*
-  past its window it may be evicted, and a later message under the same
-  `(sender, id)` with a fresh `at` is then a new message. Its old redelivery
-  is still refused by the window; a writer that can choose `at` freely could
-  already write any new id, which is P2.1's rules' and D113b's MAC's to fence.
+- **After the horizon, an id with a later `at` is a new message.** Inside the
+  horizon the same `(sender, id)` is never acted on twice. Once its record is
+  acked *and* past the horizon it is evicted, and a message under the same
+  `(sender, id)` with a **later** `at` is then a new message — that is the
+  protocol's semantics, not a hole: the original's redelivery (same `at`) is
+  still refused by the window and the watermark. **The caller's duty: the
+  phone must never retry an id with a new `at`.** A retry re-sends the same
+  message, `at` included; a new `at` is a new message and needs a new id.
+- **Persisting the whole state is the caller's duty, the watermark
+  included.** The machine is a function of the state it is handed. A caller
+  that hands back a lower watermark (or 0), or a ledger with a record missing,
+  re-admits what was evicted or forgotten. `step` refuses a watermark that is
+  too *high* for the state; it cannot tell a lowered one from an honest one.
 - **A `now` that leaps is bounded.** A `now` up to `MAX_FORWARD_JUMP_MS`
   ahead is accepted, and every later `now` must be at least that. The caller's
   `now` is the server's (D117), so a leap is a caller bug; it can freeze the
@@ -413,6 +427,8 @@ instead.
   hands back a state with one missing, re-admits a replay for as long as the
   window lasts — the window is the bound on that mistake, and it is why the
   window exists as a rule rather than as an optimisation.
+- **`kind` is the caller's to derive from the MAC-verified message** (see
+  "The caller's duty" above); today it is the event's unauthenticated claim.
 - **The ledger records `at`, not the text.** Two deliveries of the same
   `(sender, id, at)` with *different* text are indistinguishable here and the
   second is answered as a duplicate. Detecting that would mean holding the text
