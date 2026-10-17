@@ -28,13 +28,22 @@
 //     be giving a window with `connect-src 'none'` a Node builtin.
 //
 // **The goldens are recorded where the plan says they live**
-// (`test/e2e/__screenshots__/`), which needs no change to
-// `playwright.config.ts`: `toHaveScreenshot(['..', '__screenshots__', name])`
-// is a path the default template resolves through `{snapshotDir}/{testFileDir}`
-// and out of the per-spec `-snapshots` directory. Playwright's default
-// `updateSnapshots: 'missing'` writes a baseline that is not there and passes,
-// so the first run on a machine that can launch Electron records them and every
-// run after that compares against them.
+// (`test/e2e/__screenshots__/`), which needs no change to the snapshot *path*:
+// `toHaveScreenshot(['..', '__screenshots__', name])` resolves through the
+// default template's `{snapshotDir}/{testFileDir}` and out of the per-spec
+// `-snapshots` directory.
+//
+// What does need saying is the *update* mode, because Playwright's default is
+// not what a reader would assume and it would leave this file red on the first
+// machine that can launch Electron: 1.64.1 resolves `updateSnapshots` to
+// `'default'`, which writes a missing baseline **and fails the test** with a
+// soft error marked `shouldNotRetryTest` (`matchers/expect.js`,
+// `handleMissing`) -- and since this file runs in one worker in order, the dark
+// golden would never be recorded after the light one failed. The console's
+// config sets `updateSnapshots: 'missing'` for exactly this reason; see the
+// comment there. (It cannot be set per file: the matcher reads it off the
+// resolved project config, and `updateSnapshots` is not a `test.use` option in
+// this version.)
 //
 // Nothing here reaches the network or the CLI: the document is the committed
 // synthetic fixture, read from disk, and every string it holds was already

@@ -44,6 +44,7 @@ import {
   unavailable,
 } from '../../src/shared/availability'
 import { decodeSnapshot } from '../../src/shared/schema'
+import type { JSONDoc } from '../../src/source/source'
 import type { LiveDocument, RunView } from '../../src/shared/schema'
 import {
   BurnHistory,
@@ -54,6 +55,7 @@ import {
   LIVE_STALE_AFTER_SECONDS,
   LIVE_THEMES,
   buildLiveModel,
+  contradiction,
   deadlineFlag,
   healthFlag,
   renderLive,
@@ -102,6 +104,17 @@ function theLastFrame(): LiveDocument {
   const last = all[all.length - 1]
   if (last === undefined) throw new Error('the fixture has no documents')
   return last
+}
+
+/** rawFrames is every document of the fixture as it arrived, undecoded, so a
+ * test can add a key the fixture does not carry and put it through the decoder
+ * rather than around it. */
+function rawFrames(): readonly JSONDoc[] {
+  const out: JSONDoc[] = []
+  for (const record of theFixture().records) {
+    if ('document' in record) out.push(record.document)
+  }
+  return out
 }
 
 /** theRun finds a run in a frame by its wire slug key, so a test names the row
@@ -344,8 +357,31 @@ describe('the row model', () => {
     expect(modelOf(frameAt('2026-10-15T12:01:40Z')).connection.staleByAge).toBe(true)
   })
 
-  it('keeps the queued note when the document carries one', () => {
+  it('keeps the queued note when the document carries one, and only then', () => {
+    // The fixture's frames carry no `queued_note` -- the key is `omitempty` and
+    // the synthetic feed was invented without it -- so the absent case is the
+    // fixture and the present case is built here. Without this the branch was
+    // never drawn by any test, which is the hole a screen full of nothing
+    // leaves: a project whose runs bucket could not be read would look exactly
+    // like a project with no queued runs.
     expect(modelOf(theLastFrame()).queuedNote).toBeNull()
+    expect(all(renderLive(factory, modelOf(theLastFrame()), 'light'), 'live-note')).toEqual([])
+
+    // The key is read off the *wire* document and through the decoder, because
+    // the decoded name is `queuedNote` and only the raw frame carries
+    // `queued_note` -- building the decoded object by hand would assert the
+    // screen against a shape the decoder never produces.
+    const raw = rawFrames()[rawFrames().length - 1]
+    if (raw === undefined) throw new Error('the fixture has no documents')
+    const decoded = decodeSnapshot(
+      { ...raw, queued_note: 'the runs bucket could not be read (retrying)' },
+      'the fixture frame with a queued note',
+    )
+    if (!decoded.ok) throw new Error(decoded.skew.because)
+    const withNote = buildLiveModel(decoded.value, new BurnHistory())
+    expect(withNote.queuedNote).toBe('the runs bucket could not be read (retrying)')
+    const tree = renderLive(factory, withNote, 'light')
+    expect(texts(tree, 'live-note')).toEqual(['the runs bucket could not be read (retrying)'])
   })
 
   it('reads a repository row, its bar and its rate', () => {
@@ -468,10 +504,13 @@ describe('the row model', () => {
     // the total's counted dollars and its notional dollars are two readings and
     // the model never adds them.
     const total = modelOf(theLastFrame()).total
-    expect(total.countedUsd.value).toBe(50)
-    expect(total.notionalUsd.value).toBe(3.29)
-    expect(total.countedUsd.value).not.toBe(53.29)
+    expect(formatReading(total.countedUsd, 'usd')).toBe('$50.00')
+    expect(formatReading(total.notionalUsd, 'usd')).toBe(`${NOTIONAL_MARK}$3.29`)
     expect(total.notionalUsd.state).toBe('notional')
+    // And the pair the two cells hold is not the pair a screen that summed
+    // them would draw: `$53.29` appears in no cell of the total.
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(drawn(one(tree, 'live-total'))).not.toContain('$53.29')
   })
 
   it('renders a kill banner with its by, its at and its reason', () => {
@@ -495,6 +534,53 @@ describe('the row model', () => {
     expect(drawn(tree)).toContain('KILLED')
     expect(one(tree, 'live-kill').getAttribute('data-killed')).toBe('true')
     expect(texts(tree, 'live-kill-reason')).toEqual(['runaway spend'])
+  })
+})
+
+describe('the contradiction', () => {
+  it('is reported only where a run\'s own age makes it impossible', () => {
+    // A 45 s old run cannot have been quiet for 60 s, so an `silent` flag on it
+    // is a document the console should say something about.
+    expect(contradiction('silent', 45)).toContain('45 s')
+    expect(contradiction('lost', 45)).toContain('45 s')
+    // A long-running run can be either: quiet for 100 s is `silent`, and quiet
+    // for five seconds is `ok`, and both of those are 30 minutes old.
+    expect(contradiction('silent', 1800)).toBeNull()
+    expect(contradiction('lost', 1800)).toBeNull()
+    expect(contradiction('ok', 45)).toBeNull()
+    expect(contradiction('hibernating', 45)).toBeNull()
+  })
+
+  it('says nothing about a run whose age the document does not carry', () => {
+    // `age_seconds` is `*float64` with no `omitempty` and `schema.ts` reads it
+    // on the tolerant axis, so `null` is an accepted document. `watchHealth`
+    // calls it ok, and a function that let any flag "beat" that would announce
+    // that a run "is only null s old" -- a sentence, and the word `null`, on a
+    // screen, from a bound nobody measured.
+    expect(contradiction('silent', null)).toBeNull()
+    expect(contradiction('lost', null)).toBeNull()
+    expect(contradiction('lost', Number.NaN)).toBeNull()
+    expect(contradiction('lost', -1)).toBeNull()
+  })
+
+  it('draws no contradiction for a silent run with no measured age', () => {
+    // The whole way through: model and screen. `age_seconds: null` is what the
+    // wire writes for a run whose start the registry does not have.
+    const frame = frameAt('2026-10-15T12:01:40Z')
+    const document: LiveDocument = {
+      ...frame,
+      runs: frame.runs.map((run) => ({ ...run, ageSeconds: unavailable('the document has no runs[].age_seconds') })),
+    }
+    const model = buildLiveModel(document, new BurnHistory())
+    const row = model.repos[0]?.runs[0]
+    expect(row?.flags.map((flag) => flag.name)).toEqual(['silent'])
+    expect(row?.contradiction).toBeNull()
+
+    const tree = renderLive(factory, model, 'light')
+    // The word `null` is nowhere on the screen: not as a sentence and not as a
+    // drawn value.
+    expect(drawn(tree)).not.toContain('null')
+    expect(all(tree, 'live-run-contradiction')).toEqual([])
   })
 })
 
@@ -525,14 +611,29 @@ describe('the burn history', () => {
     // (`availability.ts`), and a line drawn through it would be a measurement
     // in ink. `seriesSegments` is the console's own answer to that, and the
     // model reports the count so a screen cannot quietly draw one segment.
+    // The history is keyed by the repository's slug, which is what
+    // `buildLiveModel` observes under, so the model the screen is rendered from
+    // is the same one this run of samples belongs to.
+    const slug = theLastFrame().repos[0]?.slug ?? ''
     const history = new BurnHistory()
-    history.observe('r', { at: '2026-10-15T12:00:00Z', reading: measured(0.01) })
-    history.observe('r', { at: '2026-10-15T12:01:00Z', reading: unavailable('the document has no burn') })
-    history.observe('r', { at: '2026-10-15T12:02:00Z', reading: measured(0.03) })
-    const spark = sparkline(history, 'r', '2026-10-15T12:02:30Z')
+    history.observe(slug, { at: '2026-10-15T12:00:00Z', reading: measured(0.01) })
+    history.observe(slug, { at: '2026-10-15T12:01:00Z', reading: unavailable('the document has no burn') })
+    history.observe(slug, { at: '2026-10-15T12:02:00Z', reading: measured(0.03) })
+    const spark = sparkline(history, slug, '2026-10-15T12:02:30Z')
     expect(spark.segments).toBe(2)
     expect(spark.bars).toHaveLength(3)
     expect(formatReading(spark.bars[1]?.height ?? unavailable('none'), 'percent')).toBe(GAP_MARK)
+    // The bar is a gap, and the mark is not the whole of it: the reason the
+    // sample is missing is what the tooltip has to carry, because `n/a` over a
+    // reason tells a person less than the reason does.
+    const tree = renderLive(
+      factory,
+      buildLiveModel(theLastFrame(), history),
+      'light',
+    )
+    const gapBars = all(tree, 'live-burn-bar').filter((bar) => bar.getAttribute('data-state') === 'gap')
+    expect(gapBars.length).toBeGreaterThan(0)
+    expect(gapBars[0]?.getAttribute('title')).toBe('the document has no burn')
     expect(spark.bars[0]?.height.state).toBe('measured')
     expect(formatReading(spark.bars[2]?.height ?? unavailable('none'), 'percent')).toBe('100.0%')
   })
@@ -544,6 +645,29 @@ describe('the burn history', () => {
     const spark = sparkline(history, 'r', '2026-10-15T12:02:00Z')
     expect(formatReading(spark.bars[0]?.height ?? unavailable('none'), 'percent')).toBe('25.0%')
     expect(formatReading(spark.bars[1]?.height ?? unavailable('none'), 'percent')).toBe('100.0%')
+  })
+
+  it('stays bounded however long the feed runs', () => {
+    // The caller keeps one history across frames, so a feed at a document a
+    // second for a day is 86,400 arrivals per repository. What `window` can
+    // return is one window's worth, and everything older than the newest stamp
+    // minus `BurnWindow` can never be drawn again -- so it is dropped on the
+    // way in rather than held for the life of the window.
+    const history = new BurnHistory()
+    const base = Date.parse('2026-10-15T00:00:00Z')
+    for (let second = 0; second < 2000; second++) {
+      history.observe('r', {
+        at: new Date(base + second * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+        reading: measured(0.01),
+      })
+    }
+    const end = new Date(base + 1999 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    expect(history.window('r', end).length).toBeLessThanOrEqual(LIVE_BURN_WINDOW_SECONDS + 1)
+    // And the pruning kept exactly the window: the oldest sample left is the
+    // one at the cut, which is the sample `State.Burn` also keeps.
+    expect(history.window('r', end)[0]?.at).toBe(
+      new Date(base + (1999 - LIVE_BURN_WINDOW_SECONDS) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    )
   })
 
   it('rolls the window across the frames a replay hands it', () => {
@@ -628,6 +752,24 @@ describe('the rendered screen', () => {
         ).toBe(true)
       }
     }
+  })
+
+  it('puts the sanitized value, not the document\'s, into an attribute', () => {
+    // A state `putText` refuses is drawn as `n/a`. `data-state` is read back off
+    // the drawn cell for exactly that reason: an attribute echoing the raw
+    // string would put back on screen what the refusal kept off it, and a
+    // reviewer checking attribute *names* (the test above) would not see it.
+    const frame = theLastFrame()
+    const raw = 'liv\nve'
+    const document: LiveDocument = {
+      ...frame,
+      connection: { ...frame.connection, state: raw },
+    }
+    const tree = renderLive(factory, buildLiveModel(document, new BurnHistory()), 'light')
+    const connection = one(tree, 'live-connection')
+    expect(connection.textContent).toBe(UNAVAILABLE_MARK)
+    expect(connection.getAttribute('data-state')).toBe(UNAVAILABLE_MARK)
+    expect(connection.getAttribute('data-state')).not.toContain('\n')
   })
 
   it('leaves the anchor and its destination out of the live screen entirely', () => {

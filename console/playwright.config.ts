@@ -29,6 +29,21 @@ export default defineConfig({
   // files is unaffected: it is workers, not this flag, that decides how many
   // spec files run at once.
   fullyParallel: false,
+  // Task 2.1's goldens (`test/e2e/__screenshots__/live-{light,dark}.png`) are
+  // the first snapshots this repository takes, and the default would make them
+  // look like a failure rather than a recording. Playwright 1.64.1 resolves
+  // this to `'default'` when nobody says otherwise (`common/index.js:531`), and
+  // `'default'` *writes* a missing baseline and then fails the test with a
+  // `softError` marked `shouldNotRetryTest` (`matchers/expect.js`,
+  // `handleMissing`) -- on the first machine that can launch Electron, both
+  // golden tests would be red, and because a spec file runs in one worker in
+  // order the second theme's golden would never be recorded at all.
+  // `'missing'` writes it and passes; every run after that compares against the
+  // file that is by then committed. This is a per-run *project* option and not
+  // a `test.use` one: `updateSnapshots` is on `FullProject`, and the matcher
+  // reads it off the resolved config, so the config file is the only place it
+  // can be set.
+  updateSnapshots: 'missing',
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'line' : 'list',

@@ -86,9 +86,13 @@ export const LIVE_LOST_AFTER_SECONDS = 3 * 60
 export const LIVE_NEAR_DEADLINE_FRACTION = 0.8
 
 /** LIVE_NEAR_DEADLINE_PERCENT is the same fraction as the sentence says it, so
- * the text is `80%` rather than `80.00000000000001%` -- binary floating point
- * cannot represent 0.8 exactly, and `0.8 * 100` is one of the results that
- * shows it. */
+ * a threshold reads `80%` rather than `79.99999999999999%`.
+ *
+ * `0.8 * 100` is exactly `80` in IEEE-754, so this rounding changes nothing
+ * about the value above -- it is here because the constant is a *fraction* and
+ * not every fraction someone might choose multiplies to a whole number (`0.29 *
+ * 100` is `28.999999999999996`), and a flag whose explanation reads
+ * `28.999999999999996% of the stage's time` is a number nobody chose. */
 export const LIVE_NEAR_DEADLINE_PERCENT = Math.round(LIVE_NEAR_DEADLINE_FRACTION * 100)
 
 /**
@@ -245,10 +249,19 @@ export function rowTone(flags: readonly RunFlag[]): RunTone {
  * The other direction is not a contradiction and must not be reported as one:
  * a 30-minute-old run whose last heartbeat was five seconds ago is `ok`, and a
  * run of the same age that has been quiet for 100 s is `silent`.
+ *
+ * **An age that is not a measured number says nothing at all.** `age_seconds`
+ * is a `*float64` with no `omitempty` (`internal/watch/json.go:67`) and
+ * `schema.ts` reads it on the tolerant axis, so `null` is a reading this screen
+ * accepts -- and `watchHealth(null)` is `ok`, so any `silent` or `lost` health
+ * would "beat" it and this function would announce that a run is "only null s
+ * old". A bound the document does not carry is not a bound of zero; it is the
+ * absence of one, and there is nothing to contradict.
  */
 export function contradiction(health: string, ageSeconds: number | null): string | null {
   const claimed = HEALTH_SEVERITY[health]
   if (claimed === undefined || claimed === 0) return null
+  if (ageSeconds === null || !Number.isFinite(ageSeconds) || ageSeconds < 0) return null
   const supported = HEALTH_SEVERITY[watchHealth(ageSeconds)]
   if (supported === undefined || claimed <= supported) return null
   return `watch calls this run ${health}, but it is only ${String(ageSeconds)} s old, and a run cannot have been quiet for longer than that`
@@ -259,7 +272,7 @@ export function contradiction(health: string, ageSeconds: number | null): string
 // ---------------------------------------------------------------------------
 
 /**
- * BurnHistory is the rolling window the sparkline is drawn from: one bounded
+ * BurnHistory is the rolling window the sparkline is drawn from: one **bounded**
  * list of `{at, reading}` per key, and a window that is `BurnWindow` wide.
  *
  * The window is taken **at a stamp the caller names** rather than at the wall
@@ -267,14 +280,20 @@ export function contradiction(health: string, ageSeconds: number | null): string
  * same picture every time it is run, and a window anchored on `Date.now()`
  * would make every screenshot golden depend on when it was taken.
  *
- * `observe` is append-only in `at`, and it drops nothing on the way in: the
- * pruning happens on the way out, in `window`, so a caller that replays a feed
- * out of order sees what the feed said rather than what the console kept.
+ * `observe` prunes on the way in, at the stamp of the sample it just added, so
+ * the list is bounded by how many arrivals fit in one window rather than by how
+ * long the console has been open. That matters because the caller keeps one
+ * history across frames and `buildLiveModel` observes a sample per repository
+ * per frame: a feed running for a day at a document per second is 86,400
+ * samples per repository, and every one of them older than the newest window
+ * can never be drawn again. Pruning at the newest stamp is exactly the cut
+ * `window` makes for a window ending there, so nothing `window` would have
+ * returned is lost.
  */
 export class BurnHistory {
   private readonly samples = new Map<string, Sample[]>()
 
-  /** observe adds one arrival. */
+  /** observe adds one arrival and drops what has fallen out of the window. */
   observe(key: string, sample: Sample): void {
     const existing = this.samples.get(key)
     if (existing === undefined) {
@@ -282,6 +301,12 @@ export class BurnHistory {
       return
     }
     existing.push(sample)
+    const end = Date.parse(sample.at)
+    if (Number.isNaN(end)) return // an unparseable stamp is not a basis to drop anything
+    const cut = end - LIVE_BURN_WINDOW_SECONDS * 1000
+    let keep = 0
+    while (keep < existing.length && Date.parse(existing[keep]?.at ?? '') < cut) keep++
+    if (keep > 0) existing.splice(0, keep)
   }
 
   /**
@@ -696,7 +721,12 @@ function spark(factory: ScreenFactory, line: Sparkline): ScreenElement {
     putReading(drawn, point.height, 'percent')
     drawn.setAttribute('data-height', formatReading(point.height, 'percent'))
     drawn.setAttribute('data-state', point.height.state)
-    drawn.setAttribute('title', formatReading(point.rate, 'usd'))
+    // The rate is what the bar means, so it is the tooltip -- except on a bar
+    // that is a gap, where `putReading` has already written *why* the sample is
+    // missing into exactly this attribute. `n/a` over a reason is the wrong way
+    // round: the mark is drawn either way, and the sentence is the only thing
+    // that tells a person which of the two facts they are looking at.
+    if (point.height.value !== null) drawn.setAttribute('title', formatReading(point.rate, 'usd'))
   }
   return element
 }
@@ -792,7 +822,12 @@ function header(factory: ScreenFactory, model: LiveModel): ScreenElement {
     'connection.state',
     'live-connection',
   )
-  connection.setAttribute('data-state', model.connection.state)
+  // `data-state` is the state **as drawn**, read back off the cell, and not the
+  // document's raw string: a state `putText` refused is drawn as `n/a`, and an
+  // attribute echoing the raw value would put back on screen exactly what the
+  // refusal kept off it -- the whole reason `app.ts` has writers and this file
+  // has `sanitizedKey`.
+  connection.setAttribute('data-state', connection.textContent ?? '')
   connection.setAttribute('data-stale-by-age', model.connection.staleByAge ? 'true' : 'false')
   numberCell(element, factory, 'span', model.connection.age, 'seconds', 'live-connection-age')
   if (model.connection.reason !== null) {
