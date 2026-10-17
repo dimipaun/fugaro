@@ -1016,7 +1016,8 @@ rule is written.
 - **The recordings.** Eight cases, owner-run, listed above and in
   `FIXTURE_CASES`; one synthetic fixture stands in until they land.
 - **Any screen.** Nothing renders a fixture yet: `FixtureSource` is a
-  `FugaroSource` and no screen exists to consume one until Task 2.0.
+  `FugaroSource` and no screen exists to consume one until Task 2.1 (Task 2.0
+  builds the text path and the document shapes those screens must go through).
 - **The wiring.** Nothing chooses a fixture, and nothing switches a running
   console between the live source and a replay — that belongs with the Live
   screen's task, beside the `handlersFor` wiring Task 1.3 left open.
@@ -1053,6 +1054,203 @@ Three additions and one move, each with its reason:
   the suite holds every one of them, plus the spawn, the redaction of one line,
   the header, a recording in progress and the whole tool end to end, against
   stubs and never a real child.
+
+## Availability, sanitization and the text path (Task 2.0)
+
+Four modules, and the rule is the same rule four times: **a number the document
+does not carry has no number to draw, and a string a job wrote is text.** The
+desktop console's worst failure is not a crash — it is a screen that looks fine
+and says something the CLI never said: a subscription's spend drawn as billed
+money, a `0` for a cap nobody set, a hostile title turned into markup, a
+degraded document rendered as an empty feed. Each of those is now a type or a
+door rather than a convention a screen is asked to remember.
+
+The plan's red steps for this task are both here and both are real: removing the
+`textContent` writer (or planting an assignment to a markup-parsing property in
+`src/renderer/`) fails `sanitize.test.ts`, and making a missing number render as
+`0` fails `availability.test.ts`.
+
+### The five states, in one type every screen goes through
+
+`src/shared/availability.ts` is the contract's five states as a discriminated
+union — **measured**, **notional**, **estimated**, **unavailable**, **gap** —
+with the contract's own spellings for each (`NOTIONAL~`, `est.`, `n/a`, an em
+dash for a gap, `≥` for a floor) and one `formatReading` that is the only place a
+`Reading` becomes a string. A reading that is not measured carries a *sentence*
+saying why instead of a value, and the constructors refuse to build one without
+it, so `{ state: 'unavailable', value: 0 }` is not expressible.
+
+Two consequences worth naming, because both are bugs the tests were written to
+catch:
+
+- **`readNumber` is the one door.** The contract carries most numbers as
+  `*float64` (`internal/watch/json.go:54`), which makes `null` a normal value —
+  "no cap set", "no spend recorded" — and `0` a measured zero. One `JSON.parse`
+  apart, and a formatter that read `.value` without reading `.state` would draw
+  the wrong one.
+- **The sign is decided after rounding** (commit `670314f`). `-0.001` used to
+  draw as `-$0.00`, which is a claim that a repository spent below nothing. The
+  sign now comes from the rounded text a person actually reads, so a negative
+  that rounds away is drawn as zero and one that survives keeps its sign.
+
+### Eleven classes, deny-by-default
+
+`src/shared/sanitize.ts` is the display layer's **copy** of the recorder's rules
+(design §5.1 rule 7: the sanitization is re-applied here rather than trusted to
+have survived the subprocess boundary). It is a copy rather than an import
+because `src/source/redact.ts` reaches for `node:crypto` and the renderer has no
+Node; `sanitize.test.ts` holds the two vocabularies **equal by test** — the
+markers, the placeholders, the bounds and the keep-or-drop decision — by running
+both modules over the same inputs, so drift on either side fails a test rather
+than a screen.
+
+| class | admits | on anything else |
+| --- | --- | --- |
+| `sentence` | free text a job wrote, one line, invisible characters stripped, credential-shaped runs neutralised, every URL replaced | clipped at 512 characters, never refused (an empty title is a title) |
+| `label` | a short rendered field (`stage`, `round`, `verify`, `models`, `recipe`, `workflow`) | refused past 200 characters, or if it is not a single line |
+| `repository` | `owner/name`, at most 200 characters, no `..` | refused |
+| `slug` | the console's own slug grammar | refused |
+| `branch` | a git ref, no leading/trailing slash, no `.lock` | refused |
+| `project` | a GCP project name | refused |
+| `person` | a login or a pseudonym | an email address becomes `redacted@example.invalid`; anything else refused |
+| `runId` | the run-id grammar, or a marker | refused |
+| `host` | a hostname | an IP address, or anything that is not a hostname, becomes `<host>` |
+| `path` | a filesystem path | redacted to `<path>` |
+| `url` | `https`, a non-empty host, no userinfo, no whitespace | refused — including `http:` and `javascript:` |
+
+Every refusal is a **sentence about the class** ("it is not https") that names
+the field and never the value: a refusal that echoed its input would put the
+input on screen through the back door, which is the same failure it exists to
+prevent.
+
+### The entropy guard is copied with its guard, so a model name stays a model name
+
+The recorder's credential net ends with a high-entropy rule, and that rule has a
+guard (`isHighEntropy`) that keeps a string with separators or whitespace out of
+it. Without the guard, `claude-sonnet-4-5-20250929 / claude-opus-4-1` is
+"high-entropy" and every run's model pair would be drawn as `[redacted-token]` —
+a redaction where there is nothing to redact, which is worse than a leak of a
+model name. The console's copy carries the guard, and the fixture's model pair is
+the standing witness: it is in the committed recording, and it survives decoding
+(`test/fixtures/synthetic.ndjson`).
+
+### The text path: three writers, and no fourth way
+
+`src/renderer/app.ts` is the only code in the console that touches an element,
+and it is deliberately narrow (`ElementLike`: a text slot and attributes — no
+markup slot, no style, no event handler):
+
+- **`putText`** writes a string through `textContent` and nothing else. A refusal
+  is drawn as `n/a` with the console's sentence in the `title` attribute.
+- **`putReading`** writes a number through `formatReading`, so a screen cannot
+  draw a bare `0` where the document said "not known".
+- **`putLink`** takes its destination from `safeUrl` and puts it in `data-href`
+  — **never** in the navigating attribute. The renderer therefore cannot
+  navigate even if a screen is written badly later: an element carrying
+  `data-href` is inert until the main process, behind Task 1.2's allow-list,
+  decides the URL may be opened at all. A redaction marker offered as a link is
+  text with a title instead, because "the CLI redacted this URL" is a different
+  fact from "there is no URL".
+
+`sanitize.test.ts` drives the plan's hostile-title corpus through all three
+writers into a **fake element whose every markup-parsing property and every
+navigational or event attribute throws**, so "the text path cannot become markup"
+is a fact a test holds rather than a property a reviewer reads for. The fake also
+records every mutation, so a test can assert that the *only* write that happened
+was a text write. The same file scans `src/renderer/` for the markup-parsing
+properties (and for `toFixed`, `toLocaleString` and `Intl.NumberFormat`, which
+are how a number escapes the availability model), and checks that the scan sees a
+planted one — a lint that cannot fail is not a lint.
+
+### Two document shapes, and neither is a guess
+
+`src/shared/schema.ts` is the door every document comes through. It admits
+exactly the two shapes the CLI writes and nothing else:
+
+- the live feed (`internal/watch/json.go`), and
+- `watchDegradedDoc` — `lsDoc` **embedded** plus `degraded: true` and a `notice`
+  (`internal/cli/watch.go:401`), for a project with no budget backend.
+
+The discrimination is the `degraded` key itself, not a guess about which fields
+happen to be present: a document with `degraded` must carry `true` (no version of
+`watch` writes anything else), a document carrying `degraded: true` *and* the
+live feed's identifying keys is refused as a contradiction, and a document with
+neither shape's keys is the **skew state Task 3.2 renders** — never an empty
+screen, which is the failure that looks like a working console.
+
+Three rules a reader would not guess, all taken from the wire:
+
+- **The identifying keys are the eight the degraded shape does not have.**
+  `project` and `runs` are in *both* (`lsDoc` carries them), so a marker list
+  including them refuses a real degraded document as a contradiction. This is
+  exactly the bug the first draft of the test caught.
+- **Numbers are the tolerant axis and keys are not.** An absent or `null` number
+  is an unavailable reading with a sentence; an absent *string* key a screen
+  reads is a refusal by name (`runs[0].round`, `missing`).
+- **An unknown key is a refusal, and the key is text.** A document with a key
+  this console does not know is refused by name rather than half-drawn, and the
+  name goes through the sanitizer before it reaches a banner — a key shaped like
+  a credential is neutralised and a key no class admits is not drawn at all.
+
+The tests hold the plan's four claims, and three mutants die on them: reading a
+degraded document as a live one (4 tests), reading a missing number as `0` (3
+tests), and a shape that stops refusing unknown keys (2 tests).
+
+### The corpus was corrected against the wire, not against itself
+
+`synthetic.ts` and the committed recording now say what the Go source writes,
+which is not what the previous draft of the fixture said:
+
+- **`round` is a string**, not an int: `strconv.Itoa(e.Round)`, and `"-"` for a
+  run whose round is not known (`internal/watch/build.go:403`). A console that
+  typed it as a number would pass every fixture until a queued run arrived.
+  `schema.test.ts` has that near-miss as its own red step.
+- **`kill` is `null` when the switch is off**, not absent (`json.go:134`: the
+  field has no `omitempty`).
+- **The `omitempty` keys are absent, not empty** (`recipe`, `halted`, `queued`,
+  `stuck`, `workflow`, `requested_by`, `queued_note`), and `queued_note` is
+  therefore the one live key the corpus does not carry — asserted, so that a key
+  added to the shape and never carried by a document fails the walk.
+- **A queued row carries a dash in each of the five fields it has no value for**
+  (`round`, `verify`, `models`, `auth`, `internal/watch/queued.go:40`), with
+  `spent_usd: null`.
+
+The fixture is regenerated from `synthetic`, and `fixture.test.ts` asserts the
+committed bytes are exactly what the module produces, so an edit to the corpus
+that is not committed (or the reverse) fails.
+
+### The fake secrets, and why every one is built at run time
+
+`test/support/fakeSecrets.ts` is the one addition to the plan's file list for
+this task, and it exists for the reason below. It assembles every secret-shaped
+test input by concatenation — `gh` + `p_` + 36 characters, a PEM header from pieces and a body
+of repeated `A` — and no line of this task's files carries a shape a scanner
+matches. A fake token that is a *literal* is indistinguishable from a leaked one
+to GitHub's push protection and to a reader, and the console's own tests would be
+the last place to find out.
+
+### What is deliberately not here (Task 2.0)
+
+- **Any screen, and the wiring to the bridge.** `app.ts` has the writers and
+  nothing else: no screen, no entry point, no decision about where the compiled
+  script is served from (`tsc` emits `dist/`, `src/main/index.ts` serves
+  `src/renderer`, and one of the two has to move). Those are Task 2.1's.
+- **The skew banner itself.** `schema.ts` produces the state Task 3.2 draws; this
+  task does not draw it.
+- **The loader's share of the fixture decision.** `loadFixture` already refuses a
+  fixture whose header, redaction marker or hash does not verify (Task 1.4); this
+  task reads none of that and adds no second format.
+
+### A failing test, inherited, with the evidence
+
+`test/unit/redact-persons.test.ts` — "refuses a document nested 10000 deep as a
+`RedactionRefusal`, and the loader as a `FixtureRefusal`" — fails with
+`RangeError: Maximum call stack size exceeded` from `JSON.stringify` in
+`src/source/fixture.ts:208`. It is **not** this task's: it fails identically at
+`43c6dd7` (this branch's head before Task 2.0 began), which was checked out in a
+worktree and run there against the same Node. The rest of the suite is green
+(1013 passing, 1 failing). Fixing it belongs to the recorder's own task, and this
+task's diff does not touch `fixture.ts`, `redact.ts` or that suite.
 
 ## `docs/pending-workflows/console-tests.yml`
 
