@@ -134,7 +134,7 @@ func TestManagedAllowedTypesIsDecided(t *testing.T) {
 var managedKeptFixture = map[string]ResourceChange{
 	"google_apikeys_key": mrc("google_apikeys_key", map[string]any{"name": ManagedPrefix + "web-key"}),
 	"google_artifact_registry_repository": mrc("google_artifact_registry_repository", map[string]any{
-		"repository_id": ManagedPrefix + "repo", "format": "DOCKER"}),
+		"repository_id": ManagedPrefix + "repo", "format": "DOCKER", "mode": "STANDARD_REPOSITORY"}),
 	"google_artifact_registry_repository_iam_member": mrc("google_artifact_registry_repository_iam_member", map[string]any{
 		"repository": ManagedPrefix + "repo", "member": "serviceAccount:" + managedAccount, "role": "roles/artifactregistry.reader"}),
 	"google_cloud_run_v2_job": mrc("google_cloud_run_v2_job", map[string]any{
@@ -327,10 +327,10 @@ func TestManagedCoverRefusesTheBasicRoles(t *testing.T) {
 	}
 }
 
-// inModule is rc at module path mod (empty for the root module): the
+// managedInModule is rc at module path mod (empty for the root module): the
 // computed-value rules trust a value only when the resource it may be
 // computed from is created in the same module.
-func inModule(rc ResourceChange, mod string) ResourceChange {
+func managedInModule(rc ResourceChange, mod string) ResourceChange {
 	rc.Address = rc.Type + ".this"
 	if mod != "" {
 		rc.Address = mod + "." + rc.Address
@@ -357,11 +357,11 @@ func withUnknown(rc ResourceChange, unknown map[string]any) ResourceChange {
 // accounts and resources literally is covered.
 func TestManagedCoverComputedValues(t *testing.T) {
 	const mod = "module.managed"
-	sa := inModule(mrc("google_service_account", map[string]any{"account_id": ManagedPrefix + "sa"}), mod)
-	bucket := inModule(mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "bucket"}), mod)
-	secret := inModule(mrc("google_secret_manager_secret", map[string]any{"secret_id": ManagedPrefix + "token"}), mod)
-	repo := inModule(mrc("google_artifact_registry_repository", map[string]any{"repository_id": ManagedPrefix + "repo"}), mod)
-	job := inModule(managedKeptFixture["google_cloud_run_v2_job"], mod)
+	sa := managedInModule(mrc("google_service_account", map[string]any{"account_id": ManagedPrefix + "sa"}), mod)
+	bucket := managedInModule(mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "bucket"}), mod)
+	secret := managedInModule(mrc("google_secret_manager_secret", map[string]any{"secret_id": ManagedPrefix + "token"}), mod)
+	repo := managedInModule(mrc("google_artifact_registry_repository", map[string]any{"repository_id": ManagedPrefix + "repo", "mode": "STANDARD_REPOSITORY"}), mod)
+	job := managedInModule(managedKeptFixture["google_cloud_run_v2_job"], mod)
 	everything := []ResourceChange{sa, bucket, secret, repo, job}
 	// computed is the kept fixture of typ with attr known only after apply,
 	// in the module that creates everything a computed value could name.
@@ -374,7 +374,7 @@ func TestManagedCoverComputedValues(t *testing.T) {
 		for k, v := range set {
 			after[k] = v
 		}
-		return inModule(withUnknown(mrc(typ, after), map[string]any{attr: true}), mod)
+		return managedInModule(withUnknown(mrc(typ, after), map[string]any{attr: true}), mod)
 	}
 	const memberWhy = "a member that is not known at plan time"
 	for name, tc := range map[string]struct {
@@ -428,23 +428,23 @@ func TestManagedCoverComputedValues(t *testing.T) {
 	// A grant to an account the module creates, written with its member, its
 	// account and its bucket spelled out, is covered.
 	literal := []ResourceChange{sa, bucket,
-		inModule(managedKeptFixture["google_storage_bucket_iam_member"], mod),
-		inModule(managedKeptFixture["google_service_account_iam_member"], mod)}
+		managedInModule(managedKeptFixture["google_storage_bucket_iam_member"], mod),
+		managedInModule(managedKeptFixture["google_service_account_iam_member"], mod)}
 	if out := managedTestCover().NotCovered(managedPlan(literal...), nil); len(out) != 0 {
 		t.Errorf("a grant to a created account, spelled out, gives %q, want it covered", out)
 	}
 
 	// The job's and the scheduler's accounts: never trusted computed either.
-	jobComputedAccount := inModule(withUnknown(mrc("google_cloud_run_v2_job", map[string]any{
+	jobComputedAccount := managedInModule(withUnknown(mrc("google_cloud_run_v2_job", map[string]any{
 		"name": ManagedPrefix + "job", "template": []any{map[string]any{"template": []any{map[string]any{}}}}}),
 		map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"service_account": true}}}}}), mod)
-	schedComputedOAuth := inModule(withUnknown(mrc("google_cloud_scheduler_job", map[string]any{
+	schedComputedOAuth := managedInModule(withUnknown(mrc("google_cloud_scheduler_job", map[string]any{
 		"name": ManagedPrefix + "sweep", "http_target": []any{map[string]any{"oauth_token": []any{map[string]any{}}}}}),
 		map[string]any{"http_target": []any{map[string]any{"oauth_token": []any{map[string]any{"service_account_email": true}}}}}), mod)
-	schedComputedOIDC := inModule(withUnknown(mrc("google_cloud_scheduler_job", map[string]any{
+	schedComputedOIDC := managedInModule(withUnknown(mrc("google_cloud_scheduler_job", map[string]any{
 		"name": ManagedPrefix + "sweep", "http_target": []any{map[string]any{"oidc_token": []any{map[string]any{}}}}}),
 		map[string]any{"http_target": []any{map[string]any{"oidc_token": []any{map[string]any{"service_account_email": true}}}}}), mod)
-	schedComputedTarget := inModule(withUnknown(mrc("google_cloud_scheduler_job", map[string]any{
+	schedComputedTarget := managedInModule(withUnknown(mrc("google_cloud_scheduler_job", map[string]any{
 		"name": ManagedPrefix + "sweep"}), map[string]any{"http_target": true}), mod)
 	for name, tc := range map[string]struct {
 		rc  ResourceChange
@@ -738,5 +738,33 @@ func TestManagedCoverSchedulerOIDC(t *testing.T) {
 				t.Fatalf("gives %q, want one refusal naming %s", out, compute)
 			}
 		})
+	}
+}
+
+// TestManagedCoverRefusesAVirtualOrRemoteRepository: a repository carrying the
+// prefix can still be a virtual one whose upstream is Fugaro's own fugaro-base,
+// or a remote one whose upstream password is one of Fugaro's secrets, so the
+// prefix alone does not keep it the managed project's. A managed repository is
+// a standard one (the provider's default, which the plan shows when unset);
+// what else a repository points at is Task 1.2's.
+func TestManagedCoverRefusesAVirtualOrRemoteRepository(t *testing.T) {
+	repo := func(after map[string]any) ResourceChange {
+		after["repository_id"], after["format"] = ManagedPrefix+"repo", "DOCKER"
+		return mrc("google_artifact_registry_repository", after)
+	}
+	for name, rc := range map[string]ResourceChange{
+		"virtual":  repo(map[string]any{"mode": "VIRTUAL_REPOSITORY"}),
+		"remote":   repo(map[string]any{"mode": "REMOTE_REPOSITORY"}),
+		"no mode":  repo(map[string]any{}),
+		"computed": withUnknown(repo(map[string]any{}), map[string]any{"mode": true}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(managedPlan(rc), nil); len(out) != 1 || !refusedWith(out, rc.Address+" (", "STANDARD_REPOSITORY") {
+				t.Fatalf("gives %q, want one refusal naming STANDARD_REPOSITORY", out)
+			}
+		})
+	}
+	if out := managedTestCover().NotCovered(managedPlan(repo(map[string]any{"mode": "STANDARD_REPOSITORY"})), nil); len(out) != 0 {
+		t.Errorf("a standard repository gives %q, want it covered", out)
 	}
 }

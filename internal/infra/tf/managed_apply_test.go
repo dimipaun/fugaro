@@ -249,3 +249,261 @@ func refusedWith(out []string, parts ...string) bool {
 	}
 	return false
 }
+
+// readPlanFixture reads one of testdata's plans through parsePlan, as Show
+// reads terraform's output.
+func readPlanFixture(t *testing.T, name string) *Plan {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsePlan(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestManagedCoverRefusesTerraformsOwnProviderSettings reads terraform's own
+// output (terraform 1.16.4 and google 8.4.0, planned offline from the plugin
+// cache with the token in the environment, so no setting below is the test's
+// invention): a provider block in the root that impersonates Fugaro's
+// scheduler and sends the storage API — and the bearer token with it — to an
+// outside address, an aliased block whose impersonated account comes from an
+// ephemeral resource, and a module's own block that bills another project.
+// Each is refused for the setting it carries; the plan's resources are clean.
+func TestManagedCoverRefusesTerraformsOwnProviderSettings(t *testing.T) {
+	out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_settings_plan.json"), nil)
+	for _, want := range [][]string{
+		{"provider_config.google (", "storage_custom_endpoint"},
+		{"provider_config.google (", "impersonate_service_account"},
+		{"provider_config.google.other (", "alias"},
+		{"provider_config.google.other (", "impersonate_service_account"},
+		{"provider_config.module.m:google (", "billing_project"},
+		{"provider_config.module.m:google (", "user_project_override"},
+		{"configuration (references ephemeral.google_service_account_access_token.t:"},
+	} {
+		if !refusedWith(out, want...) {
+			t.Errorf("gives %q, want a refusal carrying %q", out, want)
+		}
+	}
+	for _, o := range out {
+		if !strings.HasPrefix(o, "provider_config.") && !strings.HasPrefix(o, "configuration (references ephemeral.") {
+			t.Errorf("refuses %q, which is neither a provider setting nor the ephemeral resource", o)
+		}
+		if strings.Contains(o, "setting project") || strings.Contains(o, "setting region") {
+			t.Errorf("refuses %q, an allowed setting", o)
+		}
+	}
+	// The positive control from the same terraform: project from a variable,
+	// region, zone and default labels written out.
+	if out := managedTestCover().NotCovered(readPlanFixture(t, "managed_provider_clean_plan.json"), nil); len(out) != 0 {
+		t.Errorf("the clean plan gives %q, want it covered", out)
+	}
+}
+
+// providerPlan is a plan of one managed bucket whose configuration's google
+// entry carries the given fields beside its name and full name.
+func providerPlan(t *testing.T, fields map[string]any) *Plan {
+	t.Helper()
+	pc := map[string]any{"name": "google", "full_name": googleProvider}
+	for k, v := range fields {
+		pc[k] = v
+	}
+	cfg := config(nil, []map[string]any{bucketConfig()}, nil)
+	cfg["provider_config"] = map[string]any{"google": pc}
+	return jsonPlan(t, []map[string]any{bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)}, cfg)
+}
+
+func constant(v any) map[string]any { return map[string]any{"constant_value": v} }
+
+func refs(r ...string) map[string]any { return map[string]any{"references": r} }
+
+// TestManagedCoverProviderSettings: a provider block decides who applies,
+// who is billed and where every request — with the applier's bearer token —
+// goes. A managed plan's provider blocks, in every module, set project,
+// region, zone, default labels and the attribution label alone, each written
+// out or read from a variable; every other setting, an alias and any field of
+// the entry the cover does not know is refused.
+func TestManagedCoverProviderSettings(t *testing.T) {
+	refused := map[string]map[string]any{
+		"credentials":                           {"expressions": map[string]any{"credentials": constant("{}")}},
+		"access_token":                          {"expressions": map[string]any{"access_token": refs("var.t")}},
+		"impersonate_service_account":           {"expressions": map[string]any{"impersonate_service_account": constant("fugaro-scheduler@proj-1.iam.gserviceaccount.com")}},
+		"impersonate_service_account_delegates": {"expressions": map[string]any{"impersonate_service_account_delegates": constant([]any{"a"})}},
+		"universe_domain":                       {"expressions": map[string]any{"universe_domain": constant("attacker.example")}},
+		"billing_project":                       {"expressions": map[string]any{"billing_project": constant("proj-2")}},
+		"user_project_override":                 {"expressions": map[string]any{"user_project_override": constant(true)}},
+		"storage_custom_endpoint":               {"expressions": map[string]any{"storage_custom_endpoint": constant("https://attacker.example/")}},
+		"a block":                               {"expressions": map[string]any{"batching": []any{map[string]any{"send_after": constant("1s")}}}},
+		"project from a local":                  {"expressions": map[string]any{"project": refs("local.p")}},
+		"project from a resource":               {"expressions": map[string]any{"project": refs("google_storage_bucket.b.project", "google_storage_bucket.b")}},
+		"project from an ephemeral":             {"expressions": map[string]any{"project": refs("ephemeral.x.y.z", "ephemeral.x.y")}},
+		"project from a variable and a local":   {"expressions": map[string]any{"project": refs("var.p", "local.q")}},
+		"project from a function":               {"expressions": map[string]any{"project": map[string]any{}}},
+		"labels from a data source":             {"expressions": map[string]any{"default_labels": refs("data.x.y.labels", "data.x.y")}},
+		"an alias":                              {"alias": "other", "expressions": map[string]any{"project": constant("proj-1")}},
+		"a field the cover does not know":       {"future_setting": map[string]any{"x": 1}},
+	}
+	for name, fields := range refused {
+		t.Run("refuses "+name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(providerPlan(t, fields), nil); !refusedWith(out, "provider_config.google (") {
+				t.Fatalf("gives %q, want the provider block refused", out)
+			}
+		})
+	}
+	admitted := map[string]map[string]any{
+		"nothing": {},
+		"the allowed settings written out": {"version_constraint": "8.4.0", "expressions": map[string]any{
+			"project": constant("proj-1"), "region": constant("us-east5"), "zone": constant("us-east5-a"),
+			"default_labels": constant(map[string]any{"team": "a"}), "add_terraform_attribution_label": constant(true),
+			"terraform_attribution_label_addition_strategy": constant("CREATION_ONLY")}},
+		"the allowed settings from variables": {"expressions": map[string]any{
+			"project": refs("var.p"), "region": refs("var.r"), "zone": refs("var.z"), "default_labels": refs("var.l.x", "var.l")}},
+		"a module's own block": {"module_address": "module.m", "expressions": map[string]any{"project": constant("proj-1")}},
+	}
+	for name, fields := range admitted {
+		t.Run("admits "+name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(providerPlan(t, fields), nil); len(out) != 0 {
+				t.Fatalf("gives %q, want it covered", out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverRefusesWhatThePlanCarriesBesideResources: Terraform's
+// action blocks run a provider's action at apply (action "local_command" runs
+// a command on the machine that applies) and show only in the plan's
+// action_invocations and the configuration's actions; a deferred change is a
+// resource the plan has not shown yet. These fixtures are hand-written from
+// the documented plan JSON format (terraform 1.14+); no cached provider
+// carries an action. Any key the cover does not know, at the top of the plan,
+// of the configuration or of a module, is refused when it carries anything,
+// rather than read as inert.
+func TestManagedCoverRefusesWhatThePlanCarriesBesideResources(t *testing.T) {
+	bucket := bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)
+	clean := func() map[string]any {
+		return map[string]any{"format_version": "1.2", "terraform_version": "1.16.4",
+			"resource_changes": []any{bucket},
+			"configuration":    config(map[string]string{"google": googleProvider}, []map[string]any{bucketConfig()}, nil)}
+	}
+	invocation := []any{map[string]any{"address": "action.local_command.x", "type": "local_command", "name": "x",
+		"provider_name": "registry.terraform.io/hashicorp/local", "config_values": map[string]any{"command": "true"},
+		"lifecycle_action_trigger": map[string]any{"triggering_resource_address": "google_storage_bucket.b",
+			"action_trigger_block_index": 0, "actions_list_index": 0, "action_trigger_event": "AfterCreate"}}}
+	actionConfig := []any{map[string]any{"address": "action.local_command.x", "type": "local_command", "name": "x",
+		"provider_config_key": "local", "expressions": map[string]any{"command": constant("true")}}}
+	root := func(d map[string]any) map[string]any {
+		return d["configuration"].(map[string]any)["root_module"].(map[string]any)
+	}
+	for name, tc := range map[string]struct {
+		edit func(d map[string]any)
+		want string
+	}{
+		"action_invocations":          {func(d map[string]any) { d["action_invocations"] = invocation }, "action_invocations"},
+		"deferred_action_invocations": {func(d map[string]any) { d["deferred_action_invocations"] = invocation }, "deferred_action_invocations"},
+		"deferred_changes": {func(d map[string]any) {
+			d["deferred_changes"] = []any{map[string]any{"reason": "provider_config_unknown", "resource_change": bucket}}
+		}, "deferred_changes"},
+		"an unknown top-level key": {func(d map[string]any) { d["hooks"] = map[string]any{"x": 1} }, "hooks"},
+		"actions in the root":      {func(d map[string]any) { root(d)["actions"] = actionConfig }, "actions"},
+		"actions in a module": {func(d map[string]any) {
+			root(d)["module_calls"] = map[string]any{"app": map[string]any{"source": "./app",
+				"module": map[string]any{"actions": actionConfig}}}
+		}, "module.app"},
+		"an unknown configuration key": {func(d map[string]any) {
+			d["configuration"].(map[string]any)["hooks"] = []any{1}
+		}, "hooks"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := clean()
+			tc.edit(d)
+			data, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := parsePlan(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out := managedTestCover().NotCovered(p, nil); !refusedWith(out, tc.want) {
+				t.Fatalf("gives %q, want a refusal naming %q", out, tc.want)
+			}
+		})
+	}
+	// The positive control: the keys terraform writes for an ordinary plan,
+	// and the action keys present but empty.
+	d := clean()
+	for k, v := range map[string]any{"variables": map[string]any{"p": map[string]any{"value": "x"}},
+		"planned_values": map[string]any{"root_module": map[string]any{}}, "prior_state": map[string]any{},
+		"resource_drift": []any{}, "relevant_attributes": []any{}, "output_changes": map[string]any{},
+		"checks": []any{}, "timestamp": "2026-10-17T00:00:00Z", "applyable": true, "complete": true,
+		"errored": false, "action_invocations": []any{}, "deferred_changes": nil} {
+		d[k] = v
+	}
+	root(d)["actions"] = []any{}
+	root(d)["outputs"] = map[string]any{"o": map[string]any{"expression": constant("x")}}
+	root(d)["variables"] = map[string]any{"p": map[string]any{"default": "x"}}
+	data, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsePlan(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := managedTestCover().NotCovered(p, nil); len(out) != 0 {
+		t.Fatalf("an ordinary plan gives %q, want it covered", out)
+	}
+}
+
+// TestManagedCoverRefusesEphemeralResources: an ephemeral resource is opened
+// at apply with the applier's credentials (google_service_account_access_token
+// mints a token for any account the applier may impersonate). Terraform
+// leaves the block itself out of the plan's configuration, so the cover
+// refuses it wherever it can show: as a change of mode "ephemeral", as a
+// configuration entry of that mode, and as a reference from any expression of
+// the configuration — a resource's, a module call's, a provider's.
+func TestManagedCoverRefusesEphemeralResources(t *testing.T) {
+	google := map[string]string{"google": googleProvider}
+	bucket := bucketChange("google_storage_bucket.b", ManagedPrefix+"b", googleProvider)
+	ephRefs := refs("ephemeral.google_service_account_access_token.t.access_token", "ephemeral.google_service_account_access_token.t")
+	withExpr := func(r map[string]any, key string, v any) map[string]any {
+		r["expressions"] = map[string]any{key: v}
+		return r
+	}
+	for name, tc := range map[string]struct {
+		changes []map[string]any
+		config  map[string]any
+		want    []string
+	}{
+		"a change of mode ephemeral": {[]map[string]any{bucket, {"address": "ephemeral.google_service_account_access_token.t",
+			"mode": "ephemeral", "type": "google_service_account_access_token", "name": "t", "provider_name": googleProvider,
+			"change": map[string]any{"actions": []any{"open"}, "after": map[string]any{}, "after_unknown": map[string]any{}}}},
+			config(google, []map[string]any{bucketConfig()}, nil),
+			[]string{"ephemeral.google_service_account_access_token.t (", "ephemeral"}},
+		"a configuration entry of mode ephemeral": {[]map[string]any{bucket},
+			config(google, []map[string]any{bucketConfig(), {"address": "ephemeral.google_service_account_access_token.t",
+				"mode": "ephemeral", "type": "google_service_account_access_token", "name": "t", "provider_config_key": "google"}}, nil),
+			[]string{"ephemeral.google_service_account_access_token.t (", "ephemeral"}},
+		"a resource's expression": {[]map[string]any{bucket},
+			config(google, []map[string]any{withExpr(bucketConfig(), "labels", map[string]any{"t": ephRefs})}, nil),
+			[]string{"ephemeral.google_service_account_access_token.t"}},
+		"a module call's expression": {[]map[string]any{bucket},
+			config(google, []map[string]any{bucketConfig()}, map[string]any{"app": map[string]any{"source": "./app",
+				"expressions": map[string]any{"token": ephRefs}, "module": map[string]any{}}}),
+			[]string{"ephemeral.google_service_account_access_token.t"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out := managedTestCover().NotCovered(jsonPlan(t, tc.changes, tc.config), nil); !refusedWith(out, tc.want...) {
+				t.Fatalf("gives %q, want a refusal carrying %q", out, tc.want)
+			}
+		})
+	}
+	// The positive control: a resource expression with ordinary references.
+	cfg := config(google, []map[string]any{withExpr(bucketConfig(), "location", refs("var.location"))}, nil)
+	if out := managedTestCover().NotCovered(jsonPlan(t, []map[string]any{bucket}, cfg), nil); len(out) != 0 {
+		t.Fatalf("gives %q, want it covered", out)
+	}
+}

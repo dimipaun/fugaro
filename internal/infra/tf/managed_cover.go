@@ -1,6 +1,7 @@
 package tf
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"regexp"
@@ -197,7 +198,14 @@ var managedGrantRules = map[string]bool{
 // calls. No provisioner anywhere, no provider but Google's two, no data
 // source, and no object uploaded from a local path — read from the plan's
 // configuration and each change's mode and provider, which is why a plan
-// without a configuration is refused (managedConfiguration).
+// without a configuration is refused (managedConfiguration). Nor does the
+// plan choose who applies, who is billed or where the requests go: a provider
+// block sets project, region, zone and labels alone (managedProviderAllowed).
+// No action, deferred change or ephemeral resource either, and any key of the
+// plan, the configuration or a module the cover does not know is refused
+// rather than read as inert (managedPlanFields). What the plan JSON does not
+// show at all — the backend, provider_meta, an unreferenced ephemeral block —
+// is Task 3.1's to refuse before init.
 type ManagedCover struct {
 	Cover
 }
@@ -221,7 +229,7 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
 	}
-	out := managedConfiguration(p)
+	out := append(managedPlanFields(p), managedConfiguration(p)...)
 	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -319,14 +327,24 @@ func managedConfiguration(p *Plan) []string {
 		}
 		return []string{"the plan (no configuration: a managed plan's provisioners, providers and data sources are read from it, so a plan without one is refused rather than read as having none)"}
 	}
-	var out []string
+	out := unknownFields("configuration", cfg.fields, managedConfigurationKeys)
 	for _, key := range slices.Sorted(maps.Keys(cfg.ProviderConfig)) {
-		if full := cfg.ProviderConfig[key].FullName; !managedProviders[full] {
-			out = append(out, "provider_config."+key+" ("+managedProviderReason(full)+")")
+		pc := cfg.ProviderConfig[key]
+		if !managedProviders[pc.FullName] {
+			out = append(out, "provider_config."+key+" ("+managedProviderReason(pc.FullName)+")")
+		}
+		for _, why := range managedProviderSettings(pc) {
+			out = append(out, "provider_config."+key+" ("+why+")")
 		}
 	}
+	out = append(out, managedEphemeralReferences(cfg.raw)...)
 	var walk func(prefix string, m ConfigModule)
 	walk = func(prefix string, m ConfigModule) {
+		where := "configuration.root_module"
+		if prefix != "" {
+			where = strings.TrimSuffix(prefix, ".")
+		}
+		out = append(out, unknownFields(where, m.fields, managedModuleKeys)...)
 		for _, r := range m.Resources {
 			addr := prefix + r.Address
 			switch {
@@ -341,6 +359,172 @@ func managedConfiguration(p *Plan) []string {
 		}
 	}
 	walk("", cfg.RootModule)
+	return out
+}
+
+// managedInertPlanKeys are the top-level keys of terraform's plan JSON that
+// carry nothing a managed apply runs: the values, the changes the cover reads,
+// the state before, the configuration it reads, and terraform's bookkeeping.
+// Any other key carrying anything is refused (managedPlanFields): an action
+// runs at apply and shows only in action_invocations, a deferred change is a
+// resource the plan does not show yet, and a key a later terraform adds is one
+// this cover has not read.
+var managedInertPlanKeys = map[string]bool{
+	"format_version": true, "terraform_version": true, "variables": true, "planned_values": true,
+	"resource_drift": true, "resource_changes": true, "relevant_attributes": true, "output_changes": true,
+	"prior_state": true, "configuration": true, "checks": true, "timestamp": true,
+	"applyable": true, "complete": true, "errored": true,
+}
+
+// managedConfigurationKeys and managedModuleKeys are the keys of the
+// configuration and of each of its modules the cover reads or knows inert;
+// any other, such as a module's "actions", is refused when it carries
+// anything.
+var (
+	managedConfigurationKeys = map[string]bool{"provider_config": true, "root_module": true}
+	managedModuleKeys        = map[string]bool{"resources": true, "module_calls": true, "outputs": true, "variables": true}
+)
+
+// managedPlanFields says why the plan carries a top-level key a managed plan
+// may not: one outside managedInertPlanKeys that is not empty.
+func managedPlanFields(p *Plan) []string {
+	return unknownFields("the plan", p.fields, managedInertPlanKeys)
+}
+
+// unknownFields lists, as refusals at where, the keys of fields outside known
+// that carry anything: absent, null, [] and {} carry nothing.
+func unknownFields(where string, fields map[string]json.RawMessage, known map[string]bool) []string {
+	var out []string
+	for _, k := range slices.Sorted(maps.Keys(fields)) {
+		if known[k] || emptyJSON(fields[k]) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s (carries %q, which the managed cover does not read: an action runs at apply and a deferred change is a resource the plan does not show, so a key it does not know is refused rather than read as inert)", where, k))
+	}
+	return out
+}
+
+// emptyJSON: the value is null, an empty list or an empty object.
+func emptyJSON(raw json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return false
+	}
+	switch v := v.(type) {
+	case nil:
+		return true
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	}
+	return false
+}
+
+// managedProviderKeys are the fields of a provider_config entry the cover
+// reads or knows inert. An alias is read, and refused (managedProviderSettings).
+var managedProviderKeys = map[string]bool{
+	"name": true, "full_name": true, "alias": true, "module_address": true, "version_constraint": true, "expressions": true,
+}
+
+// managedProviderAllowed are the settings a managed plan's provider block may
+// carry, in any module: where its resources land by default and the labels
+// they carry, nothing else. Every other setting of Google's provider decides
+// who applies (credentials, access_token, impersonate_service_account and its
+// delegates), who is billed (billing_project, user_project_override), or
+// where every request — the applier's bearer token with it — is sent (the
+// *_custom_endpoint settings, universe_domain), and is refused.
+var managedProviderAllowed = map[string]bool{
+	"project": true, "region": true, "zone": true, "default_labels": true,
+	"add_terraform_attribution_label": true, "terraform_attribution_label_addition_strategy": true,
+}
+
+// managedProviderSettings says why a provider block carries what a managed
+// plan's may not: an alias (a second configuration of the provider is a
+// second set of settings a module can be handed), a field of the entry the
+// cover does not know, a setting outside managedProviderAllowed, or an
+// allowed one whose value is neither written out nor read from variables
+// alone — a local, a resource, a data source or an ephemeral resource can
+// carry what the plan does not show, and a function call shows as neither.
+func managedProviderSettings(pc ProviderConfig) []string {
+	var out []string
+	if pc.Alias != "" {
+		out = append(out, fmt.Sprintf("alias %q: a managed plan configures each provider once, without an alias", pc.Alias))
+	}
+	for _, k := range slices.Sorted(maps.Keys(pc.fields)) {
+		if !managedProviderKeys[k] {
+			out = append(out, fmt.Sprintf("carries %q, a field of a provider block the managed cover does not read", k))
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(pc.Expressions)) {
+		if !managedProviderAllowed[k] {
+			out = append(out, fmt.Sprintf("setting %s, which a managed plan's provider block may not carry: it sets only %s", k, strings.Join(slices.Sorted(maps.Keys(managedProviderAllowed)), ", ")))
+			continue
+		}
+		var e struct {
+			ConstantValue json.RawMessage `json:"constant_value"`
+			References    []string        `json:"references"`
+		}
+		ok := json.Unmarshal(pc.Expressions[k], &e) == nil
+		if ok && e.ConstantValue == nil {
+			ok = len(e.References) > 0
+			for _, r := range e.References {
+				ok = ok && strings.HasPrefix(r, "var.")
+			}
+		}
+		if !ok || (e.ConstantValue != nil && len(e.References) > 0) {
+			out = append(out, fmt.Sprintf("setting %s from something other than a literal or variables alone: write it out, or read it from a variable", k))
+		}
+	}
+	return out
+}
+
+// managedEphemeralReferences says which ephemeral resources an expression of
+// the configuration references, anywhere: a resource's, a module call's, a
+// provider's, an output's. An ephemeral resource is opened at apply with the
+// applier's credentials (google_service_account_access_token mints a token
+// for an account the applier may impersonate), and terraform leaves the
+// block itself out of the plan's configuration, so a reference to one is
+// where a plan shows it. One that nothing references, or that only a local
+// does, is not in the plan at all: Task 3.1 refuses the block in the working
+// directory's .tf files.
+func managedEphemeralReferences(raw json.RawMessage) []string {
+	var doc any
+	if len(raw) == 0 || json.Unmarshal(raw, &doc) != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if refs, ok := v["references"].([]any); ok {
+				for _, r := range refs {
+					if s, _ := r.(string); strings.HasPrefix(s, "ephemeral.") {
+						// The block's own address: terraform lists the
+						// reference, its instance and the block.
+						parts := strings.SplitN(s, ".", 4)
+						if len(parts) >= 3 {
+							s = strings.Join(parts[:2], ".") + "." + strings.SplitN(parts[2], "[", 2)[0]
+						}
+						seen[s] = true
+					}
+				}
+			}
+			for _, e := range v {
+				walk(e)
+			}
+		case []any:
+			for _, e := range v {
+				walk(e)
+			}
+		}
+	}
+	walk(doc)
+	var out []string
+	for _, r := range slices.Sorted(maps.Keys(seen)) {
+		out = append(out, "configuration (references "+r+": an ephemeral resource is opened at apply with the credentials of whoever applies, and a managed plan opens none)")
+	}
 	return out
 }
 
@@ -390,6 +574,15 @@ func (c ManagedCover) managedResource(rc ResourceChange) string {
 		// refused for managedNames' reason.
 		if unknown(rc.Change, "source") || str(a["source"]) != "" {
 			return "an object uploaded from source, a local path on the machine that applies: write its content in the plan instead"
+		}
+	case "google_artifact_registry_repository":
+		// A virtual repository reads through to an upstream repository, which
+		// can be Fugaro's own fugaro-base, and a remote one through to an
+		// outside registry with a password from a secret, which can be
+		// Fugaro's: the prefix covers the repository and not what it reads.
+		// The provider writes the default mode into the plan when it is unset.
+		if m := str(a["mode"]); m != "STANDARD_REPOSITORY" {
+			return fmt.Sprintf("a repository of mode %q, which is not STANDARD_REPOSITORY: a virtual or remote repository reads from an upstream the prefix does not cover", m)
 		}
 	case "google_cloud_run_v2_job":
 		// A job with no service account runs as the project's default compute
