@@ -11,9 +11,9 @@
 //      the cases below mutate `website/data/faq.yaml` in a temp copy and require the build to
 //      stop with the row's own id in the message. The empty section is the honest state on
 //      day one, so the section renders no rows until the owner supplies sourced, dated ones.
-//   2. **The FAQ is owner-reviewed before it publishes** (D103). The page records that it is
-//      pending that review, and `faq.yaml`'s own flag is what decides it: flip the flag in the
-//      fixture and the note has to disappear from the built page.
+//   2. **The FAQ is owner-approved and says so by saying nothing** (D103; approved 2026-10-17).
+//      The built page carries no pending-review notice, and `faq.yaml` carries no review flag:
+//      a stale `review_pending:` key fails the build as a key the page does not read.
 //   3. **The community page's CI description is `ci.yml`'s, not prose somebody typed**
 //      (F46, D101). The section is rendered from the workflow's own `on:` block, and the case
 //      that proves it edits `ci.yml` in a temp copy and requires the page to follow — because
@@ -299,10 +299,10 @@ test('the FAQ refuses a comparison row that carries no date', async (t) => {
   assert.notEqual(built.status, 0, `the build accepted a comparison row with no date:\n${built.output}`)
 })
 
-test('a comparison row with a source and a date is rendered, and the FAQ is no longer pending review', async (t) => {
+test('a comparison row with a source and a date is rendered, and the page carries no pending-review notice', async (t) => {
   // The positive half of the same rule, in one build: a row that carries both fields is
-  // published, and the owner's review is what the fixture also flips — so the page is not
-  // merely refusing rows, it is rendering the sourced ones.
+  // published, so the page is not merely refusing rows, it is rendering the sourced ones —
+  // and, with a row in it, the page still carries no pending-review notice.
   const rows = `  - ${row(PROBE, {
     name: 'A rival tool',
     claim: 'It runs agents somewhere, according to its own documentation.',
@@ -311,7 +311,6 @@ test('a comparison row with a source and a date is rendered, and the FAQ is no l
   })}`
   const built = buildWith(t, (copy) => {
     rewrite(path.join(copy.site, 'data', 'faq.yaml'), withComparison(rows))
-    rewrite(path.join(copy.site, 'data', 'faq.yaml'), (text) => text.replace(/^review_pending: true$/m, 'review_pending: false'))
   })
 
   assert.equal(built.status, 0, `the build refused a sourced, dated comparison row:\n${built.output}`)
@@ -323,8 +322,8 @@ test('a comparison row with a source and a date is rendered, and the FAQ is no l
   assert.ok(built.page.includes('https://example.invalid/rival'), 'the row is rendered without its source')
   assert.ok(built.page.includes('2026-10-01'), 'the row is rendered without its date')
   assert.ok(
-    !built.page.includes('id="review-pending"'),
-    'review_pending is false in faq.yaml and the page still says it is pending the owner\'s review (D103)',
+    !built.page.includes('id="review-pending"') && !/pending review/i.test(built.page),
+    "the owner approved the FAQ on 2026-10-17 and the page still says it is pending the owner's review (D103)",
   )
 })
 
@@ -345,15 +344,10 @@ test('the comparison section renders no rows while faq.yaml carries none', async
     assert.ok(!section.includes('id="comparison-empty"'), 'faq.yaml carries comparison rows and the section still renders its empty state')
   }
 
-  // And the review flag is read from the file rather than typed into the page: the same flag
-  // the case above flips, asserted against the real file.
-  const pending = /^review_pending:\s*(true|false)\s*$/m.exec(faq)
-  assert.ok(pending, `${FAQ_FILE} carries no \`review_pending:\` line, so nothing decides whether the page says it is pending review (D103)`)
-  assert.equal(
-    page.includes('id="review-pending"'),
-    pending[1] === 'true',
-    `faq.yaml says review_pending: ${pending[1]} and the built page disagrees`,
-  )
+  // The FAQ is approved (D103, 2026-10-17): no review flag in the file, no notice on the page.
+  assert.ok(!/^review_pending:/m.test(faq), `${FAQ_FILE} carries a review_pending flag again, and the FAQ is approved (D103)`)
+  assert.ok(!page.includes('id="review-pending"'), 'the built FAQ carries the pending-review notice, and the owner approved it on 2026-10-17 (D103)')
+  assert.ok(!/pending review/i.test(page), 'the built FAQ says it is pending review, and the owner approved it on 2026-10-17 (D103)')
 })
 
 // ---- the community page's facts -----------------------------------------------------------

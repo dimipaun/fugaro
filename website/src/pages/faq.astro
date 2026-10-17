@@ -20,9 +20,8 @@
  *   2. **An answer whose source is not in the tree stops the build.** Every answer names the
  *      file that proves it, the page links it at the branch the repository builds on, and a
  *      source that is not there is a build error rather than a link that 404s.
- *   3. **The review state is data, not prose** (D103). `review_pending` is the owner's
- *      before-publish review of this page, and the note below is rendered from that flag —
- *      the owner flips it in the commit that records the review, and the note goes with it.
+ *   3. **The page carries no pending-review notice** (D103). The owner approved the FAQ on
+ *      2026-10-17, and the page's test pins that the notice is gone.
  *
  * It reads the file itself rather than through `src/content.ts`, and that is a consequence
  * of this task's Files list rather than a preference: W1.3 owns `content.ts` and its reader
@@ -95,7 +94,7 @@ function parseFaqYAML(raw: string): { [key: string]: Value } {
 
   // A folded block scalar (`>-`): the lines under the indicator, indented past it, folded
   // into one line per paragraph. The FAQ's answers are written this way so that a reader —
-  // and the owner, who reviews this page before it publishes (D103) — edits a paragraph
+  // and the owner, who approved this page (D103) — edits a paragraph
   // rather than a line a thousand characters wide.
   const blockScalar = (indicator: string, parentIndent: number): string => {
     const folded = indicator.startsWith('>')
@@ -219,12 +218,11 @@ interface ComparisonRow {
 }
 
 interface Faq {
-  pendingReview: boolean
   questions: Question[]
   rows: ComparisonRow[]
 }
 
-const TOP_LEVEL_KEYS = ['version', 'review_pending', 'questions', 'comparison']
+const TOP_LEVEL_KEYS = ['version', 'questions', 'comparison']
 
 /** A required string of the file, or a build error naming the key and the entry. */
 function text(entry: { [key: string]: Value }, key: string, what: string): string {
@@ -260,12 +258,6 @@ function loadFaq(): Faq {
   }
   if (document.version !== 1) {
     throw new Error(`${FAQ_FILE}: version is ${JSON.stringify(document.version)}, and this reader knows version 1 (W1.10 step 2).`)
-  }
-
-  // D103's answer: the owner reviews this page before it publishes. The flag is the state,
-  // and it is a boolean rather than something a truthy test could get wrong.
-  if (typeof document.review_pending !== 'boolean') {
-    throw new Error(`${FAQ_FILE}: review_pending is ${JSON.stringify(document.review_pending)}, and it is the owner's before-publish review of this page as true or false (D103).`)
   }
 
   const questions = (Array.isArray(document.questions) ? document.questions : []).map((value, index) => {
@@ -333,7 +325,7 @@ function loadFaq(): Faq {
     return { id, name: text(entry, 'name', what), claim: text(entry, 'claim', what), source, date }
   })
 
-  return { pendingReview: document.review_pending, questions, rows }
+  return { questions, rows }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -406,14 +398,6 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
     each one names the document it came from. Where the detail matters it is a link, not a
     summary.
   </p>
-
-  {faq.pendingReview && (
-    <p id="review-pending" class="note">
-      <strong>Pending review.</strong> The owner reviews this page — the comparison section
-      included — before it publishes, so what you are reading is the page as it stands, not the
-      page as it is approved (D103).
-    </p>
-  )}
 
   <div class="questions">
     {faq.questions.map((entry) => (
