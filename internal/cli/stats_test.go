@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -44,7 +47,10 @@ var statsIdentifierShapes = map[string]*regexp.Regexp{
 
 // statsSeed is one run's record, as seedStatsRuns writes it.
 type statsSeed struct {
-	recipe       string
+	recipe string
+	// source is the recipe's own source: "catalog" (the default here) or the
+	// "repo" a repository's recipe of its own has.
+	source       string
 	duration     time.Duration
 	cost         float64
 	notEstimated bool
@@ -52,12 +58,14 @@ type statsSeed struct {
 	noFigure bool
 }
 
-// seedStatsRuns writes n records of one recipe into the fixture's runs bucket.
-// Every record carries the identifiers a real one carries -- the repository,
-// the run ID, the branch, the pull request, the commit and the oauth account
-// -- and a task.json beside it carrying the task's own text and the person who
-// asked for it, so the tests prove that neither reaches the output: the
-// command reads result.json and nothing else.
+// seedStatsRuns writes one record per seed into the fixture's runs bucket.
+// Every record carries the identifiers and the free text a real one carries --
+// the repository, the run ID, the branch, the pull request, the commit, the
+// oauth account, and the model and the path a halt's own reason and detail
+// hold -- and a task.json beside it carrying the task's own text and the
+// person who asked for it, so the tests prove that none of it reaches the
+// output: the command reads result.json, and reads nothing out of it but a
+// recipe, a duration and a cost.
 func seedStatsRuns(t *testing.T, f *cloudFixture, seeds []statsSeed, start time.Time) {
 	t.Helper()
 	ctx := context.Background()
@@ -71,18 +79,24 @@ func seedStatsRuns(t *testing.T, f *cloudFixture, seeds []statsSeed, start time.
 		}); err != nil {
 			t.Fatal(err)
 		}
+		source := s.source
+		if source == "" {
+			source = "catalog"
+		}
 		rec := runstore.Record{
 			Version: 1, RunID: id, Repo: statsFixtureRepo, Workflow: "web",
 			OAuthAccount: statsFixturePerson, Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady,
 			Branch: statsFixtureBranch, PushedHead: statsFixtureCommit,
-			PR:        &runstore.PRRef{Number: 7, URL: statsFixturePRURL},
-			Recipe:    &runstore.RecipeRecord{Name: s.recipe, Source: "catalog", SHA256: strings.Repeat("ab", 32)},
-			StartedAt: start.Add(-2 * time.Hour),
+			PR:     &runstore.PRRef{Number: 7, URL: statsFixturePRURL},
+			Halt:   &runstore.Halt{Reason: runstore.HaltReason(statsFixtureModel), Scope: "run", At: start, Detail: statsFixtureHaltDetail},
+			Recipe: &runstore.RecipeRecord{Name: s.recipe, Source: source, SHA256: strings.Repeat("ab", 32)},
+			// StartedAt is set below, once the duration is known.
 			Cost: &runstore.Cost{
 				TotalUSD: s.cost, ComputeEstimated: !s.notEstimated,
 				ModelUSD: 0, Estimate: true, ModelBasis: runstore.BasisAPIList,
 			},
 		}
+		rec.StartedAt = start.Add(-2 * time.Hour)
 		if !s.noFigure {
 			done := rec.StartedAt.Add(s.duration)
 			rec.FinishedAt = &done
@@ -91,6 +105,29 @@ func seedStatsRuns(t *testing.T, f *cloudFixture, seeds []statsSeed, start time.
 			t.Fatal(err)
 		}
 	}
+}
+
+// seedStatsUnreadable writes one more run into the bucket whose result.json
+// cannot be read: a file the process has no permission for, which is a read
+// failure that is neither a missing record nor a corrupt one, so it is the one
+// the command must report without naming the run.
+func seedStatsUnreadable(t *testing.T, f *cloudFixture, start time.Time, n int) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("the file is readable despite mode 0 (running as root)")
+	}
+	ctx := context.Background()
+	id := fmt.Sprintf("%s-1200%02d-abcd", start.Format("20060102"), n)
+	st := runstore.Open(statsBucket(t, f), appSlug, id)
+	if err := st.PutFile(ctx, "result.json", []byte(`{"version":1}`), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's runs bucket is <dir>/runs, and a run sits under runs/.
+	path := filepath.Join(f.dir, "runs", "runs", appSlug, id, "result.json")
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
 }
 
 // statsBucket opens the fixture's runs bucket directly, for the seeds that
@@ -127,6 +164,13 @@ const (
 	statsFixturePerson = "someone@example.com"
 	statsFixtureTask   = "rewrite the billing pipeline for the acme rollout"
 	statsFixtureCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	// The free text a record can hold besides: the model a run was halted
+	// over, the path a halt's detail names, the person a task was asked for
+	// by, and a recipe of a repository's own.
+	statsFixtureModel      = "acme-org/llm-internal-v9"
+	statsFixtureHaltDetail = "/var/lib/fugaro/runs/20261017-120000-abcd/transcripts/agent-1.jsonl"
+	statsFixtureName       = "Ada Example-Lovelace"
+	statsFixtureCustom     = "acme-house-style"
 )
 
 // statsFixtureIDs are the strings of the fixtures above that the output must
@@ -136,15 +180,45 @@ func statsFixtureIDs() []string {
 	return []string{
 		statsFixtureRepo, statsFixtureBranch, statsFixturePRURL,
 		statsFixturePerson, statsFixtureTask, statsFixtureCommit,
-		appSlug,
+		statsFixtureModel, statsFixtureHaltDetail, statsFixtureName,
+		statsFixtureCustom, appSlug,
+	}
+}
+
+// statsIdentifierREs are what an identifier looks like anywhere in a line of
+// text -- unlike the anchored shapes above, these are for the table and for
+// stderr, where a value sits inside a sentence.
+var statsIdentifierREs = map[string]*regexp.Regexp{
+	"a repository slug, branch or path": regexp.MustCompile(`[A-Za-z0-9._-]+/[A-Za-z0-9._-]+`),
+	"a run ID":                          regexp.MustCompile(`\b[0-9]{8}-[0-9]{6}-[0-9a-f]{4}\b`),
+	"a commit":                          regexp.MustCompile(`\b[0-9a-f]{40}\b`),
+	"a person":                          regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+`),
+	"a URL":                             regexp.MustCompile(`://`),
+}
+
+// assertNoIdentifiers fails if text carries any identifier of the fixture, or
+// anything that looks like one. what names the output it is: the table the
+// command printed, or what it wrote to stderr.
+func assertNoIdentifiers(t *testing.T, what, text string) {
+	t.Helper()
+	for _, id := range statsFixtureIDs() {
+		if strings.Contains(text, id) {
+			t.Errorf("%s carries the identifier %q:\n%s", what, id, text)
+		}
+	}
+	for shape, re := range statsIdentifierREs {
+		if m := re.FindString(text); m != "" {
+			t.Errorf("%s carries what looks like %s: %q\n%s", what, shape, m, text)
+		}
 	}
 }
 
 // TestStatsRunsJSONCarriesNoIdentifiers is the load-bearing test of the task
-// (reconciliation D96, plan P2): the aggregation's output carries no
-// repository slug, run ID, branch, pull request, task text, person or commit,
-// over a fixture whose records deliberately carry every one of them -- so a
-// future field that leaks one fails here.
+// (reconciliation D96, plan P2): the output carries no repository slug, run ID,
+// branch, pull request, task text, person, commit, model or path, over a
+// fixture whose records deliberately carry every one of them -- so a future
+// field that leaks one fails here. The table and stderr are held to the same
+// rule as --json: they are printed output too.
 func TestStatsRunsJSONCarriesNoIdentifiers(t *testing.T) {
 	noAgentSession(t)
 	f := newCloudFixture(t)
@@ -152,9 +226,12 @@ func TestStatsRunsJSONCarriesNoIdentifiers(t *testing.T) {
 	for i := range 21 {
 		seeds = append(seeds, statsSeed{recipe: "standard", duration: time.Duration(600+i*60) * time.Second, cost: 1 + float64(i)/10})
 	}
+	// A repository's recipe of its own, dropped by the aggregation: its name
+	// must not appear either.
+	seeds = append(seeds, statsSeed{recipe: statsFixtureCustom, source: "repo", duration: time.Minute, cost: 2})
 	seedStatsRuns(t, f, seeds, time.Now().UTC())
 
-	out, _, err := execute(t, "stats", "runs", "--project", "aurora", "--json")
+	out, errOut, err := execute(t, "stats", "runs", "--project", "aurora", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,9 +255,17 @@ func TestStatsRunsJSONCarriesNoIdentifiers(t *testing.T) {
 			}
 		}
 	}
-	if strings.Contains(out, statsFixtureTask) || strings.Contains(out, statsFixturePerson) {
-		t.Errorf("stats output carries the task's own text or its requester: %s", out)
+	assertNoIdentifiers(t, "the JSON output", out)
+	assertNoIdentifiers(t, "stderr", errOut)
+
+	// The same fixture, without --json: the table is printed output too, and
+	// so is anything the command warns with.
+	table, tableErr, err := execute(t, "stats", "runs", "--project", "aurora")
+	if err != nil {
+		t.Fatal(err)
 	}
+	assertNoIdentifiers(t, "the table", table)
+	assertNoIdentifiers(t, "stderr", tableErr)
 }
 
 // statsStrings walks a decoded JSON document and returns every string value
@@ -533,6 +618,188 @@ func TestStatsRunsSurvivesARecordItCannotRead(t *testing.T) {
 	totals := statsTotals(t, doc)
 	if totals["runs"] != float64(21) || totals["runs_without_a_figure"] != float64(1) {
 		t.Errorf("totals = %v, want the corrupt record counted and not grouped", totals)
+	}
+}
+
+// TestStatsRunsDropsARepoRecipeThatShadowsTheCatalog: a repository (or project)
+// recipe may reuse a built-in name -- resolveRecipe lets it shadow the catalog
+// one -- so grouping by the record's name alone would publish one repository's
+// own loop under a built-in label, beside the catalog's runs and with its
+// figures mixed in. Only a catalog recipe is grouped; 20 runs of a repo's
+// "standard" at about $500, next to 20 catalog ones, must leave the published
+// p90 at the catalog's $1.81 and count the repo's 20 as unknown.
+func TestStatsRunsDropsARepoRecipeThatShadowsTheCatalog(t *testing.T) {
+	noAgentSession(t)
+	f := newCloudFixture(t)
+	var seeds []statsSeed
+	for i := 1; i <= 20; i++ {
+		seeds = append(seeds, statsSeed{recipe: "standard", duration: time.Duration(i*100) * time.Second, cost: float64(i) * 0.1})
+	}
+	shadows := 0
+	for i := 1; i <= 20; i++ {
+		seeds = append(seeds, statsSeed{recipe: "standard", source: "repo", duration: 15 * time.Minute, cost: float64(i) * 500})
+		shadows++
+	}
+	for range 20 {
+		seeds = append(seeds, statsSeed{recipe: "standard", source: "project", duration: 15 * time.Minute, cost: 500})
+		shadows++
+	}
+	seedStatsRuns(t, f, seeds, time.Now().UTC())
+
+	doc := statsRunsJSON(t, f, "aurora")
+	recipes, _ := doc["recipes"].([]any)
+	if len(recipes) != 1 {
+		t.Fatalf("recipes = %v, want only the catalog's standard", doc["recipes"])
+	}
+	group, _ := recipes[0].(map[string]any)
+	if group["recipe"] != "standard" || group["runs"] != float64(20) {
+		t.Fatalf("group = %v, want the catalog's 20 runs", group)
+	}
+	cost, _ := group["cost_usd"].(map[string]any)
+	if cost["p90"] != 1.81 || cost["min"] != 0.10 {
+		t.Errorf("cost_usd = %v, want the catalog's own range: a repository's loop must not be published as the built-in standard", cost)
+	}
+	if totals := statsTotals(t, doc); totals["runs_unknown_recipe"] != float64(shadows) {
+		t.Errorf("totals = %v, want the %d shadowing runs counted as unknown", totals, shadows)
+	}
+}
+
+// TestStatsRunsReportsAReadFailureWithoutNamingTheRun: a record that cannot be
+// read for a reason that is not its corruption -- permission denied on a real
+// installation -- fails the command, and the failure names no run: no repository
+// slug, no run ID, no object key, no local path, and not the underlying error.
+func TestStatsRunsReportsAReadFailureWithoutNamingTheRun(t *testing.T) {
+	noAgentSession(t)
+	f := newCloudFixture(t)
+	now := time.Now().UTC()
+	var seeds []statsSeed
+	for i := range 21 {
+		seeds = append(seeds, statsSeed{recipe: "standard", duration: time.Duration(600+i) * time.Second, cost: 1})
+	}
+	seedStatsRuns(t, f, seeds, now)
+	seedStatsUnreadable(t, f, now, 40)
+
+	out, errOut, err := execute(t, "stats", "runs", "--project", "aurora", "--json")
+	if err == nil {
+		t.Fatalf("an unreadable record was not reported: %s", out)
+	}
+	if got := ExitCode(err); got != ExitRemoteError {
+		t.Errorf("exit code = %d, want %d", got, ExitRemoteError)
+	}
+	if !strings.Contains(err.Error(), "could not be read") {
+		t.Errorf("err = %v, want it to say a record could not be read", err)
+	}
+	// The detail goes nowhere: not in the error, not on either stream.
+	for _, text := range []string{err.Error(), out, errOut} {
+		if strings.Contains(text, "permission denied") || strings.Contains(text, "result.json") {
+			t.Errorf("the failure carries the underlying error: %q", text)
+		}
+	}
+	assertNoIdentifiers(t, "the failure", err.Error())
+	assertNoIdentifiers(t, "stdout", out)
+	assertNoIdentifiers(t, "stderr", errOut)
+}
+
+// TestStatsRunsWarnsBelowTheThreshold: --min-runs 1 is allowed -- lowering the
+// threshold deliberately is the operator's call (D97) -- but a range from one
+// run is one run's exact figures, so the command says so on stderr rather than
+// printing them quietly.
+func TestStatsRunsWarnsBelowTheThreshold(t *testing.T) {
+	noAgentSession(t)
+	f := newCloudFixture(t)
+	seedStatsRuns(t, f, []statsSeed{{recipe: "standard", duration: time.Minute, cost: 1}}, time.Now().UTC())
+
+	out, errOut, err := execute(t, "stats", "runs", "--project", "aurora", "--min-runs", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "warning") || !strings.Contains(errOut, "--min-runs 1") || !strings.Contains(errOut, "20") {
+		t.Errorf("stderr = %q, want a warning naming --min-runs 1 and the 20 it is below", errOut)
+	}
+	if !strings.Contains(out, "one run's own exact figure") {
+		t.Errorf("the output does not say a thin range is one run's exact figures:\n%s", out)
+	}
+	// At the threshold there is nothing to warn about.
+	if _, errOut, err = execute(t, "stats", "runs", "--project", "aurora", "--min-runs", "1", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "warning") {
+		t.Errorf("stderr = %q, want the warning on --json too", errOut)
+	}
+}
+
+// TestStatsRunDropsAnImpossibleFigure: a figure that cannot be one -- a
+// negative cost or duration, or a value that is not finite -- is no figure at
+// all. Two of them in one window are enough to make the interpolation produce
+// Inf, and --json then fails outright with "json: unsupported value: -Inf".
+func TestStatsRunDropsAnImpossibleFigure(t *testing.T) {
+	rec := func(cost float64, d time.Duration) *runstore.Record {
+		start := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+		done := start.Add(d)
+		return &runstore.Record{
+			RunID: "20261017-120000-abcd", Recipe: &runstore.RecipeRecord{Name: "standard", Source: "catalog"},
+			StartedAt: start, FinishedAt: &done, Cost: &runstore.Cost{TotalUSD: cost},
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		rec  *runstore.Record
+		want bool // want a figure
+	}{
+		{"a plain figure", rec(1, time.Minute), true},
+		{"a zero cost", rec(0, time.Minute), true},
+		{"a negative cost", rec(-5, time.Minute), false},
+		{"a cost past any figure", rec(math.MaxFloat64, time.Minute), false},
+		{"a NaN cost", rec(math.NaN(), time.Minute), false},
+		{"an infinite cost", rec(math.Inf(-1), time.Minute), false},
+		{"a negative duration", rec(1, -time.Minute), false},
+		{"no cost breakdown", &runstore.Record{StartedAt: time.Now()}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := statsRun(tc.rec)
+			if got.NoFigure == tc.want {
+				t.Errorf("statsRun = %+v, want a figure: %v", got, tc.want)
+			}
+			if !tc.want && got.CostUSD != 0 {
+				t.Errorf("statsRun kept the impossible figure %v", got.CostUSD)
+			}
+		})
+	}
+}
+
+// TestStatsRunsCountsARecordWithAnImpossibleFigure: such a record is counted
+// with the ones that carry no figure, and the figures that are left are still
+// published -- --json must decode, which it cannot if one of them is Inf.
+func TestStatsRunsCountsARecordWithAnImpossibleFigure(t *testing.T) {
+	noAgentSession(t)
+	f := newCloudFixture(t)
+	var seeds []statsSeed
+	for i := range 21 {
+		seeds = append(seeds, statsSeed{recipe: "standard", duration: time.Duration(600+i) * time.Second, cost: 1})
+	}
+	seeds = append(seeds,
+		statsSeed{recipe: "standard", duration: time.Minute, cost: -5},
+		statsSeed{recipe: "standard", duration: -time.Minute, cost: 1},
+		// 1e308 is a cost a bad record can carry, and rounding it to the cent
+		// multiplies it by 100 first.
+		statsSeed{recipe: "standard", duration: time.Minute, cost: 1e308},
+	)
+	seedStatsRuns(t, f, seeds, time.Now().UTC())
+
+	doc := statsRunsJSON(t, f, "aurora")
+	recipes, _ := doc["recipes"].([]any)
+	if len(recipes) != 1 {
+		t.Fatalf("recipes = %v, want the one group of 21", doc["recipes"])
+	}
+	group, _ := recipes[0].(map[string]any)
+	if group["runs"] != float64(21) {
+		t.Errorf("group runs = %v, want 21", group["runs"])
+	}
+	if cost, _ := group["cost_usd"].(map[string]any); cost["min"] != float64(1) {
+		t.Errorf("cost_usd = %v, want the finite figures only", cost)
+	}
+	if totals := statsTotals(t, doc); totals["runs_without_a_figure"] != float64(3) {
+		t.Errorf("totals = %v, want the three impossible figures counted", totals)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
 // TestStatsPercentilesInterpolate: the three figures are read off the sorted
@@ -34,25 +36,24 @@ func TestStatsPercentilesInterpolate(t *testing.T) {
 	}
 }
 
+// catalogRun is a run of a catalog recipe with one figure, for the tests that
+// only care which group it lands in.
+func catalogRun(name string, durationS, costUSD float64) Run {
+	return Run{Recipe: name, RecipeSource: string(recipe.SourceCatalog), DurationS: durationS, CostUSD: costUSD}
+}
+
 // TestStatsAggregatesByRecipe: groups are by recipe, ascending, each with its
 // own sample size, and the published figures are rounded to a second and a
 // cent.
 func TestStatsAggregatesByRecipe(t *testing.T) {
 	var runs []Run
 	for i := 1; i <= 20; i++ {
-		runs = append(runs, Run{
-			Recipe:    "standard",
-			DurationS: float64(i) * 100,
-			CostUSD:   float64(i) * 0.1,
-		})
+		runs = append(runs, catalogRun("standard", float64(i)*100, float64(i)*0.1))
 	}
 	for i := 1; i <= 20; i++ {
-		runs = append(runs, Run{
-			Recipe:              "solo",
-			DurationS:           float64(i) * 10.4,
-			CostUSD:             1.006,
-			ComputeNotEstimated: i == 1,
-		})
+		r := catalogRun("solo", float64(i)*10.4, 1.006)
+		r.ComputeNotEstimated = i == 1
+		runs = append(runs, r)
 	}
 	res := Aggregate(runs, MinRuns)
 	if res.Runs != 40 || res.RunsUnknownRecipe != 0 || res.RunsBelowMinRuns != 0 || res.RunsWithoutFigure != 0 {
@@ -85,18 +86,18 @@ func TestStatsAggregatesByRecipe(t *testing.T) {
 
 // TestStatsDropsRecipesTheTreeDoesNotShip: a group key is a name a reader can
 // look up, so a name internal/recipe's catalog does not carry is dropped and
-// counted rather than published -- and a name retired in 0.7.0 is grouped under the
-// name the tree ships today.
+// counted rather than published -- and a catalog name retired in 0.7.0 is
+// grouped under the name the tree ships today.
 func TestStatsDropsRecipesTheTreeDoesNotShip(t *testing.T) {
 	var runs []Run
-	for i := 1; i <= 20; i++ {
-		runs = append(runs, Run{Recipe: "claude-solo", DurationS: 60, CostUSD: 1})
+	for range 20 {
+		runs = append(runs, catalogRun("claude-solo", 60, 1))
 	}
-	for i := 1; i <= 20; i++ {
-		runs = append(runs, Run{Recipe: "acme-house-style", DurationS: 60, CostUSD: 1})
+	for range 20 {
+		runs = append(runs, Run{Recipe: "acme-house-style", RecipeSource: string(recipe.SourceRepo), DurationS: 60, CostUSD: 1})
 	}
-	for i := 1; i <= 20; i++ {
-		runs = append(runs, Run{Recipe: "", DurationS: 60, CostUSD: 1})
+	for range 20 {
+		runs = append(runs, Run{DurationS: 60, CostUSD: 1})
 	}
 	res := Aggregate(runs, MinRuns)
 	if len(res.Groups) != 1 || res.Groups[0].Recipe != "solo" || res.Groups[0].Runs != 20 {
@@ -110,12 +111,47 @@ func TestStatsDropsRecipesTheTreeDoesNotShip(t *testing.T) {
 	}
 }
 
+// TestStatsDropsARepoRecipeThatShadowsTheCatalog: a repository or project
+// recipe may reuse a catalog name (internal/recipe's resolveRecipe lets it
+// shadow the built-in one), so the name alone is not the recipe: a group is
+// published only for a run whose recipe came from the catalog. Otherwise one
+// repository's own loop would be published under a built-in label, and its
+// figures -- the very thing a reader compares against -- would be its own.
+func TestStatsDropsARepoRecipeThatShadowsTheCatalog(t *testing.T) {
+	var runs []Run
+	for i := 1; i <= 20; i++ {
+		runs = append(runs, catalogRun("standard", float64(i)*100, float64(i)*0.1))
+	}
+	// 20 runs of a repository's own "standard" at about $500: if these were
+	// grouped with the catalog's, the p90 would read about $513.10.
+	for i := 1; i <= 20; i++ {
+		runs = append(runs, Run{Recipe: "standard", RecipeSource: string(recipe.SourceRepo), DurationS: 900, CostUSD: float64(i) * 500})
+	}
+	for range 20 {
+		runs = append(runs, Run{Recipe: "standard", RecipeSource: string(recipe.SourceProject), DurationS: 900, CostUSD: 500})
+	}
+	res := Aggregate(runs, MinRuns)
+	if len(res.Groups) != 1 {
+		t.Fatalf("groups = %+v, want only the catalog's standard", res.Groups)
+	}
+	std := res.Groups[0]
+	if std.Recipe != "standard" || std.Runs != 20 {
+		t.Fatalf("group = %+v, want the catalog's 20 runs", std)
+	}
+	if want := (Percentiles{Min: 0.1, Median: 1.05, P90: 1.81}); std.CostUSD != want {
+		t.Errorf("costs = %+v, want the catalog's %+v: a repo recipe's own loop is not published under a built-in label", std.CostUSD, want)
+	}
+	if res.RunsUnknownRecipe != 40 {
+		t.Errorf("RunsUnknownRecipe = %d, want the 40 shadowing runs counted", res.RunsUnknownRecipe)
+	}
+}
+
 // TestStatsSuppressesGroupsBelowMinRuns: a thin group is suppressed, its runs
 // are counted, and a lower threshold publishes it deliberately.
 func TestStatsSuppressesGroupsBelowMinRuns(t *testing.T) {
 	var runs []Run
 	for i := 1; i <= 4; i++ {
-		runs = append(runs, Run{Recipe: "premium", DurationS: 60, CostUSD: 1})
+		runs = append(runs, catalogRun("premium", 60, 1))
 	}
 	res := Aggregate(runs, MinRuns)
 	if len(res.Groups) != 0 || res.Runs != 4 || res.RunsBelowMinRuns != 4 {
@@ -130,9 +166,9 @@ func TestStatsSuppressesGroupsBelowMinRuns(t *testing.T) {
 // TestStatsCountsRunsWithoutAFigure: a record no figure can be drawn from is
 // counted, never grouped, so the sample does not read smaller than it is.
 func TestStatsCountsRunsWithoutAFigure(t *testing.T) {
-	runs := []Run{{Recipe: "standard", NoFigure: true}}
+	runs := []Run{{Recipe: "standard", RecipeSource: string(recipe.SourceCatalog), NoFigure: true}}
 	for i := 1; i <= 20; i++ {
-		runs = append(runs, Run{Recipe: "standard", DurationS: 60, CostUSD: 1})
+		runs = append(runs, catalogRun("standard", 60, 1))
 	}
 	res := Aggregate(runs, MinRuns)
 	if res.RunsWithoutFigure != 1 || res.Runs != 20 {
