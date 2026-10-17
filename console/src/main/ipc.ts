@@ -78,6 +78,7 @@
 //     before there is anything behind it. The wiring is one line in
 //     `src/main/window.ts` and belongs with the task that brings the handlers.
 
+import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
 import { APP_HOST, APP_SCHEME } from './protocol'
 import { validateExternalUrl } from './window'
 
@@ -939,16 +940,14 @@ function hiddenCharacterReason(value: string): string | null {
   return null
 }
 
-/** isFormatCharacter is Unicode's `Cf` range as it matters here: the characters
- * that change how a string is read without being read. */
+/** isFormatCharacter is the shared set of invisible characters
+ * (`INVISIBLE_CLASS` in `src/shared/sanitize.ts`: every `Cf`, every
+ * default-ignorable code point, every bidi control) plus the line and paragraph
+ * separators: the characters that change how a string is read without being
+ * read. It is the same definition the recorder and the display layer strip, so
+ * an argument cannot carry a character one of them would remove. */
 function isFormatCharacter(code: number): boolean {
-  if (code === 0x00ad || code === 0x061c || code === 0x180e) return true
-  if (code >= 0x200b && code <= 0x200f) return true
-  if (code >= 0x202a && code <= 0x202e) return true
-  if (code >= 0x2060 && code <= 0x2064) return true
-  if (code >= 0x2066 && code <= 0x2069) return true
-  if (code === 0xfeff || code === 0xfff9 || code === 0xfffa || code === 0xfffb) return true
-  return false
+  return isInvisibleCodePoint(code) || isSeparatorCodePoint(code)
 }
 
 /** isCalendarDay is `day`'s grammar plus a real date: `2026-02-30` is refused,
@@ -1560,11 +1559,13 @@ function replacePath(_match: string, url: string | undefined, anchor: string | u
   return `${anchor ?? ''}${PATH_PLACEHOLDER}`
 }
 
-/** INVISIBLE_RE is the format characters `hiddenCharacterReason` refuses in an
+/** INVISIBLE_RE is the shared set of invisible characters
+ * (`src/shared/sanitize.ts`), the ones `hiddenCharacterReason` refuses in an
  * argument -- bidi overrides and isolates, zero-width characters, the BOM, the
- * soft hyphen -- which a refusal drops for the same reason: a right-to-left
- * override makes a screen show a sentence other than the one that was sent. */
-const INVISIBLE_RE = /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb]/g
+ * soft hyphen, the variation selectors, the interlinear annotation characters
+ * -- which a refusal drops for the same reason: a right-to-left override makes
+ * a screen show a sentence other than the one that was sent. */
+const INVISIBLE_RE = invisibleRe()
 
 /** LONE_SURROGATE_RE is half a character: a high surrogate with no low one
  * after it, or a low one with no high one before it. */
