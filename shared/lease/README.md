@@ -77,11 +77,11 @@ is refused rather than parsed, because a guessed timestamp is how a lease goes s
 
 | Code | When |
 |---|---|
-| `unknown-field` | a lease, a state, a take or a release carries a field this module does not define |
+| `unknown-field` | a lease, a state, a take or a release carries a field this module does not define (the message never names the key: it is caller-chosen and may be huge or carry a bidi override) |
 | `missing-field` | one of the fields above is absent |
 | `bad-type` | the value is not a plain object at all (null, an array, a string, a class instance) |
 | `bad-holder` | the holder is not a string, is blank, carries any whitespace, an invisible, direction-changing or blank-looking character, a private-use or unassigned code point, or is not in NFC (below) |
-| `oversize` | the holder is longer than `MAX_HOLDER_LENGTH` (256) |
+| `oversize` | the holder is longer than `MAX_HOLDER_LENGTH` (256) **code points** — not UTF-16 units — so at most 1,024 bytes of UTF-8; checked before every other holder rule, so a 10 MB holder is refused without being walked or normalized |
 | `bad-timestamp` | `at` is not a whole number of milliseconds from 1 to `MAX_TIMESTAMP` (0 and -0 included) |
 | `bad-ttl` | the state's TTL is not a whole number of milliseconds from 1 to `MAX_TTL` (zero included: a TTL of zero makes every claim stale the instant it is taken, which is the same as no lease at all) |
 | `unreadable-claim` | the state holds something that is not a lease |
@@ -106,7 +106,8 @@ blank-looking letters **U+2800** (braille pattern blank) and the **Hangul filler
 U+1160, U+3164, U+FFA0), **Co** (private use) and **Cn** (unassigned, as of the running engine's
 Unicode version). And a holder must already be in **NFC**: a decomposed `e` + U+0301 prints as the
 precomposed `é`, so a non-NFC holder is **refused rather than normalized** — normalizing would
-quietly make two inputs one identity. A holder that is merely **not ASCII** — an accented or CJK name — is not refused, and a
+quietly make two inputs one identity. A holder may not **start with a combining mark** (`\p{M}`),
+which would attach itself to whatever is printed before it. A holder that is merely **not ASCII** — an accented or CJK name — is not refused, and a
 test asserts that as the positive control, so the rule cannot quietly become "ASCII only".
 
 **Every input is read once.** A state, a held claim and a request are each copied into a frozen
@@ -114,6 +115,10 @@ snapshot, one read per field, before anything is judged, so a getter or a Proxy 
 value to the validation and another to the comparison (a TTL that reads as ten minutes and then as
 `NaN` would otherwise make `x < NaN` false and let a fresh lease be taken over). Tests count the
 reads.
+
+**A refusal hands back a frozen copy of the state it read**, never the caller's own object (which
+may be unfrozen or a Proxy), so every state this module returns is frozen. When the state itself is
+unreadable there is nothing read to hand back, and the refusal carries **no** `state`.
 
 **Fail-closed choices worth naming.**
 
@@ -128,9 +133,26 @@ reads.
   than the tolerance is refused, and the far-future lease is never written). It was not chosen
   because the module has no clock of its own: at take time there is no "now" to compare a lone
   claimant against, so a far-future first take cannot be told from an honest one, and the
-  take-over rule is the only place both instants are in hand. The cost of the chosen rule is that a
-  holder whose clock runs more than five minutes fast can lose its lease to a slower-clocked
-  claimant; the owner may prefer the refusal.
+  take-over rule is the only place both instants are in hand. **The costs of the chosen rule,**
+  stated so the owner can weigh them:
+  - **the mirror image of the DoS:** a claimant whose `at` is more than `MAX_CLOCK_SKEW` **behind**
+    the held claim takes over a live lease — a slow-clocked consumer can steal a fast-clocked
+    holder's lease. The Go launch claim (`takeClaim`) is immune, because it has no such bound;
+  - **freshness is not monotonic:** a lease 6 minutes ahead of a claimant is expired at the
+    claimant's `T`, and fresh again at `T + 1 min` (now 5 minutes ahead, inside the tolerance).
+
+  The owner may prefer the refusal.
+
+**What the caller (P4.1's consumer, P1.5's simulator) must guarantee.** This module judges values;
+the guarantees below are the caller's, and without them the lease is not a lease:
+
+- **`at` comes from ONE authoritative clock** — the server's timestamp (D117) — never from each
+  consumer's own clock. With one clock the skew rule above never fires on an honest holder.
+- **The state is replaced only by compare-and-swap** (a generation, or a database transaction):
+  two consumers that both read the same state and both get `ok: true` from `takeLease` must not
+  both be able to write. This module has no generation; the store's write is the fence.
+- **A holder stops acting by `claim.at + ttl − MAX_CLOCK_SKEW`**, or re-reads the lease before it
+  acts or acks: past that point another claimant may, by this module's rule, already hold it.
 - **An unreadable claim is refused, never taken over.** `takeClaim` treats one as stale and takes it
   over, and it may: its read carries a generation, so its takeover is conditional on the claim not
   having changed since. A state value carries no generation, so an unreadable claim here is an
@@ -145,7 +167,8 @@ cd shared && npm test
 
 `shared/lease/mutation-proof.sh` disables each guard above in turn (the skew bound and its
 boundary, the timestamp and TTL ceilings, zero, each holder class, NFC, the single-read snapshot,
-and the TTL a release carries on) and asserts that the suite catches every one; run it from a clean
+the TTL a release carries on, the unechoed key, the frozen refusal state, Cf, the plain-object
+test, the holder's length unit and order, and the leading mark) and asserts that the suite catches every one; run it from a clean
 tree.
 
 `node:test` and `node:assert/strict` only: no dependency, no install, no network, no filesystem, no

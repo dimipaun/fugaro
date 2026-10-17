@@ -163,9 +163,9 @@ run "snapshot: the held claim is read again" \
   "  const { claim, ttl } = snap.fields;" "  const { claim, ttl } = { claim: state.claim, ttl: snap.fields.ttl };"
 run "snapshot: the take's holder is read again" \
   "  const holder = validateHolder(snap.fields.holder);
-  if (!holder.ok) return refusalWithState(holder, state);
+  if (!holder.ok) return refusalWithState(holder, held);
   const at" "  const holder = validateHolder(snap.fields.holder);
-  if (!holder.ok) return refusalWithState(holder, state);
+  if (!holder.ok) return refusalWithState(holder, held);
   holder.holder = request.holder;
   const at"
 run "snapshot: each field is read twice" \
@@ -174,6 +174,31 @@ run "snapshot: each field is read twice" \
 # (5) The release keeps the TTL.
 run "release: the TTL is reset to CLAIM_TTL" \
   "state: emptyLeaseState(held.ttl) });" "state: emptyLeaseState() });"
+
+# Round 2. L1: a refused key is never echoed.
+run "message: the unknown key is echoed" \
+  "carries a field it does not define\`" "has no field \${JSON.stringify(key)}\`"
+# L2: a refusal hands back a frozen copy, never the caller's state.
+run "state: a refusal's state is not frozen" \
+  "  if (held !== null) out.state = stateOf(held);" "  if (held !== null) out.state = { claim: held.claim, ttl: held.ttl };"
+run "state: already-claimed hands back the caller's object" \
+  "      state: stateOf(held)," "      state,"
+# L3: the Cf class and the plain-object test.
+run "holder: format characters (Cf) accepted" \
+  "\\p{Cf}" ""
+run "type: a class instance is a plain object" \
+  "  return prototype === Object.prototype || prototype === null;" "  return true;"
+# L4: the length, in code points, first.
+run "holder: no length bound" \
+  "  if (isOversize(holder)) {" "  if (false) {"
+run "holder: the bound counts UTF-16 units, not code points" \
+  "  if (holder.length > 2 * MAX_HOLDER_LENGTH) return true;" "  if (holder.length > MAX_HOLDER_LENGTH) return true;"
+run "holder: the character rule runs before the length" \
+  "  // The length first," "  if (NON_PRINTABLE.test(holder)) return refusal(LEASE_CODES.BAD_HOLDER, 'x');
+  // The length first,"
+# L5: a leading combining mark.
+run "holder: a leading combining mark accepted" \
+  "  if (LEADING_MARK.test(holder)) {" "  if (false) {"
 
 git checkout -- "$F"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"

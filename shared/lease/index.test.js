@@ -470,7 +470,9 @@ test('a held claim that is not a lease is refused, never taken over', () => {
     const taken = takeLease(state, { holder: 'consumer-b', at: AT + 100 * CLAIM_TTL });
     assert.equal(taken.ok, false);
     assert.equal(taken.code, LEASE_CODES.UNREADABLE_CLAIM);
-    assert.equal(taken.state, state);
+    // The state is unreadable, so there is no state to hand back: the
+    // refusal carries none rather than the caller's own object.
+    assert.equal(Object.hasOwn(taken, 'state'), false);
     assert.equal(readLease(state).code, LEASE_CODES.UNREADABLE_CLAIM);
     assert.equal(releaseLease(state, { holder: 'consumer-a' }).code, LEASE_CODES.UNREADABLE_CLAIM);
   }
@@ -587,4 +589,111 @@ test('a getter that changes between reads cannot pass validation with one value 
   const taken = takeLease(emptyLeaseState(), flipHolder);
   assert.equal(taken.ok, true);
   assert.equal(taken.lease.holder, 'consumer-b');
+});
+
+test('a refusal never echoes a field name it refused', () => {
+  // An unknown key is attacker-chosen: a bidi override or 100k characters
+  // must not reach a message a caller may log or print.
+  const evil = `‮${'k'.repeat(100_000)}`;
+  const lease = validateLease({ holder: 'consumer-a', at: AT, [evil]: 1 });
+  assert.equal(lease.code, LEASE_CODES.UNKNOWN_FIELD);
+  assert.equal(lease.message.includes('k'.repeat(10)), false);
+  assert.equal(lease.message.includes('‮'), false);
+  assert.ok(lease.message.length < 200);
+
+  // ...and not through the unreadable-claim refusal that wraps it, either.
+  const state = { claim: { holder: 'consumer-a', at: AT, [evil]: 1 }, ttl: CLAIM_TTL };
+  const taken = takeLease(state, { holder: 'consumer-b', at: AT });
+  assert.equal(taken.code, LEASE_CODES.UNREADABLE_CLAIM);
+  assert.equal(taken.because, LEASE_CODES.UNKNOWN_FIELD);
+  assert.equal(taken.message.includes('‮'), false);
+  assert.ok(taken.message.length < 200);
+
+  const request = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT, [evil]: 1 });
+  assert.equal(request.message.includes('‮'), false);
+  assert.ok(request.message.length < 200);
+});
+
+test('every state a refusal hands back is a frozen copy, never the caller object', () => {
+  const held = takeLease(emptyLeaseState(), { holder: 'consumer-a', at: AT });
+  // An unfrozen state with a readable claim, and a Proxy over one.
+  const loose = { claim: { holder: 'consumer-a', at: AT }, ttl: CLAIM_TTL };
+  const proxy = new Proxy({ ...held.state }, {});
+  for (const input of [loose, proxy]) {
+    const refusals = [
+      takeLease(input, { holder: 'consumer-b', at: AT + 1 }), // already-claimed
+      takeLease(input, { holder: '', at: AT }), // bad-holder
+      takeLease(input, { holder: 'consumer-b', at: 0 }), // bad-timestamp
+      takeLease(input, null), // bad-type
+      releaseLease(input, { holder: 'consumer-b' }), // not-holder
+      releaseLease(input, {}), // missing-field
+    ];
+    for (const r of refusals) {
+      assert.equal(r.ok, false);
+      assert.notEqual(r.state, input, `${r.code} handed back the caller's object`);
+      assert.equal(Object.isFrozen(r.state), true, `${r.code} handed back an unfrozen state`);
+      assert.equal(Object.isFrozen(r.state.claim), true);
+      assert.deepEqual(r.state, { claim: { holder: 'consumer-a', at: AT }, ttl: CLAIM_TTL });
+    }
+  }
+  const none = releaseLease({ claim: null, ttl: 1_000 }, { holder: 'consumer-a' });
+  assert.equal(none.code, LEASE_CODES.NO_LEASE);
+  assert.equal(Object.isFrozen(none.state), true);
+  assert.deepEqual(none.state, { claim: null, ttl: 1_000 });
+});
+
+test('format characters outside the default-ignorable set are refused (Cf)', () => {
+  // These are Cf and nothing else in the holder rule: deleting \p{Cf} would
+  // let them through.
+  for (const point of [0x0600, 0xfff9, 0x110bd]) {
+    const holder = `consumer${String.fromCodePoint(point)}a`;
+    assert.equal(validateLease({ holder, at: AT }).code, LEASE_CODES.BAD_HOLDER, `U+${point.toString(16)}`);
+  }
+});
+
+test('a class instance is not a plain object', () => {
+  class Lease {
+    constructor() {
+      this.holder = 'consumer-a';
+      this.at = AT;
+    }
+  }
+  assert.equal(validateLease(new Lease()).code, LEASE_CODES.BAD_TYPE);
+  assert.equal(takeLease(emptyLeaseState(), new Lease()).code, LEASE_CODES.BAD_TYPE);
+  class State {
+    constructor() {
+      this.claim = null;
+      this.ttl = CLAIM_TTL;
+    }
+  }
+  assert.equal(readLease(new State()).code, LEASE_CODES.BAD_TYPE);
+});
+
+test('a holder is bounded in code points, checked before anything else', () => {
+  // 256 code points: 512 UTF-16 units of an astral letter is still inside,
+  // and the bound is at most 1,024 bytes of UTF-8.
+  const astral = '\u{1d49c}'; // MATHEMATICAL SCRIPT CAPITAL A, a letter
+  assert.equal(validateLease({ holder: astral.repeat(MAX_HOLDER_LENGTH), at: AT }).ok, true);
+  assert.equal(
+    validateLease({ holder: astral.repeat(MAX_HOLDER_LENGTH + 1), at: AT }).code,
+    LEASE_CODES.OVERSIZE,
+  );
+  assert.ok(Buffer.byteLength(astral.repeat(MAX_HOLDER_LENGTH), 'utf8') <= 4 * MAX_HOLDER_LENGTH);
+
+  // A 10 MB holder is refused as oversize -- before the character rule, so
+  // it is refused for its length even though it is also invisible.
+  const huge = '​'.repeat(10 * 1024 * 1024);
+  assert.equal(validateLease({ holder: huge, at: AT }).code, LEASE_CODES.OVERSIZE);
+  const hugeBlank = ' '.repeat(10 * 1024 * 1024);
+  assert.equal(takeLease(emptyLeaseState(), { holder: hugeBlank, at: AT }).code, LEASE_CODES.OVERSIZE);
+});
+
+test('a holder does not start with a combining mark', () => {
+  // A leading mark attaches to whatever precedes the holder when printed.
+  for (const holder of ['́consumer', '⃝a', 'िconsumer']) {
+    assert.equal(holder, holder.normalize('NFC'));
+    assert.equal(validateLease({ holder, at: AT }).code, LEASE_CODES.BAD_HOLDER, JSON.stringify(holder));
+  }
+  // A mark after a base character is fine (the NFC-stable Devanagari case).
+  assert.equal(validateLease({ holder: 'kि', at: AT }).ok, true);
 });

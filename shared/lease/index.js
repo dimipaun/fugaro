@@ -82,7 +82,9 @@ export const MAX_TIMESTAMP = Date.UTC(2100, 0, 1);
 export const MAX_TTL = 24 * 60 * 60 * 1000;
 
 /**
- * The longest holder this module accepts. The CLI's bound is the bucket's
+ * The longest holder this module accepts, in **Unicode code points** (not
+ * UTF-16 units): so a holder is at most 1,024 bytes of UTF-8, whatever it is
+ * written in. The CLI's bound is the bucket's
  * object-size limit (`runstore.ErrTooLarge`), which this module has no bucket
  * to borrow, so it states its own.
  */
@@ -170,7 +172,10 @@ function snapshot(value, fields, what) {
   const keys = Object.getOwnPropertyNames(value);
   for (const key of keys) {
     if (!fields.includes(key)) {
-      return refusal(LEASE_CODES.UNKNOWN_FIELD, `${what} has no field ${JSON.stringify(key)}`);
+      // The key is the caller's (or an attacker's) and is never echoed: it
+      // may be 100k characters or carry a bidi override, and a message is
+      // something a caller logs and prints.
+      return refusal(LEASE_CODES.UNKNOWN_FIELD, `${what} carries a field it does not define`);
     }
   }
   for (const key of fields) {
@@ -181,9 +186,37 @@ function snapshot(value, fields, what) {
   return Object.freeze({ ok: true, fields: Object.freeze(copy) });
 }
 
+/**
+ * Is `holder` more than MAX_HOLDER_LENGTH code points? Answered without
+ * walking a huge string: a code point is one or two UTF-16 units, so more
+ * than twice the bound in units is over it, and anything shorter is counted
+ * with an early exit.
+ */
+function isOversize(holder) {
+  if (holder.length > 2 * MAX_HOLDER_LENGTH) return true;
+  let points = 0;
+  for (const _ of holder) {
+    points += 1;
+    if (points > MAX_HOLDER_LENGTH) return true;
+  }
+  return false;
+}
+
+// A holder that begins with a combining mark attaches it to whatever is
+// printed before the holder.
+const LEADING_MARK = /^\p{M}/u;
+
 function validateHolder(holder) {
   if (typeof holder !== 'string') {
     return refusal(LEASE_CODES.BAD_HOLDER, 'a lease holder is a string');
+  }
+  // The length first, before any rule that walks the string or normalizes it:
+  // a 10 MB holder is refused for its size, cheaply.
+  if (isOversize(holder)) {
+    return refusal(
+      LEASE_CODES.OVERSIZE,
+      `a lease holder is at most ${MAX_HOLDER_LENGTH} code points`,
+    );
   }
   if (holder.trim() === '') {
     return refusal(LEASE_CODES.BAD_HOLDER, 'a lease holder is not blank');
@@ -197,11 +230,11 @@ function validateHolder(holder) {
       'a lease holder carries no whitespace, control, format, ignorable, blank-looking, private-use or unassigned characters',
     );
   }
+  if (LEADING_MARK.test(holder)) {
+    return refusal(LEASE_CODES.BAD_HOLDER, 'a lease holder does not start with a combining mark');
+  }
   if (holder.normalize('NFC') !== holder) {
     return refusal(LEASE_CODES.BAD_HOLDER, 'a lease holder is in Unicode NFC form');
-  }
-  if (holder.length > MAX_HOLDER_LENGTH) {
-    return refusal(LEASE_CODES.OVERSIZE, `a lease holder is at most ${MAX_HOLDER_LENGTH} characters`);
   }
   return Object.freeze({ ok: true, holder });
 }
@@ -294,11 +327,24 @@ function readState(state) {
   return Object.freeze({ ok: true, claim: held.lease, ttl });
 }
 
-/** Re-attach the state to a refusal, so a caller can keep threading it. */
-function refusalWithState(result, state) {
-  const out = { ok: false, code: result.code, message: result.message, state };
+/**
+ * A refusal that hands back the state, so a caller can keep threading it --
+ * and the state is the one this module READ (`held`, from the snapshot),
+ * rebuilt and frozen, never the caller's own object, which may be unfrozen
+ * or a Proxy. When the state itself was unreadable (`held` is null), there is
+ * no state to hand back and the refusal carries none: the caller still has
+ * whatever it passed, and every function refuses it the same way.
+ */
+function refusalWithState(result, held) {
+  const out = { ok: false, code: result.code, message: result.message };
   if (result.because !== undefined) out.because = result.because;
+  if (held !== null) out.state = stateOf(held);
   return Object.freeze(out);
+}
+
+/** A frozen state rebuilt from what `readState` read. */
+function stateOf(held) {
+  return Object.freeze({ claim: held.claim, ttl: held.ttl });
 }
 
 /**
@@ -351,18 +397,19 @@ function isFresh(current, at, ttl) {
  * create, so a lease is renewed by releasing it, not by re-taking it.
  *
  * Nothing about a refused take touches the state: the claim it was refused by
- * is still the claim that is held.
+ * is still the claim that is held, and the state handed back is a frozen copy
+ * of the one read (none, when the state itself was unreadable).
  */
 export function takeLease(state, request) {
   const held = readState(state);
-  if (!held.ok) return refusalWithState(held, state);
+  if (!held.ok) return refusalWithState(held, null);
 
   const snap = snapshot(request, TAKE_FIELDS, 'a take request');
-  if (!snap.ok) return refusalWithState(snap, state);
+  if (!snap.ok) return refusalWithState(snap, held);
   const holder = validateHolder(snap.fields.holder);
-  if (!holder.ok) return refusalWithState(holder, state);
+  if (!holder.ok) return refusalWithState(holder, held);
   const at = validateTimestamp(snap.fields.at);
-  if (!at.ok) return refusalWithState(at, state);
+  if (!at.ok) return refusalWithState(at, held);
 
   const mine = Object.freeze({ holder: holder.holder, at: at.at });
   const current = held.claim;
@@ -372,7 +419,7 @@ export function takeLease(state, request) {
       code: LEASE_CODES.ALREADY_CLAIMED,
       message: `the lease is held by ${current.holder} at ${current.at}`,
       existing: current,
-      state,
+      state: stateOf(held),
     });
   }
   return Object.freeze({
@@ -394,16 +441,16 @@ export function takeLease(state, request) {
  */
 export function releaseLease(state, request) {
   const held = readState(state);
-  if (!held.ok) return refusalWithState(held, state);
+  if (!held.ok) return refusalWithState(held, null);
 
   const snap = snapshot(request, RELEASE_FIELDS, 'a release request');
-  if (!snap.ok) return refusalWithState(snap, state);
+  if (!snap.ok) return refusalWithState(snap, held);
   const holder = validateHolder(snap.fields.holder);
-  if (!holder.ok) return refusalWithState(holder, state);
+  if (!holder.ok) return refusalWithState(holder, held);
 
   const current = held.claim;
   if (current === null) {
-    return refusalWithState(refusal(LEASE_CODES.NO_LEASE, 'no lease is held to release'), state);
+    return refusalWithState(refusal(LEASE_CODES.NO_LEASE, 'no lease is held to release'), held);
   }
   if (current.holder !== holder.holder) {
     return refusalWithState(
@@ -411,7 +458,7 @@ export function releaseLease(state, request) {
         LEASE_CODES.NOT_HOLDER,
         `the lease is held by ${current.holder}, not by ${holder.holder}`,
       ),
-      state,
+      held,
     );
   }
   return Object.freeze({ ok: true, released: current, state: emptyLeaseState(held.ttl) });
