@@ -502,14 +502,14 @@ function siteOf(text: string, at: number, from: number, end: number, hasFinal: b
  * left for `INVISIBLE_RE`, which every caller applies afterwards.
  */
 export function stripTerminalSequences(text: string): string {
-  return scanTerminalSequences(text, null)
+  return scanTerminalSequences(text, null, null)
 }
 
 /** scanTerminalSequences is `stripTerminalSequences`, reporting into `sites`
  * (when given) every sequence that swallowed printable bytes, at its place in
  * the output. Reading the swallowed bytes back is linear too: they are bytes the
  * scan consumed, read once more. */
-function scanTerminalSequences(text: string, sites: AmbiguousSite[] | null): string {
+function scanTerminalSequences(text: string, sites: AmbiguousSite[] | null, cuts: number[] | null): string {
   if (!SEQUENCE_FAST_RE.test(text)) return text
   const kept: string[] = []
   let keptLength = 0
@@ -535,6 +535,9 @@ function scanTerminalSequences(text: string, sites: AmbiguousSite[] | null): str
       const site = siteOf(text, keptLength, span.bodyFrom, span.end, span.hasFinal)
       if (site !== null) sites.push(site)
     }
+    // Every removal is a place where two pieces of text now touch: the
+    // resolver reads each such place as a boundary too (`resolveReadings`).
+    if (cuts !== null) cuts.push(keptLength)
     index = span.end > index ? span.end : index + 1
     copyFrom = index
   }
@@ -1283,9 +1286,14 @@ function applyTracked(state: Traced, rule: TrackedRule, nested: boolean, covered
 }
 
 /** traceCredentials runs every tracked rule over one reading, in order. */
-function traceCredentials(reading: Traced, nested: boolean, covered: Uint8Array): Traced {
+function traceCredentials(
+  reading: Traced,
+  nested: boolean,
+  covered: Uint8Array,
+  rules: readonly TrackedRule[] = TRACKED_RULES,
+): Traced {
   let state = reading
-  for (const rule of TRACKED_RULES) state = applyTracked(state, rule, nested, covered)
+  for (const rule of rules) state = applyTracked(state, rule, nested, covered)
   return state
 }
 
@@ -1317,6 +1325,116 @@ export const MAX_AMBIGUOUS_COMBINATIONS = 64
  */
 export const MAX_AMBIGUOUS_SCAN = 1 << 20
 
+/** SPLIT_SIDE_RE is a character a credential can be made of: a split place
+ * matters only between two of them (a boundary between two punctuation marks or
+ * inside an emoji sequence changes no token shape's reading). */
+const SPLIT_SIDE_RE = /[\p{L}\p{N}_\-+/=.]/u
+
+/** SPLIT_MARK is what a split place read as a boundary holds: a character no
+ * token shape contains and every lookbehind and lookahead treats as a
+ * boundary, and not whitespace, so no rule that needs a space is handed one. */
+const SPLIT_MARK = '\u200b'
+
+/** MAX_SPLIT_EXHAUSTIVE is how many split places one whitespace-free run may
+ * hold and still be read in every combination (2^6 = 64 readings, the same
+ * bound as `MAX_AMBIGUOUS_COMBINATIONS`); a run with more is read with every
+ * single place and every pair of places as boundaries, up to
+ * `MAX_SPLIT_PLACES`. A run with more than that is masked whole: fail closed,
+ * locally. */
+const MAX_SPLIT_EXHAUSTIVE = 6
+export const MAX_SPLIT_PLACES = 24
+
+/** MAX_SPLIT_SCAN bounds the split readings' work, readings times characters,
+ * at a quarter of `MAX_AMBIGUOUS_SCAN`: a value of a few KiB is read in every
+ * combination, and in a 64 KiB value a run needing more than four readings is
+ * masked whole rather than read (the price of a bounded worst case). */
+export const MAX_SPLIT_SCAN = 1 << 18
+
+/**
+ * traceSplits reads every split place of `prepared` as a boundary or not, in
+ * the combinations `MAX_SPLIT_EXHAUSTIVE` allows, marking what the tracked
+ * rules match into `covered`. Runs are read side by side, as the escape-sequence
+ * resolver reads its clusters: reading `j` takes combination `j` of every run,
+ * which is exact for every rule that cannot cross whitespace. A run whose
+ * combinations would make the readings cost more than `MAX_SPLIT_SCAN` is
+ * masked whole instead of read.
+ */
+function traceSplits(
+  prepared: string,
+  places: readonly number[],
+  covered: Uint8Array,
+  rules: readonly TrackedRule[],
+): void {
+  interface Run {
+    readonly start: number
+    end: number
+    readonly places: number[]
+  }
+  const runs: Run[] = []
+  let previous = -1
+  for (const place of places) {
+    if (place === previous || place <= 0 || place >= prepared.length) continue
+    previous = place
+    if (!SPLIT_SIDE_RE.test(prepared[place - 1] ?? '') || !SPLIT_SIDE_RE.test(prepared[place] ?? '')) continue
+    const last = runs[runs.length - 1]
+    if (last !== undefined && place < last.end) {
+      last.places.push(place)
+      continue
+    }
+    let start = place
+    while (start > 0 && !/\s/.test(prepared[start - 1] ?? '')) start -= 1
+    let end = place
+    while (end < prepared.length && !/\s/.test(prepared[end] ?? '')) end += 1
+    runs.push({ start, end, places: [place] })
+  }
+  if (runs.length === 0) return
+  const maskWhole = (run: Run): void => {
+    covered.fill(COVER_TOKEN, run.start, run.end)
+  }
+  const budget = Math.max(1, Math.floor(MAX_SPLIT_SCAN / Math.max(1, prepared.length)))
+  const runsRead: Run[] = []
+  const combosRead: number[][][] = []
+  for (const run of runs) {
+    const m = run.places.length
+    // The count first, so a run that will be masked costs nothing to list.
+    const count = m <= MAX_SPLIT_EXHAUSTIVE ? (1 << m) - 1 : (m * (m + 1)) / 2 + 1
+    if (m > MAX_SPLIT_PLACES || count > budget) {
+      maskWhole(run)
+      continue
+    }
+    const chosen: number[][] = []
+    if (m <= MAX_SPLIT_EXHAUSTIVE) {
+      for (let mask = 1; mask < 1 << m; mask += 1) chosen.push(run.places.filter((_, index) => (mask & (1 << index)) !== 0))
+    } else {
+      for (let i = 0; i < m; i += 1) {
+        chosen.push([run.places[i] ?? 0])
+        for (let k = i + 1; k < m; k += 1) chosen.push([run.places[i] ?? 0, run.places[k] ?? 0])
+      }
+      chosen.push([...run.places])
+    }
+    runsRead.push(run)
+    combosRead.push(chosen)
+  }
+  const readings = combosRead.reduce((most, chosen) => Math.max(most, chosen.length), 0)
+  for (let j = 0; j < readings; j += 1) {
+    const marks: number[] = []
+    for (const chosen of combosRead) marks.push(...(chosen[j % chosen.length] ?? []))
+    const parts: string[] = []
+    const origin = new Int32Array(prepared.length + marks.length)
+    let from = 0
+    let out = 0
+    for (const mark of marks) {
+      parts.push(prepared.slice(from, mark), SPLIT_MARK)
+      for (let index = from; index < mark; index += 1) origin[out++] = index
+      origin[out++] = -1
+      from = mark
+    }
+    parts.push(prepared.slice(from))
+    for (let index = from; index < prepared.length; index += 1) origin[out++] = index
+    traceCredentials({ text: parts.join(''), origin }, false, covered, rules)
+  }
+}
+
 /** Ambiguity is what `resolveAmbiguousSequences` hands the three layers: the
  * prepared form with every credential any reading found replaced, and whether
  * anything was. */
@@ -1327,6 +1445,9 @@ export interface Ambiguity {
    * opposed to the form as written alone holding a credential
    * (`resolveReadings`). */
   readonly sequences: boolean
+  /** credential says whether any reading matched a credential (as opposed to
+   * only a URL), which is what the url class refuses on. */
+  readonly credential: boolean
 }
 
 /**
@@ -1371,62 +1492,104 @@ export function resolveAmbiguousSequences(raw: string): Ambiguity | null | undef
  * (`src/source/redact.ts`) -- so that the two cannot combine their readings two
  * different ways (review round 2 of PR 540).
  *
- * It is `resolveAmbiguousSequences` with **one more reading in the union: the
- * form as written**, NFKC with the terminal's reading of every sequence and
- * every invisible character still in place. The prepared form has lost those
- * characters, and with them the boundary a token shape's lookbehind
- * (`(?<![\p{L}\p{N}_])`) needs, so `J` + a zero-width space + a key id is a key
- * id only in the form as written. Both layers used to read that form only when
- * the prepared one matched nothing, so a path, an address or another token
- * anywhere in the value turned the second reading off and the split key id was
- * drawn and recorded whole. Now the credential rules run over the written form
- * too, every time, and what they match there is mapped onto the prepared form's
- * characters and masked, exactly as an ambiguous sequence's readings are.
+ * It is `resolveAmbiguousSequences` with **more readings in the union**, and
+ * the union is taken over covered *characters* before anything is masked (review
+ * round 3 of PR 540: masking what one reading found and re-scanning the cut
+ * text left the head of a token no rule matched). The readings:
  *
- * Returns `undefined` when no sequence swallowed anything and the written form
- * holds no credential the prepared form's own pass would not see (the caller's
- * ordinary path), `null` when the readings exceed the bounds (fail closed), and
+ *  - the prepared form itself (NFKC, every sequence and invisible character
+ *    gone), so its own credentials are in the union;
+ *  - every **split place** -- where removing an invisible run or a terminal
+ *    sequence made two token characters touch -- read as a boundary or not, in
+ *    every combination per whitespace-free run (`traceSplits`). The prepared
+ *    form has lost those characters, and with them the boundary a token
+ *    shape's lookbehind (`(?<![\p{L}\p{N}_])`) needs: `J` + a zero-width space
+ *    + a key id is a key id only with that place read as a boundary, and a key
+ *    id that also splits itself (`J`, ZWSP, `AKIA..`, ZWSP, `..`) needs one
+ *    place read each way. An OSC 8 hyperlink or an SGR between `J` and the key
+ *    is the same case. The form as written is the every-place-a-boundary
+ *    combination.
+ *
+ * Both layers used to read the form as written only when the prepared one
+ * matched nothing (review round 2), so a path, an address or another token
+ * anywhere in the value turned that reading off.
+ *
+ * Returns `undefined` when nothing was removed or no reading found anything (the
+ * caller's ordinary path), `null` when the readings exceed the bounds (fail closed), and
  * otherwise the prepared form, masked.
  */
 export function resolveReadings(raw: string): Ambiguity | null | undefined {
   return resolve(raw, true)
 }
 
+/** CREDENTIAL_TRACKED_RULES are `TRACKED_RULES` without the URL rule: the
+ * url class asks whether a credential sits *inside* a link, which the URL rule,
+ * run first, would hide by replacing the whole link. */
+const CREDENTIAL_TRACKED_RULES: readonly TrackedRule[] = Object.freeze(TRACKED_RULES.slice(1))
+
+/** resolveCredentialReadings is `resolveReadings` asking only about
+ * credentials: what the url class reads. */
+export function resolveCredentialReadings(raw: string): Ambiguity | null | undefined {
+  return resolve(raw, true, CREDENTIAL_TRACKED_RULES)
+}
+
 /** resolve is the union over readings, with or without the form as written
  * (`resolveReadings`). */
-function resolve(raw: string, withWritten: boolean): Ambiguity | null | undefined {
+function resolve(
+  raw: string,
+  withWritten: boolean,
+  rules: readonly TrackedRule[] = TRACKED_RULES,
+): Ambiguity | null | undefined {
   const hasSequence = SEQUENCE_FAST_RE.test(raw)
   if (!hasSequence && !withWritten) return undefined
   const sites: AmbiguousSite[] = []
-  const stripped = hasSequence ? scanTerminalSequences(raw.normalize('NFKC'), sites) : stripTerminalSequences(raw.normalize('NFKC'))
+  const cuts: number[] = []
+  const stripped = hasSequence ? scanTerminalSequences(raw.normalize('NFKC'), sites, withWritten ? cuts : null) : raw.normalize('NFKC')
   // The prepared form, with each site's place carried through the strip.
   const removed: number[] = []
   const prepared = stripped.replace(PREPARE_STRIP_RE, (found: string, offset: number) => {
     removed.push(offset, found.length)
     return ''
   })
-  if (sites.length === 0 && (!withWritten || removed.length === 0)) return undefined
+  if (sites.length === 0 && (!withWritten || (removed.length === 0 && cuts.length === 0))) return undefined
   const covered = new Uint8Array(prepared.length)
   if (withWritten) {
-    // The form as written: `stripped`, each character mapped to its place in
-    // the prepared form, and each character the prepared form dropped mapped
-    // to none.
-    const origin = new Int32Array(stripped.length).fill(-1)
+    // More readings, and their union -- never one reading masked and the cut
+    // text re-scanned (review round 3 of PR 540: a token whose tail the written
+    // form found was masked and the head it left behind no longer matched any
+    // rule):
+    //
+    //   1. the prepared form itself, every invisible character and sequence
+    //      gone, so its own credentials are in the union;
+    //   2. every place where a removal made two characters touch (an invisible
+    //      run, a sequence) read as a boundary or not, in every combination per
+    //      whitespace-free run (`traceSplits`): a key id split twice, once to
+    //      borrow a boundary and once to split itself, needs one place read
+    //      each way. The form as written is one of those combinations (every
+    //      place a boundary), so it is not read separately.
+    const splitPlaces: number[] = []
     let at = 0
     let next = 0
     let r = 0
-    while (at < stripped.length) {
+    let c = 0
+    while (at <= stripped.length) {
+      while (c < cuts.length && (cuts[c] ?? 0) <= at) {
+        splitPlaces.push(next)
+        c += 1
+      }
+      if (at === stripped.length) break
       const start = removed[r]
       if (start !== undefined && at === start) {
+        splitPlaces.push(next)
         at += removed[r + 1] ?? 0
         r += 2
         continue
       }
-      origin[at] = next
       next += 1
       at += 1
     }
-    traceCredentials({ text: stripped, origin }, false, covered)
+    traceCredentials({ text: prepared, origin: new Int32Array(prepared.length).map((_, index) => index) }, false, covered, rules)
+    traceSplits(prepared, splitPlaces, covered, rules)
     if (sites.length === 0) return maskCovered(prepared, covered, false) ?? undefined
   }
   const places: number[] = []
@@ -1495,7 +1658,7 @@ function resolve(raw: string, withWritten: boolean): Ambiguity | null | undefine
     for (const span of origins) {
       for (let offset = 0; offset < span.length; offset += 1) origin[span.at + offset] = span.from + offset
     }
-    traceCredentials({ text: parts.join(''), origin }, false, covered)
+    traceCredentials({ text: parts.join(''), origin }, false, covered, rules)
   }
   // Every combination within each cluster, all clusters at once: reading `j`
   // takes combination `j mod size` of each cluster, a mixed-radix number over
@@ -1517,7 +1680,7 @@ function resolve(raw: string, withWritten: boolean): Ambiguity | null | undefine
   // Every final byte kept, and every body kept, everywhere at once.
   read((site) => (sites[site]?.final === null ? 0 : 1))
   read((site) => (options[site]?.length ?? 1) - 1)
-  return maskCovered(prepared, covered, true) ?? { text: prepared, masked: false, sequences: true }
+  return maskCovered(prepared, covered, true) ?? { text: prepared, masked: false, sequences: true, credential: false }
 }
 
 /** maskCovered replaces every covered run of `prepared` with its placeholder,
@@ -1538,7 +1701,7 @@ function maskCovered(prepared: string, covered: Uint8Array, sequences: boolean):
     }
     index = end
   }
-  return masked ? { text: out.join(''), masked, sequences } : null
+  return masked ? { text: out.join(''), masked, sequences, credential: covered.includes(COVER_TOKEN) } : null
 }
 
 /**
@@ -2076,6 +2239,12 @@ export function sanitizeText(
     // sequences hide bytes no reading can settle is not a link.
     if (ambiguity?.sequences === true) {
       return refuse(`${field} is a url with a terminal escape sequence in it, so the console will not draw it`)
+    }
+    // The url class reads the union too (review round 3 of PR 540): a key id
+    // the prepared form joins to the letter before it is still a key id in
+    // the form as written, and a link carrying it is not drawn.
+    if (resolveCredentialReadings(raw)?.credential === true) {
+      return refuse(`${field} is a url that carries a credential, so the console will not draw it`)
     }
     return applyUrl(text, field)
   }

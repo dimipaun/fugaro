@@ -1515,28 +1515,34 @@ npm run test:unit
 # "2 passed", with neither skipped.
 npm run test:unit -- test/unit/fuses.test.ts -t 'the pinned Electron binary itself'
 
-# 3. Package, with the signing material and nothing else. Read the values into
-#    shell variables that are NOT exported (for example with `read -rs`), then
-#    hand them to one command whose environment is built from scratch.
-#    CSC_LINK is a FILE PATH to the exported .p12 (Developer ID Application),
-#    never the base64 of it inline: an inline value is a secret in the
-#    command line and the process table. Notarisation activates by itself when
-#    one credential triple is present (electron-builder 26 has no "turn it on"
-#    flag, only a disable switch); the App Store Connect API key is the
-#    recommended one -- the alternatives are APPLE_ID +
-#    APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID, or APPLE_KEYCHAIN +
+# 3. Package, in a subshell (so the `exit` below ends it, not your terminal),
+#    with an environment built from nothing. Only files and identifiers go on
+#    a command line: CSC_LINK is a FILE PATH to the exported .p12 (Developer ID
+#    Application), never its base64 inline, and APPLE_API_KEY is the path of the
+#    .p8. The one secret VALUE, the certificate's password, never touches argv:
+#    the inner shell reads it from the terminal and exports it to the packager.
+#    Notarisation activates by itself when one credential triple is present
+#    (electron-builder 26 has no "turn it on" flag, only a disable switch); the
+#    App Store Connect API key is the recommended one -- the alternatives are
+#    APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID, or APPLE_KEYCHAIN +
 #    APPLE_KEYCHAIN_PROFILE: one triple, not three.
-test ! -e electron-builder.env   # see below: it must not exist
-env -i \
-  PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin" \
-  HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
-  NO_UPDATE_NOTIFIER=1 CI=1 \
-  CSC_LINK="${csc_p12_path:?the path of the exported Developer ID Application .p12}" \
-  CSC_KEY_PASSWORD="${csc_key_password:?the certificate's password}" \
-  APPLE_API_KEY="${apple_api_key_path:?the path of the App Store Connect API key file}" \
-  APPLE_API_KEY_ID="${apple_api_key_id:?the key's id}" \
-  APPLE_API_ISSUER="${apple_api_issuer:?the issuer uuid}" \
-  npm run package   # npm run build && electron-builder --mac --universal --publish never
+(
+  test ! -e electron-builder.env || { echo 'remove console/electron-builder.env first' >&2; exit 1; }
+  env -i \
+    PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin" \
+    HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
+    NO_UPDATE_NOTIFIER=1 CI=1 \
+    CSC_LINK="$HOME/<private dir>/developer-id-application.p12" \
+    APPLE_API_KEY="$HOME/<private dir>/AuthKey_<key id>.p8" \
+    APPLE_API_KEY_ID="<key id>" \
+    APPLE_API_ISSUER="<issuer uuid>" \
+    /bin/bash --noprofile --norc -c '
+      IFS= read -rs -p "Developer ID certificate password: " CSC_KEY_PASSWORD </dev/tty
+      echo >&2
+      export CSC_KEY_PASSWORD
+      exec npm run package   # npm run build && electron-builder --mac --universal --publish never
+    '
+)
 ```
 
 Why each of the variables that are not secrets is there:
@@ -1556,6 +1562,16 @@ it builds, so a file there would add variables the `env -i` above was written to
 keep out — and, if it held secrets, put them in a file in the checkout.
 `fuses.test.ts` asserts the file is absent and that `build.files` could not
 ship it.
+
+**The window that remains, said plainly.** The password is in the environment
+of the packaging processes (the inner shell, npm, `tsc`, electron-builder and
+what they start) for the length of the build, where any process running as the
+owner's user can read it (`ps eww`, for one); and electron-builder itself hands
+it to `/usr/bin/security import … -P <password>` on a command line for the
+moment it imports the certificate into its temporary keychain
+(`codeSign/macCodeSign.js`), which the pinned packer does and this repository
+cannot change. The `.p12` and the `.p8` are files whose paths, not contents,
+are passed; keep them `0600` in a directory only the owner can read.
 
 **What still runs with the secrets present**, said plainly: `npm run package`
 runs `tsc` (`npm run build`) and then the whole electron-builder tree, and every
