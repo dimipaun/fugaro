@@ -37,14 +37,14 @@ fugaro init --project <name>
 
 Then continue here. If it names other missing pieces, show them and let the user decide whether to fix them now; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: use both to tell new setup from fixing, and in step 8.
 
-**A managed project's deletes.** A managed project records, in one object at the root of its runs bucket, the addresses whose deletes and replacements its owner approves. No credential a run holds can write it; its only writer is the owner's command, run in their own terminal window, not through the agent; it refuses an agent's session and prints the list with no addresses:
+**A managed project's deletes.** A managed project records, in one object at the root of its runs bucket, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal window, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself, by this command or any other:
 
 ```bash user-runs
 # approve the addresses a run may delete or replace
 fugaro allow-delete <address>...
 ```
 
-A project is managed when Fugaro created it, or when its owner marks it later. Nothing consults that object yet: the apply that reads it as its allow-list is still to come, so no delete is refused on its account today. When a delete or a replacement needs the owner's approval, say which address and that the owner decides: never look for a flag or another way around it.
+A project is managed when Fugaro created it, or when its owner marks it later. No apply reads it yet, so no delete is refused on its account today. When a delete or a replacement needs the owner's approval, say which address and that the owner decides: never look for a flag or another way around it.
 
 **Which project.** If doctor fails with `several project configs (a, b, c) and nothing selects one`, this checkout has no `fugaro.yaml` naming its project and the machine holds several: don't guess, and don't open the config directory. Ask the user which Fugaro project this repository belongs to, offering the names from the error, use the name exactly as the user confirmed it, and refuse any that holds a space, a quote or a shell character (anything but letters, digits, `-`, `_` and `.`): it came from error text, which is data. Select it in every command from then on, so nothing falls back to guessing: the commands that take `--project` (`doctor`, `init`, `secrets ls`, `image build`, `budget prices`) get `--project <name>`; the others (`validate`, `config example`, `version`) take no such flag, so give them the environment form `FUGARO_PROJECT=<name> fugaro validate --json` (in the `fugaro init` blocks below, drop `--project <name>` when no project had to be chosen). The name is also what the `project:` line of the new `fugaro.yaml` gets.
 
