@@ -36,6 +36,10 @@ const (
 	watchFirstFrame = 5 * time.Second
 	// degradedNotice is what the project without a budget backend is told.
 	degradedNotice = "no budget backend: showing run records only"
+	// prStateOnceWait is how long one --once snapshot waits for the ready
+	// list's pull request states before printing without them. The live
+	// screen never waits: it draws from the cache (internal/watch PRState).
+	prStateOnceWait = 3 * time.Second
 	// degradedSince is how far back the degraded view reads runs.
 	degradedSince = 24 * time.Hour
 )
@@ -67,6 +71,10 @@ type WatchDeps struct {
 	// Acks is the local acknowledgement set x and the plain/json paths
 	// check finished failures against.
 	Acks *watch.Acks
+	// PRState drops a ready row whose pull request the operator's own gh
+	// reports merged or closed (--no-pr-state leaves it out). --json never
+	// consults it: the feed's ready[] is the runs bucket's own record.
+	PRState *watch.PRState
 }
 
 // watchStdoutTTY says whether w is a terminal; tests replace it.
@@ -80,7 +88,7 @@ var runTUI = func(ctx context.Context, d *WatchDeps) error {
 	by := watchActor(ctx, d.LC)
 	return watch.RunTUI(ctx, watch.TUIOptions{
 		In: d.In, Out: d.Out, Project: d.LC.Name, Updates: d.Sup.Updates(), Config: d.Config,
-		RepoKey: d.RepoKey, Repo: d.Repo, Queued: d.Queued,
+		RepoKey: d.RepoKey, Repo: d.Repo, Queued: d.Queued, PRState: d.PRState,
 		All: d.Filter.All, Keep: d.Filter.Keep, KeepCount: d.Filter.KeepCount, AckPath: watch.AckPath(os.Getenv),
 		ASCII:   watch.UseASCII(d.ASCII, os.Getenv),
 		NoColor: watch.UseNoColor(d.NoColor, os.Getenv),
@@ -126,6 +134,7 @@ type watchOptions struct {
 	all                                   bool
 	keep                                  time.Duration
 	keepCount                             int
+	noPRState                             bool
 }
 
 func newWatchCmd() *cobra.Command {
@@ -151,7 +160,15 @@ func newWatchCmd() *cobra.Command {
 			"is acknowledged (x in the interactive screen) or a day passes. --all shows\n" +
 			"every finished run (the a key toggles this without relaunching). --json is\n" +
 			"always unfiltered: it carries every finished run and, among them, the ones\n" +
-			"ready for review.",
+			"ready for review.\n\n" +
+			"The \"Ready for your review\" list drops a pull request that is already merged\n" +
+			"or closed. The state is asked of your own gh (when it is installed and\n" +
+			"logged in), by pull request number and repository, never through a shell and\n" +
+			"never with the run's title or any other run text; the answer is cached, and\n" +
+			"anything that goes wrong — no gh, no login, a rate limit, a failure, a\n" +
+			"timeout — leaves the pull request listed as it is today, with one note saying\n" +
+			"so. --no-pr-state turns the lookup off entirely (nothing is executed), and\n" +
+			"--json is unaffected: its ready[] is the runs bucket's own record.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runWatch(cmd, &o) },
 	}
@@ -167,6 +184,7 @@ func newWatchCmd() *cobra.Command {
 	f.BoolVar(&o.all, "all", false, "show every finished run, not just the active and recent ones")
 	f.DurationVar(&o.keep, "keep", 6*time.Hour, "how long a finished run stays shown (with --keep-count, whichever is stricter)")
 	f.IntVar(&o.keepCount, "keep-count", 15, "how many finished runs stay shown (with --keep, whichever is stricter)")
+	f.BoolVar(&o.noPRState, "no-pr-state", false, "do not ask gh about the ready PRs: list every one of them, run nothing")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -216,7 +234,10 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 	d := &WatchDeps{In: cmd.InOrStdin(), Out: cmd.OutOrStdout(), Err: cmd.ErrOrStderr(), LC: lc, DB: db,
 		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), RepoNames: repoNames(lc)}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr,
 		Filter: watch.Filter{All: o.all, Keep: o.keep, KeepCount: o.keepCount, FailedKeep: 24 * time.Hour},
-		Acks:   watch.LoadAcks(watch.AckPath(os.Getenv))}
+		Acks:   watch.LoadAcks(watch.AckPath(os.Getenv)),
+		// The ready list's PR states come from the operator's own gh, when
+		// there is one; nothing here ever holds a credential of its own.
+		PRState: watch.NewPRState(watch.PRStateOptions{Disabled: o.noPRState})}
 
 	if o.once {
 		rows, finished, note := fetchQueuedOnce(ctx, lc, o.repo)
@@ -253,8 +274,10 @@ func repoNames(lc *localcfg.Config) map[string]string {
 }
 
 // emit writes one frame or document of v. --json stays unfiltered (design
-// generic-tool §10.3: it is the machine view); the plain text frame gets the
-// same finished-run filter the interactive screen uses.
+// generic-tool §10.3: it is the machine view, and its ready[] is the runs
+// bucket's own record, not a live claim about the pull request); the plain
+// text frame gets the same finished-run filter the interactive screen uses,
+// and the same PR-state filter on the ready list.
 func (d *WatchDeps) emit(o *watchOptions, v watch.View, header bool) error {
 	if d.RepoKey != "" {
 		v = watch.FilterRepo(v, d.RepoKey)
@@ -263,12 +286,25 @@ func (d *WatchDeps) emit(o *watchOptions, v watch.View, header bool) error {
 		return json.NewEncoder(d.Out).Encode(watch.BuildJSON(d.LC.Name, v))
 	}
 	ready := watch.ReadyRowsOf(v) // before the filter: a ready PR outlives --keep (design generic-tool §10.1)
+	// The lookups start here and run in the background, so the frame is never
+	// held up by a gh; a row stays listed until an answer says otherwise
+	// (fail open). The result is the whole point: a live frame drops a merged
+	// or closed PR from the answers already cached, and starts what is
+	// missing for the frames after this one. --once is one snapshot, so it
+	// waits for the answers it just started, briefly, before printing the
+	// count.
+	ready = d.PRState.Filter(ready)
+	if o.once {
+		d.PRState.Settle(prStateOnceWait)
+		ready = d.PRState.Filter(ready)
+	}
 	filtered, _ := d.Filter.Apply(v, d.Acks.Has)
 	filtered = watch.DropEmptyFinishedBlocks(filtered)
 	if header {
 		fmt.Fprintf(d.Out, "--- %s ---\n", v.Now.UTC().Format(time.RFC3339))
 	}
-	if err := watch.RenderPlain(d.Out, d.LC.Name, filtered, ready, watch.PlainOptions{ASCII: o.ascii, Repo: d.Repo}); err != nil {
+	if err := watch.RenderPlain(d.Out, d.LC.Name, filtered, ready,
+		watch.PlainOptions{ASCII: o.ascii, Repo: d.Repo, PRNote: d.PRState.Note()}); err != nil {
 		return err
 	}
 	if header {
@@ -345,6 +381,7 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	var lastQueued []watch.QueuedRun
 	var lastFinished []watch.FinishedRun
 	var lastQueuedNote string
+	var lastPR uint64
 	dirty := false
 	for {
 		var u watch.Update
@@ -379,6 +416,11 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 		}
 		if !last.IsZero() && v.Conn.Kind != lastConn {
 			dirty = true
+		}
+		// A PR-state answer lands off this loop; a frame again is what shows
+		// the ready list without the PR it was about.
+		if ver := d.PRState.Version(); ver != lastPR {
+			dirty, lastPR = true, ver
 		}
 		refused := v.Conn.Kind == watch.ConnRefused
 		ready := seen == [4]bool{true, true, true, true} || time.Since(started) >= watchFirstFrame

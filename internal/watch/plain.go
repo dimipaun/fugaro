@@ -17,6 +17,10 @@ type PlainOptions struct {
 	// Repo, when set, is the repository name the view was narrowed to (the
 	// project line then still shows the whole project).
 	Repo string
+	// PRNote is a one-line reason the ready list's pull request states could
+	// not be read from the operator's gh; it is printed once, under the ready
+	// section, and never carries the gh output itself.
+	PRNote string
 }
 
 // RenderPlain writes v as one readable text frame: lines of words and
@@ -30,6 +34,8 @@ type PlainOptions struct {
 // --keep-count, which bound how much history the rest of the frame shows,
 // not what still needs a look. The caller resolves it, since by the time
 // RenderPlain runs, v may already be filtered and the run's own block gone.
+// The caller also hands it through PRState first, so a pull request the gh of
+// the operator's machine says is merged or closed is not listed here at all.
 func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainOptions) error {
 	warn, sep := "⚠", " · "
 	if o.ASCII {
@@ -86,6 +92,9 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 			fmt.Fprintf(tw, "  %s\t#%d\t%s\t%s\n", item.Repo, item.Run.PRNumber, dashIfEmpty(item.Run.PRURL), dash(item.Run.Title))
 		}
 		tw.Flush()
+	}
+	if o.PRNote != "" {
+		fmt.Fprintf(&b, "%s\n", o.PRNote)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
