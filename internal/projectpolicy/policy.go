@@ -112,8 +112,10 @@ type Policy struct {
 	// name (config.Workflow.JobProfile, default DefaultProfileName) and the
 	// runner refuses the run when the policy does not define it (§5(3), fail
 	// closed), so this block is a closed set a workflow may only name, never
-	// extend: a backlog job, a budget backlog entry and the run's own identity
-	// are all built from the profile the node defines.
+	// extend. In this release the selection is checked by name only; the
+	// profile's cpu, memory, timeout, secrets and allow_repos are validated
+	// here and applied by the job layout and admission check of later phase 3
+	// tasks (3.2, 3.3), which build the job a run is launched as from it.
 	//
 	// An absent block is a phase-1 node: it declares no profile, and a workflow
 	// that selects one is then refused at run start rather than run on
@@ -375,9 +377,11 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 	if fraw, ok := doc["profiles"]; ok && !isNull(fraw) {
+		// decodeProfileBlock's errors name their place themselves
+		// ("projectpolicy: profiles.<name>..."), so they are returned as they are.
 		ps, err := decodeProfileBlock(fraw)
 		if err != nil {
-			return nil, true, fmt.Errorf("projectpolicy: profiles: %w", err)
+			return nil, true, err
 		}
 		p.Profiles = ps
 		if err := validProfiles(p.Profiles); err != nil {
@@ -454,7 +458,7 @@ func sortedStringKeys[V any](m map[string]V) []string {
 func decodeProfileBlock(raw json.RawMessage) (map[string]Profile, error) {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("projectpolicy: profiles: %w", err)
 	}
 	out := make(map[string]Profile, len(entries))
 	for _, name := range sortedProfileNames(entries) {
@@ -462,7 +466,7 @@ func decodeProfileBlock(raw json.RawMessage) (map[string]Profile, error) {
 		dec.DisallowUnknownFields()
 		var pr Profile
 		if err := dec.Decode(&pr); err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+			return nil, fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
 		}
 		if err := checkWrittenProfileFields(name, entries[name]); err != nil {
 			return nil, err
@@ -535,7 +539,7 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 func checkWrittenProfileFields(name string, raw json.RawMessage) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return fmt.Errorf("%s: %w", name, err)
+		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
 	}
 	for _, member := range memberNames(fields) {
 		known := spelledMember(profileMembers, member)

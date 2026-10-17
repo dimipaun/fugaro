@@ -314,6 +314,11 @@ func TestDecodeRefusesACaseVariantProfileMember(t *testing.T) {
 		{"a null allow_repos spelled ALLOW_REPOS", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","ALLOW_REPOS":null}}`},
 		{"a provider spelled Provider", `{"standard":{"Provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}`},
 		{"a timeout spelled Timeout_Class", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","Timeout_Class":"6h"}}`},
+		// encoding/json folds case the way strings.EqualFold does, so the long
+		// s (U+017F) matches 's' and the Kelvin sign (U+212A) matches 'k':
+		// neither is a byte-for-byte spelling the written-document checks see.
+		{"an empty allow_repos spelled with a long s", "{\"standard\":{\"provider\":\"github\",\"cpu\":2,\"memory\":\"4Gi\",\"timeout_class\":\"6h\",\"allow_repo\u017f\":[]}}"},
+		{"secrets spelled with a long s", "{\"standard\":{\"provider\":\"github\",\"cpu\":2,\"memory\":\"4Gi\",\"timeout_class\":\"6h\",\"\u017fecrets\":[\"deploy-key\"]}}"},
 	} {
 		p, err := decodeProfiles(t, tc.doc)
 		if err == nil {
@@ -472,5 +477,30 @@ func TestProfileTimeoutUsesFugaroYAMLsOwnDurationSpelling(t *testing.T) {
 	}
 	if d != 36*time.Hour {
 		t.Errorf("config.ParseDuration(1d12h) = %s, want 36h", d)
+	}
+}
+
+// TestDecodeProfileErrorsCarryTheirPrefixOnce: a refusal inside the profiles
+// block names its place once ("projectpolicy: profiles.standard..."), not
+// behind a second "projectpolicy: profiles:" the caller used to add.
+func TestDecodeProfileErrorsCarryTheirPrefixOnce(t *testing.T) {
+	for _, doc := range []string{
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":[]}}`,
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","Provider":"github"}}`,
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","bogus":1}}`,
+		`{"standard":5}`,
+		`[]`,
+	} {
+		_, err := decodeProfiles(t, doc)
+		if err == nil {
+			t.Errorf("%s was accepted", doc)
+			continue
+		}
+		if n := strings.Count(err.Error(), "projectpolicy:"); n != 1 {
+			t.Errorf("%s: the error carries the prefix %d times: %v", doc, n, err)
+		}
+		if !strings.HasPrefix(err.Error(), "projectpolicy: profiles") {
+			t.Errorf("%s: the error does not name the profiles block: %v", doc, err)
+		}
 	}
 }

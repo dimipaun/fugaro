@@ -25,9 +25,10 @@ resource "google_service_account_iam_member" "operator" {
 # its profile, so the object it writes is no longer inside one repository's
 # prefix. SECURITY.md and docs/design/bucket-iam.md state the regression in
 # full (D4), including another queued run's budget token (D13, accepted
-# 2026-10-15) and another run's launch.json/result.json (task 3.4); the
-# mitigation is separate profiles, since a profile is a job and so a job
-# service account.
+# 2026-10-15) and another run's launch.json/result.json (task 3.4). Every
+# project job gets this same condition whatever its profile, so a profile
+# separates secrets, not bucket objects: the mitigation D4 named (separate
+# profiles) does not hold for the bucket and is open for the owner to re-rule.
 #
 # The condition is the input byte for byte: one that differs is a different
 # binding, and the review screen (internal/infra/tf) accepts it only for an

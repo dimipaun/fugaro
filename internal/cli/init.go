@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -584,7 +585,10 @@ func runInit(r *initRun) error {
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
 	if !o.forget && !o.configOnly {
 		// The default and --firebase modes: the converge loop over the
-		// engines (init_stages.go).
+		// engines (init_stages.go), whose own outcome records the creation
+		// fact before it prints the result (markCreated, called from
+		// outcome), whatever the loop's outcome — which the run still
+		// returns.
 		return e.converge(cmd.Context())
 	}
 
@@ -604,6 +608,84 @@ func runInit(r *initRun) error {
 		return err
 	}
 	return r.printResult()
+}
+
+// markCreated records the creation fact in the runs bucket of a project
+// this run created: the object at the bucket's root that no credential a run
+// holds can write (internal/infra/managed, design D56/D57; Task 0.1 of
+// docs/plans/2026-10-16-managed-projects.md). A later run reads it to know
+// the project is Fugaro's own, so it is written by the run that knows the
+// fact, on the operator's own credentials, and by nothing else: the project
+// stage runs first and the runs bucket does not exist until the installation
+// stage has applied, so this is the one place and the one moment it can be
+// written from.
+//
+// The fact is the project this run created, and nothing else (D73: adding
+// Firebase to an existing project is not creating one, so init --firebase
+// writes nothing). The write itself refuses anything but that fact
+// (managed.WriteMarker); what is here is the rest: which bucket — the
+// project's own, under the name the read of Task 0.2 looks in and no other —
+// which project number, and what to say when it cannot be written.
+//
+// It runs at the end of the converge and never changes its outcome: the
+// engine calls it from outcome, before the result is printed, so what it
+// warns is in the account a --json consumer reads and not only on stderr. A run that
+// created the project and then failed later still records the fact — the
+// project exists, and the part of the work that succeeded must not be lost
+// — and a write that fails is a warning, never a failure of the run: an
+// unmarked project is the fail-closed direction (nothing is skipped for it,
+// which is where a project that was not created in this run stays).
+func (e *initEngine) markCreated(ctx context.Context) {
+	r := e.r
+	// Created is set by the project stage alone, inside its create branch
+	// (init_project.go:421): "" means this run created no project, whatever
+	// else it did, and then there is no fact to record. This is the gate the
+	// task's own test at the call site pins (init_managed_test.go): every
+	// ordinary run of an existing installation — fugaro's own, belong, the
+	// owner's — comes through here with it empty.
+	if r.res.Created == "" {
+		return
+	}
+	if e.c == nil {
+		r.warn(fmt.Sprintf("project %s was created by this run but no Google client was built for the run: it is not marked as managed, so nothing is skipped for it until it is", r.res.Created))
+		return
+	}
+	if r.res.Created != r.gcpProject {
+		r.warn(fmt.Sprintf("this run created project %s but installs into %s: neither is marked as managed", r.res.Created, r.gcpProject))
+		return
+	}
+	bucket := ""
+	if r.res.Outputs != nil {
+		bucket = r.res.Outputs.RunsBucket
+	}
+	if bucket == "" {
+		r.warn(fmt.Sprintf("project %s was created but the runs bucket it would be marked in is not known in this run (the installation did not finish): it is not marked, so nothing is skipped for it until it is", r.res.Created))
+		return
+	}
+	// The bucket must be the project's own, under the default name, for the
+	// same reason init's owner() refuses any other (init_review.go:183): a
+	// custom --runs-bucket would take the marker where the read of Task 0.2
+	// does not look — owner() reads fugaro-runs-<project>, and Task 0.2's
+	// IsManaged locates the bucket the same way. A marker in a custom bucket
+	// is the fail-closed direction and still a silently unmanaged project,
+	// so this writes only into the name the read knows and says which name
+	// it found instead.
+	if want := "fugaro-runs-" + r.res.Created; bucket != want {
+		r.warn(fmt.Sprintf("project %s was created but its runs bucket is %s, not %s: it is not marked as managed, because the marker is only read from the default bucket name", r.res.Created, bucket, want))
+		return
+	}
+	// The number is what makes the marker about this project and not about a
+	// bucket of the same name in someone else's project (managed.WriteMarker
+	// checks the bucket against it).
+	number, err := infra.ProjectNumber(ctx, e.c, r.res.Created)
+	if err == nil {
+		err = managed.WriteMarker(ctx, e.c.Storage, bucket, r.res.Created, r.gcpProject, number)
+	}
+	if err != nil {
+		r.warn(fmt.Sprintf("project %s was created but not marked as managed in gs://%s (%v): the marker is written once, by the run that creates the project, so nothing is skipped for it until an owner-run command marks it", r.res.Created, bucket, err))
+		return
+	}
+	fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s)\n", r.res.Created, bucket, managed.MarkerObject)
 }
 
 // checkEnv refuses an environment that would point Terraform or the
@@ -1120,8 +1202,13 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 }
 
 // guard is tf.Guard, a refusal being exit 1 with a hint for each refused
-// delete that flags left out of this run would keep.
+// delete that flags left out of this run would keep. A project job's delete
+// is refused first and whatever allowDelete names: its retirement is not
+// supported yet (infra.RefuseProjectJobDeletes).
 func guard(plan *tf.Plan, allowDelete []string) error {
+	if err := infra.RefuseProjectJobDeletes(plan); err != nil {
+		return userErr("%v", err)
+	}
 	err := tf.Guard(plan, allowDelete)
 	if err == nil {
 		return nil
