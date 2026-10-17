@@ -274,6 +274,54 @@ func TestDecodeRefusesAProfileSecretThatIsAValueOrNotAName(t *testing.T) {
 	}
 }
 
+// TestDecodeRefusesAProfileMountingAClaudeOAuthToken: a Claude account is
+// person-owned (design D2) and its allow_data_to is a per-repository list a
+// shared job cannot honour, so no profile may mount a Claude OAuth token until
+// phase 5 decides how an account reaches a shared job. That rule already
+// refuses `fugaro init` (internal/infra's projectJobSecrets); it is stated here
+// as well so that publish, the deployer and both readers of the node
+// (internal/cli's launch and internal/runner) hold a profile to ONE rule.
+//
+// Without it the two documents could disagree about one profile: publish
+// copies the operator's profiles verbatim, so a policy could carry a profile
+// mounting the reserved claude-oauth-token whose job `fugaro init` refuses to
+// deploy — the launcher would compute the account segment of a job that does
+// not exist (the default account on its side, the empty account on the
+// deployer's) and call Cloud Run on a 404, and the runner would match no
+// candidate of its own and halt every run of that profile with cannotPlaceJob,
+// which blames a stale module version instead of the profile. The mutation is
+// dropping the refusal: every secrets list below is accepted.
+//
+// The whole claude-oauth-token-<account> namespace is refused, not only the
+// names a claude_accounts block happens to define (config.ClaudeOAuthTokenPrefix
+// says why: a name merely shaped like one must be refused wherever a secret
+// name is accepted).
+func TestDecodeRefusesAProfileMountingAClaudeOAuthToken(t *testing.T) {
+	secrets := func(list string) string {
+		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":` + list + `}}`
+	}
+	for _, list := range []string{
+		`["claude-oauth-token"]`,
+		`["claude-oauth-token-acme-personal"]`,
+		`["claude-oauth-token-nobody"]`,
+		`["github-app-key","claude-oauth-token"]`,
+	} {
+		_, err := decodeProfiles(t, secrets(list))
+		if err == nil {
+			t.Errorf("the secrets list %s was accepted", list)
+			continue
+		}
+		if !strings.Contains(err.Error(), "person-owned") || !strings.Contains(err.Error(), "phase 5") {
+			t.Errorf("the refusal for %s reads %v, want one naming the token person-owned until phase 5", list, err)
+		}
+	}
+	// Every other secret a profile may mount is still its to mount: the rule
+	// is the Claude OAuth namespace and nothing else.
+	if _, err := decodeProfiles(t, secrets(`["github-app-key","openrouter-api-key"]`)); err != nil {
+		t.Fatalf("a profile mounting other project secrets was refused: %v", err)
+	}
+}
+
 // TestDecodeRefusesAnExplicitlyEmptyProfileAllowRepos: a written empty list is
 // not the same statement as an absent one, and the node cannot carry the
 // difference (the carrier's omitempty): read as "the project's list applies",

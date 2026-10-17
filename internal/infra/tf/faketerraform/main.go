@@ -52,6 +52,10 @@ type Call struct {
 	Args []string `json:"args"`
 	Env  []string `json:"env"`
 	Dir  string   `json:"dir"`
+	// Credentials is whether the file GOOGLE_APPLICATION_CREDENTIALS names
+	// was there when the call ran: a credential file removed before the
+	// terraform that needs it is the bug a log of arguments cannot show.
+	Credentials bool `json:"credentials"`
 }
 
 func main() {
@@ -61,7 +65,12 @@ func main() {
 func run(args []string) int {
 	dir, _ := os.Getwd()
 	if path := os.Getenv("FAKE_TERRAFORM_LOG"); path != "" {
-		line, err := json.Marshal(Call{Args: args, Env: os.Environ(), Dir: dir})
+		creds := false
+		if p := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); p != "" {
+			_, err := os.Stat(p)
+			creds = err == nil
+		}
+		line, err := json.Marshal(Call{Args: args, Env: os.Environ(), Dir: dir, Credentials: creds})
 		if err == nil {
 			err = appendLine(path, line)
 		}

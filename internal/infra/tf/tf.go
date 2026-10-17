@@ -160,6 +160,24 @@ type ConfigResource struct {
 type ModuleCall struct {
 	Source string       `json:"source"`
 	Module ConfigModule `json:"module"`
+
+	// fields are its keys, as a module's are: a call's arguments, its
+	// version constraint and the meta-arguments that decide what the call
+	// makes (count, for_each), which provider configurations its block uses
+	// (providers) and what it waits for (depends_on) live under keys this
+	// struct does not decode, and the managed cover reads a call's own keys
+	// rather than taking them to be inert (managedModuleCallKeys and
+	// managedModuleCallArguments, managed_cover.go).
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a module call and keeps its keys.
+func (mc *ModuleCall) UnmarshalJSON(data []byte) error {
+	type plain ModuleCall
+	if err := json.Unmarshal(data, (*plain)(mc)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &mc.fields)
 }
 
 // Change is what a plan will do to one resource instance.

@@ -99,6 +99,14 @@ func policyOf(profiles map[string]config.JobProfile) *projectpolicy.Policy {
 // and drop the account, or have projectJobCandidates drop the account segment.
 // The named-account case fails alone, which is the axis the job's own service
 // account and its Claude token are separated by (design §7).
+//
+// The two Claude cases are arithmetic on profiles a *published* policy cannot
+// carry in this release: projectpolicy.validProfiles refuses a profile that
+// mounts any Claude OAuth token (the rule `fugaro init` deploys by), which is
+// why the launcher, the runner and the deployer can never disagree about a
+// job's account segment today. They are kept because the axis is what phase 5
+// reaches, and the candidate set must agree with the deployer's naming then as
+// it does now.
 func TestJobIdentityMatchesAComputedProjectJobName(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

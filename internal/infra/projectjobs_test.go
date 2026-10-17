@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // projectProfilesLCBlock is the local config block the project-job tests and
@@ -322,6 +323,13 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 // a profile that mounts any Claude account's token is refused, the default
 // account's and a named account's alike, rather than mounted with its
 // allow-list silently ignored.
+//
+// The refusal is pinned to the LAYER that makes it, not to a phrase both
+// layers could produce: the deployer's refusal is projectpolicy's rule
+// (ProjectJobs runs CheckProfiles over the local config before it builds
+// anything), so what this asserts is that the error is that function's own,
+// word for word. A second refusal copy inside this package — which an earlier
+// revision carried, unreachable behind the first — cannot satisfy it.
 func TestProjectJobsRefuseAClaudeOAuthToken(t *testing.T) {
 	for _, c := range []struct{ name, lc string }{
 		{"the default account", `project_secrets:
@@ -333,8 +341,19 @@ profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] }
 `},
 	} {
-		_, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions+c.lc), "fugaro-runs-proj-1234", false)
-		if err == nil || !strings.Contains(err.Error(), "person-owned") || !strings.Contains(err.Error(), "phase 5") {
+		lc := parseLC(t, m4LocalConfig+m5Additions+c.lc)
+		want := projectpolicy.CheckProfiles(profilesAsPolicy(lc.Profiles))
+		if want == nil {
+			t.Fatalf("%s: the policy admits the profile, so nothing below is about the layer that refuses it", c.name)
+		}
+		_, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+		if err == nil {
+			t.Fatalf("%s: ProjectJobs deployed a job for a profile mounting a Claude OAuth token", c.name)
+		}
+		if err.Error() != want.Error() {
+			t.Errorf("%s: err = %v, want the policy's own refusal %v", c.name, err, want)
+		}
+		if !strings.Contains(err.Error(), "person-owned") || !strings.Contains(err.Error(), "phase 5") {
 			t.Errorf("%s: err = %v, want a refusal naming the token person-owned until phase 5", c.name, err)
 		}
 	}
