@@ -467,15 +467,19 @@ const BRANCH_RE =
  * the same way a space is, and the whole run still has to be followed by more
  * path (`SEG/`) to join, so a sentence after a path is still not eaten. */
 const PATH_SEGMENT = String.raw`[^\s\/\\"'\x60<>|;,:()\[\]{}*?]+`
-const ABS_PATH_RE = new RegExp(
-  [
-    String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:\s+SEG)*\/)+SEG`,
-    String.raw`(?:~\/|\/)(?:SEG\/)+SEG`,
-  ]
-    .join('|')
-    .replaceAll('SEG', PATH_SEGMENT),
-  'gu',
-)
+/** ABS_PATH_SOURCE is the one definition of the absolute-path pattern: the
+ * recorder (`src/source/redact.ts`) builds its `ABS_PATH_RE` from this same
+ * string, so the two layers cannot drift (review round 2 of PR 494: c32b14f
+ * changed this half to `\s` and left the recorder on `[ \t]`). Exported as a
+ * source string, not a shared `RegExp`, so neither module shares the other's
+ * `lastIndex`. */
+export const ABS_PATH_SOURCE = [
+  String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:\s+SEG)*\/)+SEG`,
+  String.raw`(?:~\/|\/)(?:SEG\/)+SEG`,
+]
+  .join('|')
+  .replaceAll('SEG', PATH_SEGMENT)
+const ABS_PATH_RE = new RegExp(ABS_PATH_SOURCE, 'gu')
 
 /** WIN_PATH_RE matches a Windows path and a UNC path. */
 const WIN_PATH_RE = /(?:\b[A-Za-z]:\\[^\s"'`,;:)\]}]*|\\\\[^\s"'`,;:)\]}]+)/g
@@ -615,7 +619,14 @@ const WRAPPED_BASE64_RE = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{16,}={0,2}(?![A-Z
  * the recorder's rule with a Web decoder: a run whose text is not mostly
  * printable is not text, and a run that does not decode is not a candidate. */
 function decodeBase64(run: string): string | null {
-  const standard = run.replace(/-/g, '+').replace(/_/g, '/')
+  // Read the way the recorder's `Buffer.from(run, 'base64')` reads it: the
+  // padding is dropped, and a run whose length is 1 mod 4 loses its last
+  // character (which carries fewer than eight bits) instead of being refused
+  // by `atob` -- review round 2 of PR 494 found the two layers disagreeing on
+  // exactly that run, which `WRAPPED_BASE64_RE` makes common by absorbing the
+  // first letter of the next word.
+  let standard = run.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '')
+  if (standard.length % 4 === 1) standard = standard.slice(0, -1)
   const padded = standard + '='.repeat((4 - (standard.length % 4)) % 4)
   let decoded: string
   try {
@@ -706,6 +717,10 @@ const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
   },
   { flag: 'branch-placeholder', apply: (text) => text.replace(BRANCH_RE, BRANCH_PLACEHOLDER) },
   {
+    flag: 'neutralised-credential',
+    apply: (text) => text.replace(ENTROPY_RE, (run) => (isPathShapedSecret(run) ? TOKEN_PLACEHOLDER : run)),
+  },
+  {
     flag: 'path-placeholder',
     apply: (text) =>
       text.replace(ABS_PATH_RE, PATH_PLACEHOLDER).replace(WIN_PATH_RE, PATH_PLACEHOLDER),
@@ -745,6 +760,18 @@ const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
 ])
 
 /**
+ * isPathShapedSecret is a high-entropy run the path rule would otherwise split:
+ * it does not start at a `/` (a rooted run is a path, redacted whole by the
+ * path rule) and holds two or more slashes, so the path rule's unrooted
+ * alternative would take `/a/b` and leave the run's first fragment on screen
+ * (review round 2 of PR 494). One slash is a repository path and is the
+ * repository rule's. The recorder runs the same rule at the same place.
+ */
+function isPathShapedSecret(run: string): boolean {
+  return !run.startsWith('/') && (run.match(/\//g) ?? []).length >= 2 && isHighEntropy(run)
+}
+
+/**
  * CREDENTIAL_RULES are the first two of them, and they are the whole pass a
  * value whose *key* declares what it is goes through. Running the whole list
  * over such a value would be wrong in both directions: `fixture-owner/fixture-repo`
@@ -757,6 +784,19 @@ const FREE_TEXT_RULES: readonly OneRule[] = Object.freeze([
  * legal git branch name, and so is a forge token with no underscore in it.
  */
 const CREDENTIAL_RULES: readonly OneRule[] = Object.freeze(FREE_TEXT_RULES.slice(0, 2))
+
+/**
+ * REFUSAL_RULES are every credential redaction the free-text path makes, and
+ * nothing else: the URL rule, the credential pass, the path-shaped secret and
+ * the entropy net. They are what `sanitizeRefusal` runs. The pattern classes
+ * that rewrite a remedy (repository, GCP name, path, host) are left out on
+ * purpose -- see `sanitizeRefusal` -- but a credential the text path would
+ * redact is redacted here too (`sanitize-agreement.test.ts` pins the two equal
+ * over a corpus).
+ */
+const REFUSAL_RULES: readonly OneRule[] = Object.freeze(
+  FREE_TEXT_RULES.filter((rule) => rule.flag === 'neutralised-credential' || rule.flag === 'replaced-url'),
+)
 
 /**
  * credentialPass is the recorder's "something credential-shaped" rule: a
@@ -826,6 +866,13 @@ function runRules(text: string, rules: readonly OneRule[], nested: boolean): Cha
  */
 function freeText(text: string, prepared: string, textClass: TextClass): Changed {
   const rules = textClass === 'sentence' || textClass === 'label' ? FREE_TEXT_RULES : CREDENTIAL_RULES
+  return withRules(text, prepared, rules)
+}
+
+/** withRules runs `rules` over the prepared form and, when they find nothing
+ * there, over the form as written -- `freeText`'s rule, shared with
+ * `sanitizeRefusal`. */
+function withRules(text: string, prepared: string, rules: readonly OneRule[]): Changed {
   const fromPrepared = runRules(prepared, rules, false)
   if (fromPrepared.text !== prepared) return fromPrepared
   if (prepared === text) return fromPrepared
@@ -1377,9 +1424,11 @@ export function sanitizeText(
  * error: stderr is not a document, but it is not the console's own text either,
  * and a credential a child echoed into it must not reach a screen.
  *
- * So this pass is `CREDENTIAL_RULES` and only those -- a percent-encoded run
- * decoded, the token families, an assignment, the entropy net -- plus this
- * layer's own two: the invisible characters go (a value a screen is made to
+ * So this pass is `REFUSAL_RULES` and only those -- a URL, a percent-encoded
+ * or base64-wrapped run decoded, the token families, an assignment, a
+ * path-shaped secret, the entropy net -- read, as every class reads them, on
+ * the **prepared** form (NFKC, so a fullwidth token is a token: review round 2
+ * of PR 494), plus this layer's own two: the invisible characters go (a value a screen is made to
  * misspell is not a value), and the display bound applies. A refusal sentence
  * that echoes a token is redacted; a refusal sentence that names a role, a
  * project or a path is drawn as the CLI printed it, which is what the design
@@ -1400,7 +1449,13 @@ export function sanitizeRefusal(raw: unknown, field = 'the refusal'): Sanitized 
     )
   }
   const stripped = stripInvisible(raw)
-  const rules = runRules(stripped.text, CREDENTIAL_RULES, false)
+  const prepared = prepare(stripped.text)
+  if (prepared.length > MAX_TEXT_INPUT_LENGTH) {
+    return refuse(
+      `${field} is longer than the console will read (${String(MAX_TEXT_INPUT_LENGTH)} characters)`,
+    )
+  }
+  const rules = withRules(stripped.text, prepared, REFUSAL_RULES)
   const cut = clipped(oneLine(rules.text))
   return ok(cut.text, [...stripped.flags, ...rules.flags, ...cut.flags])
 }

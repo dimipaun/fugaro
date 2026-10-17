@@ -87,6 +87,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
 
 import { decodeFeedLine } from '../main/spawn'
+import { ABS_PATH_SOURCE } from '../shared/sanitize'
 
 /**
  * REDACTOR_VERSION is the marker written into every fixture's header and checked
@@ -594,19 +595,12 @@ const BRANCH_RE =
  * eaten: `and/or` is not rooted. A single-segment path (`/opt`) in free text is
  * not redacted; the structured `path` key is.
  */
-const PATH_SEGMENT = String.raw`[^\s\/\\"'\x60<>|;,:()\[\]{}*?]+`
-const ABS_PATH_RE = new RegExp(
-  [
-    // Rooted where a path can start: a segment may hold spaces.
-    String.raw`(?<![\p{L}\p{N}])(?:~\/|\/)(?:SEG(?:[ \t]+SEG)*\/)+SEG`,
-    // Rooted after a word character (`Data/Users/...`): no spaces, so the
-    // prose `i/o and input/output` is not one path.
-    String.raw`(?:~\/|\/)(?:SEG\/)+SEG`,
-  ]
-    .join('|')
-    .replaceAll('SEG', PATH_SEGMENT),
-  'gu',
-)
+// The pattern itself is defined once, in `src/shared/sanitize.ts`
+// (`ABS_PATH_SOURCE`), and built here from that same string: segments join
+// across any whitespace, a line break included (review round 2 of PR 494 --
+// this copy had stayed on `[ \t]` after the display layer's moved to `\s`, so
+// `/home\nzora/.ssh` passed the recorder's audit).
+const ABS_PATH_RE = new RegExp(ABS_PATH_SOURCE, 'gu')
 
 /** WIN_PATH_RE matches a Windows path and a UNC path. */
 const WIN_PATH_RE = /(?:\b[A-Za-z]:\\[^\s"'`,;:)\]}]*|\\\\[^\s"'`,;:)\]}]+)/g
@@ -906,6 +900,17 @@ const RULES: readonly Rule[] = Object.freeze([
     apply: (text) => text.replace(ADDRESS_RE, (match) => (isAddressMarker(match) ? match : ADDRESS_MARKER)),
   },
   { what: 'a branch name', apply: (text) => text.replace(BRANCH_RE, BRANCH_MARKER) },
+  {
+    // A high-entropy run with two or more slashes that does not start at one
+    // would be split by the path rule's unrooted alternative, leaving its first
+    // fragment in the fixture and nothing for the net (or `problems()`) to see
+    // (review round 2 of PR 494). It goes whole, before the path rule.
+    what: 'something credential-shaped',
+    apply: (text) =>
+      text.replace(ENTROPY_RE, (run) =>
+        !run.startsWith('/') && (run.match(/\//g) ?? []).length >= 2 && isHighEntropy(run) ? TOKEN_MARKER : run,
+      ),
+  },
   {
     what: 'a filesystem path',
     apply: (text) => text.replace(ABS_PATH_RE, PATH_MARKER).replace(WIN_PATH_RE, PATH_MARKER),
