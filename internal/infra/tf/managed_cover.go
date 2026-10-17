@@ -170,7 +170,7 @@ var managedGrantRules = map[string]bool{
 // region, the buckets, the registry and the billing account — taken from it
 // unchanged, because they are the review's and not this list's.
 //
-// What it adds to Cover is the managed answer to four questions, each of which
+// What it adds to Cover is the managed answer to five questions, each of which
 // is a refusal rather than an inheritance:
 //
 //   - the delete (Task 1.2a): a delete or a replace is admitted only for an
@@ -204,12 +204,12 @@ var managedGrantRules = map[string]bool{
 // an object's Locked retention can never be undone, so it is refused whatever
 // the delete rule would later allow (managedBucketLock, managedObjectLock).
 //
-// And one rule under all four: every value the cover reads — a name, the
+// And one rule under all five: every value the cover reads — a name, the
 // account a job, a scheduler or a grant is on, a member, a role — must be
 // known at plan time. A computed one is refused, never trusted for what it
 // references (managedNames says why).
 //
-// And one rule before all four, because a managed apply runs as the operator
+// And one rule before all five, because a managed apply runs as the operator
 // (D75: the operator's shell impersonates the deployer): nothing in the plan
 // runs at apply besides Google's own provider making the resources' API
 // calls. No provisioner anywhere, no provider but Google's two, no data
@@ -272,8 +272,8 @@ func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
 // judged by the same chain as a create, on the view of it the change shows
 // (removed says which), so a listed address whose resource is not one a
 // managed plan may carry is refused for the resource. The list is what
-// managed.applies hands this cover beside the plan, the same slice tf.Guard
-// is handed, and a cover that was handed none admits no delete at all.
+// managed.Spec.notCovered hands this cover beside the plan, the same slice
+// tf.Guard is handed, and a cover that was handed none admits no delete at all.
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}

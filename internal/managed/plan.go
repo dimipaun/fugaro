@@ -228,7 +228,7 @@ func (s Spec) unjudgedDeletes(p *tf.Plan) []string {
 	var out []string
 	for _, rc := range p.ResourceChanges {
 		if slices.Contains(rc.Change.Actions, "delete") && slices.Contains(s.AllowDelete, rc.Address) {
-			out = append(out, rc.Address+" (a delete or a replace of an address on the owner's delete list, which this cover cannot be told the list: the resource is not judged, and the address alone never admits one)")
+			out = append(out, rc.Address+" (a delete or a replace of an address on the owner's delete list, and the cover this gate was handed cannot be told the list, so the resource is not judged: the address alone never admits one)")
 		}
 	}
 	return out
