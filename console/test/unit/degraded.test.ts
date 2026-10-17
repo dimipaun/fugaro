@@ -422,8 +422,21 @@ describe('the console with no binary to read', () => {
     expect(one(tree, 'unavailable-headline').textContent).toBe('no fugaro binary')
     expect(one(tree, 'unavailable-install-command').textContent).toBe(FUGARO_INSTALL_COMMAND)
     expect(one(tree, 'unavailable-picker').getAttribute('data-picker')).toBe('binary')
-    expect(all(tree, 'unavailable-searched-path')).toHaveLength(state.searched.length)
+    // How many places were searched, and never which: no path is drawn on this
+    // console -- the `path` class turns every one of them into `<path>`, and a
+    // column of `<path>` under a sentence saying the console looked somewhere
+    // tells the operator nothing. The count is the fact that survives.
+    expect(one(tree, 'unavailable-searched-count').textContent).toBe(String(state.searched.length))
+    const drawn = walk(tree).map((node) => node.textContent).join('\n')
+    expect(drawn).not.toContain('/opt/homebrew')
+    expect(drawn).not.toContain('/usr/local/bin')
+    // The resolution's own sentence is read as prose, so the paths inside it
+    // are drawn as the console's `<path>` marker -- the design's own mark for a
+    // path, and the reason the sentence is still worth drawing: it says the
+    // console looked and that nothing was there, and each place it looked is
+    // marked rather than named.
     expect(one(tree, 'unavailable-reason').textContent).toContain('no fugaro binary was found')
+    expect(one(tree, 'unavailable-reason').textContent).toContain('<path>')
     // Not a partially drawn dashboard: no screen, no cap, no run list.
     expect(all(tree, 'live')).toEqual([])
     expect(all(tree, 'degraded-caps')).toEqual([])

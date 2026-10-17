@@ -35,6 +35,18 @@
 //   - an entry can be scoped to one function's body (`within`), so the `note`
 //     helper's own parameter is allowed there and nowhere else.
 //
+// **The spellings the second scan is closed against**, named here because they
+// are the review of Task 2.3's finding and each one was a way past the first
+// version of this file: a text slot or attribute written through a **computed
+// key** (`el['textContent'] = x`, `el['title'] = x`), read or called through one
+// (`el['setAttribute']('data-repo', x)`), the library spellings of a property
+// write (`Object.assign(el, {textContent: x})`, `Object.defineProperty`,
+// `Reflect.set`), the **optional call** `el.setAttribute?.(...)`, and the writer
+// taken off the element and applied (`el.setAttribute.call(el, ...)`). Every one
+// of them is an offence with no vocabulary list behind it: the screens write a
+// slot by name, through `literal` or through `putText`, and a screen that needs
+// one of these must come here and say why.
+//
 // The mutation the test is proven against is the defect itself: put
 // `literal(..., label.key)` back into `projects.ts` and the first case fails
 // naming it (`MUTATION` below runs the same scan over a doctored copy), and one
@@ -408,6 +420,31 @@ const TEXT_SLOT = /\.(?:textContent|innerText)\s*\+?=(?!=)/g
  * rest of the statement. */
 const ATTRIBUTE_PROPERTY = /\.(?:title|className|id|dataset(?:\.\w+|\[[^\]]*\]))\s*\+?=(?!=)/g
 
+/** QUOTED_KEY is a property name written as a quoted string, in any of the
+ * three quote styles: the key half of a computed access. */
+const QUOTED_KEY = "(?:'[^'\\n]*'|\"[^\"\\n]*\"|`[^`\\n]*`)"
+
+/** COMPUTED_WRITE is a property written through a computed key --
+ * `el['textContent'] = x`, `el["title"] = x`, ``el[`innerHTML`]``. It is an
+ * offence whatever the key is: this scan reads `.textContent =` and
+ * `.title =` by name, and a write it cannot read the name of is a write it
+ * cannot hold to any vocabulary. */
+const COMPUTED_WRITE = new RegExp(`\\[\\s*${QUOTED_KEY}\\s*\\]\\s*\\+?=(?!=)`, 'g')
+
+/** COMPUTED_CALL is a call through a computed key -- `el['setAttribute'](...)`,
+ * the attribute writer reached by a name this scan does not spell. */
+const COMPUTED_CALL = new RegExp(`\\[\\s*${QUOTED_KEY}\\s*\\]\\s*\\??\\.?\\s*\\(`, 'g')
+
+/** OBJECT_WRITE is the library spelling of "write this property": three ways to
+ * write a text slot or an attribute without ever assigning one. */
+const OBJECT_WRITE = /(?<![\w$.])(?:Object\s*\.\s*(?:assign|defineProperty|defineProperties)|Reflect\s*\.\s*set)\s*\(/g
+
+/** ATTRIBUTE_NAME is the attribute writer by its member name, so that every
+ * spelling of reaching it -- the call, the optional call, and the ones that are
+ * not a call at all -- is found from one place. A bare `setAttribute(` in a
+ * local of the same name is not this. */
+const ATTRIBUTE_NAME = /\.setAttribute\b/g
+
 /** referencesOf is every use of a sink's name that is not a call to it or its
  * declaration -- an alias, a destructuring, the sink passed as a value. Only
  * a sink the file declares is checked: `note` is a plain variable elsewhere. */
@@ -457,21 +494,71 @@ function offences(file: string, source: string): string[] {
     if (isConstantArgument(value, source) || allows(attributes[value], code, match.index)) continue
     out.push(`${file}:${String(lineOf(bare, match.index))} ${match[0].trim()} ${value}`)
   }
-  for (const { at, args } of attributeCalls(code)) {
+  // These two read the code with its strings intact, because the quoted key IS
+  // a string: blanking them would blank the very thing the rule looks for. A
+  // string literal containing the text `['title'] =` would be reported, which
+  // is the direction this file errs in everywhere.
+  for (const match of code.matchAll(COMPUTED_WRITE)) {
+    out.push(`${file}:${String(lineOf(code, match.index))} a property written through a computed key: ${match[0].trim()}`)
+  }
+  for (const match of code.matchAll(COMPUTED_CALL)) {
+    out.push(`${file}:${String(lineOf(code, match.index))} a call through a computed key: ${match[0].trim()}`)
+  }
+  for (const match of bare.matchAll(OBJECT_WRITE)) {
+    out.push(`${file}:${String(lineOf(bare, match.index))} a property written through the library: ${match[0].trim()}`)
+  }
+  for (const at of attributeOtherUses(bare)) {
+    out.push(`${file}:${String(lineOf(bare, at))} setAttribute used other than by a call to it`)
+  }
+  for (const { at, args } of attributeCalls(bare, code)) {
     const value = args[1] ?? ''
     if (isConstantArgument(value, source) || allows(attributes[value], code, at)) continue
-    out.push(`${file}:${String(lineOf(code, at))} setAttribute(..., ${value})`)
+    out.push(`${file}:${String(lineOf(bare, at))} setAttribute(..., ${value})`)
   }
   return out
 }
 
-/** attributeCalls is every `.setAttribute(` call, with its arguments. */
-function attributeCalls(code: string): { at: number; args: string[] }[] {
+/** isAttributeCall is whether what follows the attribute writer at `at` is a
+ * call: `(` for the call, `?.(` for the optional one, and nothing else. */
+function isAttributeCall(code: string, at: number): boolean {
+  return /^\s*(?:\?\.\s*)?\(/.test(code.slice(at + '.setAttribute'.length))
+}
+
+/**
+ * attributeCalls is every call of the attribute writer, **the optional-call
+ * spelling included**, with its arguments. `matchesIn` is where the calls are
+ * found and `argumentsIn` is where their arguments are read, and the two are
+ * separate on purpose: the scan finds a call in string-blanked code (so a
+ * `.setAttribute(` inside a string is not a call) and reads the argument out of
+ * the real code (so a string argument is the string it is, and not the run of
+ * spaces the blanking left).
+ */
+function attributeCalls(matchesIn: string, argumentsIn: string): { at: number; args: string[] }[] {
   const found: { at: number; args: string[] }[] = []
-  for (const match of code.matchAll(/\.setAttribute\(/g)) {
-    found.push({ at: match.index, args: argumentsAt(code, match.index + '.setAttribute'.length) })
+  for (const match of matchesIn.matchAll(ATTRIBUTE_NAME)) {
+    if (!isAttributeCall(matchesIn, match.index)) continue
+    found.push({ at: match.index, args: argumentsAt(argumentsIn, argumentsOpenAt(matchesIn, match.index)) })
   }
   return found
+}
+
+/** argumentsOpenAt is the offset of an attribute call's `(`, which is what
+ * `argumentsAt` needs; the caller has already established that there is one. */
+function argumentsOpenAt(code: string, at: number): number {
+  const open = /^\s*(?:\?\.\s*)?\(/.exec(code.slice(at + '.setAttribute'.length))
+  if (open === null) throw new Error('no attribute call at this offset')
+  return at + '.setAttribute'.length + open[0].length - 1
+}
+
+/** attributeOtherUses is every use of the attribute writer that is not a call
+ * with the `(` right there: the writer taken off the element and applied
+ * (`.call`, `.apply`), read into a variable, or handed on as a value. */
+function attributeOtherUses(code: string): number[] {
+  const out: number[] = []
+  for (const match of code.matchAll(ATTRIBUTE_NAME)) {
+    if (!isAttributeCall(code, match.index)) out.push(match.index)
+  }
+  return out
 }
 
 const FILES = readdirSync(SCREENS).filter((name) => name.endsWith('.ts'))
@@ -498,7 +585,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
     }
     for (const [file, entries] of Object.entries(ATTRIBUTE_VOCABULARY)) {
       const code = blankComments(readFileSync(join(SCREENS, file), 'utf8'))
-      const values = attributeCalls(code).map(({ at, args }) => ({ at, value: args[1] ?? '' }))
+      const values = attributeCalls(code, code).map(({ at, args }) => ({ at, value: args[1] ?? '' }))
       for (const match of code.matchAll(ATTRIBUTE_PROPERTY)) {
         const end = code.indexOf('\n', match.index)
         values.push({ at: match.index, value: code.slice(match.index + match[0].length, end === -1 ? undefined : end).trim() })
@@ -550,6 +637,17 @@ describe('a screen writes only its own vocabulary through literal', () => {
       setAttribute: `${source}\nfunction m10(p: ScreenElement, row: { repo: string }) {\n  p.setAttribute('data-repo', row.repo)\n}\n`,
       dataset: `${source}\nfunction m11(p: { dataset: Record<string, string> }, row: { repo: string }) {\n  p.dataset.repo = row.repo\n}\n`,
       title: `${source}\nfunction m12(p: { title: string }, row: { repo: string }) {\n  p.title = row.repo\n}\n`,
+      // The spellings the review of Task 2.3 named: each one writes a slot or
+      // an attribute without ever spelling an assignment this scan reads by
+      // name, and each must be an offence of its own.
+      computedText: `${source}\nfunction m13(p: ScreenElement, row: { repo: string }) {\n  p['textContent'] = row.repo\n}\n`,
+      computedTitle: `${source}\nfunction m14(p: ScreenElement, row: { repo: string }) {\n  p[\`title\`] = row.repo\n}\n`,
+      computedAttribute: `${source}\nfunction m15(p: ScreenElement, row: { repo: string }) {\n  p['setAttribute']('data-repo', row.repo)\n}\n`,
+      optionalAttribute: `${source}\nfunction m16(p: ScreenElement, row: { repo: string }) {\n  p.setAttribute?.('data-repo', row.repo)\n}\n`,
+      assignedAttribute: `${source}\nfunction m17(p: ScreenElement, row: { repo: string }) {\n  const write = p.setAttribute\n  write.call(p, 'data-repo', row.repo)\n}\n`,
+      objectAssign: `${source}\nfunction m18(p: ScreenElement, row: { repo: string }) {\n  Object.assign(p, { textContent: row.repo })\n}\n`,
+      reflectSet: `${source}\nfunction m19(p: ScreenElement, row: { repo: string }) {\n  Reflect.set(p, 'textContent', row.repo)\n}\n`,
+      defineProperty: `${source}\nfunction m20(p: ScreenElement, row: { repo: string }) {\n  Object.defineProperty(p, 'textContent', { value: row.repo })\n}\n`,
     }
     const missed = Object.entries(mutants)
       .filter(([, mutant]) => offences('projects.ts', mutant).length <= before)

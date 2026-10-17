@@ -36,14 +36,16 @@
 //   - the absent-binary screen is the console's own, built by
 //     `src/source/cli.ts`'s `noInstallationState` from the resolution that
 //     failed, and it is deliberately the *only* thing on screen: what is
-//     needed, the install command, and where the binary would have been found.
+//     needed, the install command, the picker, and how many places were
+//     searched -- a count and never the paths themselves, because no path is
+//     ever drawn on this console (the `path` class, `sanitize.ts`).
 //
 // Every string a document or the CLI wrote reaches the window through `putText`
 // (and every number through `putReading`); only the console's own vocabulary is
 // written directly, through `literal`. `screen-literals.test.ts` scans this file
 // for that, and `degraded.spec.ts` draws it under the console's real CSP.
 
-import { unavailable } from '../../shared/availability'
+import { measured, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import { sanitizeText } from '../../shared/sanitize'
 import type { CostView, DegradedDocument, RecordView } from '../../shared/schema'
@@ -92,8 +94,8 @@ export const INSTALL_LEAD = 'install it with'
  * one does not own, and an invented control that did nothing would be worse
  * than a sentence that says what it is for. */
 export const PICKER_LEAD = 'choose a different fugaro binary'
-/** SEARCHED_LEAD says what the list under it is. */
-export const SEARCHED_LEAD = 'searched'
+/** SEARCHED_LEAD says what the number beside it counts. */
+export const SEARCHED_LEAD = 'places the console looked in for a fugaro binary'
 /** REFUSED_HEADLINE is the refused-read screen's heading. */
 export const REFUSED_HEADLINE = 'the CLI refused this read'
 
@@ -465,15 +467,29 @@ function picker(parent: ScreenElement, factory: ScreenFactory, state: NoBinarySt
   }
 }
 
-/** searched draws the directories the resolution looked in, which is the list
- * its own refusal sentence names. */
+/**
+ * searched says **how many** places the resolution walked, and deliberately not
+ * which ones.
+ *
+ * The first draft of this screen listed the candidates, and the `path` class is
+ * why it cannot: `sanitize.ts` draws every path as the `<path>` placeholder
+ * whatever it looks like -- "a path is where the operator's user name and
+ * checkout live, and neither belongs in a screenshot" -- so a list of them would
+ * be a column of `<path>` under a sentence saying the console looked somewhere,
+ * and a list read as prose would be a column of `[redacted]` instead. The count
+ * is the fact that survives that rule, and it is the whole of what the operator
+ * needs from it: the console looked in the usual places and found no `fugaro`
+ * there, so the answer is the install command or the picker above, and the paths
+ * themselves are in the spawn log where the resolution wrote them.
+ *
+ * The number goes through `putReading` like every other number -- a count this
+ * file computed, drawn `measured` -- and `SEARCHED_LEAD` is this file's own
+ * sentence.
+ */
 function searched(parent: ScreenElement, factory: ScreenFactory, state: NoBinaryState): void {
   const element = cell(parent, factory, 'div', 'unavailable-searched')
+  numberCell(element, factory, 'span', measured(state.searched.length), 'count', 'unavailable-searched-count')
   literal(cell(element, factory, 'span', 'unavailable-searched-lead'), SEARCHED_LEAD)
-  const list = cell(element, factory, 'ul', 'unavailable-searched-list')
-  for (const candidate of state.searched) {
-    textCell(list, factory, 'li', candidate, 'label', 'a directory the resolution looked in', 'unavailable-searched-path')
-  }
 }
 
 /** noBinary draws the absent-binary screen: what is needed, the install command
@@ -483,7 +499,11 @@ function noBinary(factory: ScreenFactory, state: NoBinaryState): ScreenElement {
   literal(cell(element, factory, 'h1', 'unavailable-headline'), NO_BINARY_HEADLINE)
   // The resolution's sentence is the CLI's shape of "where I looked", written by
   // `spawn.ts` rather than by a document: it goes through `putText` like every
-  // other string this screen did not author itself.
+  // other string this screen did not author itself. As prose it is read as
+  // prose, so the path fragments inside the "looked at ..." form are redacted
+  // (`ABS_PATH_RE`) -- deliberately, and without loss: the sentence carries the
+  // fact and the list below carries the places, each one drawn as the path it
+  // is.
   textCell(element, factory, 'p', state.reason, 'sentence', 'the resolution reason', 'unavailable-reason')
   const install = cell(element, factory, 'div', 'unavailable-install')
   literal(cell(install, factory, 'span', 'unavailable-install-lead'), INSTALL_LEAD)
