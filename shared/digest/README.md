@@ -60,12 +60,19 @@ status outside that set, a `failed` and a `status` that disagree, and a finish
 carrying neither are all refusals: the digest does not get to guess a
 severity, because a guessed severity is an alarm nobody's document supports.
 
-The digest's item order is fixed and documented, so no consumer has to sort:
-the project's own triggers, then each repository's in the document's order,
-then the `ready` entries, then the `finished` ones, then the live runs.
-Nothing here sorts by time — **the digest holds no clock**, which is what
-makes the interrupt policy above it (voice V2.2, mobile P3.5) a pure function
-too.
+The digest's item order is fixed, documented and asserted by a test, so no
+consumer has to sort: the project's own triggers, then each repository's in
+the document's order, then the `ready` finishes, then the other `finished`
+ones, then the live runs. **A run is emitted once even when the document
+carries it twice**: `ready` is a subset of `finished` in the contract
+(`internal/watch/json.go` keeps both lists, and `internal/watch/filter.go`
+derives the ready ones as the finished runs whose outcome is ready), so the
+first list to carry a run wins and the `finished` copy of it is dropped — a
+speaking consumer would otherwise say the run twice and a counting one count
+it twice. An entry whose `run` is `unavailable` cannot be identified and is
+not deduped against anything. Nothing here sorts by time — **the digest holds
+no clock**, which is what makes the interrupt policy above it (voice V2.2,
+mobile P3.5) a pure function too.
 
 ## The refusals
 
@@ -149,9 +156,11 @@ the hand-rolled base64 has to agree with a reference instead of with itself.
   has been run, and nothing here asserts that a phone speaks anything
   correctly. This module is a pure function with tests, which is all the plan
   asks of it.
-- **The package's own README still says "the skeleton, and nothing else"**
-  (`shared/README.md`). That line is P0.1's file, which this task may not
-  edit; the modules beside this one are the plan's other phase-1 tasks.
+- **The modules beside this one are other tasks.** P0.2's message schema,
+  P0.3's URL validator, P1.1's mailbox state machine, P1.2's lease, P1.4's
+  staleness rule and P1.5's simulator are not built here; this directory is
+  not evidence that any of them exists. (`shared/README.md`'s status line was
+  brought up to date with this module in the same change.)
 
 Where the reasoning lives: [implementation-plan.md](../../docs/mobile/implementation-plan.md)
 (P1.3, and the "shared files" table that gives this package's manifest to P0.1

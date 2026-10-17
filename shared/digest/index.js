@@ -242,8 +242,9 @@ function readEnum(object, field, table, path) {
 //
 // The order is fixed and documented, so a consumer can rely on it and a test
 // can assert it without sorting: the project's own triggers first, then each
-// repository's in the document's order, then the finishes, then the live runs.
-// Nothing here sorts by time: the digest holds no clock.
+// repository's in the document's order, then the ready finishes, then the
+// other finishes (each run once -- see `digest`), then the live runs. Nothing
+// here sorts by time: the digest holds no clock.
 
 function killItem(object, scope, repo, path) {
   checkShape(object, KILL_FIELDS, path);
@@ -305,14 +306,17 @@ function finishedItem(object, scope, path) {
   };
 }
 
-function runItem(object, repo, path) {
+function runItem(object, path) {
+  // The shape is checked before anything is read out of the entry: a `null`
+  // or non-object element in a list is a refusal with a code, and reading a
+  // field first would raise a raw TypeError instead.
   checkShape(object, RUN_FIELDS, path);
   readEnum(object, 'health', HEALTH, path);
   readEnum(object, 'deadline', DEADLINE, path);
   return {
     kind: 'run',
     severity: SEVERITY.info,
-    repo,
+    repo: read(object, 'repo'),
     run: read(object, 'run'),
     title: read(object, 'title'),
     stage: read(object, 'stage'),
@@ -396,16 +400,33 @@ export function digest(document) {
     }
   });
 
-  readList(document, 'ready').forEach((entry, i) => {
-    items.push(finishedItem(entry, 'ready', `$.ready[${i}]`));
-  });
-
-  readList(document, 'finished').forEach((entry, i) => {
-    items.push(finishedItem(entry, 'finished', `$.finished[${i}]`));
-  });
+  // `ready` is a **subset of** `finished`: the contract keeps both lists
+  // (`internal/watch/json.go`'s `JSONDoc.Finished` and `.Ready`, the latter
+  // derived by `internal/watch/filter.go` as the finished runs whose outcome
+  // is ready). So the same run arrives in both, and emitting it twice would
+  // make a speaking consumer say it twice and a counting one count it twice.
+  // The run is emitted once, from the first list that carries it, and `ready`
+  // is walked first because it is the more specific statement about it. An
+  // entry whose `run` is `unavailable` cannot be identified, so it is not
+  // deduped against anything.
+  const identified = new Set();
+  const finishedItems = (entries, kind, listPath) => {
+    entries.forEach((entry, i) => {
+      const item = finishedItem(entry, kind, `${listPath}[${i}]`);
+      if (item.run !== UNAVAILABLE) {
+        if (identified.has(item.run)) {
+          return;
+        }
+        identified.add(item.run);
+      }
+      items.push(item);
+    });
+  };
+  finishedItems(readList(document, 'ready'), 'ready', '$.ready');
+  finishedItems(readList(document, 'finished'), 'finished', '$.finished');
 
   readList(document, 'runs').forEach((entry, i) => {
-    items.push(runItem(entry, read(entry, 'repo'), `$.runs[${i}]`));
+    items.push(runItem(entry, `$.runs[${i}]`));
   });
 
   return {

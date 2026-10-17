@@ -300,10 +300,96 @@ test('a document that contradicts itself is refused', () => {
   );
 });
 
+test('a list element that is not an object is refused with a code, not a TypeError', () => {
+  // Every list the digest walks refuses the same input the same way: reading
+  // a field out of the element before its shape is checked would raise a raw
+  // TypeError, which is a crash rather than the refusal the plan asks for.
+  const offenders = [
+    [doc({ repos: [null] }), '$.repos[0]'],
+    [doc({ finished: [null] }), '$.finished[0]'],
+    [doc({ ready: [42] }), '$.ready[0]'],
+    [doc({ runs: [null] }), '$.runs[0]'],
+    [doc({ runs: ['a run'] }), '$.runs[0]'],
+    [doc({ finished: [[]] }), '$.finished[0]'],
+  ];
+  for (const [d, path] of offenders) {
+    assert.throws(() => digest(d), (err) => {
+      assert.ok(err instanceof DigestError, `expected a DigestError, got ${err}`);
+      assert.equal(err.code, ERROR.TYPE);
+      assert.equal(err.path, path);
+      return true;
+    }, `${path} should be refused`);
+  }
+});
+
 test('a document that is not a document is refused', () => {
   for (const bad of [null, undefined, 42, 'doc', [], true]) {
     assert.throws(() => digest(bad), refusal(ERROR.NOT_A_DOCUMENT));
   }
+});
+
+// --- the item order, and the ready/finished overlap -----------------------
+
+test('the item order is the documented one, over all five groups at once', () => {
+  // A consumer relies on this order (the README states it, and the interrupt
+  // policy above this module reads the head of the list), so it is asserted
+  // rather than left to whatever the walk happens to produce. The five groups:
+  // the project's own triggers, each repository's, the ready finishes, the
+  // other finishes, then the live runs.
+  const got = digest(doc({
+    total: total({ kill: kill(), burn: burn({ fast: true }) }),
+    repos: [repo({ kill: kill(), burn: burn({ fast: true }) })],
+    ready: [finished({ run: 'ready-1', outcome: 'ready' })],
+    finished: [finished({ run: 'done-1' }), finished({ run: 'failed-1', status: 'failed', failed: true })],
+    runs: [run(), run({ run: 'r2' })],
+  }));
+  assert.deepEqual(
+    got.items.map((item) => [item.kind, item.run === undefined ? item.scope : item.run]),
+    [
+      ['kill', 'project'],
+      ['fast_burn', 'project'],
+      ['kill', 'repo'],
+      ['fast_burn', 'repo'],
+      ['ready', 'ready-1'],
+      ['finished', 'done-1'],
+      ['failed_finish', 'failed-1'],
+      ['run', 'r1'],
+      ['run', 'r2'],
+    ],
+  );
+  assert.equal(got.severity, SEVERITY.kill);
+});
+
+test('a run in both ready and finished is emitted once, from ready', () => {
+  // `ready` is a subset of `finished` in the contract
+  // (`internal/watch/filter.go` derives it: the finished runs whose outcome is
+  // ready), so the same run arrives twice in one document. A speaking
+  // consumer must not say it twice, and a counting one must not count it
+  // twice.
+  const both = finished({ run: 'ready-1', outcome: 'ready' });
+  const got = digest(doc({ ready: [both], finished: [both, finished({ run: 'done-1' })] }));
+  assert.deepEqual(
+    got.items.map((item) => [item.kind, item.run]),
+    [['ready', 'ready-1'], ['finished', 'done-1']],
+  );
+  // Within one list the same rule applies to a repeated run, and the first
+  // occurrence wins.
+  const twice = digest(doc({ finished: [finished({ run: 'x' }), finished({ run: 'x' })] }));
+  assert.equal(twice.items.length, 1);
+  assert.equal(twice.items[0].run, 'x');
+  // An entry with no run to identify is never deduped against another: only
+  // an identified run is deduped.
+  const anonymous = digest(doc({ finished: [finished({ run: undefined }), finished({ run: undefined })] }));
+  assert.equal(anonymous.items.length, 2);
+  assert.equal(anonymous.items[0].run, UNAVAILABLE);
+});
+
+test('a failed run is still a failure wherever it appears in the overlap', () => {
+  // The dedupe must not swallow a failure: the copy that survives carries the
+  // same fields and the same classification either way.
+  const failedReady = digest(doc({ ready: [finished({ run: 'r', status: 'failed', failed: true })] }));
+  assert.equal(failedReady.severity, SEVERITY.failed);
+  assert.deepEqual(failedReady.items.map((i) => i.kind), ['failed_finish']);
 });
 
 // --- purity ---------------------------------------------------------------

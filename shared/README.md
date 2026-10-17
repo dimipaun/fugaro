@@ -8,12 +8,16 @@ D50's operative rulings: the code lives **in this repository**, it is **not an n
 `package.json` is `private` and the version is `0.0.0`, so nothing here is published and
 nothing here is a public API — and there is **no `fugaro voice` command**.
 
-**Status: the skeleton, and nothing else.** Nothing here implements anything. The message
-schema (P0.2), the URL validator (P0.3), the mailbox state machine (P1.1), the consumer lease
-(P1.2), the digest and its redactor (P1.3), the staleness rule (P1.4) and the mailbox
-simulator (P1.5) are planned, unbuilt, and each is its own directory. What exists today is
-the runner, one trivial module with its test, and this document. No task of that plan is
-approved, and this directory is not evidence that one is.
+**Status: the runner, the skeleton, and one module of phase 1.** `shared/digest/` — the
+digest, the severity rule and the redactor — is built (Task **P1.3**, owner-approved
+2026-10-17), with its own tests and its own README, and the runner's glob picked it up
+without this manifest being touched, which is what the glob is for. The message schema
+(P0.2), the URL validator (P0.3), the mailbox state machine (P1.1), the consumer lease
+(P1.2), the staleness rule (P1.4) and the mailbox simulator (P1.5) are planned and unbuilt,
+and each is its own directory beside it. **Two of the plan's tasks are present here and the
+rest are not**: this directory is not evidence that any other task of that plan is done, and
+it is not evidence that any live behaviour works — the plan's checks 80–89 are owner-run and
+none has been run.
 
 ## The runner, and the glob
 
