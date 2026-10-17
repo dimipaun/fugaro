@@ -27,15 +27,30 @@ const (
 	planVM     = "module.managed.google_compute_instance.vm"
 )
 
-// admitAll is a cover that admits everything, and it stands in for the one
-// thing Task 1.1's managed cover must do that the installation's does not: a
-// delete or a replace is the guard's to decide in a managed project — the
-// owner's own list is the allow-list (D74) — so the managed cover does not
-// also refuse it. With it, a test can see the guard's refusal reach the
-// verdict on its own.
-type admitAll struct{}
+// admitAll is a cover that admits everything and that the owner's delete list
+// can be handed to: it is what a test of the guard's own refusal reaches for,
+// because it never refuses a delete itself, so the refusal the verdict carries
+// is the guard's. It is not the cover a managed apply hands Gate — that is
+// tf.ManagedCover, which judges the resource (managedCover below) — and deletes
+// hands it the list Gate passed, so a test can see the wiring.
+type admitAll struct{ deletes *[]string }
 
 func (admitAll) NotCovered(*tf.Plan, []tf.ImportKey) []string { return nil }
+
+func (a admitAll) WithDeleteList(allowDelete []string) tf.Deletable {
+	if a.deletes != nil {
+		*a.deletes = slices.Clone(allowDelete)
+	}
+	return a
+}
+
+// judgesNothing is a cover that admits everything and cannot be told the
+// owner's delete list at all: the fail-closed case of Task 1.2a. A listed
+// address must not be admitted through it, because the resource is never
+// judged — the address on the owner's list is not a judgement of the resource.
+type judgesNothing struct{}
+
+func (judgesNothing) NotCovered(*tf.Plan, []tf.ImportKey) []string { return nil }
 
 // cover is the scope-and-attribute gate of the managed project the tests judge
 // for: the installation's tf.Cover with the inputs the review would have
@@ -45,6 +60,14 @@ func cover() tf.Cover {
 		Buckets: []string{"fugaro-runs-" + gcpProject}, Billing: []string{"AAAA-BBBB"}}
 }
 
+// managedCover is the gate a managed apply really hands Gate: Task 1.1's
+// managed allowlist over the same review the installation's cover would have
+// been given. A test of the delete rule uses it, because it is the cover that
+// judges the resource (Task 1.2a); admitAll judges nothing.
+func managedCover() tf.ManagedCover {
+	return tf.ManagedCover{Cover: cover()}
+}
+
 // change is one entry of a plan's resource_changes.
 func change(addr, typ string, actions []string, after map[string]any) map[string]any {
 	if after == nil {
@@ -52,6 +75,24 @@ func change(addr, typ string, actions []string, after map[string]any) map[string
 	}
 	return map[string]any{"address": addr, "type": typ, "mode": "managed",
 		"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": after}}
+}
+
+// managedChange is one entry of a managed plan's resource_changes, under
+// Google's provider: a change with no provider name is refused by the managed
+// cover before any rule about the resource is read, so a test of a managed
+// rule names it.
+func managedChange(addr, typ string, actions []string, before, after map[string]any) map[string]any {
+	ch := change(addr, typ, actions, after)
+	ch["provider_name"] = "registry.terraform.io/hashicorp/google"
+	ch["change"].(map[string]any)["before"] = before
+	return ch
+}
+
+// deleted is one entry of a managed plan's resource_changes for a resource the
+// plan removes: the resource in before and null in after, which is what the
+// managed cover judges the resource itself on.
+func deleted(addr, typ string, before map[string]any) map[string]any {
+	return managedChange(addr, typ, []string{"delete"}, before, nil)
 }
 
 // bucket is a storage bucket as the installation's module writes it: the one
@@ -160,6 +201,26 @@ func (r *rig) planFile(t *testing.T) string {
 func (r *rig) show(t *testing.T, changes ...map[string]any) {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": changes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.script["show"] = map[string]any{"stdout": string(b)}
+}
+
+// managedShow scripts the fake's `show` with a plan that carries the
+// configuration a managed plan must: Google's provider with its project
+// written out. The managed cover refuses a plan with changes and no
+// configuration to read them from, so a test of a managed rule goes through
+// here.
+func (r *rig) managedShow(t *testing.T, changes ...map[string]any) {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{
+		"format_version":   "1.2",
+		"resource_changes": changes,
+		"configuration": map[string]any{"provider_config": map[string]any{"google": map[string]any{
+			"name": "google", "full_name": "registry.terraform.io/hashicorp/google",
+			"expressions": map[string]any{"project": map[string]any{"constant_value": gcpProject}}}}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,8 +474,101 @@ func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 	}
 }
 
-// An address on the owner's AllowDelete list is admitted for a delete; one not
-// on it is refused.
+// The red step of Task 1.2a, and the rule it is about: the owner's delete list
+// is one half of the decision and the resource is the other. A cover that
+// judges no delete — the shape the managed cover had while the list alone was
+// taken to decide — must not have a listed delete admitted through it: the
+// resource is never read, and an address on the owner's list is not a
+// judgement of it. Before the rule, this verdict is OK.
+func TestGateRefusesAListedDeleteTheCoverDoesNotJudge(t *testing.T) {
+	r := newRig(t)
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	v := gate(t, r, spec(t, r, judgesNothing{}, planBucket))
+	if v.OK {
+		t.Fatal("a delete of an address on the owner's list was admitted by a cover that judges no delete")
+	}
+	if len(v.Refusals) != 1 {
+		t.Fatalf("refusals %v, want the cover's one", v.Refusals)
+	}
+	got := v.Refusals[0]
+	if got.Gate != coverGate || got.Address != planBucket || !strings.Contains(got.Why, "not judged") {
+		t.Errorf("refusal %+v, want the cover's refusal of %s saying the resource was not judged", got, planBucket)
+	}
+}
+
+// Gate hands the cover the same list it hands the guard, so the two cannot be
+// given different ones — which is how a delete could be admitted by the list
+// one of them was told and refused by the other's.
+func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
+	var covered, guarded []string
+	old := guard
+	guard = func(_ *tf.Plan, allowDelete []string) error { guarded = slices.Clone(allowDelete); return nil }
+	t.Cleanup(func() { guard = old })
+	r := newRig(t)
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	if v := gate(t, r, spec(t, r, admitAll{deletes: &covered}, planBucket)); !v.OK {
+		t.Fatalf("a listed delete both gates admit is refused: %v", v.Refusals)
+	}
+	if !slices.Equal(guarded, []string{planBucket}) {
+		t.Errorf("the guard was handed %v, want the spec's own list", guarded)
+	}
+	if !slices.Equal(covered, guarded) {
+		t.Errorf("the guard was handed %v and the cover %v, want the same list", guarded, covered)
+	}
+}
+
+// Task 1.2a through Gate with the real managed cover: a listed delete of a
+// resource the managed allowlist admits is admitted, and the same listed
+// address admits nothing whose resource is not one a managed plan may carry.
+func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	allowed := func() map[string]any {
+		return deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data"})
+	}
+	r := newRig(t)
+	r.managedShow(t, allowed())
+	if v := gate(t, r, spec(t, r, managedCover(), addr)); !v.OK {
+		t.Errorf("a listed delete of a resource the allowlist admits is refused: %v", v.Refusals)
+	}
+	// The resource judged although the address is listed: the plan's own
+	// bucket carries the prefix, this one is Fugaro's state bucket.
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fugaro-tfstate-" + gcpProject}))
+	v := gate(t, r, spec(t, r, managedCover(), addr))
+	if v.OK {
+		t.Fatal("a listed delete of a resource outside the managed prefix was admitted")
+	}
+	if len(v.Refusals) != 1 || v.Refusals[0].Gate != coverGate || !strings.Contains(v.Refusals[0].Why, "outside the managed prefix") {
+		t.Errorf("refusals %v, want the cover's prefix refusal of %s", v.Refusals, addr)
+	}
+	// And a resource whose type the allowlist does not carry.
+	r.managedShow(t, deleted(addr, "google_compute_instance", map[string]any{"name": "fmgd-data"}))
+	if v := gate(t, r, spec(t, r, managedCover(), addr)); v.OK {
+		t.Error("a listed delete of a type outside the managed allowlist was admitted")
+	}
+	// The other half: the resource is the plan's own and the address is not on
+	// the list, which is the guard's refusal to make and the verdict names it.
+	r.managedShow(t, allowed())
+	v = gate(t, r, spec(t, r, managedCover()))
+	if v.OK {
+		t.Fatal("a delete with an empty list was admitted")
+	}
+	guarded := false
+	for _, ref := range v.Refusals {
+		guarded = guarded || (ref.Gate == guardGate && ref.Address == addr && strings.Contains(ref.Why, "delete"))
+	}
+	if !guarded {
+		t.Errorf("refusals %v, want the guard's refusal of %s with its actions", v.Refusals, addr)
+	}
+	if v := gate(t, r, spec(t, r, managedCover(), "module.managed.google_storage_bucket.other")); v.OK {
+		t.Error("a delete of an address not listed was admitted")
+	}
+}
+
+// An address on the owner's AllowDelete list is admitted for a delete only
+// because the cover the test hands Gate admits the resource too; one not on
+// the list is refused, and an empty list refuses every delete. What makes a
+// listed delete of a resource the allowlist refuses fail is
+// TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist.
 func TestGateAdmitsADeleteOnlyForAListedAddress(t *testing.T) {
 	r := newRig(t)
 	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))

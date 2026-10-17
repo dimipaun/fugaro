@@ -652,9 +652,11 @@ func TestManagedCoverIsACover(t *testing.T) {
 }
 
 // TestManagedCoverRefusesDeletesAndReplacements: the action set is create,
-// update, no-op and read. A delete or a replacement is refused here whatever
-// the owner's delete list says (the open question the PR records), and an
-// unknown action is refused rather than read as none.
+// update, no-op and read, and a delete or a replacement is admitted only for
+// an exact address on the owner's delete list — which this cover was not told
+// (Task 1.2a), so it admits none of them. An unknown action is refused rather
+// than read as none, whatever the list says. The listed cases are below, in
+// the tests of the delete rule itself.
 func TestManagedCoverRefusesDeletesAndReplacements(t *testing.T) {
 	for name, acts := range map[string][]string{
 		"a delete":                         {"delete"},
@@ -1430,5 +1432,190 @@ func TestManagedCoverDropsInitAttributeChecks(t *testing.T) {
 				t.Fatalf("init's cover gives %q, want it refused for %q: the row would not isolate the check", out, tc.want)
 			}
 		})
+	}
+}
+
+// The delete rule (Task 1.2a): the managed cover takes the owner's delete list
+// as an input beside the plan, and a delete or a replace is judged twice — the
+// address must be on the list exactly, as tf.Guard compares it — and the
+// resource must be one the managed allowlist admits, judged exactly as a
+// create is. The address alone never admits one, and the list alone neither:
+// the two are separate rules and a fixture fails each on its own.
+
+// destroyed is the change terraform writes for a resource it destroys: the
+// resource in before, null in after, and no after_unknown. It is what the
+// removed half of a delete or a replace is read from.
+func destroyed(rc ResourceChange) ResourceChange {
+	rc.Change.Actions = []string{"delete"}
+	rc.Change.Before = rc.Change.After
+	rc.Change.After = nil
+	rc.Change.AfterUnknown = nil
+	return rc
+}
+
+// TestManagedCoverAdmitsAListedDeleteOfAnAllowedResource: a delete of an exact
+// address on the owner's list whose resource the allowlist admits is admitted.
+// Every kept type, because every one of them is judged on the resource the
+// plan removes and each has its own rule.
+func TestManagedCoverAdmitsAListedDeleteOfAnAllowedResource(t *testing.T) {
+	for _, typ := range ManagedAllowedTypes() {
+		t.Run(typ, func(t *testing.T) {
+			rc := destroyed(managedKeptFixture[typ])
+			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
+				t.Fatalf("a listed delete of the %s fixture is not covered: %q", typ, out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverRefusesAListedDeleteOfATypeOutsideTheAllowlist: the red step.
+// The address alone is not the decision: a listed delete whose type the managed
+// list does not carry is refused, and the refusal names the type rule rather
+// than the actions, so a cover that admitted a listed delete unjudged would
+// fail here. The first two are dropped entries and the third is a type neither
+// list carries.
+func TestManagedCoverRefusesAListedDeleteOfATypeOutsideTheAllowlist(t *testing.T) {
+	for _, typ := range []string{"google_project_iam_member", "google_monitoring_alert_policy", "google_compute_instance"} {
+		t.Run(typ, func(t *testing.T) {
+			rc := destroyed(mrc(typ, map[string]any{"name": ManagedPrefix + "x"}))
+			c := managedTestCover().WithDeleteList([]string{rc.Address})
+			out := c.NotCovered(managedPlan(rc), nil)
+			if len(out) != 1 || !strings.HasPrefix(out[0], rc.Address+" (") {
+				t.Fatalf("a listed delete of %s gives %q, want one refusal at its own address", typ, out)
+			}
+			if strings.Contains(out[0], "actions delete") {
+				t.Errorf("a listed delete of %s is refused for its actions (%q), want the resource judged", typ, out[0])
+			}
+			if !strings.Contains(out[0], "allowlist") {
+				t.Errorf("a listed delete of %s is refused for %q, want the type rule", typ, out[0])
+			}
+		})
+	}
+}
+
+// TestManagedCoverRefusesAListedDeleteOutsideTheManagedPrefix: the same for the
+// name rule — an allowed type whose removed resource is not the plan's own.
+func TestManagedCoverRefusesAListedDeleteOutsideTheManagedPrefix(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket"])
+	rc.Change.Before = map[string]any{"name": "fugaro-runs-proj-1"}
+	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	out := c.NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
+		t.Fatalf("a listed delete of a bucket outside the prefix gives %q, want the prefix rule", out)
+	}
+	// The same resource with the name it may carry: the fixture above fails on
+	// the name and on nothing else.
+	rc.Change.Before = map[string]any{"name": ManagedPrefix + "bucket"}
+	if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
+		t.Fatalf("the same delete with a prefixed name gives %q, want it covered", out)
+	}
+}
+
+// TestManagedCoverRefusesAListedDeleteOfAnAccountOutsideTheManagedProject: the
+// account rules are the resource judgement too — a listed delete of a grant on
+// the project's default compute account is refused.
+func TestManagedCoverRefusesAListedDeleteOfAnAccountOutsideTheManagedProject(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_service_account_iam_member"])
+	rc.Change.Before = map[string]any{
+		"service_account_id": "projects/proj-1/serviceAccounts/123456789-compute@developer.gserviceaccount.com",
+		"member":             "serviceAccount:" + managedAccount, "role": "roles/iam.serviceAccountUser"}
+	c := managedTestCover().WithDeleteList([]string{rc.Address})
+	out := c.NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
+		t.Fatalf("a listed delete of a grant on the default compute account gives %q, want the account rule", out)
+	}
+}
+
+// TestManagedCoverReplacesAreJudgedLikeDeletes: both of terraform's action
+// orders, and both halves — the resource the plan removes and the one it
+// creates. A replace of a listed address is refused when either half is not
+// one a managed plan may contain, and an unlisted one is refused whatever the
+// resources are.
+func TestManagedCoverReplacesAreJudgedLikeDeletes(t *testing.T) {
+	for _, order := range [][]string{{"delete", "create"}, {"create", "delete"}} {
+		t.Run(strings.Join(order, ","), func(t *testing.T) {
+			replacing := func(before, after map[string]any) ResourceChange {
+				rc := managedKeptFixture["google_storage_bucket"]
+				rc.Change.Actions = order
+				rc.Change.Before, rc.Change.After = before, after
+				return rc
+			}
+			listed := managedTestCover().WithDeleteList([]string{"module.managed.google_storage_bucket.this"})
+			prefixed, fugaro := map[string]any{"name": ManagedPrefix + "bucket"}, map[string]any{"name": "fugaro-tfstate-proj-1"}
+			if out := listed.NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 0 {
+				t.Fatalf("a listed replace of two allowed resources gives %q, want it covered", out)
+			}
+			if out := listed.NotCovered(managedPlan(replacing(fugaro, prefixed)), nil); len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
+				t.Fatalf("a listed replace whose removed resource is not the plan's gives %q, want the prefix rule", out)
+			}
+			if out := listed.NotCovered(managedPlan(replacing(prefixed, fugaro)), nil); len(out) != 1 || !strings.Contains(out[0], "outside the managed prefix") {
+				t.Fatalf("a listed replace whose created resource is not the plan's gives %q, want the prefix rule", out)
+			}
+			// The unlisted replace, whose resources are the plan's own: the
+			// list is what refuses it.
+			if out := managedTestCover().NotCovered(managedPlan(replacing(prefixed, prefixed)), nil); len(out) != 1 || strings.Contains(out[0], "prefix") {
+				t.Fatalf("an unlisted replace of two allowed resources gives %q, want the delete-list rule", out)
+			}
+		})
+	}
+}
+
+// TestManagedCoverDeleteListIsExactAddresses: the list is compared as tf.Guard
+// compares it, by string equality. A listed x[0] admits nothing of x[1], and no
+// module, prefix or glob shortcut stands in for an address.
+func TestManagedCoverDeleteListIsExactAddresses(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket"])
+	rc.Address = "module.managed.google_storage_bucket.x[1]"
+	for _, listed := range []string{
+		"module.managed.google_storage_bucket.x[0]",
+		"module.managed.google_storage_bucket",
+		"module.managed.google_storage_bucket.x*",
+		"module.managed.google_storage_bucket.x",
+	} {
+		if out := managedTestCover().WithDeleteList([]string{listed}).NotCovered(managedPlan(rc), nil); len(out) != 1 {
+			t.Errorf("%q listed admits x[1] (%q), want a refusal: an address matches by string equality alone", listed, out)
+		}
+	}
+	if out := managedTestCover().WithDeleteList([]string{rc.Address}).NotCovered(managedPlan(rc), nil); len(out) != 0 {
+		t.Fatalf("the exact address listed gives %q, want it covered: the fixture above fails on the address alone", out)
+	}
+}
+
+// TestManagedCoverDeleteListEmptyAdmitsNoDelete: absent and empty are the same
+// thing, and both refuse every delete and every replace however allowed the
+// resource is.
+func TestManagedCoverDeleteListEmptyAdmitsNoDelete(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket"])
+	for _, allow := range [][]string{nil, {}} {
+		if out := managedTestCover().WithDeleteList(allow).NotCovered(managedPlan(rc), nil); len(out) != 1 {
+			t.Errorf("a delete with the list %v gives %q, want one refusal", allow, out)
+		}
+	}
+}
+
+// TestManagedCoverDeleteListIsCopied: the cover holds its own copy of the
+// owner's list, so the list the guard is handed and the list the cover reads
+// cannot drift apart through either of them.
+func TestManagedCoverDeleteListIsCopied(t *testing.T) {
+	allow := []string{"module.managed.google_storage_bucket.this"}
+	c := managedTestCover().WithDeleteList(allow)
+	allow[0] = "module.managed.google_storage_bucket.other"
+	rc := destroyed(managedKeptFixture["google_storage_bucket"])
+	if out := c.NotCovered(managedPlan(rc), nil); len(out) != 0 {
+		t.Fatalf("a delete of the address the cover was handed gives %q, want it covered: the list was not copied", out)
+	}
+}
+
+// TestManagedCoverIsDeletable: the managed cover is the cover a managed apply
+// hands the delete list to, and a value is what it returns — the interface the
+// gate type-asserts for (internal/managed/plan.go).
+func TestManagedCoverIsDeletable(t *testing.T) {
+	var d Deletable = managedTestCover()
+	if _, ok := d.WithDeleteList([]string{"x"}).(ManagedCover); !ok {
+		t.Fatal("WithDeleteList returns something that is not a ManagedCover")
+	}
+	if !slices.Equal(d.WithDeleteList([]string{"x"}).(ManagedCover).AllowDelete, []string{"x"}) {
+		t.Error("WithDeleteList did not hand the cover the list it was given")
 	}
 }

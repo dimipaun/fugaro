@@ -222,6 +222,33 @@ var managedGrantRules = map[string]bool{
 // is Task 3.1's to refuse before init.
 type ManagedCover struct {
 	Cover
+	// AllowDelete are the exact addresses the owner approved a delete or a
+	// replace for, handed over by WithDeleteList beside the plan — the same
+	// list tf.Guard is handed, so the two cannot be given different ones. It
+	// is a copy of the caller's slice, so a cover cannot edit the list the
+	// guard was given. Absent and empty are the same thing here: no delete and
+	// no replace at all.
+	AllowDelete []string
+}
+
+// Deletable is a cover that can be told the owner's delete list, and the one
+// thing a cover must be for a delete or a replace to be judged at all. The
+// list is an input of the gate beside the plan (Task 1.2a, design D72/D74), so
+// a cover that cannot be told it cannot judge a delete — and
+// managed.Spec.notCovered refuses a listed one rather than letting the address
+// alone admit a resource nothing read.
+type Deletable interface {
+	NotCovered(p *Plan, imports []ImportKey) []string
+	WithDeleteList(allowDelete []string) Deletable
+}
+
+// WithDeleteList is the managed cover with the owner's delete list, which is
+// what a managed apply's gate hands it. A copy, so the list the guard is
+// handed and the list this cover holds are the same list rather than two that
+// can drift.
+func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
+	c.AllowDelete = slices.Clone(allowDelete)
+	return c
 }
 
 // NotCovered lists why a managed project's plan is not covered, empty when it
